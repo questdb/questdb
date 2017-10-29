@@ -418,25 +418,25 @@ public final class Chars {
         }
     }
 
-    private static int utf8error(int index, int len) {
-        return len - index;
-    }
-
-    private static int utf8DecodeMultiByte(ByteSequence in, int b, int index, int len, CharSink builder) {
+    public static int utf8DecodeMultiByte(ByteSequence in, int b, int index, int len, CharSink sink) {
         if (b >> 5 == -2 && (b & 30) != 0) {
-            return utf8Decode2Bytes(in, b, index, len, builder);
+            return utf8Decode2Bytes(in, b, index, len, sink);
         }
 
         if (b >> 4 == -2) {
-            return utf8Decode3Bytes(in, b, index, len, builder);
+            return utf8Decode3Bytes(in, b, index, len, sink);
         }
 
-        return utf8Decode4Bytes(in, b, index, len, builder);
+        return utf8Decode4Bytes(in, b, index, len, sink);
     }
 
-    private static int utf8Decode4Bytes(ByteSequence in, int b, int index, int len, CharSink builder) {
+    private static int utf8error() {
+        return -1;
+    }
+
+    private static int utf8Decode4Bytes(ByteSequence in, int b, int index, int len, CharSink sink) {
         if (b >> 3 != -2) {
-            return utf8error(index, len);
+            return utf8error();
         }
 
         if (len - index > 3) {
@@ -446,46 +446,46 @@ public final class Chars {
 
             int codePoint = b << 18 ^ b2 << 12 ^ b3 << 6 ^ b4 ^ 3678080;
             if (!isMalformed4(b2, b3, b4) && Character.isSupplementaryCodePoint(codePoint)) {
-                builder.put(Character.highSurrogate(codePoint));
-                builder.put(Character.lowSurrogate(codePoint));
+                sink.put(Character.highSurrogate(codePoint));
+                sink.put(Character.lowSurrogate(codePoint));
                 return 4;
             }
         }
-        return utf8error(index, len);
+        return utf8error();
     }
 
-    private static int utf8Decode3Bytes(ByteSequence in, int b, int index, int len, CharSink builder) {
+    private static int utf8Decode3Bytes(ByteSequence in, int b, int index, int len, CharSink sink) {
         if (len - index < 3) {
-            return utf8error(index, len);
+            return utf8error();
         }
 
         byte b2 = in.byteAt(index + 1);
         byte b3 = in.byteAt(index + 2);
 
         if (isMalformed3(b, b2, b3)) {
-            return utf8error(index, len);
+            return utf8error();
         }
 
         char c = (char) (b << 12 ^ b2 << 6 ^ b3 ^ -123008);
         if (Character.isSurrogate(c)) {
-            return utf8error(index, len);
+            return utf8error();
         }
 
-        builder.put(c);
+        sink.put(c);
         return 3;
     }
 
-    private static int utf8Decode2Bytes(ByteSequence in, int b, int index, int len, CharSink builder) {
+    private static int utf8Decode2Bytes(ByteSequence in, int b, int index, int len, CharSink sink) {
         if (len - index < 2) {
-            return utf8error(index, len);
+            return utf8error();
         }
 
         byte b2 = in.byteAt(index + 1);
         if (isNotContinuation(b2)) {
-            return utf8error(index, len);
+            return utf8error();
         }
 
-        builder.put((char) (b << 6 ^ b2 ^ 3968));
+        sink.put((char) (b << 6 ^ b2 ^ 3968));
         return 2;
     }
 

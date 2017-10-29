@@ -30,6 +30,7 @@ import java.util.concurrent.atomic.AtomicLong;
 
 public final class Unsafe {
     public static final long CHAR_OFFSET;
+    public static final long CHAR_SCALE;
     public static final long BYTE_OFFSET;
     public final static int CACHE_LINE_SIZE = 64;
     public static final long INT_OFFSET;
@@ -66,7 +67,12 @@ public final class Unsafe {
 
     public static long arrayGet(long[] array, int index) {
         assert index > -1 && index < array.length;
-        return array[index];
+        return Unsafe.getUnsafe().getLong(array, LONG_OFFSET + (index << LONG_SCALE));
+    }
+
+    public static char arrayGet(char[] array, int index) {
+        assert index > -1 && index < array.length;
+        return UNSAFE.getChar(array, CHAR_OFFSET + (index << CHAR_SCALE));
     }
 
     public static long arrayGetVolatile(long[] array, int index) {
@@ -92,6 +98,11 @@ public final class Unsafe {
     public static void arrayPut(long[] array, int index, long value) {
         assert index > -1 && index < array.length;
         Unsafe.getUnsafe().putLong(array, LONG_OFFSET + (index << LONG_SCALE), value);
+    }
+
+    public static void arrayPut(char[] array, int index, char value) {
+        assert index > -1 && index < array.length;
+        Unsafe.getUnsafe().putChar(array, CHAR_OFFSET + (index << CHAR_SCALE), value);
     }
 
     public static void arrayPutOrdered(long[] array, int index, long value) {
@@ -175,6 +186,8 @@ public final class Unsafe {
             LONG_SCALE = msb(Unsafe.getUnsafe().arrayIndexScale(long[].class));
 
             CHAR_OFFSET = Unsafe.getUnsafe().arrayBaseOffset(char[].class);
+            CHAR_SCALE = msb(Unsafe.getUnsafe().arrayIndexScale(char[].class));
+
             BYTE_OFFSET = Unsafe.getUnsafe().arrayBaseOffset(byte[].class);
 
             BOOL_OFFSET = Unsafe.getUnsafe().arrayBaseOffset(boolean[].class);

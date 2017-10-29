@@ -66,9 +66,8 @@ public class ResponseHeaderBuffer extends AbstractCharSink implements Closeable,
         ByteBuffers.release(headers);
     }
 
-    @Override
-    public void flush() {
-        throw new UnsupportedOperationException();
+    public int getCode() {
+        return code;
     }
 
     @Override
@@ -91,10 +90,6 @@ public class ResponseHeaderBuffer extends AbstractCharSink implements Closeable,
             return this;
         }
         throw ResponseHeaderBufferTooSmallException.INSTANCE;
-    }
-
-    public int getCode() {
-        return code;
     }
 
     public String status(int code, CharSequence contentType, long contentLength) {

@@ -37,6 +37,36 @@ public abstract class AbstractCharSink implements CharSink {
     private static final ThreadLocal<ObjHashSet<Throwable>> tlSet = ThreadLocal.withInitial(ObjHashSet::new);
 
     @Override
+    public void encodeUtf8(CharSequence cs) {
+        int hi = cs.length();
+        int i = 0;
+        while (i < hi) {
+            char c = cs.charAt(i++);
+            if (c > 31 && c < 128) {
+                put(c);
+            } else i = putUtf8Internal(cs, hi, i, c);
+        }
+    }
+
+    @Override
+    public void jsonFmt(float value, int scale) {
+        if (value == value) {
+            Numbers.append(this, value, scale);
+        } else {
+            put("null");
+        }
+    }
+
+    @Override
+    public void jsonFmt(double value, int scale) {
+        if (value == value) {
+            Numbers.append(this, value, scale);
+        } else {
+            put("null");
+        }
+    }
+
+    @Override
     public CharSink put(int value) {
         Numbers.append(this, value);
         return this;
@@ -106,47 +136,8 @@ public abstract class AbstractCharSink implements CharSink {
     }
 
     @Override
-    public CharSink putJson(float value, int scale) {
-        if (value == value) {
-            Numbers.append(this, value, scale);
-        } else {
-            put("null");
-        }
-        return this;
-    }
-
-    @Override
-    public CharSink putJson(double value, int scale) {
-        if (value == value) {
-            Numbers.append(this, value, scale);
-        } else {
-            put("null");
-        }
-        return this;
-    }
-
-    @Override
     public CharSink putQuoted(CharSequence cs) {
         put('\"').put(cs).put('\"');
-        return this;
-    }
-
-    @Override
-    public CharSink putTrim(double value, int scale) {
-        Numbers.appendTrim(this, value, scale);
-        return this;
-    }
-
-    @Override
-    public CharSink putUtf8(CharSequence cs) {
-        int hi = cs.length();
-        int i = 0;
-        while (i < hi) {
-            char c = cs.charAt(i++);
-            if (c > 31 && c < 128) {
-                put(c);
-            } else i = putUtf8Internal(cs, hi, i, c);
-        }
         return this;
     }
 

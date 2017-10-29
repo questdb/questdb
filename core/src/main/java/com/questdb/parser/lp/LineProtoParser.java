@@ -1,7 +1,5 @@
 package com.questdb.parser.lp;
 
-import com.questdb.std.str.ByteSequence;
-
 @FunctionalInterface
 public interface LineProtoParser {
     int EVT_MEASUREMENT = 1;
@@ -12,5 +10,5 @@ public interface LineProtoParser {
     int EVT_TIMESTAMP = 6;
     int EVT_END = 7;
 
-    void onEvent(ByteSequence token, int type);
+    void onEvent(CharSequence token, int type);
 }

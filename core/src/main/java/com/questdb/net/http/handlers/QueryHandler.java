@@ -213,10 +213,10 @@ public class QueryHandler implements ContextHandler {
                 sink.put(rec.get(col));
                 break;
             case ColumnType.DOUBLE:
-                sink.putJson(rec.getDouble(col), 10);
+                sink.jsonFmt(rec.getDouble(col), 10);
                 break;
             case ColumnType.FLOAT:
-                sink.putJson(rec.getFloat(col), 10);
+                sink.jsonFmt(rec.getFloat(col), 10);
                 break;
             case ColumnType.INT:
                 final int i = rec.getInt(col);

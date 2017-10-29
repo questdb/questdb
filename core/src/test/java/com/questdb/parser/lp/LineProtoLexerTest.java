@@ -1,6 +1,6 @@
 package com.questdb.parser.lp;
 
-import com.questdb.misc.Unsafe;
+import com.questdb.std.str.AbstractCharSequence;
 import com.questdb.std.str.ByteSequence;
 import com.questdb.std.str.StringSink;
 import com.questdb.test.tools.TestUtils;
@@ -9,15 +9,17 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
+import java.io.UnsupportedEncodingException;
+
 public class LineProtoLexerTest {
 
-    private final static LineProtoLexer lexer = new LineProtoLexer();
+    private final static LineProtoLexer lexer = new LineProtoLexer(4096);
     private final StringSink sink = new StringSink();
-    private final LineProtoParser lineAssemblingListener = new LineProtoParser() {
+    private final LineProtoParser lineAssemblingParser = new LineProtoParser() {
         boolean fields = false;
 
         @Override
-        public void onEvent(ByteSequence token, int type) {
+        public void onEvent(CharSequence token, int type) {
             switch (type) {
                 case LineProtoParser.EVT_MEASUREMENT:
                     sink.put(token);
@@ -60,7 +62,6 @@ public class LineProtoLexerTest {
 
     @AfterClass
     public static void tearDown() throws Exception {
-        lexer.close();
     }
 
     @Before
@@ -70,12 +71,12 @@ public class LineProtoLexerTest {
 
     @Test
     public void testCommaInTagName() throws Exception {
-        assertThat("measurement,t\\,ag=value,tag2=value field=10000i,field2=\"str\" 100000\n", "measurement,t\\,ag=value,tag2=value field=10000i,field2=\"str\" 100000\n");
+        assertThat("measurement,t,ag=value,tag2=value field=10000i,field2=\"str\" 100000\n", "measurement,t\\,ag=value,tag2=value field=10000i,field2=\"str\" 100000\n");
     }
 
     @Test
     public void testCommaInTagValue() throws Exception {
-        assertThat("measurement,tag=value,tag2=va\\,lue field=10000i,field2=\"str\" 100000\n", "measurement,tag=value,tag2=va\\,lue field=10000i,field2=\"str\" 100000\n");
+        assertThat("measurement,tag=value,tag2=va,lue field=10000i,field2=\"str\" 100000\n", "measurement,tag=value,tag2=va\\,lue field=10000i,field2=\"str\" 100000\n");
     }
 
     @Test
@@ -242,12 +243,12 @@ public class LineProtoLexerTest {
 
     @Test
     public void testSpaceTagName() throws Exception {
-        assertThat("measurement,t\\ ag=value,tag2=value field=10000i,field2=\"str\" 100000\n", "measurement,t\\ ag=value,tag2=value field=10000i,field2=\"str\" 100000\n");
+        assertThat("measurement,t ag=value,tag2=value field=10000i,field2=\"str\" 100000\n", "measurement,t\\ ag=value,tag2=value field=10000i,field2=\"str\" 100000\n");
     }
 
     @Test
     public void testSpaceTagValue() throws Exception {
-        assertThat("measurement,tag=value,tag2=valu\\ e field=10000i,field2=\"str\" 100000\n", "measurement,tag=value,tag2=valu\\ e field=10000i,field2=\"str\" 100000\n");
+        assertThat("measurement,tag=value,tag2=valu e field=10000i,field2=\"str\" 100000\n", "measurement,tag=value,tag2=valu\\ e field=10000i,field2=\"str\" 100000\n");
     }
 
     @Test
@@ -256,59 +257,104 @@ public class LineProtoLexerTest {
                 "measurement,tag=value3,tag2=value2 field=100i,field2=\"ok\"\n");
     }
 
-    private void assertError(CharSequence line) throws LineProtoException {
-        final int len = line.length();
-        long ptr = TestUtils.toMemory(line);
-        try {
+    @Test
+    public void testUtf8() throws Exception {
+        assertThat("меморандум,кроме=никто,этом=комитета находился=10000i,вышел=\"Александр\" 100000\n", "меморандум,кроме=никто,этом=комитета находился=10000i,вышел=\"Александр\" 100000\n");
+    }
+
+    @Test
+    public void testUtf8Measurement() throws Exception {
+        assertThat("меморандум,tag=value,tag2=value field=10000i,field2=\"str\" 100000\n", "меморандум,tag=value,tag2=value field=10000i,field2=\"str\" 100000\n");
+    }
+
+    @Test
+    public void testUtf8ThreeBytes() throws Exception {
+        assertThat("违法违,控网站漏洞风=不一定代,网站可能存在=комитета 的风险=10000i,вышел=\"险\" 100000\n", "违法违,控网站漏洞风=不一定代,网站可能存在=комитета 的风险=10000i,вышел=\"险\" 100000\n");
+    }
+
+    private void assertError(CharSequence line) throws LineProtoException, UnsupportedEncodingException {
+        ByteArrayByteSequence bs = new ByteArrayByteSequence(line.toString().getBytes("UTF8"));
+        final int len = bs.length();
+        for (int i = 0; i < len; i++) {
+            sink.clear();
+            try {
+                lexer.clear();
+                lexer.withParser(lineAssemblingParser);
+                lexer.parse(bs.limit(0, i));
+                lexer.parse(bs.limit(i, len - i));
+                lexer.parseLast();
+                Assert.fail();
+            } catch (LineProtoException ignored) {
+
+            }
+        }
+    }
+
+    private void assertThat(CharSequence expected, CharSequence line) throws LineProtoException, UnsupportedEncodingException {
+        ByteArrayByteSequence bs = new ByteArrayByteSequence(line.toString().getBytes("UTF8"));
+        final int len = bs.length();
+        if (len < 10) {
             for (int i = 0; i < len; i++) {
                 sink.clear();
-                try {
-                    lexer.clear();
-                    lexer.parse(ptr, i, lineAssemblingListener);
-                    lexer.parse(ptr + i, len - i, lineAssemblingListener);
-                    lexer.parseLast(lineAssemblingListener);
-                    Assert.fail();
-                } catch (LineProtoException ignored) {
-
-                }
-            }
-        } finally {
-            Unsafe.free(ptr, len);
-        }
-    }
-
-    private void assertThat(CharSequence expected, CharSequence line) throws LineProtoException {
-        final int len = line.length();
-        if (len < 10) {
-            long ptr = TestUtils.toMemory(line);
-            try {
-                for (int i = 0; i < len; i++) {
-                    sink.clear();
-                    lexer.clear();
-                    lexer.parse(ptr, i, lineAssemblingListener);
-                    lexer.parse(ptr + i, len - i, lineAssemblingListener);
-                    lexer.parseLast(lineAssemblingListener);
-                    TestUtils.assertEquals(expected, sink);
-                }
-            } finally {
-                Unsafe.free(ptr, len);
+                lexer.clear();
+                lexer.withParser(lineAssemblingParser);
+                lexer.parse(bs.limit(0, i));
+                lexer.parse(bs.limit(i, len - i));
+                lexer.parseLast();
+                TestUtils.assertEquals(expected, sink);
             }
         } else {
-            long ptr = TestUtils.toMemory(line);
-            try {
-                for (int i = 0; i < len - 10; i++) {
-                    sink.clear();
-                    lexer.clear();
-                    lexer.parse(ptr, i, lineAssemblingListener);
-                    lexer.parse(ptr + i, 10, lineAssemblingListener);
-                    lexer.parse(ptr + i + 10, len - i - 10, lineAssemblingListener);
-                    lexer.parseLast(lineAssemblingListener);
-                    TestUtils.assertEquals(expected, sink);
-                }
-            } finally {
-                Unsafe.free(ptr, len);
+            for (int i = 0; i < len - 10; i++) {
+                sink.clear();
+                lexer.clear();
+                lexer.withParser(lineAssemblingParser);
+                lexer.parse(bs.limit(0, i));
+                lexer.parse(bs.limit(i, 10));
+                lexer.parse(bs.limit(i + 10, len - i - 10));
+                lexer.parseLast();
+                TestUtils.assertEquals(expected, sink);
             }
         }
+
+        // assert small buffer
+        LineProtoLexer smallBufLexer = new LineProtoLexer(64);
+        sink.clear();
+        smallBufLexer.withParser(lineAssemblingParser);
+        smallBufLexer.parse(bs.limit(0, len));
+        smallBufLexer.parseLast();
+        TestUtils.assertEquals(expected, sink);
     }
 
+    private static class ByteArrayByteSequence extends AbstractCharSequence implements ByteSequence {
+
+        private final byte[] array;
+        private int top = 0;
+        private int len;
+
+        public ByteArrayByteSequence(byte[] array) {
+            this.array = array;
+            this.len = array.length;
+        }
+
+        @Override
+        public byte byteAt(int index) {
+            return array[top + index];
+        }
+
+        @Override
+        public int length() {
+            return len;
+        }
+
+        @Override
+        public char charAt(int index) {
+            return (char) byteAt(index);
+        }
+
+        ByteArrayByteSequence limit(int top, int len) {
+            this.top = top;
+            this.len = len;
+            return this;
+        }
+    }
 }

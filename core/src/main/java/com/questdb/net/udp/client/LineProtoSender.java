@@ -136,7 +136,7 @@ public class LineProtoSender extends AbstractCharSink implements Closeable {
 
     public LineProtoSender tag(CharSequence tag, CharSequence value) {
         if (hasMetric) {
-            put(',').putNameEscaped(tag).put('=').putUtf8(value);
+            put(',').putNameEscaped(tag).put('=').encodeUtf8(value);
             return this;
         }
         throw new RuntimeException();

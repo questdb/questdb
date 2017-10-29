@@ -1,64 +1,79 @@
 package com.questdb.parser.lp;
 
+import com.questdb.misc.Chars;
 import com.questdb.misc.Unsafe;
 import com.questdb.std.Mutable;
+import com.questdb.std.str.AbstractCharSequence;
+import com.questdb.std.str.AbstractCharSink;
 import com.questdb.std.str.ByteSequence;
-import com.questdb.std.str.DirectByteCharSequence;
-import com.questdb.std.str.SplitByteSequence;
+import com.questdb.std.str.CharSink;
 
-import java.io.Closeable;
+public class LineProtoLexer implements Mutable {
 
-public class LineProtoLexer implements Mutable, Closeable {
-
-    private final DirectByteCharSequence dbcs = new DirectByteCharSequence();
-    private final DirectByteCharSequence reserveDbcs = new DirectByteCharSequence();
-    private final SplitByteSequence sbcs = new SplitByteSequence();
-
+    private final ArrayBackedCharSink sink = new ArrayBackedCharSink();
+    private final ArrayBackedCharSequence cs = new ArrayBackedCharSequence();
+    private final ArrayBackedByteSequence utf8ErrorSeq = new ArrayBackedByteSequence();
     private int state = LineProtoParser.EVT_MEASUREMENT;
     private boolean escape = false;
-    private long rollPtr = 0;
-    private int rollCapacity = 0;
-    private int rollSize = 0;
+    private char buffer[];
+    private int dstPos = 0;
+    private int dstTop = 0;
+    private LineProtoParser parser;
+    private int utf8ErrorTop;
+    private int utf8ErrorPos;
+
+    public LineProtoLexer(int bufferSize) {
+        buffer = new char[bufferSize];
+    }
 
     @Override
-    public void clear() {
-        rollSize = 0;
+    public final void clear() {
         escape = false;
         state = LineProtoParser.EVT_MEASUREMENT;
+        dstTop = dstPos = 0;
+        utf8ErrorTop = utf8ErrorPos = -1;
     }
 
-    @Override
-    public void close() {
-        if (rollPtr > 0) {
-            Unsafe.free(rollPtr, rollCapacity);
-        }
-    }
+    public void parse(ByteSequence bytes) throws LineProtoException {
+        int srcPos = 0;
+        int len = bytes.length();
 
-    public void parse(long lo, int len, LineProtoParser listener) throws LineProtoException {
-        long p = lo;
-        long hi = lo + len;
-        long _lo = p;
+        while (srcPos < len) {
 
-        while (p < hi) {
-            char c = (char) Unsafe.getUnsafe().getByte(p++);
+            byte b = bytes.byteAt(srcPos);
+
+            if (escape) {
+                dstPos--;
+            }
+
+            if (b < 0) {
+                srcPos = utf8Decode(bytes, srcPos, len, b);
+            } else {
+                sink.put((char) b);
+                srcPos++;
+            }
+
             if (escape) {
                 escape = false;
+                dstPos++;
                 continue;
             }
+
+            char c = Unsafe.arrayGet(buffer, dstPos++);
 
             switch (c) {
                 case ',':
                     switch (state) {
                         case LineProtoParser.EVT_MEASUREMENT:
-                            listener.onEvent(makeByteSeq(_lo, p), LineProtoParser.EVT_MEASUREMENT);
+                            fireEvent();
                             state = LineProtoParser.EVT_TAG_NAME;
                             break;
                         case LineProtoParser.EVT_TAG_VALUE:
-                            listener.onEvent(makeByteSeq(_lo, p), LineProtoParser.EVT_TAG_VALUE);
+                            fireEvent();
                             state = LineProtoParser.EVT_TAG_NAME;
                             break;
                         case LineProtoParser.EVT_FIELD_VALUE:
-                            listener.onEvent(makeByteSeq(_lo, p), LineProtoParser.EVT_FIELD_VALUE);
+                            fireEvent();
                             state = LineProtoParser.EVT_FIELD_NAME;
                             break;
                         default:
@@ -68,11 +83,11 @@ public class LineProtoLexer implements Mutable, Closeable {
                 case '=':
                     switch (state) {
                         case LineProtoParser.EVT_TAG_NAME:
-                            listener.onEvent(makeByteSeq(_lo, p), LineProtoParser.EVT_TAG_NAME);
+                            fireEvent();
                             state = LineProtoParser.EVT_TAG_VALUE;
                             break;
                         case LineProtoParser.EVT_FIELD_NAME:
-                            listener.onEvent(makeByteSeq(_lo, p), LineProtoParser.EVT_FIELD_NAME);
+                            fireEvent();
                             state = LineProtoParser.EVT_FIELD_VALUE;
                             break;
                         default:
@@ -85,15 +100,15 @@ public class LineProtoLexer implements Mutable, Closeable {
                 case ' ':
                     switch (state) {
                         case LineProtoParser.EVT_MEASUREMENT:
-                            listener.onEvent(makeByteSeq(_lo, p), LineProtoParser.EVT_MEASUREMENT);
+                            fireEvent();
                             state = LineProtoParser.EVT_FIELD_NAME;
                             break;
                         case LineProtoParser.EVT_TAG_VALUE:
-                            listener.onEvent(makeByteSeq(_lo, p), LineProtoParser.EVT_TAG_VALUE);
+                            fireEvent();
                             state = LineProtoParser.EVT_FIELD_NAME;
                             break;
                         case LineProtoParser.EVT_FIELD_VALUE:
-                            listener.onEvent(makeByteSeq(_lo, p), LineProtoParser.EVT_FIELD_VALUE);
+                            fireEvent();
                             state = LineProtoParser.EVT_TIMESTAMP;
                             break;
                         default:
@@ -107,105 +122,148 @@ public class LineProtoLexer implements Mutable, Closeable {
                             // empty line?
                             break;
                         case LineProtoParser.EVT_TAG_VALUE:
-                            listener.onEvent(makeByteSeq(_lo, p), LineProtoParser.EVT_TAG_VALUE);
-                            break;
                         case LineProtoParser.EVT_FIELD_VALUE:
-                            listener.onEvent(makeByteSeq(_lo, p), LineProtoParser.EVT_FIELD_VALUE);
-                            break;
                         case LineProtoParser.EVT_TIMESTAMP:
-                            listener.onEvent(makeByteSeq(_lo, p), LineProtoParser.EVT_TIMESTAMP);
+                            fireEvent();
+                            state = LineProtoParser.EVT_END;
+                            fireEvent();
+                            clear();
                             break;
                         default:
                             throw LineProtoException.INSTANCE;
-                    }
-
-                    if (state != LineProtoParser.EVT_MEASUREMENT) {
-                        listener.onEvent(null, LineProtoParser.EVT_END);
-                        clear();
                     }
                     break;
                 default:
                     // normal byte
                     continue;
             }
-            _lo = p;
-        }
-
-        if (_lo < hi) {
-            rollLine(_lo, hi);
+            dstTop = dstPos;
         }
     }
 
-    public void parseLast(LineProtoParser listener) throws LineProtoException {
-        if (state != LineProtoParser.EVT_MEASUREMENT) {
-            parseLast0(listener);
-        }
-    }
-
-    private ByteSequence makeByteSeq(long _lo, long hi) throws LineProtoException {
-        if (rollSize > 0) {
-            return makeByteSeq0(_lo, hi);
-        }
-
-        if (_lo == hi - 1) {
-            throw LineProtoException.INSTANCE;
-        }
-
-        return dbcs.of(_lo, hi - 1);
-    }
-
-    private ByteSequence makeByteSeq0(long _lo, long hi) {
-        ByteSequence sequence;
-        if (_lo == hi - 1) {
-            sequence = dbcs.of(rollPtr, rollPtr + rollSize);
-        } else {
-            sequence = sbcs.of(dbcs.of(rollPtr, rollPtr + rollSize), reserveDbcs.of(_lo, hi - 1));
-        }
-        rollSize = 0;
-        return sequence;
-    }
-
-    private void parseLast0(LineProtoParser listener) throws LineProtoException {
-        if (state == LineProtoParser.EVT_TIMESTAMP) {
-            if (rollSize > 0) {
-                listener.onEvent(dbcs.of(rollPtr, rollPtr + rollSize), LineProtoParser.EVT_TIMESTAMP);
-            }
-        } else if (rollSize == 0) {
-            throw LineProtoException.INSTANCE;
-        }
-
+    public void parseLast() throws LineProtoException {
         switch (state) {
+            case LineProtoParser.EVT_MEASUREMENT:
+                break;
             case LineProtoParser.EVT_TAG_VALUE:
-                listener.onEvent(dbcs.of(rollPtr, rollPtr + rollSize), LineProtoParser.EVT_TAG_VALUE);
-                break;
             case LineProtoParser.EVT_FIELD_VALUE:
-                listener.onEvent(dbcs.of(rollPtr, rollPtr + rollSize), LineProtoParser.EVT_FIELD_VALUE);
-                break;
             case LineProtoParser.EVT_TIMESTAMP:
+                dstPos++;
+                fireEvent();
+                state = LineProtoParser.EVT_END;
+                fireEvent();
                 break;
             default:
                 throw LineProtoException.INSTANCE;
         }
-        listener.onEvent(null, LineProtoParser.EVT_END);
     }
 
-    private void rollLine(long lo, long hi) {
-        int len = (int) (hi - lo);
-        int requiredCapacity = rollSize + len;
+    public void withParser(LineProtoParser parser) {
+        this.parser = parser;
+    }
 
-        if (requiredCapacity > rollCapacity) {
-            long p = Unsafe.malloc(requiredCapacity);
-            if (rollSize > 0) {
-                Unsafe.getUnsafe().copyMemory(rollPtr, p, rollSize);
-            }
-
-            if (rollPtr > 0) {
-                Unsafe.free(rollPtr, rollCapacity);
-            }
-            rollPtr = p;
-            rollCapacity = requiredCapacity;
+    private void fireEvent() throws LineProtoException {
+        if (dstTop >= dstPos - 1) {
+            throw LineProtoException.INSTANCE;
         }
-        Unsafe.getUnsafe().copyMemory(lo, rollPtr + rollSize, len);
-        rollSize = requiredCapacity;
+        parser.onEvent(cs, state);
+    }
+
+    private int repairMultiByteChar(byte b, ByteSequence bytes, int pos, int len) throws LineProtoException {
+        int n = -1;
+        do {
+            // UTF8 error
+            if (utf8ErrorTop == -1) {
+                utf8ErrorTop = utf8ErrorPos = dstPos + 1;
+            }
+            // store partial byte
+            dstPos = utf8ErrorPos++;
+            sink.put((char) b);
+
+            // try to decode partial bytes
+            int errorLen = utf8ErrorSeq.length();
+            if (errorLen > 1) {
+                dstPos = utf8ErrorTop - 1;
+                n = Chars.utf8DecodeMultiByte(utf8ErrorSeq, utf8ErrorSeq.byteAt(0), 0, errorLen, sink);
+            }
+
+            if (n == -1 && errorLen > 3) {
+                throw LineProtoException.INSTANCE;
+            }
+
+            if (n == -1 && ++pos < len) {
+                b = bytes.byteAt(pos);
+            } else {
+                break;
+            }
+        } while (true);
+
+        // we can only be in error when we ran out of bytes to read
+        // in which case we return array pointer to original position and exit method
+        dstPos = utf8ErrorTop - 1;
+
+        if (n > 0) {
+            // if we are successful, reset error pointers
+            utf8ErrorTop = utf8ErrorPos = -1;
+        }
+
+        // bump pos by one more byte in addition to what we may have incremented in the loop
+        return pos + 1;
+    }
+
+    private int utf8Decode(ByteSequence bytes, int srcPos, int len, byte b) throws LineProtoException {
+        int n = Chars.utf8DecodeMultiByte(bytes, b, srcPos, len, sink);
+        if (n == -1) {
+            srcPos = repairMultiByteChar(b, bytes, srcPos, len);
+        } else {
+            srcPos += n;
+        }
+        return srcPos;
+    }
+
+    private class ArrayBackedCharSink extends AbstractCharSink {
+
+        @Override
+        public CharSink put(char c) {
+            if (dstPos == buffer.length) {
+                extend();
+            }
+            Unsafe.arrayPut(buffer, dstPos, c);
+            return this;
+        }
+
+        private void extend() {
+            int capacity = dstPos * 2;
+            if (capacity < 0) {
+                throw new OutOfMemoryError();
+            }
+            char buf[] = new char[capacity];
+            System.arraycopy(buffer, 0, buf, 0, dstPos);
+            buffer = buf;
+        }
+    }
+
+    private class ArrayBackedCharSequence extends AbstractCharSequence {
+        @Override
+        public int length() {
+            return dstPos - dstTop - 1;
+        }
+
+        @Override
+        public char charAt(int index) {
+            return Unsafe.arrayGet(buffer, dstTop + index);
+        }
+    }
+
+    private class ArrayBackedByteSequence extends AbstractCharSequence implements ByteSequence {
+        @Override
+        public byte byteAt(int index) {
+            return (byte) Unsafe.arrayGet(buffer, utf8ErrorTop + index);
+        }
+
+        @Override
+        public int length() {
+            return utf8ErrorPos - utf8ErrorTop;
+        }
     }
 }

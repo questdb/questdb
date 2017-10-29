@@ -5,7 +5,6 @@ import com.questdb.std.Mutable;
 import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
-import java.io.IOException;
 
 public class DirectCharSink extends AbstractCharSink implements CharSequence, Closeable, Mutable, DirectBytes {
     private long ptr;
@@ -41,7 +40,18 @@ public class DirectCharSink extends AbstractCharSink implements CharSequence, Cl
     }
 
     @Override
-    public void flush() throws IOException {
+    public int length() {
+        return (int) (lo - ptr) / 2;
+    }
+
+    @Override
+    public char charAt(int index) {
+        return Unsafe.getUnsafe().getChar(ptr + index * 2);
+    }
+
+    @Override
+    public CharSequence subSequence(int start, int end) {
+        throw new UnsupportedOperationException();
     }
 
     @Override
@@ -68,21 +78,6 @@ public class DirectCharSink extends AbstractCharSink implements CharSequence, Cl
         Unsafe.getUnsafe().putChar(lo, c);
         lo += 2;
         return this;
-    }
-
-    @Override
-    public int length() {
-        return (int) (lo - ptr) / 2;
-    }
-
-    @Override
-    public char charAt(int index) {
-        return Unsafe.getUnsafe().getChar(ptr + index * 2);
-    }
-
-    @Override
-    public CharSequence subSequence(int start, int end) {
-        throw new UnsupportedOperationException();
     }
 
     @NotNull

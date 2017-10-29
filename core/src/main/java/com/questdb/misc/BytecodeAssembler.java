@@ -32,7 +32,6 @@ import com.questdb.std.str.AbstractCharSink;
 import com.questdb.std.str.CharSink;
 
 import java.io.FileOutputStream;
-import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 
@@ -690,11 +689,6 @@ public class BytecodeAssembler {
         public int $() {
             putShort(lenpos, utf8len);
             return poolCount++;
-        }
-
-        @Override
-        public void flush() throws IOException {
-
         }
 
         @Override

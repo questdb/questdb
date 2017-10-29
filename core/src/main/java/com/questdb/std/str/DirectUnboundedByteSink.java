@@ -39,11 +39,8 @@ public class DirectUnboundedByteSink extends AbstractCharSink {
         _wptr = address + len;
     }
 
-    /**
-     * This is an unbuffered in-memory sink, any data put into it is flushed immediately.
-     */
-    @Override
-    public void flush() {
+    public int length() {
+        return (int) (_wptr - address);
     }
 
     @Override
@@ -58,10 +55,6 @@ public class DirectUnboundedByteSink extends AbstractCharSink {
     public CharSink put(char c) {
         Unsafe.getUnsafe().putByte(_wptr++, (byte) c);
         return this;
-    }
-
-    public int length() {
-        return (int) (_wptr - address);
     }
 
     @Override

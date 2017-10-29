@@ -448,7 +448,7 @@ public class ImportHandler extends AbstractMultipartHandler {
             sink.put('{').putQuoted("status").put(':').putUtf8EscapedAndQuoted(message).put('}');
         } else {
             sink.status(400, CONTENT_TYPE_TEXT);
-            sink.putUtf8(message);
+            sink.encodeUtf8(message);
         }
         sink.flush();
         throw DisconnectedChannelException.INSTANCE;

@@ -28,9 +28,19 @@ import com.questdb.std.Sinkable;
 import java.io.IOException;
 
 public interface CharSink {
-    void flush() throws IOException;
 
-    CharSink put(CharSequence cs);
+    void encodeUtf8(CharSequence cs);
+
+    default void flush() throws IOException {
+    }
+
+    void jsonFmt(float value, int scale);
+
+    void jsonFmt(double value, int scale);
+
+    default CharSink put(CharSequence cs) {
+        throw new UnsupportedOperationException();
+    }
 
     CharSink put(char c);
 
@@ -50,15 +60,7 @@ public interface CharSink {
 
     CharSink putISODate(long value);
 
-    CharSink putJson(float value, int scale);
-
-    CharSink putJson(double value, int scale);
-
     CharSink putQuoted(CharSequence cs);
-
-    CharSink putTrim(double value, int scale);
-
-    CharSink putUtf8(CharSequence cs);
 
     CharSink putUtf8Escaped(CharSequence cs);
 

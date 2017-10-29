@@ -45,8 +45,20 @@ public class LogRecordSink extends AbstractCharSink {
         _wptr = address + len;
     }
 
-    @Override
-    public void flush() {
+    public long getAddress() {
+        return address;
+    }
+
+    public int getLevel() {
+        return level;
+    }
+
+    public void setLevel(int level) {
+        this.level = level;
+    }
+
+    public int length() {
+        return (int) (_wptr - address);
     }
 
     @Override
@@ -65,22 +77,6 @@ public class LogRecordSink extends AbstractCharSink {
             Unsafe.getUnsafe().putByte(_wptr++, (byte) c);
         }
         return this;
-    }
-
-    public long getAddress() {
-        return address;
-    }
-
-    public int getLevel() {
-        return level;
-    }
-
-    public void setLevel(int level) {
-        this.level = level;
-    }
-
-    public int length() {
-        return (int) (_wptr - address);
     }
 
     @Override

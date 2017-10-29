@@ -25,4 +25,9 @@ package com.questdb.std.str;
 
 public interface ByteSequence extends CharSequence {
     byte byteAt(int index);
+
+    @Override
+    default char charAt(int index) {
+        throw new UnsupportedOperationException();
+    }
 }

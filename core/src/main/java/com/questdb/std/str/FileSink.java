@@ -61,11 +61,6 @@ public class FileSink extends AbstractCharSink implements Closeable {
     }
 
     @Override
-    public void flush() {
-
-    }
-
-    @Override
     public CharSink put(CharSequence cs) {
         if (cs == null) {
             return this;
