@@ -1,6 +1,5 @@
 package com.questdb.parser.lp;
 
-@FunctionalInterface
 public interface LineProtoParser {
     int EVT_MEASUREMENT = 1;
     int EVT_TAG_VALUE = 2;
@@ -9,6 +8,12 @@ public interface LineProtoParser {
     int EVT_FIELD_NAME = 5;
     int EVT_TIMESTAMP = 6;
     int EVT_END = 7;
+
+    int ERROR_EXPECTED = 1;
+    int ERROR_ENCODING = 2;
+    int ERROR_EMPTY = 3;
+
+    void onError(int position, int state, int code);
 
     void onEvent(CharSequence token, int type);
 }

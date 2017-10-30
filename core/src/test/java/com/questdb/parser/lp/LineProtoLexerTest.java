@@ -15,50 +15,7 @@ public class LineProtoLexerTest {
 
     private final static LineProtoLexer lexer = new LineProtoLexer(4096);
     private final StringSink sink = new StringSink();
-    private final LineProtoParser lineAssemblingParser = new LineProtoParser() {
-        boolean fields = false;
-
-        @Override
-        public void onEvent(CharSequence token, int type) {
-            switch (type) {
-                case LineProtoParser.EVT_MEASUREMENT:
-                    sink.put(token);
-                    break;
-                case LineProtoParser.EVT_TAG_NAME:
-                    sink.put(',').put(token).put('=');
-                    break;
-                case LineProtoParser.EVT_FIELD_NAME:
-                    if (fields) {
-                        sink.put(',');
-                    } else {
-                        try {
-                            fields = true;
-                        } catch (Exception e) {
-                            e.printStackTrace();
-                        }
-                        sink.put(' ');
-                    }
-                    sink.put(token).put('=');
-                    break;
-                case LineProtoParser.EVT_TAG_VALUE:
-                case LineProtoParser.EVT_FIELD_VALUE:
-                    sink.put(token);
-                    break;
-                case LineProtoParser.EVT_TIMESTAMP:
-                    if (token.length() > 0) {
-                        sink.put(' ').put(token);
-                    }
-                    break;
-                case LineProtoParser.EVT_END:
-                    sink.put('\n');
-                    fields = false;
-                    break;
-                default:
-                    break;
-
-            }
-        }
-    };
+    private final TestLineProtoParser lineAssemblingParser = new TestLineProtoParser();
 
     @AfterClass
     public static void tearDown() throws Exception {
@@ -80,8 +37,24 @@ public class LineProtoLexerTest {
     }
 
     @Test
+    public void testCorruptUtf8Sequence() throws Exception {
+        byte bytesA[] = "违法违,控网站漏洞风=不一定代,网站可能存在=комитета 的风险=10000i,вышел=\"险\" 100000\n".getBytes("UTF8");
+        byte bytesB[] = {-116, -76, -55, 55, -34, 0, -11, 15, 13};
+        byte bytesC[] = "меморандум,tag=value,tag2=value field=10000i,field2=\"str\" 100000\n".getBytes("UTF8");
+
+        byte bytes[] = new byte[bytesA.length + bytesB.length + bytesC.length];
+        System.arraycopy(bytesA, 0, bytes, 0, bytesA.length);
+        System.arraycopy(bytesB, 0, bytes, bytesA.length, bytesB.length);
+        System.arraycopy(bytesC, 0, bytes, bytesA.length + bytesB.length, bytesC.length);
+        assertThat("违法违,控网站漏洞风=不一定代,网站可能存在=комитета 的风险=10000i,вышел=\"险\" 100000\n" +
+                        "-- error --\n" +
+                        "меморандум,tag=value,tag2=value field=10000i,field2=\"str\" 100000\n",
+                bytes);
+    }
+
+    @Test
     public void testDanglingCommaOnTag() throws Exception {
-        assertError("measurement,tag=value, field=x 10000\n");
+        assertError("measurement,tag=value, field=x 10000\n", LineProtoParser.EVT_TAG_NAME, LineProtoParser.ERROR_EXPECTED, 22);
     }
 
     @Test
@@ -128,117 +101,127 @@ public class LineProtoLexerTest {
 
     @Test
     public void testNoFieldName1() throws Exception {
-        assertError("measurement,tag=x f=10i,f2 10000");
+        assertError("measurement,tag=x f=10i,f2 10000", LineProtoParser.EVT_FIELD_NAME, LineProtoParser.ERROR_EXPECTED, 26);
     }
 
     @Test
     public void testNoFieldName2() throws Exception {
-        assertError("measurement,tag=x f=10i,=f2 10000");
+        assertError("measurement,tag=x f=10i,=f2 10000", LineProtoParser.EVT_FIELD_NAME, LineProtoParser.ERROR_EMPTY, 24);
     }
 
     @Test
     public void testNoFieldName3() throws Exception {
-        assertError("measurement,tag=x =10i,=f2 10000");
+        assertError("measurement,tag=x =10i,=f2 10000", LineProtoParser.EVT_FIELD_NAME, LineProtoParser.ERROR_EMPTY, 18);
     }
 
     @Test
     public void testNoFieldValue1() throws Exception {
-        assertError("measurement,tag=x f 10000");
+        assertError("measurement,tag=x f 10000", LineProtoParser.EVT_FIELD_NAME, LineProtoParser.ERROR_EXPECTED, 19);
     }
 
     @Test
     public void testNoFieldValue2() throws Exception {
-        assertError("measurement,tag=x f= 10000");
+        assertError("measurement,tag=x f= 10000", LineProtoParser.EVT_FIELD_VALUE, LineProtoParser.ERROR_EMPTY, 20);
     }
 
     @Test
     public void testNoFieldValue3() throws Exception {
-        assertError("measurement,tag=x f=, 10000");
+        assertError("measurement,tag=x f=, 10000", LineProtoParser.EVT_FIELD_VALUE, LineProtoParser.ERROR_EMPTY, 20);
     }
 
     @Test
     public void testNoFields1() throws Exception {
-        assertError("measurement  \n");
+        assertError("measurement  \n", LineProtoParser.EVT_FIELD_NAME, LineProtoParser.ERROR_EXPECTED, 12);
     }
 
     @Test
     public void testNoFields2() throws Exception {
-        assertError("measurement  ");
+        assertError("measurement  ", LineProtoParser.EVT_FIELD_NAME, LineProtoParser.ERROR_EXPECTED, 12);
     }
 
     @Test
     public void testNoFields3() throws Exception {
-        assertError("measurement  10000");
+        assertError("measurement  10000", LineProtoParser.EVT_FIELD_NAME, LineProtoParser.ERROR_EXPECTED, 12);
     }
 
     @Test
     public void testNoFields4() throws Exception {
-        assertError("measurement,tag=x 10000");
+        assertError("measurement,tag=x 10000", LineProtoParser.EVT_FIELD_NAME, LineProtoParser.ERROR_EXPECTED, 23);
     }
 
     @Test
     public void testNoMeasure1() throws Exception {
-        assertError("tag=value field=x 10000\n");
+        assertError("tag=value field=x 10000\n", LineProtoParser.EVT_MEASUREMENT, LineProtoParser.ERROR_EXPECTED, 3);
     }
 
     @Test
     public void testNoMeasure2() throws Exception {
-        assertError("tag=value field=x 10000\n");
+        assertError("tag=value field=x 10000\n", LineProtoParser.EVT_MEASUREMENT, LineProtoParser.ERROR_EXPECTED, 3);
     }
 
     @Test
     public void testNoTag4() throws Exception {
-        assertError("measurement, \n");
+        assertError("measurement, \n", LineProtoParser.EVT_TAG_NAME, LineProtoParser.ERROR_EXPECTED, 12);
     }
 
     @Test
     public void testNoTagEquals1() throws Exception {
-        assertError("measurement,tag field=x 10000\n");
+        assertError("measurement,tag field=x 10000\n", LineProtoParser.EVT_TAG_NAME, LineProtoParser.ERROR_EXPECTED, 15);
     }
 
     @Test
     public void testNoTagEquals2() throws Exception {
-        assertError("measurement,tag, field=x 10000\n");
+        assertError("measurement,tag, field=x 10000\n", LineProtoParser.EVT_TAG_NAME, LineProtoParser.ERROR_EXPECTED, 15);
     }
 
     @Test
     public void testNoTagValue1() throws Exception {
-        assertError("measurement,tag= field=x 10000\n");
+        assertError("measurement,tag= field=x 10000\n", LineProtoParser.EVT_TAG_VALUE, LineProtoParser.ERROR_EMPTY, 16);
     }
 
     @Test
     public void testNoTagValue2() throws Exception {
-        assertError("measurement,tag=, field=x 10000\n");
+        assertError("measurement,tag=, field=x 10000\n", LineProtoParser.EVT_TAG_VALUE, LineProtoParser.ERROR_EMPTY, 16);
     }
 
     @Test
     public void testNoTagValue3() throws Exception {
-        assertError("measurement,tag=");
+        assertError("measurement,tag=", LineProtoParser.EVT_TAG_VALUE, LineProtoParser.ERROR_EMPTY, 16);
     }
 
     @Test
     public void testNoTagValue4() throws Exception {
-        assertError("measurement,tag=\n");
+        assertError("measurement,tag=\n", LineProtoParser.EVT_TAG_VALUE, LineProtoParser.ERROR_EMPTY, 16);
     }
 
     @Test
     public void testNoTags1() throws Exception {
-        assertError("measurement,");
+        assertError("measurement,", LineProtoParser.EVT_TAG_NAME, LineProtoParser.ERROR_EXPECTED, 12);
     }
 
     @Test
     public void testNoTags2() throws Exception {
-        assertError("measurement,\n");
+        assertError("measurement,\n", LineProtoParser.EVT_TAG_NAME, LineProtoParser.ERROR_EXPECTED, 12);
     }
 
     @Test
     public void testNoTags3() throws Exception {
-        assertError("measurement, 100000\n");
+        assertError("measurement, 100000\n", LineProtoParser.EVT_TAG_NAME, LineProtoParser.ERROR_EXPECTED, 12);
     }
 
     @Test
     public void testSimpleParse() throws Exception {
         assertThat("measurement,tag=value,tag2=value field=10000i,field2=\"str\" 100000\n", "measurement,tag=value,tag2=value field=10000i,field2=\"str\" 100000\n");
+    }
+
+    @Test
+    public void testSkipLine() throws Exception {
+        assertThat("measurement,tag=value,tag2=value field=10000i,field2=\"str\" 100000\n" +
+                        "measurement,tag=value3,tag2=value2 field=-- error --\n" +
+                        "measurement,tag=value4,tag2=value4 field=200i,field2=\"super\"\n",
+                "measurement,tag=value,tag2=value field=10000i,field2=\"str\" 100000\n" +
+                        "measurement,tag=value3,tag2=value2 field=,field2=\"ok\"\n" +
+                        "measurement,tag=value4,tag2=value4 field=200i,field2=\"super\"\n");
     }
 
     @Test
@@ -254,7 +237,7 @@ public class LineProtoLexerTest {
     @Test
     public void testTrailingSpace() throws Exception {
         assertError("measurement,tag=value,tag2=value field=10000i,field2=\"str\" \n" +
-                "measurement,tag=value3,tag2=value2 field=100i,field2=\"ok\"\n");
+                "measurement,tag=value3,tag2=value2 field=100i,field2=\"ok\"\n", LineProtoParser.EVT_TIMESTAMP, LineProtoParser.ERROR_EMPTY, 59);
     }
 
     @Test
@@ -272,30 +255,32 @@ public class LineProtoLexerTest {
         assertThat("违法违,控网站漏洞风=不一定代,网站可能存在=комитета 的风险=10000i,вышел=\"险\" 100000\n", "违法违,控网站漏洞风=不一定代,网站可能存在=комитета 的风险=10000i,вышел=\"险\" 100000\n");
     }
 
-    private void assertError(CharSequence line) throws LineProtoException, UnsupportedEncodingException {
+    private void assertError(CharSequence line, int state, int code, int position) throws LineProtoException, UnsupportedEncodingException {
         ByteArrayByteSequence bs = new ByteArrayByteSequence(line.toString().getBytes("UTF8"));
         final int len = bs.length();
         for (int i = 0; i < len; i++) {
-            sink.clear();
-            try {
-                lexer.clear();
-                lexer.withParser(lineAssemblingParser);
-                lexer.parse(bs.limit(0, i));
-                lexer.parse(bs.limit(i, len - i));
-                lexer.parseLast();
-                Assert.fail();
-            } catch (LineProtoException ignored) {
-
-            }
+            lineAssemblingParser.clear();
+            lexer.clear();
+            lexer.withParser(lineAssemblingParser);
+            lexer.parse(bs.limit(0, i));
+            lexer.parse(bs.limit(i, len - i));
+            lexer.parseLast();
+            Assert.assertEquals(state, lineAssemblingParser.errorState);
+            Assert.assertEquals(code, lineAssemblingParser.errorCode);
+            Assert.assertEquals(position, lineAssemblingParser.errorPosition);
         }
     }
 
     private void assertThat(CharSequence expected, CharSequence line) throws LineProtoException, UnsupportedEncodingException {
-        ByteArrayByteSequence bs = new ByteArrayByteSequence(line.toString().getBytes("UTF8"));
+        assertThat(expected, line.toString().getBytes("UTF8"));
+    }
+
+    private void assertThat(CharSequence expected, byte[] line) throws LineProtoException, UnsupportedEncodingException {
+        ByteArrayByteSequence bs = new ByteArrayByteSequence(line);
         final int len = bs.length();
         if (len < 10) {
             for (int i = 0; i < len; i++) {
-                sink.clear();
+                lineAssemblingParser.clear();
                 lexer.clear();
                 lexer.withParser(lineAssemblingParser);
                 lexer.parse(bs.limit(0, i));
@@ -305,7 +290,7 @@ public class LineProtoLexerTest {
             }
         } else {
             for (int i = 0; i < len - 10; i++) {
-                sink.clear();
+                lineAssemblingParser.clear();
                 lexer.clear();
                 lexer.withParser(lineAssemblingParser);
                 lexer.parse(bs.limit(0, i));
@@ -318,7 +303,7 @@ public class LineProtoLexerTest {
 
         // assert small buffer
         LineProtoLexer smallBufLexer = new LineProtoLexer(64);
-        sink.clear();
+        lineAssemblingParser.clear();
         smallBufLexer.withParser(lineAssemblingParser);
         smallBufLexer.parse(bs.limit(0, len));
         smallBufLexer.parseLast();
@@ -355,6 +340,69 @@ public class LineProtoLexerTest {
             this.top = top;
             this.len = len;
             return this;
+        }
+    }
+
+    private class TestLineProtoParser implements LineProtoParser {
+        boolean fields = false;
+        int errorState;
+        int errorCode;
+        int errorPosition;
+
+        @Override
+        public void onError(int position, int state, int code) {
+            this.errorCode = code;
+            this.errorPosition = position;
+            this.errorState = state;
+            this.fields = false;
+            sink.put("-- error --\n");
+        }
+
+        @Override
+        public void onEvent(CharSequence token, int type) {
+            switch (type) {
+                case LineProtoParser.EVT_MEASUREMENT:
+                    sink.put(token);
+                    break;
+                case LineProtoParser.EVT_TAG_NAME:
+                    sink.put(',').put(token).put('=');
+                    break;
+                case LineProtoParser.EVT_FIELD_NAME:
+                    if (fields) {
+                        sink.put(',');
+                    } else {
+                        try {
+                            fields = true;
+                        } catch (Exception e) {
+                            e.printStackTrace();
+                        }
+                        sink.put(' ');
+                    }
+                    sink.put(token).put('=');
+                    break;
+                case LineProtoParser.EVT_TAG_VALUE:
+                case LineProtoParser.EVT_FIELD_VALUE:
+                    sink.put(token);
+                    break;
+                case LineProtoParser.EVT_TIMESTAMP:
+                    if (token.length() > 0) {
+                        sink.put(' ').put(token);
+                    }
+                    break;
+                case LineProtoParser.EVT_END:
+                    sink.put('\n');
+                    fields = false;
+                    break;
+                default:
+                    break;
+
+            }
+        }
+
+        private void clear() {
+            sink.clear();
+            errorCode = 0;
+            errorPosition = 0;
         }
     }
 }

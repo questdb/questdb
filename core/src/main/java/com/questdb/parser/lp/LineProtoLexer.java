@@ -18,9 +18,11 @@ public class LineProtoLexer implements Mutable {
     private char buffer[];
     private int dstPos = 0;
     private int dstTop = 0;
+    private boolean skipLine = false;
     private LineProtoParser parser;
     private int utf8ErrorTop;
     private int utf8ErrorPos;
+    private int errorCode = 0;
 
     public LineProtoLexer(int bufferSize) {
         buffer = new char[bufferSize];
@@ -32,9 +34,11 @@ public class LineProtoLexer implements Mutable {
         state = LineProtoParser.EVT_MEASUREMENT;
         dstTop = dstPos = 0;
         utf8ErrorTop = utf8ErrorPos = -1;
+        skipLine = false;
+        errorCode = 0;
     }
 
-    public void parse(ByteSequence bytes) throws LineProtoException {
+    public void parse(ByteSequence bytes) {
         int srcPos = 0;
         int len = bytes.length();
 
@@ -42,119 +46,124 @@ public class LineProtoLexer implements Mutable {
 
             byte b = bytes.byteAt(srcPos);
 
+            if (skipLine) {
+                switch (b) {
+                    case '\n':
+                    case '\r':
+                        clear();
+                        break;
+                    default:
+                        break;
+                }
+                srcPos++;
+                continue;
+            }
+
             if (escape) {
                 dstPos--;
             }
 
-            if (b < 0) {
-                srcPos = utf8Decode(bytes, srcPos, len, b);
-            } else {
-                sink.put((char) b);
-                srcPos++;
-            }
-
-            if (escape) {
-                escape = false;
-                dstPos++;
-                continue;
-            }
-
-            char c = Unsafe.arrayGet(buffer, dstPos++);
-
-            switch (c) {
-                case ',':
-                    switch (state) {
-                        case LineProtoParser.EVT_MEASUREMENT:
-                            fireEvent();
-                            state = LineProtoParser.EVT_TAG_NAME;
-                            break;
-                        case LineProtoParser.EVT_TAG_VALUE:
-                            fireEvent();
-                            state = LineProtoParser.EVT_TAG_NAME;
-                            break;
-                        case LineProtoParser.EVT_FIELD_VALUE:
-                            fireEvent();
-                            state = LineProtoParser.EVT_FIELD_NAME;
-                            break;
-                        default:
-                            throw LineProtoException.INSTANCE;
+            try {
+                if (b < 0) {
+                    try {
+                        srcPos = utf8Decode(bytes, srcPos, len, b);
+                    } catch (Utf8RepairContinue e) {
+                        break;
                     }
-                    break;
-                case '=':
-                    switch (state) {
-                        case LineProtoParser.EVT_TAG_NAME:
-                            fireEvent();
-                            state = LineProtoParser.EVT_TAG_VALUE;
-                            break;
-                        case LineProtoParser.EVT_FIELD_NAME:
-                            fireEvent();
-                            state = LineProtoParser.EVT_FIELD_VALUE;
-                            break;
-                        default:
-                            throw LineProtoException.INSTANCE;
-                    }
-                    break;
-                case '\\':
-                    escape = true;
+                } else {
+                    sink.put((char) b);
+                    srcPos++;
+                }
+
+                if (escape) {
+                    escape = false;
+                    dstPos++;
                     continue;
-                case ' ':
-                    switch (state) {
-                        case LineProtoParser.EVT_MEASUREMENT:
-                            fireEvent();
-                            state = LineProtoParser.EVT_FIELD_NAME;
-                            break;
-                        case LineProtoParser.EVT_TAG_VALUE:
-                            fireEvent();
-                            state = LineProtoParser.EVT_FIELD_NAME;
-                            break;
-                        case LineProtoParser.EVT_FIELD_VALUE:
-                            fireEvent();
-                            state = LineProtoParser.EVT_TIMESTAMP;
-                            break;
-                        default:
-                            throw LineProtoException.INSTANCE;
-                    }
-                    break;
-                case '\n':
-                case '\r':
-                    switch (state) {
-                        case LineProtoParser.EVT_MEASUREMENT:
-                            // empty line?
-                            break;
-                        case LineProtoParser.EVT_TAG_VALUE:
-                        case LineProtoParser.EVT_FIELD_VALUE:
-                        case LineProtoParser.EVT_TIMESTAMP:
-                            fireEvent();
-                            state = LineProtoParser.EVT_END;
-                            fireEvent();
-                            clear();
-                            break;
-                        default:
-                            throw LineProtoException.INSTANCE;
-                    }
-                    break;
-                default:
-                    // normal byte
-                    continue;
+                }
+
+                char c = Unsafe.arrayGet(buffer, dstPos++);
+
+                switch (c) {
+                    case ',':
+                        switch (state) {
+                            case LineProtoParser.EVT_MEASUREMENT:
+                                fireEvent();
+                                state = LineProtoParser.EVT_TAG_NAME;
+                                break;
+                            case LineProtoParser.EVT_TAG_VALUE:
+                                fireEvent();
+                                state = LineProtoParser.EVT_TAG_NAME;
+                                break;
+                            case LineProtoParser.EVT_FIELD_VALUE:
+                                fireEvent();
+                                state = LineProtoParser.EVT_FIELD_NAME;
+                                break;
+                            default:
+                                errorCode = LineProtoParser.ERROR_EXPECTED;
+                                throw LineProtoException.INSTANCE;
+                        }
+                        break;
+                    case '=':
+                        switch (state) {
+                            case LineProtoParser.EVT_TAG_NAME:
+                                fireEvent();
+                                state = LineProtoParser.EVT_TAG_VALUE;
+                                break;
+                            case LineProtoParser.EVT_FIELD_NAME:
+                                fireEvent();
+                                state = LineProtoParser.EVT_FIELD_VALUE;
+                                break;
+                            default:
+                                errorCode = LineProtoParser.ERROR_EXPECTED;
+                                throw LineProtoException.INSTANCE;
+                        }
+                        break;
+                    case '\\':
+                        escape = true;
+                        continue;
+                    case ' ':
+                        switch (state) {
+                            case LineProtoParser.EVT_MEASUREMENT:
+                                fireEvent();
+                                state = LineProtoParser.EVT_FIELD_NAME;
+                                break;
+                            case LineProtoParser.EVT_TAG_VALUE:
+                                fireEvent();
+                                state = LineProtoParser.EVT_FIELD_NAME;
+                                break;
+                            case LineProtoParser.EVT_FIELD_VALUE:
+                                fireEvent();
+                                state = LineProtoParser.EVT_TIMESTAMP;
+                                break;
+                            default:
+                                errorCode = LineProtoParser.ERROR_EXPECTED;
+                                throw LineProtoException.INSTANCE;
+                        }
+                        break;
+                    case '\n':
+                    case '\r':
+                        consumeLineEnd();
+                        break;
+                    default:
+                        // normal byte
+                        continue;
+                }
+                dstTop = dstPos;
+            } catch (LineProtoException ex) {
+                skipLine = true;
+                parser.onError(dstPos - 1, state, errorCode);
             }
-            dstTop = dstPos;
         }
     }
 
-    public void parseLast() throws LineProtoException {
-        switch (state) {
-            case LineProtoParser.EVT_MEASUREMENT:
-                break;
-            case LineProtoParser.EVT_TAG_VALUE:
-            case LineProtoParser.EVT_FIELD_VALUE:
-            case LineProtoParser.EVT_TIMESTAMP:
-                dstPos++;
-                fireEvent();
-                state = LineProtoParser.EVT_END;
-                fireEvent();
-                break;
-            default:
-                throw LineProtoException.INSTANCE;
+    public void parseLast() {
+        if (!skipLine) {
+            dstPos++;
+            try {
+                consumeLineEnd();
+            } catch (LineProtoException e) {
+                parser.onError(dstPos - 1, state, errorCode);
+            }
         }
     }
 
@@ -162,8 +171,27 @@ public class LineProtoLexer implements Mutable {
         this.parser = parser;
     }
 
+    private void consumeLineEnd() throws LineProtoException {
+        switch (state) {
+            case LineProtoParser.EVT_MEASUREMENT:
+                break;
+            case LineProtoParser.EVT_TAG_VALUE:
+            case LineProtoParser.EVT_FIELD_VALUE:
+            case LineProtoParser.EVT_TIMESTAMP:
+                fireEvent();
+                state = LineProtoParser.EVT_END;
+                fireEvent();
+                clear();
+                break;
+            default:
+                errorCode = LineProtoParser.ERROR_EXPECTED;
+                throw LineProtoException.INSTANCE;
+        }
+    }
+
     private void fireEvent() throws LineProtoException {
         if (dstTop >= dstPos - 1) {
+            errorCode = LineProtoParser.ERROR_EMPTY;
             throw LineProtoException.INSTANCE;
         }
         parser.onEvent(cs, state);
@@ -188,6 +216,7 @@ public class LineProtoLexer implements Mutable {
             }
 
             if (n == -1 && errorLen > 3) {
+                errorCode = LineProtoParser.ERROR_ENCODING;
                 throw LineProtoException.INSTANCE;
             }
 
@@ -205,10 +234,10 @@ public class LineProtoLexer implements Mutable {
         if (n > 0) {
             // if we are successful, reset error pointers
             utf8ErrorTop = utf8ErrorPos = -1;
+            // bump pos by one more byte in addition to what we may have incremented in the loop
+            return pos + 1;
         }
-
-        // bump pos by one more byte in addition to what we may have incremented in the loop
-        return pos + 1;
+        throw Utf8RepairContinue.INSTANCE;
     }
 
     private int utf8Decode(ByteSequence bytes, int srcPos, int len, byte b) throws LineProtoException {
@@ -235,7 +264,8 @@ public class LineProtoLexer implements Mutable {
         private void extend() {
             int capacity = dstPos * 2;
             if (capacity < 0) {
-                throw new OutOfMemoryError();
+                // can't realistically reach this in test :(
+                throw LineProtoException.INSTANCE;
             }
             char buf[] = new char[capacity];
             System.arraycopy(buffer, 0, buf, 0, dstPos);
