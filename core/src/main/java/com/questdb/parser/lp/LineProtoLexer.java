@@ -13,6 +13,13 @@ public class LineProtoLexer implements Mutable {
     private final ArrayBackedCharSink sink = new ArrayBackedCharSink();
     private final ArrayBackedCharSequence cs = new ArrayBackedCharSequence();
     private final ArrayBackedByteSequence utf8ErrorSeq = new ArrayBackedByteSequence();
+    private final FloatingCharSequence floatingCharSequence = new FloatingCharSequence();
+    private final CharSequenceCache charSequenceCache = address -> {
+        floatingCharSequence.lo = (int) (address >> 32);
+        floatingCharSequence.hi = ((int) address) - 1;
+        return floatingCharSequence;
+    };
+
     private int state = LineProtoParser.EVT_MEASUREMENT;
     private boolean escape = false;
     private char buffer[];
@@ -179,8 +186,7 @@ public class LineProtoLexer implements Mutable {
             case LineProtoParser.EVT_FIELD_VALUE:
             case LineProtoParser.EVT_TIMESTAMP:
                 fireEvent();
-                state = LineProtoParser.EVT_END;
-                fireEvent();
+                parser.onLineEnd(charSequenceCache);
                 clear();
                 break;
             default:
@@ -273,7 +279,13 @@ public class LineProtoLexer implements Mutable {
         }
     }
 
-    private class ArrayBackedCharSequence extends AbstractCharSequence {
+    private class ArrayBackedCharSequence extends AbstractCharSequence implements CachedCharSequence {
+
+        @Override
+        public long getCacheAddress() {
+            return ((long) dstTop << 32) | dstPos;
+        }
+
         @Override
         public int length() {
             return dstPos - dstTop - 1;
@@ -282,6 +294,20 @@ public class LineProtoLexer implements Mutable {
         @Override
         public char charAt(int index) {
             return Unsafe.arrayGet(buffer, dstTop + index);
+        }
+    }
+
+    private class FloatingCharSequence extends AbstractCharSequence {
+        int lo, hi;
+
+        @Override
+        public int length() {
+            return hi - lo;
+        }
+
+        @Override
+        public char charAt(int index) {
+            return Unsafe.arrayGet(buffer, lo + index);
         }
     }
 

@@ -10,6 +10,8 @@ import org.junit.Before;
 import org.junit.Test;
 
 import java.io.UnsupportedEncodingException;
+import java.util.HashMap;
+import java.util.Map;
 
 public class LineProtoLexerTest {
 
@@ -348,6 +350,7 @@ public class LineProtoLexerTest {
         int errorState;
         int errorCode;
         int errorPosition;
+        HashMap<Long, String> tokens = new HashMap<>();
 
         @Override
         public void onError(int position, int state, int code) {
@@ -356,10 +359,13 @@ public class LineProtoLexerTest {
             this.errorState = state;
             this.fields = false;
             sink.put("-- error --\n");
+            tokens.clear();
         }
 
         @Override
-        public void onEvent(CharSequence token, int type) {
+        public void onEvent(CachedCharSequence token, int type) {
+            Assert.assertNull(tokens.put(token.getCacheAddress(), token.toString()));
+
             switch (type) {
                 case LineProtoParser.EVT_MEASUREMENT:
                     sink.put(token);
@@ -389,20 +395,30 @@ public class LineProtoLexerTest {
                         sink.put(' ').put(token);
                     }
                     break;
-                case LineProtoParser.EVT_END:
-                    sink.put('\n');
-                    fields = false;
-                    break;
                 default:
                     break;
 
             }
         }
 
+        @Override
+        public void onLineEnd(CharSequenceCache cache) {
+            sink.put('\n');
+
+            // assert that cached token match
+            for (Map.Entry<Long, String> e : tokens.entrySet()) {
+                TestUtils.assertEquals(e.getValue(), cache.get(e.getKey()));
+            }
+
+            tokens.clear();
+            fields = false;
+        }
+
         private void clear() {
             sink.clear();
             errorCode = 0;
             errorPosition = 0;
+            tokens.clear();
         }
     }
 }
