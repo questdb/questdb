@@ -1,5 +1,7 @@
 package com.questdb.cairo;
 
+import com.questdb.std.clock.Clock;
+import com.questdb.std.clock.MilliClock;
 import com.questdb.std.str.ImmutableCharSequence;
 
 public class DefaultCairoConfiguration implements CairoConfiguration {
@@ -48,5 +50,10 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public CharSequence getRoot() {
         return root;
+    }
+
+    @Override
+    public Clock getClock() {
+        return MilliClock.INSTANCE;
     }
 }

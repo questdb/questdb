@@ -14,7 +14,7 @@ public interface LineProtoParser {
 
     void onError(int position, int state, int code);
 
-    void onEvent(CachedCharSequence token, int type);
+    void onEvent(CachedCharSequence token, int type, CharSequenceCache cache);
 
     void onLineEnd(CharSequenceCache cache);
 }

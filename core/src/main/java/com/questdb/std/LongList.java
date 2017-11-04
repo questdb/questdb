@@ -121,7 +121,6 @@ public class LongList implements Mutable {
 
     public void clear() {
         pos = 0;
-        Arrays.fill(buffer, noEntryValue);
     }
 
     public void ensureCapacity(int capacity) {
@@ -138,6 +137,11 @@ public class LongList implements Mutable {
         }
     }
 
+    public void erase() {
+        pos = 0;
+        Arrays.fill(buffer, noEntryValue);
+    }
+
     public void extendAndSet(int index, long value) {
         ensureCapacity(index + 1);
         if (index >= pos) {
@@ -146,11 +150,21 @@ public class LongList implements Mutable {
         Unsafe.arrayPut(buffer, index, value);
     }
 
+    public void fill(int from, int to, long value) {
+        Arrays.fill(buffer, from, to, value);
+    }
+
     public long get(int index) {
         if (index < pos) {
             return Unsafe.arrayGet(buffer, index);
         }
         throw new ArrayIndexOutOfBoundsException(index);
+    }
+
+    public long getAndSetQuick(int index, long value) {
+        long v = getQuick(index);
+        Unsafe.arrayPut(buffer, index, value);
+        return v;
     }
 
     /**
@@ -244,7 +258,7 @@ public class LongList implements Mutable {
     public void seed(int capacity, long value) {
         ensureCapacity(capacity);
         pos = capacity;
-        Arrays.fill(buffer, value);
+        fill(0, capacity, value);
     }
 
     public void seed(int fromIndex, int count, long value) {
@@ -269,12 +283,6 @@ public class LongList implements Mutable {
 
     public void setQuick(int index, long value) {
         Unsafe.arrayPut(buffer, index, value);
-    }
-
-    public long getAndSetQuick(int index, long value) {
-        long v = getQuick(index);
-        Unsafe.arrayPut(buffer, index, value);
-        return v;
     }
 
     public void shuffle(Rnd rnd) {

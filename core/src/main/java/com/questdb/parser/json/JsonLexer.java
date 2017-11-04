@@ -246,11 +246,11 @@ public class JsonLexer implements Mutable, Closeable {
             throw JsonException.with("Unterminated string", position);
         }
 
-        if (arrayDepth > 0 || arrayDepthStack.size() > 0) {
+        if (arrayDepth > 0) {
             throw JsonException.with("Unterminated array", position);
         }
 
-        if (objDepth > 0 || objDepthStack.size() > 0) {
+        if (objDepth > 0 || arrayDepthStack.size() > 0 || objDepthStack.size() > 0) {
             throw JsonException.with("Unterminated object", position);
         }
     }

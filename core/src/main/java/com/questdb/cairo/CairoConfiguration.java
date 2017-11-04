@@ -1,5 +1,7 @@
 package com.questdb.cairo;
 
+import com.questdb.std.clock.Clock;
+
 public interface CairoConfiguration {
     int getFileOperationRetryCount();
 
@@ -16,4 +18,6 @@ public interface CairoConfiguration {
     int getReaderPoolSegments();
 
     CharSequence getRoot();
+
+    Clock getClock();
 }

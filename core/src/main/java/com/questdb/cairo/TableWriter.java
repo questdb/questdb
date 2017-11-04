@@ -48,6 +48,8 @@ public class TableWriter implements Closeable {
 
     private static final Log LOG = LogFactory.getLog(TableWriter.class);
     private static final CharSequenceHashSet ignoredFiles = new CharSequenceHashSet();
+    private static final Runnable NOOP = () -> {
+    };
     final ObjList<AppendMemory> columns;
     private final CompositePath path;
     private final CompositePath other;
@@ -105,7 +107,6 @@ public class TableWriter implements Closeable {
         this.name = ImmutableCharSequence.of(name);
         this.rootLen = path.length();
         try {
-            this.txMem = openTxnFile();
             try {
                 this.lockFd = TableUtils.lock(ff, path);
             } finally {
@@ -116,6 +117,7 @@ public class TableWriter implements Closeable {
                 throw CairoException.instance(ff.errno()).put("Cannot lock table: ").put(path.$());
             }
 
+            this.txMem = openTxnFile();
             this.txMem.jumpTo(TableUtils.TX_EOF);
             long todo = readTodoTaskCode();
             if (todo != -1L) {
@@ -638,12 +640,13 @@ public class TableWriter implements Closeable {
                 maxTimestamp = prevTimestamp;
                 removeDirOnCancelRow = true;
             } else {
+                maxTimestamp = prevTimestamp;
                 // we only have one partition, jump to start on every column
                 for (int i = 0; i < columnCount; i++) {
-                    getPrimaryColumn(i).jumpTo(0);
+                    getPrimaryColumn(i).setSize(0);
                     AppendMemory mem = getSecondaryColumn(i);
                     if (mem != null) {
-                        mem.jumpTo(0);
+                        mem.setSize(0);
                     }
                 }
             }
@@ -665,7 +668,7 @@ public class TableWriter implements Closeable {
                 setAppendPosition(transientRowCount);
             }
         }
-        masterRef--;
+        refs.fill(0, columnCount, --masterRef);
     }
 
     private void closeColumns(boolean truncate) {
@@ -796,6 +799,7 @@ public class TableWriter implements Closeable {
             return value -> {
             };
         } else {
+            nullers.setQuick(index, NOOP);
             return getPrimaryColumn(index)::putLong;
         }
     }
@@ -1436,6 +1440,11 @@ public class TableWriter implements Closeable {
 
         public void putStr(int index, CharSequence value) {
             getSecondaryColumn(index).putLong(getPrimaryColumn(index).putStr(value));
+            notNull(index);
+        }
+
+        public void putStr(int index, CharSequence value, int pos, int len) {
+            getSecondaryColumn(index).putLong(getPrimaryColumn(index).putStr(value, pos, len));
             notNull(index);
         }
 

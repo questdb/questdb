@@ -48,8 +48,8 @@ public final class TableUtils {
     static final DateFormat fmtYear;
     static final String ARCHIVE_FILE_NAME = "_archive";
     static final String DEFAULT_PARTITION_NAME = "default";
-    static final String META_FILE_NAME = "_meta";
-    static final String TXN_FILE_NAME = "_txn";
+    public static final String META_FILE_NAME = "_meta";
+    public static final String TXN_FILE_NAME = "_txn";
     static final long TX_OFFSET_TXN = 0;
     static final long TX_OFFSET_TRANSIENT_ROW_COUNT = 8;
     static final long TX_OFFSET_FIXED_ROW_COUNT = 16;
@@ -176,7 +176,7 @@ public final class TableUtils {
     }
 
 
-    static void resetTxn(VirtualMemory txMem) {
+    public static void resetTxn(VirtualMemory txMem) {
         // txn to let readers know table is being reset
         txMem.putLong(-1);
         // transient row count

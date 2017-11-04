@@ -38,19 +38,40 @@ import org.junit.Test;
 
 public class JsonLexerTest {
 
-    private static final JsonLexer parser = new JsonLexer(1024);
+    private static final JsonLexer LEXER = new JsonLexer(1024);
     private static final JsonAssemblingParser listener = new JsonAssemblingParser();
 
     @AfterClass
     public static void tearDown() throws Exception {
-        parser.close();
+        LEXER.close();
     }
 
     @Before
     public void setUp() throws Exception {
-        parser.clear();
+        LEXER.clear();
         listener.clear();
         listener.recordPositions = false;
+    }
+
+    @Test
+    public void tesStringTooLong() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            String json = "{\"a\":1, \"b\": \"123456789012345678901234567890\"]}";
+            int len = json.length() - 6;
+            long address = TestUtils.toMemory(json);
+            try (JsonLexer lexer = new JsonLexer(4)) {
+                try {
+                    lexer.parse(address, len, listener);
+                    lexer.parseLast();
+                    Assert.fail();
+                } catch (JsonException e) {
+                    Assert.assertEquals("String is too long", e.getMessage());
+                    Assert.assertEquals(41, e.getPosition());
+                }
+            } finally {
+                Unsafe.free(address, json.length());
+            }
+        });
     }
 
     @Test
@@ -66,9 +87,9 @@ public class JsonLexerTest {
         int len = in.length();
         long address = TestUtils.toMemory(in);
         try {
-            parser.parse(address, len - 7, listener);
-            parser.parse(address + len - 7, 7, listener);
-            parser.parseLast();
+            LEXER.parse(address, len - 7, listener);
+            LEXER.parse(address + len - 7, 7, listener);
+            LEXER.parseLast();
             TestUtils.assertEquals("{\"x\":\"abcdefhijklmn\"}", listener.value());
         } finally {
             Unsafe.free(address, len);
@@ -127,11 +148,11 @@ public class JsonLexerTest {
 
             for (int i = 0; i < len; i++) {
                 listener.clear();
-                parser.clear();
+                LEXER.clear();
 
-                parser.parse(address, i, listener);
-                parser.parse(address + i, len - i, listener);
-                parser.parseLast();
+                LEXER.parse(address, i, listener);
+                LEXER.parse(address + i, len - i, listener);
+                LEXER.parseLast();
                 TestUtils.assertEquals(expected, listener.value());
             }
         } finally {
@@ -245,17 +266,32 @@ public class JsonLexerTest {
     }
 
     @Test
+    public void testUnterminatedArray() throws Exception {
+        assertError("Unterminated array", 37, "{\"x\": { \"y\": [[1,2,3], [5,2,3], [0,1]");
+    }
+
+    @Test
+    public void testUnterminatedObject() throws Exception {
+        assertError("Unterminated object", 38, "{\"x\": { \"y\": [[1,2,3], [5,2,3], [0,1]]");
+    }
+
+    @Test
+    public void testUnterminatedString() throws Exception {
+        assertError("Unterminated string", 46, "{\"x\": { \"y\": [[1,2,3], [5,2,3], [0,1]], \"a\":\"b");
+    }
+
+    @Test
     public void testWrongQuote() throws Exception {
         assertError("Unexpected symbol", 10, "{\"x\": \"a\"bc\",}");
     }
 
-    private void assertError(String expected, int expectedPosition, String input) {
+    private void assertError(String expected, int expectedPosition, String input) throws Exception {
         int len = input.length();
         long address = TestUtils.toMemory(input);
         try {
             try {
-                parser.parse(address, len, listener);
-                parser.parseLast();
+                LEXER.parse(address, len, listener);
+                LEXER.parseLast();
                 Assert.fail();
             } catch (JsonException e) {
                 Assert.assertEquals(expected, e.getMessage());
@@ -266,12 +302,12 @@ public class JsonLexerTest {
         }
     }
 
-    private void assertThat(String expected, String input) throws JsonException {
+    private void assertThat(String expected, String input) throws Exception {
         int len = input.length();
         long address = TestUtils.toMemory(input);
         try {
-            parser.parse(address, len, listener);
-            parser.parseLast();
+            LEXER.parse(address, len, listener);
+            LEXER.parseLast();
             TestUtils.assertEquals(expected, listener.value());
         } finally {
             Unsafe.free(address, len);

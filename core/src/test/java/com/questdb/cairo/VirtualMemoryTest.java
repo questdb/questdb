@@ -492,6 +492,8 @@ public class VirtualMemoryTest {
         long o3 = mem.putStr(null);
         long o4 = mem.putStr("xyz123");
         long o5 = mem.putNullStr();
+        long o6 = mem.putStr("123ohh4", 3, 3);
+        long o7 = mem.putStr(null, 0, 2);
 
         if (b) {
             assertEquals(1, mem.getByte(0));
@@ -509,6 +511,9 @@ public class VirtualMemoryTest {
         assertNull(mem.getStr(o5));
         assertNull(mem.getStr2(o5));
         Assert.assertEquals(-1, mem.getStrLen(o5));
+
+        TestUtils.assertEquals("ohh", mem.getStr(o6));
+        Assert.assertNull(mem.getStr(o7));
 
         CharSequence s1 = mem.getStr(o1);
         CharSequence s2 = mem.getStr2(o2);
