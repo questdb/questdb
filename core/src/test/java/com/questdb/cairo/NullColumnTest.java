@@ -48,7 +48,7 @@ public class NullColumnTest {
 
     @Test
     public void getInt() throws Exception {
-        Assert.assertEquals(0, NullColumn.INSTANCE.getInt(1234));
+        Assert.assertEquals(Numbers.INT_NaN, NullColumn.INSTANCE.getInt(1234));
     }
 
     @Test

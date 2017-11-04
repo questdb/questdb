@@ -39,7 +39,7 @@ import com.questdb.store.factory.FactoryConstants;
 import java.util.Arrays;
 import java.util.Map;
 
-public class ReaderPool extends AbstractPool {
+public class ReaderPool extends AbstractPool implements ResourcePool<TableReader> {
 
     private static final Log LOG = LogFactory.getLog(ReaderPool.class);
     private static final long UNLOCKED = -1L;
@@ -59,27 +59,8 @@ public class ReaderPool extends AbstractPool {
         this.maxEntries = maxSegments * ENTRY_SIZE;
     }
 
-    public int getBusyCount() {
-        int count = 0;
-        for (Map.Entry<CharSequence, Entry> me : entries.entrySet()) {
-            Entry e = me.getValue();
-            do {
-                for (int i = 0; i < ENTRY_SIZE; i++) {
-                    if (Unsafe.arrayGetVolatile(e.allocations, i) != UNALLOCATED && Unsafe.arrayGet(e.readers, i) != null) {
-                        count++;
-                    }
-                }
-                e = e.next;
-            } while (e != null);
-        }
-        return count;
-    }
-
-    public int getMaxEntries() {
-        return maxEntries;
-    }
-
-    public TableReader getReader(CharSequence name) {
+    @Override
+    public TableReader get(CharSequence name) {
 
         checkClosed();
 
@@ -150,6 +131,26 @@ public class ReaderPool extends AbstractPool {
         notifyListener(thread, name, PoolListener.EV_FULL, -1, -1);
         LOG.info().$('\'').$(name).$("' is busy [thread=").$(thread).$(", retries=").$(this.maxSegments).$(']').$();
         throw EntryUnavailableException.INSTANCE;
+    }
+
+    public int getBusyCount() {
+        int count = 0;
+        for (Map.Entry<CharSequence, Entry> me : entries.entrySet()) {
+            Entry e = me.getValue();
+            do {
+                for (int i = 0; i < ENTRY_SIZE; i++) {
+                    if (Unsafe.arrayGetVolatile(e.allocations, i) != UNALLOCATED && Unsafe.arrayGet(e.readers, i) != null) {
+                        count++;
+                    }
+                }
+                e = e.next;
+            } while (e != null);
+        }
+        return count;
+    }
+
+    public int getMaxEntries() {
+        return maxEntries;
     }
 
     public boolean lock(CharSequence name) {
@@ -339,9 +340,9 @@ public class ReaderPool extends AbstractPool {
     }
 
     public static class R extends TableReader {
+        private final int index;
         private ReaderPool pool;
         private Entry entry;
-        private final int index;
 
         public R(FilesFacade ff, ReaderPool pool, Entry entry, int index, CharSequence root, CharSequence name) {
             super(ff, root, name);

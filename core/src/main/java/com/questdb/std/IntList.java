@@ -88,7 +88,9 @@ public class IntList implements Mutable {
 
     public void clear() {
         pos = 0;
-        Arrays.fill(buffer, noEntryValue);
+        // this is removed to improve performance
+        // erase() method should be added if entire buffer has to be erased as well
+//        Arrays.fill(buffer, noEntryValue);
     }
 
     public void clear(int capacity) {

@@ -200,7 +200,7 @@ public class LineProtoLexer implements Mutable {
             errorCode = LineProtoParser.ERROR_EMPTY;
             throw LineProtoException.INSTANCE;
         }
-        parser.onEvent(cs, state);
+        parser.onEvent(cs, state, charSequenceCache);
     }
 
     private int repairMultiByteChar(byte b, ByteSequence bytes, int pos, int len) throws LineProtoException {

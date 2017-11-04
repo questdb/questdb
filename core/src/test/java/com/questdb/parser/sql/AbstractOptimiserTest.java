@@ -40,6 +40,7 @@ import com.questdb.std.str.StringSink;
 import com.questdb.std.time.DateFormatFactory;
 import com.questdb.std.time.DateLocaleFactory;
 import com.questdb.store.SymbolTable;
+import com.questdb.store.factory.configuration.RecordMetadata;
 import com.questdb.test.tools.FactoryContainer;
 import com.questdb.test.tools.TestUtils;
 import org.junit.After;
@@ -178,20 +179,23 @@ public abstract class AbstractOptimiserTest {
     protected void assertThat(String expected, RecordSource rs, boolean header) throws IOException {
         RecordCursor cursor = rs.prepareCursor(FACTORY_CONTAINER.getFactory());
         try {
-            sink.clear();
-            printer.print(cursor, header, rs.getMetadata());
-            TestUtils.assertEquals(expected, sink);
-
-            cursor.toTop();
-
-            sink.clear();
-            printer.print(cursor, header, rs.getMetadata());
-            TestUtils.assertEquals(expected, sink);
+            assertThat(expected, cursor, rs.getMetadata(), header);
         } finally {
             cursor.releaseCursor();
         }
-
         TestUtils.assertStrings(rs, FACTORY_CONTAINER.getFactory());
+    }
+
+    protected void assertThat(CharSequence expected, RecordCursor cursor, RecordMetadata metadata, boolean header) throws IOException {
+        sink.clear();
+        printer.print(cursor, header, metadata);
+        TestUtils.assertEquals(expected, sink);
+
+        cursor.toTop();
+
+        sink.clear();
+        printer.print(cursor, header, metadata);
+        TestUtils.assertEquals(expected, sink);
     }
 
     private void assertThat0(String expected, String query, boolean header) throws ParserException, IOException {

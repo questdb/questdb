@@ -60,7 +60,7 @@ import java.util.Iterator;
  * thread-safe and is guarantying that all open writers will be eventually
  * closed.
  */
-public class WriterPool extends AbstractPool {
+public class WriterPool extends AbstractPool implements ResourcePool<TableWriter> {
 
     private static final Log LOG = LogFactory.getLog(WriterPool.class);
 
@@ -81,34 +81,34 @@ public class WriterPool extends AbstractPool {
     }
 
     /**
-     * Counts busy writers in pool.
+     * <p>
+     * Creates or retrieves existing TableWriter from pool. Because of TableWriter compliance with <b>single
+     * writer model</b> pool ensures there is single TableWriter instance for given table name. Table name is unique in
+     * context of <b>root</b> and pool instance covers single root.
+     * </p>
+     * When TableWriter from this pool is used by another thread @{@link EntryUnavailableException} is thrown and
+     * when table is locked outside of pool, which includes same or different process, @{@link CairoException} instead.
+     * In case of former application can retry getting writer from pool again at any time. When latter occurs application has
+     * to call {@link #releaseAll(long)} before retrying for TableWriter.
      *
-     * @return number of busy writer instances.
+     * @param tableName name of the table
+     * @return cached TableWriter instance.
      */
-    public int getBusyCount() {
-        int count = 0;
-        for (Entry e : entries.values()) {
-            if (e.owner != UNALLOCATED) {
-                count++;
-            }
-        }
-        return count;
-    }
-
-    public TableWriter getWriter(CharSequence name) {
+    @Override
+    public TableWriter get(CharSequence tableName) {
 
         checkClosed();
 
         long thread = Thread.currentThread().getId();
 
-        Entry e = entries.get(name);
+        Entry e = entries.get(tableName);
         if (e == null) {
             // We are racing to create new writer!
             e = new Entry();
-            Entry other = entries.putIfAbsent(name, e);
+            Entry other = entries.putIfAbsent(tableName, e);
             if (other == null) {
                 // race won
-                return createWriter(name, e, thread);
+                return createWriter(tableName, e, thread);
             } else {
                 e = other;
             }
@@ -120,7 +120,7 @@ public class WriterPool extends AbstractPool {
             // in an extreme race condition it is possible that e.writer will be null
             // in this case behaviour should be identical to entry missing entirely
             if (e.writer == null) {
-                return createWriter(name, e, thread);
+                return createWriter(tableName, e, thread);
             }
 
             if (isClosed()) {
@@ -136,21 +136,36 @@ public class WriterPool extends AbstractPool {
                 }
 
                 if (e.ex != null) {
-                    notifyListener(thread, name, PoolListener.EV_EX_RESEND);
+                    notifyListener(thread, tableName, PoolListener.EV_EX_RESEND);
                     // this writer failed to allocate by this very thread
                     // ensure consistent response
                     throw e.ex;
                 }
 
                 if (isClosed()) {
-                    LOG.info().$('\'').$(name).$("' born free").$();
+                    LOG.info().$('\'').$(tableName).$("' born free").$();
                     e.writer.goodby();
                 }
                 return logAndReturn(e, PoolListener.EV_GET);
             }
-            LOG.error().$('\'').$(name).$("' is busy [owner=").$(owner).$(']').$();
+            LOG.error().$('\'').$(tableName).$("' is busy [owner=").$(owner).$(']').$();
             throw EntryUnavailableException.INSTANCE;
         }
+    }
+
+    /**
+     * Counts busy writers in pool.
+     *
+     * @return number of busy writer instances.
+     */
+    public int getBusyCount() {
+        int count = 0;
+        for (Entry e : entries.values()) {
+            if (e.owner != UNALLOCATED) {
+                count++;
+            }
+        }
+        return count;
     }
 
     /**
@@ -250,18 +265,6 @@ public class WriterPool extends AbstractPool {
         LOG.info().$("closed").$();
     }
 
-    private void closeWriter(long thread, Entry e, short ev, int reason) {
-        PooledTableWriter w = e.writer;
-        if (w != null) {
-            CharSequence name = e.writer.getName();
-            w.goodby();
-            w.close();
-            e.writer = null;
-            LOG.info().$("closed '").$(name).$("' [reason=").$(FactoryConstants.closeReasonText(reason)).$(", by=").$(thread).$(']').$();
-            notifyListener(thread, name, ev);
-        }
-    }
-
     @Override
     protected boolean releaseAll(long deadline) {
         long thread = Thread.currentThread().getId();
@@ -302,6 +305,18 @@ public class WriterPool extends AbstractPool {
             }
         }
         return removed;
+    }
+
+    private void closeWriter(long thread, Entry e, short ev, int reason) {
+        PooledTableWriter w = e.writer;
+        if (w != null) {
+            CharSequence name = e.writer.getName();
+            w.goodby();
+            w.close();
+            e.writer = null;
+            LOG.info().$("closed '").$(name).$("' [reason=").$(FactoryConstants.closeReasonText(reason)).$(", by=").$(thread).$(']').$();
+            notifyListener(thread, name, ev);
+        }
     }
 
     int countFreeWriters() {
@@ -393,16 +408,16 @@ public class WriterPool extends AbstractPool {
             this.entry = e;
         }
 
-        private void goodby() {
-            this.entry = null;
-        }
-
         @Override
         public void close() {
             if (entry != null && pool != null && pool.returnToPool(entry)) {
                 return;
             }
             super.close();
+        }
+
+        private void goodby() {
+            this.entry = null;
         }
     }
 }

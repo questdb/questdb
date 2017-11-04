@@ -163,11 +163,11 @@ public class TableReaderTest extends AbstractCairoTest {
             assertNullStr(r, 5);
         }
 
-        Assert.assertEquals(0, r.getInt(20));
+        Assert.assertEquals(Numbers.INT_NaN, r.getInt(20));
     };
 
     private static final RecordAssert BATCH_2_7_BEFORE_ASSERTER = (r, rnd, ts, blob) -> assertNullStr(r, 10);
-    private static final RecordAssert BATCH_3_7_BEFORE_ASSERTER = (r, rnd, ts, blob) -> Assert.assertEquals(0, r.getInt(11));
+    private static final RecordAssert BATCH_3_7_BEFORE_ASSERTER = (r, rnd, ts, blob) -> Assert.assertEquals(Numbers.INT_NaN, r.getInt(11));
     private static final RecordAssert BATCH_4_7_BEFORE_ASSERTER = (r, rnd, ts, blob) -> {
         Assert.assertEquals(0, r.getShort(12));
         Assert.assertFalse(r.getBool(13));
@@ -193,7 +193,7 @@ public class TableReaderTest extends AbstractCairoTest {
         }
     };
 
-    private static final RecordAssert BATCH3_BEFORE_ASSERTER = (r, rnd, ts, blob) -> Assert.assertEquals(0, r.getInt(12));
+    private static final RecordAssert BATCH3_BEFORE_ASSERTER = (r, rnd, ts, blob) -> Assert.assertEquals(Numbers.INT_NaN, r.getInt(12));
 
     private static final RecordAssert BATCH3_ASSERTER = (r, rnd, ts, blob) -> {
         BATCH2_ASSERTER.assertRecord(r, rnd, ts, blob);
@@ -579,6 +579,38 @@ public class TableReaderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNullValueRecovery() throws Exception {
+        final String expected = "int\tshort\tbyte\tdouble\tfloat\tlong\tstr\tsym\tbool\tbin\tdate\n" +
+                "NaN\t0\t0\tNaN\tNaN\tNaN\t\tabc\ttrue\t\t\n";
+
+        TestUtils.assertMemoryLeak(() -> {
+            CairoTestUtils.createAllTable(root, PartitionBy.NONE);
+
+            try (TableWriter w = new TableWriter(FF, root, "all")) {
+                TableWriter.Row r = w.newRow(1000000); // <-- higher timestamp
+                r.putInt(0, 10);
+                r.putByte(1, (byte) 56);
+                r.putDouble(2, 4.3223);
+                r.putStr(6, "xyz");
+                r.cancel();
+
+                r = w.newRow(100000); // <-- lower timestamp
+                r.putStr(7, "abc");
+                r.putBool(8, true);
+                r.append();
+
+                w.commit();
+            }
+
+            try (TableReader r = new TableReader(FF, root, "all")) {
+                sink.clear();
+                printer.print(r, true, r.getMetadata());
+                TestUtils.assertEquals(expected, sink);
+            }
+        });
+    }
+
+    @Test
     public void testPartitionArchiveDoesNotExist() throws Exception {
         RecoverableTestFilesFacade ff = new RecoverableTestFilesFacade() {
 
@@ -875,6 +907,27 @@ public class TableReaderTest extends AbstractCairoTest {
                 "NaN\t-22994\t0\tNaN\tNaN\tNaN\t\t\ttrue\t\t\n" +
                 "NaN\t0\t0\tNaN\tNaN\tNaN\tOJZOVQGFZU\t\tfalse\t\t\n";
         TestUtils.assertMemoryLeak(() -> testTableCursor(24 * 60 * 60 * 60000L, expected));
+    }
+
+    @Test
+    public void testReadEmptyTable() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            CairoTestUtils.createAllTable(root, PartitionBy.NONE);
+            try (TableWriter ignored1 = new TableWriter(FF, root, "all")) {
+
+                // open another writer, which should fail
+                try {
+                    new TableWriter(FF, root, "all");
+                    Assert.fail();
+                } catch (CairoException ignored) {
+
+                }
+
+                try (TableReader reader = new TableReader(FF, root, "all")) {
+                    Assert.assertFalse(reader.hasNext());
+                }
+            }
+        });
     }
 
     @Test

@@ -814,7 +814,7 @@ public class TableReader implements Closeable, RecordCursor {
         public int getInt(int col) {
             long index = getIndex(col);
             if (index < 0) {
-                return 0;
+                return Numbers.INT_NaN;
             }
             return colA(col).getInt(index * 4);
         }

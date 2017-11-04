@@ -43,7 +43,7 @@ public final class NullColumn implements ReadOnlyColumn {
 
     @Override
     public int getInt(long offset) {
-        return 0;
+        return Numbers.INT_NaN;
     }
 
     @Override

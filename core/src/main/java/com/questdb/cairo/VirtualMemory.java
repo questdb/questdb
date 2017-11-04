@@ -312,20 +312,22 @@ public class VirtualMemory implements Closeable {
     }
 
     public final long putStr(CharSequence value) {
-        final long offset = getAppendOffset();
+        return value == null ? putNullStr() : putStr(value, 0, value.length());
+    }
+
+    public final long putStr(CharSequence value, int pos, int len) {
+
         if (value == null) {
-            putInt(-1);
-            return offset;
+            return putNullStr();
         }
 
-        int l = value.length();
-        putInt(l);
-
-        if (pageHi - appendPointer < l * 2) {
-            putStrSplit(value, l);
+        final long offset = getAppendOffset();
+        putInt(len);
+        if (pageHi - appendPointer < len * 2) {
+            putStrSplit(value, pos, len);
         } else {
-            copyStrChars(value, 0, l, appendPointer);
-            appendPointer += l * 2;
+            copyStrChars(value, pos, len, appendPointer);
+            appendPointer += len * 2;
         }
 
         return offset;
@@ -373,7 +375,7 @@ public class VirtualMemory implements Closeable {
                 release(i, pages.getQuick(i));
             }
         }
-        pages.clear();
+        pages.erase();
     }
 
     /**
@@ -700,8 +702,8 @@ public class VirtualMemory implements Closeable {
         Unsafe.getUnsafe().putByte(appendPointer++, (byte) c);
     }
 
-    private void putStrSplit(CharSequence value, int len) {
-        int start = 0;
+    private void putStrSplit(CharSequence value, int pos, int len) {
+        int start = pos;
         do {
             int half = (int) ((pageHi - appendPointer) / 2);
 
