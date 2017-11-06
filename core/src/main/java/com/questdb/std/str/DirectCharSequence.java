@@ -23,7 +23,6 @@
 
 package com.questdb.std.str;
 
-import com.questdb.misc.Chars;
 import com.questdb.misc.Unsafe;
 
 public class DirectCharSequence extends AbstractCharSequence implements DirectBytes {
@@ -62,10 +61,6 @@ public class DirectCharSequence extends AbstractCharSequence implements DirectBy
         return h;
     }
 
-    @Override
-    public boolean equals(Object obj) {
-        return this == obj || obj instanceof CharSequence && Chars.equals(this, (CharSequence) obj);
-    }
 
     @Override
     public int length() {

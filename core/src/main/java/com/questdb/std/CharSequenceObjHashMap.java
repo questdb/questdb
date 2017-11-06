@@ -71,14 +71,19 @@ public class CharSequenceObjHashMap<V> implements Mutable {
     }
 
     public V get(CharSequence key) {
+        final int index = keyIndex(key);
+        return index < 0 ? Unsafe.arrayGet(values, -index - 1) : null;
+    }
+
+    public int keyIndex(CharSequence key) {
         int index = Chars.hashCode(key) & mask;
 
         if (Unsafe.arrayGet(keys, index) == noEntryValue) {
-            return null;
+            return index;
         }
 
         if (Chars.equals(key, Unsafe.arrayGet(keys, index))) {
-            return Unsafe.arrayGet(values, index);
+            return -index - 1;
         }
 
         return probe(key, index);
@@ -89,32 +94,17 @@ public class CharSequenceObjHashMap<V> implements Mutable {
     }
 
     public boolean put(CharSequence key, V value) {
-        if (put0(key, value)) {
-            list.add(key);
-            if (free == 0) {
-                rehash();
-            }
-            return true;
-        }
-        return false;
+        return putAt(keyIndex(key), key, value);
     }
 
     public void remove(CharSequence key) {
-        int index = Chars.hashCode(key) & mask;
-
-        if (Unsafe.arrayGet(keys, index) == noEntryValue) {
-            return;
-        }
-
-        if (Chars.equals(key, Unsafe.arrayGet(keys, index))) {
-            Unsafe.arrayPut(keys, index, noEntryValue);
-            Unsafe.arrayPut(values, index, null);
+        int index = keyIndex(key);
+        if (index < 0) {
+            Unsafe.arrayPut(keys, -index - 1, noEntryValue);
+            Unsafe.arrayPut(values, -index - 1, null);
             list.remove(key);
             free++;
-            return;
         }
-
-        probeRemove(key, index);
     }
 
     public int size() {
@@ -129,71 +119,42 @@ public class CharSequenceObjHashMap<V> implements Mutable {
         return get(list.getQuick(index));
     }
 
-    private V probe(CharSequence key, int index) {
+    private int probe(CharSequence key, int index) {
         do {
             index = (index + 1) & mask;
             if (Unsafe.arrayGet(keys, index) == noEntryValue) {
-                return null;
+                return index;
             }
             if (Chars.equals(key, Unsafe.arrayGet(keys, index))) {
-                return Unsafe.arrayGet(values, index);
+                return -index - 1;
             }
         } while (true);
     }
 
-    private boolean probeInsert(CharSequence key, int index, V value) {
-        do {
-            index = (index + 1) & mask;
-            if (Unsafe.arrayGet(keys, index) == noEntryValue) {
-                Unsafe.arrayPut(keys, index, key);
-                Unsafe.arrayPut(values, index, value);
-                free--;
-                return true;
-            }
-
-            if (Chars.equals(key, Unsafe.arrayGet(keys, index))) {
-                Unsafe.arrayPut(values, index, value);
-                return false;
-            }
-        } while (true);
-    }
-
-    private void probeRemove(CharSequence key, int index) {
-        do {
-            index = (index + 1) & mask;
-            if (Unsafe.arrayGet(keys, index) == noEntryValue) {
-                return;
-            }
-            if (Chars.equals(key, Unsafe.arrayGet(keys, index))) {
-                Unsafe.arrayPut(keys, index, noEntryValue);
-                Unsafe.arrayPut(values, index, null);
-                list.remove(key);
-                free++;
-                return;
-            }
-        } while (true);
-    }
-
-    private boolean put0(CharSequence key, V value) {
-        int index = Chars.hashCode(key) & mask;
-        if (Unsafe.arrayGet(keys, index) == noEntryValue) {
-            Unsafe.arrayPut(keys, index, key);
-            Unsafe.arrayPut(values, index, value);
-            free--;
+    private boolean putAt(int index, CharSequence key, V value) {
+        if (putAt0(index, key, value)) {
+            list.add(key);
             return true;
         }
+        return false;
+    }
 
-        if (Chars.equals(key, Unsafe.arrayGet(keys, index))) {
-            Unsafe.arrayPut(values, index, value);
+    private boolean putAt0(int index, CharSequence key, V value) {
+        if (index < 0) {
+            Unsafe.arrayPut(values, -index - 1, value);
             return false;
+        } else {
+            Unsafe.arrayPut(keys, index, key);
+            Unsafe.arrayPut(values, index, value);
+            if (--free == 0) {
+                rehash();
+            }
+            return true;
         }
-
-        return probeInsert(key, index, value);
     }
 
     @SuppressWarnings({"unchecked"})
     private void rehash() {
-
         int newCapacity = values.length << 1;
         mask = newCapacity - 1;
         free = capacity = (int) (newCapacity * loadFactor);
@@ -205,7 +166,7 @@ public class CharSequenceObjHashMap<V> implements Mutable {
 
         for (int i = oldKeys.length; i-- > 0; ) {
             if (Unsafe.arrayGet(oldKeys, i) != noEntryValue) {
-                put0(Unsafe.arrayGet(oldKeys, i), Unsafe.arrayGet(oldValues, i));
+                putAt0(keyIndex(Unsafe.arrayGet(oldKeys, i)), Unsafe.arrayGet(oldKeys, i), Unsafe.arrayGet(oldValues, i));
             }
         }
     }

@@ -26,5 +26,6 @@ package com.questdb.mp;
 public interface Job {
     boolean run();
 
-    void setupThread();
+    default void setupThread() {
+    }
 }

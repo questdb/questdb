@@ -110,6 +110,10 @@ public final class Os {
 
     public static native int getPid();
 
+    public static native int getTid();
+
+    public static native int schedSetAffinity(int pid, int cpu);
+
     public static long getSystemMemory() {
         return bean.getTotalPhysicalMemorySize();
     }

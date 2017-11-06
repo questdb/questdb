@@ -23,8 +23,6 @@
 
 package com.questdb.std.str;
 
-import com.questdb.misc.Chars;
-
 public final class ImmutableCharSequence extends AbstractCharSequence {
 
     private final char[] chars;
@@ -42,16 +40,6 @@ public final class ImmutableCharSequence extends AbstractCharSequence {
             return charSequence;
         }
         return new ImmutableCharSequence(charSequence);
-    }
-
-    @Override
-    public int hashCode() {
-        return Chars.hashCode(this);
-    }
-
-    @Override
-    public boolean equals(Object that) {
-        return this == that || that instanceof CharSequence && Chars.equals(this, (CharSequence) that);
     }
 
     @Override

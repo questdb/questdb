@@ -156,8 +156,6 @@ JNIEXPORT jlong JNICALL Java_com_questdb_misc_Net_msgHeaders
     struct iovec *iovecs = malloc(sizeof(struct iovec) * blockCount);
     void *buf = malloc(((size_t) blockSize * (size_t) blockCount));
 
-    EWOULDBLOCK
-
     memset(msgs, 0, sizeof(struct mmsghdr) * blockCount);
     for (int i = 0; i < blockCount; i++) {
         iovecs[i].iov_base = buf;

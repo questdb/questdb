@@ -172,6 +172,7 @@ public class LineProtoLexer implements Mutable {
                 parser.onError(dstPos - 1, state, errorCode);
             }
         }
+        clear();
     }
 
     public void withParser(LineProtoParser parser) {
