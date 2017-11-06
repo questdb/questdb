@@ -1,61 +1,81 @@
 package com.questdb.net.udp.receiver;
 
+import com.questdb.cairo.CairoConfiguration;
 import com.questdb.cairo.CairoException;
+import com.questdb.cairo.TableWriter;
+import com.questdb.cairo.pool.ResourcePool;
+import com.questdb.misc.Misc;
 import com.questdb.misc.Net;
 import com.questdb.misc.Os;
-import com.questdb.misc.Unsafe;
+import com.questdb.mp.Job;
+import com.questdb.parser.lp.CairoLineProtoParser;
+import com.questdb.parser.lp.LineProtoLexer;
 import com.questdb.std.str.DirectByteCharSequence;
 
 import java.io.Closeable;
 
-public class LineProtoReceiver implements Closeable {
-    private final int msgSize = 2048;
-    private final int msgCount = 4096;
+public class LineProtoReceiver implements Closeable, Job {
+    private final int msgCount;
+    private final DirectByteCharSequence byteSequence = new DirectByteCharSequence();
+    private final LineProtoLexer lexer;
+    private final CairoLineProtoParser parser;
     private long fd = -1;
-    private long msgVec;
+    private long msgVec = 0;
 
-    public LineProtoReceiver(CharSequence bindIPv4Address, CharSequence groupIPv4Address, int port) {
+    public LineProtoReceiver(ReceiverConfiguration receiverCfg, CairoConfiguration cairoCfg, ResourcePool<TableWriter> writerPool) {
         fd = Net.socketUdp();
         if (fd < 0) {
             throw CairoException.instance(Os.errno()).put("Cannot open UDP socket");
         }
 
-        if (!Net.bind(fd, bindIPv4Address, port)) {
-            throw CairoException.instance(Os.errno()).put("Cannot bind to ").put(bindIPv4Address).put(':').put(port);
+        if (!Net.bind(fd, receiverCfg.getBindIPv4Address(), receiverCfg.getPort())) {
+            close();
+            throw CairoException.instance(Os.errno()).put("Cannot bind to ").put(receiverCfg.getBindIPv4Address()).put(':').put(receiverCfg.getPort());
         }
 
-        if (!Net.join(fd, bindIPv4Address, groupIPv4Address)) {
-            throw CairoException.instance(Os.errno()).put("Cannot join multicast group ").put(groupIPv4Address).put(" [bindTo=").put(bindIPv4Address).put(']');
+        if (!Net.join(fd, receiverCfg.getBindIPv4Address(), receiverCfg.getGroupIPv4Address())) {
+            close();
+            throw CairoException.instance(Os.errno()).put("Cannot join multicast group ").put(receiverCfg.getGroupIPv4Address()).put(" [bindTo=").put(receiverCfg.getBindIPv4Address()).put(']');
         }
 
-        msgVec = Net.msgHeaders(msgSize, msgCount);
+        this.msgCount = receiverCfg.getMsgCount();
 
-        DirectByteCharSequence charSequence = new DirectByteCharSequence();
-
-        int count = Net.recvmmsg(fd, msgVec, msgCount);
-        if (count > 0) {
-            long p = msgVec;
-            for (int i = 0; i < count; i++) {
-                int size = Unsafe.getUnsafe().getInt(p + Net.MMSGHDR_BUFFER_LENGTH_OFFSET);
-                long addr = Unsafe.getUnsafe().getLong(Unsafe.getUnsafe().getLong(p + Net.MMSGHDR_BUFFER_ADDRESS_OFFSET));
-                charSequence.of(addr, addr + size);
-//                System.out.println("Received: " + Long.toHexString(addr));
-                System.out.print(charSequence);
-                p += Net.MMSGHDR_SIZE;
-            }
-        } else {
-            System.out.println("count: " + count);
-            System.out.println("errno: " + Os.errno());
-            System.out.println(Os.errno() == Net.EWOULDBLOCK);
+        if (Net.setRcvBuf(fd, receiverCfg.getReceiveBufferSize()) != 0) {
+            System.out.println("err");
         }
+        msgVec = Net.msgHeaders(receiverCfg.getMsgBufferSize(), msgCount);
+        lexer = new LineProtoLexer(receiverCfg.getMsgBufferSize());
+        parser = new CairoLineProtoParser(cairoCfg, writerPool);
+        lexer.withParser(parser);
     }
 
     @Override
     public void close() {
+        parser.commitAll();
         if (fd > -1) {
             Net.close(fd);
-            Net.freeMsgHeaders(msgVec);
+            if (msgVec != 0) {
+                Net.freeMsgHeaders(msgVec);
+            }
+            Misc.free(parser);
             fd = -1;
         }
+    }
+
+    @Override
+    public boolean run() {
+        int count = Net.recvmmsg(fd, msgVec, msgCount);
+        if (count > 0) {
+            long p = msgVec;
+            for (int i = 0; i < count; i++) {
+                long buf = Net.getMMsgBuf(p);
+                byteSequence.of(buf, buf + Net.getMMsgBufLen(p));
+                lexer.parse(byteSequence);
+                lexer.parseLast();
+                p += Net.MMSGHDR_SIZE;
+            }
+            return true;
+        }
+        return false;
     }
 }

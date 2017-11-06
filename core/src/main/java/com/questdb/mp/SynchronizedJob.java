@@ -43,9 +43,5 @@ public abstract class SynchronizedJob implements Job {
         return false;
     }
 
-    @Override
-    public void setupThread() {
-    }
-
     protected abstract boolean runSerially();
 }

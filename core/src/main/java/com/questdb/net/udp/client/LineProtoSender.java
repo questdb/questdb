@@ -90,7 +90,7 @@ public class LineProtoSender extends AbstractCharSink implements Closeable {
     }
 
     public LineProtoSender field(CharSequence name, double value, int scale) {
-        field(name).put(value, scale).put('i');
+        field(name).put(value, scale);
         return this;
     }
 

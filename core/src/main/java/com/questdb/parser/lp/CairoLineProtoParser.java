@@ -70,6 +70,15 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
         }
     }
 
+    public void commitAll() {
+        for (int i = 0, n = writerCache.size(); i < n; i++) {
+            CacheEntry e = writerCache.valueQuick(i);
+            if (e.writer != null) {
+                writer.commit();
+            }
+        }
+    }
+
     @Override
     public void onError(int position, int state, int code) {
         clearState();

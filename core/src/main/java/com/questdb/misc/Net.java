@@ -64,6 +64,14 @@ public final class Net {
 
     public native static void freeSockAddr(long sockaddr);
 
+    public static long getMMsgBuf(long msgPtr) {
+        return Unsafe.getUnsafe().getLong(Unsafe.getUnsafe().getLong(msgPtr + MMSGHDR_BUFFER_ADDRESS_OFFSET));
+    }
+
+    public static int getMMsgBufLen(long msgPtr) {
+        return Unsafe.getUnsafe().getInt(msgPtr + MMSGHDR_BUFFER_LENGTH_OFFSET);
+    }
+
     public native static long getPeerIP(long fd);
 
     public native static int getPeerPort(long fd);
@@ -76,13 +84,13 @@ public final class Net {
 
     public native static boolean join(long fd, int bindIPv4Address, int groupIPv4Address);
 
-    public static native long msgHeaders(int blockSize, int count);
-
     public native static void listen(long fd, int backlog);
 
-    public static native int recvmmsg(long fd, long msgvec, int vlen);
+    public static native long msgHeaders(int blockSize, int count);
 
     public static native int recv(long fd, long ptr, int len);
+
+    public static native int recvmmsg(long fd, long msgvec, int vlen);
 
     public static native int send(long fd, long ptr, int len);
 

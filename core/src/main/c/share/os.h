@@ -35,6 +35,22 @@ JNIEXPORT jint JNICALL Java_com_questdb_misc_Os_getPid
 
 /*
  * Class:     com_questdb_misc_Os
+ * Method:    getTid
+ * Signature: ()I
+ */
+JNIEXPORT jint JNICALL Java_com_questdb_misc_Os_getTid
+        (JNIEnv *, jclass);
+
+/*
+ * Class:     com_questdb_misc_Os
+ * Method:    schedSetAffinity
+ * Signature: (II)I
+ */
+JNIEXPORT jint JNICALL Java_com_questdb_misc_Os_schedSetAffinity
+        (JNIEnv *, jclass, jint, jint);
+
+/*
+ * Class:     com_questdb_misc_Os
  * Method:    generateKrbToken
  * Signature: (J)J
  */

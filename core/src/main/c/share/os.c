@@ -21,14 +21,32 @@
  *
  ******************************************************************************/
 
+#define _GNU_SOURCE
+
 #include <unistd.h>
 #include <sys/errno.h>
 #include <stdlib.h>
+#include <syscall.h>
+#include <sched.h>
 #include "../share/os.h"
 
 JNIEXPORT jint JNICALL Java_com_questdb_misc_Os_getPid
         (JNIEnv *e, jclass cp) {
     return getpid();
+}
+
+
+JNIEXPORT jint JNICALL Java_com_questdb_misc_Os_getTid
+        (JNIEnv *e, jclass cl) {
+    return (pid_t) syscall(SYS_gettid);
+}
+
+JNIEXPORT jint JNICALL Java_com_questdb_misc_Os_schedSetAffinity
+        (JNIEnv *e, jclass cl, jint pid, jint cpu) {
+    cpu_set_t set;
+    CPU_ZERO(&set);
+    CPU_SET(cpu, &set);
+    return sched_setaffinity(pid, sizeof(set), &set);
 }
 
 JNIEXPORT jint JNICALL Java_com_questdb_misc_Os_errno
