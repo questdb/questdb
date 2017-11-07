@@ -41,19 +41,27 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
     private final LongList columnValues = new LongList();
     private final AppendMemory appendMemory = new AppendMemory();
     private final Clock clock;
+    private final FieldNameParser MY_NEW_FIELD_NAME = this::parseFieldNameNewTable;
+    private final FieldValueParser MY_NEW_TAG_VALUE = this::parseTagValueNewTable;
     // state
     private TableWriter writer;
+    private final LineEndParser MY_LINE_END = this::appendRow;
     private RecordMetadata metadata;
     private int columnCount;
     private int columnIndex;
     private long columnName;
     private int columnType;
+    private final FieldNameParser MY_FIELD_NAME = this::parseFieldName;
     private long tableName;
     private CacheEntry entry;
+    private final LineEndParser MY_NEW_LINE_END = this::createTableAndAppendRow;
     private LineEndParser onLineEnd;
     private FieldNameParser onFieldName;
     private FieldValueParser onFieldValue;
     private FieldValueParser onTagValue;
+    private final FieldValueParser MY_FIELD_VALUE = this::parseFieldValue;
+    private final FieldValueParser MY_NEW_FIELD_VALUE = this::parseFieldValueNewTable;
+    private final FieldValueParser MY_TAG_VALUE = this::parseTagValue;
 
     public CairoLineProtoParser(CairoConfiguration configuration, ResourcePool<TableWriter> pool) {
         this.configuration = configuration;
@@ -212,10 +220,12 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
         writer = entry.writer;
         metadata = writer.getMetadata();
         columnCount = metadata.getColumnCount();
-        onLineEnd = this::appendRow;
-        onFieldName = this::parseFieldName;
-        onFieldValue = this::parseFieldValue;
-        onTagValue = this::parseTagValue;
+        if (onLineEnd != MY_LINE_END) {
+            onLineEnd = MY_LINE_END;
+            onFieldName = MY_FIELD_NAME;
+            onFieldValue = MY_FIELD_VALUE;
+            onTagValue = MY_TAG_VALUE;
+        }
     }
 
     private void createTable(CharSequenceCache cache) {
@@ -287,10 +297,12 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
                     this.entry = entry;
                     tableName = token.getCacheAddress();
                     this.entry = entry;
-                    onLineEnd = this::createTableAndAppendRow;
-                    onFieldName = this::parseFieldNameNewTable;
-                    onFieldValue = this::parseFieldValueNewTable;
-                    onTagValue = this::parseTagValueNewTable;
+                    if (onLineEnd != MY_NEW_LINE_END) {
+                        onLineEnd = MY_NEW_LINE_END;
+                        onFieldName = MY_NEW_FIELD_NAME;
+                        onFieldValue = MY_NEW_FIELD_VALUE;
+                        onTagValue = MY_NEW_TAG_VALUE;
+                    }
                     break;
                 default:
                     entry.state = 3;
