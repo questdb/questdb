@@ -98,7 +98,7 @@ public class CharSequenceIntHashMap implements Mutable {
             return -index - 1;
         }
 
-        return probe0(key, index);
+        return probe(key, index);
     }
 
     public boolean put(CharSequence key, int value) {
@@ -142,7 +142,7 @@ public class CharSequenceIntHashMap implements Mutable {
         return index < 0 ? Unsafe.arrayGet(values, -index - 1) : noEntryValue;
     }
 
-    private int probe0(CharSequence key, int index) {
+    private int probe(CharSequence key, int index) {
         do {
             index = (index + 1) & mask;
             if (Unsafe.arrayGet(keys, index) == noEntryKey) {

@@ -66,14 +66,18 @@ public class IntHashSet implements Mutable {
     }
 
     public boolean add(int key) {
-        boolean r = insertKey(key);
-        if (r) {
-            list.add(key);
-            if (free == 0) {
-                rehash();
-            }
+        int index = keyIndex(key);
+        if (index < 0) {
+            return false;
         }
-        return r;
+
+        Unsafe.arrayPut(keys, index, key);
+        list.add(key);
+        if (--free == 0) {
+            rehash();
+        }
+
+        return true;
     }
 
     public final void clear() {
@@ -83,23 +87,33 @@ public class IntHashSet implements Mutable {
     }
 
     public boolean contains(int key) {
-        int index = key & mask;
-        return Unsafe.arrayGet(keys, index) != noEntryValue && (key == Unsafe.arrayGet(keys, index) || probeContains(key, index));
+        return keyIndex(key) < 0;
     }
 
     public int get(int index) {
         return list.getQuick(index);
     }
 
+    public int keyIndex(int key) {
+        int index = key & mask;
+
+        if (Unsafe.arrayGet(keys, index) == noEntryValue) {
+            return index;
+        }
+
+        if (Unsafe.arrayGet(keys, index) == key) {
+            return -index - 1;
+        }
+
+        return probe0(key, index);
+    }
+
     public void remove(int key) {
-        if (list.remove(key)) {
-            int index = key & mask;
-            if (key == Unsafe.arrayGet(keys, index)) {
-                Unsafe.arrayPut(keys, index, noEntryValue);
-                free++;
-            } else {
-                probeRemove(key, index);
-            }
+        int index = keyIndex(key);
+        if (index < 0) {
+            assert list.remove(key);
+            Unsafe.arrayPut(keys, -index - 1, noEntryValue);
+            free++;
         }
     }
 
@@ -114,54 +128,17 @@ public class IntHashSet implements Mutable {
         return sink.toString();
     }
 
-    private boolean insertKey(int key) {
-        int index = key & mask;
-        if (Unsafe.arrayGet(keys, index) == noEntryValue) {
-            Unsafe.arrayPut(keys, index, key);
-            free--;
-            return true;
-        }
-        return Unsafe.arrayGet(keys, index) != key && probeInsert(key, index);
-    }
-
-    private boolean probeContains(int key, int index) {
+    private int probe0(int key, int index) {
         do {
             index = (index + 1) & mask;
             if (Unsafe.arrayGet(keys, index) == noEntryValue) {
-                return false;
+                return index;
             }
 
             if (key == Unsafe.arrayGet(keys, index)) {
-                return true;
+                return -index - 1;
             }
         } while (true);
-    }
-
-    private boolean probeInsert(int key, int index) {
-        do {
-            index = (index + 1) & mask;
-            if (Unsafe.arrayGet(keys, index) == noEntryValue) {
-                Unsafe.arrayPut(keys, index, key);
-                free--;
-                return true;
-            }
-
-            if (key == Unsafe.arrayGet(keys, index)) {
-                return false;
-            }
-        } while (true);
-    }
-
-    private void probeRemove(int key, int index) {
-        int i = index;
-        do {
-            index = (index + 1) & mask;
-            if (key == Unsafe.arrayGet(keys, index)) {
-                Unsafe.arrayPut(keys, index, noEntryValue);
-                free++;
-                break;
-            }
-        } while (i != index);
     }
 
     @SuppressWarnings({"unchecked"})
@@ -176,7 +153,7 @@ public class IntHashSet implements Mutable {
 
         for (int i = oldKeys.length; i-- > 0; ) {
             if (Unsafe.arrayGet(oldKeys, i) != noEntryValue) {
-                insertKey(Unsafe.arrayGet(oldKeys, i));
+                add(Unsafe.arrayGet(oldKeys, i));
             }
         }
     }
