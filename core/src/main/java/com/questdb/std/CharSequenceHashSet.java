@@ -34,7 +34,7 @@ public class CharSequenceHashSet implements Mutable {
 
     private static final int MIN_INITIAL_CAPACITY = 16;
     private final double loadFactor;
-    private final ObjList<String> list;
+    private final ObjList<CharSequence> list;
     private CharSequence[] keys;
     private int free;
     private int capacity;
@@ -74,23 +74,26 @@ public class CharSequenceHashSet implements Mutable {
     }
 
     public boolean add(CharSequence key) {
+        return add0(key);
+    }
+
+    public boolean add0(CharSequence key) {
         if (key == null) {
-            if (hasNull) {
-                return false;
-            }
-            hasNull = true;
-            list.add(null);
-            free--;
-            return true;
+            return addNull();
         }
 
-        if (insertKey(key)) {
-            if (free == 0) {
-                resize();
-            }
-            return true;
+        int index = keyIndex(key);
+        if (index < 0) {
+            return false;
         }
-        return false;
+
+        String s = key.toString();
+        Unsafe.arrayPut(keys, index, s);
+        list.add(s);
+        if (--free < 1) {
+            resize();
+        }
+        return true;
     }
 
     public final void addAll(CharSequenceHashSet that) {
@@ -110,9 +113,7 @@ public class CharSequenceHashSet implements Mutable {
         if (key == null) {
             return hasNull;
         }
-
-        int index = idx(key);
-        return Unsafe.arrayGet(keys, index) != null && (eq(index, key) || probe(key, index) > -1);
+        return keyIndex(key) < 0;
     }
 
     public CharSequence get(int index) {
@@ -125,31 +126,19 @@ public class CharSequenceHashSet implements Mutable {
 
     public int remove(CharSequence key) {
         if (key == null) {
-            if (hasNull) {
-                hasNull = false;
-                int index = list.remove(null);
-                free++;
-                return index;
-            }
-            return -1;
+            return removeNull();
         }
 
-        int index = idx(key);
-
-        if (Unsafe.arrayGet(keys, index) == null) {
-            return -1;
-        }
-
-        if (eq(index, key)) {
-            return removeAt(index);
-        }
-
-        index = probe(key, index);
+        int index = keyIndex(key);
         if (index < 0) {
-            return -1;
+            int result = list.remove(Unsafe.arrayGet(keys, -index - 1));
+            Unsafe.arrayPut(keys, -index - 1, null);
+            free++;
+            rehash();
+            return result;
         }
 
-        return removeAt(index);
+        return -1;
     }
 
     public int size() {
@@ -161,39 +150,30 @@ public class CharSequenceHashSet implements Mutable {
         return list.toString();
     }
 
+    private boolean addNull() {
+        if (hasNull) {
+            return false;
+        }
+        --free;
+        hasNull = true;
+        list.add(null);
+        return true;
+    }
+
     private boolean eq(int index, CharSequence key) {
         return key == Unsafe.arrayGet(keys, index) || Chars.equals(key, Unsafe.arrayGet(keys, index));
     }
 
-    private int idx(CharSequence key) {
-        return key == null ? 0 : (Chars.hashCode(key) & mask);
-    }
-
-    private boolean insertKey(CharSequence key) {
-        int index = idx(key);
+    private int keyIndex(CharSequence key) {
+        int index = Chars.hashCode(key) & mask;
         if (Unsafe.arrayGet(keys, index) == null) {
-            String sk = key.toString();
-            Unsafe.arrayPut(keys, index, sk);
-            list.add(sk);
-            free--;
-            return true;
-        } else {
-            if (eq(index, key)) {
-                return false;
-            }
-
-            int next = probe(key, index);
-
-            if (next < 0) {
-                String sk = key.toString();
-                Unsafe.arrayPut(keys, -next - 1, sk);
-                list.add(sk);
-                free--;
-                return true;
-            }
-
-            return false;
+            return index;
         }
+        if (eq(index, key)) {
+            return -index - 1;
+        }
+
+        return probe(key, index);
     }
 
     private int probe(CharSequence key, int index) {
@@ -201,11 +181,11 @@ public class CharSequenceHashSet implements Mutable {
             index = (index + 1) & mask;
 
             if (Unsafe.arrayGet(keys, index) == null) {
-                return -(index + 1);
+                return index;
             }
 
             if (eq(index, key)) {
-                return index;
+                return -index - 1;
             }
 
         } while (true);
@@ -214,23 +194,19 @@ public class CharSequenceHashSet implements Mutable {
     private void rehash() {
         Arrays.fill(keys, null);
         for (int i = 0, n = list.size(); i < n; i++) {
-            String key = list.getQuick(i);
-            int idx = idx(key);
-            if (Unsafe.arrayGet(keys, idx) == null) {
-                Unsafe.arrayPut(keys, idx, key);
-            } else {
-                int next = probe(key, idx);
-                assert next < 0;
-                Unsafe.arrayPut(keys, -next - 1, key);
-            }
+            CharSequence key = list.getQuick(i);
+            Unsafe.arrayPut(keys, keyIndex(key), key);
         }
     }
 
-    private int removeAt(int index) {
-        int result = list.remove(Unsafe.arrayGet(keys, index));
-        free++;
-        rehash();
-        return result;
+    private int removeNull() {
+        if (hasNull) {
+            hasNull = false;
+            int index = list.remove(null);
+            free++;
+            return index;
+        }
+        return -1;
     }
 
     @SuppressWarnings({"unchecked"})

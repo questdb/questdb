@@ -71,8 +71,7 @@ public class CharSequenceObjHashMap<V> implements Mutable {
     }
 
     public V get(CharSequence key) {
-        final int index = keyIndex(key);
-        return index < 0 ? Unsafe.arrayGet(values, -index - 1) : null;
+        return valueAt(keyIndex(key));
     }
 
     public int keyIndex(CharSequence key) {
@@ -169,5 +168,9 @@ public class CharSequenceObjHashMap<V> implements Mutable {
                 putAt0(keyIndex(Unsafe.arrayGet(oldKeys, i)), Unsafe.arrayGet(oldKeys, i), Unsafe.arrayGet(oldValues, i));
             }
         }
+    }
+
+    private V valueAt(int index) {
+        return index < 0 ? Unsafe.arrayGet(values, -index - 1) : null;
     }
 }
