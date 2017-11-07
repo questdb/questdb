@@ -44,7 +44,7 @@ public class LineProtoReceiverTest extends AbstractCairoTest {
 
         Worker worker = new Worker(jobs, workerHaltLatch);
         worker.start();
-
+//
         LineProtoSender sender = new LineProtoSender("127.0.0.1", receiverCfg.getPort(), 1200);
 
         for (int i = 0; i < 10000000; i++) {
@@ -63,6 +63,9 @@ public class LineProtoReceiverTest extends AbstractCairoTest {
         try (TableReader reader = new TableReader(cairoCfg.getFilesFacade(), root, "tab")) {
             System.out.println(reader.size());
         }
+
+//        System.out.println("WAITING");
+//        Thread.sleep(1000000000);
     }
 
     private static class TestReceiverConfiguration implements ReceiverConfiguration {

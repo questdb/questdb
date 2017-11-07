@@ -72,6 +72,7 @@ public class TableWriter implements Closeable {
     private final int fileOperationRetryCount;
     private final CharSequence name;
     private final TableWriterMetadata metadata;
+    private final Runnable MY_OPEN_META = this::openMetaFile;
     int txPartitionCount = 0;
     private long lockFd = -1;
     private LongConsumer timestampSetter;
@@ -1139,7 +1140,7 @@ public class TableWriter implements Closeable {
         try {
             this.metaPrevIndex = rename(TableUtils.META_FILE_NAME, TableUtils.META_PREV_FILE_NAME, fileOperationRetryCount);
         } catch (CairoException e) {
-            runFragile(this::openMetaFile, e);
+            runFragile(MY_OPEN_META, e);
         }
     }
 
