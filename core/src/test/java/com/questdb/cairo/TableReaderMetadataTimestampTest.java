@@ -1,5 +1,6 @@
 package com.questdb.cairo;
 
+import com.questdb.misc.FilesFacadeImpl;
 import com.questdb.std.str.CompositePath;
 import com.questdb.std.str.StringSink;
 import com.questdb.store.ColumnType;

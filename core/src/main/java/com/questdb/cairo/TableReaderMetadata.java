@@ -1,5 +1,6 @@
 package com.questdb.cairo;
 
+import com.questdb.misc.FilesFacade;
 import com.questdb.misc.Misc;
 import com.questdb.misc.Unsafe;
 import com.questdb.std.CharSequenceIntHashMap;

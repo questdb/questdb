@@ -29,6 +29,7 @@ import com.questdb.cairo.pool.WriterPool;
 import com.questdb.ex.JournalException;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
+import com.questdb.misc.FilesFacade;
 import com.questdb.misc.Misc;
 import com.questdb.misc.Os;
 import com.questdb.mp.Job;

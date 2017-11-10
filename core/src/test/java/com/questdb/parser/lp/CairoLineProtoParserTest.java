@@ -5,6 +5,7 @@ import com.questdb.cairo.pool.WriterPool;
 import com.questdb.ex.NumericException;
 import com.questdb.misc.Chars;
 import com.questdb.misc.Files;
+import com.questdb.misc.FilesFacade;
 import com.questdb.std.clock.Clock;
 import com.questdb.std.str.CompositePath;
 import com.questdb.std.str.LPSZ;

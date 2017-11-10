@@ -52,7 +52,7 @@ public final class Files {
     public static final int MAP_RO = 1;
     public static final int MAP_RW = 2;
 
-    private static final AtomicLong OPEN_FILE_COUNT = new AtomicLong();
+    static final AtomicLong OPEN_FILE_COUNT = new AtomicLong();
 
     private Files() {
     } // Prevent construction.

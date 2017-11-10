@@ -5,6 +5,8 @@ import com.questdb.cairo.pool.ex.EntryLockedException;
 import com.questdb.cairo.pool.ex.EntryUnavailableException;
 import com.questdb.cairo.pool.ex.PoolClosedException;
 import com.questdb.misc.Chars;
+import com.questdb.misc.FilesFacade;
+import com.questdb.misc.FilesFacadeImpl;
 import com.questdb.std.str.LPSZ;
 import com.questdb.store.factory.configuration.JournalStructure;
 import com.questdb.test.tools.TestUtils;
@@ -34,7 +36,8 @@ public class WriterPoolTest extends AbstractCairoTest {
             int n = 2;
             final CyclicBarrier barrier = new CyclicBarrier(n);
             final CountDownLatch halt = new CountDownLatch(n);
-            final AtomicInteger errors = new AtomicInteger();
+            final AtomicInteger errors1 = new AtomicInteger();
+            final AtomicInteger errors2 = new AtomicInteger();
             final AtomicInteger writerCount = new AtomicInteger();
             new Thread(() -> {
                 try {
@@ -52,7 +55,7 @@ public class WriterPoolTest extends AbstractCairoTest {
                     }
                 } catch (Exception e) {
                     e.printStackTrace();
-                    errors.incrementAndGet();
+                    errors1.incrementAndGet();
                 } finally {
                     halt.countDown();
                 }
@@ -69,7 +72,7 @@ public class WriterPoolTest extends AbstractCairoTest {
 
                 } catch (Exception e) {
                     e.printStackTrace();
-                    errors.incrementAndGet();
+                    errors2.incrementAndGet();
                 } finally {
                     halt.countDown();
                 }
@@ -78,7 +81,8 @@ public class WriterPoolTest extends AbstractCairoTest {
             halt.await();
 
             Assert.assertTrue(writerCount.get() > 0);
-            Assert.assertEquals(0, errors.get());
+            Assert.assertEquals(0, errors1.get());
+            Assert.assertEquals(0, errors2.get());
         });
     }
 

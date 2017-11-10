@@ -1,6 +1,8 @@
 package com.questdb.cairo;
 
 import com.questdb.misc.Chars;
+import com.questdb.misc.FilesFacade;
+import com.questdb.misc.FilesFacadeImpl;
 import com.questdb.std.str.LPSZ;
 import com.questdb.store.PartitionBy;
 import com.questdb.test.tools.TestUtils;

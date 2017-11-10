@@ -23,6 +23,7 @@
 
 package com.questdb.cairo;
 
+import com.questdb.misc.FilesFacadeImpl;
 import com.questdb.misc.Os;
 import com.questdb.std.str.CompositePath;
 import com.questdb.std.str.Path;

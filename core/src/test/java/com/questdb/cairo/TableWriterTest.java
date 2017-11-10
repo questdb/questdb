@@ -26,10 +26,7 @@ package com.questdb.cairo;
 import com.questdb.ex.NumericException;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
-import com.questdb.misc.Chars;
-import com.questdb.misc.Files;
-import com.questdb.misc.Rnd;
-import com.questdb.misc.Unsafe;
+import com.questdb.misc.*;
 import com.questdb.std.Sinkable;
 import com.questdb.std.str.CompositePath;
 import com.questdb.std.str.LPSZ;
@@ -2576,6 +2573,9 @@ public class TableWriterTest extends AbstractCairoTest {
 
             Rnd rnd = new Rnd();
             try (TableWriter writer = new TableWriter(FF, root, name)) {
+
+                // optional
+                writer.warmUp();
 
                 ts = append10KProducts(ts, rnd, writer);
 

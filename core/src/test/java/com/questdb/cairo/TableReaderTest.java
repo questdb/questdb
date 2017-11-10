@@ -625,6 +625,16 @@ public class TableReaderTest extends AbstractCairoTest {
             }
             writer.commit();
 
+            // add more rows for good measure and rollback
+
+            for (int i = 0; i < N; i++) {
+                TableWriter.Row r = writer.newRow(0);
+                CharSequence chars = rnd.nextChars(15);
+                r.putStr(col, chars, 2, 10);
+                r.append();
+            }
+            writer.rollback();
+
             rnd.reset();
 
             try (TableReader reader = new TableReader(FF, root, "all")) {

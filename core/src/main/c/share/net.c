@@ -53,7 +53,7 @@ JNIEXPORT jlong JNICALL Java_com_questdb_misc_Net_socketTcp
     return fd;
 }
 
-JNIEXPORT jlong JNICALL Java_com_questdb_misc_Net_socketUdp
+JNIEXPORT jlong JNICALL Java_com_questdb_misc_Net_socketUdp0
         (JNIEnv *e, jclass cl) {
     return socket(AF_INET, SOCK_DGRAM, 0);
 }

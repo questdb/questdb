@@ -1,8 +1,6 @@
-package com.questdb.cairo;
+package com.questdb.misc;
 
-import com.questdb.misc.Files;
-import com.questdb.misc.FindVisitor;
-import com.questdb.misc.Os;
+import com.questdb.cairo.CairoException;
 import com.questdb.std.str.CompositePath;
 import com.questdb.std.str.LPSZ;
 
