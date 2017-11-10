@@ -1,5 +1,7 @@
 package com.questdb.cairo;
 
+import com.questdb.misc.FilesFacade;
+import com.questdb.misc.FilesFacadeImpl;
 import com.questdb.std.str.CompositePath;
 import com.questdb.std.time.Dates;
 import com.questdb.store.PartitionBy;

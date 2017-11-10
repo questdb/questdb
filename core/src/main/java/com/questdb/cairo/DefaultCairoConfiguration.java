@@ -1,5 +1,7 @@
 package com.questdb.cairo;
 
+import com.questdb.misc.FilesFacade;
+import com.questdb.misc.FilesFacadeImpl;
 import com.questdb.std.clock.Clock;
 import com.questdb.std.clock.MilliClock;
 import com.questdb.std.str.ImmutableCharSequence;

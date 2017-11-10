@@ -460,6 +460,21 @@ public class TableWriter implements Closeable {
         }
     }
 
+    /**
+     * Eagerly sets up writer instance. Otherwise writer will initialize lazily. Invoking this method could improve
+     * performance of some applications. UDP receivers use this in order to avoid initial receive buffer contention.
+     */
+    public void warmUp() {
+        Row r = newRow(maxTimestamp);
+        try {
+            for (int i = 0; i < columnCount; i++) {
+                r.putByte(0, (byte) 0);
+            }
+        } finally {
+            r.cancel();
+        }
+    }
+
     private static int getPrimaryColumnIndex(int index) {
         return index * 2;
     }

@@ -25,13 +25,13 @@ package com.questdb.cairo.pool;
 
 import com.questdb.cairo.CairoConfiguration;
 import com.questdb.cairo.CairoException;
-import com.questdb.cairo.FilesFacade;
 import com.questdb.cairo.TableReader;
 import com.questdb.cairo.pool.ex.EntryLockedException;
 import com.questdb.cairo.pool.ex.EntryUnavailableException;
 import com.questdb.cairo.pool.ex.PoolClosedException;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
+import com.questdb.misc.FilesFacade;
 import com.questdb.misc.Unsafe;
 import com.questdb.std.ConcurrentHashMap;
 import com.questdb.store.factory.FactoryConstants;

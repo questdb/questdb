@@ -1,6 +1,5 @@
-package com.questdb.cairo;
+package com.questdb.misc;
 
-import com.questdb.misc.FindVisitor;
 import com.questdb.std.str.CompositePath;
 import com.questdb.std.str.LPSZ;
 

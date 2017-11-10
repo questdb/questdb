@@ -25,6 +25,7 @@ package com.questdb.cairo;
 
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
+import com.questdb.misc.FilesFacade;
 import com.questdb.misc.Os;
 import com.questdb.misc.Unsafe;
 import com.questdb.std.CharSequenceIntHashMap;

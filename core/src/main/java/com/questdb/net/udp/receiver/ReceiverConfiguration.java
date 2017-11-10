@@ -1,6 +1,11 @@
 package com.questdb.net.udp.receiver;
 
+import com.questdb.misc.NetFacade;
+
 public interface ReceiverConfiguration {
+
+    int getCommitRate();
+
     CharSequence getBindIPv4Address();
 
     CharSequence getGroupIPv4Address();
@@ -12,4 +17,6 @@ public interface ReceiverConfiguration {
     int getPort();
 
     int getReceiveBufferSize();
+
+    NetFacade getNetFacade();
 }

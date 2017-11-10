@@ -23,12 +23,16 @@
 
 package com.questdb;
 
-import com.questdb.cairo.*;
+import com.questdb.cairo.AppendMemory;
+import com.questdb.cairo.TableReader;
+import com.questdb.cairo.TableUtils;
+import com.questdb.cairo.TableWriter;
 import com.questdb.ex.JournalException;
 import com.questdb.ex.NumericException;
 import com.questdb.ex.ParserException;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
+import com.questdb.misc.FilesFacadeImpl;
 import com.questdb.misc.Rnd;
 import com.questdb.model.Quote;
 import com.questdb.parser.sql.QueryCompiler;

@@ -55,7 +55,7 @@ public final class Net {
     }
 
     public static int close(long fd) {
-        return Files.close0(fd);
+        return Files.close(fd);
     }
 
     public static native int configureNonBlocking(long fd);
@@ -106,7 +106,15 @@ public final class Net {
 
     public native static long socketTcp(boolean blocking);
 
-    public native static long socketUdp();
+    public static long socketUdp() {
+        long fd = socketUdp0();
+        if (fd != -1L) {
+            Files.OPEN_FILE_COUNT.incrementAndGet();
+        }
+        return fd;
+    }
+
+    private native static long socketUdp0();
 
     private static native long getMsgHeaderSize();
 

@@ -162,7 +162,7 @@ JNIEXPORT jlong JNICALL Java_com_questdb_misc_Net_socketTcp
  * Method:    socketUdp
  * Signature: ()J
  */
-JNIEXPORT jlong JNICALL Java_com_questdb_misc_Net_socketUdp
+JNIEXPORT jlong JNICALL Java_com_questdb_misc_Net_socketUdp0
         (JNIEnv *, jclass);
 
 /*

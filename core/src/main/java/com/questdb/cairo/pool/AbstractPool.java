@@ -23,7 +23,7 @@
 
 package com.questdb.cairo.pool;
 
-import com.questdb.cairo.FilesFacade;
+import com.questdb.misc.FilesFacade;
 import com.questdb.misc.Unsafe;
 import com.questdb.std.str.ImmutableCharSequence;
 
