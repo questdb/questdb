@@ -416,6 +416,13 @@ public class WriterPool extends AbstractPool implements ResourcePool<TableWriter
             super.close();
         }
 
+        @Override
+        public String toString() {
+            return "PooledTableWriter{" +
+                    "name=" + (entry.writer != null ? entry.writer.getName() : "<unassigned>") +
+                    '}';
+        }
+
         private void goodby() {
             this.entry = null;
         }

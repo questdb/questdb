@@ -611,6 +611,38 @@ public class TableReaderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPartialString() throws Exception {
+        CairoTestUtils.createAllTable(root, PartitionBy.NONE);
+        int N = 10000;
+        Rnd rnd = new Rnd();
+        try (TableWriter writer = new TableWriter(FF, root, "all")) {
+            int col = writer.getMetadata().getColumnIndex("str");
+            for (int i = 0; i < N; i++) {
+                TableWriter.Row r = writer.newRow(0);
+                CharSequence chars = rnd.nextChars(15);
+                r.putStr(col, chars, 2, 10);
+                r.append();
+            }
+            writer.commit();
+
+            rnd.reset();
+
+            try (TableReader reader = new TableReader(FF, root, "all")) {
+                col = reader.getMetadata().getColumnIndex("str");
+                int count = 0;
+                while (reader.hasNext()) {
+                    Record record = reader.next();
+                    CharSequence expected = rnd.nextChars(15);
+                    CharSequence actual = record.getFlyweightStr(col);
+                    Assert.assertTrue(Chars.equals(expected, 2, 10, actual, 0, 8));
+                    count++;
+                }
+                Assert.assertEquals(N, count);
+            }
+        }
+    }
+
+    @Test
     public void testPartitionArchiveDoesNotExist() throws Exception {
         RecoverableTestFilesFacade ff = new RecoverableTestFilesFacade() {
 

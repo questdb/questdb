@@ -409,6 +409,13 @@ public class TableWriter implements Closeable {
         return fixedRowCount + transientRowCount;
     }
 
+    @Override
+    public String toString() {
+        return "TableWriter{" +
+                "name=" + name +
+                '}';
+    }
+
     /**
      * Truncates table. When operation is unsuccessful it throws CairoException. With that truncate can be
      * retried or alternatively table can be closed. Outcome of any other operation with the table is undefined
