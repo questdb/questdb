@@ -2000,6 +2000,16 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testToString() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            create(FF, PartitionBy.NONE);
+            try (TableWriter writer = new TableWriter(FF, root, PRODUCT)) {
+                Assert.assertEquals("TableWriter{name=product}", writer.toString());
+            }
+        });
+    }
+
+    @Test
     public void testTruncateCannotAppendTodo() throws Exception {
         testTruncateRecoverableFailure(new TodoAppendDenyingFacade());
     }

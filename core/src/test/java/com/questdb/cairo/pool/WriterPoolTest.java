@@ -155,19 +155,6 @@ public class WriterPoolTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testUnlockWriterWhenPoolIsClosed() throws Exception {
-        assertWithPool(pool -> {
-            Assert.assertTrue(pool.lock("z"));
-
-            pool.close();
-
-            TableWriter writer = new TableWriter(FilesFacadeImpl.INSTANCE, root, "z");
-            Assert.assertNotNull(writer);
-            writer.close();
-        });
-    }
-
-    @Test
     public void testClosedPoolLock() throws Exception {
         assertWithPool(pool -> {
             class X implements PoolListener {
@@ -355,6 +342,15 @@ public class WriterPoolTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testToStringOnWriter() throws Exception {
+        assertWithPool(pool -> {
+            try (TableWriter w = pool.get("z")) {
+                Assert.assertEquals("PooledTableWriter{name=z}", w.toString());
+            }
+        });
+    }
+
+    @Test
     public void testTwoThreadsRaceToAllocate() throws Exception {
         assertWithPool(pool -> {
             for (int k = 0; k < 1000; k++) {
@@ -505,6 +501,19 @@ public class WriterPoolTest extends AbstractCairoTest {
             pool.setPoolListner(x);
             pool.unlock("x");
             Assert.assertEquals(PoolListener.EV_NOT_LOCKED, x.ev);
+        });
+    }
+
+    @Test
+    public void testUnlockWriterWhenPoolIsClosed() throws Exception {
+        assertWithPool(pool -> {
+            Assert.assertTrue(pool.lock("z"));
+
+            pool.close();
+
+            TableWriter writer = new TableWriter(FilesFacadeImpl.INSTANCE, root, "z");
+            Assert.assertNotNull(writer);
+            writer.close();
         });
     }
 

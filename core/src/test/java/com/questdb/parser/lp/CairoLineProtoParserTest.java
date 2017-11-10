@@ -479,6 +479,7 @@ public class CairoLineProtoParserTest extends AbstractCairoTest {
                     lexer.withParser(parser);
                     lexer.parse(new ByteArrayByteSequence(lines.getBytes("UTF8")));
                     lexer.parseLast();
+                    parser.commitAll();
                 }
             }
             assertTable(expected, tableName);

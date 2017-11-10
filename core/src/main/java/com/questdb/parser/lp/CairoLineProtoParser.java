@@ -35,6 +35,7 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
     };
     private final ResourcePool<TableWriter> pool;
     private final CharSequenceObjHashMap<CacheEntry> writerCache = new CharSequenceObjHashMap<>();
+    private final CharSequenceObjHashMap<TableWriter> commitList = new CharSequenceObjHashMap<>();
     private final CompositePath path = new CompositePath();
     private final CairoConfiguration configuration;
     private final LongList columnNameType = new LongList();
@@ -44,6 +45,8 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
     private final FieldNameParser MY_NEW_FIELD_NAME = this::parseFieldNameNewTable;
     private final FieldValueParser MY_NEW_TAG_VALUE = this::parseTagValueNewTable;
     // state
+    // cache entry index is always a negative value
+    private int cacheEntryIndex = 0;
     private TableWriter writer;
     private final LineEndParser MY_LINE_END = this::appendRow;
     private RecordMetadata metadata;
@@ -53,7 +56,6 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
     private int columnType;
     private final FieldNameParser MY_FIELD_NAME = this::parseFieldName;
     private long tableName;
-    private CacheEntry entry;
     private final LineEndParser MY_NEW_LINE_END = this::createTableAndAppendRow;
     private LineEndParser onLineEnd;
     private FieldNameParser onFieldName;
@@ -79,12 +81,13 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
     }
 
     public void commitAll() {
-        for (int i = 0, n = writerCache.size(); i < n; i++) {
-            CacheEntry e = writerCache.valueQuick(i);
-            if (e.writer != null) {
-                writer.commit();
-            }
+        if (writer != null) {
+            writer.commit();
         }
+        for (int i = 0, n = commitList.size(); i < n; i++) {
+            commitList.valueQuick(i).commit();
+        }
+        commitList.clear();
     }
 
     @Override
@@ -97,15 +100,19 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
 
         switch (eventType) {
             case EVT_MEASUREMENT:
-                CacheEntry entry = writerCache.get(token);
-                if (entry == null) {
-                    writerCache.put(ImmutableCharSequence.of(token), entry = new CacheEntry());
-                }
-
-                if (entry.writer == null) {
-                    initCacheEntry(token, entry);
+                int wrtIndex = writerCache.keyIndex(token);
+                // this condition relies on the fact that this.cacheEntryIndex is always negative
+                // which indicates that entry is in cache
+                if (wrtIndex == this.cacheEntryIndex) {
+                    // same table as from last line?
+                    // make sure we append it in case it was in "create" mode
+                    if (writer != null) {
+                        switchModeToAppend();
+                    } else {
+                        initCacheEntry(token, writerCache.valueAt(wrtIndex));
+                    }
                 } else {
-                    createState(entry);
+                    switchTable(token, wrtIndex);
                 }
                 break;
             case EVT_FIELD_NAME:
@@ -137,7 +144,12 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
     }
 
     private void appendFirstRowAndCacheWriter(CharSequenceCache cache) {
-        TableWriter writer = entry.writer = pool.get(cache.get(tableName));
+        TableWriter writer = pool.get(cache.get(tableName));
+        this.writer = writer;
+        this.metadata = writer.getMetadata();
+        this.columnCount = metadata.getColumnCount();
+        writerCache.valueAt(cacheEntryIndex).writer = writer;
+
         int columnCount = columnNameType.size() / 2;
         int valueCount = columnValues.size();
 
@@ -162,7 +174,6 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
                         , cache.get(columnValues.getQuick(i)));
             }
             row.append();
-            writer.commit();
         } catch (BadCastException ignore) {
             row.cancel();
         }
@@ -193,7 +204,6 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
                 );
             }
             row.append();
-            writer.commit();
         } catch (BadCastException ignore) {
             row.cancel();
         }
@@ -206,12 +216,11 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
             createState(entry);
         } catch (CairoException ex) {
             LOG.error().$((Sinkable) ex).$();
-            skipAll();
+            switchModeToSkipLine();
         }
     }
 
     private void clearState() {
-        writer = null;
         columnNameType.clear();
         columnValues.clear();
     }
@@ -220,12 +229,7 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
         writer = entry.writer;
         metadata = writer.getMetadata();
         columnCount = metadata.getColumnCount();
-        if (onLineEnd != MY_LINE_END) {
-            onLineEnd = MY_LINE_END;
-            onFieldName = MY_FIELD_NAME;
-            onFieldValue = MY_FIELD_VALUE;
-            onTagValue = MY_TAG_VALUE;
-        }
+        switchModeToAppend();
     }
 
     private void createTable(CharSequenceCache cache) {
@@ -286,32 +290,35 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
     }
 
     private void initCacheEntry(CachedCharSequence token, CacheEntry entry) {
-        if (entry.state == 0) {
-            int exists = TableUtils.exists(configuration.getFilesFacade(), path, configuration.getRoot(), token);
-            switch (exists) {
-                case TABLE_EXISTS:
-                    entry.state = 1;
-                    cacheWriter(entry, token);
-                    break;
-                case TABLE_DOES_NOT_EXIST:
-                    this.entry = entry;
-                    tableName = token.getCacheAddress();
-                    this.entry = entry;
-                    if (onLineEnd != MY_NEW_LINE_END) {
-                        onLineEnd = MY_NEW_LINE_END;
-                        onFieldName = MY_NEW_FIELD_NAME;
-                        onFieldValue = MY_NEW_FIELD_VALUE;
-                        onTagValue = MY_NEW_TAG_VALUE;
-                    }
-                    break;
-                default:
-                    entry.state = 3;
-                    skipAll();
-                    break;
-            }
-        } else if (entry.state == 1) {
-            // have to retry pool
-            cacheWriter(entry, token);
+        switch (entry.state) {
+            case 0:
+                int exists = TableUtils.exists(configuration.getFilesFacade(), path, configuration.getRoot(), token);
+                switch (exists) {
+                    case TABLE_EXISTS:
+                        entry.state = 1;
+                        cacheWriter(entry, token);
+                        break;
+                    case TABLE_DOES_NOT_EXIST:
+                        tableName = token.getCacheAddress();
+                        if (onLineEnd != MY_NEW_LINE_END) {
+                            onLineEnd = MY_NEW_LINE_END;
+                            onFieldName = MY_NEW_FIELD_NAME;
+                            onFieldValue = MY_NEW_FIELD_VALUE;
+                            onTagValue = MY_NEW_TAG_VALUE;
+                        }
+                        break;
+                    default:
+                        entry.state = 3;
+                        switchModeToSkipLine();
+                        break;
+                }
+                break;
+            case 1:
+                cacheWriter(entry, token);
+                break;
+            default:
+                switchModeToSkipLine();
+                break;
         }
     }
 
@@ -331,7 +338,7 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
     private void parseFieldValue(CachedCharSequence value, CharSequenceCache cache) {
         int valueType = getValueType(value);
         if (valueType == -1) {
-            skipAll();
+            switchModeToSkipLine();
         } else {
             parseValue(value, valueType, cache);
         }
@@ -341,7 +348,7 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
     private void parseFieldValueNewTable(CachedCharSequence value, CharSequenceCache cache) {
         int valueType = getValueType(value);
         if (valueType == -1) {
-            skipAll();
+            switchModeToSkipLine();
         } else {
             parseValueNewTable(value, valueType);
         }
@@ -368,7 +375,7 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
                         .$(", columnType=").$(ColumnType.nameOf(columnType))
                         .$(", valueType=").$(ColumnType.nameOf(valueType))
                         .$(']').$();
-                skipAll();
+                switchModeToSkipLine();
             } else {
                 columnNameType.add(columnIndex);
                 columnNameType.add(valueType);
@@ -424,12 +431,49 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
         }
     }
 
-    private void skipAll() {
+    private void switchModeToAppend() {
+        if (onLineEnd != MY_LINE_END) {
+            onLineEnd = MY_LINE_END;
+            onFieldName = MY_FIELD_NAME;
+            onFieldValue = MY_FIELD_VALUE;
+            onTagValue = MY_TAG_VALUE;
+        }
+    }
+
+    private void switchModeToSkipLine() {
         if (onFieldValue != NOOP_FIELD_VALUE) {
             onFieldValue = NOOP_FIELD_VALUE;
             onFieldName = NOOP_FIELD_NAME;
             onTagValue = NOOP_FIELD_VALUE;
             onLineEnd = NOOP_LINE_END;
+        }
+    }
+
+    private void switchTable(CachedCharSequence tableName, int entryIndex) {
+        if (this.cacheEntryIndex != 0) {
+            // add previous writer to commit list
+            CacheEntry e = writerCache.valueAt(cacheEntryIndex);
+            if (e.writer != null) {
+                commitList.put(e.writer.getName(), e.writer);
+            }
+        }
+
+        CacheEntry entry;
+        if (entryIndex < 0) {
+            entry = writerCache.valueAt(entryIndex);
+        } else {
+            entry = new CacheEntry();
+            writerCache.putAt(entryIndex, ImmutableCharSequence.of(tableName), entry);
+            // adjust writer map index to negative, which indicates that entry exists
+            entryIndex = -entryIndex - 1;
+        }
+
+        this.cacheEntryIndex = entryIndex;
+
+        if (entry.writer == null) {
+            initCacheEntry(tableName, entry);
+        } else {
+            createState(entry);
         }
     }
 

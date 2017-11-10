@@ -30,6 +30,7 @@ public class LineProtoReceiverTest extends AbstractCairoTest {
             TableUtils.create(cairoCfg.getFilesFacade(), path, mem, root, struct.build(), cairoCfg.getMkDirMode());
         }
 
+        Os.schedSetAffinity(Os.getPid(), 0);
         try (TableWriter w = pool.get("tab")) {
             TableWriter.Row r = w.newRow(0);
             r.putStr(0, null);
@@ -55,7 +56,9 @@ public class LineProtoReceiverTest extends AbstractCairoTest {
         System.out.println("SENDER DONE");
 
         Thread.sleep(2000);
+
         worker.halt();
+        receiver.close();
 
         System.out.println("WORKER HALTED");
         workerHaltLatch.await();
@@ -86,7 +89,7 @@ public class LineProtoReceiverTest extends AbstractCairoTest {
 
         @Override
         public int getMsgCount() {
-            return 4096;
+            return 10000;
         }
 
         @Override
@@ -96,7 +99,7 @@ public class LineProtoReceiverTest extends AbstractCairoTest {
 
         @Override
         public int getReceiveBufferSize() {
-            return 16 * 1024 * 1024;
+            return 8 * 1024 * 1024;
         }
     }
 

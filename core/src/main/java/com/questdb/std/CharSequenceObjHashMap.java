@@ -114,6 +114,14 @@ public class CharSequenceObjHashMap<V> implements Mutable {
         list.sort(comparator);
     }
 
+    public boolean putAt(int index, CharSequence key, V value) {
+        if (putAt0(index, key, value)) {
+            list.add(key);
+            return true;
+        }
+        return false;
+    }
+
     public V valueQuick(int index) {
         return get(list.getQuick(index));
     }
@@ -130,12 +138,8 @@ public class CharSequenceObjHashMap<V> implements Mutable {
         } while (true);
     }
 
-    private boolean putAt(int index, CharSequence key, V value) {
-        if (putAt0(index, key, value)) {
-            list.add(key);
-            return true;
-        }
-        return false;
+    public V valueAt(int index) {
+        return index < 0 ? Unsafe.arrayGet(values, -index - 1) : null;
     }
 
     private boolean putAt0(int index, CharSequence key, V value) {
@@ -168,9 +172,5 @@ public class CharSequenceObjHashMap<V> implements Mutable {
                 putAt0(keyIndex(Unsafe.arrayGet(oldKeys, i)), Unsafe.arrayGet(oldKeys, i), Unsafe.arrayGet(oldValues, i));
             }
         }
-    }
-
-    private V valueAt(int index) {
-        return index < 0 ? Unsafe.arrayGet(values, -index - 1) : null;
     }
 }
