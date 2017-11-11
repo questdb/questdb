@@ -20,7 +20,6 @@ import com.questdb.store.PartitionBy;
 import com.questdb.store.factory.configuration.RecordMetadata;
 
 import java.io.Closeable;
-import java.io.IOException;
 
 import static com.questdb.cairo.TableUtils.TABLE_DOES_NOT_EXIST;
 import static com.questdb.cairo.TableUtils.TABLE_EXISTS;
@@ -72,7 +71,7 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
     }
 
     @Override
-    public void close() throws IOException {
+    public void close() {
         Misc.free(path);
         Misc.free(appendMemory);
         for (int i = 0, n = writerCache.size(); i < n; i++) {

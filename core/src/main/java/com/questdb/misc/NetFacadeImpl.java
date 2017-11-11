@@ -44,6 +44,11 @@ public class NetFacadeImpl implements NetFacade {
     }
 
     @Override
+    public int recv(long fd, long buf, int bufLen) {
+        return Net.recv(fd, buf, bufLen);
+    }
+
+    @Override
     public int setRcvBuf(long fd, int size) {
         return Net.setRcvBuf(fd, size);
     }

@@ -15,6 +15,8 @@ public interface NetFacade {
 
     long msgHeaders(int msgBufferSize, int msgCount);
 
+    int recv(long fd, long buf, int bufLen);
+
     @SuppressWarnings("SpellCheckingInspection")
     int recvmmsg(long fd, long msgVec, int msgCount);
 
