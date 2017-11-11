@@ -6,9 +6,9 @@ import com.questdb.cairo.TableWriter;
 import com.questdb.cairo.pool.ResourcePool;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
-import com.questdb.misc.Net;
 import com.questdb.misc.NetFacade;
 import com.questdb.misc.Os;
+import com.questdb.misc.Unsafe;
 import com.questdb.mp.Job;
 import com.questdb.parser.lp.CairoLineProtoParser;
 import com.questdb.parser.lp.LineProtoLexer;
@@ -16,20 +16,20 @@ import com.questdb.std.str.DirectByteCharSequence;
 
 import java.io.Closeable;
 
-public class LinuxLineProtoReceiver implements Closeable, Job {
-    private static final Log LOG = LogFactory.getLog(LinuxLineProtoReceiver.class);
+public class GenericLineProtoReceiver implements Closeable, Job {
+    private static final Log LOG = LogFactory.getLog(GenericLineProtoReceiver.class);
 
-    private final int msgCount;
     private final DirectByteCharSequence byteSequence = new DirectByteCharSequence();
     private final LineProtoLexer lexer;
     private final CairoLineProtoParser parser;
     private final NetFacade nf;
+    private final int bufLen;
     private long fd = -1;
-    private long msgVec = 0;
     private int commitRate;
     private long totalCount = 0;
+    private long buf;
 
-    public LinuxLineProtoReceiver(ReceiverConfiguration receiverCfg, CairoConfiguration cairoCfg, ResourcePool<TableWriter> writerPool) {
+    public GenericLineProtoReceiver(ReceiverConfiguration receiverCfg, CairoConfiguration cairoCfg, ResourcePool<TableWriter> writerPool) {
 
         nf = receiverCfg.getNetFacade();
 
@@ -58,26 +58,26 @@ public class LinuxLineProtoReceiver implements Closeable, Job {
         }
 
         this.commitRate = receiverCfg.getCommitRate();
-        this.msgCount = receiverCfg.getMsgCount();
 
         if (receiverCfg.getReceiveBufferSize() != -1 && nf.setRcvBuf(fd, receiverCfg.getReceiveBufferSize()) != 0) {
             LOG.error().$("cannot set receive buffer size [fd=").$(fd).$(", size=").$(receiverCfg.getReceiveBufferSize()).$(']').$();
         }
 
-        msgVec = nf.msgHeaders(receiverCfg.getMsgBufferSize(), msgCount);
+        this.buf = Unsafe.malloc(this.bufLen = receiverCfg.getMsgBufferSize());
+
         lexer = new LineProtoLexer(receiverCfg.getMsgBufferSize());
         parser = new CairoLineProtoParser(cairoCfg, writerPool);
         lexer.withParser(parser);
 
-        LOG.info().$("started [fd=").$(fd).$(", bind=").$(receiverCfg.getBindIPv4Address()).$(", group=").$(receiverCfg.getGroupIPv4Address()).$(", port=").$(receiverCfg.getPort()).$(", batch=").$(msgCount).$(", commitRate=").$(commitRate).$(']').$();
+        LOG.info().$("started [fd=").$(fd).$(", bind=").$(receiverCfg.getBindIPv4Address()).$(", group=").$(receiverCfg.getGroupIPv4Address()).$(", port=").$(receiverCfg.getPort()).$(", commitRate=").$(commitRate).$(']').$();
     }
 
     @Override
     public void close() {
         if (fd > -1) {
             nf.close(fd);
-            if (msgVec != 0) {
-                nf.freeMsgHeaders(msgVec);
+            if (buf != 0) {
+                Unsafe.free(buf, bufLen);
             }
             if (parser != null) {
                 parser.commitAll();
@@ -92,17 +92,12 @@ public class LinuxLineProtoReceiver implements Closeable, Job {
     public boolean run() {
         boolean ran = false;
         int count;
-        while ((count = nf.recvmmsg(fd, msgVec, msgCount)) > 0) {
-            long p = msgVec;
-            for (int i = 0; i < count; i++) {
-                long buf = nf.getMMsgBuf(p);
-                byteSequence.of(buf, buf + nf.getMMsgBufLen(p));
-                lexer.parse(byteSequence);
-                lexer.parseLast();
-                p += Net.MMSGHDR_SIZE;
-            }
+        while ((count = nf.recv(fd, buf, bufLen)) > 0) {
+            byteSequence.of(buf, buf + count);
+            lexer.parse(byteSequence);
+            lexer.parseLast();
 
-            totalCount += count;
+            totalCount++;
 
             if (totalCount > commitRate) {
                 totalCount = 0;

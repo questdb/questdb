@@ -55,7 +55,14 @@ JNIEXPORT jlong JNICALL Java_com_questdb_misc_Net_socketTcp
 
 JNIEXPORT jlong JNICALL Java_com_questdb_misc_Net_socketUdp0
         (JNIEnv *e, jclass cl) {
-    return socket(AF_INET, SOCK_DGRAM, 0);
+    int fd = socket(AF_INET, SOCK_DGRAM, 0);
+
+    if (fd > 0 && fcntl(fd, F_SETFL, O_NONBLOCK) < 0) {
+        close(fd);
+        return -1;
+    }
+
+    return fd;
 }
 
 JNIEXPORT jlong JNICALL Java_com_questdb_misc_Net_sockaddr
