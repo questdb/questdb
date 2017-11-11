@@ -33,7 +33,6 @@ import com.questdb.std.ObjList;
 import com.questdb.std.str.CompositePath;
 import com.questdb.std.str.DirectCharSequence;
 import com.questdb.std.str.NativeLPSZ;
-import com.questdb.std.str.Path;
 import com.questdb.std.time.DateFormatUtils;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -54,9 +53,9 @@ public class FilesTest {
 
     @Test
     public void testAppendAndSeqRead() throws Exception {
-        try (Path path = new Path()) {
+        try (CompositePath path = new CompositePath()) {
             File f = temporaryFolder.newFile();
-            long fd = Files.openRW(path.of(f.getAbsolutePath()));
+            long fd = Files.openRW(path.of(f.getAbsolutePath()).$());
             try {
                 Assert.assertTrue(fd > 0);
 
@@ -94,7 +93,7 @@ public class FilesTest {
             }
 
             Assert.assertTrue(Files.exists(path));
-            Assert.assertFalse(Files.exists(path.of("/x/yz/1/2/3")));
+            Assert.assertFalse(Files.exists(path.of("/x/yz/1/2/3").$()));
         }
     }
 
@@ -124,9 +123,9 @@ public class FilesTest {
 
     @Test
     public void testDeleteOpenFile() throws Exception {
-        try (Path path = new Path()) {
+        try (CompositePath path = new CompositePath()) {
             File f = temporaryFolder.newFile();
-            long fd = Files.openRW(path.of(f.getAbsolutePath()));
+            long fd = Files.openRW(path.of(f.getAbsolutePath()).$());
             Assert.assertTrue(Files.exists(fd));
             Assert.assertTrue(Files.remove(path));
             Assert.assertFalse(Files.exists(fd));
@@ -136,9 +135,9 @@ public class FilesTest {
 
     @Test
     public void testLastModified() throws IOException, NumericException {
-        try (Path path = new Path()) {
+        try (CompositePath path = new CompositePath()) {
             File f = temporaryFolder.newFile();
-            Assert.assertTrue(Files.touch(path.of(f.getAbsolutePath())));
+            Assert.assertTrue(Files.touch(path.of(f.getAbsolutePath()).$()));
             long t = DateFormatUtils.parseDateTime("2015-10-17T10:00:00.000Z");
             Assert.assertTrue(Files.setLastModified(path, t));
             Assert.assertEquals(t, Files.getLastModified(path));
@@ -149,7 +148,7 @@ public class FilesTest {
     public void testListDir() throws Exception {
         String temp = temporaryFolder.getRoot().getAbsolutePath();
         ObjList<String> names = new ObjList<>();
-        try (Path path = new Path(temp)) {
+        try (CompositePath path = new CompositePath().of(temp).$()) {
             try (CompositePath cp = new CompositePath()) {
                 Assert.assertTrue(Files.touch(cp.of(temp).concat("a.txt").$()));
                 NativeLPSZ name = new NativeLPSZ();
@@ -195,7 +194,7 @@ public class FilesTest {
 
     @Test
     public void testRemove() throws Exception {
-        try (Path path = new Path(temporaryFolder.newFile().getAbsolutePath())) {
+        try (CompositePath path = new CompositePath().of(temporaryFolder.newFile().getAbsolutePath()).$()) {
             Assert.assertTrue(Files.touch(path));
             Assert.assertTrue(Files.exists(path));
             Assert.assertTrue(Files.remove(path));
@@ -207,7 +206,7 @@ public class FilesTest {
     public void testTruncate() throws Exception {
         File temp = temporaryFolder.newFile();
         Files.writeStringToFile(temp, "abcde");
-        try (Path path = new Path(temp.getAbsolutePath())) {
+        try (CompositePath path = new CompositePath().of(temp.getAbsolutePath()).$()) {
             Assert.assertTrue(Files.exists(path));
             Assert.assertEquals(5, Files.length(path));
 
@@ -225,9 +224,9 @@ public class FilesTest {
 
     @Test
     public void testWrite() throws Exception {
-        try (Path path = new Path()) {
+        try (CompositePath path = new CompositePath()) {
             File f = temporaryFolder.newFile();
-            long fd = Files.openRW(path.of(f.getAbsolutePath()));
+            long fd = Files.openRW(path.of(f.getAbsolutePath()).$());
             try {
                 Assert.assertTrue(fd > 0);
 

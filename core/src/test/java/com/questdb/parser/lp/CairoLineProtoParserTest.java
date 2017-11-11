@@ -9,7 +9,6 @@ import com.questdb.misc.FilesFacade;
 import com.questdb.std.clock.Clock;
 import com.questdb.std.str.CompositePath;
 import com.questdb.std.str.LPSZ;
-import com.questdb.std.str.Path;
 import com.questdb.std.time.DateFormatUtils;
 import com.questdb.store.factory.configuration.JournalStructure;
 import com.questdb.test.tools.TestMilliClock;
@@ -229,7 +228,7 @@ public class CairoLineProtoParserTest extends AbstractCairoTest {
 
             @Override
             public int mkdirs(LPSZ path, int mode) {
-                if (Chars.endsWith(path, "x" + Path.SEPARATOR)) {
+                if (Chars.endsWith(path, "x" + Files.SEPARATOR)) {
                     called = true;
                     return -1;
                 }
@@ -340,7 +339,7 @@ public class CairoLineProtoParserTest extends AbstractCairoTest {
         };
 
         try (CompositePath path = new CompositePath()) {
-            Files.mkdirs(path.of(root).concat("x").put(Path.SEPARATOR).$(), configuration.getMkDirMode());
+            Files.mkdirs(path.of(root).concat("x").put(Files.SEPARATOR).$(), configuration.getMkDirMode());
             assertThat(expected, lines, "y", configuration);
             Assert.assertEquals(TableUtils.TABLE_RESERVED, TableUtils.exists(configuration.getFilesFacade(), path, root, "x"));
         }

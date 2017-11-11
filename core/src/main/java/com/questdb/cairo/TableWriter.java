@@ -31,7 +31,10 @@ import com.questdb.std.CharSequenceHashSet;
 import com.questdb.std.LongList;
 import com.questdb.std.ObjList;
 import com.questdb.std.Sinkable;
-import com.questdb.std.str.*;
+import com.questdb.std.str.CompositePath;
+import com.questdb.std.str.ImmutableCharSequence;
+import com.questdb.std.str.LPSZ;
+import com.questdb.std.str.NativeLPSZ;
 import com.questdb.std.time.DateFormat;
 import com.questdb.std.time.DateFormatUtils;
 import com.questdb.std.time.DateLocaleFactory;
@@ -900,7 +903,7 @@ public class TableWriter implements Closeable {
         try {
             setStateForTimestamp(timestamp, true);
             int plen = path.length();
-            if (ff.mkdirs(path.put(Path.SEPARATOR).$(), mkDirMode) != 0) {
+            if (ff.mkdirs(path.put(Files.SEPARATOR).$(), mkDirMode) != 0) {
                 throw CairoException.instance(ff.errno()).put("Cannot create directory: ").put(path);
             }
             assert columnCount > 0;
@@ -1238,7 +1241,7 @@ public class TableWriter implements Closeable {
     private void setStateForTimestamp(long timestamp, boolean updatePartitionInterval) {
         int y, m, d;
         boolean leap;
-        path.put(Path.SEPARATOR);
+        path.put(Files.SEPARATOR);
         switch (partitionBy) {
             case PartitionBy.DAY:
                 y = Dates.getYear(timestamp);

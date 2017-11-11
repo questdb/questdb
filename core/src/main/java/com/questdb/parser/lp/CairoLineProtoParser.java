@@ -6,6 +6,7 @@ import com.questdb.ex.NumericException;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.misc.Chars;
+import com.questdb.misc.Files;
 import com.questdb.misc.Misc;
 import com.questdb.misc.Numbers;
 import com.questdb.std.CharSequenceObjHashMap;
@@ -14,7 +15,6 @@ import com.questdb.std.Sinkable;
 import com.questdb.std.clock.Clock;
 import com.questdb.std.str.CompositePath;
 import com.questdb.std.str.ImmutableCharSequence;
-import com.questdb.std.str.Path;
 import com.questdb.store.ColumnType;
 import com.questdb.store.PartitionBy;
 import com.questdb.store.factory.configuration.RecordMetadata;
@@ -234,7 +234,7 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
     private void createTable(CharSequenceCache cache) {
         path.of(configuration.getRoot()).concat(cache.get(tableName));
         final int rootLen = path.length();
-        if (configuration.getFilesFacade().mkdirs(path.put(Path.SEPARATOR).$(), configuration.getMkDirMode()) == -1) {
+        if (configuration.getFilesFacade().mkdirs(path.put(Files.SEPARATOR).$(), configuration.getMkDirMode()) == -1) {
             throw CairoException.instance(0).put("cannot create directory: ").put(path);
         }
 

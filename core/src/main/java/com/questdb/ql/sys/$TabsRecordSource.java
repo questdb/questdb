@@ -31,7 +31,10 @@ import com.questdb.misc.Os;
 import com.questdb.misc.Unsafe;
 import com.questdb.ql.*;
 import com.questdb.ql.ops.AbstractRecordSource;
-import com.questdb.std.str.*;
+import com.questdb.std.str.CharSink;
+import com.questdb.std.str.CompositePath;
+import com.questdb.std.str.LPSZ;
+import com.questdb.std.str.NativeLPSZ;
 import com.questdb.store.factory.ReaderFactory;
 import com.questdb.store.factory.configuration.JournalConfiguration;
 import com.questdb.store.factory.configuration.RecordMetadata;
@@ -39,7 +42,7 @@ import com.questdb.store.factory.configuration.RecordMetadata;
 public class $TabsRecordSource extends AbstractRecordSource {
 
     private static final Log LOG = LogFactory.getLog($TabsRecordSource.class);
-    private static final ThreadLocal<Path> tlPath = ThreadLocal.withInitial(Path::new);
+    private static final ThreadLocal<CompositePath> tlPath = ThreadLocal.withInitial(CompositePath::new);
     private static final ThreadLocal<CompositePath> tlCompositePath = ThreadLocal.withInitial(CompositePath::new);
 
     private static final ThreadLocal<NativeLPSZ> tlNativeLpsz = ThreadLocal.withInitial(NativeLPSZ::new);
@@ -82,7 +85,7 @@ public class $TabsRecordSource extends AbstractRecordSource {
 
         try {
             String base = factory.getConfiguration().getJournalBase().getAbsolutePath();
-            Path path = tlPath.get().of(base);
+            CompositePath path = tlPath.get().of(base).$();
             long find = Files.findFirst(path);
             if (find > 0) {
                 try {

@@ -36,7 +36,6 @@ import com.questdb.std.ObjList;
 import com.questdb.std.str.CompositePath;
 import com.questdb.std.str.ImmutableCharSequence;
 import com.questdb.std.str.NativeLPSZ;
-import com.questdb.std.str.Path;
 import com.questdb.std.time.DateFormat;
 import com.questdb.std.time.DateLocaleFactory;
 import com.questdb.std.time.Dates;
@@ -54,7 +53,7 @@ public class TableReader implements Closeable, RecordCursor {
                 Dates.addYear(reader.partitionMin, partitionIndex),
                 DateLocaleFactory.INSTANCE.getDefaultDateLocale(),
                 null,
-                reader.path.put(Path.SEPARATOR)
+                reader.path.put(Files.SEPARATOR)
         );
         return reader.path.$();
 
@@ -65,7 +64,7 @@ public class TableReader implements Closeable, RecordCursor {
                 Dates.addMonths(reader.partitionMin, partitionIndex),
                 DateLocaleFactory.INSTANCE.getDefaultDateLocale(),
                 null,
-                reader.path.put(Path.SEPARATOR)
+                reader.path.put(Files.SEPARATOR)
         );
         return reader.path.$();
     };
@@ -75,7 +74,7 @@ public class TableReader implements Closeable, RecordCursor {
                 Dates.addDays(reader.partitionMin, partitionIndex),
                 DateLocaleFactory.INSTANCE.getDefaultDateLocale(),
                 null,
-                reader.path.put(Path.SEPARATOR)
+                reader.path.put(Files.SEPARATOR)
         );
         return reader.path.$();
     };

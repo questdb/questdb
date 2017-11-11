@@ -25,13 +25,13 @@ package com.questdb.cairo;
 
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
+import com.questdb.misc.Files;
 import com.questdb.misc.FilesFacade;
 import com.questdb.misc.Os;
 import com.questdb.misc.Unsafe;
 import com.questdb.std.CharSequenceIntHashMap;
 import com.questdb.std.str.CompositePath;
 import com.questdb.std.str.LPSZ;
-import com.questdb.std.str.Path;
 import com.questdb.std.time.DateFormat;
 import com.questdb.std.time.DateFormatCompiler;
 import com.questdb.store.ColumnType;
@@ -69,7 +69,7 @@ public final class TableUtils {
     public static void create(FilesFacade ff, CompositePath path, AppendMemory memory, CharSequence root, JournalMetadata metadata, int mode) {
         path.of(root).concat(metadata.getName());
         final int rootLen = path.length();
-        if (ff.mkdirs(path.put(Path.SEPARATOR).$(), mode) == -1) {
+        if (ff.mkdirs(path.put(Files.SEPARATOR).$(), mode) == -1) {
             throw CairoException.instance(ff.errno()).put("Cannot create dir: ").put(path);
         }
 
