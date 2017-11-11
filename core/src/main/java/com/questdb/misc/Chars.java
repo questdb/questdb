@@ -27,8 +27,8 @@ import com.questdb.ex.JournalRuntimeException;
 import com.questdb.std.ObjList;
 import com.questdb.std.str.ByteSequence;
 import com.questdb.std.str.CharSink;
+import com.questdb.std.str.CompositePath;
 import com.questdb.std.str.DirectBytes;
-import com.questdb.std.str.Path;
 
 public final class Chars {
     private final static ThreadLocal<char[]> builder = new ThreadLocal<>();
@@ -290,8 +290,8 @@ public final class Chars {
      * @param args command line
      * @return list of 0-terminated strings
      */
-    public static ObjList<Path> splitLpsz(CharSequence args) {
-        final ObjList<Path> paths = new ObjList<>();
+    public static ObjList<CompositePath> splitLpsz(CharSequence args) {
+        final ObjList<CompositePath> paths = new ObjList<>();
         int n = args.length();
         int lastLen = 0;
         int lastIndex = 0;
@@ -306,7 +306,7 @@ public final class Chars {
                         if (inQuote) {
                             lastLen++;
                         } else {
-                            paths.add(new Path().of(args, lastIndex, lastLen));
+                            paths.add(new CompositePath().of(args, lastIndex, lastLen).$());
                             lastLen = 0;
                         }
                     }
@@ -325,7 +325,7 @@ public final class Chars {
         }
 
         if (lastLen > 0) {
-            paths.add(new Path().of(args, lastIndex, lastLen));
+            paths.add(new CompositePath().of(args, lastIndex, lastLen).$());
         }
         return paths;
     }

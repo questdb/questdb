@@ -24,6 +24,7 @@
 package com.questdb.std.str;
 
 import com.questdb.misc.Chars;
+import com.questdb.misc.Files;
 import com.questdb.misc.Os;
 import com.questdb.misc.Unsafe;
 import org.jetbrains.annotations.NotNull;
@@ -40,7 +41,19 @@ public final class CompositePath extends AbstractCharSink implements Closeable, 
     private boolean trailingSlash = false;
 
     public CompositePath() {
-        alloc(128);
+        this.capacity = 128;
+        this.ptr = this.wptr = Unsafe.malloc(capacity + 1);
+    }
+
+    public static void copy(CharSequence str, int from, int len, long addr) {
+        for (int i = 0; i < len; i++) {
+            char c = str.charAt(i + from);
+            Unsafe.getUnsafe().putByte(addr + i, (byte) (c == '/' && Os.type == Os.WINDOWS ? '\\' : c));
+        }
+    }
+
+    public static void copyPathSeparator(long address) {
+        Unsafe.getUnsafe().putByte(address, (byte) Files.SEPARATOR);
     }
 
     public CompositePath $() {
@@ -75,25 +88,34 @@ public final class CompositePath extends AbstractCharSink implements Closeable, 
     }
 
     public CompositePath concat(CharSequence str) {
-        int l = str.length();
-        if (l + len + OVERHEAD >= capacity) {
-            extend(l + len + OVERHEAD);
+        return concat(str, 0, str.length());
+    }
+
+    public CompositePath concat(CharSequence str, int from, int len) {
+        if (len + this.len + OVERHEAD >= capacity) {
+            extend(len + this.len + OVERHEAD);
         }
 
-        if (len > 0 && !trailingSlash) {
-            Path.copyPathSeparator(wptr);
+        if (this.len > 0 && !trailingSlash) {
+            copyPathSeparator(wptr);
             wptr++;
-            len++;
+            this.len++;
         }
 
-        copy(str, l);
+        copy(str, from, len, wptr);
+
+        this.trailingSlash = len > 0 && str.charAt(from + len - 1) == Files.SEPARATOR;
+        this.wptr += len;
+        this.len += len;
+
+
         return this;
     }
 
     public CompositePath concat(long lpsz) {
 
         if (len > 0 && !trailingSlash) {
-            Path.copyPathSeparator(wptr);
+            copyPathSeparator(wptr);
             wptr++;
             len++;
         }
@@ -174,6 +196,13 @@ public final class CompositePath extends AbstractCharSink implements Closeable, 
         }
     }
 
+    public CompositePath of(CharSequence str, int from, int len) {
+        this.wptr = ptr;
+        this.len = 0;
+        this.trailingSlash = false;
+        return concat(str, from, len);
+    }
+
     public CompositePath of(long lpsz) {
         if (lpsz != ptr) {
             this.wptr = ptr;
@@ -204,23 +233,6 @@ public final class CompositePath extends AbstractCharSink implements Closeable, 
         this.len = len;
         wptr = ptr + len;
         return this;
-    }
-
-    private void alloc(int len) {
-        this.capacity = len;
-        this.ptr = this.wptr = Unsafe.malloc(len + 1);
-    }
-
-    private void copy(CharSequence str, int len) {
-        Path.copy(str, 0, len, wptr);
-        if (len > 0) {
-            char c = str.charAt(len - 1);
-            this.trailingSlash = c == '/' || c == '\\';
-        } else {
-            this.trailingSlash = false;
-        }
-        this.wptr += len;
-        this.len += len;
     }
 
     private void extend(int len) {

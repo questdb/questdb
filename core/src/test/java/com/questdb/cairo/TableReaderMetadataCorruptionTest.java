@@ -23,10 +23,10 @@
 
 package com.questdb.cairo;
 
+import com.questdb.misc.Files;
 import com.questdb.misc.FilesFacadeImpl;
 import com.questdb.misc.Os;
 import com.questdb.std.str.CompositePath;
-import com.questdb.std.str.Path;
 import com.questdb.store.ColumnType;
 import com.questdb.store.PartitionBy;
 import com.questdb.test.tools.TestUtils;
@@ -168,7 +168,7 @@ public class TableReaderMetadataCorruptionTest extends AbstractCairoTest {
             try (CompositePath path = new CompositePath()) {
                 path.of(root).concat("x");
                 final int rootLen = path.length();
-                if (FilesFacadeImpl.INSTANCE.mkdirs(path.put(Path.SEPARATOR).$(), 509) == -1) {
+                if (FilesFacadeImpl.INSTANCE.mkdirs(path.put(Files.SEPARATOR).$(), 509) == -1) {
                     throw CairoException.instance(FilesFacadeImpl.INSTANCE.errno()).put("Cannot create dir: ").put(path);
                 }
 

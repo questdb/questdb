@@ -29,7 +29,7 @@ import com.questdb.misc.*;
 import com.questdb.mp.RingQueue;
 import com.questdb.mp.Sequence;
 import com.questdb.mp.SynchronizedJob;
-import com.questdb.std.str.Path;
+import com.questdb.std.str.CompositePath;
 
 import java.io.Closeable;
 
@@ -68,7 +68,7 @@ public class LogFileWriter extends SynchronizedJob implements Closeable, LogWrit
         }
         this.buf = _wptr = Unsafe.malloc(bufSize);
         this.lim = buf + bufSize;
-        try (Path path = new Path(location)) {
+        try (CompositePath path = new CompositePath().of(location).$()) {
             if (truncate != null && Chars.equalsIgnoreCase(truncate, "true")) {
                 this.fd = Files.openRW(path);
                 Files.truncate(fd, 0);

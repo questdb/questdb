@@ -46,10 +46,10 @@ public final class PrefixedPath extends AbstractCharSequence implements Closeabl
 
         alloc(Math.max(minCapacity, l * 2));
 
-        Path.copy(prefix, 0, l, ptr);
+        CompositePath.copy(prefix, 0, l, ptr);
         char c = prefix.charAt(l - 1);
         if (c != '/' && c != '\\') {
-            Path.copyPathSeparator(ptr + l);
+            CompositePath.copyPathSeparator(ptr + l);
             l++;
         }
 
@@ -85,7 +85,8 @@ public final class PrefixedPath extends AbstractCharSequence implements Closeabl
         if (l + prefixLen > capacity) {
             alloc(l + len);
         }
-        Path.copyz(str, 0, l, ptr + prefixLen);
+        CompositePath.copy(str, 0, l, ptr + prefixLen);
+        Unsafe.getUnsafe().putByte(ptr + prefixLen + l, (byte) 0);
         this.len = this.prefixLen + l;
         return this;
     }

@@ -51,6 +51,7 @@ public final class Files {
 
     public static final int MAP_RO = 1;
     public static final int MAP_RW = 2;
+    public static final char SEPARATOR;
 
     static final AtomicLong OPEN_FILE_COUNT = new AtomicLong();
 
@@ -413,5 +414,6 @@ public final class Files {
     static {
         UTF_8 = Charset.forName("UTF-8");
         PAGE_SIZE = getPageSize();
+        SEPARATOR = Os.type == Os.WINDOWS ? '\\' : '/';
     }
 }

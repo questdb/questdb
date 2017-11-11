@@ -31,7 +31,6 @@ import com.questdb.std.Sinkable;
 import com.questdb.std.str.CompositePath;
 import com.questdb.std.str.LPSZ;
 import com.questdb.std.str.NativeLPSZ;
-import com.questdb.std.str.Path;
 import com.questdb.std.time.*;
 import com.questdb.store.ColumnType;
 import com.questdb.store.PartitionBy;
@@ -972,7 +971,7 @@ public class TableWriterTest extends AbstractCairoTest {
         testConstructor(new FilesFacadeImpl() {
             @Override
             public int mkdirs(LPSZ path, int mode) {
-                if (Chars.endsWith(path, "default" + Path.SEPARATOR)) {
+                if (Chars.endsWith(path, "default" + Files.SEPARATOR)) {
                     return -1;
                 }
                 return super.mkdirs(path, mode);
@@ -1971,11 +1970,11 @@ public class TableWriterTest extends AbstractCairoTest {
         });
     }
 
-//    @Test
-//    public void testTwoByteUtf8() throws Exception {
-//        JournalStructure struct = new JournalStructure("соотечественник").$str("секьюрити").$ts();
-//        CairoTestUtils.createTable(FF, root, struct);
-//    }
+    @Test
+    public void testTwoByteUtf8() throws Exception {
+        JournalStructure struct = new JournalStructure("соотечественник").$str("секьюрити").$ts();
+        CairoTestUtils.createTable(FF, root, struct);
+    }
 
     @Test
     public void testTableDoesNotExist() throws Exception {
@@ -2846,7 +2845,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
         try (CompositePath vp = new CompositePath()) {
             for (i = 0; i < n; i++) {
-                vp.of(root).concat(PRODUCT).put(Path.SEPARATOR);
+                vp.of(root).concat(PRODUCT).put(Files.SEPARATOR);
                 fmt.format(vmem.getLong(i * 8), enGb, "UTC", vp);
                 if (!FF.exists(vp.$())) {
                     Assert.fail();

@@ -27,7 +27,7 @@ import com.questdb.ex.FatalError;
 import com.questdb.ex.KerberosException;
 import com.questdb.std.ObjList;
 import com.questdb.std.str.CharSequenceZ;
-import com.questdb.std.str.Path;
+import com.questdb.std.str.CompositePath;
 import com.sun.management.OperatingSystemMXBean;
 
 import java.io.File;
@@ -51,7 +51,7 @@ public final class Os {
     public static native int errno();
 
     public static long forkExec(CharSequence args) {
-        ObjList<Path> paths = Chars.splitLpsz(args);
+        ObjList<CompositePath> paths = Chars.splitLpsz(args);
         int n = paths.size();
         try {
             long argv = Unsafe.malloc((n + 1) * 8);
@@ -110,17 +110,17 @@ public final class Os {
 
     public static native int getPid();
 
-    public static native int getTid();
-
-    public static native int schedSetAffinity(int pid, int cpu);
-
     public static long getSystemMemory() {
         return bean.getTotalPhysicalMemorySize();
     }
 
+    public static native int getTid();
+
     @SuppressWarnings("EmptyMethod")
     public static void init() {
     }
+
+    public static native int schedSetAffinity(int pid, int cpu);
 
     private static native long generateKrbToken(long spn);
 

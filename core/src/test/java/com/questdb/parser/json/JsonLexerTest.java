@@ -29,7 +29,7 @@ import com.questdb.misc.Unsafe;
 import com.questdb.std.IntStack;
 import com.questdb.std.Mutable;
 import com.questdb.std.str.ByteSequence;
-import com.questdb.std.str.Path;
+import com.questdb.std.str.CompositePath;
 import com.questdb.test.tools.TestUtils;
 import org.junit.AfterClass;
 import org.junit.Assert;
@@ -203,14 +203,15 @@ public class JsonLexerTest {
     @Test
     public void testParseLargeFile() throws Exception {
         String path = JsonLexerTest.class.getResource("/json/test.json").getPath();
-        Path p;
+        CompositePath p = new CompositePath();
         if (Os.type == Os.WINDOWS && path.startsWith("/")) {
-            p = new Path(path.substring(1));
+            p.of(path.substring(1));
         } else {
-            p = new Path(path);
+            p.of(path);
         }
+
         try {
-            long l = Files.length(p);
+            long l = Files.length(p.$());
             long fd = Files.openRO(p);
             JsonParser listener = new NoOpParser();
             try {

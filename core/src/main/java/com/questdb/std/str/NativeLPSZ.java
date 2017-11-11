@@ -25,14 +25,13 @@ package com.questdb.std.str;
 
 import com.questdb.misc.Unsafe;
 
-public class NativeLPSZ extends AbstractCharSequence implements LPSZ {
+/**
+ * Represents C LPSZ as Java' CharSequence. Byes in native memory are interpreted as ASCII characters. Multi-byte
+ * characters are NOT decoded.
+ */
+public class NativeLPSZ extends AbstractCharSequence {
     private long address;
     private int len;
-
-    @Override
-    public long address() {
-        return address;
-    }
 
     @Override
     public int length() {
