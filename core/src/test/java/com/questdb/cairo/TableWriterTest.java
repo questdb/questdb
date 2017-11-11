@@ -1971,6 +1971,12 @@ public class TableWriterTest extends AbstractCairoTest {
         });
     }
 
+//    @Test
+//    public void testTwoByteUtf8() throws Exception {
+//        JournalStructure struct = new JournalStructure("соотечественник").$str("секьюрити").$ts();
+//        CairoTestUtils.createTable(FF, root, struct);
+//    }
+
     @Test
     public void testTableDoesNotExist() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
