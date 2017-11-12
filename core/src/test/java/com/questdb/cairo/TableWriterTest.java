@@ -28,9 +28,9 @@ import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.misc.*;
 import com.questdb.std.Sinkable;
-import com.questdb.std.str.CompositePath;
 import com.questdb.std.str.LPSZ;
 import com.questdb.std.str.NativeLPSZ;
+import com.questdb.std.str.Path;
 import com.questdb.std.time.*;
 import com.questdb.store.ColumnType;
 import com.questdb.store.PartitionBy;
@@ -843,7 +843,7 @@ public class TableWriterTest extends AbstractCairoTest {
                 boolean fail = false;
 
                 @Override
-                public boolean rmdir(CompositePath name) {
+                public boolean rmdir(Path name) {
                     return !fail && super.rmdir(name);
                 }
 
@@ -1315,7 +1315,7 @@ public class TableWriterTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             create(ff, PartitionBy.DAY);
 
-            try (CompositePath path = new CompositePath().of(root)) {
+            try (Path path = new Path().of(root)) {
                 path.concat(PRODUCT).concat("test.dat").$();
                 Assert.assertTrue(Files.touch(path));
             }
@@ -1361,7 +1361,7 @@ public class TableWriterTest extends AbstractCairoTest {
     public void testDayPartitionRmDirError() throws Exception {
         testTruncate(new CountingFilesFacade() {
             @Override
-            public boolean rmdir(CompositePath name) {
+            public boolean rmdir(Path name) {
                 return --count != 0 && super.rmdir(name);
             }
         }, true);
@@ -1495,7 +1495,7 @@ public class TableWriterTest extends AbstractCairoTest {
             try {
                 Unsafe.getUnsafe().putLong(buf, 89808823424L);
 
-                try (CompositePath path = new CompositePath().of(root).concat("all").concat(TableUtils.TODO_FILE_NAME).$()) {
+                try (Path path = new Path().of(root).concat("all").concat(TableUtils.TODO_FILE_NAME).$()) {
                     long fd = Files.openRW(path);
                     Assert.assertTrue(fd != -1);
                     Assert.assertEquals(8, Files.write(fd, buf, 8, 0));
@@ -1560,7 +1560,7 @@ public class TableWriterTest extends AbstractCairoTest {
     public void testOpenWriterMissingTxFile() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             createAllTable();
-            try (CompositePath path = new CompositePath()) {
+            try (Path path = new Path()) {
                 Assert.assertTrue(FF.remove(path.of(root).concat("all").concat(TableUtils.TXN_FILE_NAME).$()));
                 try {
                     new TableWriter(FF, root, "all");
@@ -1896,7 +1896,7 @@ public class TableWriterTest extends AbstractCairoTest {
             boolean removeAttempted = false;
 
             @Override
-            public boolean rmdir(CompositePath name) {
+            public boolean rmdir(Path name) {
                 if (Chars.endsWith(name, "2013-03-12")) {
                     removeAttempted = true;
                     return false;
@@ -2182,7 +2182,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
     private int getDirCount() {
         AtomicInteger count = new AtomicInteger();
-        try (CompositePath path = new CompositePath()) {
+        try (Path path = new Path()) {
             FF.iterateDir(path.of(root).concat(PRODUCT).$(), (name, type) -> {
                 if (type == Files.DT_DIR) {
                     count.incrementAndGet();
@@ -2587,7 +2587,7 @@ public class TableWriterTest extends AbstractCairoTest {
                 writer.removeColumn("supplier");
 
                 final NativeLPSZ lpsz = new NativeLPSZ();
-                try (CompositePath path = new CompositePath()) {
+                try (Path path = new Path()) {
                     path.of(root).concat(name);
                     final int plen = path.length();
                     FF.iterateDir(path.$(), (file, type) -> {
@@ -2843,7 +2843,7 @@ public class TableWriterTest extends AbstractCairoTest {
         DateFormat fmt = compiler.compile("yyyy-MM-dd");
         DateLocale enGb = DateLocaleFactory.INSTANCE.getDateLocale("en-gb");
 
-        try (CompositePath vp = new CompositePath()) {
+        try (Path vp = new Path()) {
             for (i = 0; i < n; i++) {
                 vp.of(root).concat(PRODUCT).put(Files.SEPARATOR);
                 fmt.format(vmem.getLong(i * 8), enGb, "UTC", vp);

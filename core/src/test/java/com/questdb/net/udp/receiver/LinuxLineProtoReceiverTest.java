@@ -11,7 +11,7 @@ import com.questdb.mp.Worker;
 import com.questdb.net.udp.client.LineProtoSender;
 import com.questdb.ql.RecordSourcePrinter;
 import com.questdb.std.ObjHashSet;
-import com.questdb.std.str.CompositePath;
+import com.questdb.std.str.Path;
 import com.questdb.std.str.StringSink;
 import com.questdb.store.factory.configuration.JournalStructure;
 import com.questdb.test.tools.TestUtils;
@@ -230,7 +230,7 @@ public class LinuxLineProtoReceiverTest extends AbstractCairoTest {
                     // create table
 
                     JournalStructure struct = new JournalStructure("tab").$sym("colour").$sym("shape").$double("size").$ts();
-                    try (CompositePath path = new CompositePath();
+                    try (Path path = new Path();
                          AppendMemory mem = new AppendMemory()) {
                         TableUtils.create(cairoCfg.getFilesFacade(), path, mem, root, struct.build(), cairoCfg.getMkDirMode());
                     }

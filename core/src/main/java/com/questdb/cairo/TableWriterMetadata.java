@@ -10,7 +10,7 @@ public class TableWriterMetadata extends AbstractRecordMetadata {
     private final ObjList<TableColumnMetadata> columnMetadata;
     private final CharSequenceIntHashMap columnNameIndexMap = new CharSequenceIntHashMap();
     private int columnCount;
-    private int timestampIndex;
+    private final int timestampIndex;
 
     public TableWriterMetadata(FilesFacade ff, ReadOnlyMemory metaMem) {
         TableUtils.validate(ff, metaMem, columnNameIndexMap);

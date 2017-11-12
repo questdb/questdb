@@ -31,48 +31,52 @@ public class PrefixedPathTest {
     @Test
     public void testBorderlineChild() throws Exception {
         try (PrefixedPath path = new PrefixedPath("/home/xterm/public", 12)) {
-            Assert.assertEquals(transform("/home/xterm/public/xyz/123456789/abcd"), path.of("xyz/123456789/abcd").toString());
+            assertThat(path, "/home/xterm/public/xyz/123456789/abcd", "xyz/123456789/abcd");
         }
     }
 
     @Test
     public void testLargeChild() throws Exception {
         try (PrefixedPath path = new PrefixedPath("/home/xterm/public", 24)) {
-            Assert.assertEquals(transform("/home/xterm/public/xyz/123456789/abcdef"), path.of("xyz/123456789/abcdef").toString());
+            assertThat(path, "/home/xterm/public/xyz/123456789/abcdef", "xyz/123456789/abcdef");
         }
     }
 
     @Test
     public void testReuse() throws Exception {
         try (PrefixedPath path = new PrefixedPath("/home/xterm/public", 12)) {
-            Assert.assertEquals(transform("/home/xterm/public/xyz"), path.of("xyz").toString());
-            Assert.assertEquals(transform("/home/xterm/public/xyz"), path.of("xyz").toString());
-            Assert.assertEquals(transform("/home/xterm/public/xyz"), path.of("xyz").toString());
+            assertThat(path, "/home/xterm/public/xyz", "xyz");
+            assertThat(path, "/home/xterm/public/xyz", "xyz");
+            assertThat(path, "/home/xterm/public/xyz", "xyz");
         }
     }
 
     @Test
     public void testSimpleNoSlash() throws Exception {
         try (PrefixedPath path = new PrefixedPath("/home/xterm/public")) {
-            Assert.assertEquals(transform("/home/xterm/public/"), path.toString());
+            Assert.assertEquals(transform("/home/xterm/public/"), path.$().toString());
         }
     }
 
     @Test
     public void testSimpleSlash() throws Exception {
         try (PrefixedPath path = new PrefixedPath("/home/xterm/public/")) {
-            Assert.assertEquals(transform("/home/xterm/public/"), path.toString());
+            Assert.assertEquals(transform("/home/xterm/public/"), path.$().toString());
         }
     }
 
     @Test
     public void testSmallChild() throws Exception {
         try (PrefixedPath path = new PrefixedPath("/home/xterm/public")) {
-            Assert.assertEquals(transform("/home/xterm/public/xyz"), path.of("xyz").toString());
+            assertThat(path, "/home/xterm/public/xyz", "xyz");
         }
     }
 
     private static String transform(final String s) {
         return Os.type == Os.WINDOWS ? s.replaceAll("/", "\\\\") : s;
+    }
+
+    private void assertThat(PrefixedPath path, String expected, CharSequence concat) {
+        Assert.assertEquals(transform(expected), path.rewind().concat(concat).$().toString());
     }
 }

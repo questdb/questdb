@@ -27,7 +27,7 @@ import com.questdb.ex.FatalError;
 import com.questdb.ex.KerberosException;
 import com.questdb.std.ObjList;
 import com.questdb.std.str.CharSequenceZ;
-import com.questdb.std.str.CompositePath;
+import com.questdb.std.str.Path;
 import com.sun.management.OperatingSystemMXBean;
 
 import java.io.File;
@@ -51,7 +51,7 @@ public final class Os {
     public static native int errno();
 
     public static long forkExec(CharSequence args) {
-        ObjList<CompositePath> paths = Chars.splitLpsz(args);
+        ObjList<Path> paths = Chars.splitLpsz(args);
         int n = paths.size();
         try {
             long argv = Unsafe.malloc((n + 1) * 8);

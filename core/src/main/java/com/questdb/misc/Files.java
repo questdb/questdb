@@ -25,8 +25,8 @@ package com.questdb.misc;
 
 import com.questdb.ex.JournalException;
 import com.questdb.ex.JournalRuntimeException;
-import com.questdb.std.str.CompositePath;
 import com.questdb.std.str.LPSZ;
+import com.questdb.std.str.Path;
 
 import java.io.File;
 import java.io.FileInputStream;
@@ -176,7 +176,7 @@ public final class Files {
     }
 
     public static int mkdirs(LPSZ path, int mode) {
-        try (CompositePath pp = new CompositePath()) {
+        try (Path pp = new Path()) {
             for (int i = 0, n = path.length(); i < n; i++) {
                 char c = path.charAt(i);
                 if (c == File.separatorChar) {
@@ -267,7 +267,7 @@ public final class Files {
         return rename(oldName.address(), newName.address());
     }
 
-    public static boolean rmdir(CompositePath path) {
+    public static boolean rmdir(Path path) {
         long p = findFirst(path.address());
         int len = path.length();
 

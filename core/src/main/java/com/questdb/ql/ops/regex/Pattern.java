@@ -5482,7 +5482,7 @@ public final class Pattern
         static {
             // Unicode character property aliases, defined in
             // http://www.unicode.org/Public/UNIDATA/PropertyValueAliases.txt
-            defCategory("Cn", 1 << Character.UNASSIGNED);
+            defCategory("Cn", 1);
             defCategory("Lu", 1 << Character.UPPERCASE_LETTER);
             defCategory("Ll", 1 << Character.LOWERCASE_LETTER);
             defCategory("Lt", 1 << Character.TITLECASE_LETTER);

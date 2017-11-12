@@ -31,10 +31,10 @@ import com.questdb.std.CharSequenceHashSet;
 import com.questdb.std.LongList;
 import com.questdb.std.ObjList;
 import com.questdb.std.Sinkable;
-import com.questdb.std.str.CompositePath;
 import com.questdb.std.str.ImmutableCharSequence;
 import com.questdb.std.str.LPSZ;
 import com.questdb.std.str.NativeLPSZ;
+import com.questdb.std.str.Path;
 import com.questdb.std.time.DateFormat;
 import com.questdb.std.time.DateFormatUtils;
 import com.questdb.std.time.DateLocaleFactory;
@@ -54,8 +54,8 @@ public class TableWriter implements Closeable {
     private static final Runnable NOOP = () -> {
     };
     final ObjList<AppendMemory> columns;
-    private final CompositePath path;
-    private final CompositePath other;
+    private final Path path;
+    private final Path other;
     private final LongList refs = new LongList();
     private final Row row = new Row();
     private final int rootLen;
@@ -106,8 +106,8 @@ public class TableWriter implements Closeable {
         this.ff = ff;
         this.mkDirMode = mkDirMode;
         this.fileOperationRetryCount = fileOperationRetryCount;
-        this.path = new CompositePath().of(root).concat(name);
-        this.other = new CompositePath().of(root).concat(name);
+        this.path = new Path().of(root).concat(name);
+        this.other = new Path().of(root).concat(name);
         this.name = ImmutableCharSequence.of(name);
         this.rootLen = path.length();
         try {

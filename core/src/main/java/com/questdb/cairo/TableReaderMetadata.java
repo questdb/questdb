@@ -5,7 +5,7 @@ import com.questdb.misc.Misc;
 import com.questdb.misc.Unsafe;
 import com.questdb.std.CharSequenceIntHashMap;
 import com.questdb.std.ObjList;
-import com.questdb.std.str.CompositePath;
+import com.questdb.std.str.Path;
 import com.questdb.store.factory.configuration.AbstractRecordMetadata;
 import com.questdb.store.factory.configuration.RecordColumnMetadata;
 
@@ -15,16 +15,16 @@ class TableReaderMetadata extends AbstractRecordMetadata implements Closeable {
     private final ObjList<TableColumnMetadata> columnMetadata;
     private final CharSequenceIntHashMap columnNameIndexMap = new CharSequenceIntHashMap();
     private final ReadOnlyMemory metaMem;
-    private final CompositePath path;
+    private final Path path;
     private final FilesFacade ff;
     private final CharSequenceIntHashMap tmpValidationMap = new CharSequenceIntHashMap();
     private int timestampIndex;
     private int columnCount;
     private ReadOnlyMemory transitionMeta;
 
-    public TableReaderMetadata(FilesFacade ff, CompositePath path) {
+    public TableReaderMetadata(FilesFacade ff, Path path) {
         this.ff = ff;
-        this.path = new CompositePath().of(path).$();
+        this.path = new Path().of(path).$();
         try {
             this.metaMem = new ReadOnlyMemory(ff, path, ff.getPageSize());
             TableUtils.validate(ff, metaMem, this.columnNameIndexMap);

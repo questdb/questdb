@@ -1,7 +1,7 @@
 package com.questdb.misc;
 
-import com.questdb.std.str.CompositePath;
 import com.questdb.std.str.LPSZ;
+import com.questdb.std.str.Path;
 
 public interface FilesFacade {
     long append(long fd, long buf, int len);
@@ -50,7 +50,7 @@ public interface FilesFacade {
 
     boolean rename(LPSZ from, LPSZ to);
 
-    boolean rmdir(CompositePath name);
+    boolean rmdir(Path name);
 
     boolean truncate(long fd, long size);
 
