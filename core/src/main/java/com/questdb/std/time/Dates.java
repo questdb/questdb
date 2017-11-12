@@ -57,6 +57,8 @@ final public class Dates {
     };
     private static final long[] MIN_MONTH_OF_YEAR_MILLIS = new long[12];
     private static final long[] MAX_MONTH_OF_YEAR_MILLIS = new long[12];
+    private static final char BEFORE_ZERO = '0' - 1;
+    private static final char AFTER_NINE = '9' + 1;
 
     private Dates() {
     }
@@ -211,7 +213,7 @@ final public class Dates {
     public static int getDayOfWeek(long millis) {
         // 1970-01-01 is Thursday.
         long d;
-        if (millis >= 0) {
+        if (millis > -1) {
             d = millis / DAY_MILLIS;
         } else {
             d = (millis - (DAY_MILLIS - 1)) / DAY_MILLIS;
@@ -225,7 +227,7 @@ final public class Dates {
     public static int getDayOfWeekSundayFirst(long millis) {
         // 1970-01-01 is Thursday.
         long d;
-        if (millis >= 0) {
+        if (millis > -1) {
             d = millis / DAY_MILLIS;
         } else {
             d = (millis - (DAY_MILLIS - 1)) / DAY_MILLIS;
@@ -237,10 +239,10 @@ final public class Dates {
     }
 
     public static long getDaysBetween(long a, long b) {
-        if (b >= a) {
-            return (b - a) / DAY_MILLIS;
-        } else {
+        if (b < a) {
             return getDaysBetween(b, a);
+        } else {
+            return (b - a) / DAY_MILLIS;
         }
     }
 
@@ -452,7 +454,7 @@ final public class Dates {
                                 state = STATE_HOUR;
                                 break;
                             default:
-                                if (c >= '0' && c <= '9') {
+                                if (isDigit(c)) {
                                     state = STATE_HOUR;
                                     p--;
                                 } else {
@@ -491,7 +493,7 @@ final public class Dates {
                         state = STATE_HOUR;
                         break;
                     case STATE_HOUR:
-                        if (c >= '0' && c <= '9' && p < hi - 1) {
+                        if (isDigit(c) && p < hi - 1) {
                             hour = Numbers.parseInt(in, p, p + 2);
                         } else {
                             return Long.MIN_VALUE;
@@ -503,14 +505,14 @@ final public class Dates {
                         if (c == ':') {
                             state = STATE_MINUTE;
                             p++;
-                        } else if (c >= '0' && c <= '9') {
+                        } else if (isDigit(c)) {
                             state = STATE_MINUTE;
                         } else {
                             return Long.MIN_VALUE;
                         }
                         break;
                     case STATE_MINUTE:
-                        if (c >= '0' && c <= '9' && p < hi - 1) {
+                        if (isDigit(c) && p < hi - 1) {
                             minute = Numbers.parseInt(in, p, p + 2);
                         } else {
                             return Long.MIN_VALUE;
@@ -587,6 +589,10 @@ final public class Dates {
         }
 
         return (year * 365L + (leapYears - DAYS_0000_TO_1970)) * DAY_MILLIS;
+    }
+
+    private static boolean isDigit(char c) {
+        return c > BEFORE_ZERO && c < AFTER_NINE;
     }
 
     private static long getTime(long millis) {
