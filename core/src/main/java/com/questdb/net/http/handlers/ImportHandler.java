@@ -212,7 +212,7 @@ public class ImportHandler extends AbstractMultipartHandler {
                 long importedRows = ctx.importer.getImportedRowCount();
                 r.put('{')
                         .putQuoted("status").put(':').putQuoted("OK").put(',')
-                        .putQuoted("location").put(':').putUtf8EscapedAndQuoted(FileNameExtractorCharSequence.get(m.getName())).put(',')
+                        .putQuoted("location").put(':').encodeUtf8AndQuote(FileNameExtractorCharSequence.get(m.getName())).put(',')
                         .putQuoted("rowsRejected").put(':').put(totalRows - importedRows).put(',')
                         .putQuoted("rowsImported").put(':').put(importedRows).put(',')
                         .putQuoted("header").put(':').put(ctx.importer.isHeader()).put(',')
@@ -445,7 +445,7 @@ public class ImportHandler extends AbstractMultipartHandler {
         ResponseSink sink = context.responseSink();
         if (Chars.equalsNc("json", context.request.getUrlParam("fmt"))) {
             sink.status(200, CONTENT_TYPE_JSON);
-            sink.put('{').putQuoted("status").put(':').putUtf8EscapedAndQuoted(message).put('}');
+            sink.put('{').putQuoted("status").put(':').encodeUtf8AndQuote(message).put('}');
         } else {
             sink.status(400, CONTENT_TYPE_TEXT);
             sink.encodeUtf8(message);

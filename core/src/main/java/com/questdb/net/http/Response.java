@@ -376,8 +376,67 @@ public class Response implements Closeable, Mutable {
         }
 
         @Override
+        public CharSink put(float value, int scale) {
+            if (value == value) {
+                return super.put(value, scale);
+            }
+            put("null");
+            return this;
+        }
+
+        @Override
+        public CharSink put(double value, int scale) {
+            if (value == value) {
+                return super.put(value, scale);
+            }
+            put("null");
+            return this;
+        }
+
+        @Override
+        protected void putUtf8Special(char c) {
+            if (c < 32) {
+                escapeSpace(c);
+            } else {
+                switch (c) {
+                    case '/':
+                    case '\"':
+                    case '\\':
+                        put('\\');
+                        // intentional fall through
+                    default:
+                        put(c);
+                        break;
+                }
+            }
+        }
+
+        @Override
         public void status(int status, CharSequence contentType) {
             hb.status(status, contentType, -1);
+        }
+
+        private void escapeSpace(char c) {
+            switch (c) {
+                case '\b':
+                    put("\\b");
+                    break;
+                case '\f':
+                    put("\\f");
+                    break;
+                case '\n':
+                    put("\\n");
+                    break;
+                case '\r':
+                    put("\\r");
+                    break;
+                case '\t':
+                    put("\\t");
+                    break;
+                default:
+                    put(c);
+                    break;
+            }
         }
     }
 
@@ -396,7 +455,6 @@ public class Response implements Closeable, Mutable {
         public CharSink headers() {
             return hb;
         }
-
 
         @Override
         public ByteBuffer out() {

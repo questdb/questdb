@@ -29,14 +29,10 @@ import java.io.IOException;
 
 public interface CharSink {
 
-    void encodeUtf8(CharSequence cs);
+    CharSink encodeUtf8(CharSequence cs);
 
     default void flush() throws IOException {
     }
-
-    void jsonFmt(float value, int scale);
-
-    void jsonFmt(double value, int scale);
 
     default CharSink put(CharSequence cs) {
         throw new UnsupportedOperationException();
@@ -62,7 +58,7 @@ public interface CharSink {
 
     CharSink putQuoted(CharSequence cs);
 
-    CharSink putUtf8Escaped(CharSequence cs);
+    CharSink encodeUtf8(CharSequence cs, int from, int len);
 
-    CharSink putUtf8EscapedAndQuoted(CharSequence cs);
+    CharSink encodeUtf8AndQuote(CharSequence cs);
 }

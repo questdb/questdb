@@ -193,7 +193,7 @@ public final class Files {
                             return r;
                         }
                     }
-                    pp.trimBy(1);
+                    pp.chopZ();
                 }
                 pp.put(c);
             }
@@ -412,6 +412,7 @@ public final class Files {
     private static native boolean rename(long lpszOld, long lpszNew);
 
     static {
+        Os.init();
         UTF_8 = Charset.forName("UTF-8");
         PAGE_SIZE = getPageSize();
         SEPARATOR = Os.type == Os.WINDOWS ? '\\' : '/';

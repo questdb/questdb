@@ -27,6 +27,7 @@ import com.questdb.ex.NumericException;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.misc.*;
+import com.questdb.ql.Record;
 import com.questdb.std.Sinkable;
 import com.questdb.std.str.LPSZ;
 import com.questdb.std.str.NativeLPSZ;
@@ -1971,12 +1972,6 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testTwoByteUtf8() throws Exception {
-        JournalStructure struct = new JournalStructure("соотечественник").$str("секьюрити").$ts();
-        CairoTestUtils.createTable(FF, root, struct);
-    }
-
-    @Test
     public void testTableDoesNotExist() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try {
@@ -2051,6 +2046,34 @@ public class TableWriterTest extends AbstractCairoTest {
             populateProducts(writer, rnd, ts, 1000, 60 * 60000);
             writer.commit();
             Assert.assertEquals(1000, writer.size());
+        }
+    }
+
+    @Test
+    public void testTwoByteUtf8() throws Exception {
+        JournalStructure struct = new JournalStructure("соотечественник").$str("секьюрити").$ts();
+        CairoTestUtils.createTable(FF, root, struct);
+
+        Rnd rnd = new Rnd();
+        try (TableWriter writer = new TableWriter(FF, root, struct.getName())) {
+            for (int i = 0; i < 1000000; i++) {
+                TableWriter.Row r = writer.newRow(0);
+                r.putStr(0, rnd.nextChars(5));
+                r.append();
+            }
+            writer.commit();
+            writer.addColumn("митинг", ColumnType.INT);
+            Assert.assertEquals(0, writer.getColumnIndex("секьюрити"));
+            Assert.assertEquals(2, writer.getColumnIndex("митинг"));
+        }
+
+        rnd.reset();
+        try (TableReader reader = new TableReader(FF, root, struct.getName())) {
+            int col = reader.getMetadata().getColumnIndex("секьюрити");
+            while (reader.hasNext()) {
+                Record r = reader.next();
+                TestUtils.assertEquals(rnd.nextChars(5), r.getFlyweightStr(col));
+            }
         }
     }
 

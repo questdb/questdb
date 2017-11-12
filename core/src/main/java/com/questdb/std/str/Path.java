@@ -57,13 +57,6 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
         this.ptr = this.wptr = Unsafe.malloc(capacity + 1);
     }
 
-    public static void copy(CharSequence str, int from, int len, long addr) {
-        for (int i = 0; i < len; i++) {
-            char c = str.charAt(i + from);
-            Unsafe.getUnsafe().putByte(addr + i, (byte) (c == '/' && Os.type == Os.WINDOWS ? '\\' : c));
-        }
-    }
-
     public Path $() {
         if (1 + (wptr - ptr) >= capacity) {
             extend((int) (16 + (wptr - ptr)));
@@ -99,17 +92,10 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
         return concat(str, 0, str.length());
     }
 
-    public Path concat(CharSequence str, int from, int len) {
-        if (len + this.len + OVERHEAD >= capacity) {
-            extend(len + this.len + OVERHEAD);
-        }
 
-        ensureSeparator();
-        copy(str, from, len, wptr);
-
-        this.wptr += len;
-        this.len += len;
-        return this;
+    @Override
+    public char charAt(int index) {
+        return (char) Unsafe.getUnsafe().getByte(ptr + index);
     }
 
     public Path concat(long lpsz) {
@@ -142,45 +128,26 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
     }
 
     @Override
-    public final int length() {
-        return len;
-    }
-
-    public Path of(CharSequence str) {
-        if (str == this) {
-            this.len = str.length();
-            this.wptr = ptr + len;
-            return this;
-        } else {
-            this.wptr = ptr;
-            this.len = 0;
-            return concat(str);
-        }
-    }
-
-    public Path of(CharSequence str, int from, int len) {
-        this.wptr = ptr;
-        this.len = 0;
-        return concat(str, from, len);
-    }
-
-    @Override
-    public char charAt(int index) {
-        return (char) Unsafe.getUnsafe().getByte(ptr + index);
-    }
-
-    @Override
     public CharSequence subSequence(int start, int end) {
         throw new UnsupportedOperationException();
     }
 
-    public Path of(long lpsz) {
-        if (lpsz != ptr) {
-            this.wptr = ptr;
-            this.len = 0;
-            return concat(lpsz);
-        }
+    public Path concat(CharSequence str, int from, int len) {
+//        if (len + this.len + OVERHEAD >= capacity) {
+//            extend(len + this.len + OVERHEAD);
+//        }
+
+        ensureSeparator();
+        copy(str, from, len);
+
+//        this.wptr += len;
+//        this.len += len;
         return this;
+    }
+
+    @Override
+    public final int length() {
+        return len;
     }
 
     @Override
@@ -204,27 +171,61 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
         len++;
         return this;
     }
-    
+
+    public Path of(CharSequence str) {
+        if (str == this) {
+            this.len = str.length();
+            this.wptr = ptr + len;
+            return this;
+        } else {
+            this.wptr = ptr;
+            this.len = 0;
+            return concat(str);
+        }
+    }
+
+    public Path of(CharSequence str, int from, int len) {
+        this.wptr = ptr;
+        this.len = 0;
+        return concat(str, from, len);
+    }
+
+    public Path of(long lpsz) {
+        if (lpsz != ptr) {
+            this.wptr = ptr;
+            this.len = 0;
+            return concat(lpsz);
+        }
+        return this;
+    }
+
     @Override
     @NotNull
     public String toString() {
         return ptr == 0 ? "" : AbstractCharSequence.getString(this);
     }
 
-    public void trimBy(int count) {
-        if (Unsafe.getUnsafe().getByte(wptr - 1) == 0) {
-            wptr -= count;
-            len -= count - 1;
-        } else {
-            wptr -= count;
-            len -= count;
-        }
-    }
-
     public Path trimTo(int len) {
         this.len = len;
         wptr = ptr + len;
         return this;
+    }
+
+    private void copy(CharSequence str, int from, int len) {
+        encodeUtf8(str, from, len);
+//        for (int i = 0; i < len; i++) {
+//            char c = str.charAt(i + from);
+//            Unsafe.getUnsafe().putByte(wptr + i, (byte) (c == '/' && Os.type == Os.WINDOWS ? '\\' : c));
+//        }
+    }
+
+    @Override
+    protected void putUtf8Special(char c) {
+        if (c == '/' && Os.type == Os.WINDOWS) {
+            put('\\');
+        } else {
+            put(c);
+        }
     }
 
     protected final void ensureSeparator() {

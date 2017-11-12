@@ -114,7 +114,7 @@ public class Engine implements Closeable {
                 path.of(configuration.getRoot()).concat(tableName).$();
                 if (!configuration.getFilesFacade().rmdir(path)) {
                     int error = configuration.getFilesFacade().errno();
-                    LOG.error().$("remove failed [tableName='").$(tableName).$("', error=").$(error).$(']').$();
+                    LOG.error().$("remove failed [tableName='").utf8(tableName).$("', error=").$(error).$(']').$();
                     throw CairoException.instance(error).put("Table remove failed");
                 }
             } finally {
@@ -146,7 +146,7 @@ public class Engine implements Closeable {
             try (Path newName = new Path()) {
 
                 if (TableUtils.exists(ff, oldName, root, tableName) != TableUtils.TABLE_EXISTS) {
-                    LOG.error().$('\'').$(tableName).$("' does not exist. Rename failed.").$();
+                    LOG.error().$('\'').utf8(tableName).$("' does not exist. Rename failed.").$();
                     throw CairoException.instance(0).put("Rename failed. Table '").put(tableName).put("' does not exist");
                 }
 

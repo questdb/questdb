@@ -32,6 +32,8 @@ public interface LogRecord {
 
     LogRecord $(CharSequence sequence);
 
+    LogRecord utf8(CharSequence sequence);
+
     LogRecord $(int x);
 
     LogRecord $(double x);

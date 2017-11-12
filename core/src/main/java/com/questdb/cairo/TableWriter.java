@@ -102,7 +102,7 @@ public class TableWriter implements Closeable {
     }
 
     public TableWriter(FilesFacade ff, CharSequence root, CharSequence name, int mkDirMode, int fileOperationRetryCount) {
-        LOG.info().$("open '").$(name).$('\'').$();
+        LOG.info().$("open '").utf8(name).$('\'').$();
         this.ff = ff;
         this.mkDirMode = mkDirMode;
         this.fileOperationRetryCount = fileOperationRetryCount;
@@ -186,7 +186,7 @@ public class TableWriter implements Closeable {
             throw CairoException.instance(0).put("Duplicate column name: ").put(name);
         }
 
-        LOG.info().$("adding column '").$(name).$('[').$(ColumnType.nameOf(type)).$("]' to ").$(path).$();
+        LOG.info().$("adding column '").utf8(name).$('[').$(ColumnType.nameOf(type)).$("]' to ").$(path).$();
 
         commit();
 
@@ -246,7 +246,7 @@ public class TableWriter implements Closeable {
 
         metadata.addColumn(name, type);
 
-        LOG.info().$("ADDED column '").$(name).$('[').$(ColumnType.nameOf(type)).$("]' to ").$(path).$();
+        LOG.info().$("ADDED column '").utf8(name).$('[').$(ColumnType.nameOf(type)).$("]' to ").$(path).$();
     }
 
     @Override
@@ -266,7 +266,7 @@ public class TableWriter implements Closeable {
                 Unsafe.free(tempMem8b, 8);
                 tempMem8b = 0;
             }
-            LOG.info().$("closed '").$(name).$('\'').$();
+            LOG.info().$("closed '").utf8(name).$('\'').$();
         }
     }
 
@@ -339,7 +339,7 @@ public class TableWriter implements Closeable {
     public void removeColumn(CharSequence name) {
         int index = getColumnIndex(name);
 
-        LOG.info().$("removing column '").$(name).$("' from ").$(path).$();
+        LOG.info().$("removing column '").utf8(name).$("' from ").$(path).$();
 
         // check if we are moving timestamp from a partitioned table
         boolean timestamp = index == metaMem.getInt(TableUtils.META_OFFSET_TIMESTAMP_INDEX);
@@ -396,7 +396,7 @@ public class TableWriter implements Closeable {
 
         metadata.removeColumn(name);
 
-        LOG.info().$("REMOVED column '").$(name).$("' from ").$(path).$();
+        LOG.info().$("REMOVED column '").utf8(name).$("' from ").$(path).$();
     }
 
     public void rollback() {
@@ -1025,7 +1025,7 @@ public class TableWriter implements Closeable {
             if (ff.remove(name)) {
                 LOG.info().$("removed: ").$(path).$();
             } else {
-                LOG.error().$("cannot remove: ").$(name).$(" [errno=").$(ff.errno()).$(']').$();
+                LOG.error().$("cannot remove: ").utf8(name).$(" [errno=").$(ff.errno()).$(']').$();
             }
         }
     }

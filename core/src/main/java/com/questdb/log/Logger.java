@@ -97,6 +97,16 @@ class Logger implements LogRecord, Log {
     }
 
     @Override
+    public LogRecord utf8(CharSequence sequence) {
+        if (sequence == null) {
+            sink().put("null");
+        } else {
+            sink().encodeUtf8(sequence);
+        }
+        return this;
+    }
+
+    @Override
     public LogRecord $(int x) {
         sink().put(x);
         return this;
