@@ -29,7 +29,7 @@ import com.questdb.misc.Unsafe;
 import com.questdb.std.IntStack;
 import com.questdb.std.Mutable;
 import com.questdb.std.str.ByteSequence;
-import com.questdb.std.str.CompositePath;
+import com.questdb.std.str.Path;
 import com.questdb.test.tools.TestUtils;
 import org.junit.AfterClass;
 import org.junit.Assert;
@@ -203,7 +203,7 @@ public class JsonLexerTest {
     @Test
     public void testParseLargeFile() throws Exception {
         String path = JsonLexerTest.class.getResource("/json/test.json").getPath();
-        CompositePath p = new CompositePath();
+        Path p = new Path();
         if (Os.type == Os.WINDOWS && path.startsWith("/")) {
             p.of(path.substring(1));
         } else {
@@ -286,7 +286,7 @@ public class JsonLexerTest {
         assertError("Unexpected symbol", 10, "{\"x\": \"a\"bc\",}");
     }
 
-    private void assertError(String expected, int expectedPosition, String input) throws Exception {
+    private void assertError(String expected, int expectedPosition, String input) {
         int len = input.length();
         long address = TestUtils.toMemory(input);
         try {

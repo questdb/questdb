@@ -31,7 +31,7 @@ import com.questdb.misc.Os;
 import com.questdb.mp.Job;
 import com.questdb.mp.SynchronizedJob;
 import com.questdb.std.ObjHashSet;
-import com.questdb.std.str.CompositePath;
+import com.questdb.std.str.Path;
 import com.questdb.store.*;
 import com.questdb.store.factory.configuration.JournalConfiguration;
 import com.questdb.store.factory.configuration.JournalMetadata;
@@ -241,8 +241,8 @@ public class Factory implements ReaderFactory, WriterFactory {
     }
 
     private void rename0(CharSequence from, CharSequence to) throws JournalException {
-        try (CompositePath oldName = new CompositePath()) {
-            try (CompositePath newName = new CompositePath()) {
+        try (Path oldName = new Path()) {
+            try (Path newName = new Path()) {
                 String path = getConfiguration().getJournalBase().getAbsolutePath();
 
                 oldName.of(path).concat(from).$();

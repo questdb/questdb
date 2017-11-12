@@ -7,8 +7,8 @@ import com.questdb.misc.Chars;
 import com.questdb.misc.Files;
 import com.questdb.misc.FilesFacade;
 import com.questdb.std.clock.Clock;
-import com.questdb.std.str.CompositePath;
 import com.questdb.std.str.LPSZ;
+import com.questdb.std.str.Path;
 import com.questdb.std.time.DateFormatUtils;
 import com.questdb.store.factory.configuration.JournalStructure;
 import com.questdb.test.tools.TestMilliClock;
@@ -269,7 +269,7 @@ public class CairoLineProtoParserTest extends AbstractCairoTest {
 
         Assert.assertTrue(ff.wasCalled());
 
-        try (CompositePath path = new CompositePath()) {
+        try (Path path = new Path()) {
             Assert.assertEquals(TableUtils.TABLE_DOES_NOT_EXIST, TableUtils.exists(ff, path, root, "all"));
         }
     }
@@ -338,7 +338,7 @@ public class CairoLineProtoParserTest extends AbstractCairoTest {
             }
         };
 
-        try (CompositePath path = new CompositePath()) {
+        try (Path path = new Path()) {
             Files.mkdirs(path.of(root).concat("x").put(Files.SEPARATOR).$(), configuration.getMkDirMode());
             assertThat(expected, lines, "y", configuration);
             Assert.assertEquals(TableUtils.TABLE_RESERVED, TableUtils.exists(configuration.getFilesFacade(), path, root, "x"));

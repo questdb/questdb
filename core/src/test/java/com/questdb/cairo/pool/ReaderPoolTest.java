@@ -28,7 +28,7 @@ import java.util.concurrent.locks.LockSupport;
 public class ReaderPoolTest extends AbstractCairoTest {
     private static final FilesFacade ff = FilesFacadeImpl.INSTANCE;
     private static final Log LOG = LogFactory.getLog(ReaderPoolTest.class);
-    private static DefaultCairoConfiguration configuration = new DefaultCairoConfiguration(root);
+    private static final DefaultCairoConfiguration configuration = new DefaultCairoConfiguration(root);
 
     @Before
     public void setUpInstance() throws Exception {
@@ -604,14 +604,13 @@ public class ReaderPoolTest extends AbstractCairoTest {
         assertWithPool(pool -> {
 
             class Listener implements PoolListener {
-                private ObjList<CharSequence> names = new ObjList<>();
-                private IntList events = new IntList();
+                private final ObjList<CharSequence> names = new ObjList<>();
+                private final IntList events = new IntList();
 
                 @Override
-                public boolean onEvent(byte factoryType, long thread, CharSequence name, short event, short segment, short position) {
+                public void onEvent(byte factoryType, long thread, CharSequence name, short event, short segment, short position) {
                     names.add(name == null ? "" : ImmutableCharSequence.of(name));
                     events.add(event);
-                    return false;
                 }
             }
 

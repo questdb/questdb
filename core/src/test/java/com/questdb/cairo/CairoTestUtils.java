@@ -2,7 +2,7 @@ package com.questdb.cairo;
 
 import com.questdb.misc.FilesFacade;
 import com.questdb.misc.FilesFacadeImpl;
-import com.questdb.std.str.CompositePath;
+import com.questdb.std.str.Path;
 import com.questdb.std.time.Dates;
 import com.questdb.store.PartitionBy;
 import com.questdb.store.factory.configuration.JournalStructure;
@@ -16,7 +16,7 @@ public class CairoTestUtils {
     public static String createTable(FilesFacade ff, CharSequence root, JournalStructure struct) {
         String name = struct.getName();
         try (AppendMemory mem = new AppendMemory()) {
-            try (CompositePath path = new CompositePath()) {
+            try (Path path = new Path()) {
                 if (TableUtils.exists(ff, path, root, name) == TableUtils.TABLE_DOES_NOT_EXIST) {
                     TableUtils.create(ff, path, mem, root, struct.build(), 509);
                 } else {

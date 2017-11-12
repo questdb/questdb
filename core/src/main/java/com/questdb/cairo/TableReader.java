@@ -33,9 +33,9 @@ import com.questdb.ql.StorageFacade;
 import com.questdb.std.BinarySequence;
 import com.questdb.std.LongList;
 import com.questdb.std.ObjList;
-import com.questdb.std.str.CompositePath;
 import com.questdb.std.str.ImmutableCharSequence;
 import com.questdb.std.str.NativeLPSZ;
+import com.questdb.std.str.Path;
 import com.questdb.std.time.DateFormat;
 import com.questdb.std.time.DateLocaleFactory;
 import com.questdb.std.time.Dates;
@@ -91,7 +91,7 @@ public class TableReader implements Closeable, RecordCursor {
             int partitionIndex = reader.partitionCount - 1;
             if (delta > 0) {
                 reader.incrementPartitionCountBy(delta);
-                CompositePath path = reader.partitionPathGenerator.generate(reader, partitionIndex);
+                Path path = reader.partitionPathGenerator.generate(reader, partitionIndex);
                 try {
                     reader.reloadPartition(partitionIndex, readPartitionSize(reader.ff, path.chopZ(), reader.tempMem8b));
                 } finally {
@@ -117,7 +117,7 @@ public class TableReader implements Closeable, RecordCursor {
     };
     private final ColumnCopyStruct tempCopyStruct = new ColumnCopyStruct();
     private final FilesFacade ff;
-    private final CompositePath path;
+    private final Path path;
     private final int rootLen;
     private final ReadOnlyMemory txMem;
     private final NativeLPSZ nativeLPSZ = new NativeLPSZ();
@@ -148,7 +148,7 @@ public class TableReader implements Closeable, RecordCursor {
         LOG.info().$("open '").$(name).$('\'').$();
         this.ff = ff;
         this.name = ImmutableCharSequence.of(name);
-        this.path = new CompositePath().of(root).concat(name);
+        this.path = new Path().of(root).concat(name);
         this.rootLen = path.length();
         try {
             failOnPendingTodo();
@@ -339,7 +339,7 @@ public class TableReader implements Closeable, RecordCursor {
         return getPrimaryColumnIndex(base, index) + 1;
     }
 
-    private static long readPartitionSize(FilesFacade ff, CompositePath path, long tempMem) {
+    private static long readPartitionSize(FilesFacade ff, Path path, long tempMem) {
         int plen = path.length();
         try {
             if (ff.exists(path.concat(TableUtils.ARCHIVE_FILE_NAME).$())) {
@@ -393,7 +393,7 @@ public class TableReader implements Closeable, RecordCursor {
         }
     }
 
-    private void createColumnInstanceAt(CompositePath path, ObjList<ReadOnlyColumn> columns, LongList columnTops, int columnIndex, int columnBase) {
+    private void createColumnInstanceAt(Path path, ObjList<ReadOnlyColumn> columns, LongList columnTops, int columnIndex, int columnBase) {
         int plen = path.length();
         try {
             String name = metadata.getColumnName(columnIndex);
@@ -435,7 +435,7 @@ public class TableReader implements Closeable, RecordCursor {
             int oldBase = partitionIndex << columnCountBits;
 
             try {
-                CompositePath path = partitionPathGenerator.generate(this, partitionIndex);
+                Path path = partitionPathGenerator.generate(this, partitionIndex);
                 for (int i = 0; i < columnCount; i++) {
                     final int copyFrom = Unsafe.getUnsafe().getInt(address + i * 8) - 1;
                     if (copyFrom > -1) {
@@ -548,7 +548,7 @@ public class TableReader implements Closeable, RecordCursor {
 
     private long openPartition(int partitionIndex, int columnBase, boolean last) {
         try {
-            CompositePath path = partitionPathGenerator.generate(this, partitionIndex);
+            Path path = partitionPathGenerator.generate(this, partitionIndex);
             final long partitionSize;
             if (ff.exists(path)) {
                 path.chopZ();
@@ -574,7 +574,7 @@ public class TableReader implements Closeable, RecordCursor {
         }
     }
 
-    private void openPartitionColumns(CompositePath path, int columnBase) {
+    private void openPartitionColumns(Path path, int columnBase) {
         for (int i = 0; i < columnCount; i++) {
             if (columns.getQuick(getPrimaryColumnIndex(columnBase, i)) == null) {
                 createColumnInstanceAt(path, this.columns, this.columnTops, i, columnBase);
@@ -643,7 +643,7 @@ public class TableReader implements Closeable, RecordCursor {
         for (int partitionIndex = 0; partitionIndex < partitionCount; partitionIndex++) {
             int base = getColumnBase(partitionIndex);
             try {
-                CompositePath path = partitionPathGenerator.generate(this, partitionIndex);
+                Path path = partitionPathGenerator.generate(this, partitionIndex);
 
                 Unsafe.getUnsafe().setMemory(stateAddress, columnCount, (byte) 0);
 
@@ -716,7 +716,7 @@ public class TableReader implements Closeable, RecordCursor {
 
     @FunctionalInterface
     private interface PartitionPathGenerator {
-        CompositePath generate(TableReader reader, int partitionIndex);
+        Path generate(TableReader reader, int partitionIndex);
     }
 
     private static class ColumnCopyStruct {

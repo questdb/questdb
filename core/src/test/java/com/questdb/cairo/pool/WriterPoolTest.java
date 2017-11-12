@@ -165,9 +165,8 @@ public class WriterPoolTest extends AbstractCairoTest {
                 short ev = -1;
 
                 @Override
-                public boolean onEvent(byte factoryType, long thread, CharSequence name, short event, short segment, short position) {
+                public void onEvent(byte factoryType, long thread, CharSequence name, short event, short segment, short position) {
                     this.ev = event;
-                    return false;
                 }
             }
             X x = new X();
@@ -496,9 +495,8 @@ public class WriterPoolTest extends AbstractCairoTest {
                 short ev = -1;
 
                 @Override
-                public boolean onEvent(byte factoryType, long thread, CharSequence name, short event, short segment, short position) {
+                public void onEvent(byte factoryType, long thread, CharSequence name, short event, short segment, short position) {
                     this.ev = event;
-                    return false;
                 }
             }
             X x = new X();
@@ -528,9 +526,8 @@ public class WriterPoolTest extends AbstractCairoTest {
                 short ev = -1;
 
                 @Override
-                public boolean onEvent(byte factoryType, long thread, CharSequence name, short event, short segment, short position) {
+                public void onEvent(byte factoryType, long thread, CharSequence name, short event, short segment, short position) {
                     this.ev = event;
-                    return false;
                 }
             }
             X x = new X();

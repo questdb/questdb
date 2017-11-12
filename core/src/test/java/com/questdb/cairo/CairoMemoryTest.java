@@ -26,8 +26,8 @@ package com.questdb.cairo;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.misc.*;
-import com.questdb.std.str.CompositePath;
 import com.questdb.std.str.LPSZ;
+import com.questdb.std.str.Path;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.BeforeClass;
@@ -71,7 +71,7 @@ public class CairoMemoryTest {
 
         long openFileCount = ff.getOpenFileCount();
         int failureCount = 0;
-        try (CompositePath path = new CompositePath()) {
+        try (Path path = new Path()) {
             path.of(temp.newFile().getAbsolutePath());
             try (AppendMemory mem = new AppendMemory()) {
                 mem.of(ff, path.$(), ff.getPageSize() * 2);
@@ -109,7 +109,7 @@ public class CairoMemoryTest {
 
         X ff = new X();
 
-        try (CompositePath path = new CompositePath().of(temp.newFile().getAbsolutePath()).$()) {
+        try (Path path = new Path().of(temp.newFile().getAbsolutePath()).$()) {
             try (AppendMemory mem = new AppendMemory(FF, path, 2 * FF.getPageSize())) {
                 for (int i = 0; i < N; i++) {
                     mem.putLong(i);
@@ -150,7 +150,7 @@ public class CairoMemoryTest {
 
         X ff = new X();
 
-        try (CompositePath path = new CompositePath().of(temp.newFile().getAbsolutePath()).$()) {
+        try (Path path = new Path().of(temp.newFile().getAbsolutePath()).$()) {
             try (AppendMemory mem = new AppendMemory(FF, path, 2 * FF.getPageSize())) {
                 for (int i = 0; i < N; i++) {
                     mem.putLong(i);
@@ -180,7 +180,7 @@ public class CairoMemoryTest {
     @Test
     public void testAppendAndReadWithReadOnlyMem() throws Exception {
         long used = Unsafe.getMemUsed();
-        try (CompositePath path = new CompositePath().of(temp.newFile().getAbsolutePath()).$()) {
+        try (Path path = new Path().of(temp.newFile().getAbsolutePath()).$()) {
             try (AppendMemory mem = new AppendMemory(FF, path, 2 * FF.getPageSize())) {
                 for (int i = 0; i < N; i++) {
                     mem.putLong(i);
@@ -227,7 +227,7 @@ public class CairoMemoryTest {
         long openFileCount = ff.getOpenFileCount();
         int successCount = 0;
         int failCount = 0;
-        try (CompositePath path = new CompositePath()) {
+        try (Path path = new Path()) {
             path.of(temp.getRoot().getAbsolutePath());
             int prefixLen = path.length();
             try (AppendMemory mem = new AppendMemory()) {
@@ -269,7 +269,7 @@ public class CairoMemoryTest {
     @Test
     public void testAppendMemoryJump() throws Exception {
         long used = Unsafe.getMemUsed();
-        try (CompositePath path = new CompositePath().of(temp.newFile().getAbsolutePath()).$()) {
+        try (Path path = new Path().of(temp.newFile().getAbsolutePath()).$()) {
             try (AppendMemory mem = new AppendMemory(FF, path, FF.getPageSize())) {
                 for (int i = 0; i < 100; i++) {
                     mem.putLong(i);
@@ -287,7 +287,7 @@ public class CairoMemoryTest {
         long used = Unsafe.getMemUsed();
         try (AppendMemory mem = new AppendMemory()) {
             for (int j = 0; j < 10; j++) {
-                try (CompositePath path = new CompositePath().of(temp.newFile().getAbsolutePath()).$()) {
+                try (Path path = new Path().of(temp.newFile().getAbsolutePath()).$()) {
                     mem.of(FF, path, 2 * FF.getPageSize());
                     for (int i = 0; i < N; i++) {
                         mem.putLong(i);
@@ -326,7 +326,7 @@ public class CairoMemoryTest {
         X ff = new X();
 
         long openFileCount = ff.getOpenFileCount();
-        try (CompositePath path = new CompositePath().of(temp.newFile().getAbsolutePath()).$()) {
+        try (Path path = new Path().of(temp.newFile().getAbsolutePath()).$()) {
             try (AppendMemory mem = new AppendMemory(ff, path, 2 * ff.getPageSize())) {
                 try {
                     for (int i = 0; i < N * 10; i++) {
@@ -366,7 +366,7 @@ public class CairoMemoryTest {
         long openFileCount = ff.getOpenFileCount();
         int successCount = 0;
         int failCount = 0;
-        try (CompositePath path = new CompositePath()) {
+        try (Path path = new Path()) {
             path.of(temp.getRoot().getAbsolutePath());
             int prefixLen = path.length();
             try (ReadWriteMemory mem = new ReadWriteMemory(ff)) {
@@ -408,7 +408,7 @@ public class CairoMemoryTest {
     @Test
     public void testReadWriteMemoryJump() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (CompositePath path = new CompositePath().of(temp.newFile().getAbsolutePath()).$()) {
+            try (Path path = new Path().of(temp.newFile().getAbsolutePath()).$()) {
                 try (ReadWriteMemory mem = new ReadWriteMemory(FF, path, FF.getPageSize(), 0, FF.getPageSize())) {
                     for (int i = 0; i < 100; i++) {
                         mem.putLong(i);
@@ -424,7 +424,7 @@ public class CairoMemoryTest {
     @Test
     public void testWriteAndRead() throws Exception {
         long used = Unsafe.getMemUsed();
-        try (CompositePath path = new CompositePath().of(temp.newFile().getAbsolutePath()).$()) {
+        try (Path path = new Path().of(temp.newFile().getAbsolutePath()).$()) {
             long size;
             try (ReadWriteMemory mem = new ReadWriteMemory(FF, path, 2 * FF.getPageSize(), 0, FF.getPageSize())) {
                 for (int i = 0; i < N; i++) {
@@ -449,7 +449,7 @@ public class CairoMemoryTest {
     @Test
     public void testWriteAndReadWithReadOnlyMem() throws Exception {
         long used = Unsafe.getMemUsed();
-        try (CompositePath path = new CompositePath().of(temp.newFile().getAbsolutePath()).$()) {
+        try (Path path = new Path().of(temp.newFile().getAbsolutePath()).$()) {
             try (ReadWriteMemory mem = new ReadWriteMemory(FF, path, 2 * FF.getPageSize(), 0, FF.getPageSize())) {
                 for (int i = 0; i < N; i++) {
                     mem.putLong(i);
@@ -483,7 +483,7 @@ public class CairoMemoryTest {
 
         final X ff = new X();
 
-        try (CompositePath path = new CompositePath().of(temp.newFile().getAbsolutePath()).$()) {
+        try (Path path = new Path().of(temp.newFile().getAbsolutePath()).$()) {
             try (ReadWriteMemory mem = new ReadWriteMemory(ff, path, 2 * ff.getPageSize(), 0, ff.getPageSize())) {
                 int i = 0;
                 while (i < N) {

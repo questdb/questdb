@@ -23,102 +23,23 @@
 
 package com.questdb.std.str;
 
-import com.questdb.misc.Misc;
-import com.questdb.misc.Unsafe;
-import com.questdb.std.Sinkable;
-import org.jetbrains.annotations.NotNull;
+public final class PrefixedPath extends Path {
 
-import java.io.Closeable;
-
-public final class PrefixedPath extends AbstractCharSequence implements Closeable, LPSZ, Sinkable {
     private final int prefixLen;
-    private long ptr = 0;
-    private int capacity = 0;
-    private int len;
+
+    public PrefixedPath(CharSequence prefix, int capacity) {
+        super(capacity);
+        super.of(prefix);
+        ensureSeparator();
+        this.prefixLen = length();
+    }
 
     public PrefixedPath(CharSequence prefix) {
         this(prefix, 128);
     }
 
-    PrefixedPath(CharSequence prefix, int minCapacity) {
-
-        int l = prefix.length();
-
-        alloc(Math.max(minCapacity, l * 2));
-
-        CompositePath.copy(prefix, 0, l, ptr);
-        char c = prefix.charAt(l - 1);
-        if (c != '/' && c != '\\') {
-            CompositePath.copyPathSeparator(ptr + l);
-            l++;
-        }
-
-        Unsafe.getUnsafe().putByte(ptr + l, (byte) 0);
-        this.len = this.prefixLen = l;
-    }
-
-    @Override
-    public long address() {
-        return ptr;
-    }
-
-    @Override
-    public void close() {
-        if (ptr > 0) {
-            Unsafe.free(ptr, capacity + 1);
-            ptr = 0;
-        }
-    }
-
-    @Override
-    public int length() {
-        return len;
-    }
-
-    @Override
-    public char charAt(int index) {
-        return (char) Unsafe.getUnsafe().getByte(ptr + index);
-    }
-
-    public PrefixedPath of(CharSequence str) {
-        int l = str.length();
-        if (l + prefixLen > capacity) {
-            alloc(l + len);
-        }
-        CompositePath.copy(str, 0, l, ptr + prefixLen);
-        Unsafe.getUnsafe().putByte(ptr + prefixLen + l, (byte) 0);
-        this.len = this.prefixLen + l;
+    public PrefixedPath rewind() {
+        trimTo(prefixLen);
         return this;
-    }
-
-    @Override
-    public void toSink(CharSink sink) {
-        long p = this.ptr;
-        byte b;
-        while ((b = Unsafe.getUnsafe().getByte(p++)) != 0) {
-            sink.put((char) b);
-        }
-    }
-
-    @Override
-    @NotNull
-    public String toString() {
-        if (ptr == 0) {
-            return "";
-        }
-
-        CharSink sink = Misc.getThreadLocalBuilder();
-        toSink(sink);
-        return sink.toString();
-    }
-
-    private void alloc(int l) {
-        long p = Unsafe.malloc(l + 1);
-        if (ptr > 0) {
-            Unsafe.getUnsafe().copyMemory(ptr, p, len);
-            Unsafe.free(ptr, capacity + 1);
-        }
-        ptr = p;
-        this.capacity = l;
     }
 }

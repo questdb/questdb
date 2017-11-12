@@ -35,7 +35,7 @@ import com.questdb.log.LogFactory;
 import com.questdb.misc.Misc;
 import com.questdb.misc.Unsafe;
 import com.questdb.std.ConcurrentHashMap;
-import com.questdb.std.str.CompositePath;
+import com.questdb.std.str.Path;
 import com.questdb.store.factory.FactoryConstants;
 
 import java.util.Iterator;
@@ -67,7 +67,7 @@ public class WriterPool extends AbstractPool implements ResourcePool<TableWriter
     private final static long ENTRY_OWNER = Unsafe.getFieldOffset(Entry.class, "owner");
     private final ConcurrentHashMap<CharSequence, Entry> entries = new ConcurrentHashMap<>();
     private final CairoConfiguration configuration;
-    private final CompositePath path = new CompositePath();
+    private final Path path = new Path();
 
     /**
      * Pool constructor. WriterPool root directory is passed via configuration.

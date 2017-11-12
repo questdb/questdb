@@ -1,8 +1,8 @@
 package com.questdb.misc;
 
 import com.questdb.cairo.CairoException;
-import com.questdb.std.str.CompositePath;
 import com.questdb.std.str.LPSZ;
+import com.questdb.std.str.Path;
 
 public class FilesFacadeImpl implements FilesFacade {
 
@@ -140,7 +140,7 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
-    public boolean rmdir(CompositePath name) {
+    public boolean rmdir(Path name) {
         return Files.rmdir(name);
     }
 

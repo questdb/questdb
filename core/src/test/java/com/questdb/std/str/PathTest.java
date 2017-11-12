@@ -32,11 +32,11 @@ import org.junit.rules.TemporaryFolder;
 
 import java.io.File;
 
-public class CompositePathTest {
+public class PathTest {
 
     @Rule
     public final TemporaryFolder temp = new TemporaryFolder();
-    private final CompositePath path = new CompositePath();
+    private final Path path = new Path();
     private final char separator = System.getProperty("file.separator").charAt(0);
 
     @Test
@@ -51,9 +51,9 @@ public class CompositePathTest {
 
     @Test
     public void testLpszConcat() throws Exception {
-        try (CompositePath p1 = new CompositePath()) {
+        try (Path p1 = new Path()) {
             p1.of("abc").concat("123").$();
-            try (CompositePath p = new CompositePath()) {
+            try (Path p = new Path()) {
                 p.of("/xyz/").concat(p1.address()).$();
                 Assert.assertEquals(separator + "xyz" + separator + "abc" + separator + "123", p.toString());
             }
@@ -67,7 +67,7 @@ public class CompositePathTest {
             b.append('9');
         }
 
-        try (CompositePath p = new CompositePath()) {
+        try (Path p = new Path()) {
             TestUtils.assertEquals("9999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999" + System.getProperty("file.separator") + "xyz",
                     p.of(b).concat("xyz").$());
         }

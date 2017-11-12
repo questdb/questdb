@@ -2,7 +2,7 @@ package com.questdb.cairo;
 
 import com.questdb.misc.FilesFacadeImpl;
 import com.questdb.std.ObjIntHashMap;
-import com.questdb.std.str.CompositePath;
+import com.questdb.std.str.Path;
 import com.questdb.std.str.StringSink;
 import com.questdb.store.ColumnType;
 import com.questdb.store.PartitionBy;
@@ -51,7 +51,7 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
         expected.put("sym", 7);
         expected.put("bool", 8);
 
-        try (CompositePath path = new CompositePath().of(root).concat("all").concat(TableUtils.META_FILE_NAME).$();
+        try (Path path = new Path().of(root).concat("all").concat(TableUtils.META_FILE_NAME).$();
              TableReaderMetadata metadata = new TableReaderMetadata(FilesFacadeImpl.INSTANCE, path)) {
             for (ObjIntHashMap.Entry<String> e : expected) {
                 Assert.assertEquals(e.value, metadata.getColumnIndexQuiet(e.key));
@@ -229,7 +229,7 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
 
     private void assertThat(String expected, ColumnManipulator manipulator, int columnCount) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (CompositePath path = new CompositePath().of(root).concat("all")) {
+            try (Path path = new Path().of(root).concat("all")) {
                 try (TableReaderMetadata metadata = new TableReaderMetadata(FilesFacadeImpl.INSTANCE, path.concat(TableUtils.META_FILE_NAME).$())) {
 
                     try (TableWriter writer = new TableWriter(FilesFacadeImpl.INSTANCE, root, "all")) {

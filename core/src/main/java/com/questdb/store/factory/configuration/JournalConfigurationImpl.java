@@ -31,7 +31,7 @@ import com.questdb.log.LogFactory;
 import com.questdb.misc.Files;
 import com.questdb.std.ObjObjHashMap;
 import com.questdb.std.ThreadLocal;
-import com.questdb.std.str.CompositePath;
+import com.questdb.std.str.Path;
 import com.questdb.store.JournalKey;
 import com.questdb.store.JournalMode;
 import com.questdb.store.TxLog;
@@ -43,7 +43,7 @@ class JournalConfigurationImpl implements JournalConfiguration {
 
     private static final Log LOG = LogFactory.getLog(JournalConfigurationImpl.class);
 
-    private final static ThreadLocal<CompositePath> tlPath = new ThreadLocal<>(CompositePath::new);
+    private final static ThreadLocal<Path> tlPath = new ThreadLocal<>(Path::new);
     private final ObjObjHashMap<String, JournalMetadata> journalMetadata;
     private final File journalBase;
 
@@ -90,7 +90,7 @@ class JournalConfigurationImpl implements JournalConfiguration {
     }
 
     public int exists(CharSequence location) {
-        CompositePath path = tlPath.get();
+        Path path = tlPath.get();
         String base = getJournalBase().getAbsolutePath();
 
         if (!Files.exists(path.of(base).concat(location).$())) {

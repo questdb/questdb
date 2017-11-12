@@ -3,8 +3,8 @@ package com.questdb.cairo;
 import com.questdb.misc.Files;
 import com.questdb.misc.FilesFacade;
 import com.questdb.misc.FilesFacadeImpl;
-import com.questdb.std.str.CompositePath;
 import com.questdb.std.str.LPSZ;
+import com.questdb.std.str.Path;
 import com.questdb.store.ColumnType;
 import com.questdb.store.PartitionBy;
 import com.questdb.store.factory.configuration.JournalMetadata;
@@ -30,7 +30,7 @@ public class TableUtilsTest {
         final JournalMetadata metadata = getJournalStructure().build();
 
         try (AppendMemory appendMemory = new AppendMemory()) {
-            try (CompositePath path = new CompositePath()) {
+            try (Path path = new Path()) {
                 TableUtils.create(FF, path, appendMemory, root, metadata, 509);
                 Assert.assertEquals(TABLE_EXISTS, TableUtils.exists(FF, path, root, metadata.getName()));
 
@@ -97,7 +97,7 @@ public class TableUtilsTest {
             X ff = new X();
             JournalMetadata metadata = getJournalStructure().build();
             try (AppendMemory appendMemory = new AppendMemory()) {
-                try (CompositePath path = new CompositePath()) {
+                try (Path path = new Path()) {
                     TableUtils.create(ff, path, appendMemory, temp.getRoot().getAbsolutePath(), metadata, 509);
                     Assert.fail();
                 } catch (CairoException e) {
@@ -109,7 +109,7 @@ public class TableUtilsTest {
 
     @Test
     public void testForeignDirectory() throws Exception {
-        try (CompositePath path = new CompositePath()) {
+        try (Path path = new Path()) {
             Assert.assertEquals(TABLE_RESERVED, TableUtils.exists(FF, path, temp.getRoot().getAbsolutePath(), ""));
         }
     }

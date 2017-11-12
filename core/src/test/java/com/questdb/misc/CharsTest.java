@@ -135,7 +135,7 @@ public class CharsTest {
         }
     }
 
-    private void assertThat(String expected, ObjList<CompositePath> list) {
+    private void assertThat(String expected, ObjList<Path> list) {
         Assert.assertEquals(expected, list.toString());
         for (int i = 0, n = list.size(); i < n; i++) {
             list.getQuick(i).close();

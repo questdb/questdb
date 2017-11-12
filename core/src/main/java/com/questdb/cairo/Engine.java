@@ -26,7 +26,6 @@ package com.questdb.cairo;
 import com.questdb.cairo.pool.PoolListener;
 import com.questdb.cairo.pool.ReaderPool;
 import com.questdb.cairo.pool.WriterPool;
-import com.questdb.ex.JournalException;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.misc.FilesFacade;
@@ -35,7 +34,7 @@ import com.questdb.misc.Os;
 import com.questdb.mp.Job;
 import com.questdb.mp.SynchronizedJob;
 import com.questdb.std.ObjHashSet;
-import com.questdb.std.str.CompositePath;
+import com.questdb.std.str.Path;
 
 import java.io.Closeable;
 
@@ -46,8 +45,8 @@ public class Engine implements Closeable {
     private final ReaderPool readerPool;
     private final WriterMaintenanceJob writerMaintenanceJob;
     private final CairoConfiguration configuration;
-    private final CompositePath path = new CompositePath();
-    private final CompositePath other = new CompositePath();
+    private final Path path = new Path();
+    private final Path other = new Path();
 
     public Engine(CairoConfiguration configuration) {
         this.configuration = configuration;
@@ -125,7 +124,7 @@ public class Engine implements Closeable {
         throw CairoException.instance(configuration.getFilesFacade().errno()).put("Cannot lock ").put(tableName);
     }
 
-    public void rename(CharSequence tableName, String newName) throws JournalException {
+    public void rename(CharSequence tableName, String newName) {
         lock(tableName);
         try {
             rename0(tableName, newName);
@@ -143,8 +142,8 @@ public class Engine implements Closeable {
         final FilesFacade ff = configuration.getFilesFacade();
         final CharSequence root = configuration.getRoot();
 
-        try (CompositePath oldName = new CompositePath()) {
-            try (CompositePath newName = new CompositePath()) {
+        try (Path oldName = new Path()) {
+            try (Path newName = new Path()) {
 
                 if (TableUtils.exists(ff, oldName, root, tableName) != TableUtils.TABLE_EXISTS) {
                     LOG.error().$('\'').$(tableName).$("' does not exist. Rename failed.").$();

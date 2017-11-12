@@ -30,8 +30,8 @@ import com.questdb.misc.FilesFacade;
 import com.questdb.misc.Os;
 import com.questdb.misc.Unsafe;
 import com.questdb.std.CharSequenceIntHashMap;
-import com.questdb.std.str.CompositePath;
 import com.questdb.std.str.LPSZ;
+import com.questdb.std.str.Path;
 import com.questdb.std.time.DateFormat;
 import com.questdb.std.time.DateFormatCompiler;
 import com.questdb.store.ColumnType;
@@ -66,7 +66,7 @@ public final class TableUtils {
     private static final int _16M = 16 * 1024 * 1024;
     private final static Log LOG = LogFactory.getLog(TableUtils.class);
 
-    public static void create(FilesFacade ff, CompositePath path, AppendMemory memory, CharSequence root, JournalMetadata metadata, int mode) {
+    public static void create(FilesFacade ff, Path path, AppendMemory memory, CharSequence root, JournalMetadata metadata, int mode) {
         path.of(root).concat(metadata.getName());
         final int rootLen = path.length();
         if (ff.mkdirs(path.put(Files.SEPARATOR).$(), mode) == -1) {
@@ -93,7 +93,7 @@ public final class TableUtils {
         }
     }
 
-    public static int exists(FilesFacade ff, CompositePath path, CharSequence root, CharSequence name) {
+    public static int exists(FilesFacade ff, Path path, CharSequence root, CharSequence name) {
         path.of(root).concat(name).$();
         if (ff.exists(path)) {
             // prepare to replace trailing \0
@@ -111,7 +111,7 @@ public final class TableUtils {
         return META_OFFSET_COLUMN_TYPES + columnCount * 4;
     }
 
-    public static long lock(FilesFacade ff, CompositePath path) {
+    public static long lock(FilesFacade ff, Path path) {
         long fd = ff.openRW(path.put(".lock").$());
         if (fd == -1) {
             LOG.error().$("cannot open '").$(path).$("' to lock [errno=").$(ff.errno()).$(']').$();
@@ -202,7 +202,7 @@ public final class TableUtils {
      *
      * @return number of rows column doesn't have when column was added to table that already had data.
      */
-    static long readColumnTop(FilesFacade ff, CompositePath path, CharSequence name, int plen, long buf) {
+    static long readColumnTop(FilesFacade ff, Path path, CharSequence name, int plen, long buf) {
         try {
             if (ff.exists(topFile(path.chopZ(), name))) {
                 long fd = ff.openRO(path);
@@ -221,15 +221,15 @@ public final class TableUtils {
         }
     }
 
-    static LPSZ dFile(CompositePath path, CharSequence columnName) {
+    static LPSZ dFile(Path path, CharSequence columnName) {
         return path.concat(columnName).put(".d").$();
     }
 
-    static LPSZ topFile(CompositePath path, CharSequence columnName) {
+    static LPSZ topFile(Path path, CharSequence columnName) {
         return path.concat(columnName).put(".top").$();
     }
 
-    static LPSZ iFile(CompositePath path, CharSequence columnName) {
+    static LPSZ iFile(Path path, CharSequence columnName) {
         return path.concat(columnName).put(".i").$();
     }
 
@@ -249,7 +249,7 @@ public final class TableUtils {
         return metaMem.getInt(META_OFFSET_COLUMN_TYPES + columnIndex * 4);
     }
 
-    static int openMetaSwapFile(FilesFacade ff, AppendMemory mem, CompositePath path, int rootLen, int retryCount) {
+    static int openMetaSwapFile(FilesFacade ff, AppendMemory mem, Path path, int rootLen, int retryCount) {
         try {
             path.concat(META_SWAP_FILE_NAME).$();
             int l = path.length();

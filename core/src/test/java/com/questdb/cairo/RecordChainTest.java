@@ -12,7 +12,7 @@ import org.junit.Test;
 
 public class RecordChainTest {
     public static final long SIZE_4M = 4 * 1024 * 1024L;
-    private static CollectionRecordMetadata metadata;
+    private static final CollectionRecordMetadata metadata;
 
     @Test
     public void testClear() throws Exception {

@@ -24,7 +24,7 @@
 package com.questdb.misc;
 
 import com.questdb.ex.FatalError;
-import com.questdb.std.str.CompositePath;
+import com.questdb.std.str.Path;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Rule;
 import org.junit.Test;
@@ -42,7 +42,7 @@ public class ZipTest {
 
     @Test
     public void testGzip() throws Exception {
-        try (CompositePath path = new CompositePath()) {
+        try (Path path = new Path()) {
             File outFile = temp.newFile("x");
             File expected = new File(ZipTest.class.getResource("/large.csv").getFile());
 

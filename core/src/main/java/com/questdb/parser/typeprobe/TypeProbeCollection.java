@@ -6,8 +6,8 @@ import com.questdb.misc.Files;
 import com.questdb.misc.Os;
 import com.questdb.misc.Unsafe;
 import com.questdb.std.ObjList;
-import com.questdb.std.str.CompositePath;
 import com.questdb.std.str.DirectByteCharSequence;
+import com.questdb.std.str.Path;
 import com.questdb.std.time.DateFormatFactory;
 import com.questdb.std.time.DateFormatUtils;
 import com.questdb.std.time.DateLocale;
@@ -55,7 +55,7 @@ public class TypeProbeCollection {
 
     private void parseFile(CharSequence fileName, DateFormatFactory dateFormatFactory, DateLocaleFactory dateLocaleFactory) throws IOException {
         final DirectByteCharSequence dbcs = new DirectByteCharSequence();
-        try (CompositePath path = new CompositePath().of(fileName).$()) {
+        try (Path path = new Path().of(fileName).$()) {
             long fd = Files.openRO(path);
             if (fd < 0) {
                 throw new IOException("Cannot open " + fileName + " [errno=" + Os.errno() + ']');

@@ -30,9 +30,9 @@ import com.questdb.misc.Chars;
 import com.questdb.misc.Files;
 import com.questdb.misc.Os;
 import com.questdb.std.ObjList;
-import com.questdb.std.str.CompositePath;
 import com.questdb.std.str.DirectCharSequence;
 import com.questdb.std.str.NativeLPSZ;
+import com.questdb.std.str.Path;
 import com.questdb.std.time.DateFormatUtils;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -53,7 +53,7 @@ public class FilesTest {
 
     @Test
     public void testAppendAndSeqRead() throws Exception {
-        try (CompositePath path = new CompositePath()) {
+        try (Path path = new Path()) {
             File f = temporaryFolder.newFile();
             long fd = Files.openRW(path.of(f.getAbsolutePath()).$());
             try {
@@ -115,7 +115,7 @@ public class FilesTest {
         Assert.assertTrue(new File(r, "d/e/f").mkdirs());
         touch(new File(r, "d/1.txt"));
         touch(new File(r, "a/b/2.txt"));
-        try (CompositePath path = new CompositePath().of(r.getAbsolutePath()).$()) {
+        try (Path path = new Path().of(r.getAbsolutePath()).$()) {
             Assert.assertTrue(Files.rmdir(path));
             Assert.assertFalse(r.exists());
         }
@@ -123,7 +123,7 @@ public class FilesTest {
 
     @Test
     public void testDeleteOpenFile() throws Exception {
-        try (CompositePath path = new CompositePath()) {
+        try (Path path = new Path()) {
             File f = temporaryFolder.newFile();
             long fd = Files.openRW(path.of(f.getAbsolutePath()).$());
             Assert.assertTrue(Files.exists(fd));
@@ -135,7 +135,7 @@ public class FilesTest {
 
     @Test
     public void testLastModified() throws IOException, NumericException {
-        try (CompositePath path = new CompositePath()) {
+        try (Path path = new Path()) {
             File f = temporaryFolder.newFile();
             Assert.assertTrue(Files.touch(path.of(f.getAbsolutePath()).$()));
             long t = DateFormatUtils.parseDateTime("2015-10-17T10:00:00.000Z");
@@ -148,8 +148,8 @@ public class FilesTest {
     public void testListDir() throws Exception {
         String temp = temporaryFolder.getRoot().getAbsolutePath();
         ObjList<String> names = new ObjList<>();
-        try (CompositePath path = new CompositePath().of(temp).$()) {
-            try (CompositePath cp = new CompositePath()) {
+        try (Path path = new Path().of(temp).$()) {
+            try (Path cp = new Path()) {
                 Assert.assertTrue(Files.touch(cp.of(temp).concat("a.txt").$()));
                 NativeLPSZ name = new NativeLPSZ();
                 long pFind = Files.findFirst(path);
@@ -172,7 +172,7 @@ public class FilesTest {
     @Test
     public void testListNonExistingDir() throws Exception {
         String temp = temporaryFolder.getRoot().getAbsolutePath();
-        try (CompositePath path = new CompositePath().of(temp).concat("xyz")) {
+        try (Path path = new Path().of(temp).concat("xyz")) {
             long pFind = Files.findFirst(path);
             Assert.assertTrue(pFind == 0);
         }
@@ -181,12 +181,12 @@ public class FilesTest {
     @Test
     public void testMkdirs() throws Exception {
         File r = temporaryFolder.newFolder("to_delete");
-        try (CompositePath path = new CompositePath().of(r.getAbsolutePath())) {
+        try (Path path = new Path().of(r.getAbsolutePath())) {
             path.concat("a").concat("b").concat("c").concat("f.text").$();
             Assert.assertEquals(0, Files.mkdirs(path, 509));
         }
 
-        try (CompositePath path = new CompositePath().of(r.getAbsolutePath())) {
+        try (Path path = new Path().of(r.getAbsolutePath())) {
             path.concat("a").concat("b").concat("c").$();
             Assert.assertTrue(Files.exists(path));
         }
@@ -194,7 +194,7 @@ public class FilesTest {
 
     @Test
     public void testRemove() throws Exception {
-        try (CompositePath path = new CompositePath().of(temporaryFolder.newFile().getAbsolutePath()).$()) {
+        try (Path path = new Path().of(temporaryFolder.newFile().getAbsolutePath()).$()) {
             Assert.assertTrue(Files.touch(path));
             Assert.assertTrue(Files.exists(path));
             Assert.assertTrue(Files.remove(path));
@@ -206,7 +206,7 @@ public class FilesTest {
     public void testTruncate() throws Exception {
         File temp = temporaryFolder.newFile();
         Files.writeStringToFile(temp, "abcde");
-        try (CompositePath path = new CompositePath().of(temp.getAbsolutePath()).$()) {
+        try (Path path = new Path().of(temp.getAbsolutePath()).$()) {
             Assert.assertTrue(Files.exists(path));
             Assert.assertEquals(5, Files.length(path));
 
@@ -224,7 +224,7 @@ public class FilesTest {
 
     @Test
     public void testWrite() throws Exception {
-        try (CompositePath path = new CompositePath()) {
+        try (Path path = new Path()) {
             File f = temporaryFolder.newFile();
             long fd = Files.openRW(path.of(f.getAbsolutePath()).$());
             try {

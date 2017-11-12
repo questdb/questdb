@@ -40,7 +40,7 @@ import com.questdb.ql.Record;
 import com.questdb.ql.RecordCursor;
 import com.questdb.ql.RecordSource;
 import com.questdb.std.LongList;
-import com.questdb.std.str.CompositePath;
+import com.questdb.std.str.Path;
 import com.questdb.std.time.DateFormatUtils;
 import com.questdb.std.time.Interval;
 import com.questdb.store.*;
@@ -281,7 +281,7 @@ public class PerformanceTest extends AbstractTest {
         long result;
 
         CharSequence root = getFactory().getConfiguration().getJournalBase().getAbsolutePath();
-        try (CompositePath path = new CompositePath(); AppendMemory mem = new AppendMemory()) {
+        try (Path path = new Path(); AppendMemory mem = new AppendMemory()) {
             TableUtils.create(FilesFacadeImpl.INSTANCE, path, mem, root, getFactory().getConfiguration().createMetadata(new JournalKey<>(Quote.class, "quote", PartitionBy.NONE)), 509);
             try (TableWriter w = new TableWriter(FilesFacadeImpl.INSTANCE, root, "quote")) {
                 for (int i = -count; i < count; i++) {

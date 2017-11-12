@@ -31,7 +31,6 @@ import com.questdb.misc.*;
 import com.questdb.net.http.*;
 import com.questdb.std.LocalValue;
 import com.questdb.std.Mutable;
-import com.questdb.std.Sinkable;
 import com.questdb.std.str.*;
 
 import java.io.Closeable;
@@ -64,18 +63,20 @@ public class StaticContentHandler implements ContextHandler {
             LOG.info().$("URL abuse: ").$(url).$();
             context.simpleResponse().send(404);
         } else {
-            PrefixedPath path = tlPrefixedPath.get();
+            PrefixedPath path = tlPrefixedPath.get().rewind();
 
             if (Chars.equals(url, '/')) {
-                path.of(configuration.getHttpIndexFile());
+                path.concat(configuration.getHttpIndexFile());
             } else {
-                path.of(url);
+                path.concat(url);
             }
+
+            path.$();
 
             if (Files.exists(path)) {
                 send(context, path, context.request.getUrlParam("attachment") != null);
             } else {
-                LOG.info().$("Not found: ").$((Sinkable) path).$();
+                LOG.info().$("Not found: ").$(path).$();
                 context.simpleResponse().send(404);
             }
         }

@@ -13,8 +13,8 @@ import com.questdb.std.CharSequenceObjHashMap;
 import com.questdb.std.LongList;
 import com.questdb.std.Sinkable;
 import com.questdb.std.clock.Clock;
-import com.questdb.std.str.CompositePath;
 import com.questdb.std.str.ImmutableCharSequence;
+import com.questdb.std.str.Path;
 import com.questdb.store.ColumnType;
 import com.questdb.store.PartitionBy;
 import com.questdb.store.factory.configuration.RecordMetadata;
@@ -35,7 +35,7 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
     private final ResourcePool<TableWriter> pool;
     private final CharSequenceObjHashMap<CacheEntry> writerCache = new CharSequenceObjHashMap<>();
     private final CharSequenceObjHashMap<TableWriter> commitList = new CharSequenceObjHashMap<>();
-    private final CompositePath path = new CompositePath();
+    private final Path path = new Path();
     private final CairoConfiguration configuration;
     private final LongList columnNameType = new LongList();
     private final LongList columnValues = new LongList();

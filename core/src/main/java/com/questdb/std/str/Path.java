@@ -32,16 +32,28 @@ import org.jetbrains.annotations.NotNull;
 import java.io.Closeable;
 import java.io.IOException;
 
-public final class CompositePath extends AbstractCharSink implements Closeable, LPSZ {
+/**
+ * Builder class that allows JNI layer access CharSequence without copying memory. It is typically used
+ * to create file system paths for files and directories and passing them to {@link Files} static methods, those
+ * that accept @link {@link LPSZ} as input.
+ * <p>
+ * Instances of this class can be re-cycled for creating many different paths and
+ * must be closed when no longer required.
+ * </p>
+ */
+public class Path extends AbstractCharSink implements Closeable, LPSZ {
     private static final int OVERHEAD = 4;
     private long ptr = 0;
     private long wptr;
     private int capacity;
     private int len;
-    private boolean trailingSlash = false;
 
-    public CompositePath() {
-        this.capacity = 128;
+    public Path() {
+        this(128);
+    }
+
+    public Path(int capacity) {
+        this.capacity = capacity;
         this.ptr = this.wptr = Unsafe.malloc(capacity + 1);
     }
 
@@ -52,11 +64,7 @@ public final class CompositePath extends AbstractCharSink implements Closeable, 
         }
     }
 
-    public static void copyPathSeparator(long address) {
-        Unsafe.getUnsafe().putByte(address, (byte) Files.SEPARATOR);
-    }
-
-    public CompositePath $() {
+    public Path $() {
         if (1 + (wptr - ptr) >= capacity) {
             extend((int) (16 + (wptr - ptr)));
         }
@@ -74,7 +82,7 @@ public final class CompositePath extends AbstractCharSink implements Closeable, 
      *
      * @return instance of this
      */
-    public CompositePath chopZ() {
+    public Path chopZ() {
         trimTo(this.length());
         return this;
     }
@@ -87,48 +95,36 @@ public final class CompositePath extends AbstractCharSink implements Closeable, 
         }
     }
 
-    public CompositePath concat(CharSequence str) {
+    public Path concat(CharSequence str) {
         return concat(str, 0, str.length());
     }
 
-    public CompositePath concat(CharSequence str, int from, int len) {
+    public Path concat(CharSequence str, int from, int len) {
         if (len + this.len + OVERHEAD >= capacity) {
             extend(len + this.len + OVERHEAD);
         }
 
-        if (this.len > 0 && !trailingSlash) {
-            copyPathSeparator(wptr);
-            wptr++;
-            this.len++;
-        }
-
+        ensureSeparator();
         copy(str, from, len, wptr);
 
-        this.trailingSlash = len > 0 && str.charAt(from + len - 1) == Files.SEPARATOR;
         this.wptr += len;
         this.len += len;
-
-
         return this;
     }
 
-    public CompositePath concat(long lpsz) {
+    public Path concat(long lpsz) {
 
-        if (len > 0 && !trailingSlash) {
-            copyPathSeparator(wptr);
-            wptr++;
-            len++;
-        }
+        ensureSeparator();
 
         long p = lpsz;
         while (true) {
+
             if (len + OVERHEAD >= capacity) {
                 extend(len * 2 + OVERHEAD);
             }
 
             byte b = Unsafe.getUnsafe().getByte(p++);
             if (b == 0) {
-                this.trailingSlash = p - lpsz > 2 && ((Os.type == Os.WINDOWS && Unsafe.getUnsafe().getByte(p - 2) == '\\') || Unsafe.getUnsafe().getByte(p - 2) == '/');
                 break;
             }
 
@@ -146,30 +142,26 @@ public final class CompositePath extends AbstractCharSink implements Closeable, 
     }
 
     @Override
-    public CompositePath put(CharSequence str) {
-        int l = str.length();
-        if (l + len >= capacity) {
-            extend(l + len);
-        }
-        Chars.strcpy(str, l, wptr);
-        wptr += l;
-        len += l;
-        return this;
-    }
-
-    @Override
-    public CompositePath put(char c) {
-        if (1 + len >= capacity) {
-            extend(16 + len);
-        }
-        Unsafe.getUnsafe().putByte(wptr++, (byte) c);
-        len++;
-        return this;
-    }
-
-    @Override
-    public int length() {
+    public final int length() {
         return len;
+    }
+
+    public Path of(CharSequence str) {
+        if (str == this) {
+            this.len = str.length();
+            this.wptr = ptr + len;
+            return this;
+        } else {
+            this.wptr = ptr;
+            this.len = 0;
+            return concat(str);
+        }
+    }
+
+    public Path of(CharSequence str, int from, int len) {
+        this.wptr = ptr;
+        this.len = 0;
+        return concat(str, from, len);
     }
 
     @Override
@@ -182,37 +174,37 @@ public final class CompositePath extends AbstractCharSink implements Closeable, 
         throw new UnsupportedOperationException();
     }
 
-    public CompositePath of(CharSequence str) {
-        if (str == this) {
-            this.len = str.length();
-            this.wptr = ptr + len;
-            this.trailingSlash = false;
-            return this;
-        } else {
-            this.wptr = ptr;
-            this.len = 0;
-            this.trailingSlash = false;
-            return concat(str);
-        }
-    }
-
-    public CompositePath of(CharSequence str, int from, int len) {
-        this.wptr = ptr;
-        this.len = 0;
-        this.trailingSlash = false;
-        return concat(str, from, len);
-    }
-
-    public CompositePath of(long lpsz) {
+    public Path of(long lpsz) {
         if (lpsz != ptr) {
             this.wptr = ptr;
             this.len = 0;
-            this.trailingSlash = false;
             return concat(lpsz);
         }
         return this;
     }
 
+    @Override
+    public Path put(CharSequence str) {
+        int l = str.length();
+        if (l + len >= capacity) {
+            extend(l + len);
+        }
+        Chars.strcpy(str, l, wptr);
+        wptr += l;
+        len += l;
+        return this;
+    }
+
+    @Override
+    public Path put(char c) {
+        if (1 + len >= capacity) {
+            extend(16 + len);
+        }
+        Unsafe.getUnsafe().putByte(wptr++, (byte) c);
+        len++;
+        return this;
+    }
+    
     @Override
     @NotNull
     public String toString() {
@@ -229,10 +221,18 @@ public final class CompositePath extends AbstractCharSink implements Closeable, 
         }
     }
 
-    public CompositePath trimTo(int len) {
+    public Path trimTo(int len) {
         this.len = len;
         wptr = ptr + len;
         return this;
+    }
+
+    protected final void ensureSeparator() {
+        if (missingTrailingSeparator()) {
+            Unsafe.getUnsafe().putByte(wptr, (byte) Files.SEPARATOR);
+            wptr++;
+            this.len++;
+        }
     }
 
     private void extend(int len) {
@@ -243,5 +243,9 @@ public final class CompositePath extends AbstractCharSink implements Closeable, 
         this.ptr = p;
         this.wptr = p + d;
         this.capacity = len;
+    }
+
+    private boolean missingTrailingSeparator() {
+        return len > 0 && Unsafe.getUnsafe().getByte(wptr - 1) != Files.SEPARATOR;
     }
 }

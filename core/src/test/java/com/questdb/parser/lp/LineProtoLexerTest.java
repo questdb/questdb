@@ -2,7 +2,6 @@ package com.questdb.parser.lp;
 
 import com.questdb.std.str.StringSink;
 import com.questdb.test.tools.TestUtils;
-import org.junit.AfterClass;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -16,10 +15,6 @@ public class LineProtoLexerTest {
     private final static LineProtoLexer lexer = new LineProtoLexer(4096);
     private final StringSink sink = new StringSink();
     private final TestLineProtoParser lineAssemblingParser = new TestLineProtoParser();
-
-    @AfterClass
-    public static void tearDown() throws Exception {
-    }
 
     @Before
     public void setUp() throws Exception {
@@ -275,7 +270,7 @@ public class LineProtoLexerTest {
         assertThat(expected, line.toString().getBytes("UTF8"));
     }
 
-    private void assertThat(CharSequence expected, byte[] line) throws LineProtoException, UnsupportedEncodingException {
+    private void assertThat(CharSequence expected, byte[] line) throws LineProtoException {
         ByteArrayByteSequence bs = new ByteArrayByteSequence(line);
         final int len = bs.length();
         if (len < 10) {
@@ -315,7 +310,7 @@ public class LineProtoLexerTest {
         int errorState;
         int errorCode;
         int errorPosition;
-        HashMap<Long, String> tokens = new HashMap<>();
+        final HashMap<Long, String> tokens = new HashMap<>();
 
         @Override
         public void onError(int position, int state, int code) {

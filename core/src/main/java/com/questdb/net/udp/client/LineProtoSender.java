@@ -58,9 +58,9 @@ public class LineProtoSender extends AbstractCharSink implements Closeable {
         lineStart = lo;
     }
 
-    public LineProtoSender $(long timestamp) {
+    public void $(long timestamp) {
         put(' ').put(timestamp);
-        return $();
+        $();
     }
 
     public LineProtoSender $() {
