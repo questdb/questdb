@@ -31,6 +31,7 @@ import com.questdb.misc.Numbers;
 import com.questdb.net.http.ChunkedResponse;
 import com.questdb.net.http.ContextHandler;
 import com.questdb.net.http.IOContext;
+import com.questdb.net.http.ResponseSink;
 import com.questdb.ql.Record;
 import com.questdb.std.LocalValue;
 import com.questdb.std.str.CharSink;
@@ -93,7 +94,7 @@ public class QueryHandler implements ContextHandler {
                             break;
                         }
                         r.bookmark();
-                        r.put('{').putQuoted("query").put(':').putUtf8EscapedAndQuoted(ctx.query);
+                        r.put('{').putQuoted("query").put(':').encodeUtf8AndQuote(ctx.query);
                         r.put(',').putQuoted("columns").put(':').put('[');
                         ctx.queryState = QUERY_METADATA;
                         ctx.columnIndex = 0;
@@ -204,7 +205,7 @@ public class QueryHandler implements ContextHandler {
         AbstractQueryContext.setupThread(env);
     }
 
-    private static void putValue(CharSink sink, int type, Record rec, int col) {
+    private static void putValue(ResponseSink sink, int type, Record rec, int col) {
         switch (type) {
             case ColumnType.BOOLEAN:
                 sink.put(rec.getBool(col));
@@ -213,10 +214,10 @@ public class QueryHandler implements ContextHandler {
                 sink.put(rec.get(col));
                 break;
             case ColumnType.DOUBLE:
-                sink.jsonFmt(rec.getDouble(col), 10);
+                sink.put(rec.getDouble(col), 10);
                 break;
             case ColumnType.FLOAT:
-                sink.jsonFmt(rec.getFloat(col), 10);
+                sink.put(rec.getFloat(col), 10);
                 break;
             case ColumnType.INT:
                 final int i = rec.getInt(col);
@@ -264,7 +265,7 @@ public class QueryHandler implements ContextHandler {
         if (str == null) {
             r.put("null");
         } else {
-            r.putUtf8EscapedAndQuoted(str);
+            r.encodeUtf8AndQuote(str);
         }
     }
 

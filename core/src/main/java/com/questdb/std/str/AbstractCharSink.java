@@ -37,33 +37,8 @@ public abstract class AbstractCharSink implements CharSink {
     private static final ThreadLocal<ObjHashSet<Throwable>> tlSet = ThreadLocal.withInitial(ObjHashSet::new);
 
     @Override
-    public void encodeUtf8(CharSequence cs) {
-        int hi = cs.length();
-        int i = 0;
-        while (i < hi) {
-            char c = cs.charAt(i++);
-            if (c > 31 && c < 128) {
-                put(c);
-            } else i = putUtf8Internal(cs, hi, i, c);
-        }
-    }
-
-    @Override
-    public void jsonFmt(float value, int scale) {
-        if (value == value) {
-            Numbers.append(this, value, scale);
-        } else {
-            put("null");
-        }
-    }
-
-    @Override
-    public void jsonFmt(double value, int scale) {
-        if (value == value) {
-            Numbers.append(this, value, scale);
-        } else {
-            put("null");
-        }
+    public CharSink encodeUtf8(CharSequence cs) {
+        return encodeUtf8(cs, 0, cs.length());
     }
 
     @Override
@@ -142,30 +117,23 @@ public abstract class AbstractCharSink implements CharSink {
     }
 
     @Override
-    public CharSink putUtf8Escaped(CharSequence cs) {
-        int hi = cs.length();
-        int i = 0;
-        while (i < hi) {
-            char c = cs.charAt(i++);
-            if (c > 31 && c < 128) {
-                switch (c) {
-                    case '/':
-                    case '\"':
-                    case '\\':
-                        put('\\');
-                        // intentional fall through
-                    default:
-                        put(c);
-                        break;
-                }
-            } else i = putUtf8Internal(cs, hi, i, c);
-        }
+    public CharSink encodeUtf8AndQuote(CharSequence cs) {
+        put('\"').encodeUtf8(cs).put('\"');
         return this;
     }
 
     @Override
-    public CharSink putUtf8EscapedAndQuoted(CharSequence cs) {
-        put('\"').putUtf8Escaped(cs).put('\"');
+    public CharSink encodeUtf8(CharSequence cs, int from, int len) {
+        int hi = len + from;
+        int i = from;
+        while (i < hi) {
+            char c = cs.charAt(i++);
+            if (c < 128) {
+                putUtf8Special(c);
+            } else {
+                i = putUtf8Internal(cs, hi, i, c);
+            }
+        }
         return this;
     }
 
@@ -195,6 +163,25 @@ public abstract class AbstractCharSink implements CharSink {
                 put((char) (128 | dword >> 6 & 63)).
                 put((char) (128 | dword & 63));
         return pos;
+    }
+
+    private void put(StackTraceElement e) {
+        put("\tat ");
+        put(e.getClassName());
+        put('.');
+        put(e.getMethodName());
+        if (e.isNativeMethod()) {
+            put("(Native Method)");
+        } else {
+            if (e.getFileName() != null && e.getLineNumber() > -1) {
+                put('(').put(e.getFileName()).put(':').put(e.getLineNumber()).put(')');
+            } else if (e.getFileName() != null) {
+                put('(').put(e.getFileName()).put(')');
+            } else {
+                put("(Unknown Source)");
+            }
+        }
+        put(Misc.EOL);
     }
 
     private void put(Throwable throwable, StackTraceElement[] enclosingTrace, String caption, String prefix, Set<Throwable> dejaVu) {
@@ -241,25 +228,6 @@ public abstract class AbstractCharSink implements CharSink {
         }
     }
 
-    private void put(StackTraceElement e) {
-        put("\tat ");
-        put(e.getClassName());
-        put('.');
-        put(e.getMethodName());
-        if (e.isNativeMethod()) {
-            put("(Native Method)");
-        } else {
-            if (e.getFileName() != null && e.getLineNumber() > -1) {
-                put('(').put(e.getFileName()).put(':').put(e.getLineNumber()).put(')');
-            } else if (e.getFileName() != null) {
-                put('(').put(e.getFileName()).put(')');
-            } else {
-                put("(Unknown Source)");
-            }
-        }
-        put(Misc.EOL);
-    }
-
     private void put0(Throwable e) {
         put(e.getClass().getName());
         if (e.getMessage() != null) {
@@ -267,33 +235,8 @@ public abstract class AbstractCharSink implements CharSink {
         }
     }
 
-    private void putEscaped(char c) {
-        switch (c) {
-            case '\b':
-                put("\\b");
-                break;
-            case '\f':
-                put("\\f");
-                break;
-            case '\n':
-                put("\\n");
-                break;
-            case '\r':
-                put("\\r");
-                break;
-            case '\t':
-                put("\\t");
-                break;
-            default:
-                put(c);
-                break;
-        }
-    }
-
     private int putUtf8Internal(CharSequence cs, int hi, int i, char c) {
-        if (c < 32) {
-            putEscaped(c);
-        } else if (c < 2048) {
+        if (c < 2048) {
             put((char) (192 | c >> 6)).put((char) (128 | c & 63));
         } else if (Character.isSurrogate(c)) {
             i = encodeSurrogate(c, cs, i, hi);
@@ -301,5 +244,9 @@ public abstract class AbstractCharSink implements CharSink {
             put((char) (224 | c >> 12)).put((char) (128 | c >> 6 & 63)).put((char) (128 | c & 63));
         }
         return i;
+    }
+
+    protected void putUtf8Special(char c) {
+        put(c);
     }
 }
