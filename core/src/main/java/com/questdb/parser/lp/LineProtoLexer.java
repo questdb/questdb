@@ -312,7 +312,7 @@ public class LineProtoLexer implements Mutable {
         }
     }
 
-    private class ArrayBackedByteSequence extends AbstractCharSequence implements ByteSequence {
+    private class ArrayBackedByteSequence implements ByteSequence {
         @Override
         public byte byteAt(int index) {
             return (byte) Unsafe.arrayGet(buffer, utf8ErrorTop + index);

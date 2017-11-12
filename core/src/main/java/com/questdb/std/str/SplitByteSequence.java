@@ -26,7 +26,7 @@ package com.questdb.std.str;
 import com.questdb.std.Mutable;
 import com.questdb.std.ObjectFactory;
 
-public class SplitByteSequence extends AbstractCharSequence implements ByteSequence, Mutable {
+public class SplitByteSequence implements ByteSequence, Mutable {
     public static final ObjectFactory<SplitByteSequence> FACTORY = SplitByteSequence::new;
 
     private ByteSequence lhs;
@@ -36,11 +36,11 @@ public class SplitByteSequence extends AbstractCharSequence implements ByteSeque
 
     @Override
     public byte byteAt(int index) {
-        return (byte) charAt(index);
-    }
-
-    @Override
-    public void clear() {
+        if (index < split) {
+            return lhs.byteAt(index);
+        } else {
+            return rhs.byteAt(index - split);
+        }
     }
 
     @Override
@@ -49,12 +49,7 @@ public class SplitByteSequence extends AbstractCharSequence implements ByteSeque
     }
 
     @Override
-    public char charAt(int index) {
-        if (index < split) {
-            return lhs.charAt(index);
-        } else {
-            return rhs.charAt(index - split);
-        }
+    public void clear() {
     }
 
     public ByteSequence of(ByteSequence lhs, ByteSequence rhs) {

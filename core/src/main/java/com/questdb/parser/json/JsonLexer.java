@@ -1,12 +1,13 @@
 package com.questdb.parser.json;
 
+import com.questdb.misc.Chars;
 import com.questdb.misc.Unsafe;
 import com.questdb.std.IntHashSet;
 import com.questdb.std.IntStack;
 import com.questdb.std.Mutable;
-import com.questdb.std.str.ByteSequence;
 import com.questdb.std.str.DirectByteCharSequence;
 import com.questdb.std.str.SplitByteSequence;
+import com.questdb.std.str.StringSink;
 
 import java.io.Closeable;
 
@@ -31,6 +32,7 @@ public class JsonLexer implements Mutable, Closeable {
     private final DirectByteCharSequence dbcs = new DirectByteCharSequence();
     private final DirectByteCharSequence reserveDbcs = new DirectByteCharSequence();
     private final SplitByteSequence splitCs = new SplitByteSequence();
+    private final StringSink sink = new StringSink();
     private final int cacheSizeLimit;
     private int state = S_START;
     private int objDepth = 0;
@@ -280,12 +282,14 @@ public class JsonLexer implements Mutable, Closeable {
         }
     }
 
-    private ByteSequence getCharSequence(long lo, long hi, int cacheSize) {
+    private CharSequence getCharSequence(long lo, long hi, int cacheSize) {
+        sink.clear();
         if (cacheSize == 0) {
-            return dbcs.of(lo, hi - 1);
+            Chars.utf8Decode(dbcs.of(lo, hi - 1), sink);
         } else {
-            return splitCs.of(reserveDbcs.of(cache, cache + cacheSize), dbcs.of(lo, hi - 1));
+            Chars.utf8Decode(splitCs.of(reserveDbcs.of(cache, cache + cacheSize), dbcs.of(lo, hi - 1)), sink);
         }
+        return sink;
     }
 
     static {
