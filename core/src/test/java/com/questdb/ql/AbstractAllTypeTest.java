@@ -50,7 +50,7 @@ public abstract class AbstractAllTypeTest extends AbstractOptimiserTest {
             String[] sym = {"AX", "XX", "BZ", "KK"};
             Rnd rnd = new Rnd();
 
-            long t = Dates.toMillis(2016, 5, 1, 10, 20);
+            long t = Dates.toMicros(2016, 5, 1, 10, 20) / 1000L;
             for (int i = 0; i < n; i++) {
                 JournalEntryWriter ew = w.entryWriter(t += 60000);
                 ew.putInt(0, rnd.nextInt());
@@ -78,7 +78,7 @@ public abstract class AbstractAllTypeTest extends AbstractOptimiserTest {
             String[] sym = {"AX", "XX", "BZ", "KK"};
             Rnd rnd = new Rnd();
 
-            long t = Dates.toMillis(2016, 5, 1, 10, 20);
+            long t = Dates.toMicros(2016, 5, 1, 10, 20) / 1000L;
             for (int i = 0; i < n; i++) {
                 JournalEntryWriter ew = w.entryWriter(t += 60000);
                 ew.putInt(0, rnd.nextInt());

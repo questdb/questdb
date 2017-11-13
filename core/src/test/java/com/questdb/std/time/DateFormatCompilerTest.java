@@ -18,7 +18,7 @@ public class DateFormatCompilerTest {
 
     @BeforeClass
     public static void setUp() throws Exception {
-        DateFormatUtils.updateReferenceYear(Dates.toMillis(1997, 1, 1, 0, 0));
+        DateFormatUtils.updateReferenceYear(Dates.toMicros(1997, 1, 1, 0, 0));
     }
 
     @Test(expected = NumericException.class)
@@ -378,7 +378,7 @@ public class DateFormatCompilerTest {
     public void testGreedyYear2() throws Exception {
         long referenceYear = DateFormatUtils.getReferenceYear();
         try {
-            DateFormatUtils.updateReferenceYear(Dates.toMillis(2015, 1, 20, 0, 0));
+            DateFormatUtils.updateReferenceYear(Dates.toMicros(2015, 1, 20, 0, 0));
             assertThat("y-MM", "1564-03-01T00:00:00.000Z", "1564-03");
             assertThat("y-MM", "2006-03-01T00:00:00.000Z", "06-03");
             assertThat("y-MM", "1955-03-01T00:00:00.000Z", "55-03");

@@ -83,6 +83,9 @@ public class RecordSourcePrinter {
     private void printColumn(Record r, RecordMetadata m, int i) {
         switch (m.getColumnQuick(i).getType()) {
             case ColumnType.DATE:
+                DateFormatUtils.appendDateTimeMillis(sink, r.getDate(i));
+                break;
+            case ColumnType.TIMESTAMP:
                 DateFormatUtils.appendDateTime(sink, r.getDate(i));
                 break;
             case ColumnType.DOUBLE:

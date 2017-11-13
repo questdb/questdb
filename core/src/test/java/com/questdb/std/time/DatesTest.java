@@ -315,7 +315,7 @@ public class DatesTest {
 
     @Test
     public void testOverflowDate() throws Exception {
-        Assert.assertEquals("4509540-01-02T00:00:00.000Z", Dates.toString(142245170150400000L));
+        Assert.assertEquals("6477-07-27T03:15:50.400Z", Dates.toString(142245170150400000L));
     }
 
     @Test

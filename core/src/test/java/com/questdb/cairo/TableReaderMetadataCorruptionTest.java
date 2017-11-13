@@ -38,7 +38,7 @@ public class TableReaderMetadataCorruptionTest extends AbstractCairoTest {
     @Test
     public void testColumnCountIsBeyondFileSize() throws Exception {
         final String[] names = new String[]{"a", "b", "c", "d", "b", "f"};
-        final int[] types = new int[]{ColumnType.INT, ColumnType.INT, ColumnType.STRING, ColumnType.LONG, ColumnType.DATE, ColumnType.DATE};
+        final int[] types = new int[]{ColumnType.INT, ColumnType.INT, ColumnType.STRING, ColumnType.LONG, ColumnType.DATE, ColumnType.TIMESTAMP};
 
         assertMetaConstructorFailure(
                 names,
@@ -53,7 +53,7 @@ public class TableReaderMetadataCorruptionTest extends AbstractCairoTest {
     @Test
     public void testDuplicateColumnName() throws Exception {
         final String[] names = new String[]{"a", "b", "c", "d", "b", "f"};
-        final int[] types = new int[]{ColumnType.INT, ColumnType.INT, ColumnType.STRING, ColumnType.LONG, ColumnType.DATE, ColumnType.DATE};
+        final int[] types = new int[]{ColumnType.INT, ColumnType.INT, ColumnType.STRING, ColumnType.LONG, ColumnType.DATE, ColumnType.TIMESTAMP};
 
         assertMetaConstructorFailure(
                 names,
@@ -115,7 +115,7 @@ public class TableReaderMetadataCorruptionTest extends AbstractCairoTest {
     @Test
     public void testInvalidColumnType() throws Exception {
         final String[] names = new String[]{"a", "b", "c", "d", "e", "f"};
-        final int[] types = new int[]{ColumnType.INT, ColumnType.INT, 566, ColumnType.LONG, ColumnType.DATE, ColumnType.DATE};
+        final int[] types = new int[]{ColumnType.INT, ColumnType.INT, 566, ColumnType.LONG, ColumnType.DATE, ColumnType.TIMESTAMP};
 
         assertMetaConstructorFailure(
                 names,
@@ -130,7 +130,7 @@ public class TableReaderMetadataCorruptionTest extends AbstractCairoTest {
     @Test
     public void testNullColumnName() throws Exception {
         final String[] names = new String[]{"a", "b", "c", null, "e", "f"};
-        final int[] types = new int[]{ColumnType.INT, ColumnType.INT, ColumnType.STRING, ColumnType.LONG, ColumnType.DATE, ColumnType.DATE};
+        final int[] types = new int[]{ColumnType.INT, ColumnType.INT, ColumnType.STRING, ColumnType.LONG, ColumnType.DATE, ColumnType.TIMESTAMP};
 
         assertMetaConstructorFailure(
                 names,
@@ -201,7 +201,7 @@ public class TableReaderMetadataCorruptionTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             try (Path path = new Path()) {
 
-                CairoTestUtils.createAllTable(root, PartitionBy.NONE);
+                CairoTestUtils.createAllTable(configuration, PartitionBy.NONE);
 
                 path.of(root).concat("all").concat(TableUtils.META_FILE_NAME).$();
 

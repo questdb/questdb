@@ -11,9 +11,9 @@ import com.questdb.mp.Worker;
 import com.questdb.net.udp.client.LineProtoSender;
 import com.questdb.ql.RecordSourcePrinter;
 import com.questdb.std.ObjHashSet;
-import com.questdb.std.str.Path;
 import com.questdb.std.str.StringSink;
-import com.questdb.store.factory.configuration.JournalStructure;
+import com.questdb.store.ColumnType;
+import com.questdb.store.PartitionBy;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -229,10 +229,12 @@ public class LinuxLineProtoReceiverTest extends AbstractCairoTest {
 
                     // create table
 
-                    JournalStructure struct = new JournalStructure("tab").$sym("colour").$sym("shape").$double("size").$ts();
-                    try (Path path = new Path();
-                         AppendMemory mem = new AppendMemory()) {
-                        TableUtils.create(cairoCfg.getFilesFacade(), path, mem, root, struct.build(), cairoCfg.getMkDirMode());
+                    try (TableModel model = new TableModel(configuration, "tab", PartitionBy.NONE)
+                            .col("colour", ColumnType.SYMBOL)
+                            .col("shape", ColumnType.SYMBOL)
+                            .col("size", ColumnType.DOUBLE)
+                            .timestamp()) {
+                        CairoTestUtils.create(model);
                     }
 
                     // warm writer up
@@ -247,7 +249,7 @@ public class LinuxLineProtoReceiverTest extends AbstractCairoTest {
 
                     try (LineProtoSender sender = new LineProtoSender("127.0.0.1", receiverCfg.getPort(), 1400)) {
                         for (int i = 0; i < 10; i++) {
-                            sender.metric("tab").tag("colour", "blue").tag("shape", "square").field("size", 3.4, 4).$(100000);
+                            sender.metric("tab").tag("colour", "blue").tag("shape", "square").field("size", 3.4, 4).$(100000000);
                         }
                         sender.flush();
                     }

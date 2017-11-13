@@ -18,9 +18,9 @@ public class RecordChain implements Closeable, RecordCursor, Mutable {
     private final int columnCount;
     private final RecordMetadata metadata;
     private final RecordChainRecord record = new RecordChainRecord();
-    private long recordOffset;
     private final long varOffset;
     private final long fixOffset;
+    private long recordOffset;
     private long varAppendOffset = 0L;
     private long nextRecordOffset = -1L;
 
@@ -226,6 +226,7 @@ public class RecordChain implements Closeable, RecordCursor, Mutable {
                     putDate(record.getLong(i));
                     break;
                 case ColumnType.DATE:
+                case ColumnType.TIMESTAMP:
                     putLong(record.getDate(i));
                     break;
                 case ColumnType.SHORT:

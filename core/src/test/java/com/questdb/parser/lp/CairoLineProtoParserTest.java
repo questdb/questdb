@@ -10,7 +10,8 @@ import com.questdb.std.clock.Clock;
 import com.questdb.std.str.LPSZ;
 import com.questdb.std.str.Path;
 import com.questdb.std.time.DateFormatUtils;
-import com.questdb.store.factory.configuration.JournalStructure;
+import com.questdb.store.ColumnType;
+import com.questdb.store.PartitionBy;
 import com.questdb.test.tools.TestMilliClock;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -20,7 +21,6 @@ import java.io.IOException;
 
 public class CairoLineProtoParserTest extends AbstractCairoTest {
 
-    private static final CairoConfiguration configuration = new DefaultCairoConfiguration(root);
     private final LineProtoLexer lexer = new LineProtoLexer(4096);
 
     @Test
@@ -31,10 +31,10 @@ public class CairoLineProtoParserTest extends AbstractCairoTest {
                 "444\td555\t510\t1.400000000000\tcomment\ttrue\t1970-01-01T00:01:40.000Z\t55\n" +
                 "666\t777\t410\t1.100000000000\tcomment X\tfalse\t1970-01-01T00:01:40.000Z\tNaN\n";
 
-        final String lines = "tab,tag=abc,tag2=xyz field=10000i,f4=9.034,field2=\"str\",fx=true 100000\n" +
-                "tab,tag=woopsie,tag2=daisy field=2000i,f4=3.08891,field2=\"comment\",fx=true 100000\n" +
-                "tab,tag=444,tag2=d555 field=510i,f4=1.4,f5=55i,field2=\"comment\",fx=true 100000\n" +
-                "tab,tag=666,tag2=777 field=410i,f4=1.1,field2=\"comment\\ X\",fx=false 100000\n";
+        final String lines = "tab,tag=abc,tag2=xyz field=10000i,f4=9.034,field2=\"str\",fx=true 100000000\n" +
+                "tab,tag=woopsie,tag2=daisy field=2000i,f4=3.08891,field2=\"comment\",fx=true 100000000\n" +
+                "tab,tag=444,tag2=d555 field=510i,f4=1.4,f5=55i,field2=\"comment\",fx=true 100000000\n" +
+                "tab,tag=666,tag2=777 field=410i,f4=1.1,field2=\"comment\\ X\",fx=false 100000000\n";
 
 
         assertThat(expected, lines, "tab");
@@ -46,9 +46,16 @@ public class CairoLineProtoParserTest extends AbstractCairoTest {
                 "1.600000000000\t15\ttrue\t\txyz\tstring1\t2017-10-03T10:00:00.000Z\n" +
                 "1.300000000000\t11\tfalse\tabc\t\tstring2\t2017-10-03T10:00:00.010Z\n";
 
-
-        JournalStructure struct = new JournalStructure("x").$double("double").$int("int").$bool("bool").$sym("sym1").$sym("sym2").$str("str").$ts();
-        CairoTestUtils.createTable(configuration.getFilesFacade(), root, struct);
+        try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)
+                .col("double", ColumnType.DOUBLE)
+                .col("int", ColumnType.INT)
+                .col("bool", ColumnType.BOOLEAN)
+                .col("sym1", ColumnType.SYMBOL)
+                .col("sym2", ColumnType.SYMBOL)
+                .col("str", ColumnType.STRING)
+                .timestamp()) {
+            CairoTestUtils.create(model);
+        }
 
         String lines = "x,sym2=xyz double=1.6,int=15i,bool=true,str=\"string1\"\n" +
                 "x,sym1=abc double=1.3,int=11i,bool=false,str=\"string2\"\n";
@@ -78,12 +85,12 @@ public class CairoLineProtoParserTest extends AbstractCairoTest {
                 "55\tbox\t5.900000000000\t1970-01-01T00:28:20.000Z\n" +
                 "66\tbox\t7.900000000000\t1970-01-01T00:28:20.000Z\n";
 
-        String lines = "x,sym2=xyz double=1.6,int=15i,bool=true,str=\"string1\" 1500000\n" +
-                "x,sym1=abc double=1x.3,int=11i,bool=false,str=\"string2\" 1500000\n" + // <-- error here
-                "y,asym1=55,asym2=box adouble=5.9 1700000\n" +
-                "x,sym1=row3 double=9.4,int=6i,bool=false,str=\"string3\" 1500000\n" +
-                "y,asym1=66,asym2=box adouble=7.9 1700000\n" +
-                "x,sym1=row4 double=.3,int=91i,bool=true,str=\"string4\" 1500000\n";
+        String lines = "x,sym2=xyz double=1.6,int=15i,bool=true,str=\"string1\" 1500000000\n" +
+                "x,sym1=abc double=1x.3,int=11i,bool=false,str=\"string2\" 1500000000\n" + // <-- error here
+                "y,asym1=55,asym2=box adouble=5.9 1700000000\n" +
+                "x,sym1=row3 double=9.4,int=6i,bool=false,str=\"string3\" 1500000000\n" +
+                "y,asym1=66,asym2=box adouble=7.9 1700000000\n" +
+                "x,sym1=row4 double=.3,int=91i,bool=true,str=\"string4\" 1500000000\n";
 
         assertMultiiTable(expected1, expected2, lines);
     }
@@ -99,12 +106,12 @@ public class CairoLineProtoParserTest extends AbstractCairoTest {
                 "55\tbox\t5.900000000000\t1970-01-01T00:28:20.000Z\n" +
                 "66\tbox\t7.900000000000\t1970-01-01T00:28:20.000Z\n";
 
-        String lines = "x,sym2=xyz double=1.6x,int=15i,bool=true,str=\"string1\" 1500000\n" +  // <-- error here
-                "x,sym1=abc double=1.3,int=11i,bool=false,str=\"string2\" 1500000\n" +
-                "y,asym1=55,asym2=box adouble=5.9 1700000\n" +
-                "x,sym1=row3 double=9.4,int=6i,bool=false,str=\"string3\" 1500000\n" +
-                "y,asym1=66,asym2=box adouble=7.9 1700000\n" +
-                "x,sym1=row4 double=.3,int=91i,bool=true,str=\"string4\" 1500000\n";
+        String lines = "x,sym2=xyz double=1.6x,int=15i,bool=true,str=\"string1\" 1500000000\n" +  // <-- error here
+                "x,sym1=abc double=1.3,int=11i,bool=false,str=\"string2\" 1500000000\n" +
+                "y,asym1=55,asym2=box adouble=5.9 1700000000\n" +
+                "x,sym1=row3 double=9.4,int=6i,bool=false,str=\"string3\" 1500000000\n" +
+                "y,asym1=66,asym2=box adouble=7.9 1700000000\n" +
+                "x,sym1=row4 double=.3,int=91i,bool=true,str=\"string4\" 1500000000\n";
 
         assertMultiiTable(expected1, expected2, lines);
     }
@@ -120,12 +127,12 @@ public class CairoLineProtoParserTest extends AbstractCairoTest {
                 "55\tbox\t5.900000000000\t1970-01-01T00:28:20.000Z\n" +
                 "66\tbox\t7.900000000000\t1970-01-01T00:28:20.000Z\n";
 
-        String lines = "x,sym2=xyz double=1.6,int=15i,bool=true,str=\"string1\" 1500000\n" +
-                "x,sym1=abc double=1.3,int=1s1i,bool=false,str=\"string2\" 1500000\n" + // <-- error here
-                "y,asym1=55,asym2=box adouble=5.9 1700000\n" +
-                "x,sym1=row3 double=9.4,int=6i,bool=false,str=\"string3\" 1500000\n" +
-                "y,asym1=66,asym2=box adouble=7.9 1700000\n" +
-                "x,sym1=row4 double=.3,int=91i,bool=true,str=\"string4\" 1500000\n";
+        String lines = "x,sym2=xyz double=1.6,int=15i,bool=true,str=\"string1\" 1500000000\n" +
+                "x,sym1=abc double=1.3,int=1s1i,bool=false,str=\"string2\" 1500000000\n" + // <-- error here
+                "y,asym1=55,asym2=box adouble=5.9 1700000000\n" +
+                "x,sym1=row3 double=9.4,int=6i,bool=false,str=\"string3\" 1500000000\n" +
+                "y,asym1=66,asym2=box adouble=7.9 1700000000\n" +
+                "x,sym1=row4 double=.3,int=91i,bool=true,str=\"string4\" 1500000000\n";
 
         assertMultiiTable(expected1, expected2, lines);
     }
@@ -141,12 +148,12 @@ public class CairoLineProtoParserTest extends AbstractCairoTest {
                 "55\tbox\t5.900000000000\t1970-01-01T00:28:20.000Z\n" +
                 "66\tbox\t7.900000000000\t1970-01-01T00:28:20.000Z\n";
 
-        String lines = "x,sym2=xyz double=1.6,int=1i5i,bool=true,str=\"string1\" 1500000\n" +  // <-- error here
-                "x,sym1=abc double=1.3,int=11i,bool=false,str=\"string2\" 1500000\n" +
-                "y,asym1=55,asym2=box adouble=5.9 1700000\n" +
-                "x,sym1=row3 double=9.4,int=6i,bool=false,str=\"string3\" 1500000\n" +
-                "y,asym1=66,asym2=box adouble=7.9 1700000\n" +
-                "x,sym1=row4 double=.3,int=91i,bool=true,str=\"string4\" 1500000\n";
+        String lines = "x,sym2=xyz double=1.6,int=1i5i,bool=true,str=\"string1\" 1500000000\n" +  // <-- error here
+                "x,sym1=abc double=1.3,int=11i,bool=false,str=\"string2\" 1500000000\n" +
+                "y,asym1=55,asym2=box adouble=5.9 1700000000\n" +
+                "x,sym1=row3 double=9.4,int=6i,bool=false,str=\"string3\" 1500000000\n" +
+                "y,asym1=66,asym2=box adouble=7.9 1700000000\n" +
+                "x,sym1=row4 double=.3,int=91i,bool=true,str=\"string4\" 1500000000\n";
 
         assertMultiiTable(expected1, expected2, lines);
     }
@@ -163,11 +170,11 @@ public class CairoLineProtoParserTest extends AbstractCairoTest {
                 "66\tbox\t7.900000000000\t1970-01-01T00:28:20.000Z\n";
 
         String lines = "x,sym2=xyz double=1.6,int=15i,bool=true,str=\"string1\" 1234ab\n" + // <-- error here
-                "x,sym1=abc double=1.3,int=11i,bool=false,str=\"string2\" 1500000\n" +
-                "y,asym1=55,asym2=box adouble=5.9 1700000\n" +
-                "x,sym1=row3 double=9.4,int=6i,bool=false,str=\"string3\" 1500000\n" +
-                "y,asym1=66,asym2=box adouble=7.9 1700000\n" +
-                "x,sym1=row4 double=.3,int=91i,bool=true,str=\"string4\" 1500000\n";
+                "x,sym1=abc double=1.3,int=11i,bool=false,str=\"string2\" 1500000000\n" +
+                "y,asym1=55,asym2=box adouble=5.9 1700000000\n" +
+                "x,sym1=row3 double=9.4,int=6i,bool=false,str=\"string3\" 1500000000\n" +
+                "y,asym1=66,asym2=box adouble=7.9 1700000000\n" +
+                "x,sym1=row4 double=.3,int=91i,bool=true,str=\"string4\" 1500000000\n";
 
         assertMultiiTable(expected1, expected2, lines);
     }
@@ -183,12 +190,12 @@ public class CairoLineProtoParserTest extends AbstractCairoTest {
                 "55\tbox\t5.900000000000\t1970-01-01T00:28:20.000Z\n" +
                 "66\tbox\t7.900000000000\t1970-01-01T00:28:20.000Z\n";
 
-        String lines = "x,sym2=xyz double=1.6,int=15i,bool=true,str=\"string1\" 1234\n" +
-                "x,sym1=abc double=1.3,int=11i,bool=false,str=\"string2\" 1500000\n" +
-                "y,asym1=55,asym2=box adouble=5.9 1700000\n" +
+        String lines = "x,sym2=xyz double=1.6,int=15i,bool=true,str=\"string1\" 1234000\n" +
+                "x,sym1=abc double=1.3,int=11i,bool=false,str=\"string2\" 1500000000\n" +
+                "y,asym1=55,asym2=box adouble=5.9 1700000000\n" +
                 "x,sym1=row3 double=9.4,int=6i,bool=false,str=\"string3\" 1500x000\n" + // <-- error here
-                "y,asym1=66,asym2=box adouble=7.9 1700000\n" +
-                "x,sym1=row4 double=.3,int=91i,bool=true,str=\"string4\" 1500000\n";
+                "y,asym1=66,asym2=box adouble=7.9 1700000000\n" +
+                "x,sym1=row4 double=.3,int=91i,bool=true,str=\"string4\" 1500000000\n";
 
         assertMultiiTable(expected1, expected2, lines);
     }
@@ -198,8 +205,16 @@ public class CairoLineProtoParserTest extends AbstractCairoTest {
         final String expected = "double\tint\tbool\tsym1\tsym2\tstr\ttimestamp\n";
 
 
-        JournalStructure struct = new JournalStructure("x").$double("double").$int("int").$bool("bool").$sym("sym1").$sym("sym2").$str("str").$ts();
-        CairoTestUtils.createTable(configuration.getFilesFacade(), root, struct);
+        try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)
+                .col("double", ColumnType.DOUBLE)
+                .col("int", ColumnType.INT)
+                .col("bool", ColumnType.BOOLEAN)
+                .col("sym1", ColumnType.SYMBOL)
+                .col("sym2", ColumnType.SYMBOL)
+                .col("str", ColumnType.STRING)
+                .timestamp()) {
+            CairoTestUtils.create(model);
+        }
 
         String lines = "x,sym2=xyz double=1.6,int=15i,bool=true,str=\"string1\"\n" +
                 "x,sym1=abc double=1.3,int=11i,bool=false,str=\"string2\"\n";
@@ -216,7 +231,7 @@ public class CairoLineProtoParserTest extends AbstractCairoTest {
         };
 
         // open writer so that pool cannot have it
-        try (TableWriter ignored = new TableWriter(configuration.getFilesFacade(), root, struct.getName())) {
+        try (TableWriter ignored = new TableWriter(configuration.getFilesFacade(), root, "x")) {
             assertThat(expected, lines, "x", configuration);
         }
     }
@@ -280,8 +295,8 @@ public class CairoLineProtoParserTest extends AbstractCairoTest {
                 "abc\txyz\t10000\t9.034000000000\tstr\ttrue\t1970-01-01T00:01:40.000Z\n" +
                 "woopsie\tdaisy\t2000\t3.088910000000\tcomment\ttrue\t1970-01-01T00:01:40.000Z\n";
 
-        final String lines = "tab,tag=abc,tag2=xyz field=10000i,f4=9.034,field2=\"str\",fx=true 100000\n" +
-                "tab,tag=woopsie,tag2=daisy field=2000i,f4=3.08891,field2=\"comment\",fx=true 100000\n";
+        final String lines = "tab,tag=abc,tag2=xyz field=10000i,f4=9.034,field2=\"str\",fx=true 100000000\n" +
+                "tab,tag=woopsie,tag2=daisy field=2000i,f4=3.08891,field2=\"comment\",fx=true 100000000\n";
 
 
         assertThat(expected, lines, "tab");
@@ -313,7 +328,7 @@ public class CairoLineProtoParserTest extends AbstractCairoTest {
     public void testCreateTable() throws Exception {
         final String expected = "tag\ttag2\tfield\tf4\tfield2\tfx\ttimestamp\n" +
                 "abc\txyz\t10000\t9.034000000000\tstr\ttrue\t1970-01-01T00:01:40.000Z\n";
-        final String lines = "measurement,tag=abc,tag2=xyz field=10000i,f4=9.034,field2=\"str\",fx=true 100000\n";
+        final String lines = "measurement,tag=abc,tag2=xyz field=10000i,f4=9.034,field2=\"str\",fx=true 100000000\n";
         assertThat(expected, lines, "measurement");
     }
 

@@ -43,6 +43,7 @@ public final class ColumnType {
     public static final int SYMBOL = 8;
     public static final int BINARY = 9;
     public static final int DATE = 10;
+    public static final int TIMESTAMP = 12;
     public static final int PARAMETER = 11;
     private static final ObjIntHashMap<Class> classMap = new ObjIntHashMap<>();
     private static final IntIntHashMap sizeMap = new IntIntHashMap();
@@ -102,6 +103,7 @@ public final class ColumnType {
         sizeMap.put(BINARY, 0);
         sizeMap.put(DATE, 8);
         sizeMap.put(PARAMETER, 0);
+        sizeMap.put(TIMESTAMP, 8);
 
         typeNameMap.put(BOOLEAN, "BOOLEAN");
         typeNameMap.put(BYTE, "BYTE");
@@ -115,6 +117,7 @@ public final class ColumnType {
         typeNameMap.put(BINARY, "BINARY");
         typeNameMap.put(DATE, "DATE");
         typeNameMap.put(PARAMETER, "PARAMETER");
+        typeNameMap.put(TIMESTAMP, "TIMESTAMP");
 
         nameTypeMap.put("BOOLEAN", BOOLEAN);
         nameTypeMap.put("BYTE", BYTE);
@@ -128,5 +131,6 @@ public final class ColumnType {
         nameTypeMap.put("BINARY", BINARY);
         nameTypeMap.put("DATE", DATE);
         nameTypeMap.put("PARAMETER", PARAMETER);
+        nameTypeMap.put("TIMESTAMP", TIMESTAMP);
     }
 }

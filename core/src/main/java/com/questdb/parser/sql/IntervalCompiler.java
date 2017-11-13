@@ -169,16 +169,16 @@ public class IntervalCompiler {
                         addMonthInterval(period, count, out);
                         break;
                     case 'h':
-                        addMillisInterval(period * Dates.HOUR_MILLIS, count, out);
+                        addMillisInterval(period * Dates.HOUR_MICROS, count, out);
                         break;
                     case 'm':
-                        addMillisInterval(period * Dates.MINUTE_MILLIS, count, out);
+                        addMillisInterval(period * Dates.MINUTE_MICROS, count, out);
                         break;
                     case 's':
-                        addMillisInterval(period * Dates.SECOND_MILLIS, count, out);
+                        addMillisInterval(period * Dates.SECOND_MICROS, count, out);
                         break;
                     case 'd':
-                        addMillisInterval(period * Dates.DAY_MILLIS, count, out);
+                        addMillisInterval(period * Dates.DAY_MICROS, count, out);
                         break;
                     default:
                         throw QueryError.$(position, "Unknown period: " + type + " at " + (p - 1));

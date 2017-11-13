@@ -353,8 +353,8 @@ public final class TestUtils {
         w.commit();
     }
 
-    public static void generateQuoteData(JournalWriter<Quote> w, int count, long timetamp) throws JournalException {
-        generateQuoteData(w, count, timetamp, 0);
+    public static void generateQuoteData(JournalWriter<Quote> w, int count, long timestamp) throws JournalException {
+        generateQuoteData(w, count, timestamp, 0);
     }
 
     public static void generateQuoteData(JournalWriter<Quote> w, int count, long timestamp, long increment) throws JournalException {

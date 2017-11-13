@@ -61,7 +61,7 @@ public class JournalRecordSourceTest extends AbstractOptimiserTest {
                 str[i] = rnd.nextString(rnd.nextPositiveInt() % 10);
             }
 
-            long t = Dates.toMillis(2016, 5, 1, 10, 20);
+            long t = Dates.toMicros(2016, 5, 1, 10, 20);
             for (int i = 0; i < n; i++) {
                 JournalEntryWriter ew = w.entryWriter(t += timestep);
                 ew.putInt(0, rnd.nextInt() % 15);

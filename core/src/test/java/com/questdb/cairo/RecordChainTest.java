@@ -177,6 +177,7 @@ public class RecordChainTest {
                     Assert.assertEquals(expected.getLong(i), actual.getLong(i));
                     break;
                 case ColumnType.DATE:
+                case ColumnType.TIMESTAMP:
                     Assert.assertEquals(expected.getDate(i), actual.getDate(i));
                     break;
                 case ColumnType.BOOLEAN:

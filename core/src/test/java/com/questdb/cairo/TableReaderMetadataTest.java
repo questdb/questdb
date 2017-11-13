@@ -16,7 +16,7 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
 
     @Before
     public void setUp2() throws Exception {
-        CairoTestUtils.createAllTable(root, PartitionBy.DAY);
+        CairoTestUtils.createAllTable(configuration, PartitionBy.DAY);
     }
 
     @Test

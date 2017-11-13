@@ -63,8 +63,8 @@ public class OperatorTest extends AbstractOptimiserTest {
             String[] sym = {"AX", "XX", "BZ", "KK"};
             Rnd rnd = new Rnd();
 
-            long t = Dates.toMillis(2016, 5, 1, 10, 20);
-            long d = Dates.toMillis(2016, 5, 1, 10, 20);
+            long t = Dates.toMicros(2016, 5, 1, 10, 20);
+            long d = Dates.toMicros(2016, 5, 1, 10, 20);
             for (int i = 0; i < n; i++) {
                 JournalEntryWriter ew = w.entryWriter(t += 60000);
                 ew.putInt(0, (rnd.nextPositiveInt() & 15) == 0 ? Numbers.INT_NaN : rnd.nextInt());

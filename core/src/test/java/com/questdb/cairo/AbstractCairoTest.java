@@ -8,10 +8,12 @@ import org.junit.BeforeClass;
 
 public class AbstractCairoTest extends AbstractOptimiserTest {
     protected static CharSequence root;
+    protected static CairoConfiguration configuration;
 
     @BeforeClass
     public static void setUp() throws Exception {
         root = FACTORY_CONTAINER.getConfiguration().getJournalBase().getAbsolutePath();
+        configuration = new DefaultCairoConfiguration(root);
     }
 
     @After

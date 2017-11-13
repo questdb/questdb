@@ -5,7 +5,7 @@ import com.questdb.std.str.CharSink;
 
 public interface DateFormat {
 
-    void format(long datetime, DateLocale locale, CharSequence timeZoneName, CharSink sink);
+    void format(long micros, DateLocale locale, CharSequence timeZoneName, CharSink sink);
 
     long parse(CharSequence in, DateLocale locale) throws NumericException;
 
