@@ -5,7 +5,6 @@ import com.questdb.std.str.Path;
 import com.questdb.std.str.StringSink;
 import com.questdb.store.ColumnType;
 import com.questdb.store.PartitionBy;
-import com.questdb.store.factory.configuration.JournalStructure;
 import com.questdb.store.factory.configuration.RecordColumnMetadata;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -15,8 +14,10 @@ public class TableReaderMetadataTimestampTest extends AbstractCairoTest {
 
     @Test
     public void testReAddColumn() throws Exception {
-        JournalStructure structure = CairoTestUtils.getAllStructure();
-        CairoTestUtils.createTable(FilesFacadeImpl.INSTANCE, root, structure.$ts().partitionBy(PartitionBy.NONE));
+        try (TableModel model = CairoTestUtils.getAllTypesModel(configuration, PartitionBy.NONE)) {
+            model.timestamp();
+            CairoTestUtils.create(model);
+        }
         final String expected = "int:INT\n" +
                 "short:SHORT\n" +
                 "byte:BYTE\n" +
@@ -27,7 +28,7 @@ public class TableReaderMetadataTimestampTest extends AbstractCairoTest {
                 "bool:BOOLEAN\n" +
                 "bin:BINARY\n" +
                 "date:DATE\n" +
-                "timestamp:DATE\n" +
+                "timestamp:TIMESTAMP\n" +
                 "str:STRING\n";
         assertThatTimestampRemains((w) -> {
             w.removeColumn("str");
@@ -37,28 +38,29 @@ public class TableReaderMetadataTimestampTest extends AbstractCairoTest {
 
     @Test
     public void testRemoveColumnAfterTimestamp() throws Exception {
-        JournalStructure structure = new JournalStructure("all").
-                $int("int").
-                $short("short").
-                $byte("byte").
-                $double("double").
-                $float("float").
-                $ts().
-                $long("long").
-                $str("str").
-                $sym("sym").
-                $bool("bool").
-                $bin("bin").
-                $date("date").partitionBy(PartitionBy.NONE);
+        try (TableModel model = new TableModel(configuration, "all", PartitionBy.NONE)
+                .col("int", ColumnType.INT)
+                .col("short", ColumnType.SHORT)
+                .col("byte", ColumnType.BYTE)
+                .col("double", ColumnType.DOUBLE)
+                .col("float", ColumnType.FLOAT)
+                .timestamp()
+                .col("long", ColumnType.LONG)
+                .col("str", ColumnType.STRING)
+                .col("sym", ColumnType.SYMBOL)
+                .col("bool", ColumnType.BOOLEAN)
+                .col("bin", ColumnType.BINARY)
+                .col("date", ColumnType.DATE)) {
 
+            CairoTestUtils.create(model);
+        }
 
-        CairoTestUtils.createTable(FilesFacadeImpl.INSTANCE, root, structure);
         final String expected = "int:INT\n" +
                 "short:SHORT\n" +
                 "byte:BYTE\n" +
                 "double:DOUBLE\n" +
                 "float:FLOAT\n" +
-                "timestamp:DATE\n" +
+                "timestamp:TIMESTAMP\n" +
                 "long:LONG\n" +
                 "str:STRING\n" +
                 "sym:SYMBOL\n" +
@@ -69,8 +71,10 @@ public class TableReaderMetadataTimestampTest extends AbstractCairoTest {
 
     @Test
     public void testRemoveColumnBeforeTimestamp() throws Exception {
-        JournalStructure structure = CairoTestUtils.getAllStructure();
-        CairoTestUtils.createTable(FilesFacadeImpl.INSTANCE, root, structure.$ts().partitionBy(PartitionBy.NONE));
+        try (TableModel model = CairoTestUtils.getAllTypesModel(configuration, PartitionBy.NONE)) {
+            model.timestamp();
+            CairoTestUtils.create(model);
+        }
         final String expected = "int:INT\n" +
                 "short:SHORT\n" +
                 "byte:BYTE\n" +
@@ -81,27 +85,28 @@ public class TableReaderMetadataTimestampTest extends AbstractCairoTest {
                 "bool:BOOLEAN\n" +
                 "bin:BINARY\n" +
                 "date:DATE\n" +
-                "timestamp:DATE\n";
+                "timestamp:TIMESTAMP\n";
         assertThatTimestampRemains((w) -> w.removeColumn("str"), expected, 11, 10, 11);
     }
 
     @Test
     public void testRemoveFirstTimestamp() throws Exception {
-        JournalStructure structure = new JournalStructure("all").
-                $ts().
-                $int("int").
-                $short("short").
-                $byte("byte").
-                $double("double").
-                $float("float").
-                $long("long").
-                $str("str").
-                $sym("sym").
-                $bool("bool").
-                $bin("bin").
-                $date("date").partitionBy(PartitionBy.NONE);
+        try (TableModel model = new TableModel(configuration, "all", PartitionBy.NONE)
+                .timestamp()
+                .col("int", ColumnType.INT)
+                .col("short", ColumnType.SHORT)
+                .col("byte", ColumnType.BYTE)
+                .col("double", ColumnType.DOUBLE)
+                .col("float", ColumnType.FLOAT)
+                .col("long", ColumnType.LONG)
+                .col("str", ColumnType.STRING)
+                .col("sym", ColumnType.SYMBOL)
+                .col("bool", ColumnType.BOOLEAN)
+                .col("bin", ColumnType.BINARY)
+                .col("date", ColumnType.DATE)) {
 
-        CairoTestUtils.createTable(FilesFacadeImpl.INSTANCE, root, structure);
+            CairoTestUtils.create(model);
+        }
         final String expected = "int:INT\n" +
                 "short:SHORT\n" +
                 "byte:BYTE\n" +
@@ -118,21 +123,23 @@ public class TableReaderMetadataTimestampTest extends AbstractCairoTest {
 
     @Test
     public void testRemoveMiddleTimestamp() throws Exception {
-        JournalStructure structure = new JournalStructure("all").
-                $int("int").
-                $short("short").
-                $byte("byte").
-                $double("double").
-                $float("float").
-                $ts().
-                $long("long").
-                $str("str").
-                $sym("sym").
-                $bool("bool").
-                $bin("bin").
-                $date("date").partitionBy(PartitionBy.NONE);
+        try (TableModel model = new TableModel(configuration, "all", PartitionBy.NONE)
+                .col("int", ColumnType.INT)
+                .col("short", ColumnType.SHORT)
+                .col("byte", ColumnType.BYTE)
+                .col("double", ColumnType.DOUBLE)
+                .col("float", ColumnType.FLOAT)
+                .timestamp()
+                .col("long", ColumnType.LONG)
+                .col("str", ColumnType.STRING)
+                .col("sym", ColumnType.SYMBOL)
+                .col("bool", ColumnType.BOOLEAN)
+                .col("bin", ColumnType.BINARY)
+                .col("date", ColumnType.DATE)) {
 
-        CairoTestUtils.createTable(FilesFacadeImpl.INSTANCE, root, structure);
+            CairoTestUtils.create(model);
+        }
+
         final String expected = "int:INT\n" +
                 "short:SHORT\n" +
                 "byte:BYTE\n" +
@@ -144,13 +151,16 @@ public class TableReaderMetadataTimestampTest extends AbstractCairoTest {
                 "bool:BOOLEAN\n" +
                 "bin:BINARY\n" +
                 "date:DATE\n";
+
         assertThat(expected, 5);
     }
 
     @Test
     public void testRemoveTailTimestamp() throws Exception {
-        JournalStructure structure = CairoTestUtils.getAllStructure();
-        CairoTestUtils.createTable(FilesFacadeImpl.INSTANCE, root, structure.$ts().partitionBy(PartitionBy.NONE));
+        try (TableModel model = CairoTestUtils.getAllTypesModel(configuration, PartitionBy.NONE)
+                .timestamp()) {
+            CairoTestUtils.create(model);
+        }
         final String expected = "int:INT\n" +
                 "short:SHORT\n" +
                 "byte:BYTE\n" +

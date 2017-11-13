@@ -996,7 +996,7 @@ public class DateFormatCompiler {
                     //     timezone = Numbers.decodeInt(l);
                     //     pos += Numbers.decodeLen(l);
                     // } else {
-                    //     offset = Numbers.decodeInt(l) * Dates.MINUTE_MILLIS;
+                    //     offset = Numbers.decodeInt(l) * Dates.MINUTE_MICROS;
                     //     pos += Numbers.decodeLen(l);
                     // }
 
@@ -1211,7 +1211,7 @@ public class DateFormatCompiler {
         int dateLocaleClassIndex = asm.poolClass(DateLocale.class);
         int charSequenceClassIndex = asm.poolClass(CharSequence.class);
         int minLongIndex = asm.poolLongConst(Long.MIN_VALUE);
-        int minMillisIndex = asm.poolLongConst(Dates.MINUTE_MILLIS);
+        int minMillisIndex = asm.poolLongConst(Dates.MINUTE_MICROS);
 
         int superIndex = asm.poolMethod(superclassIndex, "<init>", "()V");
         int matchWeekdayIndex = asm.poolMethod(DateLocale.class, "matchWeekday", "(Ljava/lang/CharSequence;II)J");

@@ -41,6 +41,8 @@ public final class TableUtils {
     public static final int TABLE_EXISTS = 0;
     public static final int TABLE_DOES_NOT_EXIST = 1;
     public static final int TABLE_RESERVED = 2;
+    public static final String META_FILE_NAME = "_meta";
+    public static final String TXN_FILE_NAME = "_txn";
     static final byte TODO_RESTORE_META = 2;
     static final byte TODO_TRUNCATE = 1;
     static final long META_OFFSET_COLUMN_TYPES = 12;
@@ -49,8 +51,6 @@ public final class TableUtils {
     static final DateFormat fmtYear;
     static final String ARCHIVE_FILE_NAME = "_archive";
     static final String DEFAULT_PARTITION_NAME = "default";
-    public static final String META_FILE_NAME = "_meta";
-    public static final String TXN_FILE_NAME = "_txn";
     static final long TX_OFFSET_TXN = 0;
     static final long TX_OFFSET_TRANSIENT_ROW_COUNT = 8;
     static final long TX_OFFSET_FIXED_ROW_COUNT = 16;
@@ -127,6 +127,26 @@ public final class TableUtils {
         return fd;
     }
 
+    public static void resetTxn(VirtualMemory txMem) {
+        // txn to let readers know table is being reset
+        txMem.putLong(-1);
+        // transient row count
+        txMem.putLong(0);
+        // fixed row count
+        txMem.putLong(0);
+        // partition low
+        txMem.putLong(Long.MIN_VALUE);
+        // structure version
+        txMem.putLong(0);
+        //
+        Unsafe.getUnsafe().storeFence();
+        txMem.jumpTo(0);
+        // txn
+        txMem.putLong(0);
+        Unsafe.getUnsafe().storeFence();
+        txMem.jumpTo(TX_EOF);
+    }
+
     public static void validate(FilesFacade ff, ReadOnlyMemory metaMem, CharSequenceIntHashMap nameIndex) {
         try {
             final int timestampIndex = metaMem.getInt(META_OFFSET_TIMESTAMP_INDEX);
@@ -144,8 +164,8 @@ public final class TableUtils {
 
             if (timestampIndex != -1) {
                 int timestampType = getColumnType(metaMem, timestampIndex);
-                if (timestampType != ColumnType.DATE) {
-                    throw validationException(metaMem).put("Timestamp column must by DATE but found ").put(ColumnType.nameOf(timestampType));
+                if (timestampType != ColumnType.TIMESTAMP) {
+                    throw validationException(metaMem).put("Timestamp column must be TIMESTAMP, but found ").put(ColumnType.nameOf(timestampType));
                 }
             }
 
@@ -174,27 +194,6 @@ public final class TableUtils {
             nameIndex.clear();
             throw e;
         }
-    }
-
-
-    public static void resetTxn(VirtualMemory txMem) {
-        // txn to let readers know table is being reset
-        txMem.putLong(-1);
-        // transient row count
-        txMem.putLong(0);
-        // fixed row count
-        txMem.putLong(0);
-        // partition low
-        txMem.putLong(Long.MIN_VALUE);
-        // structure version
-        txMem.putLong(0);
-        //
-        Unsafe.getUnsafe().storeFence();
-        txMem.jumpTo(0);
-        // txn
-        txMem.putLong(0);
-        Unsafe.getUnsafe().storeFence();
-        txMem.jumpTo(TX_EOF);
     }
 
     /**

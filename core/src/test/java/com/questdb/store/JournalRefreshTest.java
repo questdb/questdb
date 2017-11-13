@@ -155,16 +155,16 @@ public class JournalRefreshTest extends AbstractTest {
     @Test
     public void testRefreshScenarios() throws JournalException {
         // initial data
-        rw.append(new Quote().setSym("IMO-1").setTimestamp(Dates.toMillis(2013, 1, 10, 10, 0)));
-        rw.append(new Quote().setSym("IMO-2").setTimestamp(Dates.toMillis(2013, 1, 10, 14, 0)));
+        rw.append(new Quote().setSym("IMO-1").setTimestamp(Dates.toMicros(2013, 1, 10, 10, 0)));
+        rw.append(new Quote().setSym("IMO-2").setTimestamp(Dates.toMicros(2013, 1, 10, 14, 0)));
         rw.commit();
 
         try (Journal<Quote> r = getFactory().reader(Quote.class)) {
             Assert.assertEquals(2, r.size());
 
             // append data to same partition
-            rw.append(new Quote().setSym("IMO-1").setTimestamp(Dates.toMillis(2013, 1, 10, 15, 0)));
-            rw.append(new Quote().setSym("IMO-2").setTimestamp(Dates.toMillis(2013, 1, 10, 16, 0)));
+            rw.append(new Quote().setSym("IMO-1").setTimestamp(Dates.toMicros(2013, 1, 10, 15, 0)));
+            rw.append(new Quote().setSym("IMO-2").setTimestamp(Dates.toMicros(2013, 1, 10, 16, 0)));
             rw.commit();
 
             // check that size didn't change before we call refresh
@@ -175,8 +175,8 @@ public class JournalRefreshTest extends AbstractTest {
             Assert.assertEquals(4, r.size());
 
             // append data to new partition
-            rw.append(new Quote().setSym("IMO-3").setTimestamp(Dates.toMillis(2013, 2, 10, 15, 0)));
-            rw.append(new Quote().setSym("IMO-4").setTimestamp(Dates.toMillis(2013, 2, 10, 16, 0)));
+            rw.append(new Quote().setSym("IMO-3").setTimestamp(Dates.toMicros(2013, 2, 10, 15, 0)));
+            rw.append(new Quote().setSym("IMO-4").setTimestamp(Dates.toMicros(2013, 2, 10, 16, 0)));
 
             // check that size didn't change before we call refresh
             Assert.assertEquals(4, r.size());
@@ -190,8 +190,8 @@ public class JournalRefreshTest extends AbstractTest {
             Assert.assertEquals(6, r.size());
 
             List<Quote> data = new ArrayList<>();
-            data.add(new Quote().setSym("IMO-5").setTimestamp(Dates.toMillis(2013, 3, 10, 15, 0)));
-            data.add(new Quote().setSym("IMO-6").setTimestamp(Dates.toMillis(2013, 3, 10, 16, 0)));
+            data.add(new Quote().setSym("IMO-5").setTimestamp(Dates.toMicros(2013, 3, 10, 15, 0)));
+            data.add(new Quote().setSym("IMO-6").setTimestamp(Dates.toMicros(2013, 3, 10, 16, 0)));
             rw.mergeAppend(data);
 
             rw.commit();

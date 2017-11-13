@@ -249,7 +249,7 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
                 // type is second value in pair
                 mem.putInt((int) columnNameType.getQuick(i * 2 + 1));
             }
-            mem.putInt(ColumnType.DATE);
+            mem.putInt(ColumnType.TIMESTAMP);
 
             for (int i = 0; i < count; i++) {
                 mem.putStr(cache.get(columnNameType.getQuick(i * 2)));

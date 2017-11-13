@@ -799,6 +799,7 @@ public class TableWriter implements Closeable {
                 break;
             case ColumnType.LONG:
             case ColumnType.DATE:
+            case ColumnType.TIMESTAMP:
                 nullers.add(() -> mem1.putLong(Numbers.LONG_NaN));
                 break;
             case ColumnType.SHORT:
@@ -1255,10 +1256,10 @@ public class TableWriter implements Closeable {
                 DateFormatUtils.append0(path, d);
 
                 if (updatePartitionInterval) {
-                    partitionLo = Dates.yearMillis(y, leap);
-                    partitionLo += Dates.monthOfYearMillis(m, leap);
-                    partitionLo += (d - 1) * Dates.DAY_MILLIS;
-                    partitionHi = partitionLo + 24 * Dates.HOUR_MILLIS;
+                    partitionLo = Dates.yearMicros(y, leap);
+                    partitionLo += Dates.monthOfYearMicros(m, leap);
+                    partitionLo += (d - 1) * Dates.DAY_MICROS;
+                    partitionHi = partitionLo + 24 * Dates.HOUR_MICROS;
                 }
                 break;
             case PartitionBy.MONTH:
@@ -1270,9 +1271,9 @@ public class TableWriter implements Closeable {
                 DateFormatUtils.append0(path, m);
 
                 if (updatePartitionInterval) {
-                    partitionLo = Dates.yearMillis(y, leap);
-                    partitionLo += Dates.monthOfYearMillis(m, leap);
-                    partitionHi = partitionLo + Dates.getDaysPerMonth(m, leap) * 24L * Dates.HOUR_MILLIS;
+                    partitionLo = Dates.yearMicros(y, leap);
+                    partitionLo += Dates.monthOfYearMicros(m, leap);
+                    partitionHi = partitionLo + Dates.getDaysPerMonth(m, leap) * 24L * Dates.HOUR_MICROS;
                 }
                 break;
             case PartitionBy.YEAR:
@@ -1280,7 +1281,7 @@ public class TableWriter implements Closeable {
                 leap = Dates.isLeapYear(y);
                 DateFormatUtils.append000(path, y);
                 if (updatePartitionInterval) {
-                    partitionLo = Dates.yearMillis(y, leap);
+                    partitionLo = Dates.yearMicros(y, leap);
                     partitionHi = Dates.addYear(partitionLo, 1);
                 }
                 break;

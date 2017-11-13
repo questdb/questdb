@@ -627,7 +627,7 @@ public class DDLTests extends AbstractTest {
             long t = DateFormatUtils.parseDateTime("2016-01-10T00:00:00.000Z");
 
             for (int i = 0; i < N; i++) {
-                JournalEntryWriter ew = w.entryWriter(t += Dates.DAY_MILLIS);
+                JournalEntryWriter ew = w.entryWriter(t += Dates.DAY_MICROS);
                 ew.putInt(0, i);
                 ew.put(1, (byte) rnd.nextInt());
                 ew.putShort(2, (short) rnd.nextInt());

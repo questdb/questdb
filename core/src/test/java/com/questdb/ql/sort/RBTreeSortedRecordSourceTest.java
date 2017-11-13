@@ -76,11 +76,11 @@ public class RBTreeSortedRecordSourceTest extends AbstractOptimiserTest {
                 .$()
         )) {
             Rnd rnd = new Rnd();
-            long ts = Dates.toMillis(2016, 3, 12, 0, 0);
+            long ts = Dates.toMicros(2016, 3, 12, 0, 0);
             for (int i = 0; i < 1000; i++) {
                 JournalEntryWriter ew = w.entryWriter();
                 ew.putDouble(0, rnd.nextDouble());
-                ew.putDate(1, ts + (rnd.nextPositiveInt() % Dates.DAY_MILLIS));
+                ew.putDate(1, ts + (rnd.nextPositiveInt() % Dates.DAY_MICROS));
                 ew.append();
             }
             w.commit();

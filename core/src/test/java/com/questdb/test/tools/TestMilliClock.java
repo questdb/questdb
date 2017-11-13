@@ -8,7 +8,7 @@ public class TestMilliClock implements Clock {
 
     public TestMilliClock(long millis, long increment) {
         this.millis = millis;
-        this.increment = increment;
+        this.increment = increment * 1000;
     }
 
     @Override

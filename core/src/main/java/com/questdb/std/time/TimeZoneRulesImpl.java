@@ -55,7 +55,7 @@ public class TimeZoneRulesImpl implements TimeZoneRules {
 
         if (savingsInstantTransition.length == 0) {
             ZoneOffset[] standardOffsets = (ZoneOffset[]) Unsafe.getUnsafe().getObject(rules, STANDARD_OFFSETS);
-            standardOffset = standardOffsets[0].getTotalSeconds() * 1000;
+            standardOffset = standardOffsets[0].getTotalSeconds() * Dates.SECOND_MICROS;
         } else {
             standardOffset = Long.MIN_VALUE;
         }
@@ -64,9 +64,8 @@ public class TimeZoneRulesImpl implements TimeZoneRules {
         for (int i = 0, n = savingsLocalTransitions.length; i < n; i++) {
             LocalDateTime dt = savingsLocalTransitions[i];
 
-            historicTransitions.add(Dates.toMillis(dt.getYear(), dt.getMonthValue(), dt.getDayOfMonth(), dt.getHour(), dt.getMinute()) +
-                    dt.getSecond() * 1000 +
-                    dt.getNano() / 1000);
+            historicTransitions.add(Dates.toMicros(dt.getYear(), dt.getMonthValue(), dt.getDayOfMonth(), dt.getHour(), dt.getMinute()) +
+                    dt.getSecond() * Dates.SECOND_MICROS + dt.getNano() / 1000);
         }
         cutoffTransition = historicTransitions.getLast();
         historyOverlapCheckCutoff = historicTransitions.size() - 1;
@@ -108,31 +107,31 @@ public class TimeZoneRulesImpl implements TimeZoneRules {
         for (int i = 0, n = wallOffsets.length; i < n; i++) {
             this.wallOffsets[i] = wallOffsets[i].getTotalSeconds();
         }
-        this.firstWall = this.wallOffsets[0] * Dates.SECOND_MILLIS;
-        this.lastWall = this.wallOffsets[wallOffsets.length - 1] * Dates.SECOND_MILLIS;
+        this.firstWall = this.wallOffsets[0] * Dates.SECOND_MICROS;
+        this.lastWall = this.wallOffsets[wallOffsets.length - 1] * Dates.SECOND_MICROS;
     }
 
     @Override
-    public long getOffset(long millis) {
-        int y = Dates.getYear(millis);
-        return getOffset(millis, y, Dates.isLeapYear(y));
+    public long getOffset(long micros) {
+        int y = Dates.getYear(micros);
+        return getOffset(micros, y, Dates.isLeapYear(y));
     }
 
     @Override
-    public long getOffset(long millis, int year, boolean leap) {
+    public long getOffset(long micros, int year, boolean leap) {
         if (standardOffset != Long.MIN_VALUE) {
             return standardOffset;
         }
 
-        if (ruleCount > 0 && millis > cutoffTransition) {
-            return fromRules(millis, year, leap);
+        if (ruleCount > 0 && micros > cutoffTransition) {
+            return fromRules(micros, year, leap);
         }
 
-        if (millis > cutoffTransition) {
+        if (micros > cutoffTransition) {
             return lastWall;
         }
 
-        return fromHistory(millis);
+        return fromHistory(micros);
     }
 
     @Override
@@ -140,8 +139,8 @@ public class TimeZoneRulesImpl implements TimeZoneRules {
         return id;
     }
 
-    private long fromHistory(long millis) {
-        int index = historicTransitions.binarySearch(millis);
+    private long fromHistory(long micros) {
+        int index = historicTransitions.binarySearch(micros);
         if (index == -1) {
             return firstWall;
         }
@@ -159,16 +158,16 @@ public class TimeZoneRulesImpl implements TimeZoneRules {
             int delta = offsetAfter - offsetBefore;
             if (delta > 0) {
                 // engage 0 transition logic
-                return (delta + offsetAfter) * Dates.SECOND_MILLIS;
+                return (delta + offsetAfter) * Dates.SECOND_MICROS;
             } else {
-                return offsetBefore * Dates.SECOND_MILLIS;
+                return offsetBefore * Dates.SECOND_MICROS;
             }
         } else {
-            return Unsafe.arrayGet(wallOffsets, index / 2 + 1) * Dates.SECOND_MILLIS;
+            return Unsafe.arrayGet(wallOffsets, index / 2 + 1) * Dates.SECOND_MICROS;
         }
     }
 
-    private long fromRules(long millis, int year, boolean leap) {
+    private long fromRules(long micros, int year, boolean leap) {
 
         int offset = 0;
 
@@ -183,12 +182,12 @@ public class TimeZoneRulesImpl implements TimeZoneRules {
             int dow = zr.dow;
             long date;
             if (dom < 0) {
-                date = Dates.toMillis(year, leap, month, Dates.getDaysPerMonth(month, leap) + 1 + dom, zr.hour, zr.minute) + zr.second * Dates.SECOND_MILLIS;
+                date = Dates.toMicros(year, leap, month, Dates.getDaysPerMonth(month, leap) + 1 + dom, zr.hour, zr.minute) + zr.second * Dates.SECOND_MICROS;
                 if (dow > -1) {
                     date = Dates.previousOrSameDayOfWeek(date, dow);
                 }
             } else {
-                date = Dates.toMillis(year, leap, month, dom, zr.hour, zr.minute) + zr.second * Dates.SECOND_MILLIS;
+                date = Dates.toMicros(year, leap, month, dom, zr.hour, zr.minute) + zr.second * Dates.SECOND_MICROS;
                 if (dow > -1) {
                     date = Dates.nextOrSameDayOfWeek(date, dow);
                 }
@@ -200,10 +199,10 @@ public class TimeZoneRulesImpl implements TimeZoneRules {
 
             switch (zr.timeDef) {
                 case TransitionRule.UTC:
-                    date += (offset - ZoneOffset.UTC.getTotalSeconds()) * Dates.SECOND_MILLIS;
+                    date += (offset - ZoneOffset.UTC.getTotalSeconds()) * Dates.SECOND_MICROS;
                     break;
                 case TransitionRule.STANDARD:
-                    date += (offset - zr.standardOffset) * Dates.SECOND_MILLIS;
+                    date += (offset - zr.standardOffset) * Dates.SECOND_MICROS;
                     break;
                 default:  // WALL
                     break;
@@ -212,25 +211,25 @@ public class TimeZoneRulesImpl implements TimeZoneRules {
             long delta = offsetAfter - offset;
 
             if (delta > 0) {
-                if (millis < date) {
-                    return offset * Dates.SECOND_MILLIS;
+                if (micros < date) {
+                    return offset * Dates.SECOND_MICROS;
                 }
 
-                if (millis < date + delta) {
-                    return (offsetAfter + delta) * Dates.SECOND_MILLIS;
+                if (micros < date + delta) {
+                    return (offsetAfter + delta) * Dates.SECOND_MICROS;
                 } else {
                     offset = offsetAfter;
                 }
             } else {
-                if (millis < date) {
-                    return offset * Dates.SECOND_MILLIS;
+                if (micros < date) {
+                    return offset * Dates.SECOND_MICROS;
                 } else {
                     offset = offsetAfter;
                 }
             }
         }
 
-        return offset * Dates.SECOND_MILLIS;
+        return offset * Dates.SECOND_MICROS;
     }
 
     private static class TransitionRule {

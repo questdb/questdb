@@ -14,7 +14,8 @@ import com.questdb.std.*;
 import com.questdb.std.str.ImmutableCharSequence;
 import com.questdb.std.str.LPSZ;
 import com.questdb.std.str.StringSink;
-import com.questdb.store.factory.configuration.JournalStructure;
+import com.questdb.store.ColumnType;
+import com.questdb.store.PartitionBy;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
@@ -28,11 +29,12 @@ import java.util.concurrent.locks.LockSupport;
 public class ReaderPoolTest extends AbstractCairoTest {
     private static final FilesFacade ff = FilesFacadeImpl.INSTANCE;
     private static final Log LOG = LogFactory.getLog(ReaderPoolTest.class);
-    private static final DefaultCairoConfiguration configuration = new DefaultCairoConfiguration(root);
 
     @Before
     public void setUpInstance() throws Exception {
-        createTable();
+        try (TableModel model = new TableModel(configuration, "u", PartitionBy.NONE).col("ts", ColumnType.DATE)) {
+            CairoTestUtils.create(model);
+        }
     }
 
     @Test
@@ -135,7 +137,9 @@ public class ReaderPoolTest extends AbstractCairoTest {
         final String[] names = new String[readerCount];
         for (int i = 0; i < readerCount; i++) {
             names[i] = "x" + i;
-            CairoTestUtils.createTable(ff, root, new JournalStructure(names[i]).$date("ts").$());
+            try (TableModel model = new TableModel(configuration, names[i], PartitionBy.NONE).col("ts", ColumnType.DATE)) {
+                CairoTestUtils.create(model);
+            }
         }
 
         assertWithPool(pool -> {
@@ -186,7 +190,9 @@ public class ReaderPoolTest extends AbstractCairoTest {
 
         for (int i = 0; i < readerCount; i++) {
             names[i] = "x" + i;
-            CairoTestUtils.createTable(ff, root, new JournalStructure(names[i]).$date("ts").$());
+            try (TableModel model = new TableModel(configuration, names[i], PartitionBy.NONE).col("ts", ColumnType.DATE)) {
+                CairoTestUtils.create(model);
+            }
 
             try (TableWriter w = new TableWriter(ff, root, names[i])) {
                 for (int k = 0; k < 10; k++) {
@@ -404,7 +410,9 @@ public class ReaderPoolTest extends AbstractCairoTest {
 
         for (int i = 0; i < readerCount; i++) {
             names[i] = "x" + i;
-            CairoTestUtils.createTable(ff, root, new JournalStructure(names[i]).$date("ts").$());
+            try (TableModel model = new TableModel(configuration, names[i], PartitionBy.NONE).col("ts", ColumnType.DATE)) {
+                CairoTestUtils.create(model);
+            }
 
             try (TableWriter w = new TableWriter(ff, root, names[i])) {
                 for (int k = 0; k < 10; k++) {
@@ -537,9 +545,15 @@ public class ReaderPoolTest extends AbstractCairoTest {
 
     @Test
     public void testLockUnlock() throws Exception {
-        // create journals
-        CairoTestUtils.createTable(ff, root, new JournalStructure("x").$date("ts").$());
-        CairoTestUtils.createTable(ff, root, new JournalStructure("y").$date("ts").$());
+        // create tables
+
+        try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE).col("ts", ColumnType.DATE)) {
+            CairoTestUtils.create(model);
+        }
+
+        try (TableModel model = new TableModel(configuration, "y", PartitionBy.NONE).col("ts", ColumnType.DATE)) {
+            CairoTestUtils.create(model);
+        }
 
         assertWithPool(pool -> {
             TableReader x, y;
@@ -661,10 +675,6 @@ public class ReaderPoolTest extends AbstractCairoTest {
                 code.run(pool);
             }
         });
-    }
-
-    private void createTable() {
-        CairoTestUtils.createTable(FilesFacadeImpl.INSTANCE, root, new JournalStructure("u").$date("ts").$());
     }
 
     private interface PoolAwareCode {

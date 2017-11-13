@@ -139,7 +139,7 @@ public final class TestData {
     }
 
     public static void appendQuoteData2(JournalWriter<Quote> w) throws JournalException, NumericException {
-        //        generateQuoteData(1000, Dates.toMillis("2013-03-10T10:00:00.000Z"), 100000000);
+        //        generateQuoteData(1000, Dates.toMicros("2013-03-10T10:00:00.000Z"), 100000000);
         w.append(new Quote().setSym("ADM.L").setAsk(0.2813225171839).setBid(0.21156328806051572).setAskSize(913537312).setBidSize(50311594).setEx("LXE").setMode("Fast trading").setTimestamp(DateFormatUtils.parseDateTime("2013-03-10T10:00:00.000Z")));
         w.append(new Quote().setSym("BT-A.L").setAsk(0.8027576197368236).setBid(0.0946990619318967).setAskSize(1004815595).setBidSize(267704199).setEx("LXE").setMode("Fast trading").setTimestamp(DateFormatUtils.parseDateTime("2013-03-10T11:23:20.000Z")));
         w.append(new Quote().setSym("RRS.L").setAsk(0.5797711255326264).setBid(0.587147559407176).setAskSize(858424797).setBidSize(1522249123).setEx("LXE").setMode("Fast trading").setTimestamp(DateFormatUtils.parseDateTime("2013-03-10T12:46:40.000Z")));

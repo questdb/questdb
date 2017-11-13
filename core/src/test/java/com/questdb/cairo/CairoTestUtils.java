@@ -1,45 +1,66 @@
 package com.questdb.cairo;
 
+import com.questdb.misc.Files;
 import com.questdb.misc.FilesFacade;
-import com.questdb.misc.FilesFacadeImpl;
 import com.questdb.std.str.Path;
 import com.questdb.std.time.Dates;
+import com.questdb.store.ColumnType;
 import com.questdb.store.PartitionBy;
-import com.questdb.store.factory.configuration.JournalStructure;
+
+import static com.questdb.cairo.TableUtils.META_FILE_NAME;
+import static com.questdb.cairo.TableUtils.TXN_FILE_NAME;
 
 public class CairoTestUtils {
 
-    public static void createAllTable(CharSequence root, int partitionBy) {
-        createTable(FilesFacadeImpl.INSTANCE, root, getAllStructure().partitionBy(partitionBy));
-    }
+    public static void create(TableModel model) {
+        final Path path = model.getPath();
+        final FilesFacade ff = model.getCairoCfg().getFilesFacade();
 
-    public static String createTable(FilesFacade ff, CharSequence root, JournalStructure struct) {
-        String name = struct.getName();
-        try (AppendMemory mem = new AppendMemory()) {
-            try (Path path = new Path()) {
-                if (TableUtils.exists(ff, path, root, name) == TableUtils.TABLE_DOES_NOT_EXIST) {
-                    TableUtils.create(ff, path, mem, root, struct.build(), 509);
-                } else {
-                    throw CairoException.instance(0).put("Table ").put(name).put(" already exists");
-                }
-            }
+        path.of(model.getCairoCfg().getRoot()).concat(model.getName());
+        final int rootLen = path.length();
+        if (ff.mkdirs(path.put(Files.SEPARATOR).$(), model.getCairoCfg().getMkDirMode()) == -1) {
+            throw CairoException.instance(ff.errno()).put("Cannot create dir: ").put(path);
         }
-        return name;
+
+        try (AppendMemory mem = model.getMem()) {
+
+            mem.of(ff, path.trimTo(rootLen).concat(META_FILE_NAME).$(), ff.getPageSize());
+
+            int count = model.getColumnCount();
+            mem.putInt(count);
+            mem.putInt(model.getPartitionBy());
+            mem.putInt(model.getTimestampIndex());
+            for (int i = 0; i < count; i++) {
+                mem.putInt(model.getColumnTypes().getQuick(i));
+            }
+            for (int i = 0; i < count; i++) {
+                mem.putStr(model.getColumnNames().getQuick(i));
+            }
+
+            mem.of(ff, path.trimTo(rootLen).concat(TXN_FILE_NAME).$(), ff.getPageSize());
+            TableUtils.resetTxn(mem);
+        }
     }
 
-    public static JournalStructure getAllStructure() {
-        return new JournalStructure("all").
-                $int("int").
-                $short("short").
-                $byte("byte").
-                $double("double").
-                $float("float").
-                $long("long").
-                $str("str").
-                $sym("sym").
-                $bool("bool").
-                $bin("bin").
-                $date("date");
+    public static void createAllTable(CairoConfiguration configuration, int partitionBy) {
+        try (TableModel model = getAllTypesModel(configuration, partitionBy)) {
+            create(model);
+        }
+    }
+
+    public static TableModel getAllTypesModel(CairoConfiguration configuration, int partitionBy) {
+        return new TableModel(configuration, "all", partitionBy)
+                .col("int", ColumnType.INT)
+                .col("short", ColumnType.SHORT)
+                .col("byte", ColumnType.BYTE)
+                .col("double", ColumnType.DOUBLE)
+                .col("float", ColumnType.FLOAT)
+                .col("long", ColumnType.LONG)
+                .col("str", ColumnType.STRING)
+                .col("sym", ColumnType.SYMBOL)
+                .col("bool", ColumnType.BOOLEAN)
+                .col("bin", ColumnType.BINARY)
+                .col("date", ColumnType.DATE);
     }
 
     static boolean isSamePartition(long timestampA, long timestampB, int partitionBy) {

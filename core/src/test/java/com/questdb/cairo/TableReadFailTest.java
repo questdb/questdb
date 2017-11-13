@@ -73,7 +73,7 @@ public class TableReadFailTest extends AbstractCairoTest {
     }
 
     private void assertConstructorFail(FilesFacade ff) throws Exception {
-        CairoTestUtils.createAllTable(root, PartitionBy.DAY);
+        CairoTestUtils.createAllTable(configuration, PartitionBy.DAY);
         TestUtils.assertMemoryLeak(() -> {
             try {
                 new TableReader(ff, root, "all");
