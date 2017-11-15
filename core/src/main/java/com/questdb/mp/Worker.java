@@ -23,8 +23,8 @@
 
 package com.questdb.mp;
 
-import com.questdb.misc.Unsafe;
 import com.questdb.std.ObjHashSet;
+import com.questdb.std.Unsafe;
 
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicInteger;

@@ -23,18 +23,14 @@
 
 package com.questdb.ql.analytic.next;
 
-import com.questdb.misc.Misc;
-import com.questdb.misc.Unsafe;
+import com.questdb.common.*;
 import com.questdb.ql.NullRecord;
-import com.questdb.ql.Record;
-import com.questdb.ql.RecordCursor;
 import com.questdb.ql.analytic.AnalyticFunction;
 import com.questdb.ql.ops.VirtualColumn;
 import com.questdb.std.MemoryPages;
+import com.questdb.std.Misc;
+import com.questdb.std.Unsafe;
 import com.questdb.std.str.CharSink;
-import com.questdb.store.ColumnType;
-import com.questdb.store.SymbolTable;
-import com.questdb.store.factory.configuration.RecordColumnMetadata;
 
 import java.io.Closeable;
 

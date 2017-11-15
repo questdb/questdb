@@ -23,13 +23,13 @@
 
 package org.questdb.examples;
 
-import com.questdb.ex.JournalException;
+import com.questdb.common.Record;
+import com.questdb.common.RecordCursor;
 import com.questdb.ex.ParserException;
 import com.questdb.parser.sql.QueryCompiler;
-import com.questdb.ql.Record;
-import com.questdb.ql.RecordCursor;
 import com.questdb.ql.RecordSource;
 import com.questdb.ql.RecordSourcePrinter;
+import com.questdb.std.ex.JournalException;
 import com.questdb.std.str.StdoutSink;
 import com.questdb.store.factory.Factory;
 import com.questdb.store.util.ImportManager;

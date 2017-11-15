@@ -23,9 +23,6 @@
 
 package com.questdb.std;
 
-import com.questdb.misc.Misc;
-import com.questdb.misc.Rnd;
-import com.questdb.misc.Unsafe;
 import com.questdb.std.str.CharSink;
 
 import java.util.Arrays;

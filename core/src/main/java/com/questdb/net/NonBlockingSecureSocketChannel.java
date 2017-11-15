@@ -23,13 +23,14 @@
 
 package com.questdb.net;
 
-import com.questdb.ex.DisconnectedChannelException;
-import com.questdb.ex.JournalRuntimeException;
-import com.questdb.ex.SlowReadableChannelException;
+import com.questdb.common.JournalRuntimeException;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
-import com.questdb.misc.ByteBuffers;
 import com.questdb.net.http.IOHttpJob;
+import com.questdb.std.ByteBuffers;
+import com.questdb.std.NetworkChannel;
+import com.questdb.std.ex.DisconnectedChannelException;
+import com.questdb.std.ex.SlowReadableChannelException;
 
 import javax.net.ssl.*;
 import java.io.IOException;

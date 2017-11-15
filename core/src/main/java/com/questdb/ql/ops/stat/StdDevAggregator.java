@@ -23,7 +23,7 @@
 
 package com.questdb.ql.ops.stat;
 
-import com.questdb.net.http.ServerConfiguration;
+import com.questdb.ServerConfiguration;
 import com.questdb.ql.map.DirectMapValues;
 import com.questdb.ql.ops.Function;
 import com.questdb.ql.ops.VirtualColumnFactory;

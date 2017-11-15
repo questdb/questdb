@@ -1,10 +1,10 @@
 package com.questdb.parser.typeprobe;
 
-import com.questdb.ex.NumericException;
+import com.questdb.common.ColumnType;
+import com.questdb.common.NumericException;
 import com.questdb.std.time.DateFormat;
 import com.questdb.std.time.DateFormatFactory;
 import com.questdb.std.time.DateLocale;
-import com.questdb.store.ColumnType;
 
 public class DateProbe implements TypeProbe {
     private final String pattern;

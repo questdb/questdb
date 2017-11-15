@@ -24,9 +24,9 @@
 package com.questdb.store.factory;
 
 import com.questdb.ex.FactoryClosedException;
-import com.questdb.ex.JournalException;
 import com.questdb.ex.JournalLockedException;
 import com.questdb.ex.WriterBusyException;
+import com.questdb.std.ex.JournalException;
 import com.questdb.store.JournalWriter;
 import com.questdb.store.factory.configuration.JournalMetadata;
 import com.questdb.store.factory.configuration.JournalStructure;

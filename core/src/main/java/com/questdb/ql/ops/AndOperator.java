@@ -23,9 +23,9 @@
 
 package com.questdb.ql.ops;
 
-import com.questdb.ql.Record;
+import com.questdb.common.ColumnType;
+import com.questdb.common.Record;
 import com.questdb.ql.ops.constant.BooleanConstant;
-import com.questdb.store.ColumnType;
 
 public class AndOperator extends AbstractBinaryOperator {
 

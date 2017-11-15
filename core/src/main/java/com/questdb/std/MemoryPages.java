@@ -23,9 +23,6 @@
 
 package com.questdb.std;
 
-import com.questdb.misc.Numbers;
-import com.questdb.misc.Unsafe;
-
 import java.io.Closeable;
 
 public class MemoryPages implements Closeable, Mutable {

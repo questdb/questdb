@@ -23,17 +23,21 @@
 
 package com.questdb.net.ha;
 
+import com.questdb.common.PartitionBy;
 import com.questdb.ex.JournalConfigurationException;
-import com.questdb.misc.Rnd;
 import com.questdb.model.Quote;
 import com.questdb.net.ha.config.ClientConfig;
 import com.questdb.net.ha.config.ServerConfig;
 import com.questdb.net.ha.config.ServerNode;
 import com.questdb.ql.RecordSource;
 import com.questdb.ql.RecordSourcePrinter;
+import com.questdb.std.Rnd;
 import com.questdb.std.str.StringSink;
 import com.questdb.std.time.DateFormatUtils;
-import com.questdb.store.*;
+import com.questdb.store.JournalEntryWriter;
+import com.questdb.store.JournalKey;
+import com.questdb.store.JournalListener;
+import com.questdb.store.JournalWriter;
 import com.questdb.store.factory.configuration.JournalStructure;
 import com.questdb.test.tools.AbstractTest;
 import com.questdb.test.tools.TestUtils;

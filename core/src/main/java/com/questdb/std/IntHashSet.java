@@ -23,8 +23,6 @@
 
 package com.questdb.std;
 
-import com.questdb.misc.Numbers;
-import com.questdb.misc.Unsafe;
 import com.questdb.std.str.CharSink;
 import com.questdb.std.str.StringSink;
 

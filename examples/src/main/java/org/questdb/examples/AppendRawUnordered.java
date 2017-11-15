@@ -23,9 +23,9 @@
 
 package org.questdb.examples;
 
-import com.questdb.ex.JournalException;
 import com.questdb.ex.ParserException;
-import com.questdb.misc.Rnd;
+import com.questdb.std.Rnd;
+import com.questdb.std.ex.JournalException;
 import com.questdb.store.JournalEntryWriter;
 import com.questdb.store.JournalWriter;
 import com.questdb.store.factory.Factory;

@@ -1,7 +1,7 @@
 package com.questdb.cairo;
 
-import com.questdb.misc.Files;
 import com.questdb.parser.sql.AbstractOptimiserTest;
+import com.questdb.std.Files;
 import com.questdb.std.str.Path;
 import org.junit.After;
 import org.junit.BeforeClass;

@@ -23,11 +23,12 @@
 
 package com.questdb.net.ha;
 
-import com.questdb.ex.JournalException;
-import com.questdb.misc.Rnd;
+import com.questdb.common.PartitionBy;
 import com.questdb.model.Quote;
 import com.questdb.net.ha.config.ClientConfig;
 import com.questdb.net.ha.config.ServerConfig;
+import com.questdb.std.Rnd;
+import com.questdb.std.ex.JournalException;
 import com.questdb.store.*;
 import com.questdb.store.factory.configuration.Constants;
 import com.questdb.test.tools.AbstractTest;

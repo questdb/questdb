@@ -25,7 +25,7 @@
 package com.questdb.ql.ops.regex;
 
 
-import com.questdb.misc.Unsafe;
+import com.questdb.std.Unsafe;
 
 import java.util.Arrays;
 import java.util.Objects;

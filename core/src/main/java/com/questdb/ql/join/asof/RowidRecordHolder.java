@@ -23,8 +23,8 @@
 
 package com.questdb.ql.join.asof;
 
-import com.questdb.ql.Record;
-import com.questdb.ql.RecordCursor;
+import com.questdb.common.Record;
+import com.questdb.common.RecordCursor;
 
 public class RowidRecordHolder implements RecordHolder {
     private RecordCursor cursor;

@@ -23,10 +23,10 @@
 
 package com.questdb.std.str;
 
-import com.questdb.misc.Chars;
-import com.questdb.misc.Unsafe;
+import com.questdb.std.Chars;
 import com.questdb.std.Mutable;
 import com.questdb.std.ObjectFactory;
+import com.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
 
 public class DirectByteCharSequence extends AbstractCharSequence implements Mutable, ByteSequence, DirectBytes {

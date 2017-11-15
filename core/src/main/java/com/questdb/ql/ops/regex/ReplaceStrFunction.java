@@ -23,10 +23,11 @@
 
 package com.questdb.ql.ops.regex;
 
+import com.questdb.common.ColumnType;
+import com.questdb.common.Record;
+import com.questdb.common.StorageFacade;
 import com.questdb.ex.ParserException;
 import com.questdb.parser.sql.QueryError;
-import com.questdb.ql.Record;
-import com.questdb.ql.StorageFacade;
 import com.questdb.ql.ops.AbstractVirtualColumn;
 import com.questdb.ql.ops.Function;
 import com.questdb.ql.ops.VirtualColumn;
@@ -34,7 +35,6 @@ import com.questdb.std.str.AbstractCharSequence;
 import com.questdb.std.str.CharSink;
 import com.questdb.std.str.ConcatCharSequence;
 import com.questdb.std.str.FlyweightCharSequence;
-import com.questdb.store.ColumnType;
 
 class ReplaceStrFunction extends AbstractVirtualColumn implements Function {
     private FlyweightCharSequence left;

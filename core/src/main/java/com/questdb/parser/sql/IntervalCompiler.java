@@ -23,10 +23,10 @@
 
 package com.questdb.parser.sql;
 
-import com.questdb.ex.NumericException;
+import com.questdb.common.NumericException;
 import com.questdb.ex.ParserException;
-import com.questdb.misc.Numbers;
 import com.questdb.std.LongList;
+import com.questdb.std.Numbers;
 import com.questdb.std.ObjList;
 import com.questdb.std.time.DateFormatUtils;
 import com.questdb.std.time.Dates;

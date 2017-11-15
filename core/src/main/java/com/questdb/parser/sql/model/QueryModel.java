@@ -23,10 +23,9 @@
 
 package com.questdb.parser.sql.model;
 
-import com.questdb.ex.JournalException;
-import com.questdb.ex.JournalRuntimeException;
+import com.questdb.common.JournalRuntimeException;
+import com.questdb.common.RecordMetadata;
 import com.questdb.ex.ParserException;
-import com.questdb.misc.Chars;
 import com.questdb.parser.sql.QueryError;
 import com.questdb.ql.RecordSource;
 import com.questdb.ql.ops.Parameter;
@@ -34,11 +33,11 @@ import com.questdb.ql.ops.VirtualColumn;
 import com.questdb.ql.sys.SysFactories;
 import com.questdb.ql.sys.SystemViewFactory;
 import com.questdb.std.*;
+import com.questdb.std.ex.JournalException;
 import com.questdb.std.str.StringSink;
 import com.questdb.store.factory.Factory;
 import com.questdb.store.factory.configuration.JournalConfiguration;
 import com.questdb.store.factory.configuration.JournalMetadata;
-import com.questdb.store.factory.configuration.RecordMetadata;
 
 import java.util.ArrayDeque;
 

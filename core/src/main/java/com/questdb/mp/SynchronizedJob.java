@@ -23,7 +23,7 @@
 
 package com.questdb.mp;
 
-import com.questdb.misc.Unsafe;
+import com.questdb.std.Unsafe;
 
 public abstract class SynchronizedJob implements Job {
     private static final long LOCKED_OFFSET = Unsafe.getFieldOffset(SynchronizedJob.class, "locked");

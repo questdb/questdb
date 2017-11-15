@@ -2,10 +2,10 @@ package com.questdb.parser.typeprobe;
 
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
-import com.questdb.misc.Files;
-import com.questdb.misc.Os;
-import com.questdb.misc.Unsafe;
+import com.questdb.std.Files;
 import com.questdb.std.ObjList;
+import com.questdb.std.Os;
+import com.questdb.std.Unsafe;
 import com.questdb.std.str.DirectByteCharSequence;
 import com.questdb.std.str.Path;
 import com.questdb.std.time.DateFormatFactory;

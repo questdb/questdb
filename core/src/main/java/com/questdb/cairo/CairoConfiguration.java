@@ -1,6 +1,6 @@
 package com.questdb.cairo;
 
-import com.questdb.misc.FilesFacade;
+import com.questdb.std.FilesFacade;
 import com.questdb.std.clock.Clock;
 
 public interface CairoConfiguration {

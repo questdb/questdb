@@ -23,7 +23,7 @@
 
 package com.questdb.ql.analytic;
 
-import com.questdb.net.http.ServerConfiguration;
+import com.questdb.ServerConfiguration;
 import com.questdb.ql.ops.VirtualColumn;
 import com.questdb.std.ObjList;
 

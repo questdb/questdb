@@ -1,7 +1,7 @@
 package com.questdb.std.microtime;
 
-import com.questdb.misc.Numbers;
 import com.questdb.std.CharSequenceIntHashMap;
+import com.questdb.std.Numbers;
 import com.questdb.std.ObjList;
 
 import java.time.ZoneId;

@@ -23,9 +23,9 @@
 
 package com.questdb.net.ha.mcast;
 
-import com.questdb.ex.JournalNetworkException;
-import com.questdb.misc.ByteBuffers;
 import com.questdb.net.ha.config.ServerConfig;
+import com.questdb.std.ByteBuffers;
+import com.questdb.std.ex.JournalNetworkException;
 
 import java.net.InetSocketAddress;
 import java.nio.ByteBuffer;

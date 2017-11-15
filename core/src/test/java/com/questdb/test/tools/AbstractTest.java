@@ -24,20 +24,20 @@
 package com.questdb.test.tools;
 
 import com.questdb.BootstrapEnv;
+import com.questdb.ServerConfiguration;
+import com.questdb.common.Record;
+import com.questdb.common.RecordCursor;
+import com.questdb.common.SymbolTable;
 import com.questdb.ex.ParserException;
-import com.questdb.misc.Unsafe;
 import com.questdb.model.configuration.ModelConfiguration;
-import com.questdb.net.http.ServerConfiguration;
 import com.questdb.parser.sql.QueryCompiler;
 import com.questdb.parser.sql.QueryError;
-import com.questdb.ql.Record;
-import com.questdb.ql.RecordCursor;
 import com.questdb.ql.RecordSource;
 import com.questdb.ql.RecordSourcePrinter;
+import com.questdb.std.Unsafe;
 import com.questdb.std.str.StringSink;
 import com.questdb.std.time.DateFormatFactory;
 import com.questdb.std.time.DateLocaleFactory;
-import com.questdb.store.SymbolTable;
 import com.questdb.store.factory.Factory;
 import org.junit.After;
 import org.junit.Assert;

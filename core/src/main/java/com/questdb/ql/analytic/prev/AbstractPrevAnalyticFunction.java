@@ -23,15 +23,11 @@
 
 package com.questdb.ql.analytic.prev;
 
-import com.questdb.misc.Numbers;
-import com.questdb.misc.Unsafe;
-import com.questdb.ql.Record;
-import com.questdb.ql.RecordCursor;
+import com.questdb.common.*;
 import com.questdb.ql.analytic.AnalyticFunction;
 import com.questdb.ql.ops.VirtualColumn;
-import com.questdb.store.ColumnType;
-import com.questdb.store.SymbolTable;
-import com.questdb.store.factory.configuration.RecordColumnMetadata;
+import com.questdb.std.Numbers;
+import com.questdb.std.Unsafe;
 
 import java.io.Closeable;
 import java.io.IOException;

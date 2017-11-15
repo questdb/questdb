@@ -23,9 +23,9 @@
 
 package com.questdb.net.ha;
 
-import com.questdb.ex.JournalNetworkException;
-import com.questdb.misc.ByteBuffers;
-import com.questdb.misc.Unsafe;
+import com.questdb.std.ByteBuffers;
+import com.questdb.std.Unsafe;
+import com.questdb.std.ex.JournalNetworkException;
 
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;

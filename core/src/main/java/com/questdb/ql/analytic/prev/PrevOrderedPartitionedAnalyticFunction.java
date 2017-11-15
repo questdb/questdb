@@ -23,11 +23,11 @@
 
 package com.questdb.ql.analytic.prev;
 
-import com.questdb.misc.Misc;
-import com.questdb.ql.Record;
+import com.questdb.common.Record;
 import com.questdb.ql.analytic.AbstractOrderedAnalyticFunction;
 import com.questdb.ql.map.*;
 import com.questdb.ql.ops.VirtualColumn;
+import com.questdb.std.Misc;
 import com.questdb.std.ObjList;
 import com.questdb.std.ThreadLocal;
 

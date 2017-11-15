@@ -23,8 +23,8 @@
 
 package org.questdb.examples;
 
-import com.questdb.ex.JournalException;
-import com.questdb.misc.Files;
+import com.questdb.std.Files;
+import com.questdb.std.ex.JournalException;
 import com.questdb.store.JournalWriter;
 import com.questdb.store.factory.Factory;
 import com.questdb.store.factory.configuration.JournalConfiguration;

@@ -23,7 +23,7 @@
 
 package com.questdb.std.str;
 
-import com.questdb.misc.Unsafe;
+import com.questdb.std.Unsafe;
 
 public class DirectCharSequence extends AbstractCharSequence implements DirectBytes {
     private long lo;

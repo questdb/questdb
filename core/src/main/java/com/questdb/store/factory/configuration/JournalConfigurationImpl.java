@@ -24,13 +24,13 @@
 package com.questdb.store.factory.configuration;
 
 import com.questdb.ex.JournalDoesNotExistException;
-import com.questdb.ex.JournalException;
 import com.questdb.ex.JournalMetadataException;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
-import com.questdb.misc.Files;
+import com.questdb.std.Files;
 import com.questdb.std.ObjObjHashMap;
 import com.questdb.std.ThreadLocal;
+import com.questdb.std.ex.JournalException;
 import com.questdb.std.str.Path;
 import com.questdb.store.JournalKey;
 import com.questdb.store.JournalMode;

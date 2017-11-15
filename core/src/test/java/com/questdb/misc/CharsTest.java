@@ -23,7 +23,10 @@
 
 package com.questdb.misc;
 
+import com.questdb.std.Chars;
 import com.questdb.std.ObjList;
+import com.questdb.std.Os;
+import com.questdb.std.Unsafe;
 import com.questdb.std.str.*;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;

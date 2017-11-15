@@ -23,7 +23,7 @@
 
 package com.questdb.ql.analytic.next;
 
-import com.questdb.net.http.ServerConfiguration;
+import com.questdb.ServerConfiguration;
 import com.questdb.ql.analytic.AnalyticFunction;
 import com.questdb.ql.analytic.AnalyticFunctionFactory;
 import com.questdb.ql.ops.VirtualColumn;

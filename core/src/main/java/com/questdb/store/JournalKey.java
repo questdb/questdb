@@ -23,7 +23,8 @@
 
 package com.questdb.store;
 
-import com.questdb.misc.ByteBuffers;
+import com.questdb.common.PartitionBy;
+import com.questdb.std.ByteBuffers;
 import com.questdb.store.factory.configuration.Constants;
 
 import java.nio.ByteBuffer;

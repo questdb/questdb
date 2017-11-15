@@ -23,16 +23,16 @@
 
 package com.questdb.ql.virtual;
 
-import com.questdb.misc.Misc;
-import com.questdb.ql.*;
+import com.questdb.common.*;
+import com.questdb.ql.CancellationHandler;
+import com.questdb.ql.RecordSource;
 import com.questdb.ql.join.SplitRecordStorageFacade;
 import com.questdb.ql.ops.AbstractCombinedRecordSource;
 import com.questdb.ql.ops.VirtualColumn;
+import com.questdb.std.Misc;
 import com.questdb.std.ObjList;
 import com.questdb.std.str.CharSink;
-import com.questdb.store.SymbolTable;
 import com.questdb.store.factory.ReaderFactory;
-import com.questdb.store.factory.configuration.RecordMetadata;
 
 public class VirtualColumnRecordSource extends AbstractCombinedRecordSource {
     private final RecordSource delegate;

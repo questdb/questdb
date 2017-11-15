@@ -23,9 +23,13 @@
 
 package org.questdb.examples.replication.cluster;
 
+import com.questdb.common.PartitionBy;
 import com.questdb.net.ha.JournalClient;
 import com.questdb.net.ha.config.ClientConfig;
-import com.questdb.store.*;
+import com.questdb.store.Journal;
+import com.questdb.store.JournalIterators;
+import com.questdb.store.JournalKey;
+import com.questdb.store.JournalListener;
 import com.questdb.store.factory.Factory;
 import com.questdb.store.factory.configuration.JournalConfiguration;
 import com.questdb.store.factory.configuration.JournalConfigurationBuilder;

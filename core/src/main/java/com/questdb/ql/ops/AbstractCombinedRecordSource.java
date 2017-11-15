@@ -23,8 +23,8 @@
 
 package com.questdb.ql.ops;
 
-import com.questdb.ql.Record;
-import com.questdb.ql.RecordCursor;
+import com.questdb.common.Record;
+import com.questdb.common.RecordCursor;
 import com.questdb.ql.RecordSource;
 
 public abstract class AbstractCombinedRecordSource extends AbstractRecordSource implements RecordSource, RecordCursor {

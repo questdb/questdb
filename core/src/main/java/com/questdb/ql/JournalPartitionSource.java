@@ -23,8 +23,9 @@
 
 package com.questdb.ql;
 
-import com.questdb.ex.JournalException;
-import com.questdb.ex.JournalRuntimeException;
+import com.questdb.common.JournalRuntimeException;
+import com.questdb.common.StorageFacade;
+import com.questdb.std.ex.JournalException;
 import com.questdb.std.str.CharSink;
 import com.questdb.std.str.FileNameExtractorCharSequence;
 import com.questdb.store.Journal;

@@ -24,7 +24,6 @@
 package com.questdb.parser.sql.model;
 
 import com.questdb.ex.ParserException;
-import com.questdb.misc.Chars;
 import com.questdb.parser.sql.IntervalCompiler;
 import com.questdb.std.*;
 

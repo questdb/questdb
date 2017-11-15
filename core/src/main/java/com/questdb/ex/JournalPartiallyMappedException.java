@@ -23,6 +23,8 @@
 
 package com.questdb.ex;
 
+import com.questdb.std.ex.JournalException;
+
 public class JournalPartiallyMappedException extends JournalException {
     public static final JournalPartiallyMappedException INSTANCE = new JournalPartiallyMappedException();
 

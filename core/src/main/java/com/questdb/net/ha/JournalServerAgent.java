@@ -23,9 +23,6 @@
 
 package com.questdb.net.ha;
 
-import com.questdb.ex.JournalDisconnectedChannelException;
-import com.questdb.ex.JournalException;
-import com.questdb.ex.JournalNetworkException;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.net.ha.auth.AuthorizationHandler;
@@ -45,6 +42,9 @@ import com.questdb.net.ha.protocol.commands.*;
 import com.questdb.std.IntIntHashMap;
 import com.questdb.std.IntList;
 import com.questdb.std.ObjList;
+import com.questdb.std.ex.JournalDisconnectedChannelException;
+import com.questdb.std.ex.JournalException;
+import com.questdb.std.ex.JournalNetworkException;
 import com.questdb.store.Journal;
 import com.questdb.store.JournalKey;
 import com.questdb.store.factory.configuration.JournalConfiguration;

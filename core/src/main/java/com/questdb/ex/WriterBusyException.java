@@ -23,6 +23,8 @@
 
 package com.questdb.ex;
 
+import com.questdb.std.ex.JournalException;
+
 public class WriterBusyException extends JournalException {
     public static final WriterBusyException INSTANCE = new WriterBusyException();
 }

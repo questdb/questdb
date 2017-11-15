@@ -23,16 +23,9 @@
 
 package com.questdb.ql;
 
-import com.questdb.ex.JournalRuntimeException;
-import com.questdb.misc.Chars;
-import com.questdb.misc.Misc;
-import com.questdb.misc.Unsafe;
-import com.questdb.std.DirectInputStream;
-import com.questdb.std.MemoryPages;
-import com.questdb.std.Mutable;
-import com.questdb.store.ColumnType;
+import com.questdb.common.*;
+import com.questdb.std.*;
 import com.questdb.store.VariableColumn;
-import com.questdb.store.factory.configuration.RecordMetadata;
 
 import java.io.Closeable;
 

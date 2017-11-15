@@ -23,7 +23,6 @@
 
 package com.questdb.net.ha;
 
-import com.questdb.misc.Chars;
 import com.questdb.model.Quote;
 import com.questdb.model.Trade;
 import com.questdb.net.ha.comsumer.HugeBufferConsumer;
@@ -39,6 +38,7 @@ import com.questdb.net.ha.protocol.CommandProducer;
 import com.questdb.net.ha.protocol.commands.CharSequenceResponseConsumer;
 import com.questdb.net.ha.protocol.commands.IntResponseConsumer;
 import com.questdb.net.ha.protocol.commands.SetKeyRequestProducer;
+import com.questdb.std.Chars;
 import com.questdb.store.Journal;
 import com.questdb.store.JournalWriter;
 import com.questdb.test.tools.AbstractTest;

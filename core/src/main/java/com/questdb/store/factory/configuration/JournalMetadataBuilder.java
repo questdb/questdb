@@ -23,14 +23,10 @@
 
 package com.questdb.store.factory.configuration;
 
+import com.questdb.common.ColumnType;
+import com.questdb.common.PartitionBy;
 import com.questdb.ex.JournalConfigurationException;
-import com.questdb.misc.ByteBuffers;
-import com.questdb.misc.Numbers;
-import com.questdb.misc.Unsafe;
-import com.questdb.std.CharSequenceIntHashMap;
-import com.questdb.std.ObjObjHashMap;
-import com.questdb.store.ColumnType;
-import com.questdb.store.PartitionBy;
+import com.questdb.std.*;
 
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;

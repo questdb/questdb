@@ -23,7 +23,7 @@
 
 package com.questdb.ql.analytic;
 
-import com.questdb.ql.Record;
+import com.questdb.common.Record;
 import com.questdb.std.DirectInputStream;
 import com.questdb.std.ObjList;
 

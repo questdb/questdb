@@ -23,12 +23,12 @@
 
 package com.questdb.net.ha.comsumer;
 
-import com.questdb.ex.JournalNetworkException;
-import com.questdb.misc.ByteBuffers;
-import com.questdb.misc.Unsafe;
 import com.questdb.net.ha.AbstractChannelConsumer;
+import com.questdb.std.ByteBuffers;
 import com.questdb.std.IntList;
 import com.questdb.std.ObjList;
+import com.questdb.std.Unsafe;
+import com.questdb.std.ex.JournalNetworkException;
 import com.questdb.store.Journal;
 import com.questdb.store.MMappedSymbolTable;
 

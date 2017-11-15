@@ -24,9 +24,6 @@
 package com.questdb.std;
 
 
-import com.questdb.misc.Numbers;
-import com.questdb.misc.Unsafe;
-
 import java.util.Arrays;
 
 public class IntStack implements Mutable {

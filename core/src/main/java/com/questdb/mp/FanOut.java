@@ -23,8 +23,8 @@
 
 package com.questdb.mp;
 
-import com.questdb.misc.Unsafe;
 import com.questdb.std.ObjList;
+import com.questdb.std.Unsafe;
 
 public class FanOut implements Barrier {
     private static final long HOLDER = Unsafe.getFieldOffset(FanOut.class, "holder");

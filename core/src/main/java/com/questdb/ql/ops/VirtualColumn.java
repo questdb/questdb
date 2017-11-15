@@ -23,11 +23,11 @@
 
 package com.questdb.ql.ops;
 
-import com.questdb.ql.Record;
-import com.questdb.ql.StorageFacade;
+import com.questdb.common.Record;
+import com.questdb.common.RecordColumnMetadata;
+import com.questdb.common.StorageFacade;
 import com.questdb.std.DirectInputStream;
 import com.questdb.std.str.CharSink;
-import com.questdb.store.factory.configuration.RecordColumnMetadata;
 
 import java.io.OutputStream;
 

@@ -1,21 +1,16 @@
 package com.questdb.parser;
 
 import com.questdb.BootstrapEnv;
-import com.questdb.misc.Chars;
-import com.questdb.misc.Unsafe;
+import com.questdb.common.ColumnType;
 import com.questdb.parser.json.JsonException;
 import com.questdb.parser.json.JsonLexer;
 import com.questdb.parser.json.JsonParser;
-import com.questdb.std.CharSequenceIntHashMap;
-import com.questdb.std.Mutable;
-import com.questdb.std.ObjList;
-import com.questdb.std.ObjectPool;
+import com.questdb.std.*;
 import com.questdb.std.str.AbstractCharSequence;
 import com.questdb.std.time.DateFormat;
 import com.questdb.std.time.DateFormatFactory;
 import com.questdb.std.time.DateLocale;
 import com.questdb.std.time.DateLocaleFactory;
-import com.questdb.store.ColumnType;
 
 public class JsonSchemaParser implements JsonParser, Mutable {
     private static final int S_NEED_ARRAY = 1;

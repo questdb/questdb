@@ -23,9 +23,9 @@
 
 package com.questdb.net.ha.comsumer;
 
-import com.questdb.ex.JournalNetworkException;
 import com.questdb.net.ha.AbstractChannelConsumer;
 import com.questdb.net.ha.ChannelConsumer;
+import com.questdb.std.ex.JournalNetworkException;
 
 import java.nio.channels.ReadableByteChannel;
 

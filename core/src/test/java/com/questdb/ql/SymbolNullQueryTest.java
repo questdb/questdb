@@ -24,10 +24,10 @@
 package com.questdb.ql;
 
 import com.questdb.ex.ParserException;
-import com.questdb.misc.Rnd;
 import com.questdb.parser.sql.AbstractOptimiserTest;
 import com.questdb.parser.sql.QueryError;
 import com.questdb.std.ObjList;
+import com.questdb.std.Rnd;
 import com.questdb.std.time.DateFormatUtils;
 import com.questdb.store.JournalEntryWriter;
 import com.questdb.store.JournalWriter;

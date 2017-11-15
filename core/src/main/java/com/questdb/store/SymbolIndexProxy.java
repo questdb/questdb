@@ -23,8 +23,8 @@
 
 package com.questdb.store;
 
-import com.questdb.ex.JournalException;
-import com.questdb.misc.Misc;
+import com.questdb.std.Misc;
+import com.questdb.std.ex.JournalException;
 import com.questdb.store.factory.configuration.ColumnMetadata;
 import com.questdb.store.factory.configuration.JournalMetadata;
 

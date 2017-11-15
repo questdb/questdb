@@ -23,9 +23,9 @@
 
 package com.questdb.store;
 
-import com.questdb.ex.JournalException;
 import com.questdb.model.Quote;
 import com.questdb.model.configuration.ModelConfiguration;
+import com.questdb.std.ex.JournalException;
 import com.questdb.std.time.Dates;
 import com.questdb.store.factory.Factory;
 import com.questdb.test.tools.AbstractTest;

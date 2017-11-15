@@ -24,21 +24,21 @@
 package com.questdb.net.http.handlers;
 
 import com.questdb.BootstrapEnv;
-import com.questdb.ex.DisconnectedChannelException;
+import com.questdb.common.ColumnType;
+import com.questdb.common.Record;
+import com.questdb.common.RecordColumnMetadata;
 import com.questdb.ex.ResponseContentBufferTooSmallException;
-import com.questdb.ex.SlowWritableChannelException;
-import com.questdb.misc.Misc;
-import com.questdb.misc.Numbers;
 import com.questdb.net.http.ChunkedResponse;
 import com.questdb.net.http.ContextHandler;
 import com.questdb.net.http.IOContext;
-import com.questdb.ql.Record;
 import com.questdb.std.LocalValue;
+import com.questdb.std.Misc;
 import com.questdb.std.Mutable;
+import com.questdb.std.Numbers;
+import com.questdb.std.ex.DisconnectedChannelException;
+import com.questdb.std.ex.SlowWritableChannelException;
 import com.questdb.std.str.CharSink;
-import com.questdb.store.ColumnType;
 import com.questdb.store.factory.Factory;
-import com.questdb.store.factory.configuration.RecordColumnMetadata;
 
 import java.io.Closeable;
 import java.io.IOException;

@@ -23,9 +23,8 @@
 
 package com.questdb.log;
 
-import com.questdb.ex.LogError;
-import com.questdb.misc.Files;
-import com.questdb.misc.Misc;
+import com.questdb.std.Files;
+import com.questdb.std.Misc;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Rule;

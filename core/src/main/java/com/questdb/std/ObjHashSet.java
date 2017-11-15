@@ -23,8 +23,6 @@
 
 package com.questdb.std;
 
-import com.questdb.misc.Numbers;
-import com.questdb.misc.Unsafe;
 import org.jetbrains.annotations.NotNull;
 
 import java.util.AbstractSet;

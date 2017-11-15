@@ -1,7 +1,7 @@
 package com.questdb.cairo;
 
-import com.questdb.store.SymbolTable;
-import com.questdb.store.factory.configuration.RecordColumnMetadata;
+import com.questdb.common.RecordColumnMetadata;
+import com.questdb.common.SymbolTable;
 
 class TableColumnMetadata implements RecordColumnMetadata {
     private final int type;

@@ -1,11 +1,11 @@
 package com.questdb.cairo;
 
-import com.questdb.misc.Files;
-import com.questdb.misc.FilesFacade;
+import com.questdb.common.ColumnType;
+import com.questdb.common.PartitionBy;
+import com.questdb.std.Files;
+import com.questdb.std.FilesFacade;
 import com.questdb.std.microtime.Dates;
 import com.questdb.std.str.Path;
-import com.questdb.store.ColumnType;
-import com.questdb.store.PartitionBy;
 
 import static com.questdb.cairo.TableUtils.META_FILE_NAME;
 import static com.questdb.cairo.TableUtils.TXN_FILE_NAME;

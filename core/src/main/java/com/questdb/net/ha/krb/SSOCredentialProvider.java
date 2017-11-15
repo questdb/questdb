@@ -23,8 +23,8 @@
 
 package com.questdb.net.ha.krb;
 
-import com.questdb.misc.Os;
 import com.questdb.net.ha.auth.CredentialProvider;
+import com.questdb.std.Os;
 
 public class SSOCredentialProvider implements CredentialProvider {
     private final String serviceName;

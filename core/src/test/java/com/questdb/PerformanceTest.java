@@ -24,19 +24,17 @@
 package com.questdb;
 
 import com.questdb.cairo.*;
-import com.questdb.ex.JournalException;
-import com.questdb.ex.NumericException;
+import com.questdb.common.*;
 import com.questdb.ex.ParserException;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
-import com.questdb.misc.FilesFacadeImpl;
-import com.questdb.misc.Rnd;
 import com.questdb.model.Quote;
 import com.questdb.parser.sql.QueryCompiler;
-import com.questdb.ql.Record;
-import com.questdb.ql.RecordCursor;
 import com.questdb.ql.RecordSource;
+import com.questdb.std.FilesFacadeImpl;
 import com.questdb.std.LongList;
+import com.questdb.std.Rnd;
+import com.questdb.std.ex.JournalException;
 import com.questdb.std.time.DateFormatUtils;
 import com.questdb.std.time.Interval;
 import com.questdb.store.*;

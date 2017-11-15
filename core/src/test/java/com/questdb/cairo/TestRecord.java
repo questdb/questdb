@@ -1,8 +1,8 @@
 package com.questdb.cairo;
 
-import com.questdb.misc.Rnd;
-import com.questdb.ql.Record;
+import com.questdb.common.Record;
 import com.questdb.std.BinarySequence;
+import com.questdb.std.Rnd;
 
 public class TestRecord implements Record {
     final Rnd rnd = new Rnd();

@@ -23,9 +23,9 @@
 
 package com.questdb.store.util;
 
-import com.questdb.ex.JournalException;
 import com.questdb.ql.RecordSource;
 import com.questdb.ql.RecordSourcePrinter;
+import com.questdb.std.ex.JournalException;
 import com.questdb.std.str.FileSink;
 import com.questdb.store.factory.ReaderFactory;
 

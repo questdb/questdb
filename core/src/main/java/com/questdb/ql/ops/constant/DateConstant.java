@@ -23,10 +23,10 @@
 
 package com.questdb.ql.ops.constant;
 
-import com.questdb.ql.Record;
-import com.questdb.ql.StorageFacade;
+import com.questdb.common.ColumnType;
+import com.questdb.common.Record;
+import com.questdb.common.StorageFacade;
 import com.questdb.ql.ops.AbstractVirtualColumn;
-import com.questdb.store.ColumnType;
 
 public class DateConstant extends AbstractVirtualColumn {
     private final long value;

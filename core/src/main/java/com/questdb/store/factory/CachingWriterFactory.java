@@ -23,10 +23,13 @@
 
 package com.questdb.store.factory;
 
+import com.questdb.common.JournalRuntimeException;
+import com.questdb.common.PoolConstants;
 import com.questdb.ex.*;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
-import com.questdb.misc.Unsafe;
+import com.questdb.std.Unsafe;
+import com.questdb.std.ex.JournalException;
 import com.questdb.store.Journal;
 import com.questdb.store.JournalWriter;
 import com.questdb.store.factory.configuration.JournalConfiguration;
@@ -125,49 +128,6 @@ public class CachingWriterFactory extends AbstractFactory implements JournalClos
         notifyListener(Thread.currentThread().getId(), null, FactoryEventListener.EV_POOL_CLOSED);
     }
 
-    @Override
-    protected boolean releaseAll(long deadline) {
-        long thread = Thread.currentThread().getId();
-        boolean removed = false;
-        final int reason = deadline == Long.MAX_VALUE ? FactoryConstants.CR_POOL_CLOSE : FactoryConstants.CR_IDLE;
-
-        Iterator<Entry> iterator = entries.values().iterator();
-        while (iterator.hasNext()) {
-            Entry e = iterator.next();
-            // lastReleaseTime is volatile, which makes
-            // order of conditions important
-            if ((deadline > e.lastReleaseTime && e.owner == -1)) {
-                // looks like this one can be released
-                // try to lock it
-                if (Unsafe.cas(e, ENTRY_OWNER, -1L, thread)) {
-                    // lock successful
-                    closeWriter(thread, e, FactoryEventListener.EV_EXPIRE, FactoryEventListener.EV_EXPIRE_EX, reason);
-                    iterator.remove();
-                    removed = true;
-                    Unsafe.getUnsafe().putOrderedLong(e, ENTRY_OWNER, -1L);
-                }
-            } else if (e.ex != null) {
-                LOG.info().$("Removing entry for failed to allocate writer").$();
-                iterator.remove();
-                removed = true;
-            }
-        }
-
-        return removed;
-    }
-
-    public int getBusyCount() {
-
-        int count = 0;
-        for (Entry e : entries.values()) {
-            if (e.owner != -1) {
-                count++;
-            }
-        }
-
-        return count;
-    }
-
     public void lock(String name) throws JournalException {
         if (closed) {
             LOG.info().$("Pool is closed").$();
@@ -194,7 +154,7 @@ public class CachingWriterFactory extends AbstractFactory implements JournalClos
         if (e != null) {
             if ((Unsafe.cas(e, ENTRY_OWNER, -1L, thread) || Unsafe.cas(e, ENTRY_OWNER, thread, thread))) {
                 LOG.info().$("Thread ").$(e.owner).$(" locked writer ").$(name).$();
-                closeWriter(thread, e, FactoryEventListener.EV_LOCK_CLOSE, FactoryEventListener.EV_LOCK_CLOSE_EX, FactoryConstants.CR_NAME_LOCK);
+                closeWriter(thread, e, FactoryEventListener.EV_LOCK_CLOSE, FactoryEventListener.EV_LOCK_CLOSE_EX, PoolConstants.CR_NAME_LOCK);
                 e.locked = true;
                 notifyListener(thread, name, FactoryEventListener.EV_LOCK_SUCCESS);
                 return;
@@ -204,6 +164,42 @@ public class CachingWriterFactory extends AbstractFactory implements JournalClos
         }
         notifyListener(thread, name, FactoryEventListener.EV_LOCK_BUSY);
         throw WriterBusyException.INSTANCE;
+    }
+
+    public int getBusyCount() {
+
+        int count = 0;
+        for (Entry e : entries.values()) {
+            if (e.owner != -1) {
+                count++;
+            }
+        }
+
+        return count;
+    }
+
+    private JournalWriter checkAndReturn(long thread, Entry e, String name, JournalMetadata<?> metadata) throws JournalException {
+        JournalMetadata wm = e.writer.getMetadata();
+        if (metadata.isCompatible(wm, false)) {
+            if (metadata.getModelClass() != null && wm.getModelClass() == null) {
+                closeWriter(thread, e, FactoryEventListener.EV_CLOSE, FactoryEventListener.EV_CLOSE_EX, PoolConstants.CR_REOPEN);
+                return createWriter(thread, name, e, metadata);
+            } else {
+                LOG.info().$("Writer '").$(name).$("' is assigned to thread ").$(thread).$();
+                notifyListener(thread, name, FactoryEventListener.EV_GET);
+                return e.writer;
+            }
+        }
+
+        JournalMetadataException ex = new JournalMetadataException(wm, metadata);
+        notifyListener(thread, name, FactoryEventListener.EV_INCOMPATIBLE);
+
+        if (closed) {
+            closeWriter(thread, e, FactoryEventListener.EV_CLOSE, FactoryEventListener.EV_CLOSE_EX, PoolConstants.CR_POOL_CLOSE);
+        }
+
+        e.owner = -1L;
+        throw ex;
     }
 
     public int size() {
@@ -235,30 +231,6 @@ public class CachingWriterFactory extends AbstractFactory implements JournalClos
         notifyListener(thread, name, FactoryEventListener.EV_UNLOCKED);
     }
 
-    private JournalWriter checkAndReturn(long thread, Entry e, String name, JournalMetadata<?> metadata) throws JournalException {
-        JournalMetadata wm = e.writer.getMetadata();
-        if (metadata.isCompatible(wm, false)) {
-            if (metadata.getModelClass() != null && wm.getModelClass() == null) {
-                closeWriter(thread, e, FactoryEventListener.EV_CLOSE, FactoryEventListener.EV_CLOSE_EX, FactoryConstants.CR_REOPEN);
-                return createWriter(thread, name, e, metadata);
-            } else {
-                LOG.info().$("Writer '").$(name).$("' is assigned to thread ").$(thread).$();
-                notifyListener(thread, name, FactoryEventListener.EV_GET);
-                return e.writer;
-            }
-        }
-
-        JournalMetadataException ex = new JournalMetadataException(wm, metadata);
-        notifyListener(thread, name, FactoryEventListener.EV_INCOMPATIBLE);
-
-        if (closed) {
-            closeWriter(thread, e, FactoryEventListener.EV_CLOSE, FactoryEventListener.EV_CLOSE_EX, FactoryConstants.CR_POOL_CLOSE);
-        }
-
-        e.owner = -1L;
-        throw ex;
-    }
-
     private void closeWriter(long thread, Entry e, short ev, short evex, int reason) {
         JournalWriter w = e.writer;
         if (w != null) {
@@ -267,13 +239,44 @@ public class CachingWriterFactory extends AbstractFactory implements JournalClos
             try {
                 w.close();
                 e.writer = null;
-                LOG.info().$("Closed writer '").$(name).$('\'').$(FactoryConstants.closeReasonText(reason)).$();
+                LOG.info().$("Closed writer '").$(name).$('\'').$(PoolConstants.closeReasonText(reason)).$();
                 notifyListener(thread, name, ev);
             } catch (Throwable e1) {
                 notifyListener(thread, name, evex);
                 LOG.error().$("Cannot close writer '").$(w.getName()).$("': ").$(e1.getMessage()).$();
             }
         }
+    }
+
+    @Override
+    protected boolean releaseAll(long deadline) {
+        long thread = Thread.currentThread().getId();
+        boolean removed = false;
+        final int reason = deadline == Long.MAX_VALUE ? PoolConstants.CR_POOL_CLOSE : PoolConstants.CR_IDLE;
+
+        Iterator<Entry> iterator = entries.values().iterator();
+        while (iterator.hasNext()) {
+            Entry e = iterator.next();
+            // lastReleaseTime is volatile, which makes
+            // order of conditions important
+            if ((deadline > e.lastReleaseTime && e.owner == -1)) {
+                // looks like this one can be released
+                // try to lock it
+                if (Unsafe.cas(e, ENTRY_OWNER, -1L, thread)) {
+                    // lock successful
+                    closeWriter(thread, e, FactoryEventListener.EV_EXPIRE, FactoryEventListener.EV_EXPIRE_EX, reason);
+                    iterator.remove();
+                    removed = true;
+                    Unsafe.getUnsafe().putOrderedLong(e, ENTRY_OWNER, -1L);
+                }
+            } else if (e.ex != null) {
+                LOG.info().$("Removing entry for failed to allocate writer").$();
+                iterator.remove();
+                removed = true;
+            }
+        }
+
+        return removed;
     }
 
     int countFreeWriters() {

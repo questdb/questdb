@@ -23,10 +23,10 @@
 
 package com.questdb.store;
 
-import com.questdb.ex.JournalException;
-import com.questdb.ex.NumericException;
+import com.questdb.common.NumericException;
 import com.questdb.model.Quote;
 import com.questdb.std.ObjList;
+import com.questdb.std.ex.JournalException;
 import com.questdb.std.time.DateFormatUtils;
 import com.questdb.std.time.Interval;
 import com.questdb.store.factory.WriterFactory;

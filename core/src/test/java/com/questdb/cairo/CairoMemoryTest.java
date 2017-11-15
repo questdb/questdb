@@ -25,7 +25,7 @@ package com.questdb.cairo;
 
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
-import com.questdb.misc.*;
+import com.questdb.std.*;
 import com.questdb.std.str.LPSZ;
 import com.questdb.std.str.Path;
 import com.questdb.test.tools.TestUtils;

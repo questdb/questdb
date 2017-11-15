@@ -23,11 +23,12 @@
 
 package com.questdb.store.query.spi;
 
-import com.questdb.ex.JournalException;
-import com.questdb.misc.Rows;
+import com.questdb.common.SymbolTable;
 import com.questdb.std.IntList;
 import com.questdb.std.LongList;
 import com.questdb.std.ObjList;
+import com.questdb.std.Rows;
+import com.questdb.std.ex.JournalException;
 import com.questdb.std.time.Interval;
 import com.questdb.store.*;
 import com.questdb.store.query.UnorderedResultSet;

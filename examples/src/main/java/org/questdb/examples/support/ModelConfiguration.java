@@ -23,7 +23,7 @@
 
 package org.questdb.examples.support;
 
-import com.questdb.store.PartitionBy;
+import com.questdb.common.PartitionBy;
 import com.questdb.store.factory.configuration.JournalConfigurationBuilder;
 
 import java.util.concurrent.TimeUnit;
