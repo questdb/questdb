@@ -23,7 +23,7 @@
 
 package com.questdb.store;
 
-import com.questdb.ex.JournalException;
+import com.questdb.std.ex.JournalException;
 import com.questdb.std.str.DirectBytes;
 
 import java.io.InputStream;

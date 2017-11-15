@@ -23,9 +23,9 @@
 
 package com.questdb.net.ha.producer;
 
-import com.questdb.ex.JournalException;
-import com.questdb.ex.JournalNetworkException;
 import com.questdb.std.ObjList;
+import com.questdb.std.ex.JournalException;
+import com.questdb.std.ex.JournalNetworkException;
 import com.questdb.store.AbstractColumn;
 import com.questdb.store.Partition;
 import com.questdb.store.VariableColumn;

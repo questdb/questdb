@@ -23,11 +23,11 @@
 
 package com.questdb.ql.ops.plus;
 
-import com.questdb.ql.Record;
+import com.questdb.common.ColumnType;
+import com.questdb.common.Record;
 import com.questdb.ql.ops.AbstractBinaryOperator;
 import com.questdb.ql.ops.Function;
 import com.questdb.ql.ops.VirtualColumnFactory;
-import com.questdb.store.ColumnType;
 
 public class AddDateOperator extends AbstractBinaryOperator {
 

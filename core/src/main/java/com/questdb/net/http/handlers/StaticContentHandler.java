@@ -24,17 +24,17 @@
 package com.questdb.net.http.handlers;
 
 import com.questdb.BootstrapEnv;
-import com.questdb.ex.NumericException;
+import com.questdb.ServerConfiguration;
+import com.questdb.common.NumericException;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
-import com.questdb.misc.*;
 import com.questdb.net.http.*;
-import com.questdb.std.LocalValue;
-import com.questdb.std.Mutable;
+import com.questdb.std.*;
 import com.questdb.std.str.*;
 
 import java.io.Closeable;
 import java.io.IOException;
+import java.lang.ThreadLocal;
 import java.nio.ByteBuffer;
 
 public class StaticContentHandler implements ContextHandler {

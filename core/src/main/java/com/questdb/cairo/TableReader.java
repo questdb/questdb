@@ -23,25 +23,16 @@
 
 package com.questdb.cairo;
 
-import com.questdb.ex.NumericException;
+import com.questdb.common.*;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
-import com.questdb.misc.*;
-import com.questdb.ql.Record;
-import com.questdb.ql.RecordCursor;
-import com.questdb.ql.StorageFacade;
-import com.questdb.std.BinarySequence;
-import com.questdb.std.LongList;
-import com.questdb.std.ObjList;
+import com.questdb.std.*;
 import com.questdb.std.microtime.DateFormat;
 import com.questdb.std.microtime.DateLocaleFactory;
 import com.questdb.std.microtime.Dates;
 import com.questdb.std.str.ImmutableCharSequence;
 import com.questdb.std.str.NativeLPSZ;
 import com.questdb.std.str.Path;
-import com.questdb.store.ColumnType;
-import com.questdb.store.PartitionBy;
-import com.questdb.store.factory.configuration.RecordMetadata;
 
 import java.io.Closeable;
 import java.util.concurrent.locks.LockSupport;
@@ -234,7 +225,7 @@ public class TableReader implements Closeable, RecordCursor {
      * Windows OS.
      *
      * @param columnName name of column to be closed.
-     * @throws com.questdb.ex.NoSuchColumnException when column is not found.
+     * @throws NoSuchColumnException when column is not found.
      */
     public void closeColumn(CharSequence columnName) {
         closeColumn(metadata.getColumnIndex(columnName));

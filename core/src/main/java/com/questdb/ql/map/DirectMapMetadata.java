@@ -23,14 +23,10 @@
 
 package com.questdb.ql.map;
 
-import com.questdb.misc.Unsafe;
-import com.questdb.std.CharSequenceIntHashMap;
-import com.questdb.std.ObjHashSet;
-import com.questdb.std.ObjList;
-import com.questdb.std.Transient;
-import com.questdb.store.factory.configuration.AbstractRecordMetadata;
-import com.questdb.store.factory.configuration.RecordColumnMetadata;
-import com.questdb.store.factory.configuration.RecordMetadata;
+import com.questdb.common.AbstractRecordMetadata;
+import com.questdb.common.RecordColumnMetadata;
+import com.questdb.common.RecordMetadata;
+import com.questdb.std.*;
 
 public final class DirectMapMetadata extends AbstractRecordMetadata {
 

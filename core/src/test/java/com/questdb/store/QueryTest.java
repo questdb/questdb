@@ -23,8 +23,8 @@
 
 package com.questdb.store;
 
-import com.questdb.ex.JournalException;
 import com.questdb.model.Quote;
+import com.questdb.std.ex.JournalException;
 import com.questdb.std.time.DateFormatUtils;
 import com.questdb.std.time.Dates;
 import com.questdb.std.time.Interval;

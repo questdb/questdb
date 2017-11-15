@@ -23,12 +23,7 @@
 
 package com.questdb.log;
 
-import com.questdb.ex.LogError;
-import com.questdb.ex.NumericException;
-import com.questdb.misc.Chars;
-import com.questdb.misc.Misc;
-import com.questdb.misc.Numbers;
-import com.questdb.misc.Unsafe;
+import com.questdb.common.NumericException;
 import com.questdb.mp.*;
 import com.questdb.std.*;
 

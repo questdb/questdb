@@ -23,9 +23,9 @@
 
 package com.questdb.store;
 
-import com.questdb.ex.JournalException;
-import com.questdb.misc.Chars;
-import com.questdb.misc.Unsafe;
+import com.questdb.std.Chars;
+import com.questdb.std.Unsafe;
+import com.questdb.std.ex.JournalException;
 
 import java.io.File;
 

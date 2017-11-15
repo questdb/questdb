@@ -23,6 +23,8 @@
 
 package com.questdb.ex;
 
+import com.questdb.common.JournalRuntimeException;
+
 public class JournalConfigurationException extends JournalRuntimeException {
 
     public JournalConfigurationException(String message) {

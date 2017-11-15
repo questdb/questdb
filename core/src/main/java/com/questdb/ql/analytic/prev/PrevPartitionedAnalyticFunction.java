@@ -23,15 +23,15 @@
 
 package com.questdb.ql.analytic.prev;
 
-import com.questdb.ex.JournalRuntimeException;
-import com.questdb.misc.Misc;
-import com.questdb.misc.Unsafe;
-import com.questdb.ql.Record;
+import com.questdb.common.ColumnType;
+import com.questdb.common.JournalRuntimeException;
+import com.questdb.common.Record;
 import com.questdb.ql.map.*;
 import com.questdb.ql.ops.VirtualColumn;
+import com.questdb.std.Misc;
 import com.questdb.std.ObjList;
 import com.questdb.std.ThreadLocal;
-import com.questdb.store.ColumnType;
+import com.questdb.std.Unsafe;
 
 import java.io.Closeable;
 import java.io.IOException;

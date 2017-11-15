@@ -23,7 +23,7 @@
 
 package com.questdb.ql.analytic;
 
-import com.questdb.net.http.ServerConfiguration;
+import com.questdb.ServerConfiguration;
 import com.questdb.ql.analytic.denserank.DenseRankAnalyticFunctionFactory;
 import com.questdb.ql.analytic.next.NextAnalyticFunctionFactory;
 import com.questdb.ql.analytic.prev.PrevAnalyticFunctionFactory;

@@ -23,6 +23,8 @@
 
 package com.questdb.ex;
 
+import com.questdb.std.ex.JournalException;
+
 public class FactoryFullException extends JournalException {
     public static final FactoryFullException INSTANCE = new FactoryFullException();
 }

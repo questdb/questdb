@@ -23,14 +23,11 @@
 
 package com.questdb.std.str;
 
-import com.questdb.misc.Misc;
-import com.questdb.misc.Numbers;
-import com.questdb.misc.Unsafe;
-import com.questdb.std.ObjHashSet;
-import com.questdb.std.Sinkable;
+import com.questdb.std.*;
 import com.questdb.std.microtime.DateFormatUtils;
 
 import java.util.Set;
+import java.lang.ThreadLocal;
 
 public abstract class AbstractCharSink implements CharSink {
 

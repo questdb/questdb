@@ -23,8 +23,8 @@
 
 package com.questdb.ql.map;
 
-import com.questdb.ql.Record;
-import com.questdb.ql.StorageFacade;
+import com.questdb.common.Record;
+import com.questdb.common.StorageFacade;
 
 public class DirectMapRecord implements Record {
     private final StorageFacade storageFacade;

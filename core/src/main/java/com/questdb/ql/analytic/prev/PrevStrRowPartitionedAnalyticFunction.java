@@ -23,14 +23,11 @@
 
 package com.questdb.ql.analytic.prev;
 
-import com.questdb.misc.Misc;
-import com.questdb.misc.Numbers;
-import com.questdb.misc.Unsafe;
-import com.questdb.ql.Record;
-import com.questdb.ql.RecordCursor;
+import com.questdb.common.Record;
+import com.questdb.common.RecordCursor;
 import com.questdb.ql.map.*;
 import com.questdb.ql.ops.VirtualColumn;
-import com.questdb.std.ObjList;
+import com.questdb.std.*;
 import com.questdb.std.ThreadLocal;
 import com.questdb.std.str.CharSink;
 

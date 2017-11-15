@@ -23,11 +23,13 @@
 
 package com.questdb.store;
 
-import com.questdb.ex.JournalException;
-import com.questdb.ex.JournalRuntimeException;
-import com.questdb.misc.Hash;
-import com.questdb.misc.Numbers;
-import com.questdb.misc.Unsafe;
+import com.questdb.common.ColumnType;
+import com.questdb.common.JournalRuntimeException;
+import com.questdb.common.SymbolTable;
+import com.questdb.std.Hash;
+import com.questdb.std.Numbers;
+import com.questdb.std.Unsafe;
+import com.questdb.std.ex.JournalException;
 import com.questdb.std.str.DirectBytes;
 import com.questdb.store.factory.configuration.ColumnMetadata;
 

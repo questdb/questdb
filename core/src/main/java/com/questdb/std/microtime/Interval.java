@@ -23,12 +23,12 @@
 
 package com.questdb.std.microtime;
 
-import com.questdb.ex.JournalUnsupportedTypeException;
-import com.questdb.ex.NumericException;
+import com.questdb.common.NumericException;
+import com.questdb.common.PartitionBy;
 import com.questdb.std.Sinkable;
+import com.questdb.std.ex.JournalUnsupportedTypeException;
 import com.questdb.std.str.CharSink;
 import com.questdb.std.str.StringSink;
-import com.questdb.store.PartitionBy;
 
 public class Interval implements Sinkable {
     private long lo;

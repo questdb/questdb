@@ -23,9 +23,9 @@
 
 package com.questdb.std.microtime;
 
-import com.questdb.ex.NumericException;
-import com.questdb.misc.Chars;
-import com.questdb.misc.Numbers;
+import com.questdb.common.NumericException;
+import com.questdb.std.Chars;
+import com.questdb.std.Numbers;
 import com.questdb.std.str.StringSink;
 
 final public class Dates {

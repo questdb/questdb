@@ -23,8 +23,6 @@
 
 package com.questdb.std;
 
-import com.questdb.misc.Unsafe;
-
 import java.io.Closeable;
 
 public class RedBlackTree implements Mutable, Closeable {

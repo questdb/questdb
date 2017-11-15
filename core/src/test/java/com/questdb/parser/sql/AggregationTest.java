@@ -24,7 +24,7 @@
 package com.questdb.parser.sql;
 
 import com.questdb.ex.ParserException;
-import com.questdb.misc.Rnd;
+import com.questdb.std.Rnd;
 import com.questdb.std.time.DateFormatUtils;
 import com.questdb.store.JournalEntryWriter;
 import com.questdb.store.JournalWriter;

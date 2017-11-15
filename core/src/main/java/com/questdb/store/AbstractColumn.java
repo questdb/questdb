@@ -23,7 +23,7 @@
 
 package com.questdb.store;
 
-import com.questdb.ex.JournalException;
+import com.questdb.std.ex.JournalException;
 
 import java.io.Closeable;
 import java.nio.ByteBuffer;

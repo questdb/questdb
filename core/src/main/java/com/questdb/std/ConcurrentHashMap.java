@@ -35,7 +35,6 @@ package com.questdb.std;
  * http://creativecommons.org/publicdomain/zero/1.0/
  */
 
-import com.questdb.misc.Unsafe;
 import com.questdb.std.str.CloneableMutable;
 import org.jetbrains.annotations.NotNull;
 

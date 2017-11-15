@@ -23,8 +23,8 @@
 
 package com.questdb.net.http;
 
-import com.questdb.ex.DisconnectedChannelException;
-import com.questdb.ex.SlowWritableChannelException;
+import com.questdb.std.ex.DisconnectedChannelException;
+import com.questdb.std.ex.SlowWritableChannelException;
 
 public interface SimpleResponse {
     void send(int code) throws DisconnectedChannelException, SlowWritableChannelException;

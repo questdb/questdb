@@ -23,13 +23,15 @@
 
 package com.questdb.store;
 
-import com.questdb.ex.JournalException;
-import com.questdb.ex.NumericException;
-import com.questdb.misc.Files;
-import com.questdb.misc.Rnd;
-import com.questdb.misc.Rows;
+import com.questdb.common.NumericException;
+import com.questdb.common.PartitionBy;
+import com.questdb.common.SymbolTable;
 import com.questdb.model.Quote;
 import com.questdb.model.TestEntity;
+import com.questdb.std.Files;
+import com.questdb.std.Rnd;
+import com.questdb.std.Rows;
+import com.questdb.std.ex.JournalException;
 import com.questdb.std.time.DateFormatUtils;
 import com.questdb.store.factory.Factory;
 import com.questdb.store.factory.configuration.JournalConfigurationBuilder;

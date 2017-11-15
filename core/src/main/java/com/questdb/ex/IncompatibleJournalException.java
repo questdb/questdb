@@ -23,6 +23,8 @@
 
 package com.questdb.ex;
 
+import com.questdb.common.JournalRuntimeException;
+
 public class IncompatibleJournalException extends JournalRuntimeException {
 
     public IncompatibleJournalException(String message, Object... args) {

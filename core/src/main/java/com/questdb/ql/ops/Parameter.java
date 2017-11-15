@@ -23,13 +23,13 @@
 
 package com.questdb.ql.ops;
 
+import com.questdb.common.ColumnType;
+import com.questdb.common.Record;
+import com.questdb.common.StorageFacade;
 import com.questdb.ex.UndefinedParameterException;
 import com.questdb.ex.WrongParameterTypeException;
 import com.questdb.parser.sql.model.ExprNode;
-import com.questdb.ql.Record;
-import com.questdb.ql.StorageFacade;
 import com.questdb.std.CharSequenceObjHashMap;
-import com.questdb.store.ColumnType;
 
 public class Parameter extends AbstractVirtualColumn {
 

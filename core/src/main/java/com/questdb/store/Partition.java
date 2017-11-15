@@ -23,15 +23,14 @@
 
 package com.questdb.store;
 
-import com.questdb.ex.JournalException;
-import com.questdb.ex.JournalRuntimeException;
+import com.questdb.common.ColumnType;
+import com.questdb.common.JournalRuntimeException;
+import com.questdb.common.PartitionBy;
+import com.questdb.common.SymbolTable;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
-import com.questdb.misc.Hash;
-import com.questdb.misc.Misc;
-import com.questdb.misc.Unsafe;
-import com.questdb.std.DirectInputStream;
-import com.questdb.std.ObjList;
+import com.questdb.std.*;
+import com.questdb.std.ex.JournalException;
 import com.questdb.std.str.CharSink;
 import com.questdb.std.time.Dates;
 import com.questdb.std.time.Interval;
@@ -643,7 +642,7 @@ public class Partition<T> implements Closeable {
      * Rebuild the index of a column using the default keyCountHint and recordCountHint values.
      *
      * @param columnIndex the column index
-     * @throws com.questdb.ex.JournalException if the operation fails
+     * @throws JournalException if the operation fails
      */
     private void rebuildIndex(int columnIndex) throws JournalException {
         JournalMetadata<T> meta = journal.getMetadata();
@@ -659,7 +658,7 @@ public class Partition<T> implements Closeable {
      * @param columnIndex     the column index
      * @param keyCountHint    the key count hint override
      * @param recordCountHint the record count hint override
-     * @throws com.questdb.ex.JournalException if the operation fails
+     * @throws JournalException if the operation fails
      */
     private void rebuildIndex(int columnIndex, int keyCountHint, int recordCountHint, int txCountHint) throws JournalException {
         final long time = System.nanoTime();

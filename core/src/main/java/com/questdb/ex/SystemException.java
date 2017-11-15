@@ -23,6 +23,8 @@
 
 package com.questdb.ex;
 
+import com.questdb.std.ex.JournalException;
+
 public class SystemException extends JournalException {
     public static final SystemException INSTANCE = new SystemException();
 }

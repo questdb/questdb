@@ -23,6 +23,8 @@
 
 package com.questdb.ex;
 
+import com.questdb.std.ex.JournalException;
+
 public class RetryLockException extends JournalException {
     public static final RetryLockException INSTANCE = new RetryLockException();
 }

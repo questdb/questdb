@@ -23,9 +23,9 @@
 
 package com.questdb.std.time;
 
-import com.questdb.misc.Unsafe;
 import com.questdb.std.LongList;
 import com.questdb.std.ObjList;
+import com.questdb.std.Unsafe;
 
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;

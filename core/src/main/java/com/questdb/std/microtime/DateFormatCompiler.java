@@ -24,8 +24,6 @@
 package com.questdb.std.microtime;
 
 
-import com.questdb.misc.BytecodeAssembler;
-import com.questdb.misc.Numbers;
 import com.questdb.std.*;
 import com.questdb.std.str.CharSink;
 

@@ -23,8 +23,8 @@
 
 package org.questdb.examples.replication.authentication;
 
-import com.questdb.ex.JournalException;
 import com.questdb.net.ha.JournalServer;
+import com.questdb.std.ex.JournalException;
 import com.questdb.store.JournalWriter;
 import com.questdb.store.factory.Factory;
 import com.questdb.store.factory.configuration.JournalConfiguration;

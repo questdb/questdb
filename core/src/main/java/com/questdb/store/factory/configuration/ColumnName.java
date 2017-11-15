@@ -23,7 +23,7 @@
 
 package com.questdb.store.factory.configuration;
 
-import com.questdb.misc.Chars;
+import com.questdb.std.Chars;
 import com.questdb.std.ThreadLocal;
 import com.questdb.std.str.AbstractCharSequence;
 import com.questdb.std.str.FlyweightCharSequence;

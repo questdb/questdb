@@ -23,12 +23,12 @@
 
 package com.questdb.ql;
 
-import com.questdb.misc.BytecodeAssembler;
 import com.questdb.model.Album;
 import com.questdb.model.Band;
 import com.questdb.ql.join.HashJoinRecordSource;
 import com.questdb.ql.map.RecordKeyCopierCompiler;
 import com.questdb.ql.select.SelectedColumnsRecordSource;
+import com.questdb.std.BytecodeAssembler;
 import com.questdb.std.IntList;
 import com.questdb.std.ObjList;
 import com.questdb.std.str.StringSink;

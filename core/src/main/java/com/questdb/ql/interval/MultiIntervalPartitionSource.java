@@ -23,11 +23,11 @@
 
 package com.questdb.ql.interval;
 
+import com.questdb.common.StorageFacade;
 import com.questdb.parser.sql.IntervalCompiler;
 import com.questdb.ql.PartitionCursor;
 import com.questdb.ql.PartitionSlice;
 import com.questdb.ql.PartitionSource;
-import com.questdb.ql.StorageFacade;
 import com.questdb.std.LongList;
 import com.questdb.std.str.CharSink;
 import com.questdb.store.BSearchType;

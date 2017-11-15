@@ -23,10 +23,10 @@
 
 package com.questdb.parser.sql;
 
-import com.questdb.ex.JournalException;
-import com.questdb.ex.NumericException;
-import com.questdb.misc.Rnd;
+import com.questdb.common.NumericException;
 import com.questdb.std.ObjHashSet;
+import com.questdb.std.Rnd;
+import com.questdb.std.ex.JournalException;
 import com.questdb.std.time.DateFormatUtils;
 import com.questdb.store.JournalEntryWriter;
 import com.questdb.store.JournalWriter;

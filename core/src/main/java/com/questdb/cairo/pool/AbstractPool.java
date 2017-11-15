@@ -23,8 +23,8 @@
 
 package com.questdb.cairo.pool;
 
-import com.questdb.misc.FilesFacade;
-import com.questdb.misc.Unsafe;
+import com.questdb.std.FilesFacade;
+import com.questdb.std.Unsafe;
 import com.questdb.std.str.ImmutableCharSequence;
 
 import java.io.Closeable;

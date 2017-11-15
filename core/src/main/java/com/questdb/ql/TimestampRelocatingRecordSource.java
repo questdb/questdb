@@ -23,11 +23,13 @@
 
 package com.questdb.ql;
 
+import com.questdb.common.Record;
+import com.questdb.common.RecordColumnMetadata;
+import com.questdb.common.RecordCursor;
+import com.questdb.common.RecordMetadata;
 import com.questdb.ql.ops.AbstractRecordSource;
 import com.questdb.std.str.CharSink;
 import com.questdb.store.factory.ReaderFactory;
-import com.questdb.store.factory.configuration.RecordColumnMetadata;
-import com.questdb.store.factory.configuration.RecordMetadata;
 
 public class TimestampRelocatingRecordSource extends AbstractRecordSource implements RecordMetadata {
     private final RecordSource delegate;

@@ -23,10 +23,10 @@
 
 package com.questdb.log;
 
-import com.questdb.misc.Misc;
-import com.questdb.misc.Net;
 import com.questdb.mp.RingQueue;
 import com.questdb.mp.Sequence;
+import com.questdb.std.Misc;
+import com.questdb.std.Net;
 import com.questdb.std.Sinkable;
 import com.questdb.std.str.CharSink;
 
@@ -185,7 +185,7 @@ class Logger implements LogRecord, Log {
 
     @Override
     public LogRecord ts() {
-        sink().putISODate(System.currentTimeMillis());
+        sink().putISODateMillis(System.currentTimeMillis());
         return this;
     }
 

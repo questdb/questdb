@@ -42,7 +42,7 @@
 #include <sys/errno.h>
 #include "files.h"
 
-JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_write
+JNIEXPORT jlong JNICALL Java_com_questdb_std_Files_write
         (JNIEnv *e, jclass cl,
          jlong fd,
          jlong address,
@@ -51,25 +51,25 @@ JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_write
     return pwrite((int) fd, (void *) (address), (size_t) len, (off_t) offset);
 }
 
-JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_mmap0
+JNIEXPORT jlong JNICALL Java_com_questdb_std_Files_mmap0
         (JNIEnv *e, jclass cl, jlong fd, jlong len, jlong offset, jint flags) {
     int prot = 0;
 
-    if (flags == com_questdb_misc_Files_MAP_RO) {
+    if (flags == com_questdb_std_Files_MAP_RO) {
         prot = PROT_READ;
-    } else if (flags == com_questdb_misc_Files_MAP_RW) {
+    } else if (flags == com_questdb_std_Files_MAP_RW) {
         prot = PROT_READ | PROT_WRITE;
     }
 
     return (jlong) mmap(NULL, (size_t) len, prot, MAP_SHARED, (int) fd, offset);
 }
 
-JNIEXPORT jint JNICALL Java_com_questdb_misc_Files_munmap0
+JNIEXPORT jint JNICALL Java_com_questdb_std_Files_munmap0
         (JNIEnv *cl, jclass e, jlong address, jlong len) {
     return munmap((void *) address, (size_t) len);
 }
 
-JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_append
+JNIEXPORT jlong JNICALL Java_com_questdb_std_Files_append
         (JNIEnv *e, jclass cl,
          jlong fd,
          jlong address,
@@ -77,7 +77,7 @@ JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_append
     return write((int) fd, (void *) (address), (size_t) len);
 }
 
-JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_read
+JNIEXPORT jlong JNICALL Java_com_questdb_std_Files_read
         (JNIEnv *e, jclass cl,
          jlong fd,
          jlong address,
@@ -87,12 +87,12 @@ JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_read
     return pread((int) fd, (void *) address, (size_t) len, (off_t) offset);
 }
 
-JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_sequentialRead
+JNIEXPORT jlong JNICALL Java_com_questdb_std_Files_sequentialRead
         (JNIEnv *e, jclass cl, jlong fd, jlong address, jint len) {
     return read((int) fd, (void *) address, (size_t) len);
 }
 
-JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_getLastModified
+JNIEXPORT jlong JNICALL Java_com_questdb_std_Files_getLastModified
         (JNIEnv *e, jclass cl, jlong pchar) {
 
     struct stat st;
@@ -101,29 +101,29 @@ JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_getLastModified
     return r == 0 ? 1000 * (jlong) st.st_mtime : r;
 }
 
-JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_openRO
+JNIEXPORT jlong JNICALL Java_com_questdb_std_Files_openRO
         (JNIEnv *e, jclass cl, jlong lpszName) {
     return open((const char *) lpszName, O_RDONLY);
 }
 
-JNIEXPORT jint JNICALL Java_com_questdb_misc_Files_close0
+JNIEXPORT jint JNICALL Java_com_questdb_std_Files_close0
         (JNIEnv *e, jclass cl, jlong fd) {
     return close((int) fd);
 }
 
-JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_openRW
+JNIEXPORT jlong JNICALL Java_com_questdb_std_Files_openRW
         (JNIEnv *e, jclass cl, jlong lpszName) {
     umask(0);
     return open((const char *) lpszName, O_CREAT | O_RDWR, 0644);
 }
 
-JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_openAppend
+JNIEXPORT jlong JNICALL Java_com_questdb_std_Files_openAppend
         (JNIEnv *e, jclass cl, jlong lpszName) {
     umask(0);
     return open((const char *) lpszName, O_CREAT | O_WRONLY | O_APPEND, 0644);
 }
 
-JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_length0
+JNIEXPORT jlong JNICALL Java_com_questdb_std_Files_length0
         (JNIEnv *e, jclass cl, jlong pchar) {
     struct stat st;
 
@@ -131,19 +131,19 @@ JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_length0
     return r == 0 ? st.st_size : r;
 }
 
-JNIEXPORT jint JNICALL Java_com_questdb_misc_Files_mkdir
+JNIEXPORT jint JNICALL Java_com_questdb_std_Files_mkdir
         (JNIEnv *e, jclass cl, jlong pchar, jint mode) {
     return mkdir((const char *) pchar, (mode_t) mode);
 }
 
-JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_length
+JNIEXPORT jlong JNICALL Java_com_questdb_std_Files_length
         (JNIEnv *e, jclass cl, jlong fd) {
     struct stat st;
     int r = fstat((int) fd, &st);
     return r == 0 ? st.st_size : r;
 }
 
-JNIEXPORT jboolean JNICALL Java_com_questdb_misc_Files_exists
+JNIEXPORT jboolean JNICALL Java_com_questdb_std_Files_exists
         (JNIEnv *e, jclass cl, jlong fd) {
     struct stat st;
     int r = fstat((int) fd, &st);
@@ -152,7 +152,7 @@ JNIEXPORT jboolean JNICALL Java_com_questdb_misc_Files_exists
 
 #ifdef __APPLE__
 
-JNIEXPORT jboolean JNICALL Java_com_questdb_misc_Files_setLastModified
+JNIEXPORT jboolean JNICALL Java_com_questdb_std_Files_setLastModified
         (JNIEnv *e, jclass cl, jlong lpszName, jlong millis) {
     struct timeval t[2];
     t[1].tv_sec = millis / 1000;
@@ -162,7 +162,7 @@ JNIEXPORT jboolean JNICALL Java_com_questdb_misc_Files_setLastModified
 
 #else
 
-JNIEXPORT jboolean JNICALL Java_com_questdb_misc_Files_setLastModified
+JNIEXPORT jboolean JNICALL Java_com_questdb_std_Files_setLastModified
         (JNIEnv *e, jclass cl, jlong lpszName, jlong millis) {
     struct utimbuf t;
     t.modtime = millis / 1000;
@@ -171,12 +171,12 @@ JNIEXPORT jboolean JNICALL Java_com_questdb_misc_Files_setLastModified
 
 #endif
 
-JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_getStdOutFd
+JNIEXPORT jlong JNICALL Java_com_questdb_std_Files_getStdOutFd
         (JNIEnv *e, jclass cl) {
     return (jlong) 1;
 }
 
-JNIEXPORT jboolean JNICALL Java_com_questdb_misc_Files_truncate
+JNIEXPORT jboolean JNICALL Java_com_questdb_std_Files_truncate
         (JNIEnv *e, jclass cl, jlong fd, jlong len) {
     if (ftruncate((int) fd, len) == 0) {
         return JNI_TRUE;
@@ -184,12 +184,12 @@ JNIEXPORT jboolean JNICALL Java_com_questdb_misc_Files_truncate
     return JNI_FALSE;
 }
 
-JNIEXPORT jboolean JNICALL Java_com_questdb_misc_Files_remove
+JNIEXPORT jboolean JNICALL Java_com_questdb_std_Files_remove
         (JNIEnv *e, jclass cl, jlong lpsz) {
     return (jboolean) (remove((const char *) lpsz) == 0);
 }
 
-JNIEXPORT jboolean JNICALL Java_com_questdb_misc_Files_rmdir
+JNIEXPORT jboolean JNICALL Java_com_questdb_std_Files_rmdir
         (JNIEnv *e, jclass cl, jlong lpsz) {
     return (jboolean) (rmdir((const char *) lpsz) == 0);
 }
@@ -199,7 +199,7 @@ typedef struct {
     struct dirent *entry;
 } FIND;
 
-JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_findFirst
+JNIEXPORT jlong JNICALL Java_com_questdb_std_Files_findFirst
         (JNIEnv *e, jclass cl, jlong lpszName) {
 
     DIR *dir;
@@ -231,13 +231,13 @@ JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_findFirst
     return (jlong) find;
 }
 
-JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_getPageSize
+JNIEXPORT jlong JNICALL Java_com_questdb_std_Files_getPageSize
         (JNIEnv *e, jclass cl) {
     return sysconf(_SC_PAGESIZE);
 }
 
 
-JNIEXPORT jint JNICALL Java_com_questdb_misc_Files_findNext
+JNIEXPORT jint JNICALL Java_com_questdb_std_Files_findNext
         (JNIEnv *e, jclass cl, jlong findPtr) {
     FIND *find = (FIND *) findPtr;
     errno = 0;
@@ -248,29 +248,29 @@ JNIEXPORT jint JNICALL Java_com_questdb_misc_Files_findNext
     return errno == 0 ? 0 : -1;
 }
 
-JNIEXPORT void JNICALL Java_com_questdb_misc_Files_findClose
+JNIEXPORT void JNICALL Java_com_questdb_std_Files_findClose
         (JNIEnv *e, jclass cl, jlong findPtr) {
     FIND *find = (FIND *) findPtr;
     closedir(find->dir);
     free(find);
 }
 
-JNIEXPORT jlong JNICALL Java_com_questdb_misc_Files_findName
+JNIEXPORT jlong JNICALL Java_com_questdb_std_Files_findName
         (JNIEnv *e, jclass cl, jlong findPtr) {
     return (jlong) ((FIND *) findPtr)->entry->d_name;
 }
 
-JNIEXPORT jint JNICALL Java_com_questdb_misc_Files_findType
+JNIEXPORT jint JNICALL Java_com_questdb_std_Files_findType
         (JNIEnv *e, jclass cl, jlong findPtr) {
     return ((FIND *) findPtr)->entry->d_type;
 }
 
-JNIEXPORT jint JNICALL Java_com_questdb_misc_Files_lock
+JNIEXPORT jint JNICALL Java_com_questdb_std_Files_lock
         (JNIEnv *e, jclass cl, jlong fd) {
     return flock((int) fd, LOCK_EX | LOCK_NB);
 }
 
-JNIEXPORT jboolean JNICALL Java_com_questdb_misc_Files_rename
+JNIEXPORT jboolean JNICALL Java_com_questdb_std_Files_rename
         (JNIEnv *e, jclass cls, jlong lpszOld, jlong lpszNew) {
     return (jboolean) (rename((const char *) lpszOld, (const char *) lpszNew) == 0);
 }

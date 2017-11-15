@@ -23,11 +23,11 @@
 
 package com.questdb.parser.typeprobe;
 
-import com.questdb.ex.NumericException;
-import com.questdb.misc.Numbers;
+import com.questdb.common.ColumnType;
+import com.questdb.common.NumericException;
+import com.questdb.std.Numbers;
 import com.questdb.std.time.DateFormat;
 import com.questdb.std.time.DateLocale;
-import com.questdb.store.ColumnType;
 
 public class LongProbe implements TypeProbe {
     @Override

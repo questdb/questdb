@@ -23,7 +23,7 @@
 
 package com.questdb.net;
 
-import com.questdb.misc.Os;
+import com.questdb.std.Os;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Rule;
 import org.junit.Test;

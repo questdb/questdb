@@ -1,12 +1,12 @@
 package com.questdb.cairo;
 
-import com.questdb.misc.Files;
-import com.questdb.misc.FilesFacade;
-import com.questdb.misc.FilesFacadeImpl;
+import com.questdb.common.ColumnType;
+import com.questdb.common.PartitionBy;
+import com.questdb.std.Files;
+import com.questdb.std.FilesFacade;
+import com.questdb.std.FilesFacadeImpl;
 import com.questdb.std.str.LPSZ;
 import com.questdb.std.str.Path;
-import com.questdb.store.ColumnType;
-import com.questdb.store.PartitionBy;
 import com.questdb.store.factory.configuration.JournalMetadata;
 import com.questdb.store.factory.configuration.JournalStructure;
 import com.questdb.test.tools.TestUtils;

@@ -25,9 +25,9 @@ package com.questdb.net.http.handlers;
 
 import com.google.gson.JsonSyntaxException;
 import com.questdb.BootstrapEnv;
+import com.questdb.ServerConfiguration;
 import com.questdb.net.http.HttpServer;
 import com.questdb.net.http.QueryResponse;
-import com.questdb.net.http.ServerConfiguration;
 import com.questdb.net.http.SimpleUrlMatcher;
 import com.questdb.parser.sql.AbstractOptimiserTest;
 import org.apache.http.MalformedChunkCodingException;

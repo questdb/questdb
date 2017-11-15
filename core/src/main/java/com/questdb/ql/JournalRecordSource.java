@@ -23,12 +23,15 @@
 
 package com.questdb.ql;
 
-import com.questdb.misc.Rows;
+import com.questdb.common.Record;
+import com.questdb.common.RecordCursor;
+import com.questdb.common.RecordMetadata;
+import com.questdb.common.StorageFacade;
 import com.questdb.ql.ops.AbstractCombinedRecordSource;
+import com.questdb.std.Rows;
 import com.questdb.std.str.CharSink;
 import com.questdb.store.factory.ReaderFactory;
 import com.questdb.store.factory.configuration.JournalMetadata;
-import com.questdb.store.factory.configuration.RecordMetadata;
 
 public class JournalRecordSource extends AbstractCombinedRecordSource {
     private final PartitionSource partitionSource;

@@ -23,7 +23,7 @@
 
 package com.questdb.net;
 
-import com.questdb.ex.NetworkError;
+import com.questdb.std.ex.NetworkError;
 
 import javax.net.ssl.KeyManagerFactory;
 import javax.net.ssl.SSLContext;

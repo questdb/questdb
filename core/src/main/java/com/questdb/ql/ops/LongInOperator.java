@@ -23,12 +23,12 @@
 
 package com.questdb.ql.ops;
 
+import com.questdb.common.ColumnType;
+import com.questdb.common.Record;
+import com.questdb.common.StorageFacade;
 import com.questdb.ex.ParserException;
-import com.questdb.misc.Numbers;
-import com.questdb.ql.Record;
-import com.questdb.ql.StorageFacade;
 import com.questdb.std.LongHashSet;
-import com.questdb.store.ColumnType;
+import com.questdb.std.Numbers;
 
 public class LongInOperator extends AbstractVirtualColumn implements Function {
 

@@ -1,10 +1,10 @@
 package com.questdb.cairo;
 
-import com.questdb.misc.Chars;
-import com.questdb.misc.FilesFacade;
-import com.questdb.misc.FilesFacadeImpl;
+import com.questdb.common.PartitionBy;
+import com.questdb.std.Chars;
+import com.questdb.std.FilesFacade;
+import com.questdb.std.FilesFacadeImpl;
 import com.questdb.std.str.LPSZ;
-import com.questdb.store.PartitionBy;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;

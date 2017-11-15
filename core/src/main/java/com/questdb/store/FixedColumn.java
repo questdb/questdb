@@ -23,8 +23,8 @@
 
 package com.questdb.store;
 
-import com.questdb.misc.Numbers;
-import com.questdb.misc.Unsafe;
+import com.questdb.std.Numbers;
+import com.questdb.std.Unsafe;
 
 public class FixedColumn extends AbstractColumn {
     private final int width;

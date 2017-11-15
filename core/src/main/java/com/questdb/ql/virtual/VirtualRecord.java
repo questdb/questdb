@@ -23,8 +23,8 @@
 
 package com.questdb.ql.virtual;
 
-import com.questdb.ql.Record;
-import com.questdb.ql.StorageFacade;
+import com.questdb.common.Record;
+import com.questdb.common.StorageFacade;
 import com.questdb.ql.ops.VirtualColumn;
 import com.questdb.std.DirectInputStream;
 import com.questdb.std.ObjList;

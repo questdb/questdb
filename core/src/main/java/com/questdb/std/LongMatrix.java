@@ -23,9 +23,6 @@
 
 package com.questdb.std;
 
-import com.questdb.misc.Numbers;
-import com.questdb.misc.Unsafe;
-
 public class LongMatrix<T> {
     private final int bits;
     private int pos;

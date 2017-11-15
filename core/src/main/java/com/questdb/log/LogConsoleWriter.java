@@ -23,11 +23,11 @@
 
 package com.questdb.log;
 
-import com.questdb.misc.Files;
-import com.questdb.misc.Os;
 import com.questdb.mp.RingQueue;
 import com.questdb.mp.Sequence;
 import com.questdb.mp.SynchronizedJob;
+import com.questdb.std.Files;
+import com.questdb.std.Os;
 
 import java.io.Closeable;
 

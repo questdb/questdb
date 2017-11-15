@@ -1,7 +1,7 @@
 package com.questdb.std.str;
 
-import com.questdb.misc.Unsafe;
 import com.questdb.std.Mutable;
+import com.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;

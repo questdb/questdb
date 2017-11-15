@@ -23,19 +23,14 @@
 
 package com.questdb.parser.sql;
 
-import com.questdb.ex.JournalException;
-import com.questdb.ex.NumericException;
+import com.questdb.common.NumericException;
 import com.questdb.ex.ParserException;
-import com.questdb.misc.BytecodeAssembler;
-import com.questdb.misc.Chars;
-import com.questdb.misc.Rnd;
 import com.questdb.ql.NoRowIdRecordSource;
 import com.questdb.ql.RecordSource;
 import com.questdb.ql.join.HashJoinRecordSource;
 import com.questdb.ql.map.RecordKeyCopierCompiler;
-import com.questdb.std.IntHashSet;
-import com.questdb.std.IntList;
-import com.questdb.std.ObjList;
+import com.questdb.std.*;
+import com.questdb.std.ex.JournalException;
 import com.questdb.std.time.DateFormatUtils;
 import com.questdb.store.JournalEntryWriter;
 import com.questdb.store.JournalWriter;

@@ -23,12 +23,14 @@
 
 package com.questdb.ql;
 
-import com.questdb.ex.JournalException;
+import com.questdb.common.Record;
+import com.questdb.common.RecordCursor;
 import com.questdb.ex.ParserException;
-import com.questdb.misc.Unsafe;
 import com.questdb.parser.sql.QueryCompiler;
 import com.questdb.std.DirectInputStream;
 import com.questdb.std.LongList;
+import com.questdb.std.Unsafe;
+import com.questdb.std.ex.JournalException;
 import com.questdb.store.JournalWriter;
 import com.questdb.test.tools.AbstractTest;
 import org.junit.Assert;

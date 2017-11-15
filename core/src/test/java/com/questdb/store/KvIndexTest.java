@@ -23,9 +23,9 @@
 
 package com.questdb.store;
 
-import com.questdb.ex.JournalException;
-import com.questdb.ex.JournalRuntimeException;
+import com.questdb.common.JournalRuntimeException;
 import com.questdb.std.LongList;
+import com.questdb.std.ex.JournalException;
 import com.questdb.test.tools.AbstractTest;
 import org.junit.Assert;
 import org.junit.Before;

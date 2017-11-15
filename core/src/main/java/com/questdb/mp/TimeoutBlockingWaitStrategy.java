@@ -23,7 +23,7 @@
 
 package com.questdb.mp;
 
-import com.questdb.ex.JournalRuntimeException;
+import com.questdb.common.JournalRuntimeException;
 import com.questdb.ex.TimeoutException;
 
 import java.util.concurrent.TimeUnit;

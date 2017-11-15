@@ -23,7 +23,7 @@
 
 package com.questdb.std.str;
 
-import com.questdb.misc.Unsafe;
+import com.questdb.std.Unsafe;
 
 /**
  * Represents C LPSZ as Java' CharSequence. Byes in native memory are interpreted as ASCII characters. Multi-byte

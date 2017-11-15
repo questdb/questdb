@@ -23,18 +23,17 @@
 
 package com.questdb.cairo;
 
-import com.questdb.ex.NumericException;
+import com.questdb.common.ColumnType;
+import com.questdb.common.NumericException;
+import com.questdb.common.PartitionBy;
+import com.questdb.common.Record;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
-import com.questdb.misc.*;
-import com.questdb.ql.Record;
-import com.questdb.std.Sinkable;
+import com.questdb.std.*;
 import com.questdb.std.microtime.*;
 import com.questdb.std.str.LPSZ;
 import com.questdb.std.str.NativeLPSZ;
 import com.questdb.std.str.Path;
-import com.questdb.store.ColumnType;
-import com.questdb.store.PartitionBy;
 import com.questdb.store.factory.configuration.JournalStructure;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;

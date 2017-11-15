@@ -23,11 +23,11 @@
 
 package com.questdb.ql.ops.constant;
 
-import com.questdb.misc.Chars;
-import com.questdb.ql.Record;
-import com.questdb.ql.StorageFacade;
+import com.questdb.common.ColumnType;
+import com.questdb.common.Record;
+import com.questdb.common.StorageFacade;
 import com.questdb.ql.ops.AbstractVirtualColumn;
-import com.questdb.store.ColumnType;
+import com.questdb.std.Chars;
 
 public class StrConstant extends AbstractVirtualColumn {
     private final String value;

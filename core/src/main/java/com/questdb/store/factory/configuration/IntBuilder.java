@@ -23,7 +23,7 @@
 
 package com.questdb.store.factory.configuration;
 
-import com.questdb.misc.Numbers;
+import com.questdb.std.Numbers;
 
 public class IntBuilder<T> extends AbstractMetadataBuilder<T> {
 

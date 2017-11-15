@@ -23,8 +23,6 @@
 
 package com.questdb.std;
 
-import com.questdb.misc.Misc;
-
 import java.io.Closeable;
 import java.lang.ref.WeakReference;
 

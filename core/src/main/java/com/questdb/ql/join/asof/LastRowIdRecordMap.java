@@ -23,12 +23,12 @@
 
 package com.questdb.ql.join.asof;
 
-import com.questdb.ql.Record;
-import com.questdb.ql.RecordCursor;
-import com.questdb.ql.StorageFacade;
+import com.questdb.common.Record;
+import com.questdb.common.RecordCursor;
+import com.questdb.common.RecordMetadata;
+import com.questdb.common.StorageFacade;
 import com.questdb.ql.map.*;
 import com.questdb.std.Transient;
-import com.questdb.store.factory.configuration.RecordMetadata;
 
 public class LastRowIdRecordMap implements LastRecordMap {
     private final DirectMap map;

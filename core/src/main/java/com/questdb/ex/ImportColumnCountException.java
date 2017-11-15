@@ -23,6 +23,8 @@
 
 package com.questdb.ex;
 
+import com.questdb.common.JournalRuntimeException;
+
 @SuppressWarnings("ThrowableInstanceNeverThrown")
 public final class ImportColumnCountException extends JournalRuntimeException {
     public final static ImportColumnCountException INSTANCE = new ImportColumnCountException();
