@@ -71,16 +71,16 @@ public final class SamplerFactory {
             switch (cs.charAt(k)) {
                 case 's':
                     // seconds
-                    return new MillisSampler(Dates.SECOND_MICROS * n);
+                    return new MillisSampler(Dates.SECOND_MILLIS * n);
                 case 'm':
                     // minutes
-                    return new MillisSampler(Dates.MINUTE_MICROS * n);
+                    return new MillisSampler(Dates.MINUTE_MILLIS * n);
                 case 'h':
                     // hours
-                    return new MillisSampler(Dates.HOUR_MICROS * n);
+                    return new MillisSampler(Dates.HOUR_MILLIS * n);
                 case 'd':
                     // days
-                    return new MillisSampler(Dates.DAY_MICROS * n);
+                    return new MillisSampler(Dates.DAY_MILLIS * n);
                 case 'M':
                     // months
                     return new MonthsSampler(n);

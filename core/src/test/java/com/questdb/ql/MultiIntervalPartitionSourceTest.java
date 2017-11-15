@@ -42,7 +42,7 @@ public class MultiIntervalPartitionSourceTest extends AbstractTest {
         StringSink sink = new StringSink();
 
         try (JournalWriter<Quote> w = getFactory().writer(Quote.class)) {
-            TestUtils.generateQuoteData(w, 600, DateFormatUtils.parseDateTime("2014-03-10T02:00:00.000Z"), Dates.MINUTE_MICROS);
+            TestUtils.generateQuoteData(w, 600, DateFormatUtils.parseDateTime("2014-03-10T02:00:00.000Z"), Dates.MINUTE_MILLIS);
             w.commit();
 
             RecordSourcePrinter p = new RecordSourcePrinter(sink);

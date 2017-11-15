@@ -21,7 +21,7 @@
  *
  ******************************************************************************/
 
-package com.questdb.std.time;
+package com.questdb.std.microtime;
 
 import com.questdb.ex.NumericException;
 import com.questdb.std.str.StringSink;

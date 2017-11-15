@@ -23,10 +23,7 @@
 
 package com.questdb;
 
-import com.questdb.cairo.AppendMemory;
-import com.questdb.cairo.TableReader;
-import com.questdb.cairo.TableUtils;
-import com.questdb.cairo.TableWriter;
+import com.questdb.cairo.*;
 import com.questdb.ex.JournalException;
 import com.questdb.ex.NumericException;
 import com.questdb.ex.ParserException;
@@ -40,7 +37,6 @@ import com.questdb.ql.Record;
 import com.questdb.ql.RecordCursor;
 import com.questdb.ql.RecordSource;
 import com.questdb.std.LongList;
-import com.questdb.std.str.Path;
 import com.questdb.std.time.DateFormatUtils;
 import com.questdb.std.time.Interval;
 import com.questdb.store.*;
@@ -281,34 +277,43 @@ public class PerformanceTest extends AbstractTest {
         long result;
 
         CharSequence root = getFactory().getConfiguration().getJournalBase().getAbsolutePath();
-        try (Path path = new Path(); AppendMemory mem = new AppendMemory()) {
-            TableUtils.create(FilesFacadeImpl.INSTANCE, path, mem, root, getFactory().getConfiguration().createMetadata(new JournalKey<>(Quote.class, "quote", PartitionBy.NONE)), 509);
-            try (TableWriter w = new TableWriter(FilesFacadeImpl.INSTANCE, root, "quote")) {
-                for (int i = -count; i < count; i++) {
-                    if (i == 0) {
-                        t = System.nanoTime();
-                    }
-                    w.truncate();
-                    long timestamp = DateFormatUtils.parseDateTime("2013-10-05T10:00:00.000Z");
-                    String symbols[] = {"AGK.L", "BP.L", "TLW.L", "ABF.L", "LLOY.L", "BT-A.L", "WTB.L", "RRS.L", "ADM.L", "GKN.L", "HSBA.L"};
-                    Rnd r = new Rnd();
-                    int n = symbols.length - 1;
-                    for (int i1 = 0; i1 < TEST_DATA_SIZE; i1++) {
-                        TableWriter.Row row = w.newRow(timestamp);
-                        row.putStr(1, symbols[Math.abs(r.nextInt() % n)]);
-                        row.putDouble(2, Math.abs(r.nextDouble()));
-                        row.putDouble(3, Math.abs(r.nextDouble()));
-                        row.putInt(4, Math.abs(r.nextInt()));
-                        row.putInt(5, Math.abs(r.nextInt()));
-                        row.putStr(6, "LXE");
-                        row.putStr(7, "Fast trading");
-                        row.append();
-                        timestamp += (long) 1000;
-                    }
-                    w.commit();
+        CairoConfiguration configuration = new DefaultCairoConfiguration(root);
+        try (TableModel model = new TableModel(configuration, "quote", PartitionBy.NONE)
+                .timestamp()
+                .col("sym", ColumnType.SYMBOL)
+                .col("bid", ColumnType.DOUBLE)
+                .col("ask", ColumnType.DOUBLE)
+                .col("bidSize", ColumnType.INT)
+                .col("askSize", ColumnType.INT)
+                .col("mode", ColumnType.SYMBOL)
+                .col("ex", ColumnType.SYMBOL)) {
+            CairoTestUtils.create(model);
+        }
+        try (TableWriter w = new TableWriter(FilesFacadeImpl.INSTANCE, root, "quote")) {
+            for (int i = -count; i < count; i++) {
+                if (i == 0) {
+                    t = System.nanoTime();
                 }
-                result = System.nanoTime() - t;
+                w.truncate();
+                long timestamp = DateFormatUtils.parseDateTime("2013-10-05T10:00:00.000Z");
+                String symbols[] = {"AGK.L", "BP.L", "TLW.L", "ABF.L", "LLOY.L", "BT-A.L", "WTB.L", "RRS.L", "ADM.L", "GKN.L", "HSBA.L"};
+                Rnd r = new Rnd();
+                int n = symbols.length - 1;
+                for (int i1 = 0; i1 < TEST_DATA_SIZE; i1++) {
+                    TableWriter.Row row = w.newRow(timestamp);
+                    row.putStr(1, symbols[Math.abs(r.nextInt() % n)]);
+                    row.putDouble(2, Math.abs(r.nextDouble()));
+                    row.putDouble(3, Math.abs(r.nextDouble()));
+                    row.putInt(4, Math.abs(r.nextInt()));
+                    row.putInt(5, Math.abs(r.nextInt()));
+                    row.putStr(6, "LXE");
+                    row.putStr(7, "Fast trading");
+                    row.append();
+                    timestamp += (long) 1000;
+                }
+                w.commit();
             }
+            result = System.nanoTime() - t;
         }
 
         LOG.info().$("Cairo append (1M): ").$(TimeUnit.NANOSECONDS.toMillis(result / count)).$("ms").$();

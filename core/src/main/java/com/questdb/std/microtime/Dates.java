@@ -21,7 +21,7 @@
  *
  ******************************************************************************/
 
-package com.questdb.std.time;
+package com.questdb.std.microtime;
 
 import com.questdb.ex.NumericException;
 import com.questdb.misc.Chars;
@@ -30,10 +30,12 @@ import com.questdb.std.str.StringSink;
 
 final public class Dates {
 
-    public static final long DAY_MILLIS = 86400000L;
-    public static final long HOUR_MILLIS = 3600000L;
-    public static final long MINUTE_MILLIS = 60000;
-    public static final long SECOND_MILLIS = 1000;
+    public static final long DAY_MICROS = 86400000000L;
+    public static final long HOUR_MICROS = 3600000000L;
+    public static final long MINUTE_MICROS = 60000000;
+    public static final long SECOND_MICROS = 1000000;
+    public static final int SECOND_MILLIS = 1000;
+    public static final int MILLI_MICROS = 1000;
     public static final int STATE_INIT = 0;
     public static final int STATE_UTC = 1;
     public static final int STATE_GMT = 2;
@@ -42,12 +44,12 @@ final public class Dates {
     public static final int STATE_MINUTE = 5;
     public static final int STATE_END = 6;
     public static final int STATE_SIGN = 7;
-    private static final long AVG_YEAR_MILLIS = (long) (365.2425 * DAY_MILLIS);
-    private static final long YEAR_MILLIS = 365 * DAY_MILLIS;
-    private static final long LEAP_YEAR_MILLIS = 366 * DAY_MILLIS;
-    private static final long HALF_YEAR_MILLIS = AVG_YEAR_MILLIS / 2;
-    private static final long EPOCH_MILLIS = 1970L * AVG_YEAR_MILLIS;
-    private static final long HALF_EPOCH_MILLIS = EPOCH_MILLIS / 2;
+    private static final long AVG_YEAR_MICROS = (long) (365.2425 * DAY_MICROS);
+    private static final long YEAR_MICROS = 365 * DAY_MICROS;
+    private static final long LEAP_YEAR_MICROS = 366 * DAY_MICROS;
+    private static final long HALF_YEAR_MICROS = AVG_YEAR_MICROS / 2;
+    private static final long EPOCH_MICROS = 1970L * AVG_YEAR_MICROS;
+    private static final long HALF_EPOCH_MICROS = EPOCH_MICROS / 2;
     private static final int DAY_HOURS = 24;
     private static final int HOUR_MINUTES = 60;
     private static final int MINUTE_SECONDS = 60;
@@ -55,29 +57,29 @@ final public class Dates {
     private static final int[] DAYS_PER_MONTH = {
             31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31
     };
-    private static final long[] MIN_MONTH_OF_YEAR_MILLIS = new long[12];
-    private static final long[] MAX_MONTH_OF_YEAR_MILLIS = new long[12];
+    private static final long[] MIN_MONTH_OF_YEAR_MICROS = new long[12];
+    private static final long[] MAX_MONTH_OF_YEAR_MICROS = new long[12];
     private static final char BEFORE_ZERO = '0' - 1;
     private static final char AFTER_NINE = '9' + 1;
 
     private Dates() {
     }
 
-    public static long addDays(long millis, int days) {
-        return millis + days * DAY_MILLIS;
+    public static long addDays(long micros, int days) {
+        return micros + days * DAY_MICROS;
     }
 
-    public static long addHours(long millis, int hours) {
-        return millis + hours * HOUR_MILLIS;
+    public static long addHours(long micros, int hours) {
+        return micros + hours * HOUR_MICROS;
     }
 
-    public static long addMonths(final long millis, int months) {
+    public static long addMonths(final long micros, int months) {
         if (months == 0) {
-            return millis;
+            return micros;
         }
-        int y = Dates.getYear(millis);
+        int y = Dates.getYear(micros);
         boolean l = Dates.isLeapYear(y);
-        int m = getMonthOfYear(millis, y, l);
+        int m = getMonthOfYear(micros, y, l);
         int _y;
         int _m = m - 1 + months;
         if (_m > -1) {
@@ -94,20 +96,20 @@ final public class Dates {
                 _y += 1;
             }
         }
-        int _d = getDayOfMonth(millis, y, m, l);
+        int _d = getDayOfMonth(micros, y, m, l);
         int maxDay = getDaysPerMonth(_m, isLeapYear(_y));
         if (_d > maxDay) {
             _d = maxDay;
         }
-        return toMillis(_y, _m, _d) + getTime(millis) + (millis < 0 ? 1 : 0);
+        return toMicros(_y, _m, _d) + getTimeMicros(micros) + (micros < 0 ? 1 : 0);
     }
 
     public static long addPeriod(long lo, char type, int period) throws NumericException {
         switch (type) {
             case 's':
-                return lo + period * Dates.SECOND_MILLIS;
+                return lo + period * Dates.SECOND_MICROS;
             case 'm':
-                return lo + period * Dates.MINUTE_MILLIS;
+                return lo + period * Dates.MINUTE_MICROS;
             case 'h':
                 return Dates.addHours(lo, period);
             case 'd':
@@ -121,102 +123,102 @@ final public class Dates {
         }
     }
 
-    public static long addYear(long millis, int years) {
+    public static long addYear(long micros, int years) {
         if (years == 0) {
-            return millis;
+            return micros;
         }
 
-        int y = getYear(millis);
+        int y = getYear(micros);
         int m;
         boolean leap1 = isLeapYear(y);
         boolean leap2 = isLeapYear(y + years);
 
-        return yearMillis(y + years, leap2)
-                + monthOfYearMillis(m = getMonthOfYear(millis, y, leap1), leap2)
-                + (getDayOfMonth(millis, y, m, leap1) - 1) * DAY_MILLIS
-                + getTime(millis)
-                + (millis < 0 ? 1 : 0);
+        return yearMicros(y + years, leap2)
+                + monthOfYearMicros(m = getMonthOfYear(micros, y, leap1), leap2)
+                + (getDayOfMonth(micros, y, m, leap1) - 1) * DAY_MICROS
+                + getTimeMicros(micros)
+                + (micros < 0 ? 1 : 0);
 
     }
 
-    public static long ceilDD(long millis) {
+    public static long ceilDD(long micros) {
         int y, m;
         boolean l;
-        return yearMillis(y = getYear(millis), l = isLeapYear(y))
-                + monthOfYearMillis(m = getMonthOfYear(millis, y, l), l)
-                + (getDayOfMonth(millis, y, m, l) - 1) * DAY_MILLIS
-                + 23 * HOUR_MILLIS
-                + 59 * MINUTE_MILLIS
-                + 59 * SECOND_MILLIS
-                + 999L
+        return yearMicros(y = getYear(micros), l = isLeapYear(y))
+                + monthOfYearMicros(m = getMonthOfYear(micros, y, l), l)
+                + (getDayOfMonth(micros, y, m, l) - 1) * DAY_MICROS
+                + 23 * HOUR_MICROS
+                + 59 * MINUTE_MICROS
+                + 59 * SECOND_MICROS
+                + 999999L
                 ;
     }
 
-    public static long ceilMM(long millis) {
+    public static long ceilMM(long micros) {
         int y, m;
         boolean l;
-        return yearMillis(y = getYear(millis), l = isLeapYear(y))
-                + monthOfYearMillis(m = getMonthOfYear(millis, y, l), l)
-                + (getDaysPerMonth(m, l) - 1) * DAY_MILLIS
-                + 23 * HOUR_MILLIS
-                + 59 * MINUTE_MILLIS
-                + 59 * SECOND_MILLIS
-                + 999L
+        return yearMicros(y = getYear(micros), l = isLeapYear(y))
+                + monthOfYearMicros(m = getMonthOfYear(micros, y, l), l)
+                + (getDaysPerMonth(m, l) - 1) * DAY_MICROS
+                + 23 * HOUR_MICROS
+                + 59 * MINUTE_MICROS
+                + 59 * SECOND_MICROS
+                + 999999L
                 ;
     }
 
-    public static long ceilYYYY(long millis) {
+    public static long ceilYYYY(long micros) {
         int y;
         boolean l;
-        return yearMillis(y = getYear(millis), l = isLeapYear(y))
-                + monthOfYearMillis(12, l)
-                + (DAYS_PER_MONTH[11] - 1) * DAY_MILLIS
-                + 23 * HOUR_MILLIS
-                + 59 * MINUTE_MILLIS
-                + 59 * SECOND_MILLIS
-                + 999L;
+        return yearMicros(y = getYear(micros), l = isLeapYear(y))
+                + monthOfYearMicros(12, l)
+                + (DAYS_PER_MONTH[11] - 1) * DAY_MICROS
+                + 23 * HOUR_MICROS
+                + 59 * MINUTE_MICROS
+                + 59 * SECOND_MICROS
+                + 999999L;
     }
 
     public static long endOfYear(int year) {
-        return toMillis(year, 12, 31, 23, 59) + 59 * 1000L + 999L;
+        return toMicros(year, 12, 31, 23, 59) + 59 * SECOND_MILLIS + 999999L;
     }
 
-    public static long floorDD(long millis) {
-        return millis - getTime(millis);
+    public static long floorDD(long micros) {
+        return micros - getTimeMicros(micros);
     }
 
-    public static long floorHH(long millis) {
-        return millis - millis % HOUR_MILLIS;
+    public static long floorHH(long micros) {
+        return micros - micros % HOUR_MICROS;
     }
 
-    public static long floorMI(long millis) {
-        return millis - millis % MINUTE_MILLIS;
+    public static long floorMI(long micros) {
+        return micros - micros % MINUTE_MICROS;
     }
 
-    public static long floorMM(long millis) {
+    public static long floorMM(long micros) {
         int y;
         boolean l;
-        return yearMillis(y = getYear(millis), l = isLeapYear(y)) + monthOfYearMillis(getMonthOfYear(millis, y, l), l);
+        return yearMicros(y = getYear(micros), l = isLeapYear(y)) + monthOfYearMicros(getMonthOfYear(micros, y, l), l);
     }
 
-    public static long floorYYYY(long millis) {
+    public static long floorYYYY(long micros) {
         int y;
-        return yearMillis(y = getYear(millis), isLeapYear(y));
+        return yearMicros(y = getYear(micros), isLeapYear(y));
     }
 
-    public static int getDayOfMonth(long millis, int year, int month, boolean leap) {
-        long dateMillis = yearMillis(year, leap);
-        dateMillis += monthOfYearMillis(month, leap);
-        return (int) ((millis - dateMillis) / DAY_MILLIS) + 1;
+    public static int getDayOfMonth(long micros, int year, int month, boolean leap) {
+        long yearMicros = yearMicros(year, leap);
+        yearMicros += monthOfYearMicros(month, leap);
+        return (int) ((micros - yearMicros) / DAY_MICROS) + 1;
     }
 
-    public static int getDayOfWeek(long millis) {
+    public static int getDayOfWeek(long micros) {
         // 1970-01-01 is Thursday.
         long d;
-        if (millis > -1) {
-            d = millis / DAY_MILLIS;
+        if (micros > -1) {
+            d = micros / DAY_MICROS;
         } else {
-            d = (millis - (DAY_MILLIS - 1)) / DAY_MILLIS;
+            d = (micros - (DAY_MICROS - 1)) / DAY_MICROS;
             if (d < -3) {
                 return 7 + (int) ((d + 4) % 7);
             }
@@ -224,13 +226,13 @@ final public class Dates {
         return 1 + (int) ((d + 3) % 7);
     }
 
-    public static int getDayOfWeekSundayFirst(long millis) {
+    public static int getDayOfWeekSundayFirst(long micros) {
         // 1970-01-01 is Thursday.
         long d;
-        if (millis > -1) {
-            d = millis / DAY_MILLIS;
+        if (micros > -1) {
+            d = micros / DAY_MICROS;
         } else {
-            d = (millis - (DAY_MILLIS - 1)) / DAY_MILLIS;
+            d = (micros - (DAY_MICROS - 1)) / DAY_MICROS;
             if (d < -4) {
                 return 7 + (int) ((d + 5) % 7);
             }
@@ -242,7 +244,7 @@ final public class Dates {
         if (b < a) {
             return getDaysBetween(b, a);
         } else {
-            return (b - a) / DAY_MILLIS;
+            return (b - a) / DAY_MICROS;
         }
     }
 
@@ -257,40 +259,40 @@ final public class Dates {
         return leap & m == 2 ? 29 : DAYS_PER_MONTH[m - 1];
     }
 
-    public static int getHourOfDay(long millis) {
-        if (millis > -1) {
-            return (int) ((millis / HOUR_MILLIS) % DAY_HOURS);
+    public static int getHourOfDay(long micros) {
+        if (micros > -1) {
+            return (int) ((micros / HOUR_MICROS) % DAY_HOURS);
         } else {
-            return DAY_HOURS - 1 + (int) (((millis + 1) / HOUR_MILLIS) % DAY_HOURS);
+            return DAY_HOURS - 1 + (int) (((micros + 1) / HOUR_MICROS) % DAY_HOURS);
         }
     }
 
-    public static int getMillisOfSecond(long millis) {
-        if (millis > -1) {
-            return (int) (millis % 1000);
+    public static int getMillisOfSecond(long micros) {
+        if (micros > -1) {
+            return (int) ((micros / MILLI_MICROS) % SECOND_MILLIS);
         } else {
-            return 1000 - 1 + (int) ((millis + 1) % 1000);
+            return SECOND_MILLIS - 1 + (int) (((micros + 1) / MILLI_MICROS) % SECOND_MILLIS);
         }
     }
 
-    public static int getMinuteOfHour(long millis) {
-        if (millis > -1) {
-            return (int) ((millis / MINUTE_MILLIS) % HOUR_MINUTES);
+    public static int getMinuteOfHour(long micros) {
+        if (micros > -1) {
+            return (int) ((micros / MINUTE_MICROS) % HOUR_MINUTES);
         } else {
-            return HOUR_MINUTES - 1 + (int) (((millis + 1) / MINUTE_MILLIS) % HOUR_MINUTES);
+            return HOUR_MINUTES - 1 + (int) (((micros + 1) / MINUTE_MICROS) % HOUR_MINUTES);
         }
     }
 
     /**
-     * Calculates month of year from absolute millis.
+     * Calculates month of year from absolute micros.
      *
-     * @param millis millis since 1970
+     * @param micros micros since 1970
      * @param year   year of month
      * @param leap   true if year was leap
      * @return month of year
      */
-    public static int getMonthOfYear(long millis, int year, boolean leap) {
-        int i = (int) ((millis - yearMillis(year, leap)) >> 10);
+    public static int getMonthOfYear(long micros, int year, boolean leap) {
+        int i = (int) (((micros - yearMicros(year, leap)) / 1000) >> 10);
         return leap
                 ? ((i < 182 * 84375)
                 ? ((i < 91 * 84375)
@@ -320,8 +322,8 @@ final public class Dates {
         int aMonth = getMonthOfYear(a, aYear, aLeap);
         int bMonth = getMonthOfYear(b, bYear, bLeap);
 
-        long aResidual = a - yearMillis(aYear, aLeap) - monthOfYearMillis(aMonth, aLeap);
-        long bResidual = b - yearMillis(bYear, bLeap) - monthOfYearMillis(bMonth, bLeap);
+        long aResidual = a - yearMicros(aYear, aLeap) - monthOfYearMicros(aMonth, aLeap);
+        long bResidual = b - yearMicros(bYear, bLeap) - monthOfYearMicros(bMonth, bLeap);
         long months = 12 * (bYear - aYear) + (bMonth - aMonth);
 
         if (aResidual > bResidual) {
@@ -331,36 +333,36 @@ final public class Dates {
         }
     }
 
-    public static int getSecondOfMinute(long millis) {
-        if (millis > -1) {
-            return (int) ((millis / SECOND_MILLIS) % MINUTE_SECONDS);
+    public static int getSecondOfMinute(long micros) {
+        if (micros > -1) {
+            return (int) ((micros / SECOND_MICROS) % MINUTE_SECONDS);
         } else {
-            return MINUTE_SECONDS - 1 + (int) (((millis + 1) / SECOND_MILLIS) % MINUTE_SECONDS);
+            return MINUTE_SECONDS - 1 + (int) (((micros + 1) / SECOND_MICROS) % MINUTE_SECONDS);
         }
     }
 
     /**
-     * Calculates year number from millis.
+     * Calculates year number from micros.
      *
-     * @param millis time millis.
+     * @param micros time micros.
      * @return year
      */
-    public static int getYear(long millis) {
-        long mid = (millis >> 1) + HALF_EPOCH_MILLIS;
+    public static int getYear(long micros) {
+        long mid = (micros >> 1) + HALF_EPOCH_MICROS;
         if (mid < 0) {
-            mid = mid - HALF_YEAR_MILLIS + 1;
+            mid = mid - HALF_YEAR_MICROS + 1;
         }
-        int year = (int) (mid / HALF_YEAR_MILLIS);
+        int year = (int) (mid / HALF_YEAR_MICROS);
 
         boolean leap = isLeapYear(year);
-        long yearStart = yearMillis(year, leap);
-        long diff = millis - yearStart;
+        long yearStart = yearMicros(year, leap);
+        long diff = micros - yearStart;
 
         if (diff < 0) {
             year--;
-        } else if (diff >= YEAR_MILLIS) {
-            yearStart += leap ? LEAP_YEAR_MILLIS : YEAR_MILLIS;
-            if (yearStart <= millis) {
+        } else if (diff >= YEAR_MICROS) {
+            yearStart += leap ? LEAP_YEAR_MICROS : YEAR_MICROS;
+            if (yearStart <= micros) {
                 year++;
             }
         }
@@ -378,8 +380,8 @@ final public class Dates {
         boolean aLeap = isLeapYear(aYear);
         boolean bLeap = isLeapYear(bYear);
 
-        long aResidual = a - yearMillis(aYear, aLeap);
-        long bResidual = b - yearMillis(bYear, bLeap);
+        long aResidual = a - yearMicros(aYear, aLeap);
+        long bResidual = b - yearMicros(bYear, bLeap);
         long months = bYear - aYear;
 
         if (aResidual > bResidual) {
@@ -401,8 +403,8 @@ final public class Dates {
         return ((year & 3) == 0) && ((year % 100) != 0 || (year % 400) == 0);
     }
 
-    public static long monthOfYearMillis(int month, boolean leap) {
-        return leap ? MAX_MONTH_OF_YEAR_MILLIS[month - 1] : MIN_MONTH_OF_YEAR_MILLIS[month - 1];
+    public static long monthOfYearMicros(int month, boolean leap) {
+        return leap ? MAX_MONTH_OF_YEAR_MICROS[month - 1] : MIN_MONTH_OF_YEAR_MICROS[month - 1];
     }
 
     public static long nextOrSameDayOfWeek(long millis, int dow) {
@@ -412,9 +414,9 @@ final public class Dates {
         }
 
         if (thisDow < dow) {
-            return millis + (dow - thisDow) * DAY_MILLIS;
+            return millis + (dow - thisDow) * DAY_MICROS;
         } else {
-            return millis + (7 - (thisDow - dow)) * DAY_MILLIS;
+            return millis + (7 - (thisDow - dow)) * DAY_MICROS;
         }
     }
 
@@ -542,30 +544,30 @@ final public class Dates {
         }
     }
 
-    public static long previousOrSameDayOfWeek(long millis, int dow) {
-        int thisDow = getDayOfWeek(millis);
+    public static long previousOrSameDayOfWeek(long micros, int dow) {
+        int thisDow = getDayOfWeek(micros);
         if (thisDow == dow) {
-            return millis;
+            return micros;
         }
 
         if (thisDow < dow) {
-            return millis - (7 + (thisDow - dow)) * DAY_MILLIS;
+            return micros - (7 + (thisDow - dow)) * DAY_MICROS;
         } else {
-            return millis - (thisDow - dow) * DAY_MILLIS;
+            return micros - (thisDow - dow) * DAY_MICROS;
         }
     }
 
-    public static long toMillis(int y, int m, int d, int h, int mi) {
-        return toMillis(y, isLeapYear(y), m, d, h, mi);
+    public static long toMicros(int y, int m, int d, int h, int mi) {
+        return toMicros(y, isLeapYear(y), m, d, h, mi);
     }
 
-    public static long toMillis(int y, boolean leap, int m, int d, int h, int mi) {
-        return yearMillis(y, leap) + monthOfYearMillis(m, leap) + (d - 1) * DAY_MILLIS + h * HOUR_MILLIS + mi * MINUTE_MILLIS;
+    public static long toMicros(int y, boolean leap, int m, int d, int h, int mi) {
+        return yearMicros(y, leap) + monthOfYearMicros(m, leap) + (d - 1) * DAY_MICROS + h * HOUR_MICROS + mi * MINUTE_MICROS;
     }
 
-    public static String toString(long millis) {
+    public static String toString(long micros) {
         StringSink sink = new StringSink();
-        DateFormatUtils.appendDateTime(sink, millis);
+        DateFormatUtils.appendDateTime(sink, micros);
         return sink.toString();
     }
 
@@ -577,7 +579,7 @@ final public class Dates {
      * @param leap true if give year is leap year
      * @return millis for start of year.
      */
-    public static long yearMillis(int year, boolean leap) {
+    public static long yearMicros(int year, boolean leap) {
         int leapYears = year / 100;
         if (year < 0) {
             leapYears = ((year + 3) >> 2) - leapYears + ((leapYears + 3) >> 2) - 1;
@@ -588,30 +590,30 @@ final public class Dates {
             }
         }
 
-        return (year * 365L + (leapYears - DAYS_0000_TO_1970)) * DAY_MILLIS;
+        return (year * 365L + (leapYears - DAYS_0000_TO_1970)) * DAY_MICROS;
     }
 
     private static boolean isDigit(char c) {
         return c > BEFORE_ZERO && c < AFTER_NINE;
     }
 
-    private static long getTime(long millis) {
-        return millis < 0 ? DAY_MILLIS - 1 + (millis % DAY_MILLIS) : millis % DAY_MILLIS;
+    private static long getTimeMicros(long micros) {
+        return micros < 0 ? DAY_MICROS - 1 + (micros % DAY_MICROS) : micros % DAY_MICROS;
     }
 
-    private static long toMillis(int y, int m, int d) {
+    private static long toMicros(int y, int m, int d) {
         boolean l = isLeapYear(y);
-        return yearMillis(y, l) + monthOfYearMillis(m, l) + (d - 1) * DAY_MILLIS;
+        return yearMicros(y, l) + monthOfYearMicros(m, l) + (d - 1) * DAY_MICROS;
     }
 
     static {
         long minSum = 0;
         long maxSum = 0;
         for (int i = 0; i < 11; i++) {
-            minSum += DAYS_PER_MONTH[i] * DAY_MILLIS;
-            MIN_MONTH_OF_YEAR_MILLIS[i + 1] = minSum;
-            maxSum += getDaysPerMonth(i + 1, true) * DAY_MILLIS;
-            MAX_MONTH_OF_YEAR_MILLIS[i + 1] = maxSum;
+            minSum += DAYS_PER_MONTH[i] * DAY_MICROS;
+            MIN_MONTH_OF_YEAR_MICROS[i + 1] = minSum;
+            maxSum += getDaysPerMonth(i + 1, true) * DAY_MICROS;
+            MAX_MONTH_OF_YEAR_MICROS[i + 1] = maxSum;
         }
     }
 

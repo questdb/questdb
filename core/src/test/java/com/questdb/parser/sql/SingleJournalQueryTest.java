@@ -910,7 +910,7 @@ public class SingleJournalQueryTest extends AbstractTest {
     @Test
     public void testInAsColumn() throws Exception {
         try (JournalWriter<Quote> w = getFactory().writer(Quote.class, "q")) {
-            TestUtils.generateQuoteData(w, 3600 * 24, DateFormatUtils.parseDateTime("2015-02-12T03:00:00.000Z"), Dates.SECOND_MICROS);
+            TestUtils.generateQuoteData(w, 3600 * 24, DateFormatUtils.parseDateTime("2015-02-12T03:00:00.000Z"), Dates.SECOND_MILLIS);
             w.commit();
         }
 
@@ -923,7 +923,7 @@ public class SingleJournalQueryTest extends AbstractTest {
     @Test
     public void testInAsColumnAliased() throws Exception {
         try (JournalWriter<Quote> w = getFactory().writer(Quote.class, "q")) {
-            TestUtils.generateQuoteData(w, 3600 * 24, DateFormatUtils.parseDateTime("2015-02-12T03:00:00.000Z"), Dates.SECOND_MICROS);
+            TestUtils.generateQuoteData(w, 3600 * 24, DateFormatUtils.parseDateTime("2015-02-12T03:00:00.000Z"), Dates.SECOND_MILLIS);
             w.commit();
         }
 
@@ -1195,7 +1195,7 @@ public class SingleJournalQueryTest extends AbstractTest {
     @Test
     public void testIntervalAndIndexHeapSearch() throws Exception {
         try (JournalWriter<Quote> w = getFactory().writer(Quote.class, "q")) {
-            TestUtils.generateQuoteData(w, 3600 * 24 * 10, DateFormatUtils.parseDateTime("2015-02-12T03:00:00.000Z"), Dates.SECOND_MICROS);
+            TestUtils.generateQuoteData(w, 3600 * 24 * 10, DateFormatUtils.parseDateTime("2015-02-12T03:00:00.000Z"), Dates.SECOND_MILLIS);
             w.commit();
         }
 
@@ -1236,7 +1236,7 @@ public class SingleJournalQueryTest extends AbstractTest {
     @Test
     public void testIntervalAndIndexSearch() throws Exception {
         try (JournalWriter<Quote> w = getFactory().writer(Quote.class, "q")) {
-            TestUtils.generateQuoteData(w, 3600 * 24 * 10, DateFormatUtils.parseDateTime("2015-02-12T03:00:00.000Z"), Dates.SECOND_MICROS);
+            TestUtils.generateQuoteData(w, 3600 * 24 * 10, DateFormatUtils.parseDateTime("2015-02-12T03:00:00.000Z"), Dates.SECOND_MILLIS);
             w.commit();
 
             final String expected = "ADM.L\t837.343750000000\t0.061431560665\t2015-02-12T10:00:04.000Z\n" +
@@ -1265,7 +1265,7 @@ public class SingleJournalQueryTest extends AbstractTest {
     @Test
     public void testIntervalIntrinsicFalse() throws Exception {
         try (JournalWriter<Quote> w = getFactory().writer(Quote.class, "q")) {
-            TestUtils.generateQuoteData(w, 3600 * 24 * 10, DateFormatUtils.parseDateTime("2015-02-12T03:00:00.000Z"), Dates.SECOND_MICROS);
+            TestUtils.generateQuoteData(w, 3600 * 24 * 10, DateFormatUtils.parseDateTime("2015-02-12T03:00:00.000Z"), Dates.SECOND_MILLIS);
             w.commit();
             assertEmpty("select sym, bid, ask, timestamp from q where timestamp = '2015-02-12T10:00:00' and timestamp = '2015-02-12T12:00:00'");
         }
@@ -1475,7 +1475,7 @@ public class SingleJournalQueryTest extends AbstractTest {
     @Test
     public void testLatestBySym() throws Exception {
         try (JournalWriter<Quote> w = getFactory().writer(Quote.class, "q")) {
-            TestUtils.generateQuoteData(w, 3600 * 24, DateFormatUtils.parseDateTime("2015-02-12T03:00:00.000Z"), Dates.SECOND_MICROS);
+            TestUtils.generateQuoteData(w, 3600 * 24, DateFormatUtils.parseDateTime("2015-02-12T03:00:00.000Z"), Dates.SECOND_MILLIS);
             w.commit();
         }
 
@@ -1496,7 +1496,7 @@ public class SingleJournalQueryTest extends AbstractTest {
     @Test
     public void testLatestBySymList() throws Exception {
         try (JournalWriter<Quote> w = getFactory().writer(Quote.class, "q")) {
-            TestUtils.generateQuoteData(w, 3600 * 24, DateFormatUtils.parseDateTime("2015-02-12T03:00:00.000Z"), Dates.SECOND_MICROS);
+            TestUtils.generateQuoteData(w, 3600 * 24, DateFormatUtils.parseDateTime("2015-02-12T03:00:00.000Z"), Dates.SECOND_MILLIS);
             w.commit();
         }
 
@@ -1508,7 +1508,7 @@ public class SingleJournalQueryTest extends AbstractTest {
     @Test
     public void testLatestBySymNoFilter() throws Exception {
         try (JournalWriter<Quote> w = getFactory().writer(Quote.class, "q")) {
-            TestUtils.generateQuoteData(w, 3600 * 24, DateFormatUtils.parseDateTime("2015-02-12T03:00:00.000Z"), Dates.SECOND_MICROS);
+            TestUtils.generateQuoteData(w, 3600 * 24, DateFormatUtils.parseDateTime("2015-02-12T03:00:00.000Z"), Dates.SECOND_MILLIS);
             w.commit();
         }
 

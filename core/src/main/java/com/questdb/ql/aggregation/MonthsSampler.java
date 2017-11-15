@@ -40,8 +40,8 @@ class MonthsSampler implements TimestampSampler {
         int m = Dates.getMonthOfYear(value, y, l);
         // target month
         int n = ((m - 1) / bucket) * bucket + 1;
-        return Dates.yearMicros(y, l) +
-                Dates.monthOfYearMicros(n, l);
+        return Dates.yearMillis(y, l) +
+                Dates.monthOfYearMillis(n, l);
     }
 
     @Override

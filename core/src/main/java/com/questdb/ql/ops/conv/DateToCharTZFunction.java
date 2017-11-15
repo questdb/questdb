@@ -101,7 +101,7 @@ public class DateToCharTZFunction extends AbstractVirtualColumn implements Funct
                     if (l == Long.MIN_VALUE) {
                         rules = dateLocale.getZoneRules(Numbers.decodeInt(dateLocale.matchZone(tz, 0, tz.length())));
                     } else {
-                        offset = Numbers.decodeInt(l) * Dates.MINUTE_MICROS;
+                        offset = Numbers.decodeInt(l) * Dates.MINUTE_MILLIS;
                         rules = null;
                     }
                 } catch (NumericException e) {
