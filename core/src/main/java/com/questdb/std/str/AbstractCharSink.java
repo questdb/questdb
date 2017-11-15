@@ -28,7 +28,7 @@ import com.questdb.misc.Numbers;
 import com.questdb.misc.Unsafe;
 import com.questdb.std.ObjHashSet;
 import com.questdb.std.Sinkable;
-import com.questdb.std.time.DateFormatUtils;
+import com.questdb.std.microtime.DateFormatUtils;
 
 import java.util.Set;
 
@@ -107,6 +107,12 @@ public abstract class AbstractCharSink implements CharSink {
     @Override
     public CharSink putISODate(long value) {
         DateFormatUtils.appendDateTime(this, value);
+        return this;
+    }
+
+    @Override
+    public CharSink putISODateMillis(long value) {
+        com.questdb.std.time.DateFormatUtils.appendDateTime(this, value);
         return this;
     }
 

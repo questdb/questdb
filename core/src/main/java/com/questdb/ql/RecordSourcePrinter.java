@@ -83,10 +83,10 @@ public class RecordSourcePrinter {
     private void printColumn(Record r, RecordMetadata m, int i) {
         switch (m.getColumnQuick(i).getType()) {
             case ColumnType.DATE:
-                DateFormatUtils.appendDateTimeMillis(sink, r.getDate(i));
+                DateFormatUtils.appendDateTime(sink, r.getDate(i));
                 break;
             case ColumnType.TIMESTAMP:
-                DateFormatUtils.appendDateTime(sink, r.getDate(i));
+                com.questdb.std.microtime.DateFormatUtils.appendDateTime(sink, r.getDate(i));
                 break;
             case ColumnType.DOUBLE:
                 Numbers.append(sink, r.getDouble(i), 12);

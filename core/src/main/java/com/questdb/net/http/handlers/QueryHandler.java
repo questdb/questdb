@@ -241,7 +241,7 @@ public class QueryHandler implements ContextHandler {
                     sink.put("null");
                     break;
                 }
-                sink.put('"').putISODate(d).put('"');
+                sink.put('"').putISODateMillis(d).put('"');
                 break;
             case ColumnType.SHORT:
                 sink.put(rec.getShort(col));

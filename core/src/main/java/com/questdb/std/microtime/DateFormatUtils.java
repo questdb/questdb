@@ -1,4 +1,4 @@
-package com.questdb.std.time;
+package com.questdb.std.microtime;
 
 import com.questdb.ex.NumericException;
 import com.questdb.misc.Chars;
@@ -51,11 +51,19 @@ public class DateFormatUtils {
     }
 
     // YYYY-MM-DDThh:mm:ss.mmmmZ
-    public static void appendDateTime(CharSink sink, long millis) {
+    public static void appendDateTime(CharSink sink, long micros) {
+        if (micros == Long.MIN_VALUE) {
+            return;
+        }
+        UTC_FORMAT.format(micros, defaultLocale, "Z", sink);
+    }
+
+    // YYYY-MM-DDThh:mm:ss.mmmmZ
+    public static void appendDateTimeMillis(CharSink sink, long millis) {
         if (millis == Long.MIN_VALUE) {
             return;
         }
-        UTC_FORMAT.format(millis, defaultLocale, "Z", sink);
+        UTC_FORMAT.format(millis * 1000, defaultLocale, "Z", sink);
     }
 
     // YYYY-MM-DD
@@ -149,88 +157,88 @@ public class DateFormatUtils {
                                 throw NumericException.INSTANCE;
                             } else {
                                 // seconds
-                                return new Interval(Dates.yearMillis(year, l)
-                                        + Dates.monthOfYearMillis(month, l)
-                                        + (day - 1) * Dates.DAY_MILLIS
-                                        + hour * Dates.HOUR_MILLIS
-                                        + min * Dates.MINUTE_MILLIS
-                                        + sec * Dates.SECOND_MILLIS,
-                                        Dates.yearMillis(year, l)
-                                                + Dates.monthOfYearMillis(month, l)
-                                                + (day - 1) * Dates.DAY_MILLIS
-                                                + hour * Dates.HOUR_MILLIS
-                                                + min * Dates.MINUTE_MILLIS
-                                                + sec * Dates.SECOND_MILLIS
-                                                + 999
+                                return new Interval(Dates.yearMicros(year, l)
+                                        + Dates.monthOfYearMicros(month, l)
+                                        + (day - 1) * Dates.DAY_MICROS
+                                        + hour * Dates.HOUR_MICROS
+                                        + min * Dates.MINUTE_MICROS
+                                        + sec * Dates.SECOND_MICROS,
+                                        Dates.yearMicros(year, l)
+                                                + Dates.monthOfYearMicros(month, l)
+                                                + (day - 1) * Dates.DAY_MICROS
+                                                + hour * Dates.HOUR_MICROS
+                                                + min * Dates.MINUTE_MICROS
+                                                + sec * Dates.SECOND_MICROS
+                                                + 999999
                                 );
                             }
                         } else {
                             // minute
-                            return new Interval(Dates.yearMillis(year, l)
-                                    + Dates.monthOfYearMillis(month, l)
-                                    + (day - 1) * Dates.DAY_MILLIS
-                                    + hour * Dates.HOUR_MILLIS
-                                    + min * Dates.MINUTE_MILLIS,
-                                    Dates.yearMillis(year, l)
-                                            + Dates.monthOfYearMillis(month, l)
-                                            + (day - 1) * Dates.DAY_MILLIS
-                                            + hour * Dates.HOUR_MILLIS
-                                            + min * Dates.MINUTE_MILLIS
-                                            + 59 * Dates.SECOND_MILLIS
-                                            + 999
+                            return new Interval(Dates.yearMicros(year, l)
+                                    + Dates.monthOfYearMicros(month, l)
+                                    + (day - 1) * Dates.DAY_MICROS
+                                    + hour * Dates.HOUR_MICROS
+                                    + min * Dates.MINUTE_MICROS,
+                                    Dates.yearMicros(year, l)
+                                            + Dates.monthOfYearMicros(month, l)
+                                            + (day - 1) * Dates.DAY_MICROS
+                                            + hour * Dates.HOUR_MICROS
+                                            + min * Dates.MINUTE_MICROS
+                                            + 59 * Dates.SECOND_MICROS
+                                            + 999999
                             );
                         }
                     } else {
                         // year + month + day + hour
-                        return new Interval(Dates.yearMillis(year, l)
-                                + Dates.monthOfYearMillis(month, l)
-                                + (day - 1) * Dates.DAY_MILLIS
-                                + hour * Dates.HOUR_MILLIS,
-                                Dates.yearMillis(year, l)
-                                        + Dates.monthOfYearMillis(month, l)
-                                        + (day - 1) * Dates.DAY_MILLIS
-                                        + hour * Dates.HOUR_MILLIS
-                                        + 59 * Dates.MINUTE_MILLIS
-                                        + 59 * Dates.SECOND_MILLIS
-                                        + 999
+                        return new Interval(Dates.yearMicros(year, l)
+                                + Dates.monthOfYearMicros(month, l)
+                                + (day - 1) * Dates.DAY_MICROS
+                                + hour * Dates.HOUR_MICROS,
+                                Dates.yearMicros(year, l)
+                                        + Dates.monthOfYearMicros(month, l)
+                                        + (day - 1) * Dates.DAY_MICROS
+                                        + hour * Dates.HOUR_MICROS
+                                        + 59 * Dates.MINUTE_MICROS
+                                        + 59 * Dates.SECOND_MICROS
+                                        + 999999
                         );
                     }
                 } else {
                     // year + month + day
-                    return new Interval(Dates.yearMillis(year, l)
-                            + Dates.monthOfYearMillis(month, l)
-                            + (day - 1) * Dates.DAY_MILLIS,
-                            Dates.yearMillis(year, l)
-                                    + Dates.monthOfYearMillis(month, l)
-                                    + +(day - 1) * Dates.DAY_MILLIS
-                                    + 23 * Dates.HOUR_MILLIS
-                                    + 59 * Dates.MINUTE_MILLIS
-                                    + 59 * Dates.SECOND_MILLIS
-                                    + 999
+                    return new Interval(Dates.yearMicros(year, l)
+                            + Dates.monthOfYearMicros(month, l)
+                            + (day - 1) * Dates.DAY_MICROS,
+                            Dates.yearMicros(year, l)
+                                    + Dates.monthOfYearMicros(month, l)
+                                    + +(day - 1) * Dates.DAY_MICROS
+                                    + 23 * Dates.HOUR_MICROS
+                                    + 59 * Dates.MINUTE_MICROS
+                                    + 59 * Dates.SECOND_MICROS
+                                    + 999999
                     );
                 }
             } else {
                 // year + month
-                return new Interval(Dates.yearMillis(year, l) + Dates.monthOfYearMillis(month, l),
-                        Dates.yearMillis(year, l)
-                                + Dates.monthOfYearMillis(month, l)
-                                + (Dates.getDaysPerMonth(month, l) - 1) * Dates.DAY_MILLIS
-                                + 23 * Dates.HOUR_MILLIS
-                                + 59 * Dates.MINUTE_MILLIS
-                                + 59 * Dates.SECOND_MILLIS
-                                + 999
+                return new Interval(Dates.yearMicros(year, l) + Dates.monthOfYearMicros(month, l),
+                        Dates.yearMicros(year, l)
+                                + Dates.monthOfYearMicros(month, l)
+                                + (Dates.getDaysPerMonth(month, l) - 1) * Dates.DAY_MICROS
+                                + 23 * Dates.HOUR_MICROS
+                                + 59 * Dates.MINUTE_MICROS
+                                + 59 * Dates.SECOND_MICROS
+                                + 999999
                 );
             }
         } else {
             // year
-            return new Interval(Dates.yearMillis(year, l) + Dates.monthOfYearMillis(1, l),
-                    Dates.yearMillis(year, l)
-                            + Dates.monthOfYearMillis(12, l)
-                            + (Dates.getDaysPerMonth(12, l) - 1) * Dates.DAY_MILLIS
-                            + 23 * Dates.HOUR_MILLIS
-                            + 59 * Dates.MINUTE_MILLIS
-                            + 59 * Dates.SECOND_MILLIS
-                            + 999
+            return new Interval(Dates.yearMicros(year, l) + Dates.monthOfYearMicros(1, l),
+                    Dates.yearMicros(year, l)
+                            + Dates.monthOfYearMicros(12, l)
+                            + (Dates.getDaysPerMonth(12, l) - 1) * Dates.DAY_MICROS
+                            + 23 * Dates.HOUR_MICROS
+                            + 59 * Dates.MINUTE_MICROS
+                            + 59 * Dates.SECOND_MICROS
+                            + 999999
             );
         }
     }
@@ -267,82 +275,82 @@ public class DateFormatUtils {
                                 throw NumericException.INSTANCE;
                             } else {
                                 // seconds
-                                out.add(Dates.yearMillis(year, l)
-                                        + Dates.monthOfYearMillis(month, l)
-                                        + (day - 1) * Dates.DAY_MILLIS
-                                        + hour * Dates.HOUR_MILLIS
-                                        + min * Dates.MINUTE_MILLIS
-                                        + sec * Dates.SECOND_MILLIS);
-                                out.add(Dates.yearMillis(year, l)
-                                        + Dates.monthOfYearMillis(month, l)
-                                        + (day - 1) * Dates.DAY_MILLIS
-                                        + hour * Dates.HOUR_MILLIS
-                                        + min * Dates.MINUTE_MILLIS
-                                        + sec * Dates.SECOND_MILLIS
+                                out.add(Dates.yearMicros(year, l)
+                                        + Dates.monthOfYearMicros(month, l)
+                                        + (day - 1) * Dates.DAY_MICROS
+                                        + hour * Dates.HOUR_MICROS
+                                        + min * Dates.MINUTE_MICROS
+                                        + sec * Dates.SECOND_MICROS);
+                                out.add(Dates.yearMicros(year, l)
+                                        + Dates.monthOfYearMicros(month, l)
+                                        + (day - 1) * Dates.DAY_MICROS
+                                        + hour * Dates.HOUR_MICROS
+                                        + min * Dates.MINUTE_MICROS
+                                        + sec * Dates.SECOND_MICROS
                                         + 999);
                             }
                         } else {
                             // minute
-                            out.add(Dates.yearMillis(year, l)
-                                    + Dates.monthOfYearMillis(month, l)
-                                    + (day - 1) * Dates.DAY_MILLIS
-                                    + hour * Dates.HOUR_MILLIS
-                                    + min * Dates.MINUTE_MILLIS);
-                            out.add(Dates.yearMillis(year, l)
-                                    + Dates.monthOfYearMillis(month, l)
-                                    + (day - 1) * Dates.DAY_MILLIS
-                                    + hour * Dates.HOUR_MILLIS
-                                    + min * Dates.MINUTE_MILLIS
-                                    + 59 * Dates.SECOND_MILLIS
+                            out.add(Dates.yearMicros(year, l)
+                                    + Dates.monthOfYearMicros(month, l)
+                                    + (day - 1) * Dates.DAY_MICROS
+                                    + hour * Dates.HOUR_MICROS
+                                    + min * Dates.MINUTE_MICROS);
+                            out.add(Dates.yearMicros(year, l)
+                                    + Dates.monthOfYearMicros(month, l)
+                                    + (day - 1) * Dates.DAY_MICROS
+                                    + hour * Dates.HOUR_MICROS
+                                    + min * Dates.MINUTE_MICROS
+                                    + 59 * Dates.SECOND_MICROS
                                     + 999);
                         }
                     } else {
                         // year + month + day + hour
-                        out.add(Dates.yearMillis(year, l)
-                                + Dates.monthOfYearMillis(month, l)
-                                + (day - 1) * Dates.DAY_MILLIS
-                                + hour * Dates.HOUR_MILLIS);
-                        out.add(Dates.yearMillis(year, l)
-                                + Dates.monthOfYearMillis(month, l)
-                                + (day - 1) * Dates.DAY_MILLIS
-                                + hour * Dates.HOUR_MILLIS
-                                + 59 * Dates.MINUTE_MILLIS
-                                + 59 * Dates.SECOND_MILLIS
+                        out.add(Dates.yearMicros(year, l)
+                                + Dates.monthOfYearMicros(month, l)
+                                + (day - 1) * Dates.DAY_MICROS
+                                + hour * Dates.HOUR_MICROS);
+                        out.add(Dates.yearMicros(year, l)
+                                + Dates.monthOfYearMicros(month, l)
+                                + (day - 1) * Dates.DAY_MICROS
+                                + hour * Dates.HOUR_MICROS
+                                + 59 * Dates.MINUTE_MICROS
+                                + 59 * Dates.SECOND_MICROS
                                 + 999);
                     }
                 } else {
                     // year + month + day
-                    out.add(Dates.yearMillis(year, l)
-                            + Dates.monthOfYearMillis(month, l)
-                            + (day - 1) * Dates.DAY_MILLIS);
-                    out.add(Dates.yearMillis(year, l)
-                            + Dates.monthOfYearMillis(month, l)
-                            + +(day - 1) * Dates.DAY_MILLIS
-                            + 23 * Dates.HOUR_MILLIS
-                            + 59 * Dates.MINUTE_MILLIS
-                            + 59 * Dates.SECOND_MILLIS
+                    out.add(Dates.yearMicros(year, l)
+                            + Dates.monthOfYearMicros(month, l)
+                            + (day - 1) * Dates.DAY_MICROS);
+                    out.add(Dates.yearMicros(year, l)
+                            + Dates.monthOfYearMicros(month, l)
+                            + +(day - 1) * Dates.DAY_MICROS
+                            + 23 * Dates.HOUR_MICROS
+                            + 59 * Dates.MINUTE_MICROS
+                            + 59 * Dates.SECOND_MICROS
                             + 999);
                 }
             } else {
                 // year + month
-                out.add(Dates.yearMillis(year, l) + Dates.monthOfYearMillis(month, l));
-                out.add(Dates.yearMillis(year, l)
-                        + Dates.monthOfYearMillis(month, l)
-                        + (Dates.getDaysPerMonth(month, l) - 1) * Dates.DAY_MILLIS
-                        + 23 * Dates.HOUR_MILLIS
-                        + 59 * Dates.MINUTE_MILLIS
-                        + 59 * Dates.SECOND_MILLIS
+                out.add(Dates.yearMicros(year, l) + Dates.monthOfYearMicros(month, l));
+                out.add(Dates.yearMicros(year, l)
+                        + Dates.monthOfYearMicros(month, l)
+                        + (Dates.getDaysPerMonth(month, l) - 1) * Dates.DAY_MICROS
+                        + 23 * Dates.HOUR_MICROS
+                        + 59 * Dates.MINUTE_MICROS
+                        + 59 * Dates.SECOND_MICROS
                         + 999);
             }
         } else {
             // year
-            out.add(Dates.yearMillis(year, l) + Dates.monthOfYearMillis(1, l));
-            out.add(Dates.yearMillis(year, l)
-                    + Dates.monthOfYearMillis(12, l)
-                    + (Dates.getDaysPerMonth(12, l) - 1) * Dates.DAY_MILLIS
-                    + 23 * Dates.HOUR_MILLIS
-                    + 59 * Dates.MINUTE_MILLIS
-                    + 59 * Dates.SECOND_MILLIS
+            out.add(Dates.yearMicros(year, l) + Dates.monthOfYearMicros(1, l));
+            out.add(Dates.yearMicros(year, l)
+                    + Dates.monthOfYearMicros(12, l)
+                    + (Dates.getDaysPerMonth(12, l) - 1) * Dates.DAY_MICROS
+                    + 23 * Dates.HOUR_MICROS
+                    + 59 * Dates.MINUTE_MICROS
+                    + 59 * Dates.SECOND_MICROS
                     + 999);
         }
     }
@@ -469,13 +477,13 @@ public class DateFormatUtils {
             throw NumericException.INSTANCE;
         }
 
-        long datetime = Dates.yearMillis(year, leap)
-                + Dates.monthOfYearMillis(month, leap)
-                + (day - 1) * Dates.DAY_MILLIS
-                + hour * Dates.HOUR_MILLIS
-                + minute * Dates.MINUTE_MILLIS
-                + second * Dates.SECOND_MILLIS
-                + millis;
+        long datetime = Dates.yearMicros(year, leap)
+                + Dates.monthOfYearMicros(month, leap)
+                + (day - 1) * Dates.DAY_MICROS
+                + hour * Dates.HOUR_MICROS
+                + minute * Dates.MINUTE_MICROS
+                + second * Dates.SECOND_MICROS
+                + millis * 1000;
 
         if (timezone > -1) {
             datetime -= locale.getZoneRules(timezone).getOffset(datetime, year, leap);

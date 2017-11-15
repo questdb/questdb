@@ -1,4 +1,4 @@
-package com.questdb.std.time;
+package com.questdb.std.microtime;
 
 import org.junit.Assert;
 import org.junit.Test;

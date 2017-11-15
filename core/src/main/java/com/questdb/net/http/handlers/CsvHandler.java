@@ -206,7 +206,7 @@ public class CsvHandler implements ContextHandler {
             case ColumnType.DATE:
                 final long dt = rec.getDate(col);
                 if (dt > Long.MIN_VALUE) {
-                    sink.put('"').putISODate(dt).put('"');
+                    sink.put('"').putISODateMillis(dt).put('"');
                 }
                 break;
             case ColumnType.SHORT:

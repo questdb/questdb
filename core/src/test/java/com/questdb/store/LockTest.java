@@ -51,8 +51,8 @@ public class LockTest extends AbstractTest {
         rw = getFactory().writer(Quote.class);
 
         List<Quote> data = new ArrayList<>();
-        data.add(new Quote().setSym("S1").setTimestamp(Dates.toMicros(2013, 3, 10, 15, 0)));
-        data.add(new Quote().setSym("S2").setTimestamp(Dates.toMicros(2013, 3, 10, 16, 0)));
+        data.add(new Quote().setSym("S1").setTimestamp(Dates.toMillis(2013, 3, 10, 15, 0)));
+        data.add(new Quote().setSym("S2").setTimestamp(Dates.toMillis(2013, 3, 10, 16, 0)));
         rw.mergeAppend(data);
         rw.commit();
 

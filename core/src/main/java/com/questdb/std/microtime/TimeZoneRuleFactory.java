@@ -1,4 +1,4 @@
-package com.questdb.std.time;
+package com.questdb.std.microtime;
 
 import com.questdb.misc.Numbers;
 import com.questdb.std.CharSequenceIntHashMap;
@@ -34,7 +34,7 @@ public class TimeZoneRuleFactory {
                     // this could be fixed offset, try parsing value as one
                     long offset = Dates.parseOffset(alias, 0, alias.length());
                     if (offset != Long.MIN_VALUE) {
-                        ruleList.add(new FixedTimeZoneRule(alias, Numbers.decodeInt(offset) * Dates.MINUTE_MILLIS));
+                        ruleList.add(new FixedTimeZoneRule(alias, Numbers.decodeInt(offset) * Dates.MILLI_MICROS));
                         ruleMap.put(key, index++);
                     }
                 } else {

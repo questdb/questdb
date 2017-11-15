@@ -36,7 +36,7 @@ class YearSampler implements TimestampSampler {
     @Override
     public long resample(long value) {
         int y;
-        return Dates.yearMicros(y = Dates.getYear(value), Dates.isLeapYear(y));
+        return Dates.yearMillis(y = Dates.getYear(value), Dates.isLeapYear(y));
     }
 
     @Override

@@ -47,6 +47,6 @@ public class AddDateDayROperator extends AbstractBinaryOperator {
     public long getLong(Record rec) {
         long l = lhs.getInt(rec);
         long r = rhs.getLong(rec);
-        return l == Integer.MIN_VALUE || r == Long.MIN_VALUE ? Long.MIN_VALUE : r + Dates.DAY_MICROS * l;
+        return l == Integer.MIN_VALUE || r == Long.MIN_VALUE ? Long.MIN_VALUE : r + Dates.DAY_MILLIS * l;
     }
 }

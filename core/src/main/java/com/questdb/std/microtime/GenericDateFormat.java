@@ -1,4 +1,4 @@
-package com.questdb.std.time;
+package com.questdb.std.microtime;
 
 import com.questdb.ex.NumericException;
 import com.questdb.misc.Numbers;
@@ -6,7 +6,7 @@ import com.questdb.std.IntList;
 import com.questdb.std.ObjList;
 import com.questdb.std.str.CharSink;
 
-import static com.questdb.std.time.DateFormatUtils.*;
+import static com.questdb.std.microtime.DateFormatUtils.*;
 
 public class GenericDateFormat extends AbstractDateFormat {
     private final IntList compiledOps;
@@ -18,7 +18,7 @@ public class GenericDateFormat extends AbstractDateFormat {
     }
 
     @Override
-    public void format(long datetime, DateLocale locale, CharSequence timeZoneName, CharSink sink) {
+    public void format(long micros, DateLocale locale, CharSequence timeZoneName, CharSink sink) {
         int day = -1;
         int month = -1;
         int year = Integer.MIN_VALUE;
@@ -36,7 +36,7 @@ public class GenericDateFormat extends AbstractDateFormat {
                 // AM/PM
                 case DateFormatCompiler.OP_AM_PM:
                     if (hour == -1) {
-                        hour = Dates.getHourOfDay(datetime);
+                        hour = Dates.getHourOfDay(micros);
                     }
                     DateFormatUtils.appendAmPm(sink, hour, locale);
                     break;
@@ -45,14 +45,14 @@ public class GenericDateFormat extends AbstractDateFormat {
                 case DateFormatCompiler.OP_MILLIS_ONE_DIGIT:
                 case DateFormatCompiler.OP_MILLIS_GREEDY:
                     if (millis == -1) {
-                        millis = Dates.getMillisOfSecond(datetime);
+                        millis = Dates.getMillisOfSecond(micros);
                     }
                     sink.put(millis);
                     break;
 
                 case DateFormatCompiler.OP_MILLIS_THREE_DIGITS:
                     if (millis == -1) {
-                        millis = Dates.getMillisOfSecond(datetime);
+                        millis = Dates.getMillisOfSecond(micros);
                     }
                     append00(sink, millis);
                     break;
@@ -61,14 +61,14 @@ public class GenericDateFormat extends AbstractDateFormat {
                 case DateFormatCompiler.OP_SECOND_ONE_DIGIT:
                 case DateFormatCompiler.OP_SECOND_GREEDY:
                     if (second == -1) {
-                        second = Dates.getSecondOfMinute(datetime);
+                        second = Dates.getSecondOfMinute(micros);
                     }
                     sink.put(second);
                     break;
 
                 case DateFormatCompiler.OP_SECOND_TWO_DIGITS:
                     if (second == -1) {
-                        second = Dates.getSecondOfMinute(datetime);
+                        second = Dates.getSecondOfMinute(micros);
                     }
                     append0(sink, second);
                     break;
@@ -78,14 +78,14 @@ public class GenericDateFormat extends AbstractDateFormat {
                 case DateFormatCompiler.OP_MINUTE_ONE_DIGIT:
                 case DateFormatCompiler.OP_MINUTE_GREEDY:
                     if (minute == -1) {
-                        minute = Dates.getMinuteOfHour(datetime);
+                        minute = Dates.getMinuteOfHour(micros);
                     }
                     sink.put(minute);
                     break;
 
                 case DateFormatCompiler.OP_MINUTE_TWO_DIGITS:
                     if (minute == -1) {
-                        minute = Dates.getMinuteOfHour(datetime);
+                        minute = Dates.getMinuteOfHour(micros);
                     }
                     append0(sink, minute);
                     break;
@@ -95,14 +95,14 @@ public class GenericDateFormat extends AbstractDateFormat {
                 case DateFormatCompiler.OP_HOUR_12_ONE_DIGIT:
                 case DateFormatCompiler.OP_HOUR_12_GREEDY:
                     if (hour == -1) {
-                        hour = Dates.getHourOfDay(datetime);
+                        hour = Dates.getHourOfDay(micros);
                     }
                     appendHour12(sink, hour);
                     break;
 
                 case DateFormatCompiler.OP_HOUR_12_TWO_DIGITS:
                     if (hour == -1) {
-                        hour = Dates.getHourOfDay(datetime);
+                        hour = Dates.getHourOfDay(micros);
                     }
                     appendHour12Padded(sink, hour);
                     break;
@@ -111,14 +111,14 @@ public class GenericDateFormat extends AbstractDateFormat {
                 case DateFormatCompiler.OP_HOUR_12_ONE_DIGIT_ONE_BASED:
                 case DateFormatCompiler.OP_HOUR_12_GREEDY_ONE_BASED:
                     if (hour == -1) {
-                        hour = Dates.getHourOfDay(datetime);
+                        hour = Dates.getHourOfDay(micros);
                     }
                     appendHour121(sink, hour);
                     break;
 
                 case DateFormatCompiler.OP_HOUR_12_TWO_DIGITS_ONE_BASED:
                     if (hour == -1) {
-                        hour = Dates.getHourOfDay(datetime);
+                        hour = Dates.getHourOfDay(micros);
                     }
                     appendHour121Padded(sink, hour);
                     break;
@@ -127,14 +127,14 @@ public class GenericDateFormat extends AbstractDateFormat {
                 case DateFormatCompiler.OP_HOUR_24_ONE_DIGIT:
                 case DateFormatCompiler.OP_HOUR_24_GREEDY:
                     if (hour == -1) {
-                        hour = Dates.getHourOfDay(datetime);
+                        hour = Dates.getHourOfDay(micros);
                     }
                     sink.put(hour);
                     break;
 
                 case DateFormatCompiler.OP_HOUR_24_TWO_DIGITS:
                     if (hour == -1) {
-                        hour = Dates.getHourOfDay(datetime);
+                        hour = Dates.getHourOfDay(micros);
                     }
                     append0(sink, hour);
                     break;
@@ -143,14 +143,14 @@ public class GenericDateFormat extends AbstractDateFormat {
                 case DateFormatCompiler.OP_HOUR_24_ONE_DIGIT_ONE_BASED:
                 case DateFormatCompiler.OP_HOUR_24_GREEDY_ONE_BASED:
                     if (hour == -1) {
-                        hour = Dates.getHourOfDay(datetime);
+                        hour = Dates.getHourOfDay(micros);
                     }
                     sink.put(hour + 1);
                     break;
 
                 case DateFormatCompiler.OP_HOUR_24_TWO_DIGITS_ONE_BASED:
                     if (hour == -1) {
-                        hour = Dates.getHourOfDay(datetime);
+                        hour = Dates.getHourOfDay(micros);
                     }
                     append0(sink, hour + 1);
                     break;
@@ -160,51 +160,51 @@ public class GenericDateFormat extends AbstractDateFormat {
                 case DateFormatCompiler.OP_DAY_GREEDY:
                     if (day == -1) {
                         if (year == Integer.MIN_VALUE) {
-                            year = Dates.getYear(datetime);
+                            year = Dates.getYear(micros);
                             leap = Dates.isLeapYear(year);
                         }
 
                         if (month == -1) {
-                            month = Dates.getMonthOfYear(datetime, year, leap);
+                            month = Dates.getMonthOfYear(micros, year, leap);
                         }
 
-                        day = Dates.getDayOfMonth(datetime, year, month, leap);
+                        day = Dates.getDayOfMonth(micros, year, month, leap);
                     }
                     sink.put(day);
                     break;
                 case DateFormatCompiler.OP_DAY_TWO_DIGITS:
                     if (day == -1) {
                         if (year == Integer.MIN_VALUE) {
-                            year = Dates.getYear(datetime);
+                            year = Dates.getYear(micros);
                             leap = Dates.isLeapYear(year);
                         }
 
                         if (month == -1) {
-                            month = Dates.getMonthOfYear(datetime, year, leap);
+                            month = Dates.getMonthOfYear(micros, year, leap);
                         }
 
-                        day = Dates.getDayOfMonth(datetime, year, month, leap);
+                        day = Dates.getDayOfMonth(micros, year, month, leap);
                     }
                     append0(sink, day);
                     break;
 
                 case DateFormatCompiler.OP_DAY_NAME_LONG:
                     if (dayOfWeek == -1) {
-                        dayOfWeek = Dates.getDayOfWeekSundayFirst(datetime);
+                        dayOfWeek = Dates.getDayOfWeekSundayFirst(micros);
                     }
                     sink.put(locale.getWeekday(dayOfWeek));
                     break;
 
                 case DateFormatCompiler.OP_DAY_NAME_SHORT:
                     if (dayOfWeek == -1) {
-                        dayOfWeek = Dates.getDayOfWeekSundayFirst(datetime);
+                        dayOfWeek = Dates.getDayOfWeekSundayFirst(micros);
                     }
                     sink.put(locale.getShortWeekday(dayOfWeek));
                     break;
 
                 case DateFormatCompiler.OP_DAY_OF_WEEK:
                     if (dayOfWeek == -1) {
-                        dayOfWeek = Dates.getDayOfWeekSundayFirst(datetime);
+                        dayOfWeek = Dates.getDayOfWeekSundayFirst(micros);
                     }
                     sink.put(dayOfWeek);
                     break;
@@ -215,22 +215,22 @@ public class GenericDateFormat extends AbstractDateFormat {
                 case DateFormatCompiler.OP_MONTH_GREEDY:
                     if (month == -1) {
                         if (year == Integer.MIN_VALUE) {
-                            year = Dates.getYear(datetime);
+                            year = Dates.getYear(micros);
                             leap = Dates.isLeapYear(year);
                         }
 
-                        month = Dates.getMonthOfYear(datetime, year, leap);
+                        month = Dates.getMonthOfYear(micros, year, leap);
                     }
                     sink.put(month);
                     break;
                 case DateFormatCompiler.OP_MONTH_TWO_DIGITS:
                     if (month == -1) {
                         if (year == Integer.MIN_VALUE) {
-                            year = Dates.getYear(datetime);
+                            year = Dates.getYear(micros);
                             leap = Dates.isLeapYear(year);
                         }
 
-                        month = Dates.getMonthOfYear(datetime, year, leap);
+                        month = Dates.getMonthOfYear(micros, year, leap);
                     }
                     append0(sink, month);
                     break;
@@ -238,22 +238,22 @@ public class GenericDateFormat extends AbstractDateFormat {
                 case DateFormatCompiler.OP_MONTH_SHORT_NAME:
                     if (month == -1) {
                         if (year == Integer.MIN_VALUE) {
-                            year = Dates.getYear(datetime);
+                            year = Dates.getYear(micros);
                             leap = Dates.isLeapYear(year);
                         }
 
-                        month = Dates.getMonthOfYear(datetime, year, leap);
+                        month = Dates.getMonthOfYear(micros, year, leap);
                     }
                     sink.put(locale.getShortMonth(month - 1));
                     break;
                 case DateFormatCompiler.OP_MONTH_LONG_NAME:
                     if (month == -1) {
                         if (year == Integer.MIN_VALUE) {
-                            year = Dates.getYear(datetime);
+                            year = Dates.getYear(micros);
                             leap = Dates.isLeapYear(year);
                         }
 
-                        month = Dates.getMonthOfYear(datetime, year, leap);
+                        month = Dates.getMonthOfYear(micros, year, leap);
                     }
                     sink.put(locale.getMonth(month - 1));
                     break;
@@ -263,21 +263,21 @@ public class GenericDateFormat extends AbstractDateFormat {
                 case DateFormatCompiler.OP_YEAR_ONE_DIGIT:
                 case DateFormatCompiler.OP_YEAR_GREEDY:
                     if (year == Integer.MIN_VALUE) {
-                        year = Dates.getYear(datetime);
+                        year = Dates.getYear(micros);
                         leap = Dates.isLeapYear(year);
                     }
                     sink.put(year);
                     break;
                 case DateFormatCompiler.OP_YEAR_TWO_DIGITS:
                     if (year == Integer.MIN_VALUE) {
-                        year = Dates.getYear(datetime);
+                        year = Dates.getYear(micros);
                         leap = Dates.isLeapYear(year);
                     }
                     append0(sink, year % 100);
                     break;
                 case DateFormatCompiler.OP_YEAR_FOUR_DIGITS:
                     if (year == Integer.MIN_VALUE) {
-                        year = Dates.getYear(datetime);
+                        year = Dates.getYear(micros);
                         leap = Dates.isLeapYear(year);
                     }
                     append000(sink, year);
@@ -286,7 +286,7 @@ public class GenericDateFormat extends AbstractDateFormat {
                 // ERA
                 case DateFormatCompiler.OP_ERA:
                     if (year == Integer.MIN_VALUE) {
-                        year = Dates.getYear(datetime);
+                        year = Dates.getYear(micros);
                         leap = Dates.isLeapYear(year);
                     }
                     appendEra(sink, year, locale);
@@ -573,7 +573,7 @@ public class GenericDateFormat extends AbstractDateFormat {
                         l = locale.matchZone(in, pos, hi);
                         timezone = Numbers.decodeInt(l);
                     } else {
-                        offset = Numbers.decodeInt(l) * Dates.MINUTE_MILLIS;
+                        offset = Numbers.decodeInt(l) * Dates.MINUTE_MICROS;
                     }
                     pos += Numbers.decodeLen(l);
                     break;

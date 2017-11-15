@@ -77,7 +77,7 @@ public class GenericTest extends AbstractTest {
             });
             client.start();
 
-            TestUtils.generateQuoteData(w, 100, DateFormatUtils.parseDateTime("2015-01-10T12:00:00.000Z") / 1000L);
+            TestUtils.generateQuoteData(w, 100, DateFormatUtils.parseDateTime("2015-01-10T12:00:00.000Z"));
             w.commit();
 
             Assert.assertTrue(ready.await(1, TimeUnit.SECONDS));

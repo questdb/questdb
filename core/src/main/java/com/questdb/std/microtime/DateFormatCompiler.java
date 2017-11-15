@@ -21,7 +21,7 @@
  *
  ******************************************************************************/
 
-package com.questdb.std.time;
+package com.questdb.std.microtime;
 
 
 import com.questdb.misc.BytecodeAssembler;
@@ -29,8 +29,8 @@ import com.questdb.misc.Numbers;
 import com.questdb.std.*;
 import com.questdb.std.str.CharSink;
 
-import static com.questdb.std.time.DateFormatUtils.HOUR_24;
-import static com.questdb.std.time.DateFormatUtils.HOUR_AM;
+import static com.questdb.std.microtime.DateFormatUtils.HOUR_24;
+import static com.questdb.std.microtime.DateFormatUtils.HOUR_AM;
 
 public class DateFormatCompiler {
     static final int OP_ERA = 1;
@@ -996,7 +996,7 @@ public class DateFormatCompiler {
                     //     timezone = Numbers.decodeInt(l);
                     //     pos += Numbers.decodeLen(l);
                     // } else {
-                    //     offset = Numbers.decodeInt(l) * Dates.MINUTE_MILLIS;
+                    //     offset = Numbers.decodeInt(l) * Dates.MINUTE_MICROS;
                     //     pos += Numbers.decodeLen(l);
                     // }
 
@@ -1205,13 +1205,13 @@ public class DateFormatCompiler {
     private DateFormat compile(IntList ops, ObjList<String> delimiters) {
         asm.init(DateFormat.class);
         asm.setupPool();
-        int thisClassIndex = asm.poolClass(asm.poolUtf8("com/questdb/std/time/DateFormatAsm"));
+        int thisClassIndex = asm.poolClass(asm.poolUtf8("com/questdb/std/microtime/DateFormatAsm"));
         int stackMapTableIndex = asm.poolUtf8("StackMapTable");
         int superclassIndex = asm.poolClass(AbstractDateFormat.class);
         int dateLocaleClassIndex = asm.poolClass(DateLocale.class);
         int charSequenceClassIndex = asm.poolClass(CharSequence.class);
         int minLongIndex = asm.poolLongConst(Long.MIN_VALUE);
-        int minMillisIndex = asm.poolLongConst(Dates.MINUTE_MILLIS);
+        int minMillisIndex = asm.poolLongConst(Dates.MINUTE_MICROS);
 
         int superIndex = asm.poolMethod(superclassIndex, "<init>", "()V");
         int matchWeekdayIndex = asm.poolMethod(DateLocale.class, "matchWeekday", "(Ljava/lang/CharSequence;II)J");
@@ -1233,11 +1233,11 @@ public class DateFormatCompiler {
         int assertNoTailIndex = asm.poolMethod(DateFormatUtils.class, "assertNoTail", "(II)V");
         int assertStringIndex = asm.poolMethod(DateFormatUtils.class, "assertString", "(Ljava/lang/CharSequence;ILjava/lang/CharSequence;II)I");
         int assertCharIndex = asm.poolMethod(DateFormatUtils.class, "assertChar", "(CLjava/lang/CharSequence;II)V");
-        int computeMillisIndex = asm.poolMethod(DateFormatUtils.class, "compute", "(Lcom/questdb/std/time/DateLocale;IIIIIIIIIJI)J");
+        int computeMillisIndex = asm.poolMethod(DateFormatUtils.class, "compute", "(Lcom/questdb/std/microtime/DateLocale;IIIIIIIIIJI)J");
         int adjustYearIndex = asm.poolMethod(DateFormatUtils.class, "adjustYear", "(I)I");
         int parseYearGreedyIndex = asm.poolMethod(DateFormatUtils.class, "parseYearGreedy", "(Ljava/lang/CharSequence;II)J");
-        int appendEraIndex = asm.poolMethod(DateFormatUtils.class, "appendEra", "(Lcom/questdb/std/str/CharSink;ILcom/questdb/std/time/DateLocale;)V");
-        int appendAmPmIndex = asm.poolMethod(DateFormatUtils.class, "appendAmPm", "(Lcom/questdb/std/str/CharSink;ILcom/questdb/std/time/DateLocale;)V");
+        int appendEraIndex = asm.poolMethod(DateFormatUtils.class, "appendEra", "(Lcom/questdb/std/str/CharSink;ILcom/questdb/std/microtime/DateLocale;)V");
+        int appendAmPmIndex = asm.poolMethod(DateFormatUtils.class, "appendAmPm", "(Lcom/questdb/std/str/CharSink;ILcom/questdb/std/microtime/DateLocale;)V");
         int appendHour12Index = asm.poolMethod(DateFormatUtils.class, "appendHour12", "(Lcom/questdb/std/str/CharSink;I)V");
         int appendHour12PaddedIndex = asm.poolMethod(DateFormatUtils.class, "appendHour12Padded", "(Lcom/questdb/std/str/CharSink;I)V");
         int appendHour121Index = asm.poolMethod(DateFormatUtils.class, "appendHour121", "(Lcom/questdb/std/str/CharSink;I)V");
@@ -1264,9 +1264,9 @@ public class DateFormatCompiler {
         int charAtIndex = asm.poolInterfaceMethod(charSequenceClassIndex, "charAt", "(I)C");
 
         int parseNameIndex = asm.poolUtf8("parse");
-        int parseSigIndex = asm.poolUtf8("(Ljava/lang/CharSequence;IILcom/questdb/std/time/DateLocale;)J");
+        int parseSigIndex = asm.poolUtf8("(Ljava/lang/CharSequence;IILcom/questdb/std/microtime/DateLocale;)J");
         int formatNameIndex = asm.poolUtf8("format");
-        int formatSigIndex = asm.poolUtf8("(JLcom/questdb/std/time/DateLocale;Ljava/lang/CharSequence;Lcom/questdb/std/str/CharSink;)V");
+        int formatSigIndex = asm.poolUtf8("(JLcom/questdb/std/microtime/DateLocale;Ljava/lang/CharSequence;Lcom/questdb/std/str/CharSink;)V");
 
         // pool only delimiters over 1 char in length
         // when delimiter is 1 char we would use shorter code path
