@@ -500,6 +500,7 @@ public class DateFormatCompilerTest {
     @Test
     public void testMillisOneDigit() throws Exception {
         assertThat("mmsSHH MMy", "2010-09-01T13:55:03.002Z", "553213 0910");
+        assertThat("SHH dd-MM-yyyy", "2014-10-03T14:00:00.003Z", "314 03-10-2014");
     }
 
     @Test

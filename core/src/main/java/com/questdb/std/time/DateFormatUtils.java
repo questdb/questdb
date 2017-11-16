@@ -89,16 +89,6 @@ public class DateFormatUtils {
         append0(sink.put('-'), m);
     }
 
-    // YYYYMMDD
-    public static void formatYYYYMMDD(CharSink sink, long millis) {
-        int y = Dates.getYear(millis);
-        boolean l = Dates.isLeapYear(y);
-        int m = Dates.getMonthOfYear(millis, y, l);
-        Numbers.append(sink, y);
-        append0(sink, m);
-        append0(sink, Dates.getDayOfMonth(millis, y, m, l));
-    }
-
     public static long getReferenceYear() {
         return referenceYear;
     }

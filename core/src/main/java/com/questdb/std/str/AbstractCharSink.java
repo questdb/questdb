@@ -26,8 +26,8 @@ package com.questdb.std.str;
 import com.questdb.std.*;
 import com.questdb.std.microtime.DateFormatUtils;
 
-import java.util.Set;
 import java.lang.ThreadLocal;
+import java.util.Set;
 
 public abstract class AbstractCharSink implements CharSink {
 
@@ -103,7 +103,7 @@ public abstract class AbstractCharSink implements CharSink {
 
     @Override
     public CharSink putISODate(long value) {
-        DateFormatUtils.appendDateTime(this, value);
+        DateFormatUtils.appendDateTimeUSec(this, value);
         return this;
     }
 
@@ -120,12 +120,6 @@ public abstract class AbstractCharSink implements CharSink {
     }
 
     @Override
-    public CharSink encodeUtf8AndQuote(CharSequence cs) {
-        put('\"').encodeUtf8(cs).put('\"');
-        return this;
-    }
-
-    @Override
     public CharSink encodeUtf8(CharSequence cs, int from, int len) {
         int hi = len + from;
         int i = from;
@@ -137,6 +131,12 @@ public abstract class AbstractCharSink implements CharSink {
                 i = putUtf8Internal(cs, hi, i, c);
             }
         }
+        return this;
+    }
+
+    @Override
+    public CharSink encodeUtf8AndQuote(CharSequence cs) {
+        put('\"').encodeUtf8(cs).put('\"');
         return this;
     }
 

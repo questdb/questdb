@@ -28,6 +28,7 @@
 #include <stdlib.h>
 #include <syscall.h>
 #include <sched.h>
+#include <sys/time.h>
 #include "../share/os.h"
 
 JNIEXPORT jint JNICALL Java_com_questdb_std_Os_getPid
@@ -35,6 +36,12 @@ JNIEXPORT jint JNICALL Java_com_questdb_std_Os_getPid
     return getpid();
 }
 
+JNIEXPORT jlong JNICALL Java_com_questdb_std_Os_currentTimeMicros
+        (JNIEnv *e, jclass cl) {
+    struct timeval tv;
+    gettimeofday(&tv, NULL);
+    return tv.tv_sec * 1000 + tv.tv_usec;
+}
 
 JNIEXPORT jint JNICALL Java_com_questdb_std_Os_getTid
         (JNIEnv *e, jclass cl) {

@@ -27,6 +27,7 @@ import com.questdb.mp.RingQueue;
 import com.questdb.mp.Sequence;
 import com.questdb.std.Misc;
 import com.questdb.std.Net;
+import com.questdb.std.Os;
 import com.questdb.std.Sinkable;
 import com.questdb.std.str.CharSink;
 
@@ -184,24 +185,24 @@ class Logger implements LogRecord, Log {
     }
 
     @Override
-    public LogRecord ts() {
-        sink().putISODateMillis(System.currentTimeMillis());
-        return this;
-    }
-
-    @Override
     public LogRecord debug() {
-        return xdebug().ts().$(" DEBUG ").$(name);
+        return xdebug().ts().$(" D ").$(name);
     }
 
     @Override
     public LogRecord error() {
-        return xerror().ts().$(" ERROR ").$(name);
+        return xerror().ts().$(" E ").$(name);
     }
 
     @Override
     public LogRecord info() {
-        return xinfo().ts().$(" INFO ").$(name);
+        return xinfo().ts().$(" I ").$(name);
+    }
+
+    @Override
+    public LogRecord ts() {
+        sink().putISODate(Os.currentTimeMicros());
+        return this;
     }
 
     @Override

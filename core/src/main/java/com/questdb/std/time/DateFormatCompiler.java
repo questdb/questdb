@@ -593,6 +593,7 @@ public class DateFormatCompiler {
                 case OP_MILLIS_ONE_DIGIT:
                     // assertRemaining(pos, hi);
                     // millis = Numbers.parseInt(in, pos, ++pos);
+                    stackState &= ~(1 << LOCAL_MILLIS);
                     parseDigits(assertRemainingIndex, parseIntIndex, 1, LOCAL_MILLIS);
                     break;
                 case OP_MILLIS_THREE_DIGITS:
