@@ -58,14 +58,6 @@ public class DateFormatUtils {
         UTC_FORMAT.format(micros, defaultLocale, "Z", sink);
     }
 
-    // YYYY-MM-DDThh:mm:ss.mmmmZ
-    public static void appendDateTimeMillis(CharSink sink, long millis) {
-        if (millis == Long.MIN_VALUE) {
-            return;
-        }
-        UTC_FORMAT.format(millis * 1000, defaultLocale, "Z", sink);
-    }
-
     // YYYY-MM-DD
     public static void formatDashYYYYMMDD(CharSink sink, long millis) {
         int y = Dates.getYear(millis);
@@ -82,11 +74,6 @@ public class DateFormatUtils {
 
     public static void formatMMMDYYYY(CharSink sink, long millis) {
         FMT4.format(millis, defaultLocale, "Z", sink);
-    }
-
-    // YYYY
-    public static void formatYYYY(CharSink sink, long millis) {
-        Numbers.append(sink, Dates.getYear(millis));
     }
 
     // YYYY-MM
@@ -287,7 +274,7 @@ public class DateFormatUtils {
                                         + hour * Dates.HOUR_MICROS
                                         + min * Dates.MINUTE_MICROS
                                         + sec * Dates.SECOND_MICROS
-                                        + 999);
+                                        + 99999);
                             }
                         } else {
                             // minute
@@ -302,7 +289,7 @@ public class DateFormatUtils {
                                     + hour * Dates.HOUR_MICROS
                                     + min * Dates.MINUTE_MICROS
                                     + 59 * Dates.SECOND_MICROS
-                                    + 999);
+                                    + 99999);
                         }
                     } else {
                         // year + month + day + hour
@@ -316,7 +303,7 @@ public class DateFormatUtils {
                                 + hour * Dates.HOUR_MICROS
                                 + 59 * Dates.MINUTE_MICROS
                                 + 59 * Dates.SECOND_MICROS
-                                + 999);
+                                + 99999);
                     }
                 } else {
                     // year + month + day
@@ -329,7 +316,7 @@ public class DateFormatUtils {
                             + 23 * Dates.HOUR_MICROS
                             + 59 * Dates.MINUTE_MICROS
                             + 59 * Dates.SECOND_MICROS
-                            + 999);
+                            + 99999);
                 }
             } else {
                 // year + month
@@ -340,7 +327,7 @@ public class DateFormatUtils {
                         + 23 * Dates.HOUR_MICROS
                         + 59 * Dates.MINUTE_MICROS
                         + 59 * Dates.SECOND_MICROS
-                        + 999);
+                        + 99999);
             }
         } else {
             // year
@@ -351,7 +338,7 @@ public class DateFormatUtils {
                     + 23 * Dates.HOUR_MICROS
                     + 59 * Dates.MINUTE_MICROS
                     + 59 * Dates.SECOND_MICROS
-                    + 999);
+                    + 99999);
         }
     }
 
@@ -433,6 +420,7 @@ public class DateFormatUtils {
             int minute,
             int second,
             int millis,
+            int micros,
             int timezone,
             long offset,
             int hourType) throws NumericException {
@@ -483,7 +471,8 @@ public class DateFormatUtils {
                 + hour * Dates.HOUR_MICROS
                 + minute * Dates.MINUTE_MICROS
                 + second * Dates.SECOND_MICROS
-                + millis * 1000;
+                + millis * Dates.MILLI_MICROS
+                + micros;
 
         if (timezone > -1) {
             datetime -= locale.getZoneRules(timezone).getOffset(datetime, year, leap);

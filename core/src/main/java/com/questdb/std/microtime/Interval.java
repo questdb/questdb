@@ -28,7 +28,6 @@ import com.questdb.common.PartitionBy;
 import com.questdb.std.Sinkable;
 import com.questdb.std.ex.JournalUnsupportedTypeException;
 import com.questdb.std.str.CharSink;
-import com.questdb.std.str.StringSink;
 
 public class Interval implements Sinkable {
     private long lo;
@@ -98,24 +97,6 @@ public class Interval implements Sinkable {
 
     public boolean contains(long x) {
         return (x >= lo && x < hi);
-    }
-
-    public String getDirName(int partitionBy) {
-        StringSink sink = new StringSink();
-        switch (partitionBy) {
-            case PartitionBy.YEAR:
-                DateFormatUtils.formatYYYY(sink, lo);
-                break;
-            case PartitionBy.MONTH:
-                DateFormatUtils.formatYYYYMM(sink, lo);
-                break;
-            case PartitionBy.DAY:
-                DateFormatUtils.formatDashYYYYMMDD(sink, lo);
-                break;
-            default:
-                return "default";
-        }
-        return sink.toString();
     }
 
     public long getHi() {

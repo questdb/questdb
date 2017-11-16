@@ -275,6 +275,15 @@ final public class Dates {
         }
     }
 
+    public static int getMicrosOfSecond(long micros) {
+        if (micros > -1) {
+            return (int) (micros % MILLI_MICROS);
+        } else {
+            return MILLI_MICROS - 1 + (int) ((micros + 1) % MILLI_MICROS);
+        }
+    }
+
+
     public static int getMinuteOfHour(long micros) {
         if (micros > -1) {
             return (int) ((micros / MINUTE_MICROS) % HOUR_MINUTES);
