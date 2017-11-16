@@ -219,12 +219,6 @@ public class DatesTest {
     }
 
     @Test
-    public void testFormatMMMDYYYY() throws NumericException {
-        DateFormatUtils.formatMMMDYYYY(sink, DateFormatUtils.parseDateTime("2008-05-10T12:31:02.008Z"));
-        TestUtils.assertEquals("May 10 2008", sink);
-    }
-
-    @Test
     public void testIntervalParse() throws Exception {
         TestUtils.assertEquals("Interval{lo=2015-01-01T00:00:00.000Z, hi=2015-12-31T23:59:59.999Z}", DateFormatUtils.parseInterval("2015").toString());
         TestUtils.assertEquals("Interval{lo=2014-03-01T00:00:00.000Z, hi=2014-03-31T23:59:59.999Z}", DateFormatUtils.parseInterval("2014-03").toString());

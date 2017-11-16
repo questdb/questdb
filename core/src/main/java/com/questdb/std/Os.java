@@ -49,6 +49,8 @@ public final class Os {
 
     public static native int errno();
 
+    public static native long currentTimeMicros();
+
     public static long forkExec(CharSequence args) {
         ObjList<Path> paths = Chars.splitLpsz(args);
         int n = paths.size();

@@ -27,6 +27,14 @@ JNIEXPORT jint JNICALL Java_com_questdb_std_Os_errno
 
 /*
  * Class:     com_questdb_std_Os
+ * Method:    currentTimeMicros
+ * Signature: ()J
+ */
+JNIEXPORT jlong JNICALL Java_com_questdb_std_Os_currentTimeMicros
+        (JNIEnv *, jclass);
+
+/*
+ * Class:     com_questdb_std_Os
  * Method:    getPid
  * Signature: ()I
  */

@@ -11,9 +11,9 @@ public class DateFormatUtils {
     public static final int HOUR_PM = 1;
     public static final int HOUR_AM = 0;
     public static final DateFormat UTC_FORMAT;
+    public static final DateFormat USEC_UTC_FORMAT;
     public static final String UTC_PATTERN = "yyyy-MM-ddTHH:mm:ss.SSSz";
     public static final DateLocale defaultLocale = DateLocaleFactory.INSTANCE.getDefaultDateLocale();
-    private static final DateFormat FMT4;
     private static final DateFormat HTTP_FORMAT;
     static long referenceYear;
     static int thisCenturyLimit;
@@ -58,6 +58,14 @@ public class DateFormatUtils {
         UTC_FORMAT.format(micros, defaultLocale, "Z", sink);
     }
 
+    // YYYY-MM-DDThh:mm:ss.mmmmZ
+    public static void appendDateTimeUSec(CharSink sink, long micros) {
+        if (micros == Long.MIN_VALUE) {
+            return;
+        }
+        USEC_UTC_FORMAT.format(micros, defaultLocale, "Z", sink);
+    }
+
     // YYYY-MM-DD
     public static void formatDashYYYYMMDD(CharSink sink, long millis) {
         int y = Dates.getYear(millis);
@@ -70,10 +78,6 @@ public class DateFormatUtils {
 
     public static void formatHTTP(CharSink sink, long millis) {
         HTTP_FORMAT.format(millis, defaultLocale, "GMT", sink);
-    }
-
-    public static void formatMMMDYYYY(CharSink sink, long millis) {
-        FMT4.format(millis, defaultLocale, "Z", sink);
     }
 
     // YYYY-MM
@@ -572,6 +576,6 @@ public class DateFormatUtils {
         DateFormatCompiler compiler = new DateFormatCompiler();
         UTC_FORMAT = compiler.compile(UTC_PATTERN);
         HTTP_FORMAT = compiler.compile("E, d MMM yyyy HH:mm:ss Z");
-        FMT4 = compiler.compile("MMM d yyyy");
+        USEC_UTC_FORMAT = compiler.compile("yyyy-MM-ddTHH:mm:ss.SSSNNNz");
     }
 }
