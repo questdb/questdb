@@ -23,7 +23,7 @@
 
 package com.questdb.ql.map;
 
-import com.questdb.ql.Record;
+import com.questdb.common.Record;
 
 public interface RecordKeyCopier {
     void copy(Record r, DirectMap.KeyWriter w);

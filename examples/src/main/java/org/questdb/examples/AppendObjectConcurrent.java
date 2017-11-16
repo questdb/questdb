@@ -23,13 +23,13 @@
 
 package org.questdb.examples;
 
-import com.questdb.ex.JournalException;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
-import com.questdb.misc.Rnd;
 import com.questdb.mp.MPSequence;
 import com.questdb.mp.RingQueue;
 import com.questdb.mp.SCSequence;
+import com.questdb.std.Rnd;
+import com.questdb.std.ex.JournalException;
 import com.questdb.store.JournalWriter;
 import com.questdb.store.factory.Factory;
 import com.questdb.store.factory.configuration.JournalConfiguration;

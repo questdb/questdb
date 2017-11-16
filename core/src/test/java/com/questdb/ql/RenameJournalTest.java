@@ -23,10 +23,10 @@
 
 package com.questdb.ql;
 
-import com.questdb.ex.JournalException;
 import com.questdb.ex.ParserException;
 import com.questdb.parser.sql.QueryCompiler;
 import com.questdb.parser.sql.QueryError;
+import com.questdb.std.ex.JournalException;
 import com.questdb.std.str.StringSink;
 import com.questdb.store.JournalEntryWriter;
 import com.questdb.store.JournalKey;

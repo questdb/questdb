@@ -24,12 +24,12 @@
 package com.questdb.store.factory;
 
 import com.questdb.ex.FactoryFullException;
-import com.questdb.ex.JournalException;
 import com.questdb.ex.JournalLockedException;
 import com.questdb.ex.RetryLockException;
-import com.questdb.misc.Rnd;
 import com.questdb.std.LongList;
 import com.questdb.std.ObjList;
+import com.questdb.std.Rnd;
+import com.questdb.std.ex.JournalException;
 import com.questdb.store.Journal;
 import com.questdb.store.factory.configuration.JournalMetadata;
 import com.questdb.store.factory.configuration.JournalStructure;

@@ -23,6 +23,7 @@
 
 package com.questdb.ql;
 
+import com.questdb.common.StorageFacade;
 import com.questdb.std.str.CharSink;
 import com.questdb.std.str.FileNameExtractorCharSequence;
 import com.questdb.store.Partition;

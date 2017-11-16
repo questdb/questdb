@@ -23,12 +23,11 @@
 
 package com.questdb.log;
 
-import com.questdb.ex.LogError;
-import com.questdb.ex.NumericException;
-import com.questdb.misc.*;
+import com.questdb.common.NumericException;
 import com.questdb.mp.RingQueue;
 import com.questdb.mp.Sequence;
 import com.questdb.mp.SynchronizedJob;
+import com.questdb.std.*;
 import com.questdb.std.str.Path;
 
 import java.io.Closeable;

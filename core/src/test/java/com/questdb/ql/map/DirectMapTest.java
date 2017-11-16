@@ -23,13 +23,9 @@
 
 package com.questdb.ql.map;
 
-import com.questdb.misc.Chars;
-import com.questdb.misc.Numbers;
-import com.questdb.misc.Rnd;
-import com.questdb.misc.Unsafe;
-import com.questdb.std.IntList;
+import com.questdb.common.ColumnType;
+import com.questdb.std.*;
 import com.questdb.std.str.StringSink;
-import com.questdb.store.ColumnType;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.BeforeClass;

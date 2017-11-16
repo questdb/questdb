@@ -23,8 +23,6 @@
 
 package com.questdb.std;
 
-import com.questdb.misc.Unsafe;
-
 public class IntLongPriorityQueue {
     private final long[] buf;
     private final int[] src;

@@ -23,10 +23,10 @@
 
 package com.questdb.parser.plaintext;
 
-import com.questdb.misc.Unsafe;
 import com.questdb.std.IntList;
 import com.questdb.std.IntLongPriorityQueue;
 import com.questdb.std.ObjectFactory;
+import com.questdb.std.Unsafe;
 
 import static com.questdb.parser.plaintext.PlainTextDelimiter.*;
 

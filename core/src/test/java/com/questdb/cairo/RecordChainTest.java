@@ -1,11 +1,11 @@
 package com.questdb.cairo;
 
+import com.questdb.common.ColumnType;
+import com.questdb.common.Record;
 import com.questdb.ql.CollectionRecordMetadata;
-import com.questdb.ql.Record;
 import com.questdb.ql.RecordColumnMetadataImpl;
 import com.questdb.std.BinarySequence;
 import com.questdb.std.LongList;
-import com.questdb.store.ColumnType;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -177,6 +177,7 @@ public class RecordChainTest {
                     Assert.assertEquals(expected.getLong(i), actual.getLong(i));
                     break;
                 case ColumnType.DATE:
+                case ColumnType.TIMESTAMP:
                     Assert.assertEquals(expected.getDate(i), actual.getDate(i));
                     break;
                 case ColumnType.BOOLEAN:

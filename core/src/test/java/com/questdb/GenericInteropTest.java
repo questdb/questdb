@@ -23,12 +23,12 @@
 
 package com.questdb;
 
-import com.questdb.ex.JournalException;
+import com.questdb.common.Record;
+import com.questdb.common.RecordCursor;
 import com.questdb.ex.JournalMetadataException;
-import com.questdb.misc.Files;
-import com.questdb.ql.Record;
-import com.questdb.ql.RecordCursor;
 import com.questdb.ql.RecordSource;
+import com.questdb.std.Files;
+import com.questdb.std.ex.JournalException;
 import com.questdb.store.Journal;
 import com.questdb.store.JournalEntryWriter;
 import com.questdb.store.JournalIterators;

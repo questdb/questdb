@@ -23,7 +23,6 @@
 
 package com.questdb;
 
-import com.questdb.net.http.ServerConfiguration;
 import com.questdb.parser.plaintext.PlainTextLexer;
 import com.questdb.parser.plaintext.PlainTextParser;
 import com.questdb.parser.typeprobe.TypeProbeCollection;

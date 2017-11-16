@@ -23,9 +23,9 @@
 
 package com.questdb.net;
 
-import com.questdb.misc.ByteBuffers;
-import com.questdb.misc.Unsafe;
-import com.questdb.misc.Zip;
+import com.questdb.std.ByteBuffers;
+import com.questdb.std.Unsafe;
+import com.questdb.std.Zip;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;

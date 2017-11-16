@@ -23,11 +23,11 @@
 
 package com.questdb.net;
 
-import com.questdb.ex.JournalNetworkException;
-import com.questdb.ex.JournalRuntimeException;
+import com.questdb.common.JournalRuntimeException;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
-import com.questdb.misc.ByteBuffers;
+import com.questdb.std.ByteBuffers;
+import com.questdb.std.ex.JournalNetworkException;
 
 import javax.net.ssl.*;
 import java.io.IOException;

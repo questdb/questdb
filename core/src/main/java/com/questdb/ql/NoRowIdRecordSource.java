@@ -23,13 +23,15 @@
 
 package com.questdb.ql;
 
-import com.questdb.misc.Misc;
+import com.questdb.common.Record;
+import com.questdb.common.RecordCursor;
+import com.questdb.common.RecordMetadata;
 import com.questdb.ql.ops.AbstractRecordSource;
 import com.questdb.ql.ops.Parameter;
 import com.questdb.std.CharSequenceObjHashMap;
+import com.questdb.std.Misc;
 import com.questdb.std.str.CharSink;
 import com.questdb.store.factory.ReaderFactory;
-import com.questdb.store.factory.configuration.RecordMetadata;
 
 public class NoRowIdRecordSource extends AbstractRecordSource {
     private RecordSource delegate;

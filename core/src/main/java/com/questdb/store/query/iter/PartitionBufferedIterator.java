@@ -23,8 +23,8 @@
 
 package com.questdb.store.query.iter;
 
-import com.questdb.ex.JournalException;
-import com.questdb.ex.JournalRuntimeException;
+import com.questdb.common.JournalRuntimeException;
+import com.questdb.std.ex.JournalException;
 import com.questdb.store.Journal;
 import com.questdb.store.Partition;
 

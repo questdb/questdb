@@ -1,7 +1,7 @@
 package com.questdb.std.time;
 
-import com.questdb.ex.NumericException;
-import com.questdb.misc.Numbers;
+import com.questdb.common.NumericException;
+import com.questdb.std.Numbers;
 import org.junit.Assert;
 import org.junit.Test;
 

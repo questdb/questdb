@@ -24,21 +24,17 @@
 package com.questdb.parser.sql;
 
 import com.questdb.BootstrapEnv;
-import com.questdb.ex.NoSuchColumnException;
-import com.questdb.ex.NumericException;
+import com.questdb.common.ColumnType;
+import com.questdb.common.NoSuchColumnException;
+import com.questdb.common.NumericException;
+import com.questdb.common.RecordMetadata;
 import com.questdb.ex.ParserException;
-import com.questdb.misc.Chars;
-import com.questdb.misc.Numbers;
 import com.questdb.parser.sql.model.ExprNode;
 import com.questdb.parser.sql.model.QueryModel;
 import com.questdb.ql.ops.*;
 import com.questdb.ql.ops.col.*;
 import com.questdb.ql.ops.constant.*;
-import com.questdb.std.CharSequenceIntHashMap;
-import com.questdb.std.CharSequenceObjHashMap;
-import com.questdb.std.ObjList;
-import com.questdb.store.ColumnType;
-import com.questdb.store.factory.configuration.RecordMetadata;
+import com.questdb.std.*;
 
 import java.util.ArrayDeque;
 

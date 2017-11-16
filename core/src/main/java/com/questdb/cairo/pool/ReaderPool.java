@@ -29,12 +29,12 @@ import com.questdb.cairo.TableReader;
 import com.questdb.cairo.pool.ex.EntryLockedException;
 import com.questdb.cairo.pool.ex.EntryUnavailableException;
 import com.questdb.cairo.pool.ex.PoolClosedException;
+import com.questdb.common.PoolConstants;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
-import com.questdb.misc.FilesFacade;
-import com.questdb.misc.Unsafe;
 import com.questdb.std.ConcurrentHashMap;
-import com.questdb.store.factory.FactoryConstants;
+import com.questdb.std.FilesFacade;
+import com.questdb.std.Unsafe;
 
 import java.util.Arrays;
 import java.util.Map;
@@ -169,7 +169,7 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
             do {
                 for (int i = 0; i < ENTRY_SIZE; i++) {
                     if (Unsafe.cas(e.allocations, i, UNALLOCATED, thread)) {
-                        closeReader(thread, e, i, PoolListener.EV_LOCK_CLOSE, FactoryConstants.CR_NAME_LOCK);
+                        closeReader(thread, e, i, PoolListener.EV_LOCK_CLOSE, PoolConstants.CR_NAME_LOCK);
                     } else if (Unsafe.cas(e.allocations, i, thread, thread)) {
                         // same thread, don't need to order reads
                         if (Unsafe.arrayGet(e.readers, i) != null) {
@@ -238,11 +238,22 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
         LOG.info().$("closed").$();
     }
 
+    private void closeReader(long thread, Entry entry, int index, short ev, int reason) {
+        R r = Unsafe.arrayGet(entry.readers, index);
+        if (r != null) {
+            r.goodby();
+            r.close();
+            LOG.info().$("closed '").$(r.getName()).$("' [at=").$(entry.index).$(':').$(index).$(", reason=").$(PoolConstants.closeReasonText(reason)).$(']').$();
+            notifyListener(thread, r.getName(), ev, entry.index, index);
+            Unsafe.arrayPut(entry.readers, index, null);
+        }
+    }
+
     @Override
     protected boolean releaseAll(long deadline) {
         long thread = Thread.currentThread().getId();
         boolean removed = false;
-        int closeReason = deadline < Long.MAX_VALUE ? FactoryConstants.CR_IDLE : FactoryConstants.CR_POOL_CLOSE;
+        int closeReason = deadline < Long.MAX_VALUE ? PoolConstants.CR_IDLE : PoolConstants.CR_POOL_CLOSE;
 
         for (Map.Entry<CharSequence, Entry> me : entries.entrySet()) {
 
@@ -272,17 +283,6 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
             } while (e != null);
         }
         return removed;
-    }
-
-    private void closeReader(long thread, Entry entry, int index, short ev, int reason) {
-        R r = Unsafe.arrayGet(entry.readers, index);
-        if (r != null) {
-            r.goodby();
-            r.close();
-            LOG.info().$("closed '").$(r.getName()).$("' [at=").$(entry.index).$(':').$(index).$(", reason=").$(FactoryConstants.closeReasonText(reason)).$(']').$();
-            notifyListener(thread, r.getName(), ev, entry.index, index);
-            Unsafe.arrayPut(entry.readers, index, null);
-        }
     }
 
     private void notifyListener(long thread, CharSequence name, short event, int segment, int position) {

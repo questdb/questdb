@@ -23,10 +23,10 @@
 
 package org.questdb.examples;
 
-import com.questdb.ex.JournalException;
 import com.questdb.ex.ParserException;
 import com.questdb.parser.sql.QueryCompiler;
 import com.questdb.ql.RecordSource;
+import com.questdb.std.ex.JournalException;
 import com.questdb.store.factory.Factory;
 import com.questdb.store.util.ExportManager;
 import com.questdb.store.util.ImportManager;

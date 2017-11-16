@@ -23,9 +23,9 @@
 
 package com.questdb.std.str;
 
-import com.questdb.misc.Chars;
-import com.questdb.misc.Misc;
-import com.questdb.misc.Unsafe;
+import com.questdb.std.Chars;
+import com.questdb.std.Misc;
+import com.questdb.std.Unsafe;
 
 public class DirectUnboundedByteSink extends AbstractCharSink {
     private final long address;

@@ -23,16 +23,15 @@
 
 package com.questdb.ql.lambda;
 
-import com.questdb.ex.JournalException;
-import com.questdb.ex.JournalRuntimeException;
+import com.questdb.common.*;
 import com.questdb.ql.*;
 import com.questdb.ql.ops.VirtualColumn;
 import com.questdb.std.IntHashSet;
 import com.questdb.std.LongList;
+import com.questdb.std.ex.JournalException;
 import com.questdb.store.IndexCursor;
 import com.questdb.store.KVIndex;
 import com.questdb.store.Partition;
-import com.questdb.store.SymbolTable;
 import com.questdb.store.factory.ReaderFactory;
 import com.questdb.store.factory.configuration.JournalMetadata;
 

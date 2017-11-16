@@ -23,7 +23,7 @@
 
 package com.questdb.ql.map;
 
-import com.questdb.store.ColumnType;
+import com.questdb.common.ColumnType;
 
 public class LongResolver implements ColumnTypeResolver {
 

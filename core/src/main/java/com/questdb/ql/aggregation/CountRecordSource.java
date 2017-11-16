@@ -23,12 +23,11 @@
 
 package com.questdb.ql.aggregation;
 
+import com.questdb.common.*;
 import com.questdb.ql.*;
 import com.questdb.ql.ops.AbstractCombinedRecordSource;
 import com.questdb.std.str.CharSink;
-import com.questdb.store.ColumnType;
 import com.questdb.store.factory.ReaderFactory;
-import com.questdb.store.factory.configuration.RecordMetadata;
 
 public class CountRecordSource extends AbstractCombinedRecordSource {
     private final CountRecord record;

@@ -24,8 +24,7 @@
 package com.questdb.ql;
 
 import com.questdb.BootstrapEnv;
-import com.questdb.misc.Rnd;
-import com.questdb.net.http.ServerConfiguration;
+import com.questdb.ServerConfiguration;
 import com.questdb.ql.ops.VirtualColumn;
 import com.questdb.ql.ops.col.DoubleRecordSourceColumn;
 import com.questdb.ql.ops.constant.DoubleConstant;
@@ -33,6 +32,7 @@ import com.questdb.ql.ops.plus.AddDoubleOperator;
 import com.questdb.ql.select.SelectedColumnsRecordSource;
 import com.questdb.ql.virtual.VirtualColumnRecordSource;
 import com.questdb.std.ObjList;
+import com.questdb.std.Rnd;
 import com.questdb.std.str.StringSink;
 import com.questdb.store.JournalEntryWriter;
 import com.questdb.store.JournalWriter;

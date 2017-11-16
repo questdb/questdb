@@ -23,12 +23,12 @@
 
 package com.questdb.ql.ops.neq;
 
-import com.questdb.misc.Numbers;
-import com.questdb.ql.Record;
+import com.questdb.common.ColumnType;
+import com.questdb.common.Record;
 import com.questdb.ql.ops.AbstractBinaryOperator;
 import com.questdb.ql.ops.Function;
 import com.questdb.ql.ops.VirtualColumnFactory;
-import com.questdb.store.ColumnType;
+import com.questdb.std.Numbers;
 
 public class IntNotEqualNaNOperator extends AbstractBinaryOperator {
 

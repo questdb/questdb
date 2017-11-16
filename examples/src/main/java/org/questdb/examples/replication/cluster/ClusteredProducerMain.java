@@ -23,18 +23,18 @@
 
 package org.questdb.examples.replication.cluster;
 
-import com.questdb.ex.JournalException;
-import com.questdb.ex.JournalNetworkException;
-import com.questdb.ex.NumericException;
-import com.questdb.misc.Numbers;
+import com.questdb.common.NumericException;
+import com.questdb.common.PartitionBy;
 import com.questdb.net.ha.ClusterController;
 import com.questdb.net.ha.ClusterStatusListener;
 import com.questdb.net.ha.config.ClientConfig;
 import com.questdb.net.ha.config.ServerConfig;
 import com.questdb.net.ha.config.ServerNode;
+import com.questdb.std.Numbers;
+import com.questdb.std.ex.JournalException;
+import com.questdb.std.ex.JournalNetworkException;
 import com.questdb.store.JournalKey;
 import com.questdb.store.JournalWriter;
-import com.questdb.store.PartitionBy;
 import com.questdb.store.factory.Factory;
 import com.questdb.store.factory.configuration.JournalConfiguration;
 import com.questdb.store.factory.configuration.JournalConfigurationBuilder;

@@ -23,7 +23,7 @@
 
 package com.questdb.std.time;
 
-import com.questdb.ex.NumericException;
+import com.questdb.common.NumericException;
 import com.questdb.std.str.StringSink;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -193,12 +193,6 @@ public class DatesTest {
     }
 
     @Test
-    public void testFormatCalDate3() throws Exception {
-        DateFormatUtils.formatYYYYMMDD(sink, DateFormatUtils.parseDateTime("2008-05-10T12:31:02.008Z"));
-        TestUtils.assertEquals("20080510", sink);
-    }
-
-    @Test
     public void testFormatDateTime() throws Exception {
         assertTrue("2014-11-30T12:34:55.332Z");
         assertTrue("2008-03-15T11:22:30.500Z");
@@ -315,7 +309,7 @@ public class DatesTest {
 
     @Test
     public void testOverflowDate() throws Exception {
-        Assert.assertEquals("4509540-01-02T00:00:00.000Z", Dates.toString(142245170150400000L));
+        Assert.assertEquals("6477-07-27T03:15:50.400Z", Dates.toString(142245170150400L));
     }
 
     @Test

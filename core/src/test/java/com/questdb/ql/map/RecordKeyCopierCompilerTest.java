@@ -23,13 +23,13 @@
 
 package com.questdb.ql.map;
 
-import com.questdb.misc.BytecodeAssembler;
+import com.questdb.common.ColumnType;
+import com.questdb.common.Record;
+import com.questdb.common.RecordCursor;
 import com.questdb.parser.sql.AbstractOptimiserTest;
-import com.questdb.ql.Record;
-import com.questdb.ql.RecordCursor;
 import com.questdb.ql.RecordSource;
+import com.questdb.std.BytecodeAssembler;
 import com.questdb.std.IntList;
-import com.questdb.store.ColumnType;
 import com.questdb.store.JournalEntryWriter;
 import com.questdb.store.JournalWriter;
 import org.junit.Assert;

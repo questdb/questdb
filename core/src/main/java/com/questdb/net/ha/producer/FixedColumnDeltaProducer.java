@@ -23,8 +23,8 @@
 
 package com.questdb.net.ha.producer;
 
-import com.questdb.ex.JournalNetworkException;
-import com.questdb.misc.ByteBuffers;
+import com.questdb.std.ByteBuffers;
+import com.questdb.std.ex.JournalNetworkException;
 import com.questdb.store.AbstractColumn;
 
 import java.nio.ByteBuffer;

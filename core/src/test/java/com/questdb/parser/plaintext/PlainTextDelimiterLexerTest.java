@@ -23,7 +23,7 @@
 
 package com.questdb.parser.plaintext;
 
-import com.questdb.misc.ByteBuffers;
+import com.questdb.std.ByteBuffers;
 import org.junit.After;
 import org.junit.Assert;
 import org.junit.Test;

@@ -23,9 +23,9 @@
 
 package com.questdb.net.ha.producer;
 
-import com.questdb.misc.ByteBuffers;
 import com.questdb.net.ha.AbstractObjectProducer;
 import com.questdb.net.ha.model.JournalServerState;
+import com.questdb.std.ByteBuffers;
 
 import java.nio.ByteBuffer;
 

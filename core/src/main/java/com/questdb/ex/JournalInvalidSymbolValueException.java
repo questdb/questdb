@@ -23,6 +23,8 @@
 
 package com.questdb.ex;
 
+import com.questdb.common.JournalRuntimeException;
+
 public class JournalInvalidSymbolValueException extends JournalRuntimeException {
 
     public JournalInvalidSymbolValueException(String message, Object... args) {

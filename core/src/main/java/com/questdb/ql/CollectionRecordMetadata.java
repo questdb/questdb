@@ -23,13 +23,13 @@
 
 package com.questdb.ql;
 
-import com.questdb.ex.JournalRuntimeException;
-import com.questdb.misc.Chars;
+import com.questdb.common.AbstractRecordMetadata;
+import com.questdb.common.JournalRuntimeException;
+import com.questdb.common.RecordColumnMetadata;
 import com.questdb.std.CharSequenceIntHashMap;
+import com.questdb.std.Chars;
 import com.questdb.std.ObjList;
-import com.questdb.store.factory.configuration.AbstractRecordMetadata;
 import com.questdb.store.factory.configuration.ColumnName;
-import com.questdb.store.factory.configuration.RecordColumnMetadata;
 
 public class CollectionRecordMetadata extends AbstractRecordMetadata {
     private final ObjList<RecordColumnMetadata> columns = new ObjList<>();

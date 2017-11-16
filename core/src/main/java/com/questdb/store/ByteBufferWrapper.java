@@ -23,7 +23,7 @@
 
 package com.questdb.store;
 
-import com.questdb.misc.ByteBuffers;
+import com.questdb.std.ByteBuffers;
 
 import java.io.Closeable;
 import java.nio.MappedByteBuffer;

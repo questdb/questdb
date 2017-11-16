@@ -25,8 +25,8 @@ package com.questdb.store;
 
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
-import com.questdb.misc.Rnd;
 import com.questdb.model.Band;
+import com.questdb.std.Rnd;
 import com.questdb.test.tools.AbstractTest;
 import org.junit.Assert;
 import org.junit.Test;

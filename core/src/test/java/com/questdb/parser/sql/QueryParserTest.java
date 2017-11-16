@@ -24,10 +24,10 @@
 package com.questdb.parser.sql;
 
 import com.questdb.ex.ParserException;
-import com.questdb.misc.Chars;
 import com.questdb.parser.sql.model.AnalyticColumn;
 import com.questdb.parser.sql.model.ExprNode;
 import com.questdb.parser.sql.model.QueryModel;
+import com.questdb.std.Chars;
 import com.questdb.test.tools.AbstractTest;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;

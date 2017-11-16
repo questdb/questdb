@@ -1,13 +1,9 @@
 package com.questdb.cairo;
 
-import com.questdb.misc.Unsafe;
-import com.questdb.ql.Record;
-import com.questdb.ql.RecordCursor;
-import com.questdb.ql.StorageFacade;
+import com.questdb.common.*;
 import com.questdb.std.BinarySequence;
 import com.questdb.std.Mutable;
-import com.questdb.store.ColumnType;
-import com.questdb.store.factory.configuration.RecordMetadata;
+import com.questdb.std.Unsafe;
 
 import java.io.Closeable;
 
@@ -18,9 +14,9 @@ public class RecordChain implements Closeable, RecordCursor, Mutable {
     private final int columnCount;
     private final RecordMetadata metadata;
     private final RecordChainRecord record = new RecordChainRecord();
-    private long recordOffset;
     private final long varOffset;
     private final long fixOffset;
+    private long recordOffset;
     private long varAppendOffset = 0L;
     private long nextRecordOffset = -1L;
 
@@ -226,6 +222,7 @@ public class RecordChain implements Closeable, RecordCursor, Mutable {
                     putDate(record.getLong(i));
                     break;
                 case ColumnType.DATE:
+                case ColumnType.TIMESTAMP:
                     putLong(record.getDate(i));
                     break;
                 case ColumnType.SHORT:

@@ -23,7 +23,7 @@
 
 package com.questdb.std.str;
 
-import com.questdb.misc.Chars;
+import com.questdb.std.Chars;
 import com.questdb.std.Mutable;
 import org.jetbrains.annotations.NotNull;
 

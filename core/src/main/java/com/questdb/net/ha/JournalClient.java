@@ -23,14 +23,11 @@
 
 package com.questdb.net.ha;
 
+import com.questdb.common.JournalRuntimeException;
+import com.questdb.common.PartitionBy;
 import com.questdb.ex.IncompatibleJournalException;
-import com.questdb.ex.JournalException;
-import com.questdb.ex.JournalNetworkException;
-import com.questdb.ex.JournalRuntimeException;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
-import com.questdb.misc.Chars;
-import com.questdb.misc.Files;
 import com.questdb.mp.MPSequence;
 import com.questdb.mp.RingQueue;
 import com.questdb.mp.SCSequence;
@@ -53,11 +50,13 @@ import com.questdb.net.ha.protocol.CommandConsumer;
 import com.questdb.net.ha.protocol.CommandProducer;
 import com.questdb.net.ha.protocol.Version;
 import com.questdb.net.ha.protocol.commands.*;
-import com.questdb.std.CharSequenceHashSet;
-import com.questdb.std.IntList;
-import com.questdb.std.ObjList;
-import com.questdb.std.ObjectFactory;
-import com.questdb.store.*;
+import com.questdb.std.*;
+import com.questdb.std.ex.JournalException;
+import com.questdb.std.ex.JournalNetworkException;
+import com.questdb.store.JournalEvents;
+import com.questdb.store.JournalKey;
+import com.questdb.store.JournalListener;
+import com.questdb.store.JournalWriter;
 import com.questdb.store.factory.WriterFactory;
 import com.questdb.store.factory.configuration.JournalMetadata;
 

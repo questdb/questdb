@@ -23,7 +23,7 @@
 
 package com.questdb.ql.ops.regex;
 
-import com.questdb.misc.Unsafe;
+import com.questdb.std.Unsafe;
 
 import java.text.Normalizer;
 import java.util.*;

@@ -24,9 +24,9 @@
 package com.questdb.parser.sql;
 
 import com.questdb.ex.ParserException;
-import com.questdb.misc.Chars;
 import com.questdb.parser.sql.model.ExprNode;
 import com.questdb.std.CharSequenceIntHashMap;
+import com.questdb.std.Chars;
 import com.questdb.store.factory.configuration.ColumnName;
 
 class LiteralMatcher implements PostOrderTreeTraversalAlgo.Visitor {

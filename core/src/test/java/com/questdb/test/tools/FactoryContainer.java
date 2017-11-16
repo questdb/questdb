@@ -23,7 +23,7 @@
 
 package com.questdb.test.tools;
 
-import com.questdb.misc.Files;
+import com.questdb.std.Files;
 import com.questdb.store.factory.Factory;
 import com.questdb.store.factory.configuration.JournalConfiguration;
 import com.questdb.store.factory.configuration.JournalConfigurationBuilder;

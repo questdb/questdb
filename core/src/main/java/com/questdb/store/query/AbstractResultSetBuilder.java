@@ -23,8 +23,8 @@
 
 package com.questdb.store.query;
 
-import com.questdb.ex.JournalException;
 import com.questdb.std.LongList;
+import com.questdb.std.ex.JournalException;
 import com.questdb.std.time.Interval;
 import com.questdb.store.BSearchType;
 import com.questdb.store.Journal;

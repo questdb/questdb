@@ -23,9 +23,9 @@
 
 package com.questdb.log;
 
-import com.questdb.misc.Chars;
-import com.questdb.misc.Numbers;
-import com.questdb.misc.Unsafe;
+import com.questdb.std.Chars;
+import com.questdb.std.Numbers;
+import com.questdb.std.Unsafe;
 import com.questdb.std.str.AbstractCharSink;
 import com.questdb.std.str.CharSink;
 

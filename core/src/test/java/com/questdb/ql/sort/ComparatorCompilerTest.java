@@ -23,19 +23,19 @@
 
 package com.questdb.ql.sort;
 
-import com.questdb.misc.BytecodeAssembler;
+import com.questdb.common.AbstractRecordMetadata;
+import com.questdb.common.ColumnType;
+import com.questdb.common.RecordColumnMetadata;
+import com.questdb.common.StorageFacade;
 import com.questdb.parser.sql.AbstractOptimiserTest;
 import com.questdb.ql.RecordSource;
-import com.questdb.ql.StorageFacade;
 import com.questdb.ql.ops.AbstractVirtualColumn;
+import com.questdb.std.BytecodeAssembler;
 import com.questdb.std.IntList;
 import com.questdb.std.ObjList;
-import com.questdb.store.ColumnType;
 import com.questdb.store.JournalEntryWriter;
 import com.questdb.store.JournalWriter;
-import com.questdb.store.factory.configuration.AbstractRecordMetadata;
 import com.questdb.store.factory.configuration.JournalStructure;
-import com.questdb.store.factory.configuration.RecordColumnMetadata;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;

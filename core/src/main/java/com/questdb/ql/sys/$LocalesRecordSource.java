@@ -1,15 +1,15 @@
 package com.questdb.ql.sys;
 
+import com.questdb.common.Record;
+import com.questdb.common.RecordCursor;
+import com.questdb.common.RecordMetadata;
+import com.questdb.common.StorageFacade;
 import com.questdb.ql.CancellationHandler;
-import com.questdb.ql.Record;
-import com.questdb.ql.RecordCursor;
-import com.questdb.ql.StorageFacade;
 import com.questdb.ql.ops.AbstractCombinedRecordSource;
 import com.questdb.std.ObjList;
 import com.questdb.std.str.CharSink;
 import com.questdb.std.time.DateLocaleFactory;
 import com.questdb.store.factory.ReaderFactory;
-import com.questdb.store.factory.configuration.RecordMetadata;
 
 public class $LocalesRecordSource extends AbstractCombinedRecordSource {
     private final ObjList<CharSequence> locales;

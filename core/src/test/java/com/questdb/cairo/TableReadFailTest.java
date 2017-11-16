@@ -1,10 +1,10 @@
 package com.questdb.cairo;
 
-import com.questdb.misc.Chars;
-import com.questdb.misc.FilesFacade;
-import com.questdb.misc.FilesFacadeImpl;
+import com.questdb.common.PartitionBy;
+import com.questdb.std.Chars;
+import com.questdb.std.FilesFacade;
+import com.questdb.std.FilesFacadeImpl;
 import com.questdb.std.str.LPSZ;
-import com.questdb.store.PartitionBy;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -73,7 +73,7 @@ public class TableReadFailTest extends AbstractCairoTest {
     }
 
     private void assertConstructorFail(FilesFacade ff) throws Exception {
-        CairoTestUtils.createAllTable(root, PartitionBy.DAY);
+        CairoTestUtils.createAllTable(configuration, PartitionBy.DAY);
         TestUtils.assertMemoryLeak(() -> {
             try {
                 new TableReader(ff, root, "all");

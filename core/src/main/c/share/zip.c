@@ -25,7 +25,7 @@
 #include <src/main/c/share/zlib-1.2.8/zutil.h>
 #include <src/main/c/share/zip.h>
 
-JNIEXPORT jlong JNICALL Java_com_questdb_misc_Zip_deflateInit
+JNIEXPORT jlong JNICALL Java_com_questdb_std_Zip_deflateInit
         (JNIEnv *e, jclass cl) {
     z_streamp strm = calloc(1, sizeof(z_stream));
 
@@ -43,7 +43,7 @@ JNIEXPORT jlong JNICALL Java_com_questdb_misc_Zip_deflateInit
     }
 }
 
-JNIEXPORT void JNICALL Java_com_questdb_misc_Zip_setInput
+JNIEXPORT void JNICALL Java_com_questdb_std_Zip_setInput
         (JNIEnv *e, jclass cl, jlong ptr, jlong address, jint available) {
     z_streamp strm = (z_streamp) ptr;
     strm->next_in = (Bytef *) address;
@@ -51,7 +51,7 @@ JNIEXPORT void JNICALL Java_com_questdb_misc_Zip_setInput
 }
 
 
-JNIEXPORT jint JNICALL Java_com_questdb_misc_Zip_deflate
+JNIEXPORT jint JNICALL Java_com_questdb_std_Zip_deflate
         (JNIEnv *e, jclass cl, jlong ptr, jlong address, jint available, jboolean flush) {
     z_streamp strm = (z_streamp) ptr;
     strm->next_out = (Bytef *) address;
@@ -59,34 +59,34 @@ JNIEXPORT jint JNICALL Java_com_questdb_misc_Zip_deflate
     return deflate(strm, flush ? Z_FINISH : Z_NO_FLUSH);
 }
 
-JNIEXPORT jint JNICALL Java_com_questdb_misc_Zip_availIn
+JNIEXPORT jint JNICALL Java_com_questdb_std_Zip_availIn
         (JNIEnv *e, jclass cl, jlong ptr) {
     return (jint) ((z_streamp) ptr)->avail_in;
 }
 
-JNIEXPORT jint JNICALL Java_com_questdb_misc_Zip_availOut
+JNIEXPORT jint JNICALL Java_com_questdb_std_Zip_availOut
         (JNIEnv *e, jclass cl, jlong ptr) {
     return (jint) ((z_streamp) ptr)->avail_out;
 }
 
-JNIEXPORT jint JNICALL Java_com_questdb_misc_Zip_totalOut
+JNIEXPORT jint JNICALL Java_com_questdb_std_Zip_totalOut
         (JNIEnv *e, jclass cl, jlong ptr) {
     return (jint) ((z_streamp) ptr)->total_out;
 }
 
-JNIEXPORT void JNICALL Java_com_questdb_misc_Zip_deflateEnd
+JNIEXPORT void JNICALL Java_com_questdb_std_Zip_deflateEnd
         (JNIEnv *e, jclass cl, jlong ptr) {
     z_streamp strm = (z_streamp) ptr;
     deflateEnd(strm);
     free(strm);
 }
 
-JNIEXPORT jint JNICALL Java_com_questdb_misc_Zip_crc32
+JNIEXPORT jint JNICALL Java_com_questdb_std_Zip_crc32
         (JNIEnv *e, jclass cl, jint crc, jlong address, jint available) {
     return (jint) crc32((uLong) crc, (const Bytef *) address, (uInt) available);
 }
 
-JNIEXPORT jlong JNICALL Java_com_questdb_misc_Zip_inflateInit
+JNIEXPORT jlong JNICALL Java_com_questdb_std_Zip_inflateInit
         (JNIEnv *e, jclass cl, jboolean nowrap) {
 
     z_streamp strm = calloc(1, sizeof(z_stream));
@@ -105,7 +105,7 @@ JNIEXPORT jlong JNICALL Java_com_questdb_misc_Zip_inflateInit
     }
 }
 
-JNIEXPORT jint JNICALL Java_com_questdb_misc_Zip_inflate
+JNIEXPORT jint JNICALL Java_com_questdb_std_Zip_inflate
         (JNIEnv *e, jclass cl, jlong ptr, jlong address, jint available, jboolean flush) {
     z_streamp strm = (z_streamp) ptr;
     strm->next_out = (Bytef *) address;
@@ -118,19 +118,19 @@ JNIEXPORT jint JNICALL Java_com_questdb_misc_Zip_inflate
     return (jint) (available - strm->avail_out);
 }
 
-JNIEXPORT void JNICALL Java_com_questdb_misc_Zip_inflateEnd
+JNIEXPORT void JNICALL Java_com_questdb_std_Zip_inflateEnd
         (JNIEnv *e, jclass cl, jlong ptr) {
     z_streamp strm = (z_streamp) ptr;
     inflateEnd(strm);
     free(strm);
 }
 
-JNIEXPORT jint JNICALL Java_com_questdb_misc_Zip_inflateReset
+JNIEXPORT jint JNICALL Java_com_questdb_std_Zip_inflateReset
         (JNIEnv *e, jclass cl, jlong ptr) {
     return (jint) inflateReset((z_streamp) ptr);
 }
 
-JNIEXPORT jint JNICALL Java_com_questdb_misc_Zip_deflateReset
+JNIEXPORT jint JNICALL Java_com_questdb_std_Zip_deflateReset
         (JNIEnv *e, jclass cl, jlong ptr) {
     return (jint) deflateReset((z_streamp) ptr);
 }

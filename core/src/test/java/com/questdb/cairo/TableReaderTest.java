@@ -23,18 +23,15 @@
 
 package com.questdb.cairo;
 
-import com.questdb.ex.NumericException;
-import com.questdb.misc.*;
-import com.questdb.ql.Record;
+import com.questdb.common.ColumnType;
+import com.questdb.common.NumericException;
+import com.questdb.common.PartitionBy;
+import com.questdb.common.Record;
 import com.questdb.ql.RecordSourcePrinter;
-import com.questdb.std.BinarySequence;
-import com.questdb.std.LongList;
+import com.questdb.std.*;
+import com.questdb.std.microtime.DateFormatUtils;
 import com.questdb.std.str.LPSZ;
 import com.questdb.std.str.StringSink;
-import com.questdb.std.time.DateFormatUtils;
-import com.questdb.store.ColumnType;
-import com.questdb.store.PartitionBy;
-import com.questdb.store.factory.configuration.JournalStructure;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -571,7 +568,7 @@ public class TableReaderTest extends AbstractCairoTest {
     @Test
     public void testDummyFacade() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            CairoTestUtils.createAllTable(root, PartitionBy.NONE);
+            CairoTestUtils.createAllTable(configuration, PartitionBy.NONE);
             try (TableReader reader = new TableReader(FF, root, "all")) {
                 Assert.assertNull(reader.getStorageFacade());
             }
@@ -584,7 +581,7 @@ public class TableReaderTest extends AbstractCairoTest {
                 "NaN\t0\t0\tNaN\tNaN\tNaN\t\tabc\ttrue\t\t\n";
 
         TestUtils.assertMemoryLeak(() -> {
-            CairoTestUtils.createAllTable(root, PartitionBy.NONE);
+            CairoTestUtils.createAllTable(configuration, PartitionBy.NONE);
 
             try (TableWriter w = new TableWriter(FF, root, "all")) {
                 TableWriter.Row r = w.newRow(1000000); // <-- higher timestamp
@@ -612,7 +609,7 @@ public class TableReaderTest extends AbstractCairoTest {
 
     @Test
     public void testPartialString() throws Exception {
-        CairoTestUtils.createAllTable(root, PartitionBy.NONE);
+        CairoTestUtils.createAllTable(configuration, PartitionBy.NONE);
         int N = 10000;
         Rnd rnd = new Rnd();
         try (TableWriter writer = new TableWriter(FF, root, "all")) {
@@ -733,13 +730,13 @@ public class TableReaderTest extends AbstractCairoTest {
 
     @Test
     public void testReadByDay() throws Exception {
-        CairoTestUtils.createAllTable(root, PartitionBy.DAY);
+        CairoTestUtils.createAllTable(configuration, PartitionBy.DAY);
         TestUtils.assertMemoryLeak(this::testTableCursor);
     }
 
     @Test
     public void testReadByMonth() throws Exception {
-        CairoTestUtils.createAllTable(root, PartitionBy.MONTH);
+        CairoTestUtils.createAllTable(configuration, PartitionBy.MONTH);
         final String expected = "int\tshort\tbyte\tdouble\tfloat\tlong\tstr\tsym\tbool\tbin\tdate\n" +
                 "73575701\t0\t0\tNaN\t0.7097\t-1675638984090602536\t\t\tfalse\t\t\n" +
                 "NaN\t0\t89\tNaN\tNaN\t6236292340460979716\tPMIUPLYJVB\t\ttrue\t\t\n" +
@@ -846,7 +843,7 @@ public class TableReaderTest extends AbstractCairoTest {
 
     @Test
     public void testReadByYear() throws Exception {
-        CairoTestUtils.createAllTable(root, PartitionBy.YEAR);
+        CairoTestUtils.createAllTable(configuration, PartitionBy.YEAR);
         final String expected = "int\tshort\tbyte\tdouble\tfloat\tlong\tstr\tsym\tbool\tbin\tdate\n" +
                 "73575701\t0\t0\tNaN\t0.7097\t-1675638984090602536\t\t\tfalse\t\t\n" +
                 "NaN\t0\t89\tNaN\tNaN\t6236292340460979716\tPMIUPLYJVB\t\ttrue\t\t\n" +
@@ -954,7 +951,7 @@ public class TableReaderTest extends AbstractCairoTest {
     @Test
     public void testReadEmptyTable() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            CairoTestUtils.createAllTable(root, PartitionBy.NONE);
+            CairoTestUtils.createAllTable(configuration, PartitionBy.NONE);
             try (TableWriter ignored1 = new TableWriter(FF, root, "all")) {
 
                 // open another writer, which should fail
@@ -974,15 +971,18 @@ public class TableReaderTest extends AbstractCairoTest {
 
     @Test
     public void testReadNonPartitioned() throws Exception {
-        CairoTestUtils.createAllTable(root, PartitionBy.NONE);
+        CairoTestUtils.createAllTable(configuration, PartitionBy.NONE);
         TestUtils.assertMemoryLeak(this::testTableCursor);
     }
 
     @Test
     public void testReaderAndWriterRace() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            JournalStructure struct = new JournalStructure("x").$ts().partitionBy(PartitionBy.NONE);
-            CairoTestUtils.createTable(FF, root, struct);
+
+            try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)) {
+                CairoTestUtils.create(model.timestamp());
+            }
+
             CountDownLatch stopLatch = new CountDownLatch(2);
             CyclicBarrier barrier = new CyclicBarrier(2);
             int count = 1000000;
@@ -1345,7 +1345,7 @@ public class TableReaderTest extends AbstractCairoTest {
         long blob = allocBlob();
         try {
             TestUtils.assertMemoryLeak(() -> {
-                CairoTestUtils.createAllTable(root, partitionBy);
+                CairoTestUtils.createAllTable(configuration, partitionBy);
                 long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
                 testAppend(rnd, ff, ts, count, increment, blob, 0, BATCH1_GENERATOR);
 
@@ -1362,8 +1362,10 @@ public class TableReaderTest extends AbstractCairoTest {
         }
     }
 
-    private void testReload(int partitionBy, int count, long increment, final int testPartitionSwitch) throws Exception {
-        CairoTestUtils.createAllTable(root, partitionBy);
+    private void testReload(int partitionBy, int count, long inct, final int testPartitionSwitch) throws Exception {
+        final long increment = inct * 1000;
+
+        CairoTestUtils.createAllTable(configuration, partitionBy);
 
         TestUtils.assertMemoryLeak(() -> {
             Rnd rnd = new Rnd();
@@ -1522,11 +1524,11 @@ public class TableReaderTest extends AbstractCairoTest {
         final Rnd rnd = new Rnd();
 
         int count = 1000;
-        long increment = 60 * 60000L;
+        long increment = 60 * 60000L * 1000L;
         long blob = allocBlob();
         try {
             TestUtils.assertMemoryLeak(() -> {
-                CairoTestUtils.createAllTable(root, PartitionBy.DAY);
+                CairoTestUtils.createAllTable(configuration, PartitionBy.DAY);
                 long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
                 testAppend(rnd, ff, ts, count, increment, blob, 0, BATCH1_GENERATOR);
 
@@ -1546,10 +1548,11 @@ public class TableReaderTest extends AbstractCairoTest {
         }
     }
 
-    private void testTableCursor(long increment, String expected) throws IOException, NumericException {
+    private void testTableCursor(long inc, String expected) throws IOException, NumericException {
+        final long increment = inc;
         Rnd rnd = new Rnd();
         int N = 100;
-        long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
+        long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z") / 1000;
         long blob = allocBlob();
         try {
             testAppend(rnd, FF, ts, N, increment, blob, 0, BATCH1_GENERATOR);

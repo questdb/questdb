@@ -23,11 +23,11 @@
 
 package com.questdb.net.http.handlers;
 
-import com.questdb.ex.DisconnectedChannelException;
-import com.questdb.ex.SlowWritableChannelException;
-import com.questdb.misc.Chars;
 import com.questdb.net.http.ChunkedResponse;
 import com.questdb.net.http.Request;
+import com.questdb.std.Chars;
+import com.questdb.std.ex.DisconnectedChannelException;
+import com.questdb.std.ex.SlowWritableChannelException;
 
 public class QueryHandlerContext extends AbstractQueryContext {
     boolean fetchAll = false;

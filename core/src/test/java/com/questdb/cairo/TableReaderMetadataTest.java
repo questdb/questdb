@@ -1,12 +1,12 @@
 package com.questdb.cairo;
 
-import com.questdb.misc.FilesFacadeImpl;
+import com.questdb.common.ColumnType;
+import com.questdb.common.PartitionBy;
+import com.questdb.common.RecordColumnMetadata;
+import com.questdb.std.FilesFacadeImpl;
 import com.questdb.std.ObjIntHashMap;
 import com.questdb.std.str.Path;
 import com.questdb.std.str.StringSink;
-import com.questdb.store.ColumnType;
-import com.questdb.store.PartitionBy;
-import com.questdb.store.factory.configuration.RecordColumnMetadata;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
@@ -16,7 +16,7 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
 
     @Before
     public void setUp2() throws Exception {
-        CairoTestUtils.createAllTable(root, PartitionBy.DAY);
+        CairoTestUtils.createAllTable(configuration, PartitionBy.DAY);
     }
 
     @Test

@@ -23,12 +23,15 @@
 
 package com.questdb.ql;
 
-import com.questdb.misc.Misc;
+import com.questdb.common.Record;
+import com.questdb.common.RecordCursor;
+import com.questdb.common.RecordMetadata;
+import com.questdb.common.StorageFacade;
 import com.questdb.ql.ops.AbstractCombinedRecordSource;
 import com.questdb.ql.ops.VirtualColumn;
+import com.questdb.std.Misc;
 import com.questdb.std.str.CharSink;
 import com.questdb.store.factory.ReaderFactory;
-import com.questdb.store.factory.configuration.RecordMetadata;
 
 public class TopRecordSource extends AbstractCombinedRecordSource {
 

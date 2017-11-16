@@ -23,16 +23,11 @@
 
 package com.questdb.ql.join.asof;
 
-import com.questdb.misc.Chars;
-import com.questdb.misc.Unsafe;
-import com.questdb.ql.Record;
-import com.questdb.ql.RecordCursor;
-import com.questdb.ql.StorageFacade;
+import com.questdb.common.*;
+import com.questdb.std.Chars;
 import com.questdb.std.IntList;
-import com.questdb.store.ColumnType;
-import com.questdb.store.SymbolTable;
+import com.questdb.std.Unsafe;
 import com.questdb.store.VariableColumn;
-import com.questdb.store.factory.configuration.RecordMetadata;
 
 public class VarRecordHolder extends AbstractVarMemRecord implements RecordHolder {
     private final IntList types;

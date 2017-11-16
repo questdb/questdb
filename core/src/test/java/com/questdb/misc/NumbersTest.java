@@ -23,7 +23,9 @@
 
 package com.questdb.misc;
 
-import com.questdb.ex.NumericException;
+import com.questdb.common.NumericException;
+import com.questdb.std.Numbers;
+import com.questdb.std.Rnd;
 import com.questdb.std.str.StringSink;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;

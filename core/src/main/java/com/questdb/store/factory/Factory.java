@@ -23,14 +23,16 @@
 
 package com.questdb.store.factory;
 
+import com.questdb.common.PartitionBy;
 import com.questdb.ex.*;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
-import com.questdb.misc.Files;
-import com.questdb.misc.Os;
 import com.questdb.mp.Job;
 import com.questdb.mp.SynchronizedJob;
+import com.questdb.std.Files;
 import com.questdb.std.ObjHashSet;
+import com.questdb.std.Os;
+import com.questdb.std.ex.JournalException;
 import com.questdb.std.str.Path;
 import com.questdb.store.*;
 import com.questdb.store.factory.configuration.JournalConfiguration;

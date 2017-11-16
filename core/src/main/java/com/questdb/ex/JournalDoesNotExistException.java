@@ -23,6 +23,8 @@
 
 package com.questdb.ex;
 
+import com.questdb.std.ex.JournalException;
+
 public class JournalDoesNotExistException extends JournalException {
     public static final JournalDoesNotExistException INSTANCE = new JournalDoesNotExistException();
 

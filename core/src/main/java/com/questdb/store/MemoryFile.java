@@ -23,13 +23,12 @@
 
 package com.questdb.store;
 
-import com.questdb.ex.JournalException;
+import com.questdb.common.JournalRuntimeException;
 import com.questdb.ex.JournalIOException;
-import com.questdb.ex.JournalRuntimeException;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
-import com.questdb.misc.*;
-import com.questdb.std.ObjList;
+import com.questdb.std.*;
+import com.questdb.std.ex.JournalException;
 
 import java.io.*;
 import java.nio.ByteOrder;

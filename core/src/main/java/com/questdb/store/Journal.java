@@ -23,17 +23,14 @@
 
 package com.questdb.store;
 
-import com.questdb.ex.JournalException;
-import com.questdb.ex.JournalRuntimeException;
-import com.questdb.ex.NumericException;
+import com.questdb.common.ColumnType;
+import com.questdb.common.JournalRuntimeException;
+import com.questdb.common.NumericException;
+import com.questdb.common.PartitionBy;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
-import com.questdb.misc.Misc;
-import com.questdb.misc.Rows;
-import com.questdb.misc.Unsafe;
-import com.questdb.std.LongList;
-import com.questdb.std.ObjList;
-import com.questdb.std.ObjObjHashMap;
+import com.questdb.std.*;
+import com.questdb.std.ex.JournalException;
 import com.questdb.std.time.Dates;
 import com.questdb.std.time.Interval;
 import com.questdb.store.factory.JournalCloseInterceptor;
@@ -226,7 +223,7 @@ public class Journal<T> implements Iterable<T>, Closeable {
      * Get the highest global row id of the Journal.
      *
      * @return the highest global row id of the Journal
-     * @throws com.questdb.ex.JournalException if there is an error
+     * @throws JournalException if there is an error
      */
     public long getMaxRowID() throws JournalException {
         Partition<T> p = getLastPartition();
@@ -428,7 +425,7 @@ public class Journal<T> implements Iterable<T>, Closeable {
      *
      * @param rowID the global row id to read
      * @param obj   object, which attributes will be populated from journal record
-     * @throws com.questdb.ex.JournalException if there is an error
+     * @throws JournalException if there is an error
      */
     public void read(long rowID, T obj) throws JournalException {
         getPartition(Rows.toPartitionIndex(rowID), true).read(Rows.toLocalRowID(rowID), obj);
@@ -439,7 +436,7 @@ public class Journal<T> implements Iterable<T>, Closeable {
      *
      * @param rowIDs the global row ids to read
      * @return some objects
-     * @throws com.questdb.ex.JournalException if there is an error
+     * @throws JournalException if there is an error
      */
     @SuppressWarnings("unchecked")
     public T[] read(LongList rowIDs) throws JournalException {
@@ -455,7 +452,7 @@ public class Journal<T> implements Iterable<T>, Closeable {
      *
      * @param rowID the global row id to read
      * @return an object
-     * @throws com.questdb.ex.JournalException if there is an error
+     * @throws JournalException if there is an error
      */
     public T read(long rowID) throws JournalException {
         return getPartition(Rows.toPartitionIndex(rowID), true).read(Rows.toLocalRowID(rowID));

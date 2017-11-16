@@ -56,6 +56,8 @@ public interface CharSink {
 
     CharSink putISODate(long value);
 
+    CharSink putISODateMillis(long value);
+
     CharSink putQuoted(CharSequence cs);
 
     CharSink encodeUtf8(CharSequence cs, int from, int len);

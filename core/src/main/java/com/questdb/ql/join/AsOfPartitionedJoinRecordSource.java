@@ -23,9 +23,11 @@
 
 package com.questdb.ql.join;
 
-import com.questdb.ex.JournalRuntimeException;
-import com.questdb.misc.Misc;
-import com.questdb.ql.*;
+import com.questdb.common.*;
+import com.questdb.ql.CancellationHandler;
+import com.questdb.ql.NullableRecord;
+import com.questdb.ql.RecordSource;
+import com.questdb.ql.SplitRecordMetadata;
 import com.questdb.ql.join.asof.*;
 import com.questdb.ql.map.RecordKeyCopier;
 import com.questdb.ql.map.RecordKeyCopierCompiler;
@@ -33,10 +35,9 @@ import com.questdb.ql.map.TypeListResolver;
 import com.questdb.ql.ops.AbstractCombinedRecordSource;
 import com.questdb.std.CharSequenceHashSet;
 import com.questdb.std.IntList;
+import com.questdb.std.Misc;
 import com.questdb.std.str.CharSink;
-import com.questdb.store.ColumnType;
 import com.questdb.store.factory.ReaderFactory;
-import com.questdb.store.factory.configuration.RecordMetadata;
 
 import java.io.Closeable;
 

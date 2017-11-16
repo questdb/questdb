@@ -23,8 +23,8 @@
 
 package com.questdb;
 
-import com.questdb.misc.Rnd;
 import com.questdb.std.IntLongPriorityQueue;
+import com.questdb.std.Rnd;
 import com.questdb.store.IndexCursor;
 import com.questdb.store.JournalMode;
 import com.questdb.store.KVIndex;

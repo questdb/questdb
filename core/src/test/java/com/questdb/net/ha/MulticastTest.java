@@ -23,13 +23,13 @@
 
 package com.questdb.net.ha;
 
-import com.questdb.ex.JournalNetworkException;
 import com.questdb.net.ha.config.ClientConfig;
 import com.questdb.net.ha.config.ServerConfig;
 import com.questdb.net.ha.config.ServerNode;
 import com.questdb.net.ha.mcast.AbstractOnDemandSender;
 import com.questdb.net.ha.mcast.OnDemandAddressPoller;
 import com.questdb.net.ha.mcast.OnDemandAddressSender;
+import com.questdb.std.ex.JournalNetworkException;
 import com.questdb.test.tools.AbstractTest;
 import org.junit.Assert;
 import org.junit.Ignore;

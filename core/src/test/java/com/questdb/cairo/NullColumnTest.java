@@ -1,6 +1,6 @@
 package com.questdb.cairo;
 
-import com.questdb.misc.Numbers;
+import com.questdb.std.Numbers;
 import org.junit.Assert;
 import org.junit.Test;
 

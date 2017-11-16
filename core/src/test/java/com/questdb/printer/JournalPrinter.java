@@ -24,11 +24,11 @@
 package com.questdb.printer;
 
 
-import com.questdb.ex.JournalRuntimeException;
-import com.questdb.misc.Unsafe;
+import com.questdb.common.JournalRuntimeException;
 import com.questdb.printer.appender.Appender;
 import com.questdb.printer.appender.StdOutAppender;
 import com.questdb.printer.converter.*;
+import com.questdb.std.Unsafe;
 
 import java.io.Closeable;
 import java.io.IOException;

@@ -23,9 +23,9 @@
 
 package com.questdb.net.ha.config;
 
-import com.questdb.ex.JournalRuntimeException;
-import com.questdb.ex.NumericException;
-import com.questdb.misc.Numbers;
+import com.questdb.common.JournalRuntimeException;
+import com.questdb.common.NumericException;
+import com.questdb.std.Numbers;
 import org.jetbrains.annotations.NotNull;
 
 public class ServerNode {

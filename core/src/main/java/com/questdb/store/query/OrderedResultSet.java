@@ -23,9 +23,9 @@
 
 package com.questdb.store.query;
 
-import com.questdb.ex.JournalException;
-import com.questdb.misc.Rows;
 import com.questdb.std.LongList;
+import com.questdb.std.Rows;
+import com.questdb.std.ex.JournalException;
 import com.questdb.store.Journal;
 
 public class OrderedResultSet<T> extends ResultSet<T> {

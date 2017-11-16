@@ -1,7 +1,7 @@
 package com.questdb.cairo;
 
-import com.questdb.misc.Numbers;
 import com.questdb.std.BinarySequence;
+import com.questdb.std.Numbers;
 
 public final class NullColumn implements ReadOnlyColumn {
 

@@ -24,16 +24,15 @@
 package com.questdb;
 
 import com.questdb.log.*;
-import com.questdb.misc.Misc;
-import com.questdb.misc.Os;
 import com.questdb.mp.Job;
 import com.questdb.net.http.HttpServer;
-import com.questdb.net.http.ServerConfiguration;
 import com.questdb.net.http.SimpleUrlMatcher;
 import com.questdb.net.http.handlers.*;
 import com.questdb.parser.typeprobe.TypeProbeCollection;
 import com.questdb.std.CharSequenceObjHashMap;
+import com.questdb.std.Misc;
 import com.questdb.std.ObjHashSet;
+import com.questdb.std.Os;
 import com.questdb.std.clock.MilliClock;
 import com.questdb.std.str.CharSink;
 import com.questdb.std.time.DateFormatFactory;
@@ -239,7 +238,7 @@ class BootstrapMain {
             if (force) {
                 File pub = new File(dir, "public");
                 if (pub.exists()) {
-                    com.questdb.misc.Files.delete(pub);
+                    com.questdb.std.Files.delete(pub);
                 }
             }
 

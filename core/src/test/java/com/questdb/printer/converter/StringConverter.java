@@ -23,8 +23,8 @@
 
 package com.questdb.printer.converter;
 
-import com.questdb.misc.Unsafe;
 import com.questdb.printer.JournalPrinter;
+import com.questdb.std.Unsafe;
 
 public class StringConverter extends AbstractConverter {
 

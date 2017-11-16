@@ -23,7 +23,7 @@
 
 package com.questdb.ql.analytic.next;
 
-import com.questdb.ql.Record;
+import com.questdb.common.Record;
 import com.questdb.ql.analytic.AbstractOrderedAnalyticFunction;
 import com.questdb.ql.ops.VirtualColumn;
 

@@ -23,9 +23,9 @@
 
 package com.questdb.net.ha.producer;
 
-import com.questdb.ex.JournalNetworkException;
 import com.questdb.net.ha.ChannelProducer;
 import com.questdb.std.ObjList;
+import com.questdb.std.ex.JournalNetworkException;
 
 import java.nio.channels.WritableByteChannel;
 

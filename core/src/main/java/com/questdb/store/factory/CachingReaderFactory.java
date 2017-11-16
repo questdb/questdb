@@ -23,10 +23,12 @@
 
 package com.questdb.store.factory;
 
+import com.questdb.common.PoolConstants;
 import com.questdb.ex.*;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
-import com.questdb.misc.Unsafe;
+import com.questdb.std.Unsafe;
+import com.questdb.std.ex.JournalException;
 import com.questdb.store.Journal;
 import com.questdb.store.factory.configuration.JournalConfiguration;
 import com.questdb.store.factory.configuration.JournalMetadata;
@@ -79,7 +81,7 @@ public class CachingReaderFactory extends AbstractFactory implements JournalClos
 
             R r = (R) journal;
 
-            if (Unsafe.arrayGetVolatile(r.entry.allocations, r.index) != FactoryConstants.UNALLOCATED) {
+            if (Unsafe.arrayGetVolatile(r.entry.allocations, r.index) != PoolConstants.UNALLOCATED) {
 
                 if (closed == TRUE) {
                     // keep locked and close
@@ -89,7 +91,7 @@ public class CachingReaderFactory extends AbstractFactory implements JournalClos
                 }
 
                 Unsafe.arrayPut(r.entry.releaseTimes, r.index, System.currentTimeMillis());
-                Unsafe.arrayPutOrdered(r.entry.allocations, r.index, FactoryConstants.UNALLOCATED);
+                Unsafe.arrayPutOrdered(r.entry.allocations, r.index, PoolConstants.UNALLOCATED);
 
                 LOG.info().$("Thread ").$(thread).$(" released reader '").$(name).$("' (").$(r.entry.index).$(',').$(r.index).$(')').$();
                 notifyListener(thread, name, FactoryEventListener.EV_RETURN, r.entry.index, r.index);
@@ -109,42 +111,13 @@ public class CachingReaderFactory extends AbstractFactory implements JournalClos
         }
     }
 
-    @Override
-    protected boolean releaseAll(long deadline) {
-        long thread = Thread.currentThread().getId();
-        boolean removed = false;
-        int closeReason = deadline < Long.MAX_VALUE ? FactoryConstants.CR_IDLE : FactoryConstants.CR_POOL_CLOSE;
-
-        for (Map.Entry<String, Entry> me : entries.entrySet()) {
-
-            Entry e = me.getValue();
-
-            do {
-                for (int i = 0; i < ENTRY_SIZE; i++) {
-                    if (deadline > Unsafe.arrayGetVolatile(e.releaseTimes, i) && Unsafe.arrayGet(e.readers, i) != null) {
-                        if (Unsafe.cas(e.allocations, i, FactoryConstants.UNALLOCATED, thread)) {
-                            // check if deadline violation still holds
-                            if (deadline > Unsafe.arrayGet(e.releaseTimes, i)) {
-                                removed = true;
-                                closeReader(thread, e, i, FactoryEventListener.EV_EXPIRE, FactoryEventListener.EV_EXPIRE_EX, closeReason);
-                            }
-                            Unsafe.arrayPutOrdered(e.allocations, i, FactoryConstants.UNALLOCATED);
-                        }
-                    }
-                }
-                e = e.next;
-            } while (e != null);
-        }
-        return removed;
-    }
-
     public int getBusyCount() {
         int count = 0;
         for (Map.Entry<String, Entry> me : entries.entrySet()) {
             Entry e = me.getValue();
             do {
                 for (int i = 0; i < ENTRY_SIZE; i++) {
-                    if (Unsafe.arrayGetVolatile(e.allocations, i) != FactoryConstants.UNALLOCATED && Unsafe.arrayGet(e.readers, i) != null) {
+                    if (Unsafe.arrayGetVolatile(e.allocations, i) != PoolConstants.UNALLOCATED && Unsafe.arrayGet(e.readers, i) != null) {
                         count++;
                     }
                 }
@@ -152,10 +125,6 @@ public class CachingReaderFactory extends AbstractFactory implements JournalClos
             } while (e != null);
         }
         return count;
-    }
-
-    public int getMaxEntries() {
-        return maxEntries;
     }
 
     public void lock(String name) throws JournalException {
@@ -171,8 +140,8 @@ public class CachingReaderFactory extends AbstractFactory implements JournalClos
         if (Unsafe.cas(e, LOCK_OWNER, UNLOCKED, thread) || Unsafe.cas(e, LOCK_OWNER, thread, thread)) {
             do {
                 for (int i = 0; i < ENTRY_SIZE; i++) {
-                    if (Unsafe.cas(e.allocations, i, FactoryConstants.UNALLOCATED, thread)) {
-                        closeReader(thread, e, i, FactoryEventListener.EV_LOCK_CLOSE, FactoryEventListener.EV_LOCK_CLOSE_EX, FactoryConstants.CR_NAME_LOCK);
+                    if (Unsafe.cas(e.allocations, i, PoolConstants.UNALLOCATED, thread)) {
+                        closeReader(thread, e, i, FactoryEventListener.EV_LOCK_CLOSE, FactoryEventListener.EV_LOCK_CLOSE_EX, PoolConstants.CR_NAME_LOCK);
                     } else if (Unsafe.arrayGet(e.allocations, i) != thread || Unsafe.arrayGet(e.readers, i) != null) {
                         LOG.info().$("Reader '").$(name).$("' is partially locked by ").$(e.lockOwner).$();
                         throw RetryLockException.INSTANCE;
@@ -189,6 +158,26 @@ public class CachingReaderFactory extends AbstractFactory implements JournalClos
         LOG.info().$("Reader '").$(name).$("' is locked").$();
     }
 
+    public int getMaxEntries() {
+        return maxEntries;
+    }
+
+    private void closeReader(long thread, Entry e, int index, short ev, short evex, int reason) {
+        R r = Unsafe.arrayGet(e.readers, index);
+        if (r != null) {
+            try {
+                r.setCloseInterceptor(null);
+                r.close();
+                LOG.info().$("Closed reader '").$(r.getName()).$("' (").$(e.index).$(',').$(index).$(") ").$(PoolConstants.closeReasonText(reason)).$();
+                notifyListener(thread, r.getName(), ev, e.index, index);
+            } catch (Throwable e1) {
+                LOG.error().$("Cannot close reader '").$(r.getName()).$("' (").$(e.index).$(',').$(index).$(") ").$(PoolConstants.closeReasonText(reason)).$(e1.getMessage()).$();
+                notifyListener(thread, r.getName(), evex, e.index, index);
+            }
+            Unsafe.arrayPut(e.readers, index, null);
+        }
+    }
+
     public void unlock(String name) {
         Entry e = entries.get(name);
         long thread = Thread.currentThread().getId();
@@ -203,29 +192,6 @@ public class CachingReaderFactory extends AbstractFactory implements JournalClos
         }
         notifyListener(thread, name, FactoryEventListener.EV_UNLOCKED, -1, -1);
         LOG.info().$("Reader '").$(name).$("' is unlocked").$();
-    }
-
-    private void closeReader(long thread, Entry e, int index, short ev, short evex, int reason) {
-        R r = Unsafe.arrayGet(e.readers, index);
-        if (r != null) {
-            try {
-                r.setCloseInterceptor(null);
-                r.close();
-                LOG.info().$("Closed reader '").$(r.getName()).$("' (").$(e.index).$(',').$(index).$(") ").$(FactoryConstants.closeReasonText(reason)).$();
-                notifyListener(thread, r.getName(), ev, e.index, index);
-            } catch (Throwable e1) {
-                LOG.error().$("Cannot close reader '").$(r.getName()).$("' (").$(e.index).$(',').$(index).$(") ").$(FactoryConstants.closeReasonText(reason)).$(e1.getMessage()).$();
-                notifyListener(thread, r.getName(), evex, e.index, index);
-            }
-            Unsafe.arrayPut(e.readers, index, null);
-        }
-    }
-
-    private void notifyListener(long thread, String name, short event, int segment, int position) {
-        FactoryEventListener listener = getEventListener();
-        if (listener != null) {
-            listener.onEvent(FactoryEventListener.SRC_READER, thread, name, event, (short) segment, (short) position);
-        }
     }
 
     @SuppressWarnings("unchecked")
@@ -266,7 +232,7 @@ public class CachingReaderFactory extends AbstractFactory implements JournalClos
 
         do {
             for (int i = 0; i < ENTRY_SIZE; i++) {
-                if (Unsafe.cas(e.allocations, i, FactoryConstants.UNALLOCATED, thread)) {
+                if (Unsafe.cas(e.allocations, i, PoolConstants.UNALLOCATED, thread)) {
                     // got lock, allocate if needed
                     R r = Unsafe.arrayGet(e.readers, i);
                     if (r == null) {
@@ -314,6 +280,42 @@ public class CachingReaderFactory extends AbstractFactory implements JournalClos
         throw FactoryFullException.INSTANCE;
     }
 
+    private void notifyListener(long thread, String name, short event, int segment, int position) {
+        FactoryEventListener listener = getEventListener();
+        if (listener != null) {
+            listener.onEvent(FactoryEventListener.SRC_READER, thread, name, event, (short) segment, (short) position);
+        }
+    }
+
+    @Override
+    protected boolean releaseAll(long deadline) {
+        long thread = Thread.currentThread().getId();
+        boolean removed = false;
+        int closeReason = deadline < Long.MAX_VALUE ? PoolConstants.CR_IDLE : PoolConstants.CR_POOL_CLOSE;
+
+        for (Map.Entry<String, Entry> me : entries.entrySet()) {
+
+            Entry e = me.getValue();
+
+            do {
+                for (int i = 0; i < ENTRY_SIZE; i++) {
+                    if (deadline > Unsafe.arrayGetVolatile(e.releaseTimes, i) && Unsafe.arrayGet(e.readers, i) != null) {
+                        if (Unsafe.cas(e.allocations, i, PoolConstants.UNALLOCATED, thread)) {
+                            // check if deadline violation still holds
+                            if (deadline > Unsafe.arrayGet(e.releaseTimes, i)) {
+                                removed = true;
+                                closeReader(thread, e, i, FactoryEventListener.EV_EXPIRE, FactoryEventListener.EV_EXPIRE_EX, closeReason);
+                            }
+                            Unsafe.arrayPutOrdered(e.allocations, i, PoolConstants.UNALLOCATED);
+                        }
+                    }
+                }
+                e = e.next;
+            } while (e != null);
+        }
+        return removed;
+    }
+
     private static class Entry {
         final long[] allocations = new long[ENTRY_SIZE];
         final long[] releaseTimes = new long[ENTRY_SIZE];
@@ -326,7 +328,7 @@ public class CachingReaderFactory extends AbstractFactory implements JournalClos
 
         public Entry(int index) {
             this.index = index;
-            Arrays.fill(allocations, FactoryConstants.UNALLOCATED);
+            Arrays.fill(allocations, PoolConstants.UNALLOCATED);
             Arrays.fill(releaseTimes, System.currentTimeMillis());
         }
     }

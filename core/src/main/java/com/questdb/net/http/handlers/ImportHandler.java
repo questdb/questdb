@@ -24,9 +24,12 @@
 package com.questdb.net.http.handlers;
 
 import com.questdb.BootstrapEnv;
-import com.questdb.ex.*;
-import com.questdb.misc.Chars;
-import com.questdb.misc.Misc;
+import com.questdb.common.ColumnType;
+import com.questdb.common.JournalRuntimeException;
+import com.questdb.common.PartitionBy;
+import com.questdb.common.RecordColumnMetadata;
+import com.questdb.ex.ImportSchemaException;
+import com.questdb.ex.ResponseContentBufferTooSmallException;
 import com.questdb.net.http.ChunkedResponse;
 import com.questdb.net.http.IOContext;
 import com.questdb.net.http.RequestHeaderBuffer;
@@ -39,15 +42,14 @@ import com.questdb.parser.plaintext.PlainTextDelimiterLexer;
 import com.questdb.parser.plaintext.PlainTextLexer;
 import com.questdb.parser.plaintext.PlainTextStoringParser;
 import com.questdb.std.*;
+import com.questdb.std.ex.DisconnectedChannelException;
+import com.questdb.std.ex.SlowWritableChannelException;
 import com.questdb.std.str.ByteSequence;
 import com.questdb.std.str.CharSink;
 import com.questdb.std.str.DirectByteCharSequence;
 import com.questdb.std.str.FileNameExtractorCharSequence;
-import com.questdb.store.ColumnType;
-import com.questdb.store.PartitionBy;
 import com.questdb.store.factory.configuration.ColumnMetadata;
 import com.questdb.store.factory.configuration.JournalMetadata;
-import com.questdb.store.factory.configuration.RecordColumnMetadata;
 
 import java.io.Closeable;
 import java.io.IOException;

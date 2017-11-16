@@ -23,9 +23,9 @@
 
 package org.questdb.examples.replication.ssl;
 
-import com.questdb.ex.JournalException;
 import com.questdb.net.ha.JournalServer;
 import com.questdb.net.ha.config.ServerConfig;
+import com.questdb.std.ex.JournalException;
 import com.questdb.store.JournalWriter;
 import com.questdb.store.factory.Factory;
 import org.questdb.examples.support.Price;

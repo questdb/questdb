@@ -23,17 +23,13 @@
 
 package com.questdb.ql.join.hash;
 
-import com.questdb.ql.Record;
-import com.questdb.ql.RecordCursor;
+import com.questdb.common.*;
 import com.questdb.ql.RecordList;
-import com.questdb.ql.StorageFacade;
 import com.questdb.ql.map.ColumnTypeResolver;
 import com.questdb.ql.map.DirectMap;
 import com.questdb.ql.map.DirectMapValues;
 import com.questdb.ql.map.RecordKeyCopier;
 import com.questdb.std.Mutable;
-import com.questdb.store.ColumnType;
-import com.questdb.store.factory.configuration.RecordMetadata;
 
 import java.io.Closeable;
 import java.io.IOException;

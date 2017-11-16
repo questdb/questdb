@@ -23,18 +23,19 @@
 
 package com.questdb.ql.latest;
 
-import com.questdb.ex.JournalException;
-import com.questdb.ex.JournalRuntimeException;
+import com.questdb.common.JournalRuntimeException;
+import com.questdb.common.StorageFacade;
+import com.questdb.common.SymbolTable;
 import com.questdb.ql.*;
 import com.questdb.ql.ops.VirtualColumn;
 import com.questdb.std.CharSequenceHashSet;
 import com.questdb.std.IntList;
 import com.questdb.std.LongList;
+import com.questdb.std.ex.JournalException;
 import com.questdb.std.str.CharSink;
 import com.questdb.store.IndexCursor;
 import com.questdb.store.KVIndex;
 import com.questdb.store.Partition;
-import com.questdb.store.SymbolTable;
 import com.questdb.store.factory.ReaderFactory;
 import com.questdb.store.factory.configuration.JournalMetadata;
 

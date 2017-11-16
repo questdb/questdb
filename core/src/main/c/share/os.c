@@ -30,18 +30,18 @@
 #include <sched.h>
 #include "../share/os.h"
 
-JNIEXPORT jint JNICALL Java_com_questdb_misc_Os_getPid
+JNIEXPORT jint JNICALL Java_com_questdb_std_Os_getPid
         (JNIEnv *e, jclass cp) {
     return getpid();
 }
 
 
-JNIEXPORT jint JNICALL Java_com_questdb_misc_Os_getTid
+JNIEXPORT jint JNICALL Java_com_questdb_std_Os_getTid
         (JNIEnv *e, jclass cl) {
     return (pid_t) syscall(SYS_gettid);
 }
 
-JNIEXPORT jint JNICALL Java_com_questdb_misc_Os_schedSetAffinity
+JNIEXPORT jint JNICALL Java_com_questdb_std_Os_schedSetAffinity
         (JNIEnv *e, jclass cl, jint pid, jint cpu) {
     cpu_set_t set;
     CPU_ZERO(&set);
@@ -49,7 +49,7 @@ JNIEXPORT jint JNICALL Java_com_questdb_misc_Os_schedSetAffinity
     return sched_setaffinity(pid, sizeof(set), &set);
 }
 
-JNIEXPORT jint JNICALL Java_com_questdb_misc_Os_errno
+JNIEXPORT jint JNICALL Java_com_questdb_std_Os_errno
         (JNIEnv *e, jclass cl) {
     return errno;
 }
@@ -107,7 +107,7 @@ fork_exec_t *forkExec(char *argv[]) {
 
 }
 
-JNIEXPORT jlong JNICALL Java_com_questdb_misc_Os_forkExec
+JNIEXPORT jlong JNICALL Java_com_questdb_std_Os_forkExec
         (JNIEnv *e, jclass cl, jlong argv) {
     return (jlong) forkExec((char **) argv);
 }

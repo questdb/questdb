@@ -1,6 +1,5 @@
 package com.questdb;
 
-import com.questdb.net.http.ServerConfiguration;
 import com.questdb.net.http.SimpleUrlMatcher;
 import com.questdb.parser.typeprobe.TypeProbeCollection;
 import com.questdb.std.time.DateFormatFactory;
