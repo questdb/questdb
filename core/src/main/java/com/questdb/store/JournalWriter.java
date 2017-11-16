@@ -23,14 +23,21 @@
 
 package com.questdb.store;
 
-import com.questdb.ex.*;
+import com.questdb.common.ColumnType;
+import com.questdb.common.JournalRuntimeException;
+import com.questdb.common.PartitionBy;
+import com.questdb.ex.IncompatibleJournalException;
+import com.questdb.ex.JournalIOException;
+import com.questdb.ex.JournalPartiallyMappedException;
+import com.questdb.ex.JournalWriterAlreadyOpenException;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
-import com.questdb.misc.*;
 import com.questdb.mp.BlockingWaitStrategy;
 import com.questdb.mp.SCSequence;
 import com.questdb.mp.SPSequence;
 import com.questdb.mp.Sequence;
+import com.questdb.std.*;
+import com.questdb.std.ex.JournalException;
 import com.questdb.std.str.FlexBufferSink;
 import com.questdb.std.time.DateFormatUtils;
 import com.questdb.std.time.Dates;
@@ -101,7 +108,7 @@ public class JournalWriter<T> extends Journal<T> {
      * Add an object to the end of the Journal.
      *
      * @param obj the object to add
-     * @throws com.questdb.ex.JournalException if there is an error
+     * @throws JournalException if there is an error
      */
     public void append(T obj) throws JournalException {
 
@@ -136,7 +143,7 @@ public class JournalWriter<T> extends Journal<T> {
      * Add objects to the end of the Journal.
      *
      * @param objects objects to add
-     * @throws com.questdb.ex.JournalException if there is an error
+     * @throws JournalException if there is an error
      */
     @SafeVarargs
     public final void append(T... objects) throws JournalException {
@@ -149,7 +156,7 @@ public class JournalWriter<T> extends Journal<T> {
      * Copy the objects corresponding to the specified ids to the end of the Journal.
      *
      * @param resultSet the global row ids
-     * @throws com.questdb.ex.JournalException if there is an error
+     * @throws JournalException if there is an error
      */
     public void append(ResultSet<T> resultSet) throws JournalException {
         if (isCompatible(resultSet.getJournal())) {
@@ -348,7 +355,7 @@ public class JournalWriter<T> extends Journal<T> {
      * this will always be rejected.
      *
      * @return max timestamp older then which append is impossible.
-     * @throws com.questdb.ex.JournalException if journal cannot calculate timestamp.
+     * @throws JournalException if journal cannot calculate timestamp.
      */
     public long getAppendTimestampLo() throws JournalException {
         if (appendTimestampLo == -1) {
@@ -526,7 +533,7 @@ public class JournalWriter<T> extends Journal<T> {
      * have lag partitions.
      *
      * @return Lag partition instance.
-     * @throws com.questdb.ex.JournalException if journal fails to open partition for any reason.
+     * @throws JournalException if journal fails to open partition for any reason.
      */
     public Partition<T> openOrCreateLagPartition() throws JournalException {
         Partition<T> result = getIrregularPartition();

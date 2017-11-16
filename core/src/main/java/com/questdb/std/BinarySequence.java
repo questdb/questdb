@@ -1,7 +1,5 @@
 package com.questdb.std;
 
-import com.questdb.misc.Unsafe;
-
 public interface BinarySequence {
 
     byte byteAt(long index);

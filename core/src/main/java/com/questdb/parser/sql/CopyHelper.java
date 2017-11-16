@@ -23,7 +23,7 @@
 
 package com.questdb.parser.sql;
 
-import com.questdb.ql.Record;
+import com.questdb.common.Record;
 import com.questdb.store.JournalEntryWriter;
 
 public interface CopyHelper {

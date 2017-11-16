@@ -24,8 +24,8 @@
 package com.questdb.ql.join;
 
 import com.questdb.ex.ParserException;
-import com.questdb.misc.Rnd;
 import com.questdb.parser.sql.QueryError;
+import com.questdb.std.Rnd;
 import com.questdb.store.JournalEntryWriter;
 import com.questdb.store.JournalWriter;
 import com.questdb.store.factory.configuration.JournalStructure;

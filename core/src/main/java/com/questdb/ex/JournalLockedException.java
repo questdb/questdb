@@ -23,6 +23,8 @@
 
 package com.questdb.ex;
 
+import com.questdb.std.ex.JournalException;
+
 public class JournalLockedException extends JournalException {
     public static final JournalLockedException INSTANCE = new JournalLockedException();
 }

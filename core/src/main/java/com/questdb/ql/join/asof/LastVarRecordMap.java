@@ -23,21 +23,10 @@
 
 package com.questdb.ql.join.asof;
 
-import com.questdb.ex.JournalRuntimeException;
-import com.questdb.misc.Chars;
-import com.questdb.misc.Numbers;
-import com.questdb.misc.Unsafe;
-import com.questdb.ql.Record;
-import com.questdb.ql.RecordCursor;
-import com.questdb.ql.StorageFacade;
+import com.questdb.common.*;
 import com.questdb.ql.map.*;
-import com.questdb.std.IntList;
-import com.questdb.std.LongList;
-import com.questdb.std.Transient;
-import com.questdb.store.ColumnType;
-import com.questdb.store.SymbolTable;
+import com.questdb.std.*;
 import com.questdb.store.VariableColumn;
-import com.questdb.store.factory.configuration.RecordMetadata;
 
 public class LastVarRecordMap implements LastRecordMap {
     private final DirectMap map;

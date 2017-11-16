@@ -23,8 +23,8 @@
 
 package com.questdb.ql;
 
-import com.questdb.misc.Rnd;
 import com.questdb.parser.sql.AbstractOptimiserTest;
+import com.questdb.std.Rnd;
 import com.questdb.std.time.Dates;
 import com.questdb.store.JournalEntryWriter;
 import com.questdb.store.JournalWriter;

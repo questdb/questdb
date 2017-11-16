@@ -23,12 +23,12 @@
 
 package com.questdb.ql.virtual;
 
+import com.questdb.common.AbstractRecordMetadata;
+import com.questdb.common.RecordColumnMetadata;
+import com.questdb.common.RecordMetadata;
 import com.questdb.ql.ops.VirtualColumn;
 import com.questdb.std.CharSequenceIntHashMap;
 import com.questdb.std.ObjList;
-import com.questdb.store.factory.configuration.AbstractRecordMetadata;
-import com.questdb.store.factory.configuration.RecordColumnMetadata;
-import com.questdb.store.factory.configuration.RecordMetadata;
 
 public class VirtualRecordMetadata extends AbstractRecordMetadata {
     private final RecordMetadata delegate;

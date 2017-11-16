@@ -23,7 +23,7 @@
 
 package com.questdb.ql.ops;
 
-import com.questdb.misc.Chars;
+import com.questdb.common.ColumnType;
 import com.questdb.ql.ops.conv.*;
 import com.questdb.ql.ops.count.*;
 import com.questdb.ql.ops.div.DivDoubleOperator;
@@ -67,9 +67,9 @@ import com.questdb.ql.ops.sum.SumDoubleAggregator;
 import com.questdb.ql.ops.sum.SumIntAggregator;
 import com.questdb.ql.ops.sum.SumLongAggregator;
 import com.questdb.std.CharSequenceHashSet;
+import com.questdb.std.Chars;
 import com.questdb.std.ObjList;
 import com.questdb.std.ObjObjHashMap;
-import com.questdb.store.ColumnType;
 
 public final class FunctionFactories {
 

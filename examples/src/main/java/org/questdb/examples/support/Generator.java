@@ -23,11 +23,11 @@
 
 package org.questdb.examples.support;
 
-import com.questdb.ex.JournalException;
-import com.questdb.misc.Files;
-import com.questdb.misc.Rnd;
-import com.questdb.ql.Record;
-import com.questdb.ql.RecordCursor;
+import com.questdb.common.Record;
+import com.questdb.common.RecordCursor;
+import com.questdb.std.Files;
+import com.questdb.std.Rnd;
+import com.questdb.std.ex.JournalException;
 import com.questdb.store.JournalEntryWriter;
 import com.questdb.store.JournalWriter;
 import com.questdb.store.factory.WriterFactory;

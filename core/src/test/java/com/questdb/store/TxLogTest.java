@@ -23,8 +23,8 @@
 
 package com.questdb.store;
 
-import com.questdb.misc.Rows;
 import com.questdb.model.Quote;
+import com.questdb.std.Rows;
 import com.questdb.std.str.DelimitedCharSink;
 import com.questdb.std.str.StringSink;
 import com.questdb.test.tools.AbstractTest;

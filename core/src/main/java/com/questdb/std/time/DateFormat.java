@@ -1,6 +1,6 @@
 package com.questdb.std.time;
 
-import com.questdb.ex.NumericException;
+import com.questdb.common.NumericException;
 import com.questdb.std.str.CharSink;
 
 public interface DateFormat {

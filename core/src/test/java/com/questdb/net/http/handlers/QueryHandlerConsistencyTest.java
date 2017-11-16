@@ -24,9 +24,9 @@
 package com.questdb.net.http.handlers;
 
 import com.questdb.BootstrapEnv;
+import com.questdb.ServerConfiguration;
 import com.questdb.net.http.ContextHandler;
 import com.questdb.net.http.IOContext;
-import com.questdb.net.http.ServerConfiguration;
 import com.questdb.parser.sql.AbstractOptimiserTest;
 import com.questdb.std.clock.MilliClock;
 import com.questdb.test.tools.TestChannel;

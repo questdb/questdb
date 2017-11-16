@@ -23,6 +23,8 @@
 
 package com.questdb.ex;
 
+import com.questdb.std.ex.JournalException;
+
 public class JournalWriterAlreadyOpenException extends JournalException {
     public static final JournalWriterAlreadyOpenException INSTANCE = new JournalWriterAlreadyOpenException();
 

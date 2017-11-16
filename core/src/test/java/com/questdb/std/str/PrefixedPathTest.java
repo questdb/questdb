@@ -23,7 +23,7 @@
 
 package com.questdb.std.str;
 
-import com.questdb.misc.Os;
+import com.questdb.std.Os;
 import org.junit.Assert;
 import org.junit.Test;
 

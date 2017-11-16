@@ -23,7 +23,9 @@
 
 package com.questdb.net.http;
 
-import com.questdb.ex.*;
+import com.questdb.ex.DisconnectedChannelRuntimeException;
+import com.questdb.ex.HeadersTooLargeException;
+import com.questdb.ex.MalformedHeaderException;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.mp.Job;
@@ -32,6 +34,10 @@ import com.questdb.mp.Sequence;
 import com.questdb.net.ChannelStatus;
 import com.questdb.net.Dispatcher;
 import com.questdb.net.Event;
+import com.questdb.std.ex.DisconnectedChannelException;
+import com.questdb.std.ex.EndOfChannelException;
+import com.questdb.std.ex.SlowReadableChannelException;
+import com.questdb.std.ex.SlowWritableChannelException;
 
 import java.io.IOException;
 

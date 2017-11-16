@@ -23,7 +23,11 @@
 
 package com.questdb.misc;
 
-import com.questdb.ex.FatalError;
+import com.questdb.std.Files;
+import com.questdb.std.Os;
+import com.questdb.std.Unsafe;
+import com.questdb.std.Zip;
+import com.questdb.std.ex.FatalError;
 import com.questdb.std.str.Path;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Rule;

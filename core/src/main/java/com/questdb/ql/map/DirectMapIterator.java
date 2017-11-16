@@ -23,7 +23,7 @@
 
 package com.questdb.ql.map;
 
-import com.questdb.misc.Unsafe;
+import com.questdb.std.Unsafe;
 
 public final class DirectMapIterator implements com.questdb.std.ImmutableIterator<DirectMapEntry> {
     private final DirectMapEntry entry;

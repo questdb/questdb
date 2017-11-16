@@ -23,6 +23,7 @@
 
 package com.questdb.ql;
 
+import com.questdb.common.StorageFacade;
 import com.questdb.std.Sinkable;
 import com.questdb.store.factory.ReaderFactory;
 import com.questdb.store.factory.configuration.JournalMetadata;

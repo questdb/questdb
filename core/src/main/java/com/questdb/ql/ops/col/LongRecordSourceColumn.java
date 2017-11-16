@@ -23,10 +23,10 @@
 
 package com.questdb.ql.ops.col;
 
-import com.questdb.ql.Record;
-import com.questdb.ql.StorageFacade;
+import com.questdb.common.ColumnType;
+import com.questdb.common.Record;
+import com.questdb.common.StorageFacade;
 import com.questdb.ql.ops.AbstractVirtualColumn;
-import com.questdb.store.ColumnType;
 
 public class LongRecordSourceColumn extends AbstractVirtualColumn {
     private final int index;

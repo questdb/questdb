@@ -23,8 +23,8 @@
 
 package com.questdb.std.str;
 
-import com.questdb.misc.Chars;
-import com.questdb.misc.Misc;
+import com.questdb.std.Chars;
+import com.questdb.std.Misc;
 import org.jetbrains.annotations.NotNull;
 
 public abstract class AbstractCharSequence implements CharSequence, CloneableMutable {

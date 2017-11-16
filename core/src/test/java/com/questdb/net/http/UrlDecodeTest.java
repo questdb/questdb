@@ -23,10 +23,10 @@
 
 package com.questdb.net.http;
 
-import com.questdb.misc.Misc;
-import com.questdb.misc.Unsafe;
 import com.questdb.std.CharSequenceObjHashMap;
+import com.questdb.std.Misc;
 import com.questdb.std.ObjectPool;
+import com.questdb.std.Unsafe;
 import com.questdb.std.str.DirectByteCharSequence;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;

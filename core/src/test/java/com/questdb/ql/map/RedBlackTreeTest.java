@@ -23,8 +23,8 @@
 
 package com.questdb.ql.map;
 
-import com.questdb.misc.Rnd;
 import com.questdb.std.RedBlackTree;
+import com.questdb.std.Rnd;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;

@@ -26,11 +26,11 @@ package com.questdb.parser.plaintext;
 import com.questdb.BootstrapEnv;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
-import com.questdb.misc.Unsafe;
 import com.questdb.parser.ImportedColumnMetadata;
 import com.questdb.std.Mutable;
 import com.questdb.std.ObjList;
 import com.questdb.std.ObjectPool;
+import com.questdb.std.Unsafe;
 import com.questdb.std.str.DirectByteCharSequence;
 
 import java.io.Closeable;

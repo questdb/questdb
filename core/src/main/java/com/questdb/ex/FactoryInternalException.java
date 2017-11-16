@@ -23,6 +23,8 @@
 
 package com.questdb.ex;
 
+import com.questdb.std.ex.JournalException;
+
 public class FactoryInternalException extends JournalException {
     public static final FactoryInternalException INSTANCE = new FactoryInternalException();
 }

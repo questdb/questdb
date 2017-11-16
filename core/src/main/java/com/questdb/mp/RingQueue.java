@@ -23,8 +23,8 @@
 
 package com.questdb.mp;
 
-import com.questdb.misc.Unsafe;
 import com.questdb.std.ObjectFactory;
+import com.questdb.std.Unsafe;
 
 public class RingQueue<T> {
     private final int mask;

@@ -24,18 +24,15 @@
 package com.questdb.ql.aggregation;
 
 
-import com.questdb.misc.Misc;
-import com.questdb.ql.*;
+import com.questdb.common.*;
+import com.questdb.ql.AggregatorFunction;
+import com.questdb.ql.CancellationHandler;
+import com.questdb.ql.RecordSource;
 import com.questdb.ql.map.*;
 import com.questdb.ql.ops.AbstractCombinedRecordSource;
-import com.questdb.std.IntList;
-import com.questdb.std.ObjHashSet;
-import com.questdb.std.ObjList;
-import com.questdb.std.Transient;
+import com.questdb.std.*;
 import com.questdb.std.str.CharSink;
 import com.questdb.store.factory.ReaderFactory;
-import com.questdb.store.factory.configuration.RecordColumnMetadata;
-import com.questdb.store.factory.configuration.RecordMetadata;
 
 public class ResampledRecordSource extends AbstractCombinedRecordSource {
     private final static com.questdb.std.ThreadLocal<VirtualColumnTypeResolver> tlAggregationTypeResolver = new VirtualColumnTypeResolver.ResolverThreadLocal();

@@ -23,8 +23,8 @@
 
 package com.questdb.store;
 
-import com.questdb.ex.JournalException;
 import com.questdb.ex.JournalInvalidSymbolValueException;
+import com.questdb.std.ex.JournalException;
 import com.questdb.test.tools.AbstractTest;
 import com.questdb.test.tools.TestUtils;
 import org.junit.After;

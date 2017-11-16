@@ -23,17 +23,15 @@
 
 package com.questdb.ql;
 
+import com.questdb.common.Record;
+import com.questdb.common.RecordCursor;
 import com.questdb.ex.ParserException;
-import com.questdb.misc.BytecodeAssembler;
-import com.questdb.misc.Chars;
-import com.questdb.misc.Rnd;
-import com.questdb.misc.Unsafe;
 import com.questdb.parser.sql.AbstractOptimiserTest;
 import com.questdb.parser.sql.QueryError;
 import com.questdb.ql.join.AsOfJoinRecordSource;
 import com.questdb.ql.join.AsOfPartitionedJoinRecordSource;
 import com.questdb.ql.map.RecordKeyCopierCompiler;
-import com.questdb.std.CharSequenceHashSet;
+import com.questdb.std.*;
 import com.questdb.std.str.StringSink;
 import com.questdb.std.time.DateFormatUtils;
 import com.questdb.store.JournalEntryWriter;

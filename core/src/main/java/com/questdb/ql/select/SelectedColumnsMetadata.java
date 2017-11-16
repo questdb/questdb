@@ -23,17 +23,12 @@
 
 package com.questdb.ql.select;
 
-import com.questdb.misc.Chars;
-import com.questdb.misc.Unsafe;
+import com.questdb.common.AbstractRecordMetadata;
+import com.questdb.common.RecordColumnMetadata;
+import com.questdb.common.RecordMetadata;
 import com.questdb.ql.RecordColumnMetadataImpl;
-import com.questdb.std.CharSequenceHashSet;
-import com.questdb.std.CharSequenceIntHashMap;
-import com.questdb.std.ObjList;
-import com.questdb.std.Transient;
-import com.questdb.store.factory.configuration.AbstractRecordMetadata;
+import com.questdb.std.*;
 import com.questdb.store.factory.configuration.ColumnName;
-import com.questdb.store.factory.configuration.RecordColumnMetadata;
-import com.questdb.store.factory.configuration.RecordMetadata;
 
 import java.util.Arrays;
 

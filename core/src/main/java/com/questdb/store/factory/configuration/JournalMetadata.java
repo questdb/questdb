@@ -23,16 +23,17 @@
 
 package com.questdb.store.factory.configuration;
 
+import com.questdb.common.AbstractRecordMetadata;
+import com.questdb.common.ColumnType;
+import com.questdb.common.JournalRuntimeException;
+import com.questdb.common.PartitionBy;
 import com.questdb.ex.JournalConfigurationException;
-import com.questdb.ex.JournalRuntimeException;
-import com.questdb.misc.Chars;
-import com.questdb.misc.Misc;
-import com.questdb.misc.Unsafe;
 import com.questdb.std.CharSequenceIntHashMap;
+import com.questdb.std.Chars;
+import com.questdb.std.Misc;
+import com.questdb.std.Unsafe;
 import com.questdb.std.str.CharSink;
-import com.questdb.store.ColumnType;
 import com.questdb.store.JournalKey;
-import com.questdb.store.PartitionBy;
 import com.questdb.store.UnstructuredFile;
 
 import java.lang.reflect.Constructor;

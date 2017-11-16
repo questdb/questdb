@@ -23,25 +23,21 @@
 
 package com.questdb.cairo;
 
-import com.questdb.ex.NumericException;
+import com.questdb.common.ColumnType;
+import com.questdb.common.NumericException;
+import com.questdb.common.PartitionBy;
+import com.questdb.common.RecordMetadata;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
-import com.questdb.misc.*;
-import com.questdb.std.CharSequenceHashSet;
-import com.questdb.std.LongList;
-import com.questdb.std.ObjList;
-import com.questdb.std.Sinkable;
+import com.questdb.std.*;
+import com.questdb.std.microtime.DateFormat;
+import com.questdb.std.microtime.DateFormatUtils;
+import com.questdb.std.microtime.DateLocaleFactory;
+import com.questdb.std.microtime.Dates;
 import com.questdb.std.str.ImmutableCharSequence;
 import com.questdb.std.str.LPSZ;
 import com.questdb.std.str.NativeLPSZ;
 import com.questdb.std.str.Path;
-import com.questdb.std.time.DateFormat;
-import com.questdb.std.time.DateFormatUtils;
-import com.questdb.std.time.DateLocaleFactory;
-import com.questdb.std.time.Dates;
-import com.questdb.store.ColumnType;
-import com.questdb.store.PartitionBy;
-import com.questdb.store.factory.configuration.RecordMetadata;
 import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
@@ -799,6 +795,7 @@ public class TableWriter implements Closeable {
                 break;
             case ColumnType.LONG:
             case ColumnType.DATE:
+            case ColumnType.TIMESTAMP:
                 nullers.add(() -> mem1.putLong(Numbers.LONG_NaN));
                 break;
             case ColumnType.SHORT:
@@ -1255,10 +1252,10 @@ public class TableWriter implements Closeable {
                 DateFormatUtils.append0(path, d);
 
                 if (updatePartitionInterval) {
-                    partitionLo = Dates.yearMillis(y, leap);
-                    partitionLo += Dates.monthOfYearMillis(m, leap);
-                    partitionLo += (d - 1) * Dates.DAY_MILLIS;
-                    partitionHi = partitionLo + 24 * Dates.HOUR_MILLIS;
+                    partitionLo = Dates.yearMicros(y, leap);
+                    partitionLo += Dates.monthOfYearMicros(m, leap);
+                    partitionLo += (d - 1) * Dates.DAY_MICROS;
+                    partitionHi = partitionLo + 24 * Dates.HOUR_MICROS;
                 }
                 break;
             case PartitionBy.MONTH:
@@ -1270,9 +1267,9 @@ public class TableWriter implements Closeable {
                 DateFormatUtils.append0(path, m);
 
                 if (updatePartitionInterval) {
-                    partitionLo = Dates.yearMillis(y, leap);
-                    partitionLo += Dates.monthOfYearMillis(m, leap);
-                    partitionHi = partitionLo + Dates.getDaysPerMonth(m, leap) * 24L * Dates.HOUR_MILLIS;
+                    partitionLo = Dates.yearMicros(y, leap);
+                    partitionLo += Dates.monthOfYearMicros(m, leap);
+                    partitionHi = partitionLo + Dates.getDaysPerMonth(m, leap) * 24L * Dates.HOUR_MICROS;
                 }
                 break;
             case PartitionBy.YEAR:
@@ -1280,7 +1277,7 @@ public class TableWriter implements Closeable {
                 leap = Dates.isLeapYear(y);
                 DateFormatUtils.append000(path, y);
                 if (updatePartitionInterval) {
-                    partitionLo = Dates.yearMillis(y, leap);
+                    partitionLo = Dates.yearMicros(y, leap);
                     partitionHi = Dates.addYear(partitionLo, 1);
                 }
                 break;

@@ -25,7 +25,7 @@ package com.questdb.store;
 
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
-import com.questdb.misc.Rnd;
+import com.questdb.std.Rnd;
 import com.questdb.store.factory.Factory;
 import com.questdb.store.factory.configuration.JournalConfigurationBuilder;
 import com.questdb.test.tools.FactoryContainer;

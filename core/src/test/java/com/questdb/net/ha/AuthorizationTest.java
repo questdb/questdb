@@ -23,15 +23,15 @@
 
 package com.questdb.net.ha;
 
-import com.questdb.ex.FatalError;
-import com.questdb.ex.JournalException;
-import com.questdb.ex.JournalNetworkException;
-import com.questdb.ex.NumericException;
+import com.questdb.common.NumericException;
 import com.questdb.model.Quote;
 import com.questdb.net.ha.config.ClientConfig;
 import com.questdb.net.ha.config.ServerConfig;
 import com.questdb.net.ha.config.ServerNode;
 import com.questdb.net.ha.krb.SSOCredentialProvider;
+import com.questdb.std.ex.FatalError;
+import com.questdb.std.ex.JournalException;
+import com.questdb.std.ex.JournalNetworkException;
 import com.questdb.store.Journal;
 import com.questdb.store.JournalListener;
 import com.questdb.store.JournalWriter;

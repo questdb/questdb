@@ -23,10 +23,10 @@
 
 package com.questdb.store;
 
-import com.questdb.ex.JournalException;
-import com.questdb.misc.ByteBuffers;
-import com.questdb.misc.Files;
-import com.questdb.misc.Rnd;
+import com.questdb.std.ByteBuffers;
+import com.questdb.std.Files;
+import com.questdb.std.Rnd;
+import com.questdb.std.ex.JournalException;
 import org.junit.*;
 import org.junit.rules.TemporaryFolder;
 

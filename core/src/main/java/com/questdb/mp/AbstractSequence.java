@@ -23,7 +23,7 @@
 
 package com.questdb.mp;
 
-import com.questdb.misc.Unsafe;
+import com.questdb.std.Unsafe;
 
 class LhsPadding {
     protected long p1, p2, p3, p4, p5, p6, p7;

@@ -23,7 +23,7 @@
 
 package com.questdb.store.query.api;
 
-import com.questdb.ex.JournalException;
+import com.questdb.std.ex.JournalException;
 import com.questdb.std.time.Interval;
 import com.questdb.store.query.OrderedResultSet;
 import com.questdb.store.query.iter.ConcurrentIterator;

@@ -23,7 +23,7 @@
 
 package com.questdb.std.str;
 
-import com.questdb.misc.ByteBuffers;
+import com.questdb.std.ByteBuffers;
 
 import java.io.Closeable;
 import java.io.IOException;

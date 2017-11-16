@@ -23,17 +23,17 @@
 
 package com.questdb.ql.analytic;
 
-import com.questdb.misc.Misc;
+import com.questdb.common.Record;
+import com.questdb.common.RecordColumnMetadata;
+import com.questdb.common.RecordCursor;
+import com.questdb.common.SymbolTable;
 import com.questdb.ql.NullRecord;
-import com.questdb.ql.Record;
-import com.questdb.ql.RecordCursor;
 import com.questdb.ql.map.DirectMap;
 import com.questdb.ql.map.DirectMapValues;
 import com.questdb.ql.map.LongResolver;
 import com.questdb.ql.ops.VirtualColumn;
+import com.questdb.std.Misc;
 import com.questdb.std.str.CharSink;
-import com.questdb.store.SymbolTable;
-import com.questdb.store.factory.configuration.RecordColumnMetadata;
 
 import java.io.Closeable;
 import java.io.IOException;

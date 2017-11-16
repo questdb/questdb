@@ -23,6 +23,7 @@
 
 package com.questdb.ql;
 
+import com.questdb.common.StorageFacade;
 import com.questdb.std.ImmutableIterator;
 import com.questdb.store.Partition;
 

@@ -23,7 +23,7 @@
 
 package com.questdb.ql.ops.gte;
 
-import com.questdb.ql.Record;
+import com.questdb.common.Record;
 import com.questdb.ql.ops.Function;
 import com.questdb.ql.ops.VirtualColumnFactory;
 import com.questdb.ql.ops.gt.DateToStrCmpBaseOperator;

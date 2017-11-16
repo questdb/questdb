@@ -23,7 +23,7 @@
 
 package com.questdb.ql.sort;
 
-import com.questdb.ql.Record;
+import com.questdb.common.Record;
 
 public interface RecordComparator {
     int compare(Record record);

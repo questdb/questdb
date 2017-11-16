@@ -23,6 +23,8 @@
 
 package com.questdb.ex;
 
+import com.questdb.common.JournalRuntimeException;
+
 @SuppressWarnings("ThrowableInstanceNeverThrown")
 public final class ImportSchemaException extends JournalRuntimeException {
     public final static ImportSchemaException INSTANCE = new ImportSchemaException();

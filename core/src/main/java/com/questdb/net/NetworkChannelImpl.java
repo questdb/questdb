@@ -23,8 +23,9 @@
 
 package com.questdb.net;
 
-import com.questdb.misc.ByteBuffers;
-import com.questdb.misc.Net;
+import com.questdb.std.ByteBuffers;
+import com.questdb.std.Net;
+import com.questdb.std.NetworkChannel;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;

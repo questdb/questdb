@@ -23,15 +23,15 @@
 
 package com.questdb.ql.ops;
 
+import com.questdb.common.ColumnType;
+import com.questdb.common.Record;
+import com.questdb.common.RecordColumnMetadata;
 import com.questdb.ql.AggregatorFunction;
-import com.questdb.ql.Record;
 import com.questdb.ql.RecordColumnMetadataImpl;
 import com.questdb.ql.map.DirectMapValues;
 import com.questdb.ql.map.MapRecordValueInterceptor;
 import com.questdb.std.ObjList;
-import com.questdb.store.ColumnType;
 import com.questdb.store.factory.configuration.ColumnMetadata;
-import com.questdb.store.factory.configuration.RecordColumnMetadata;
 
 public final class VwapAggregator extends AbstractBinaryOperator implements AggregatorFunction, MapRecordValueInterceptor {
 

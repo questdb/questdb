@@ -4,11 +4,12 @@ import com.questdb.cairo.*;
 import com.questdb.cairo.pool.ex.EntryLockedException;
 import com.questdb.cairo.pool.ex.EntryUnavailableException;
 import com.questdb.cairo.pool.ex.PoolClosedException;
-import com.questdb.misc.Chars;
-import com.questdb.misc.FilesFacade;
-import com.questdb.misc.FilesFacadeImpl;
+import com.questdb.common.ColumnType;
+import com.questdb.common.PartitionBy;
+import com.questdb.std.Chars;
+import com.questdb.std.FilesFacade;
+import com.questdb.std.FilesFacadeImpl;
 import com.questdb.std.str.LPSZ;
-import com.questdb.store.factory.configuration.JournalStructure;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
@@ -27,7 +28,9 @@ public class WriterPoolTest extends AbstractCairoTest {
 
     @Before
     public void setUpInstance() throws Exception {
-        createTable();
+        try (TableModel model = new TableModel(configuration, "z", PartitionBy.NONE).col("ts", ColumnType.DATE)) {
+            CairoTestUtils.create(model);
+        }
     }
 
     @Test
@@ -227,9 +230,13 @@ public class WriterPoolTest extends AbstractCairoTest {
 
     @Test
     public void testLockUnlock() throws Exception {
+        try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE).col("ts", ColumnType.DATE)) {
+            CairoTestUtils.create(model);
+        }
 
-        CairoTestUtils.createTable(FilesFacadeImpl.INSTANCE, root, new JournalStructure("x").$date("ts").$());
-        CairoTestUtils.createTable(FilesFacadeImpl.INSTANCE, root, new JournalStructure("y").$date("ts").$());
+        try (TableModel model = new TableModel(configuration, "y", PartitionBy.NONE).col("ts", ColumnType.DATE)) {
+            CairoTestUtils.create(model);
+        }
 
         assertWithPool(pool -> {
             TableWriter wx = pool.get("x");
@@ -613,10 +620,6 @@ public class WriterPoolTest extends AbstractCairoTest {
 
     private void assertWithPool(PoolAwareCode code) throws Exception {
         assertWithPool(code, CONFIGURATION);
-    }
-
-    private void createTable() {
-        CairoTestUtils.createTable(FilesFacadeImpl.INSTANCE, root, new JournalStructure("z").$date("ts").$());
     }
 
     private void populate(TableWriter w) {

@@ -23,13 +23,13 @@
 
 package com.questdb.ql.ops;
 
-import com.questdb.ex.NumericException;
+import com.questdb.common.ColumnType;
+import com.questdb.common.NumericException;
+import com.questdb.common.Record;
+import com.questdb.common.StorageFacade;
 import com.questdb.ex.ParserException;
 import com.questdb.parser.sql.QueryError;
-import com.questdb.ql.Record;
-import com.questdb.ql.StorageFacade;
 import com.questdb.std.time.DateFormatUtils;
-import com.questdb.store.ColumnType;
 
 public class DateInOperator extends AbstractVirtualColumn implements Function {
 

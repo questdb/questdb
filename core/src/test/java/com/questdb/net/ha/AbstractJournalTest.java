@@ -23,14 +23,14 @@
 
 package com.questdb.net.ha;
 
-import com.questdb.ex.JournalException;
-import com.questdb.ex.JournalNetworkException;
 import com.questdb.model.Quote;
 import com.questdb.net.ha.comsumer.JournalClientStateConsumer;
 import com.questdb.net.ha.comsumer.JournalDeltaConsumer;
 import com.questdb.net.ha.model.IndexedJournal;
 import com.questdb.net.ha.producer.JournalClientStateProducer;
 import com.questdb.net.ha.producer.JournalDeltaProducer;
+import com.questdb.std.ex.JournalException;
+import com.questdb.std.ex.JournalNetworkException;
 import com.questdb.store.Journal;
 import com.questdb.store.JournalWriter;
 import com.questdb.test.tools.AbstractTest;

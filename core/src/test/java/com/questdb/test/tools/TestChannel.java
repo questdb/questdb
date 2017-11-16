@@ -23,9 +23,9 @@
 
 package com.questdb.test.tools;
 
-import com.questdb.misc.ByteBuffers;
-import com.questdb.misc.Unsafe;
-import com.questdb.net.NetworkChannel;
+import com.questdb.std.ByteBuffers;
+import com.questdb.std.NetworkChannel;
+import com.questdb.std.Unsafe;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;

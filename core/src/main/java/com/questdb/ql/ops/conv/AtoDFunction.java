@@ -23,13 +23,13 @@
 
 package com.questdb.ql.ops.conv;
 
-import com.questdb.ex.NumericException;
-import com.questdb.misc.Numbers;
-import com.questdb.ql.Record;
+import com.questdb.common.ColumnType;
+import com.questdb.common.NumericException;
+import com.questdb.common.Record;
 import com.questdb.ql.ops.AbstractUnaryOperator;
 import com.questdb.ql.ops.Function;
 import com.questdb.ql.ops.VirtualColumnFactory;
-import com.questdb.store.ColumnType;
+import com.questdb.std.Numbers;
 
 public class AtoDFunction extends AbstractUnaryOperator {
 

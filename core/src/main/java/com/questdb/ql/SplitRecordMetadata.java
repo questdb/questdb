@@ -23,10 +23,10 @@
 
 package com.questdb.ql;
 
-import com.questdb.misc.Unsafe;
-import com.questdb.store.factory.configuration.AbstractRecordMetadata;
-import com.questdb.store.factory.configuration.RecordColumnMetadata;
-import com.questdb.store.factory.configuration.RecordMetadata;
+import com.questdb.common.AbstractRecordMetadata;
+import com.questdb.common.RecordColumnMetadata;
+import com.questdb.common.RecordMetadata;
+import com.questdb.std.Unsafe;
 
 public class SplitRecordMetadata extends AbstractRecordMetadata {
     private final int columnCount;

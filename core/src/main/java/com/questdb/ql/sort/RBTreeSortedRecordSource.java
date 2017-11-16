@@ -23,17 +23,22 @@
 
 package com.questdb.ql.sort;
 
-import com.questdb.misc.Misc;
-import com.questdb.misc.Unsafe;
-import com.questdb.ql.*;
+import com.questdb.common.Record;
+import com.questdb.common.RecordCursor;
+import com.questdb.common.RecordMetadata;
+import com.questdb.common.StorageFacade;
+import com.questdb.ql.CancellationHandler;
+import com.questdb.ql.RecordList;
+import com.questdb.ql.RecordSource;
 import com.questdb.ql.join.hash.FakeRecord;
 import com.questdb.ql.map.MapUtils;
 import com.questdb.ql.ops.AbstractRecordSource;
 import com.questdb.std.MemoryPages;
+import com.questdb.std.Misc;
 import com.questdb.std.Mutable;
+import com.questdb.std.Unsafe;
 import com.questdb.std.str.CharSink;
 import com.questdb.store.factory.ReaderFactory;
-import com.questdb.store.factory.configuration.RecordMetadata;
 
 import java.io.Closeable;
 

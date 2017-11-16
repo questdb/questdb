@@ -23,8 +23,9 @@
 
 package com.questdb.ql;
 
-import com.questdb.store.SymbolTable;
-import com.questdb.store.factory.configuration.RecordMetadata;
+import com.questdb.common.RecordMetadata;
+import com.questdb.common.StorageFacade;
+import com.questdb.common.SymbolTable;
 
 public class MasterStorageFacade implements StorageFacade {
     private RecordMetadata metadata;

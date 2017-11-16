@@ -23,7 +23,7 @@
 
 package com.questdb.ex;
 
-import com.questdb.store.ColumnType;
+import com.questdb.common.ColumnType;
 
 public class WrongParameterTypeException extends RuntimeException {
     public WrongParameterTypeException(String name, int expected, int actual) {

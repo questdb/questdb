@@ -23,10 +23,10 @@
 
 package com.questdb.std.str;
 
-import com.questdb.misc.Chars;
-import com.questdb.misc.Files;
-import com.questdb.misc.Os;
-import com.questdb.misc.Unsafe;
+import com.questdb.std.Chars;
+import com.questdb.std.Files;
+import com.questdb.std.Os;
+import com.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;

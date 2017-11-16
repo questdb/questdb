@@ -24,11 +24,11 @@
 package com.questdb.parser.sql;
 
 import com.questdb.ex.ParserException;
-import com.questdb.misc.Chars;
 import com.questdb.model.Quote;
 import com.questdb.parser.sql.model.ExprNode;
 import com.questdb.parser.sql.model.IntrinsicModel;
 import com.questdb.parser.sql.model.IntrinsicValue;
+import com.questdb.std.Chars;
 import com.questdb.std.Lexer;
 import com.questdb.std.ObjectPool;
 import com.questdb.store.JournalWriter;

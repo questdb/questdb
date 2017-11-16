@@ -23,7 +23,7 @@
 
 package com.questdb.ql.lambda;
 
-import com.questdb.ql.Record;
+import com.questdb.common.Record;
 import com.questdb.ql.RecordSource;
 import com.questdb.ql.RowSource;
 import com.questdb.ql.ops.VirtualColumn;

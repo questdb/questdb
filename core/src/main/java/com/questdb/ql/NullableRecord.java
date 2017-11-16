@@ -23,6 +23,7 @@
 
 package com.questdb.ql;
 
+import com.questdb.common.Record;
 import com.questdb.std.DirectInputStream;
 
 import java.io.OutputStream;

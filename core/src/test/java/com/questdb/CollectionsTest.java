@@ -23,7 +23,6 @@
 
 package com.questdb;
 
-import com.questdb.misc.Rnd;
 import com.questdb.std.*;
 import org.junit.Assert;
 import org.junit.Rule;

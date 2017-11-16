@@ -23,7 +23,7 @@
 
 package com.questdb.net.ha;
 
-import com.questdb.ex.JournalNetworkException;
+import com.questdb.std.ex.JournalNetworkException;
 
 import java.nio.channels.WritableByteChannel;
 

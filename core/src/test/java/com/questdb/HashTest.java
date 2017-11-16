@@ -23,10 +23,10 @@
 
 package com.questdb;
 
-import com.questdb.misc.Hash;
-import com.questdb.misc.Rnd;
-import com.questdb.misc.Unsafe;
+import com.questdb.std.Hash;
 import com.questdb.std.IntHashSet;
+import com.questdb.std.Rnd;
+import com.questdb.std.Unsafe;
 import org.junit.Assert;
 import org.junit.Test;
 

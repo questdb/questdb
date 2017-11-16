@@ -27,14 +27,14 @@ public class TimeZoneRulesImplTest {
             zoneRules.add(new TimeZoneRulesImpl(z, zone.getRules()));
         }
 
-        long millis = Dates.toMillis(1900, 1, 1, 0, 0);
+        long micros = Dates.toMillis(1900, 1, 1, 0, 0);
         long deadline = Dates.toMillis(2115, 12, 31, 0, 0);
 
-        while (millis < deadline) {
-            int y = Dates.getYear(millis);
+        while (micros < deadline) {
+            int y = Dates.getYear(micros);
             boolean leap = Dates.isLeapYear(y);
-            int m = Dates.getMonthOfYear(millis, y, leap);
-            int d = Dates.getDayOfMonth(millis, y, m, leap);
+            int m = Dates.getMonthOfYear(micros, y, leap);
+            int d = Dates.getDayOfMonth(micros, y, m, leap);
 
             LocalDateTime dt = LocalDateTime.of(y, m, d, 0, 0);
 
@@ -46,23 +46,23 @@ public class TimeZoneRulesImplTest {
 
                 long expected = zdt.getOffset().getTotalSeconds();
                 // find out how much algo added to datetime itself
-                long changed = Dates.toMillis(zdt.getYear(), zdt.getMonthValue(), zdt.getDayOfMonth(), zdt.getHour(), zdt.getMinute()) + zdt.getSecond() * 1000;
+                long changed = Dates.toMillis(zdt.getYear(), zdt.getMonthValue(), zdt.getDayOfMonth(), zdt.getHour(), zdt.getMinute()) + zdt.getSecond() * Dates.SECOND_MILLIS;
                 // add any extra time
-                expected += (changed - millis) / 1000;
+                expected += (changed - micros) / Dates.SECOND_MILLIS;
 
-                long offset = rules.getOffset(millis, y, leap);
+                long offset = rules.getOffset(micros, y, leap);
 
                 try {
-                    Assert.assertEquals(expected, offset / 1000);
+                    Assert.assertEquals(expected, offset / Dates.SECOND_MILLIS);
                 } catch (Throwable e) {
-                    System.out.println(zone.getId() + "; " + zdt + "; " + Dates.toString(millis + offset));
+                    System.out.println(zone.getId() + "; " + zdt + "; " + Dates.toString(micros + offset));
                     System.out.println("e: " + expected + "; a: " + offset);
                     System.out.println(dt);
-                    System.out.println(Dates.toString(millis));
+                    System.out.println(Dates.toString(micros));
                     throw e;
                 }
             }
-            millis += Dates.DAY_MILLIS;
+            micros += Dates.DAY_MILLIS;
         }
     }
 

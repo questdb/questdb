@@ -30,13 +30,13 @@ import com.questdb.cairo.TableWriter;
 import com.questdb.cairo.pool.ex.EntryLockedException;
 import com.questdb.cairo.pool.ex.EntryUnavailableException;
 import com.questdb.cairo.pool.ex.PoolClosedException;
+import com.questdb.common.PoolConstants;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
-import com.questdb.misc.Misc;
-import com.questdb.misc.Unsafe;
 import com.questdb.std.ConcurrentHashMap;
+import com.questdb.std.Misc;
+import com.questdb.std.Unsafe;
 import com.questdb.std.str.Path;
-import com.questdb.store.factory.FactoryConstants;
 
 import java.util.Iterator;
 
@@ -203,7 +203,7 @@ public class WriterPool extends AbstractPool implements ResourcePool<TableWriter
 
         // try to change owner
         if ((Unsafe.cas(e, ENTRY_OWNER, UNALLOCATED, thread) || Unsafe.cas(e, ENTRY_OWNER, thread, thread))) {
-            closeWriter(thread, e, PoolListener.EV_LOCK_CLOSE, FactoryConstants.CR_NAME_LOCK);
+            closeWriter(thread, e, PoolListener.EV_LOCK_CLOSE, PoolConstants.CR_NAME_LOCK);
             return lockAndNotify(thread, e, tableName);
         }
 
@@ -265,6 +265,18 @@ public class WriterPool extends AbstractPool implements ResourcePool<TableWriter
         LOG.info().$("closed").$();
     }
 
+    private void closeWriter(long thread, Entry e, short ev, int reason) {
+        PooledTableWriter w = e.writer;
+        if (w != null) {
+            CharSequence name = e.writer.getName();
+            w.goodby();
+            w.close();
+            e.writer = null;
+            LOG.info().$("closed '").$(name).$("' [reason=").$(PoolConstants.closeReasonText(reason)).$(", by=").$(thread).$(']').$();
+            notifyListener(thread, name, ev);
+        }
+    }
+
     @Override
     protected boolean releaseAll(long deadline) {
         long thread = Thread.currentThread().getId();
@@ -272,9 +284,9 @@ public class WriterPool extends AbstractPool implements ResourcePool<TableWriter
         final int reason;
 
         if (deadline == Long.MAX_VALUE) {
-            reason = FactoryConstants.CR_POOL_CLOSE;
+            reason = PoolConstants.CR_POOL_CLOSE;
         } else {
-            reason = FactoryConstants.CR_IDLE;
+            reason = PoolConstants.CR_IDLE;
         }
 
         Iterator<Entry> iterator = entries.values().iterator();
@@ -305,18 +317,6 @@ public class WriterPool extends AbstractPool implements ResourcePool<TableWriter
             }
         }
         return removed;
-    }
-
-    private void closeWriter(long thread, Entry e, short ev, int reason) {
-        PooledTableWriter w = e.writer;
-        if (w != null) {
-            CharSequence name = e.writer.getName();
-            w.goodby();
-            w.close();
-            e.writer = null;
-            LOG.info().$("closed '").$(name).$("' [reason=").$(FactoryConstants.closeReasonText(reason)).$(", by=").$(thread).$(']').$();
-            notifyListener(thread, name, ev);
-        }
     }
 
     int countFreeWriters() {

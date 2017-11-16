@@ -23,11 +23,11 @@
 
 package com.questdb.ql.select;
 
-import com.questdb.ql.StorageFacade;
+import com.questdb.common.RecordMetadata;
+import com.questdb.common.StorageFacade;
+import com.questdb.common.SymbolTable;
 import com.questdb.std.ObjList;
 import com.questdb.std.Transient;
-import com.questdb.store.SymbolTable;
-import com.questdb.store.factory.configuration.RecordMetadata;
 
 public class SelectedColumnsStorageFacade implements StorageFacade {
 

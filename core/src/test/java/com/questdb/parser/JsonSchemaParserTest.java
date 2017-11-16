@@ -1,10 +1,10 @@
 package com.questdb.parser;
 
 import com.questdb.BootstrapEnv;
-import com.questdb.misc.Unsafe;
 import com.questdb.parser.json.JsonException;
 import com.questdb.parser.json.JsonLexer;
 import com.questdb.std.ObjList;
+import com.questdb.std.Unsafe;
 import com.questdb.std.time.DateFormatFactory;
 import com.questdb.std.time.DateLocaleFactory;
 import com.questdb.std.time.TimeZoneRuleFactory;

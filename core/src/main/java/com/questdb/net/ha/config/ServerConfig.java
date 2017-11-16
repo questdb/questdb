@@ -23,9 +23,9 @@
 
 package com.questdb.net.ha.config;
 
-import com.questdb.ex.JournalNetworkException;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
+import com.questdb.std.ex.JournalNetworkException;
 
 import java.io.IOException;
 import java.net.*;
