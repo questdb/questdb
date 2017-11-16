@@ -66,6 +66,9 @@ public class DateFormatCompiler {
     static final int OP_TIME_ZONE_ISO_8601_1 = 26;
     static final int OP_TIME_ZONE_ISO_8601_2 = 27;
     static final int OP_TIME_ZONE_ISO_8601_3 = 28;
+    static final int OP_MICROS_ONE_DIGIT = 39;
+    static final int OP_MICROS_THREE_DIGITS = 49;
+    static final int OP_MICROS_GREEDY = 149;
     static final int OP_YEAR_GREEDY = 132;
     static final int OP_MONTH_GREEDY = 135;
     static final int OP_DAY_GREEDY = 139;
@@ -91,6 +94,7 @@ public class DateFormatCompiler {
     private static final int FA_YEAR = 7;
     private static final int FA_LEAP = 8;
     private static final int FA_DAY_OF_WEEK = 10;
+    private static final int FA_MILLIS_MICROS = 11;
     private static final int P_INPUT_STR = 1;
     private static final int P_LO = 2;
     private static final int P_HI = 3;
@@ -108,6 +112,7 @@ public class DateFormatCompiler {
     private static final int LOCAL_OFFSET = 16;
     private static final int LOCAL_HOUR_TYPE = 18;
     private static final int LOCAL_ERA = 19;
+    private static final int LOCAL_MICROS = 20;
     private static final int FORMAT_METHOD_STACK_START = 6;
     private final Lexer lexer = new Lexer();
     private final BytecodeAssembler asm = new BytecodeAssembler();
@@ -183,7 +188,37 @@ public class DateFormatCompiler {
         asm.istore(LOCAL_POS);
     }
 
-    private void assembleFormatMethod(IntList ops, ObjList<String> delimiters, int getWeekdayIndex, int getShortWeekdayIndex, int getMonthIndex, int getShortMonthIndex, int appendEraIndex, int appendAmPmIndex, int appendHour12Index, int appendHour12PaddedIndex, int appendHour121Index, int appendHour121PaddedIndex, int getYearIndex, int isLeapYearIndex, int getMonthOfYearIndex, int getDayOfMonthIndex, int getHourOfDayIndex, int getMinuteOfHourIndex, int getSecondOfMinuteIndex, int getMillisOfSecondIndex, int getDayOfWeekIndex, int append000Index, int append00Index, int append0Index, int sinkPutIntIndex, int sinkPutStrIndex, int sinkPutChrIndex, int formatNameIndex, int formatSigIndex) {
+    private void assembleFormatMethod(
+            IntList ops,
+            ObjList<String> delimiters,
+            int getWeekdayIndex,
+            int getShortWeekdayIndex,
+            int getMonthIndex,
+            int getShortMonthIndex,
+            int appendEraIndex,
+            int appendAmPmIndex,
+            int appendHour12Index,
+            int appendHour12PaddedIndex,
+            int appendHour121Index,
+            int appendHour121PaddedIndex,
+            int getYearIndex,
+            int isLeapYearIndex,
+            int getMonthOfYearIndex,
+            int getDayOfMonthIndex,
+            int getHourOfDayIndex,
+            int getMinuteOfHourIndex,
+            int getSecondOfMinuteIndex,
+            int getMillisOfSecondIndex,
+            int getMicrosOfSecondIndex,
+            int getDayOfWeekIndex,
+            int append000Index,
+            int append00Index,
+            int append0Index,
+            int sinkPutIntIndex,
+            int sinkPutStrIndex,
+            int sinkPutChrIndex,
+            int formatNameIndex,
+            int formatSigIndex) {
         int formatAttributes = computeFormatAttributes(ops);
         asm.startMethod(formatNameIndex, formatSigIndex, 6, FORMAT_METHOD_STACK_START + Integer.bitCount(formatAttributes));
 
@@ -197,6 +232,7 @@ public class DateFormatCompiler {
                 getMinuteOfHourIndex,
                 getSecondOfMinuteIndex,
                 getMillisOfSecondIndex,
+                getMicrosOfSecondIndex,
                 getDayOfWeekIndex
         );
 
@@ -209,6 +245,19 @@ public class DateFormatCompiler {
                     asm.iload(fmtAttributeIndex[FA_HOUR]);
                     asm.aload(FA_LOCAL_LOCALE);
                     asm.invokeStatic(appendAmPmIndex);
+                    break;
+                // MICROS
+                case DateFormatCompiler.OP_MICROS_ONE_DIGIT:
+                case DateFormatCompiler.OP_MICROS_GREEDY:
+                    asm.aload(FA_LOCAL_SINK);
+                    asm.iload(fmtAttributeIndex[FA_MILLIS_MICROS]);
+                    asm.invokeInterface(sinkPutIntIndex, 1);
+                    asm.pop();
+                    break;
+                case DateFormatCompiler.OP_MICROS_THREE_DIGITS:
+                    asm.aload(FA_LOCAL_SINK);
+                    asm.iload(fmtAttributeIndex[FA_MILLIS_MICROS]);
+                    asm.invokeStatic(append00Index);
                     break;
                 // MILLIS
                 case DateFormatCompiler.OP_MILLIS_ONE_DIGIT:
@@ -445,7 +494,18 @@ public class DateFormatCompiler {
         asm.endMethod();
     }
 
-    private void assembleFormatMethodStack(int formatAttributes, int getYearIndex, int isLeapYearIndex, int getMonthOfYearIndex, int getDayOfMonthIndex, int getHourOfDayIndex, int getMinuteOfHourIndex, int getSecondOfMinuteIndex, int getMillisOfSecondIndex, int getDayOfWeekIndex) {
+    private void assembleFormatMethodStack(
+            int formatAttributes,
+            int getYearIndex,
+            int isLeapYearIndex,
+            int getMonthOfYearIndex,
+            int getDayOfMonthIndex,
+            int getHourOfDayIndex,
+            int getMinuteOfHourIndex,
+            int getSecondOfMinuteIndex,
+            int getMillisOfSecondIndex,
+            int getMicrosOfSecondIndex,
+            int getDayOfWeekIndex) {
         int index = FORMAT_METHOD_STACK_START;
         if (invokeConvertMillis(formatAttributes, FA_YEAR, getYearIndex, index)) {
             fmtAttributeIndex[FA_YEAR] = index++;
@@ -493,6 +553,10 @@ public class DateFormatCompiler {
             fmtAttributeIndex[FA_SECOND_MILLIS] = index++;
         }
 
+        if (invokeConvertMillis(formatAttributes, FA_MILLIS_MICROS, getMicrosOfSecondIndex, index)) {
+            fmtAttributeIndex[FA_MILLIS_MICROS] = index++;
+        }
+
         if (invokeConvertMillis(formatAttributes, FA_DAY_OF_WEEK, getDayOfWeekIndex, index)) {
             fmtAttributeIndex[FA_DAY_OF_WEEK] = index;
         }
@@ -503,7 +567,7 @@ public class DateFormatCompiler {
         int stackState = computeParseMethodStack(ops);
 
         // public long parse(CharSequence in, int lo, int hi, DateLocale locale) throws NumericException
-        asm.startMethod(parseNameIndex, parseSigIndex, 13, 20);
+        asm.startMethod(parseNameIndex, parseSigIndex, 14, 21);
 
         // define stack variables
         // when pattern is not used a default value must be assigned
@@ -575,6 +639,11 @@ public class DateFormatCompiler {
             asm.lstore(LOCAL_TEMP_LONG);
         }
 
+        if ((stackState & (1 << LOCAL_MICROS)) == 0) {
+            asm.iconst(0);
+            asm.istore(LOCAL_MICROS);
+        }
+
         frameOffsets.clear();
         for (int i = 0, n = ops.size(); i < n; i++) {
             int op = ops.getQuick(i);
@@ -590,9 +659,30 @@ public class DateFormatCompiler {
                     asm.istore(LOCAL_HOUR_TYPE);
                     addTempToPos(decodeLenIndex);
                     break;
+                case OP_MICROS_ONE_DIGIT:
+                    // assertRemaining(pos, hi);
+                    // millis = Numbers.parseInt(in, pos, ++pos);
+                    stackState &= ~(1 << LOCAL_MICROS);
+                    parseDigits(assertRemainingIndex, parseIntIndex, 1, LOCAL_MICROS);
+                    break;
+                case OP_MICROS_THREE_DIGITS:
+                    // assertRemaining(pos + 2, hi);
+                    // millis = Numbers.parseInt(in, pos, pos += 3);
+                    stackState &= ~(1 << LOCAL_MICROS);
+                    parseDigits(assertRemainingIndex, parseIntIndex, 3, LOCAL_MICROS);
+                    break;
+                case OP_MICROS_GREEDY:
+                    // l = Numbers.parseIntSafely(in, pos, hi);
+                    // millis = Numbers.decodeInt(l);
+                    // pos += Numbers.decodeLen(l);
+                    stackState &= ~(1 << LOCAL_MICROS);
+                    stackState &= ~(1 << LOCAL_TEMP_LONG);
+                    invokeParseIntSafelyAndStore(parseIntSafelyIndex, decodeLenIndex, decodeIntIndex, LOCAL_MICROS);
+                    break;
                 case OP_MILLIS_ONE_DIGIT:
                     // assertRemaining(pos, hi);
                     // millis = Numbers.parseInt(in, pos, ++pos);
+                    stackState &= ~(1 << LOCAL_MILLIS);
                     parseDigits(assertRemainingIndex, parseIntIndex, 1, LOCAL_MILLIS);
                     break;
                 case OP_MILLIS_THREE_DIGITS:
@@ -1072,6 +1162,7 @@ public class DateFormatCompiler {
         asm.iload(LOCAL_MINUTE);
         asm.iload(LOCAL_SECOND);
         asm.iload(LOCAL_MILLIS);
+        asm.iload(LOCAL_MICROS);
         asm.iload(LOCAL_TIMEZONE);
         asm.lload(LOCAL_OFFSET);
         asm.iload(LOCAL_HOUR_TYPE);
@@ -1099,7 +1190,7 @@ public class DateFormatCompiler {
                     asm.full_frame(offset - start);
                     // 18 local variables
                     int countPos = asm.position();
-                    int count = 18;
+                    int count = 19; // TOTAL COUNT of local variables
                     asm.putShort(0);
 
                     asm.putITEM_Object(thisClassIndex);
@@ -1107,7 +1198,6 @@ public class DateFormatCompiler {
                     asm.putITEM_Integer();
                     asm.putITEM_Integer();
                     asm.putITEM_Object(dateLocaleClassIndex);
-
 
                     if ((ss & (1 << LOCAL_DAY)) == 0) {
                         asm.putITEM_Integer();
@@ -1154,7 +1244,6 @@ public class DateFormatCompiler {
                     // LOCAL_POS is always set
                     asm.putITEM_Integer();
 
-
                     if ((ss & (1 << LOCAL_TEMP_LONG)) == 0) {
                         asm.putITEM_Long();
                     } else {
@@ -1173,6 +1262,13 @@ public class DateFormatCompiler {
                     asm.putITEM_Integer();
 
                     if ((ss & (1 << LOCAL_ERA)) == 0) {
+                        asm.putITEM_Integer();
+                    } else {
+                        asm.putITEM_Top();
+                    }
+
+                    // MICROS
+                    if ((ss & (1 << LOCAL_MICROS)) == 0) {
                         asm.putITEM_Integer();
                     } else {
                         asm.putITEM_Top();
@@ -1231,7 +1327,7 @@ public class DateFormatCompiler {
         int assertNoTailIndex = asm.poolMethod(DateFormatUtils.class, "assertNoTail", "(II)V");
         int assertStringIndex = asm.poolMethod(DateFormatUtils.class, "assertString", "(Ljava/lang/CharSequence;ILjava/lang/CharSequence;II)I");
         int assertCharIndex = asm.poolMethod(DateFormatUtils.class, "assertChar", "(CLjava/lang/CharSequence;II)V");
-        int computeMillisIndex = asm.poolMethod(DateFormatUtils.class, "compute", "(Lcom/questdb/std/microtime/DateLocale;IIIIIIIIIJI)J");
+        int computeMillisIndex = asm.poolMethod(DateFormatUtils.class, "compute", "(Lcom/questdb/std/microtime/DateLocale;IIIIIIIIIIJI)J");
         int adjustYearIndex = asm.poolMethod(DateFormatUtils.class, "adjustYear", "(I)I");
         int parseYearGreedyIndex = asm.poolMethod(DateFormatUtils.class, "parseYearGreedy", "(Ljava/lang/CharSequence;II)J");
         int appendEraIndex = asm.poolMethod(DateFormatUtils.class, "appendEra", "(Lcom/questdb/std/str/CharSink;ILcom/questdb/std/microtime/DateLocale;)V");
@@ -1253,6 +1349,7 @@ public class DateFormatCompiler {
         int getMinuteOfHourIndex = asm.poolMethod(Dates.class, "getMinuteOfHour", "(J)I");
         int getSecondOfMinuteIndex = asm.poolMethod(Dates.class, "getSecondOfMinute", "(J)I");
         int getMillisOfSecondIndex = asm.poolMethod(Dates.class, "getMillisOfSecond", "(J)I");
+        int getMicrosOfSecondIndex = asm.poolMethod(Dates.class, "getMicrosOfSecond", "(J)I");
         int getDayOfWeekIndex = asm.poolMethod(Dates.class, "getDayOfWeekSundayFirst", "(J)I");
 
         int sinkPutIntIndex = asm.poolInterfaceMethod(CharSink.class, "put", "(I)Lcom/questdb/std/str/CharSink;");
@@ -1341,6 +1438,7 @@ public class DateFormatCompiler {
                 getMinuteOfHourIndex,
                 getSecondOfMinuteIndex,
                 getMillisOfSecondIndex,
+                getMicrosOfSecondIndex,
                 getDayOfWeekIndex,
                 append000Index,
                 append00Index,
@@ -1365,6 +1463,12 @@ public class DateFormatCompiler {
                 // AM/PM
                 case DateFormatCompiler.OP_AM_PM:
                     attributes |= (1 << FA_HOUR);
+                    break;
+                // MICROS
+                case DateFormatCompiler.OP_MICROS_ONE_DIGIT:
+                case DateFormatCompiler.OP_MICROS_GREEDY:
+                case DateFormatCompiler.OP_MICROS_THREE_DIGITS:
+                    attributes |= (1 << FA_MILLIS_MICROS);
                     break;
                 // MILLIS
                 case DateFormatCompiler.OP_MILLIS_ONE_DIGIT:
@@ -1453,6 +1557,13 @@ public class DateFormatCompiler {
             switch (ops.getQuick(i)) {
                 case OP_AM_PM:
                     result |= (1 << LOCAL_TEMP_LONG);
+                    break;
+                case OP_MICROS_GREEDY:
+                    result |= (1 << LOCAL_TEMP_LONG);
+                    // fall through
+                case OP_MICROS_ONE_DIGIT:
+                case OP_MICROS_THREE_DIGITS:
+                    result |= (1 << LOCAL_MICROS);
                     break;
                 case OP_MILLIS_GREEDY:
                     result |= (1 << LOCAL_TEMP_LONG);
@@ -1593,6 +1704,8 @@ public class DateFormatCompiler {
                 return OP_SECOND_GREEDY;
             case OP_MILLIS_ONE_DIGIT:
                 return OP_MILLIS_GREEDY;
+            case OP_MICROS_ONE_DIGIT:
+                return OP_MICROS_GREEDY;
             default:
                 return oldOp;
         }
@@ -1701,5 +1814,7 @@ public class DateFormatCompiler {
         addOp("x", OP_TIME_ZONE_ISO_8601_1);
         addOp("xx", OP_TIME_ZONE_ISO_8601_2);
         addOp("xxx", OP_TIME_ZONE_ISO_8601_3);
+        addOp("N", OP_MICROS_ONE_DIGIT);
+        addOp("NNN", OP_MICROS_THREE_DIGITS);
     }
 }

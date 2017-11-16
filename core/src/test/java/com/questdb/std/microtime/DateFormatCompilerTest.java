@@ -15,6 +15,7 @@ public class DateFormatCompilerTest {
     private static final DateFormatCompiler compiler = new DateFormatCompiler();
     private static final DateLocale defaultLocale = DateLocaleFactory.INSTANCE.getDateLocale("en-GB");
     private final static StringSink sink = new StringSink();
+    private final static DateFormat REFERENCE = compiler.compile("yyyy-MM-ddTHH:mm:ss.SSSNNNz");
 
     @BeforeClass
     public static void setUp() throws Exception {
@@ -214,6 +215,14 @@ public class DateFormatCompilerTest {
         assertFormat("0", "K", "2017-03-31T12:00:00.000Z");
         assertFormat("3", "K", "2017-03-31T03:00:00.000Z");
         assertFormat("11", "K", "2017-03-31T11:59:59.999Z");
+    }
+
+    @Test
+    public void testFormatMicros() throws Exception {
+        assertFormat("678-15", "S-N", "1978-03-19T21:20:45.678Z", 15);
+        assertFormat("678.025", "S.NNN", "1978-03-19T21:20:45.678Z", 25);
+        assertFormat("1978, .025", "yyyy, .NNN", "1978-03-19T21:20:45.678Z", 25);
+        assertFormat("1978, .25 678", "yyyy, .N SSS", "1978-03-19T21:20:45.678Z", 25);
     }
 
     @Test
@@ -488,6 +497,23 @@ public class DateFormatCompilerTest {
     }
 
     @Test
+    public void testMicrosGreedy() throws Exception {
+        assertMicros("yyyy N", "2017-01-01T00:00:00.000055Z", "2017 55");
+        assertMicros("N dd-MM-yyyy", "2014-10-03T00:00:00.000314Z", "314 03-10-2014");
+    }
+
+    @Test
+    public void testMicrosOneDigit() throws Exception {
+        assertMicros("mmNHH MMy", "2010-09-01T13:55:00.000002Z", "55213 0910");
+        assertMicros("NHH dd-MM-yyyy", "2014-10-03T14:00:00.000003Z", "314 03-10-2014");
+    }
+
+    @Test
+    public void testMicrosThreeDigit() throws Exception {
+        assertMicros("mmNNNHH MMy", "2010-09-01T13:55:00.000015Z", "5501513 0910");
+    }
+
+    @Test
     public void testMillisGreedy() throws Exception {
         assertThat("ddMMy HH:mm:ss.S", "1978-03-19T21:20:45.678Z", "190378 21:20:45.678");
     }
@@ -500,6 +526,7 @@ public class DateFormatCompilerTest {
     @Test
     public void testMillisOneDigit() throws Exception {
         assertThat("mmsSHH MMy", "2010-09-01T13:55:03.002Z", "553213 0910");
+        assertMicros("SHH dd-MM-yyyy", "2014-10-03T14:00:00.003000Z", "314 03-10-2014");
     }
 
     @Test
@@ -680,12 +707,26 @@ public class DateFormatCompilerTest {
     }
 
     private void assertFormat(String expected, String pattern, String date) throws NumericException {
+        assertFormat(expected, pattern, date, 0);
+    }
+
+    private void assertFormat(String expected, String pattern, String date, int mic) throws NumericException {
         sink.clear();
-        get(pattern).format(DateFormatUtils.parseDateTime(date), defaultLocale, "GMT", sink);
+        long micros = DateFormatUtils.parseDateTime(date) + mic;
+        get(pattern).format(micros, defaultLocale, "GMT", sink);
         TestUtils.assertEquals(expected, sink);
         sink.clear();
-        compiler.compile(pattern, false).format(DateFormatUtils.parseDateTime(date), defaultLocale, "GMT", sink);
+        compiler.compile(pattern, false).format(micros, defaultLocale, "GMT", sink);
         TestUtils.assertEquals(expected, sink);
+    }
+
+    private void assertMicros(String pattern, String expected, String input) throws NumericException {
+        sink.clear();
+        REFERENCE.format(get(pattern).parse(input, defaultLocale), defaultLocale, "Z", sink);
+        TestUtils.assertEquals(expected, sink);
+
+        sink.clear();
+        REFERENCE.format(compiler.compile(pattern).parse(input, defaultLocale), defaultLocale, "Z", sink);
     }
 
     private void assertThat(String pattern, String expected, String input, CharSequence localeId) throws NumericException {

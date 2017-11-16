@@ -65,8 +65,7 @@ public class TimeZoneRulesImpl implements TimeZoneRules {
             LocalDateTime dt = savingsLocalTransitions[i];
 
             historicTransitions.add(Dates.toMillis(dt.getYear(), dt.getMonthValue(), dt.getDayOfMonth(), dt.getHour(), dt.getMinute()) +
-                    dt.getSecond() * 1000 +
-                    dt.getNano() / 1000);
+                    dt.getSecond() * 1000 + dt.getNano() / 1000000);
         }
         cutoffTransition = historicTransitions.getLast();
         historyOverlapCheckCutoff = historicTransitions.size() - 1;

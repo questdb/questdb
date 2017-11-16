@@ -28,6 +28,7 @@ public class GenericDateFormat extends AbstractDateFormat {
         int dayOfWeek = -1;
         boolean leap = false;
         int millis = -1;
+        int micros0 = -1;
 
         for (int i = 0, n = compiledOps.size(); i < n; i++) {
             int op = compiledOps.getQuick(i);
@@ -39,6 +40,22 @@ public class GenericDateFormat extends AbstractDateFormat {
                         hour = Dates.getHourOfDay(micros);
                     }
                     DateFormatUtils.appendAmPm(sink, hour, locale);
+                    break;
+
+                // MICROS
+                case DateFormatCompiler.OP_MICROS_ONE_DIGIT:
+                case DateFormatCompiler.OP_MICROS_GREEDY:
+                    if (micros0 == -1) {
+                        micros0 = Dates.getMicrosOfSecond(micros);
+                    }
+                    sink.put(micros0);
+                    break;
+
+                case DateFormatCompiler.OP_MICROS_THREE_DIGITS:
+                    if (micros0 == -1) {
+                        micros0 = Dates.getMicrosOfSecond(micros);
+                    }
+                    append00(sink, micros0);
                     break;
 
                 // MILLIS
@@ -320,6 +337,7 @@ public class GenericDateFormat extends AbstractDateFormat {
         int minute = 0;
         int second = 0;
         int millis = 0;
+        int micros = 0;
         int era = 1;
         int timezone = -1;
         long offset = Long.MIN_VALUE;
@@ -336,6 +354,23 @@ public class GenericDateFormat extends AbstractDateFormat {
                 case DateFormatCompiler.OP_AM_PM:
                     l = locale.matchAMPM(in, pos, hi);
                     hourType = Numbers.decodeInt(l);
+                    pos += Numbers.decodeLen(l);
+                    break;
+
+                // MICROS
+                case DateFormatCompiler.OP_MICROS_ONE_DIGIT:
+                    assertRemaining(pos, hi);
+                    micros = Numbers.parseInt(in, pos, ++pos);
+                    break;
+
+                case DateFormatCompiler.OP_MICROS_THREE_DIGITS:
+                    assertRemaining(pos + 2, hi);
+                    micros = Numbers.parseInt(in, pos, pos += 3);
+                    break;
+
+                case DateFormatCompiler.OP_MICROS_GREEDY:
+                    l = Numbers.parseIntSafely(in, pos, hi);
+                    micros = Numbers.decodeInt(l);
                     pos += Numbers.decodeLen(l);
                     break;
 
@@ -593,6 +628,6 @@ public class GenericDateFormat extends AbstractDateFormat {
 
         assertNoTail(pos, hi);
 
-        return compute(locale, era, year, month, day, hour, minute, second, millis, timezone, offset, hourType);
+        return compute(locale, era, year, month, day, hour, minute, second, millis, micros, timezone, offset, hourType);
     }
 }
