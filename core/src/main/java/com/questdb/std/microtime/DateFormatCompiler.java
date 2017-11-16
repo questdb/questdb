@@ -844,7 +844,7 @@ public class DateFormatCompiler {
                 case OP_HOUR_24_ONE_DIGIT_ONE_BASED:
                     // assertRemaining(pos, hi);
                     // hour = Numbers.parseInt(in, pos, ++pos) - 1;
-                    stackState &= ~(1 << LOCAL_HOUR);
+                    stackState &= ~(1 << LOCAL_HOUR); // todo
                     parseDigitsSub1(assertRemainingIndex, parseIntIndex, 1, LOCAL_HOUR);
                     break;
 

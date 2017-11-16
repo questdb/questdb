@@ -35,6 +35,7 @@ import com.questdb.log.LogFactory;
 import com.questdb.std.ConcurrentHashMap;
 import com.questdb.std.FilesFacade;
 import com.questdb.std.Unsafe;
+import com.questdb.std.microtime.MicrosecondClock;
 
 import java.util.Arrays;
 import java.util.Map;
@@ -52,9 +53,11 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
     private final ConcurrentHashMap<CharSequence, Entry> entries = new ConcurrentHashMap<>();
     private final int maxSegments;
     private final int maxEntries;
+    private final MicrosecondClock clock;
 
     public ReaderPool(CairoConfiguration configuration) {
-        super(configuration.getFilesFacade(), configuration.getRoot(), configuration.getInactiveReaderTTL());
+        super(configuration.getFilesFacade(), configuration.getClock(), configuration.getRoot(), configuration.getInactiveReaderTTL());
+        this.clock = configuration.getClock();
         this.maxSegments = configuration.getReaderPoolSegments();
         this.maxEntries = maxSegments * ENTRY_SIZE;
     }
@@ -69,7 +72,7 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
         long thread = Thread.currentThread().getId();
 
         if (e == null) {
-            e = new Entry(0);
+            e = new Entry(0, clock.getTicks());
             Entry other = entries.putIfAbsent(name, e);
             if (other != null) {
                 e = other;
@@ -122,7 +125,7 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
             // all allocated, create next entry if possible
             if (Unsafe.getUnsafe().compareAndSwapInt(e, NEXT_STATUS, NEXT_OPEN, NEXT_ALLOCATED)) {
                 LOG.debug().$("Thread ").$(thread).$(" allocated entry ").$(e.index + 1).$();
-                e.next = new Entry(e.index + 1);
+                e.next = new Entry(e.index + 1, clock.getTicks());
             }
             e = e.next;
         } while (e != null && e.index < maxSegments);
@@ -238,17 +241,6 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
         LOG.info().$("closed").$();
     }
 
-    private void closeReader(long thread, Entry entry, int index, short ev, int reason) {
-        R r = Unsafe.arrayGet(entry.readers, index);
-        if (r != null) {
-            r.goodby();
-            r.close();
-            LOG.info().$("closed '").$(r.getName()).$("' [at=").$(entry.index).$(':').$(index).$(", reason=").$(PoolConstants.closeReasonText(reason)).$(']').$();
-            notifyListener(thread, r.getName(), ev, entry.index, index);
-            Unsafe.arrayPut(entry.readers, index, null);
-        }
-    }
-
     @Override
     protected boolean releaseAll(long deadline) {
         long thread = Thread.currentThread().getId();
@@ -285,6 +277,17 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
         return removed;
     }
 
+    private void closeReader(long thread, Entry entry, int index, short ev, int reason) {
+        R r = Unsafe.arrayGet(entry.readers, index);
+        if (r != null) {
+            r.goodby();
+            r.close();
+            LOG.info().$("closed '").$(r.getName()).$("' [at=").$(entry.index).$(':').$(index).$(", reason=").$(PoolConstants.closeReasonText(reason)).$(']').$();
+            notifyListener(thread, r.getName(), ev, entry.index, index);
+            Unsafe.arrayPut(entry.readers, index, null);
+        }
+    }
+
     private void notifyListener(long thread, CharSequence name, short event, int segment, int position) {
         PoolListener listener = getPoolListener();
         if (listener != null) {
@@ -313,7 +316,7 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
             LOG.info().$('\'').$(name).$("' is back [at=").$(reader.entry.index).$(':').$(index).$(", thread=").$(thread).$(']').$();
             notifyListener(thread, name, PoolListener.EV_RETURN, reader.entry.index, index);
 
-            Unsafe.arrayPut(reader.entry.releaseTimes, index, System.currentTimeMillis());
+            Unsafe.arrayPut(reader.entry.releaseTimes, index, clock.getTicks());
             Unsafe.arrayPutOrdered(reader.entry.allocations, index, UNALLOCATED);
 
             return true;
@@ -332,10 +335,10 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
         volatile Entry next;
         int index = 0;
 
-        public Entry(int index) {
+        public Entry(int index, long currentMicros) {
             this.index = index;
             Arrays.fill(allocations, UNALLOCATED);
-            Arrays.fill(releaseTimes, System.currentTimeMillis());
+            Arrays.fill(releaseTimes, currentMicros);
         }
     }
 

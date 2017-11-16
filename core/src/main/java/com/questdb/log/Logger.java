@@ -27,8 +27,8 @@ import com.questdb.mp.RingQueue;
 import com.questdb.mp.Sequence;
 import com.questdb.std.Misc;
 import com.questdb.std.Net;
-import com.questdb.std.Os;
 import com.questdb.std.Sinkable;
+import com.questdb.std.microtime.MicrosecondClock;
 import com.questdb.std.str.CharSink;
 
 import java.io.File;
@@ -61,8 +61,10 @@ class Logger implements LogRecord, Log {
     private final RingQueue<LogRecordSink> errorRing;
     private final Sequence errorSeq;
     private final ThreadLocalCursor tl = new ThreadLocalCursor();
+    private final MicrosecondClock clock;
 
     Logger(
+            MicrosecondClock clock,
             CharSequence name,
             RingQueue<LogRecordSink> debugRing,
             Sequence debugSeq,
@@ -71,6 +73,7 @@ class Logger implements LogRecord, Log {
             RingQueue<LogRecordSink> errorRing,
             Sequence errorSeq
     ) {
+        this.clock = clock;
         this.name = name;
         this.debugRing = debugRing;
         this.debugSeq = debugSeq;
@@ -201,7 +204,7 @@ class Logger implements LogRecord, Log {
 
     @Override
     public LogRecord ts() {
-        sink().putISODate(Os.currentTimeMicros());
+        sink().putISODate(clock.getTicks());
         return this;
     }
 

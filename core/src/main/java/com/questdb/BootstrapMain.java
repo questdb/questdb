@@ -33,7 +33,7 @@ import com.questdb.std.CharSequenceObjHashMap;
 import com.questdb.std.Misc;
 import com.questdb.std.ObjHashSet;
 import com.questdb.std.Os;
-import com.questdb.std.clock.MilliClock;
+import com.questdb.std.microtime.MicrosecondClockImpl;
 import com.questdb.std.str.CharSink;
 import com.questdb.std.time.DateFormatFactory;
 import com.questdb.std.time.DateLocaleFactory;
@@ -116,7 +116,7 @@ class BootstrapMain {
         // add all other jobs to server as it will be scheduling workers to do them
         final HttpServer server = new HttpServer(env);
         // monitoring setup
-        final FactoryEventLogger factoryEventLogger = new FactoryEventLogger(env.factory, 10000000, 5000, MilliClock.INSTANCE);
+        final FactoryEventLogger factoryEventLogger = new FactoryEventLogger(env.factory, 10000000, 5000, MicrosecondClockImpl.INSTANCE);
         ObjHashSet<Job> jobs = server.getJobs();
         jobs.addAll(LogFactory.INSTANCE.getJobs());
         jobs.add(factoryEventLogger);

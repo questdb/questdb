@@ -36,6 +36,7 @@ import com.questdb.log.LogFactory;
 import com.questdb.std.ConcurrentHashMap;
 import com.questdb.std.Misc;
 import com.questdb.std.Unsafe;
+import com.questdb.std.microtime.MicrosecondClock;
 import com.questdb.std.str.Path;
 
 import java.util.Iterator;
@@ -68,6 +69,8 @@ public class WriterPool extends AbstractPool implements ResourcePool<TableWriter
     private final ConcurrentHashMap<CharSequence, Entry> entries = new ConcurrentHashMap<>();
     private final CairoConfiguration configuration;
     private final Path path = new Path();
+    private final MicrosecondClock clock;
+    private final CharSequence root;
 
     /**
      * Pool constructor. WriterPool root directory is passed via configuration.
@@ -75,8 +78,15 @@ public class WriterPool extends AbstractPool implements ResourcePool<TableWriter
      * @param configuration configuration parameters.
      */
     public WriterPool(CairoConfiguration configuration) {
-        super(configuration.getFilesFacade(), configuration.getRoot(), configuration.getInactiveWriterTTL());
+        super(
+                configuration.getFilesFacade(),
+                configuration.getClock(),
+                configuration.getRoot(),
+                configuration.getInactiveWriterTTL()
+        );
         this.configuration = configuration;
+        this.clock = configuration.getClock();
+        this.root = configuration.getRoot();
         notifyListener(Thread.currentThread().getId(), null, PoolListener.EV_POOL_OPEN);
     }
 
@@ -104,7 +114,7 @@ public class WriterPool extends AbstractPool implements ResourcePool<TableWriter
         Entry e = entries.get(tableName);
         if (e == null) {
             // We are racing to create new writer!
-            e = new Entry();
+            e = new Entry(clock.getTicks());
             Entry other = entries.putIfAbsent(tableName, e);
             if (other == null) {
                 // race won
@@ -192,7 +202,7 @@ public class WriterPool extends AbstractPool implements ResourcePool<TableWriter
         Entry e = entries.get(tableName);
         if (e == null) {
             // We are racing to create new writer!
-            e = new Entry();
+            e = new Entry(clock.getTicks());
             Entry other = entries.putIfAbsent(tableName, e);
             if (other == null) {
                 return lockAndNotify(thread, e, tableName);
@@ -265,18 +275,6 @@ public class WriterPool extends AbstractPool implements ResourcePool<TableWriter
         LOG.info().$("closed").$();
     }
 
-    private void closeWriter(long thread, Entry e, short ev, int reason) {
-        PooledTableWriter w = e.writer;
-        if (w != null) {
-            CharSequence name = e.writer.getName();
-            w.goodby();
-            w.close();
-            e.writer = null;
-            LOG.info().$("closed '").$(name).$("' [reason=").$(PoolConstants.closeReasonText(reason)).$(", by=").$(thread).$(']').$();
-            notifyListener(thread, name, ev);
-        }
-    }
-
     @Override
     protected boolean releaseAll(long deadline) {
         long thread = Thread.currentThread().getId();
@@ -319,6 +317,18 @@ public class WriterPool extends AbstractPool implements ResourcePool<TableWriter
         return removed;
     }
 
+    private void closeWriter(long thread, Entry e, short ev, int reason) {
+        PooledTableWriter w = e.writer;
+        if (w != null) {
+            CharSequence name = e.writer.getName();
+            w.goodby();
+            w.close();
+            e.writer = null;
+            LOG.info().$("closed '").$(name).$("' [reason=").$(PoolConstants.closeReasonText(reason)).$(", by=").$(thread).$(']').$();
+            notifyListener(thread, name, ev);
+        }
+    }
+
     int countFreeWriters() {
         int count = 0;
         for (Entry e : entries.values()) {
@@ -347,7 +357,7 @@ public class WriterPool extends AbstractPool implements ResourcePool<TableWriter
     }
 
     private boolean lockAndNotify(long thread, Entry e, CharSequence tableName) {
-        e.lockFd = TableUtils.lock(ff, path.of(configuration.getRoot()).concat(tableName));
+        e.lockFd = TableUtils.lock(ff, path.of(root).concat(tableName));
         if (e.lockFd == -1L) {
             LOG.error().$("cannot lock '").$(tableName).$("' [thread=").$(thread).$(']').$();
             e.owner = UNALLOCATED;
@@ -379,7 +389,7 @@ public class WriterPool extends AbstractPool implements ResourcePool<TableWriter
             }
 
             e.owner = UNALLOCATED;
-            e.lastReleaseTime = System.currentTimeMillis();
+            e.lastReleaseTime = configuration.getClock().getTicks();
             notifyListener(thread, name, PoolListener.EV_RETURN);
         } else {
             LOG.error().$('\'').$(name).$("' has no owner").$();
@@ -393,9 +403,13 @@ public class WriterPool extends AbstractPool implements ResourcePool<TableWriter
         private long owner = Thread.currentThread().getId();
         private PooledTableWriter writer;
         // time writer was last released
-        private volatile long lastReleaseTime = System.currentTimeMillis();
+        private volatile long lastReleaseTime;
         private CairoException ex = null;
         private volatile long lockFd = -1L;
+
+        public Entry(long lastReleaseTime) {
+            this.lastReleaseTime = lastReleaseTime;
+        }
     }
 
     private static class PooledTableWriter extends TableWriter {

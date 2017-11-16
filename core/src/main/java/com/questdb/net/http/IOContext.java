@@ -29,9 +29,9 @@ import com.questdb.log.LogFactory;
 import com.questdb.net.Context;
 import com.questdb.net.NonBlockingSecureSocketChannel;
 import com.questdb.std.*;
-import com.questdb.std.clock.Clock;
 import com.questdb.std.ex.DisconnectedChannelException;
 import com.questdb.std.ex.SlowWritableChannelException;
+import com.questdb.std.time.MillisecondClock;
 
 import java.io.Closeable;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -45,7 +45,7 @@ public class IOContext implements Closeable, Mutable, Locality, Context {
     private final Response response;
     private final AtomicBoolean open = new AtomicBoolean(true);
 
-    public IOContext(NetworkChannel channel, ServerConfiguration configuration, Clock clock) {
+    public IOContext(NetworkChannel channel, ServerConfiguration configuration, MillisecondClock clock) {
         this.channel = configuration.getSslConfig().isSecure() ?
                 new NonBlockingSecureSocketChannel(channel, configuration.getSslConfig()) :
                 channel;

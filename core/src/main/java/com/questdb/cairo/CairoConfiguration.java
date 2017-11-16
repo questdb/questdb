@@ -1,7 +1,7 @@
 package com.questdb.cairo;
 
 import com.questdb.std.FilesFacade;
-import com.questdb.std.clock.Clock;
+import com.questdb.std.microtime.MicrosecondClock;
 
 public interface CairoConfiguration {
     int getFileOperationRetryCount();
@@ -20,5 +20,5 @@ public interface CairoConfiguration {
 
     CharSequence getRoot();
 
-    Clock getClock();
+    MicrosecondClock getClock();
 }

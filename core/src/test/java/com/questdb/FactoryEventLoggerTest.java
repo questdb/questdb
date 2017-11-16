@@ -23,7 +23,7 @@
 
 package com.questdb;
 
-import com.questdb.std.clock.MilliClock;
+import com.questdb.std.microtime.MicrosecondClockImpl;
 import com.questdb.store.Journal;
 import com.questdb.store.factory.FactoryEventListener;
 import com.questdb.test.tools.AbstractTest;
@@ -39,7 +39,7 @@ public class FactoryEventLoggerTest extends AbstractTest {
     @Test
     @Ignore
     public void testThroughput() throws Exception {
-        final FactoryEventLogger logger = new FactoryEventLogger(getFactory(), 1000, 1000, MilliClock.INSTANCE);
+        final FactoryEventLogger logger = new FactoryEventLogger(getFactory(), 1000, 1000, MicrosecondClockImpl.INSTANCE);
 
         final int count = 1000;
         final CountDownLatch done = new CountDownLatch(1);

@@ -4,6 +4,7 @@ import com.questdb.common.NumericException;
 import com.questdb.std.Chars;
 import com.questdb.std.LongList;
 import com.questdb.std.Numbers;
+import com.questdb.std.Os;
 import com.questdb.std.str.CharSink;
 
 public class DateFormatUtils {
@@ -354,10 +355,10 @@ public class DateFormatUtils {
         return parseDateTime(s, lo, lim);
     }
 
-    public static void updateReferenceYear(long millis) {
-        referenceYear = millis;
+    public static void updateReferenceYear(long micros) {
+        referenceYear = micros;
 
-        int referenceYear = Dates.getYear(millis);
+        int referenceYear = Dates.getYear(micros);
         int centuryOffset = referenceYear % 100;
         thisCenturyLimit = centuryOffset + 20;
         if (thisCenturyLimit > 100) {
@@ -572,7 +573,7 @@ public class DateFormatUtils {
     }
 
     static {
-        updateReferenceYear(System.currentTimeMillis());
+        updateReferenceYear(Os.currentTimeMicros());
         DateFormatCompiler compiler = new DateFormatCompiler();
         UTC_FORMAT = compiler.compile(UTC_PATTERN);
         HTTP_FORMAT = compiler.compile("E, d MMM yyyy HH:mm:ss Z");

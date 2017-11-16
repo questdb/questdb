@@ -31,10 +31,10 @@ import com.questdb.log.LogFactory;
 import com.questdb.mp.*;
 import com.questdb.net.*;
 import com.questdb.std.*;
-import com.questdb.std.clock.Clock;
-import com.questdb.std.clock.MilliClock;
 import com.questdb.std.ex.FatalError;
 import com.questdb.std.ex.NetworkError;
+import com.questdb.std.time.MillisecondClock;
+import com.questdb.std.time.MillisecondClockImpl;
 
 import java.net.InetSocketAddress;
 import java.util.concurrent.CountDownLatch;
@@ -52,7 +52,7 @@ public class HttpServer {
     private final ContextFactory<IOContext> contextFactory;
     private final ObjHashSet<Job> jobs = new ObjHashSet<>();
     private volatile boolean running = true;
-    private Clock clock = MilliClock.INSTANCE;
+    private MillisecondClock clock = MillisecondClockImpl.INSTANCE;
     private Dispatcher<IOContext> dispatcher;
     private RingQueue<Event<IOContext>> ioQueue;
 
@@ -93,7 +93,7 @@ public class HttpServer {
         }
     }
 
-    public void setClock(Clock clock) {
+    public void setClock(MillisecondClock clock) {
         this.clock = clock;
     }
 
@@ -131,7 +131,7 @@ public class HttpServer {
             int port,
             RingQueue<Event<IOContext>> ioQueue,
             Sequence ioSequence,
-            Clock clock,
+            MillisecondClock clock,
             ServerConfiguration configuration
     ) {
 

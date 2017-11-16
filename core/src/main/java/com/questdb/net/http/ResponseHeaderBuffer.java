@@ -25,10 +25,10 @@ package com.questdb.net.http;
 
 import com.questdb.ex.ResponseHeaderBufferTooSmallException;
 import com.questdb.std.*;
-import com.questdb.std.clock.Clock;
 import com.questdb.std.str.AbstractCharSink;
 import com.questdb.std.str.CharSink;
 import com.questdb.std.time.DateFormatUtils;
+import com.questdb.std.time.MillisecondClock;
 
 import java.io.Closeable;
 import java.nio.ByteBuffer;
@@ -39,12 +39,12 @@ public class ResponseHeaderBuffer extends AbstractCharSink implements Closeable,
     private final long headerPtr;
     private final long limit;
     private final ByteBuffer headers;
-    private final Clock clock;
+    private final MillisecondClock clock;
     private long _wptr;
     private boolean chunky;
     private int code;
 
-    public ResponseHeaderBuffer(int size, Clock clock) {
+    public ResponseHeaderBuffer(int size, MillisecondClock clock) {
         this.clock = clock;
         int sz = Numbers.ceilPow2(size);
         this.headers = ByteBuffer.allocateDirect(sz);
