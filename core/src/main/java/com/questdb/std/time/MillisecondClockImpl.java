@@ -21,17 +21,17 @@
  *
  ******************************************************************************/
 
-package com.questdb.std.clock;
+package com.questdb.std.time;
 
-public final class NanoClock implements Clock {
+public final class MillisecondClockImpl implements MillisecondClock {
 
-    public static final Clock INSTANCE = new NanoClock();
+    public static final MillisecondClock INSTANCE = new MillisecondClockImpl();
 
-    private NanoClock() {
+    private MillisecondClockImpl() {
     }
 
     @Override
     public long getTicks() {
-        return System.nanoTime();
+        return System.currentTimeMillis();
     }
 }

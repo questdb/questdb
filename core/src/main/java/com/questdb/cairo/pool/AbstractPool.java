@@ -25,6 +25,7 @@ package com.questdb.cairo.pool;
 
 import com.questdb.std.FilesFacade;
 import com.questdb.std.Unsafe;
+import com.questdb.std.microtime.MicrosecondClock;
 import com.questdb.std.str.ImmutableCharSequence;
 
 import java.io.Closeable;
@@ -36,15 +37,17 @@ abstract class AbstractPool implements Closeable {
     private static final int FALSE = 0;
     protected final CharSequence root;
     protected final FilesFacade ff;
-    private final long inactiveTtlMs;
+    private final long inactiveTtlUs;
+    private final MicrosecondClock clock;
     private PoolListener eventListener;
     @SuppressWarnings("FieldCanBeLocal")
     private volatile int closed = FALSE;
 
-    public AbstractPool(FilesFacade ff, CharSequence root, long inactiveTtlMs) {
+    public AbstractPool(FilesFacade ff, MicrosecondClock clock, CharSequence root, long inactiveTtlMs) {
         this.ff = ff;
+        this.clock = clock;
         this.root = ImmutableCharSequence.of(root);
-        this.inactiveTtlMs = inactiveTtlMs;
+        this.inactiveTtlUs = inactiveTtlMs * 1000;
     }
 
     @Override
@@ -59,7 +62,7 @@ abstract class AbstractPool implements Closeable {
     }
 
     public boolean releaseInactive() {
-        return releaseAll(System.currentTimeMillis() - inactiveTtlMs);
+        return releaseAll(clock.getTicks() - inactiveTtlUs);
     }
 
     public void setPoolListner(PoolListener eventListener) {

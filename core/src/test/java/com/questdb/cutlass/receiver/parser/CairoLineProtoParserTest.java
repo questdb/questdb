@@ -8,11 +8,11 @@ import com.questdb.common.PartitionBy;
 import com.questdb.std.Chars;
 import com.questdb.std.Files;
 import com.questdb.std.FilesFacade;
-import com.questdb.std.clock.Clock;
 import com.questdb.std.microtime.DateFormatUtils;
+import com.questdb.std.microtime.MicrosecondClock;
 import com.questdb.std.str.LPSZ;
 import com.questdb.std.str.Path;
-import com.questdb.test.tools.TestMilliClock;
+import com.questdb.test.tools.TestMicroClock;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -62,9 +62,9 @@ public class CairoLineProtoParserTest extends AbstractCairoTest {
 
         CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
             @Override
-            public Clock getClock() {
+            public MicrosecondClock getClock() {
                 try {
-                    return new TestMilliClock(DateFormatUtils.parseDateTime("2017-10-03T10:00:00.000Z"), 10);
+                    return new TestMicroClock(DateFormatUtils.parseDateTime("2017-10-03T10:00:00.000Z"), 10);
                 } catch (NumericException e) {
                     throw new RuntimeException(e);
                 }
@@ -221,9 +221,9 @@ public class CairoLineProtoParserTest extends AbstractCairoTest {
 
         CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
             @Override
-            public Clock getClock() {
+            public MicrosecondClock getClock() {
                 try {
-                    return new TestMilliClock(DateFormatUtils.parseDateTime("2017-10-03T10:00:00.000Z"), 10);
+                    return new TestMicroClock(DateFormatUtils.parseDateTime("2017-10-03T10:00:00.000Z"), 10);
                 } catch (NumericException e) {
                     throw new RuntimeException(e);
                 }
@@ -270,9 +270,9 @@ public class CairoLineProtoParserTest extends AbstractCairoTest {
             }
 
             @Override
-            public Clock getClock() {
+            public MicrosecondClock getClock() {
                 try {
-                    return new TestMilliClock(DateFormatUtils.parseDateTime("2017-10-03T10:00:00.000Z"), 10);
+                    return new TestMicroClock(DateFormatUtils.parseDateTime("2017-10-03T10:00:00.000Z"), 10);
                 } catch (NumericException e) {
                     throw new RuntimeException(e);
                 }
@@ -344,9 +344,9 @@ public class CairoLineProtoParserTest extends AbstractCairoTest {
 
         CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
             @Override
-            public Clock getClock() {
+            public MicrosecondClock getClock() {
                 try {
-                    return new TestMilliClock(DateFormatUtils.parseDateTime("2017-10-03T10:00:00.000Z"), 10);
+                    return new TestMicroClock(DateFormatUtils.parseDateTime("2017-10-03T10:00:00.000Z"), 10);
                 } catch (NumericException e) {
                     throw new RuntimeException(e);
                 }
@@ -468,9 +468,9 @@ public class CairoLineProtoParserTest extends AbstractCairoTest {
     private void assertMultiiTable(String expected1, String expected2, String lines) throws Exception {
         CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
             @Override
-            public Clock getClock() {
+            public MicrosecondClock getClock() {
                 try {
-                    return new TestMilliClock(DateFormatUtils.parseDateTime("2017-10-03T10:00:00.000Z"), 10);
+                    return new TestMicroClock(DateFormatUtils.parseDateTime("2017-10-03T10:00:00.000Z"), 10);
                 } catch (NumericException e) {
                     throw new RuntimeException(e);
                 }

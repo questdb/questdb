@@ -21,8 +21,8 @@
  *
  ******************************************************************************/
 
-package com.questdb.std.clock;
+package com.questdb.std.time;
 
-public interface Clock {
+public interface MillisecondClock {
     long getTicks();
 }

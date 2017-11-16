@@ -26,6 +26,8 @@ package com.questdb.log;
 import com.questdb.common.NumericException;
 import com.questdb.mp.*;
 import com.questdb.std.*;
+import com.questdb.std.microtime.MicrosecondClock;
+import com.questdb.std.microtime.MicrosecondClockImpl;
 
 import java.io.*;
 import java.lang.reflect.Constructor;
@@ -50,10 +52,19 @@ public class LogFactory implements Closeable {
     private final ObjList<ScopeConfiguration> scopeConfigs = new ObjList<>();
     private final ObjHashSet<LogWriter> jobs = new ObjHashSet<>();
     private final CountDownLatch workerHaltLatch = new CountDownLatch(1);
+    private final MicrosecondClock clock;
     private Worker worker = null;
     private boolean configured = false;
     private int queueDepth = DEFAULT_QUEUE_DEPTH;
     private int recordLength = DEFAULT_MSG_SIZE;
+
+    public LogFactory() {
+        this(MicrosecondClockImpl.INSTANCE);
+    }
+
+    public LogFactory(MicrosecondClock clock) {
+        this.clock = clock;
+    }
 
     public static Log getLog(Class clazz) {
         return getLog(clazz.getName());
@@ -110,12 +121,13 @@ public class LogFactory implements Closeable {
 
         ScopeConfiguration scopeConfiguration = find(key);
         if (scopeConfiguration == null) {
-            return new Logger(compressScope(key), null, null, null, null, null, null);
+            return new Logger(clock, compressScope(key), null, null, null, null, null, null);
         }
         Holder inf = scopeConfiguration.getHolder(Numbers.msb(LogLevel.LOG_LEVEL_INFO));
         Holder dbg = scopeConfiguration.getHolder(Numbers.msb(LogLevel.LOG_LEVEL_DEBUG));
         Holder err = scopeConfiguration.getHolder(Numbers.msb(LogLevel.LOG_LEVEL_ERROR));
         return new Logger(
+                clock,
                 compressScope(key),
                 dbg == null ? null : dbg.ring,
                 dbg == null ? null : dbg.lSeq,

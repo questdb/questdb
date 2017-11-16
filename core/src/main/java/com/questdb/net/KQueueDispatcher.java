@@ -30,8 +30,8 @@ import com.questdb.std.LongMatrix;
 import com.questdb.std.Misc;
 import com.questdb.std.Net;
 import com.questdb.std.ObjectFactory;
-import com.questdb.std.clock.Clock;
 import com.questdb.std.ex.NetworkError;
+import com.questdb.std.time.MillisecondClock;
 
 import java.io.IOException;
 
@@ -44,7 +44,7 @@ public class KQueueDispatcher<C extends Context> extends SynchronizedJob impleme
     private final RingQueue<Event<C>> interestQueue;
     private final MPSequence interestPubSequence;
     private final SCSequence interestSubSequence = new SCSequence();
-    private final Clock clock;
+    private final MillisecondClock clock;
     private final Kqueue kqueue;
     private final int timeout;
     private final LongMatrix<C> pending = new LongMatrix<>(2);
@@ -60,7 +60,7 @@ public class KQueueDispatcher<C extends Context> extends SynchronizedJob impleme
             int timeout,
             RingQueue<Event<C>> ioQueue,
             Sequence ioSequence,
-            Clock clock,
+            MillisecondClock clock,
             int capacity,
             ObjectFactory<Event<C>> eventFactory,
             ContextFactory<C> contextFactory

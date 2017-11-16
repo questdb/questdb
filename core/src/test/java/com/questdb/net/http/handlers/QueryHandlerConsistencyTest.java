@@ -28,7 +28,7 @@ import com.questdb.ServerConfiguration;
 import com.questdb.net.http.ContextHandler;
 import com.questdb.net.http.IOContext;
 import com.questdb.parser.sql.AbstractOptimiserTest;
-import com.questdb.std.clock.MilliClock;
+import com.questdb.std.time.MillisecondClockImpl;
 import com.questdb.test.tools.TestChannel;
 import com.questdb.test.tools.TestUtils;
 import org.junit.BeforeClass;
@@ -171,7 +171,7 @@ public class QueryHandlerConsistencyTest extends AbstractOptimiserTest {
                 "id99,-384.0000000000,0.0000000980,-264,355,\"2015-03-12T00:00:00.990Z\"\r\n";
         try {
             channel.reset();
-            try (IOContext context = new IOContext(channel, new ServerConfiguration(), MilliClock.INSTANCE)) {
+            try (IOContext context = new IOContext(channel, new ServerConfiguration(), MillisecondClockImpl.INSTANCE)) {
                 context.request.read();
                 handler.handle(context);
                 TestUtils.assertEquals(expected, channel.getOutput());
@@ -198,7 +198,7 @@ public class QueryHandlerConsistencyTest extends AbstractOptimiserTest {
             for (int i = 128; i < 7500; i++) {
                 channel.reset();
                 configuration.setHttpBufRespContent(i);
-                try (IOContext context = new IOContext(channel, configuration, MilliClock.INSTANCE)) {
+                try (IOContext context = new IOContext(channel, configuration, MillisecondClockImpl.INSTANCE)) {
                     context.request.read();
                     handler.handle(context);
                     if (expected != null) {

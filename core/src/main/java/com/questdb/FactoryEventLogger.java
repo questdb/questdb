@@ -32,8 +32,8 @@ import com.questdb.mp.SCSequence;
 import com.questdb.mp.SynchronizedJob;
 import com.questdb.std.ObjectFactory;
 import com.questdb.std.Os;
-import com.questdb.std.clock.Clock;
 import com.questdb.std.ex.JournalException;
+import com.questdb.std.microtime.MicrosecondClock;
 import com.questdb.store.JournalEntryWriter;
 import com.questdb.store.JournalWriter;
 import com.questdb.store.factory.Factory;
@@ -63,10 +63,10 @@ public class FactoryEventLogger extends SynchronizedJob implements Closeable {
     private final SCSequence subSeq = new SCSequence();
     private final long commitBatchSize;
     private final long commitInterval;
-    private final Clock clock;
+    private final MicrosecondClock clock;
     private long lastEventTimestamp = -1;
 
-    public FactoryEventLogger(Factory factory, long commitBatchSize, long commitInterval, Clock clock) throws JournalException {
+    public FactoryEventLogger(Factory factory, long commitBatchSize, long commitInterval, MicrosecondClock clock) throws JournalException {
         this.factory = factory;
         this.commitBatchSize = commitBatchSize;
         this.commitInterval = commitInterval;

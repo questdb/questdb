@@ -2,8 +2,8 @@ package com.questdb.cairo;
 
 import com.questdb.std.FilesFacade;
 import com.questdb.std.FilesFacadeImpl;
-import com.questdb.std.clock.Clock;
-import com.questdb.std.clock.MilliClock;
+import com.questdb.std.microtime.MicrosecondClock;
+import com.questdb.std.microtime.MicrosecondClockImpl;
 import com.questdb.std.str.ImmutableCharSequence;
 
 public class DefaultCairoConfiguration implements CairoConfiguration {
@@ -55,7 +55,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public Clock getClock() {
-        return MilliClock.INSTANCE;
+    public MicrosecondClock getClock() {
+        return MicrosecondClockImpl.INSTANCE;
     }
 }

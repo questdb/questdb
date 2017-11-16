@@ -9,7 +9,7 @@ import com.questdb.common.RecordMetadata;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.std.*;
-import com.questdb.std.clock.Clock;
+import com.questdb.std.microtime.MicrosecondClock;
 import com.questdb.std.str.ImmutableCharSequence;
 import com.questdb.std.str.Path;
 
@@ -34,7 +34,7 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
     private final LongList columnNameType = new LongList();
     private final LongList columnValues = new LongList();
     private final AppendMemory appendMemory = new AppendMemory();
-    private final Clock clock;
+    private final MicrosecondClock clock;
     private final FieldNameParser MY_NEW_FIELD_NAME = this::parseFieldNameNewTable;
     private final FieldValueParser MY_NEW_TAG_VALUE = this::parseTagValueNewTable;
     // state

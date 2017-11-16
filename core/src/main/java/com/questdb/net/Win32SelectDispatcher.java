@@ -27,8 +27,8 @@ import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.mp.*;
 import com.questdb.std.*;
-import com.questdb.std.clock.Clock;
 import com.questdb.std.ex.NetworkError;
+import com.questdb.std.time.MillisecondClock;
 
 import java.io.IOException;
 
@@ -50,7 +50,7 @@ public class Win32SelectDispatcher<C extends Context> extends SynchronizedJob im
     private final RingQueue<Event<C>> interestQueue;
     private final MPSequence interestPubSequence;
     private final SCSequence interestSubSequence = new SCSequence();
-    private final Clock clock;
+    private final MillisecondClock clock;
     private final int timeout;
     private final LongMatrix<C> pending = new LongMatrix<>(4);
     private final int maxConnections;
@@ -65,7 +65,7 @@ public class Win32SelectDispatcher<C extends Context> extends SynchronizedJob im
             int timeout,
             RingQueue<Event<C>> ioQueue,
             Sequence ioSequence,
-            Clock clock,
+            MillisecondClock clock,
             int capacity,
             ObjectFactory<Event<C>> eventFactory,
             ContextFactory<C> contextFactory
@@ -241,7 +241,7 @@ public class Win32SelectDispatcher<C extends Context> extends SynchronizedJob im
             return false;
         }
 
-        final long timestamp = System.currentTimeMillis();
+        final long timestamp = clock.getTicks();
         boolean useful = false;
         fds.clear();
 

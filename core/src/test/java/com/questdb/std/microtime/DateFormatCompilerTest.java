@@ -455,12 +455,14 @@ public class DateFormatCompilerTest {
 
         assertThat("k, dd-MM", "1970-11-04T02:00:00.000Z", "3, 04-11");
         assertThat("k, dd-MM", "1970-11-04T18:00:00.000Z", "19, 04-11");
+        assertThat("H, dd-MM-yyyy", "2012-11-04T19:00:00.000Z", "19, 04-11-2012");
     }
 
     @Test
     public void testHour24OneDigit() throws Exception {
         assertThat("HMMy", "2010-09-01T04:00:00.000Z", "40910");
         assertThat("kMMy", "2010-09-01T03:00:00.000Z", "40910");
+        assertThat("Hmm MM-yyyy", "2010-09-01T04:09:00.000Z", "409 09-2010");
     }
 
     @Test

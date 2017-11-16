@@ -31,12 +31,12 @@ import com.questdb.log.LogFactory;
 import com.questdb.log.LogRecord;
 import com.questdb.net.NonBlockingSecureSocketChannel;
 import com.questdb.std.*;
-import com.questdb.std.clock.Clock;
 import com.questdb.std.ex.DisconnectedChannelException;
 import com.questdb.std.ex.SlowWritableChannelException;
 import com.questdb.std.str.AbstractCharSink;
 import com.questdb.std.str.CharSink;
 import com.questdb.std.str.DirectUnboundedByteSink;
+import com.questdb.std.time.MillisecondClock;
 
 import java.io.Closeable;
 import java.io.IOException;
@@ -79,7 +79,7 @@ public class Response implements Closeable, Mutable {
     private long total = 0;
     private boolean header = true;
 
-    public Response(WritableByteChannel channel, ServerConfiguration configuration, Clock clock) {
+    public Response(WritableByteChannel channel, ServerConfiguration configuration, MillisecondClock clock) {
         if (configuration.getHttpBufRespHeader() <= 0) {
             throw new IllegalArgumentException("headerBufferSize");
         }
