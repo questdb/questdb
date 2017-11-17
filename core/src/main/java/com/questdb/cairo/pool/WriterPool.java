@@ -212,7 +212,7 @@ public class WriterPool extends AbstractPool implements ResourcePool<TableWriter
         }
 
         // try to change owner
-        if ((Unsafe.cas(e, ENTRY_OWNER, UNALLOCATED, thread) || Unsafe.cas(e, ENTRY_OWNER, thread, thread))) {
+        if ((Unsafe.cas(e, ENTRY_OWNER, UNALLOCATED, thread) /*|| Unsafe.cas(e, ENTRY_OWNER, thread, thread)*/)) {
             closeWriter(thread, e, PoolListener.EV_LOCK_CLOSE, PoolConstants.CR_NAME_LOCK);
             return lockAndNotify(thread, e, tableName);
         }
@@ -242,7 +242,7 @@ public class WriterPool extends AbstractPool implements ResourcePool<TableWriter
 
             if (e.writer != null) {
                 notifyListener(thread, name, PoolListener.EV_NOT_LOCKED);
-                throw new IllegalStateException("Writer " + name + " is not locked");
+                throw CairoException.instance(0).put("Writer ").put(name).put(" is not locked");
             }
             // unlock must remove entry because pool does not deal with null writer
             entries.remove(name);

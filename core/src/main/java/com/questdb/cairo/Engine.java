@@ -34,6 +34,7 @@ import com.questdb.std.FilesFacade;
 import com.questdb.std.Misc;
 import com.questdb.std.ObjHashSet;
 import com.questdb.std.Os;
+import com.questdb.std.microtime.MicrosecondClock;
 import com.questdb.std.str.Path;
 
 import java.io.Closeable;
@@ -52,7 +53,7 @@ public class Engine implements Closeable {
         this.configuration = configuration;
         this.writerPool = new WriterPool(configuration);
         this.readerPool = new ReaderPool(configuration);
-        this.writerMaintenanceJob = new WriterMaintenanceJob(configuration.getIdleCheckInterval());
+        this.writerMaintenanceJob = new WriterMaintenanceJob(configuration);
     }
 
 
@@ -93,6 +94,10 @@ public class Engine implements Closeable {
         return readerPool.get(tableName);
     }
 
+    public int getStatus(CharSequence tableName) {
+        return TableUtils.exists(configuration.getFilesFacade(), path, configuration.getRoot(), tableName);
+    }
+
     public TableWriter getWriter(CharSequence tableName) {
         return writerPool.get(tableName);
     }
@@ -117,6 +122,7 @@ public class Engine implements Closeable {
                     LOG.error().$("remove failed [tableName='").utf8(tableName).$("', error=").$(error).$(']').$();
                     throw CairoException.instance(error).put("Table remove failed");
                 }
+                return;
             } finally {
                 unlock(tableName);
             }
@@ -125,11 +131,15 @@ public class Engine implements Closeable {
     }
 
     public void rename(CharSequence tableName, String newName) {
-        lock(tableName);
-        try {
-            rename0(tableName, newName);
-        } finally {
-            unlock(tableName);
+        if (lock(tableName)) {
+            try {
+                rename0(tableName, newName);
+            } finally {
+                unlock(tableName);
+            }
+        } else {
+            LOG.error().$("cannot lock and rename [from='").$(tableName).$("', to='").$(newName).$("']").$();
+            throw CairoException.instance(0).put("Cannot lock [table=").put(tableName).put(']');
         }
     }
 
@@ -142,66 +152,56 @@ public class Engine implements Closeable {
         final FilesFacade ff = configuration.getFilesFacade();
         final CharSequence root = configuration.getRoot();
 
-        try (Path oldName = new Path()) {
-            try (Path newName = new Path()) {
+        if (TableUtils.exists(ff, path, root, tableName) != TableUtils.TABLE_EXISTS) {
+            LOG.error().$('\'').utf8(tableName).$("' does not exist. Rename failed.").$();
+            throw CairoException.instance(0).put("Rename failed. Table '").put(tableName).put("' does not exist");
+        }
 
-                if (TableUtils.exists(ff, oldName, root, tableName) != TableUtils.TABLE_EXISTS) {
-                    LOG.error().$('\'').utf8(tableName).$("' does not exist. Rename failed.").$();
-                    throw CairoException.instance(0).put("Rename failed. Table '").put(tableName).put("' does not exist");
-                }
+        if (Os.type == Os.WINDOWS) {
+            path.of("\\\\?\\").concat(root).concat(tableName).$();
+            other.of("\\\\?\\").concat(root).concat(to).$();
+        } else {
+            path.of(root).concat(tableName).$();
+            other.of(root).concat(to).$();
+        }
 
-                if (Os.type == Os.WINDOWS) {
-                    oldName.of("\\\\?\\").concat(root).concat(tableName).$();
-                    newName.of("\\\\?\\").concat(root).concat(to).$();
-                } else {
-                    oldName.of(root).concat(tableName).$();
-                    newName.of(root).concat(to).$();
-                }
+        if (ff.exists(other)) {
+            LOG.error().$("rename target exists [from='").$(tableName).$("', to='").$(other).$("']").$();
+            throw CairoException.instance(0).put("Rename target exists");
+        }
 
-                if (ff.exists(newName)) {
-                    LOG.error().$("rename target exists [from='").$(tableName).$("', to='").$(newName).$("']").$();
-                    throw CairoException.instance(0).put("Rename target exists");
-                }
-
-                if (!getConfiguration().getFilesFacade().rename(oldName, newName)) {
-                    int error = ff.errno();
-                    LOG.error().$("rename failed [from='").$(oldName).$("', to='").$(newName).$("', error=").$(error).$(']').$();
-                    throw CairoException.instance(error).put("Rename failed");
-                }
-            }
+        if (!ff.rename(path, other)) {
+            int error = ff.errno();
+            LOG.error().$("rename failed [from='").$(path).$("', to='").$(other).$("', error=").$(error).$(']').$();
+            throw CairoException.instance(error).put("Rename failed");
         }
     }
 
-    private static abstract class PeriodicSynchronizedJob extends SynchronizedJob {
+    private class WriterMaintenanceJob extends SynchronizedJob {
+
+        private final MicrosecondClock clock;
         private final long checkInterval;
         private long last = 0;
 
-        public PeriodicSynchronizedJob(long checkInterval) {
-            this.checkInterval = checkInterval;
+        public WriterMaintenanceJob(CairoConfiguration configuration) {
+            this.clock = configuration.getClock();
+            this.checkInterval = configuration.getIdleCheckInterval() * 1000;
         }
 
-        abstract boolean doRun();
+        protected boolean doRun() {
+            boolean w = writerPool.releaseInactive();
+            boolean r = readerPool.releaseInactive();
+            return w || r;
+        }
 
         @Override
         protected boolean runSerially() {
-            long t = System.currentTimeMillis();
+            long t = clock.getTicks();
             if (last + checkInterval < t) {
                 last = t;
                 return doRun();
             }
             return false;
-        }
-    }
-
-    private class WriterMaintenanceJob extends PeriodicSynchronizedJob {
-
-        public WriterMaintenanceJob(long checkInterval) {
-            super(checkInterval);
-        }
-
-        @Override
-        protected boolean doRun() {
-            return writerPool.releaseInactive() || readerPool.releaseInactive();
         }
     }
 }

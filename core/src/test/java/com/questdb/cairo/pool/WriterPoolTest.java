@@ -239,10 +239,6 @@ public class WriterPoolTest extends AbstractCairoTest {
         }
 
         assertWithPool(pool -> {
-            TableWriter wx = pool.get("x");
-            Assert.assertNotNull(wx);
-            Assert.assertTrue(wx.isOpen());
-
             TableWriter wy = pool.get("y");
             Assert.assertNotNull(wy);
             Assert.assertTrue(wy.isOpen());
@@ -253,7 +249,6 @@ public class WriterPoolTest extends AbstractCairoTest {
                 Assert.assertTrue(pool.lock("x"));
 
                 // check that writer x is closed and writer y is open (lock must not spill out to other writers)
-                Assert.assertFalse(wx.isOpen());
                 Assert.assertTrue(wy.isOpen());
 
                 // check that when name is locked writers are not created
@@ -267,7 +262,7 @@ public class WriterPoolTest extends AbstractCairoTest {
                 final CountDownLatch done = new CountDownLatch(1);
                 final AtomicBoolean result = new AtomicBoolean();
 
-                // have new thread try to allocated this writers
+                // have new thread try to allocated this writer
                 new Thread(() -> {
                     try (TableWriter ignored = pool.get("x")) {
                         result.set(false);
@@ -285,22 +280,22 @@ public class WriterPoolTest extends AbstractCairoTest {
 
                 pool.unlock("x");
 
-                wx = pool.get("x");
-                Assert.assertNotNull(wx);
-                Assert.assertTrue(wx.isOpen());
+                try (TableWriter wx = pool.get("x")) {
+                    Assert.assertNotNull(wx);
+                    Assert.assertTrue(wx.isOpen());
 
-                try {
-                    // unlocking writer that has not been locked must produce exception
-                    // and not affect open writer
-                    pool.unlock("x");
-                    Assert.fail();
-                } catch (IllegalStateException ignored) {
+                    try {
+                        // unlocking writer that has not been locked must produce exception
+                        // and not affect open writer
+                        pool.unlock("x");
+                        Assert.fail();
+                    } catch (CairoException ignored) {
+                    }
+
+                    Assert.assertTrue(wx.isOpen());
                 }
 
-                Assert.assertTrue(wx.isOpen());
-
             } finally {
-                wx.close();
                 wy.close();
             }
         });

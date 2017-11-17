@@ -177,10 +177,12 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
                         // same thread, don't need to order reads
                         if (Unsafe.arrayGet(e.readers, i) != null) {
                             // this thread has busy reader, it should close first
+                            e.lockOwner = -1L;
                             return false;
                         }
                     } else {
                         LOG.info().$("'").$(name).$("' is busy [at=").$(e.index).$(':').$(i).$(", owner=").$(Unsafe.arrayGet(e.allocations, i)).$(", thread=").$(thread).$(']').$();
+                        e.lockOwner = -1L;
                         return false;
                     }
                 }
@@ -195,6 +197,7 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
                         if (e.next == null) {
                             // lost the race
                             LOG.info().$("'").$(name).$("' is busy [at=").$(e.index + 1).$(':').$(0).$(", owner=unknown").$(", thread=").$(thread).$(']').$();
+                            e.lockOwner = -1L;
                             return false;
                         }
                     }
