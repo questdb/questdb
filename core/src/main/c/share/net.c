@@ -21,8 +21,6 @@
  *
  ******************************************************************************/
 
-#define _GNU_SOURCE
-
 #include <jni.h>
 #include <sys/socket.h>
 #include <sys/fcntl.h>
@@ -31,8 +29,6 @@
 #include <unistd.h>
 #include <sys/errno.h>
 #include <stdlib.h>
-#include <stddef.h>
-#include <string.h>
 #include "net.h"
 
 JNIEXPORT jlong JNICALL Java_com_questdb_std_Net_socketTcp
@@ -147,55 +143,6 @@ JNIEXPORT jboolean JNICALL Java_com_questdb_std_Net_isDead
         (JNIEnv *e, jclass cl, jlong fd) {
     int c;
     return (jboolean) (recv((int) fd, &c, 1, 0) == 0);
-}
-
-JNIEXPORT jint JNICALL Java_com_questdb_std_Net_recvmmsg
-        (JNIEnv *e, jclass cl, jlong fd, jlong msgvec, jint vlen) {
-    struct timespec timeout;
-    timeout.tv_sec = 1;
-    timeout.tv_nsec = 0;
-    return recvmmsg((int) fd, (struct mmsghdr *) msgvec, (unsigned int) vlen, MSG_DONTWAIT, &timeout);
-}
-
-JNIEXPORT jlong JNICALL Java_com_questdb_std_Net_msgHeaders
-        (JNIEnv *e, jclass cl, jint blockSize, jint blockCount) {
-    struct mmsghdr *msgs = malloc(sizeof(struct mmsghdr) * blockCount);
-    struct iovec *iovecs = malloc(sizeof(struct iovec) * blockCount);
-    void *buf = malloc(((size_t) blockSize * (size_t) blockCount));
-
-    memset(msgs, 0, sizeof(struct mmsghdr) * blockCount);
-    for (int i = 0; i < blockCount; i++) {
-        iovecs[i].iov_base = buf;
-        iovecs[i].iov_len = (size_t) blockSize;
-        msgs[i].msg_hdr.msg_iov = &iovecs[i];
-        msgs[i].msg_hdr.msg_iovlen = 1;
-        buf += blockSize;
-    }
-
-    return (jlong) msgs;
-}
-
-JNIEXPORT jlong JNICALL Java_com_questdb_std_Net_getMsgHeaderSize
-        (JNIEnv *e, jclass cl) {
-    return sizeof(struct mmsghdr);
-}
-
-JNIEXPORT jlong JNICALL Java_com_questdb_std_Net_getMsgHeaderBufferAddressOffset
-        (JNIEnv *e, jclass cl) {
-    return offsetof(struct mmsghdr, msg_hdr) + offsetof(struct msghdr, msg_iov);
-}
-
-JNIEXPORT jlong JNICALL Java_com_questdb_std_Net_getMsgHeaderBufferLengthOffset
-        (JNIEnv *e, jclass cl) {
-    return (jint) offsetof(struct mmsghdr, msg_len);
-}
-
-JNIEXPORT void JNICALL Java_com_questdb_std_Net_freeMsgHeaders
-        (JNIEnv *e, jclass cl, jlong address) {
-    struct mmsghdr *msgs = (struct mmsghdr *) address;
-    free(msgs[0].msg_hdr.msg_iov->iov_base);
-    free(msgs[0].msg_hdr.msg_iov);
-    free(msgs);
 }
 
 JNIEXPORT jint JNICALL Java_com_questdb_std_Net_configureNonBlocking
