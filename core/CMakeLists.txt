@@ -32,7 +32,7 @@ elseif (UNIX)
     set(OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/src/main/resources/binaries/linux)
     set(SOURCE_FILES ${SOURCE_FILES}
             src/main/c/share/net.c
-            src/main/c/linux/epoll.h src/main/c/linux/epoll.c)
+            src/main/c/linux/epoll.h src/main/c/linux/epoll.c src/main/c/linux/recvmmsg.c)
 endif (APPLE)
 
 if (WIN32)
