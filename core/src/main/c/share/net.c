@@ -84,7 +84,7 @@ JNIEXPORT jint JNICALL Java_com_questdb_std_Net_sendTo
                          sizeof(struct sockaddr_in));
 }
 
-JNIEXPORT jboolean JNICALL Java_com_questdb_std_Net_bind
+JNIEXPORT jboolean JNICALL Java_com_questdb_std_Net_bindTcp
         (JNIEnv *e, jobject cl, jlong fd, jint address, jint port) {
     struct sockaddr_in addr;
 
@@ -93,6 +93,11 @@ JNIEXPORT jboolean JNICALL Java_com_questdb_std_Net_bind
     addr.sin_port = htons((uint16_t) port);
 
     return (jboolean) (bind((int) fd, (struct sockaddr *) &addr, sizeof(addr)) == 0);
+}
+
+JNIEXPORT jboolean JNICALL Java_com_questdb_std_Net_bindUdp
+        (JNIEnv *e, jobject cl, jlong fd, jint address, jint port) {
+    return Java_com_questdb_std_Net_bindTcp(e, cl, fd, address, port);
 }
 
 JNIEXPORT jboolean JNICALL Java_com_questdb_std_Net_join

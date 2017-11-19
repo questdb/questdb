@@ -41,7 +41,7 @@ public class LinuxLineProtoReceiver implements Closeable, Job {
         }
 
         try {
-            if (!nf.bind(fd, receiverCfg.getBindIPv4Address(), receiverCfg.getPort())) {
+            if (!nf.bindUdp(fd, receiverCfg.getBindIPv4Address(), receiverCfg.getPort())) {
                 int errno = Os.errno();
                 LOG.error().$("cannot bind socket [errno=").$(errno).$(", fd=").$(fd).$(", bind=").$(receiverCfg.getBindIPv4Address()).$(", port=").$(receiverCfg.getPort()).$(']').$();
                 throw CairoException.instance(Os.errno()).put("Cannot bind to ").put(receiverCfg.getBindIPv4Address()).put(':').put(receiverCfg.getPort());
