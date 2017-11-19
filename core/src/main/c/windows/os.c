@@ -28,6 +28,8 @@
 
 #include <sspi.h>
 #include <issper16.h>
+#include <sysinfoapi.h>
+#include <rpc.h>
 #include "../share/os.h"
 #include "errno.h"
 
@@ -119,6 +121,17 @@ jlong JNICALL Java_com_questdb_std_Os_generateKrbToken
     return (jlong) result;
 }
 
+JNIEXPORT jint JNICALL Java_com_questdb_std_Os_setCurrentThreadAffinity0
+        (JNIEnv *e, jclass fd, jint cpu) {
+    DWORD_PTR mask = (DWORD_PTR) (1L << cpu);
+    if (SetThreadAffinityMask(GetCurrentThread(), mask) == 0) {
+        SaveLastError();
+        return -1;
+    }
+    return 0;
+}
+
+
 JNIEXPORT void JNICALL Java_com_questdb_std_Os_freeKrbToken
         (JNIEnv *e, jclass cl, jlong ptr) {
 
@@ -146,6 +159,13 @@ BOOL WINAPI DllMain(
             break;
     }
     return TRUE;
+}
+
+JNIEXPORT jlong JNICALL Java_com_questdb_std_Os_currentTimeMicros
+        (JNIEnv *e, jclass cl) {
+    FILETIME ft;
+    GetSystemTimePreciseAsFileTime(&ft);
+    return (((__int64) ft.dwHighDateTime << 32) + ft.dwLowDateTime) / 10;
 }
 
 void SaveLastError() {
