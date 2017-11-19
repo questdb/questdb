@@ -501,6 +501,9 @@ public class VirtualMemory implements Closeable {
 
     /**
      * Provides address of page for read operations. Memory writes never call this.
+     *
+     * @param page page index, starting from 0
+     * @return native address of page
      */
     protected long getPageAddress(int page) {
         return pages.getQuick(page);

@@ -175,6 +175,9 @@ public class TableWriter implements Closeable {
      * <p>
      * Pending transaction will be committed before function attempts to add column. Even when function is unsuccessful it may
      * still have committed transaction.
+     *
+     * @param name of column either ASCII or UTF8 encoded.
+     * @param type {@link ColumnType}
      */
     public void addColumn(CharSequence name, int type) {
 

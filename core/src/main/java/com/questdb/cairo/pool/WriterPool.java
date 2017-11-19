@@ -192,6 +192,7 @@ public class WriterPool extends AbstractPool implements ResourcePool<TableWriter
      * </p>
      *
      * @param tableName table name
+     * @return true if lock was successful, false otherwise
      */
     public boolean lock(CharSequence tableName) {
 
