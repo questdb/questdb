@@ -48,11 +48,17 @@ public final class Net {
         sink.put(ip & 0xff).put('.').put((ip >> 8) & 0xff).put('.').put((ip >> 16) & 0xff).put('.').put((ip >> 24) & 0xff);
     }
 
-    public native static boolean bind(long fd, int address, int port);
+    public native static boolean bindTcp(long fd, int address, int port);
 
-    public static boolean bind(long fd, CharSequence address, int port) {
-        return bind(fd, parseIPv4(address), port);
+    public static boolean bindTcp(long fd, CharSequence address, int port) {
+        return bindTcp(fd, parseIPv4(address), port);
     }
+
+    public static boolean bindUdp(long fd, CharSequence address, int port) {
+        return bindUdp(fd, parseIPv4(address), port);
+    }
+
+    public native static boolean bindUdp(long fd, int address, int port);
 
     public static int close(long fd) {
         return Files.close(fd);

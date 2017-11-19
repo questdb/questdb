@@ -1,7 +1,9 @@
 package com.questdb.std;
 
 public interface NetFacade {
-    boolean bind(long fd, CharSequence IPv4Address, int port);
+    boolean bindTcp(long fd, CharSequence IPv4Address, int port);
+
+    boolean bindUdp(long fd, CharSequence IPv4Address, int port);
 
     void close(long fd);
 

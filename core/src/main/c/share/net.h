@@ -23,10 +23,18 @@ JNIEXPORT jlong JNICALL Java_com_questdb_std_Net_accept
 
 /*
  * Class:     com_questdb_std_Net
- * Method:    bind
+ * Method:    bindTcp
  * Signature: (JII)Z
  */
-JNIEXPORT jboolean JNICALL Java_com_questdb_std_Net_bind
+JNIEXPORT jboolean JNICALL Java_com_questdb_std_Net_bindTcp
+        (JNIEnv *, jclass, jlong, jint, jint);
+
+/*
+ * Class:     com_questdb_std_Net
+ * Method:    bindUdp
+ * Signature: (JII)Z
+ */
+JNIEXPORT jboolean JNICALL Java_com_questdb_std_Net_bindUdp
         (JNIEnv *, jclass, jlong, jint, jint);
 
 /*
@@ -79,14 +87,6 @@ JNIEXPORT jboolean JNICALL Java_com_questdb_std_Net_isDead
 
 /*
  * Class:     com_questdb_std_Net
- * Method:    recvmmsg
- * Signature: (JJI)I
- */
-JNIEXPORT jint JNICALL Java_com_questdb_std_Net_recvmmsg
-        (JNIEnv *, jclass, jlong, jlong, jint);
-
-/*
- * Class:     com_questdb_std_Net
  * Method:    join
  * Signature: (JII)Z
  */
@@ -115,6 +115,14 @@ JNIEXPORT jlong JNICALL Java_com_questdb_std_Net_msgHeaders
  * Signature: (JJI)I
  */
 JNIEXPORT jint JNICALL Java_com_questdb_std_Net_recv
+        (JNIEnv *, jclass, jlong, jlong, jint);
+
+/*
+ * Class:     com_questdb_std_Net
+ * Method:    recvmmsg
+ * Signature: (JJI)I
+ */
+JNIEXPORT jint JNICALL Java_com_questdb_std_Net_recvmmsg
         (JNIEnv *, jclass, jlong, jlong, jint);
 
 /*
@@ -159,7 +167,7 @@ JNIEXPORT jlong JNICALL Java_com_questdb_std_Net_socketTcp
 
 /*
  * Class:     com_questdb_std_Net
- * Method:    socketUdp
+ * Method:    socketUdp0
  * Signature: ()J
  */
 JNIEXPORT jlong JNICALL Java_com_questdb_std_Net_socketUdp0

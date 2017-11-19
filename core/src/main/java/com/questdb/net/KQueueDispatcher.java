@@ -79,7 +79,7 @@ public class KQueueDispatcher<C extends Context> extends SynchronizedJob impleme
         // bind socket
         this.kqueue = new Kqueue(capacity);
         this.socketFd = Net.socketTcp(false);
-        if (Net.bind(this.socketFd, ip, port)) {
+        if (Net.bindTcp(this.socketFd, ip, port)) {
             Net.listen(this.socketFd, 128);
             this.kqueue.listen(socketFd);
             LOG.debug().$("Listening socket: ").$(socketFd).$();

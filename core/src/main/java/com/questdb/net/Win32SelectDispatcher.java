@@ -84,7 +84,7 @@ public class Win32SelectDispatcher<C extends Context> extends SynchronizedJob im
 
         // bind socket
         this.socketFd = Net.socketTcp(false);
-        if (Net.bind(this.socketFd, ip, port)) {
+        if (Net.bindTcp(this.socketFd, ip, port)) {
             Net.listen(this.socketFd, 128);
             int r = pending.addRow();
             pending.set(r, M_TIMESTAMP, System.currentTimeMillis());

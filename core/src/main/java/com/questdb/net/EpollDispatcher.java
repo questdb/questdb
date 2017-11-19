@@ -77,7 +77,7 @@ public class EpollDispatcher<C extends Context> extends SynchronizedJob implemen
         // bind socket
         this.epoll = new Epoll(capacity);
         this.socketFd = Net.socketTcp(false);
-        if (Net.bind(this.socketFd, ip, port)) {
+        if (Net.bindTcp(this.socketFd, ip, port)) {
             Net.listen(this.socketFd, 128);
             this.epoll.listen(socketFd);
             LOG.debug().$("Listening socket: ").$(socketFd).$();

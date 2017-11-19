@@ -4,8 +4,13 @@ public class NetFacadeImpl implements NetFacade {
     public static final NetFacadeImpl INSTANCE = new NetFacadeImpl();
 
     @Override
-    public boolean bind(long fd, CharSequence IPv4Address, int port) {
-        return Net.bind(fd, IPv4Address, port);
+    public boolean bindTcp(long fd, CharSequence IPv4Address, int port) {
+        return Net.bindTcp(fd, IPv4Address, port);
+    }
+
+    @Override
+    public boolean bindUdp(long fd, CharSequence IPv4Address, int port) {
+        return Net.bindUdp(fd, IPv4Address, port);
     }
 
     @Override
