@@ -24,6 +24,8 @@
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include "../share/net.h"
+#include "../share/os.h"
+#include "errno.h"
 
 JNIEXPORT jlong JNICALL Java_com_questdb_std_Net_socketTcp
         (JNIEnv *e, jclass cl, jboolean blocking) {
@@ -32,17 +34,27 @@ JNIEXPORT jlong JNICALL Java_com_questdb_std_Net_socketTcp
     if (s && !blocking) {
         u_long mode = 1;
         if (ioctlsocket(s, FIONBIO, &mode) != 0) {
+            SaveLastError();
             closesocket(s);
             return -1;
         }
+    } else {
+        SaveLastError();
     }
     return (jlong) s;
 }
 
-JNIEXPORT jlong JNICALL Java_com_questdb_std_Net_socketUdp
+JNIEXPORT jlong JNICALL Java_com_questdb_std_Net_socketUdp0
         (JNIEnv *e, jclass cl) {
     SOCKET s = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
     if (s == INVALID_SOCKET) {
+        return -1;
+    }
+
+    u_long mode = 1;
+    if (ioctlsocket(s, FIONBIO, &mode) != 0) {
+        SaveLastError();
+        closesocket(s);
         return -1;
     }
     return s;
@@ -69,7 +81,7 @@ JNIEXPORT void JNICALL Java_com_questdb_std_Net_freeSockAddr
     }
 }
 
-JNIEXPORT jboolean JNICALL Java_com_questdb_std_Net_bind
+JNIEXPORT jboolean JNICALL Java_com_questdb_std_Net_bindTcp
         (JNIEnv *e, jclass cl, jlong fd, jint address, jint port) {
 
     // int ip address to string
@@ -92,10 +104,43 @@ JNIEXPORT jboolean JNICALL Java_com_questdb_std_Net_bind
     // populate addrinfo
     struct addrinfo *addr;
     if (getaddrinfo(inet_ntoa(ip_addr), p, &hints, &addr) != 0) {
+        SaveLastError();
         return FALSE;
     }
 
     return (jboolean) (bind((SOCKET) fd, addr->ai_addr, (int) addr->ai_addrlen) == 0);
+}
+
+JNIEXPORT jboolean JNICALL Java_com_questdb_std_Net_join
+        (JNIEnv *e, jclass cl, jlong fd, jint bindAddress, jint groupAddress) {
+    struct ip_mreq_source imr;
+    imr.imr_multiaddr.s_addr  = htonl((u_long) groupAddress);
+    imr.imr_interface.s_addr = htonl((u_long) bindAddress);
+    if (setsockopt((SOCKET) fd, IPPROTO_IP, IP_ADD_MEMBERSHIP, (char *) &imr, sizeof(imr)) < 0) {
+        SaveLastError();
+        return FALSE;
+    }
+    return TRUE;
+}
+
+
+
+JNIEXPORT jboolean JNICALL Java_com_questdb_std_Net_bindUdp
+        (JNIEnv *e, jclass cl, jlong fd, jint address, jint port) {
+
+    struct sockaddr_in RecvAddr;
+    ZeroMemory(&RecvAddr, sizeof(RecvAddr));
+
+    RecvAddr.sin_family = AF_INET;
+    RecvAddr.sin_addr.s_addr = htonl((u_long) address);
+    RecvAddr.sin_port = htons((u_short) port);
+
+    if (bind((SOCKET) fd, (SOCKADDR*) &RecvAddr, sizeof(RecvAddr)) == 0) {
+        return TRUE;
+    }
+
+    SaveLastError();
+    return FALSE;
 }
 
 JNIEXPORT void JNICALL Java_com_questdb_std_Net_listen
@@ -115,6 +160,7 @@ JNIEXPORT jint JNICALL Java_com_questdb_std_Net_configureNonBlocking
 }
 
 jint convert_error(int n) {
+    SaveLastError();
     if (n > 0) {
         return (jint) n;
     }

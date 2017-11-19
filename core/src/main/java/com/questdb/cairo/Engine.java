@@ -33,7 +33,6 @@ import com.questdb.mp.SynchronizedJob;
 import com.questdb.std.FilesFacade;
 import com.questdb.std.Misc;
 import com.questdb.std.ObjHashSet;
-import com.questdb.std.Os;
 import com.questdb.std.microtime.MicrosecondClock;
 import com.questdb.std.str.Path;
 
@@ -157,13 +156,8 @@ public class Engine implements Closeable {
             throw CairoException.instance(0).put("Rename failed. Table '").put(tableName).put("' does not exist");
         }
 
-        if (Os.type == Os.WINDOWS) {
-            path.of("\\\\?\\").concat(root).concat(tableName).$();
-            other.of("\\\\?\\").concat(root).concat(to).$();
-        } else {
-            path.of(root).concat(tableName).$();
-            other.of(root).concat(to).$();
-        }
+        path.of(root).concat(tableName).$();
+        other.of(root).concat(to).$();
 
         if (ff.exists(other)) {
             LOG.error().$("rename target exists [from='").$(tableName).$("', to='").$(other).$("']").$();

@@ -1,5 +1,29 @@
+/*******************************************************************************
+ *    ___                  _   ____  ____
+ *   / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *  | | | | | | |/ _ \/ __| __| | | |  _ \
+ *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *   \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ * Copyright (C) 2014-2017 Appsicle
+ *
+ * This program is free software: you can redistribute it and/or  modify
+ * it under the terms of the GNU Affero General Public License, version 3,
+ * as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Affero General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ *
+ ******************************************************************************/
+
 package com.questdb.parser.typeprobe;
 
+import com.questdb.std.Os;
 import com.questdb.std.time.DateFormatFactory;
 import com.questdb.std.time.DateLocale;
 import com.questdb.std.time.DateLocaleFactory;
@@ -9,8 +33,11 @@ import org.junit.Test;
 public class TypeProbeCollectionTest {
     @Test
     public void testTypeProbeCollectionInstantiation() throws Exception {
-        TypeProbeCollection typeProbeCollection = new TypeProbeCollection(this.getClass().getResource("/date_test.formats").getFile(),
-                new DateFormatFactory(), DateLocaleFactory.INSTANCE);
+        String path = this.getClass().getResource("/date_test.formats").getFile();
+        if (Os.type == Os.WINDOWS && path.startsWith("/")) {
+            path = path.substring(1);
+        }
+        TypeProbeCollection typeProbeCollection = new TypeProbeCollection(path, new DateFormatFactory(), DateLocaleFactory.INSTANCE);
 
         Assert.assertEquals(7, typeProbeCollection.getProbeCount());
         Assert.assertTrue(typeProbeCollection.getProbe(0) instanceof IntProbe);
