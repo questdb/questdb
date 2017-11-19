@@ -43,19 +43,11 @@ JNIEXPORT jint JNICALL Java_com_questdb_std_Os_getPid
 
 /*
  * Class:     com_questdb_std_Os
- * Method:    getTid
- * Signature: ()I
+ * Method:    setCurrentThreadAffinity
+ * Signature: (I)I
  */
-JNIEXPORT jint JNICALL Java_com_questdb_std_Os_getTid
-        (JNIEnv *, jclass);
-
-/*
- * Class:     com_questdb_std_Os
- * Method:    schedSetAffinity
- * Signature: (II)I
- */
-JNIEXPORT jint JNICALL Java_com_questdb_std_Os_schedSetAffinity
-        (JNIEnv *, jclass, jint, jint);
+JNIEXPORT jint JNICALL Java_com_questdb_std_Os_setCurrentThreadAffinity0
+        (JNIEnv *, jclass, jint);
 
 /*
  * Class:     com_questdb_std_Os

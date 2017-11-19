@@ -47,9 +47,9 @@ public final class Os {
     private Os() {
     }
 
-    public static native int errno();
-
     public static native long currentTimeMicros();
+
+    public static native int errno();
 
     public static long forkExec(CharSequence args) {
         ObjList<Path> paths = Chars.splitLpsz(args);
@@ -115,13 +115,18 @@ public final class Os {
         return bean.getTotalPhysicalMemorySize();
     }
 
-    public static native int getTid();
-
     @SuppressWarnings("EmptyMethod")
     public static void init() {
     }
 
-    public static native int schedSetAffinity(int pid, int cpu);
+    public static int setCurrentThreadAffinity(int cpu) {
+        if (cpu == -1) {
+            return 0;
+        }
+        return setCurrentThreadAffinity0(cpu);
+    }
+
+    private static native int setCurrentThreadAffinity0(int cpu);
 
     private static native long generateKrbToken(long spn);
 
