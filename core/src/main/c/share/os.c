@@ -26,8 +26,6 @@
 #include <unistd.h>
 #include <sys/errno.h>
 #include <stdlib.h>
-#include <syscall.h>
-#include <sched.h>
 #include <sys/time.h>
 #include "../share/os.h"
 
@@ -41,19 +39,6 @@ JNIEXPORT jlong JNICALL Java_com_questdb_std_Os_currentTimeMicros
     struct timeval tv;
     gettimeofday(&tv, NULL);
     return tv.tv_sec * 1000 + tv.tv_usec;
-}
-
-JNIEXPORT jint JNICALL Java_com_questdb_std_Os_getTid
-        (JNIEnv *e, jclass cl) {
-    return (pid_t) syscall(SYS_gettid);
-}
-
-JNIEXPORT jint JNICALL Java_com_questdb_std_Os_schedSetAffinity
-        (JNIEnv *e, jclass cl, jint pid, jint cpu) {
-    cpu_set_t set;
-    CPU_ZERO(&set);
-    CPU_SET(cpu, &set);
-    return sched_setaffinity(pid, sizeof(set), &set);
 }
 
 JNIEXPORT jint JNICALL Java_com_questdb_std_Os_errno
