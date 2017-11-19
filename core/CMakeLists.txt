@@ -26,7 +26,7 @@ if (APPLE)
             src/main/c/osx/kqueue.h
             src/main/c/osx/kqueue.c
             src/main/c/share/net.c
-            )
+            src/main/c/osx/affinity.c)
 elseif (UNIX)
     include_directories($ENV{JAVA_HOME}/include/linux/)
     set(OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/src/main/resources/binaries/linux)
