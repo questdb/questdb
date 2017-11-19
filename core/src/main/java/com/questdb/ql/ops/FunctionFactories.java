@@ -351,6 +351,7 @@ public final class FunctionFactories {
         binSig("=", DoubleEqualOperator.FACTORY, LongEqualOperator.FACTORY, IntEqualOperator.FACTORY, StrEqualStrOperator.FACTORY);
         binSig("=", ColumnType.SYMBOL, false, ColumnType.STRING, false, StrEqualStrOperator.FACTORY);
         binSig("=", ColumnType.SYMBOL, false, ColumnType.STRING, true, SymEqualStrOperator.FACTORY);
+        binSig("=", ColumnType.SYMBOL, false, ColumnType.PARAMETER, true, SymEqualStrOperator.FACTORY);
         binSig("=", ColumnType.STRING, true, ColumnType.SYMBOL, false, StrEqualSymOperator.FACTORY);
         binSig("=", ColumnType.DATE, ColumnType.DATE, LongEqualOperator.FACTORY);
         binSig("=", ColumnType.DATE, ColumnType.STRING, true, DateEqualStrConstOperator.FACTORY);
