@@ -93,10 +93,11 @@ public final class ImportManager {
      * Parser will always attempt to infer journal structure from input, even of journal already exists. If input
      * structure does not match structure of journal - an exception is thrown.
      *
-     * @param factory   journal factory
-     * @param fileName  name of input file
-     * @param delimiter inout delimiter
-     * @param schema    optional instance of ImportSchema
+     * @param factory     journal factory
+     * @param fileName    name of input file
+     * @param delimiter   inout delimiter
+     * @param schema      optional instance of ImportSchema
+     * @param forceHeader forces to treat first row as a header. When header is not forced algorithm will make best effort to detect it.
      * @throws IOException in case imported file cannot be read
      */
     public static void importFile(Factory factory, String fileName, char delimiter, @Nullable CharSequence schema, boolean forceHeader) throws IOException {

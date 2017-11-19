@@ -39,12 +39,10 @@ import java.util.*;
  * matcher, so many matchers can share the same pattern.
  * <p>
  * A typical invocation sequence is thus
- * <p>
  * <blockquote><pre>
  * Pattern p = Pattern.{@link #compile compile}("a*b");
  * Matcher m = p.{@link #matcher matcher}("aaaaab");
  * boolean b = m.{@link Matcher#matches matches}();</pre></blockquote>
- * <p>
  * <p>
  * A {@link #matches matches} method is defined by this class as a
  * convenience for when a regular expression is used just once.  This method

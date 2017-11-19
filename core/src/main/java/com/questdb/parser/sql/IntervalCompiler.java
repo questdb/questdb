@@ -65,8 +65,9 @@ public class IntervalCompiler {
      * Intersects two lists of intervals and returns result list. Both lists are expected
      * to be chronologically ordered and result list will be ordered as well.
      *
-     * @param a list of intervals
-     * @param b list of intervals
+     * @param a   list of intervals
+     * @param b   list of intervals
+     * @param out intersection target
      */
     public static void intersect(LongList a, LongList b, LongList out) {
 

@@ -1,3 +1,26 @@
+/*******************************************************************************
+ *    ___                  _   ____  ____
+ *   / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *  | | | | | | |/ _ \/ __| __| | | |  _ \
+ *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *   \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ * Copyright (C) 2014-2017 Appsicle
+ *
+ * This program is free software: you can redistribute it and/or  modify
+ * it under the terms of the GNU Affero General Public License, version 3,
+ * as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Affero General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ *
+ ******************************************************************************/
+
 package com.questdb.std;
 
 /*
@@ -61,7 +84,6 @@ import java.util.concurrent.locks.ReentrantLock;
  * in a way that prevents all access.  This class is fully
  * interoperable with {@code Hashtable} in programs that rely on its
  * thread safety but not on its synchronization details.
- * <p>
  * <p>Retrieval operations (including {@code get}) generally do not
  * block, so may overlap with update operations (including {@code put}
  * and {@code remove}). Retrievals reflect the results of the most
@@ -82,7 +104,6 @@ import java.util.concurrent.locks.ReentrantLock;
  * Otherwise the results of these methods reflect transient states
  * that may be adequate for monitoring or estimation purposes, but not
  * for program control.
- * <p>
  * <p>The table is dynamically expanded when there are too many
  * collisions (i.e., keys that have distinct hash codes but fall into
  * the same slot modulo the table size), with the expected average
@@ -104,7 +125,6 @@ import java.util.concurrent.locks.ReentrantLock;
  * {@code hashCode()} is a sure way to slow down performance of any
  * hash table. To ameliorate impact, when keys are {@link Comparable},
  * this class may use comparison order among keys to help break ties.
- * <p>
  * <p>A {@link Set} projection of a ConcurrentHashMap may be created
  * (using {@link #newKeySet()} or {@link #newKeySet(int)}), or viewed
  * (using {@link #keySet(Object)} when only keys are of interest, and the
@@ -113,10 +133,8 @@ import java.util.concurrent.locks.ReentrantLock;
  * <p> This class and its views and iterators implement all of the
  * <em>optional</em> methods of the {@link Map} and {@link Iterator}
  * interfaces.
- * <p>
  * <p>Like {@link Hashtable} but unlike {@link HashMap}, this class
  * does <em>not</em> allow {@code null} to be used as a key or value.
- * <p>
  * <p>ConcurrentHashMaps support a set of sequential and parallel bulk
  * operations that are designed
  * to be safely, and often sensibly, applied even with maps that are
@@ -132,36 +150,27 @@ import java.util.concurrent.locks.ReentrantLock;
  * computation is in progress; and except for forEach actions, should
  * ideally be side-effect-free. Bulk operations on {@link java.util.Map.Entry}
  * objects do not support method {@code setValue}.
- * <p>
  * <ul>
  * <li> forEach: Perform a given action on each element.
  * A variant form applies a given transformation on each element
  * before performing the action.</li>
- * <p>
  * <li> search: Return the first available non-null result of
  * applying a given function on each element; skipping further
  * search when a result is found.</li>
- * <p>
  * <li> reduce: Accumulate each element.  The supplied reduction
  * function cannot rely on ordering (more formally, it should be
  * both associative and commutative).  There are five variants:
- * <p>
  * <ul>
- * <p>
  * <li> Plain reductions. (There is not a form of this method for
  * (key, value) function arguments since there is no corresponding
  * return type.)</li>
- * <p>
  * <li> Mapped reductions that accumulate the results of a given
  * function applied to each element.</li>
- * <p>
  * <li> Reductions to scalar doubles, longs, and ints, using a
  * given basis value.</li>
- * <p>
  * </ul>
  * </li>
  * </ul>
- * <p>
  * <p>The concurrency properties of bulk operations follow
  * from those of ConcurrentHashMap: Any non-null result returned
  * from {@code get(key)} and related access methods bears a
@@ -179,7 +188,6 @@ import java.util.concurrent.locks.ReentrantLock;
  * should be the identity element for the reduction). Most common
  * reductions have these properties; for example, computing a sum
  * with basis 0 or a minimum with basis MAX_VALUE.
- * <p>
  * <p>Search and transformation functions provided as arguments
  * should similarly return null to indicate the lack of any result
  * (in which case it is not used). In the case of mapped
@@ -190,20 +198,17 @@ import java.util.concurrent.locks.ReentrantLock;
  * filterings by composing them yourself under this "null means
  * there is nothing there now" rule before using them in search or
  * reduce operations.
- * <p>
  * <p>Methods accepting and/or returning Entry arguments maintain
  * key-value associations. They may be useful for example when
  * finding the key for the greatest value. Note that "plain" Entry
  * arguments can be supplied using {@code new
  * AbstractMap.SimpleEntry(k,v)}.
- * <p>
  * <p>Bulk operations may complete abruptly, throwing an
  * exception encountered in the application of a supplied
  * function. Bear in mind when handling such exceptions that other
  * concurrently executing functions could also have thrown
  * exceptions, or would have done so if the first exception had
  * not occurred.
- * <p>
  * <p>Speedups for parallel compared to sequential forms are common
  * but not guaranteed.  Parallel operations involving brief functions
  * on small maps may execute more slowly than sequential forms if the
@@ -211,9 +216,7 @@ import java.util.concurrent.locks.ReentrantLock;
  * than the computation itself.  Similarly, parallelization may not
  * lead to much actual parallelism if all processors are busy
  * performing unrelated tasks.
- * <p>
  * <p>All arguments to all task methods must be non-null.
- * <p>
  * <p>This class is a member of the
  * <a href="{@docRoot}/../technotes/guides/collections/index.html">
  * Java Collections Framework</a>.
@@ -907,7 +910,6 @@ public class ConcurrentHashMap<K, V> extends AbstractMap<K, V>
     /**
      * Returns the value to which the specified key is mapped,
      * or {@code null} if this map contains no mapping for the key.
-     * <p>
      * <p>More formally, if this map contains a mapping from a key
      * {@code k} to a value {@code v} such that {@code key.equals(k)},
      * then this method returns {@code v}; otherwise it returns
@@ -940,7 +942,6 @@ public class ConcurrentHashMap<K, V> extends AbstractMap<K, V>
     /**
      * Maps the specified key to the specified value in this table.
      * Neither the key nor the value can be null.
-     * <p>
      * <p>The value can be retrieved by calling the {@code get} method
      * with a key that is equal to the original key.
      *
@@ -1030,7 +1031,6 @@ public class ConcurrentHashMap<K, V> extends AbstractMap<K, V>
      * {@code removeAll}, {@code retainAll}, and {@code clear}
      * operations.  It does not support the {@code add} or
      * {@code addAll} operations.
-     * <p>
      * <p>The view's iterators and spliterators are
      * <a href="package-summary.html#Weakly"><i>weakly consistent</i></a>.
      * <p>
@@ -1052,10 +1052,8 @@ public class ConcurrentHashMap<K, V> extends AbstractMap<K, V>
      * {@code Collection.remove}, {@code removeAll},
      * {@code retainAll}, and {@code clear} operations.  It does not
      * support the {@code add} or {@code addAll} operations.
-     * <p>
      * <p>The view's iterators and spliterators are
      * <a href="package-summary.html#Weakly"><i>weakly consistent</i></a>.
-     * <p>
      *
      * @return the collection view
      */
@@ -1073,10 +1071,8 @@ public class ConcurrentHashMap<K, V> extends AbstractMap<K, V>
      * via the {@code Iterator.remove}, {@code Set.remove},
      * {@code removeAll}, {@code retainAll}, and {@code clear}
      * operations.
-     * <p>
      * <p>The view's iterators and spliterators are
      * <a href="package-summary.html#Weakly"><i>weakly consistent</i></a>.
-     * <p>
      *
      * @return the set view
      */
@@ -2921,7 +2917,6 @@ public class ConcurrentHashMap<K, V> extends AbstractMap<K, V>
 
         /**
          * Returns an iterator over the elements in this collection.
-         * <p>
          * <p>The returned iterator is
          * <a href="package-summary.html#Weakly"><i>weakly consistent</i></a>.
          *

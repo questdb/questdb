@@ -48,7 +48,7 @@ public interface RecordMetadata {
     /**
      * Finds column metadata by column index. Method does not perform boundary checks, relying on caller to do so.
      *
-     * @param index must be >=0 and < getColumnCount()
+     * @param index must be &gt;=0 and &lt; getColumnCount()
      * @return column metadata
      */
     RecordColumnMetadata getColumnQuick(int index);
