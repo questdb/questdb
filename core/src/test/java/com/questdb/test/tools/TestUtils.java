@@ -510,8 +510,4 @@ public final class TestUtils {
     public interface LeakProneCode {
         void run() throws Exception;
     }
-
-    static {
-        Os.init();
-    }
 }

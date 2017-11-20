@@ -124,7 +124,6 @@ public final class Epoll implements Closeable {
     private static native int getCtlMod();
 
     static {
-        Os.init();
         DATA_OFFSET = getDataOffset();
         EVENTS_OFFSET = getEventsOffset();
         SIZEOF_EVENT = getEventSize();
