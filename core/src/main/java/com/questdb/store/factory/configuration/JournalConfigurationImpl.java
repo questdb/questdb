@@ -28,6 +28,7 @@ import com.questdb.ex.JournalMetadataException;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.std.Files;
+import com.questdb.std.Misc;
 import com.questdb.std.ObjObjHashMap;
 import com.questdb.std.ThreadLocal;
 import com.questdb.std.ex.JournalException;
@@ -123,5 +124,11 @@ class JournalConfigurationImpl implements JournalConfiguration {
             }
         }
         return null;
+    }
+
+    @Override
+    public void releaseThreadLocals() {
+        Misc.free(tlPath.get());
+        tlPath.remove();
     }
 }

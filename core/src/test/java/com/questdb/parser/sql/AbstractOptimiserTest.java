@@ -164,16 +164,18 @@ public abstract class AbstractOptimiserTest {
         }
     }
 
-    protected void assertThat(String expected, String query) throws ParserException, IOException {
+    protected void assertThat(String expected, String query) throws Exception {
         assertThat(expected, query, false);
     }
 
-    protected void assertThat(String expected, String query, boolean header) throws ParserException, IOException {
-        long allocated = Unsafe.getMemUsed();
-        assertThat0(expected, query, header);
-        assertThat0(expected, query, header);
-        Misc.free(cache.poll(query));
-        Assert.assertEquals(allocated, Unsafe.getMemUsed());
+    protected void assertThat(String expected, String query, boolean header) throws Exception {
+        FACTORY_CONTAINER.getFactory().getConfiguration().releaseThreadLocals();
+        TestUtils.assertMemoryLeak(() -> {
+            assertThat0(expected, query, header);
+            assertThat0(expected, query, header);
+            Misc.free(cache.poll(query));
+            FACTORY_CONTAINER.getFactory().getConfiguration().releaseThreadLocals();
+        });
     }
 
     protected void assertThat(String expected, RecordSource rs, boolean header) throws IOException {
@@ -211,13 +213,17 @@ public abstract class AbstractOptimiserTest {
     }
 
     protected void expectFailure(CharSequence query) throws ParserException {
+        FACTORY_CONTAINER.getFactory().getConfiguration().releaseThreadLocals();
         long memUsed = Unsafe.getMemUsed();
         try {
             compiler.compile(FACTORY_CONTAINER.getFactory(), query);
             Assert.fail();
         } catch (ParserException e) {
+            FACTORY_CONTAINER.getFactory().getConfiguration().releaseThreadLocals();
             Assert.assertEquals(memUsed, Unsafe.getMemUsed());
             throw e;
+        } finally {
+            FACTORY_CONTAINER.getFactory().getConfiguration().releaseThreadLocals();
         }
     }
 

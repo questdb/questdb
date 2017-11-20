@@ -43,4 +43,6 @@ public interface JournalConfiguration {
     File getJournalBase();
 
     <T> JournalMetadata<T> readMetadata(String name) throws JournalException;
+
+    void releaseThreadLocals();
 }
