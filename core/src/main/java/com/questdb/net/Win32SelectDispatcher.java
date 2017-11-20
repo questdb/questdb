@@ -386,8 +386,6 @@ public class Win32SelectDispatcher<C extends Context> extends SynchronizedJob im
     }
 
     static {
-        Os.init();
-
         ARRAY_OFFSET = arrayOffset();
         COUNT_OFFSET = countOffset();
     }

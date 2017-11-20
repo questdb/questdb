@@ -24,7 +24,10 @@
 package com.questdb;
 
 import com.questdb.common.NumericException;
-import com.questdb.std.*;
+import com.questdb.std.ByteBuffers;
+import com.questdb.std.Chars;
+import com.questdb.std.Files;
+import com.questdb.std.ObjList;
 import com.questdb.std.ex.JournalException;
 import com.questdb.std.str.DirectCharSequence;
 import com.questdb.std.str.NativeLPSZ;
@@ -275,9 +278,5 @@ public class FilesTest {
     private static void touch(File file) throws IOException {
         FileOutputStream fos = new FileOutputStream(file);
         fos.close();
-    }
-
-    static {
-        Os.init();
     }
 }

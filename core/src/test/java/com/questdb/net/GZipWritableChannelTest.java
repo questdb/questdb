@@ -23,7 +23,6 @@
 
 package com.questdb.net;
 
-import com.questdb.std.Os;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Rule;
 import org.junit.Test;
@@ -73,9 +72,5 @@ public class GZipWritableChannelTest {
         }
 
         TestUtils.assertEquals(expected, actual);
-    }
-
-    static {
-        Os.init();
     }
 }

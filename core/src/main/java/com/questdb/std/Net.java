@@ -156,6 +156,7 @@ public final class Net {
     }
 
     static {
+        Os.init();
         EWOULDBLOCK = getEwouldblock();
         if (Os.type == Os.LINUX) {
             MMSGHDR_SIZE = getMsgHeaderSize();

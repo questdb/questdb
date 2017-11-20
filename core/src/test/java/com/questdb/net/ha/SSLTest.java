@@ -26,7 +26,6 @@ package com.questdb.net.ha;
 import com.questdb.model.Quote;
 import com.questdb.net.ha.config.ClientConfig;
 import com.questdb.net.ha.config.ServerConfig;
-import com.questdb.std.Os;
 import com.questdb.store.Journal;
 import com.questdb.store.JournalWriter;
 import com.questdb.store.factory.Factory;
@@ -354,9 +353,5 @@ public class SSLTest {
 
     private Factory getFactory() {
         return factoryContainer.getFactory();
-    }
-
-    static {
-        Os.init();
     }
 }

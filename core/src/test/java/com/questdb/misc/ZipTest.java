@@ -24,7 +24,6 @@
 package com.questdb.misc;
 
 import com.questdb.std.Files;
-import com.questdb.std.Os;
 import com.questdb.std.Unsafe;
 import com.questdb.std.Zip;
 import com.questdb.std.ex.FatalError;
@@ -140,9 +139,5 @@ public class ZipTest {
 
             TestUtils.assertEquals(expected, actual);
         }
-    }
-
-    static {
-        Os.init();
     }
 }

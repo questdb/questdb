@@ -27,7 +27,6 @@ import com.questdb.mp.RingQueue;
 import com.questdb.mp.Sequence;
 import com.questdb.mp.SynchronizedJob;
 import com.questdb.std.Files;
-import com.questdb.std.Os;
 
 import java.io.Closeable;
 
@@ -64,9 +63,5 @@ public class LogConsoleWriter extends SynchronizedJob implements Closeable, LogW
         }
         subSeq.done(cursor);
         return true;
-    }
-
-    static {
-        Os.init();
     }
 }

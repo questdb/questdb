@@ -82,17 +82,17 @@ public class SQLExamples {
             System.out.println("---------");
 
             // extract year from movie title
-            printer.print(compiler.compile(factory, "select title, match('\\(([0-9]*?)\\)', title) year from 'movies.csv' where movieId = 62198"), factory);
+            printer.print(compiler.compile(factory, "select title, pluck('\\(([0-9]*?)\\)', title) year from 'movies.csv' where movieId = 62198"), factory);
 
             System.out.println("---------");
 
             // order by movie year descending
-            printer.print(compiler.compile(factory, "select title, match('\\(([0-9]*?)\\)', title) year from 'movies.csv' order by year desc"), factory);
+            printer.print(compiler.compile(factory, "select title, pluck('\\(([0-9]*?)\\)', title) year from 'movies.csv' order by year desc"), factory);
 
             System.out.println("---------");
 
             // count titles by year
-            printer.print(compiler.compile(factory, "select year, count() from (select title, match('\\(([0-9]*?)\\)', title) year from 'movies.csv' order by year desc)"), factory);
+            printer.print(compiler.compile(factory, "select year, count() from (select title, pluck('\\(([0-9]*?)\\)', title) year from 'movies.csv' order by year desc)"), factory);
         }
     }
 }

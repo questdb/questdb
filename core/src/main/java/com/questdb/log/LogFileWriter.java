@@ -27,7 +27,10 @@ import com.questdb.common.NumericException;
 import com.questdb.mp.RingQueue;
 import com.questdb.mp.Sequence;
 import com.questdb.mp.SynchronizedJob;
-import com.questdb.std.*;
+import com.questdb.std.Chars;
+import com.questdb.std.Files;
+import com.questdb.std.Numbers;
+import com.questdb.std.Unsafe;
 import com.questdb.std.str.Path;
 
 import java.io.Closeable;
@@ -138,9 +141,5 @@ public class LogFileWriter extends SynchronizedJob implements Closeable, LogWrit
     private void flush() {
         Files.append(fd, buf, (int) (_wptr - buf));
         _wptr = buf;
-    }
-
-    static {
-        Os.init();
     }
 }
