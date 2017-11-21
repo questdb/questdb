@@ -301,7 +301,6 @@ public class WriterPool extends AbstractPool implements ResourcePool<TableWriter
                     closeWriter(thread, e, PoolListener.EV_EXPIRE, reason);
                     iterator.remove();
                     removed = true;
-                    Unsafe.getUnsafe().putOrderedLong(e, ENTRY_OWNER, UNALLOCATED);
                 }
             } else if (e.lockFd != -1L) {
                 if (ff.close(e.lockFd)) {
@@ -310,7 +309,7 @@ public class WriterPool extends AbstractPool implements ResourcePool<TableWriter
                     removed = true;
                 }
             } else if (e.ex != null) {
-                LOG.info().$("Removing entry for failed to allocate writer").$();
+                LOG.info().$("purging entry for failed to allocate writer").$();
                 iterator.remove();
                 removed = true;
             }
