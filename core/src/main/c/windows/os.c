@@ -28,11 +28,10 @@
 
 #include <sspi.h>
 #include <issper16.h>
-#include <sysinfoapi.h>
 #include <rpc.h>
-#include <stdint.h>
 #include "../share/os.h"
 #include "errno.h"
+#include "timer.h"
 
 JNIEXPORT jint JNICALL Java_com_questdb_std_Os_getPid
         (JNIEnv *e, jclass cl) {
@@ -151,6 +150,7 @@ BOOL WINAPI DllMain(
     switch (fdwReason) {
         case DLL_PROCESS_ATTACH:
             dwTlsIndexLastError = TlsAlloc();
+            setupTimer();
             break;
         case DLL_PROCESS_DETACH:
             TlsFree(dwTlsIndexLastError);
@@ -162,12 +162,14 @@ BOOL WINAPI DllMain(
     return TRUE;
 }
 
+JNIEXPORT void JNICALL Java_com_questdb_std_Os_setupTimer
+        (JNIEnv *e, jclass cl) {
+    setupTimer();
+}
+
 JNIEXPORT jlong JNICALL Java_com_questdb_std_Os_currentTimeMicros
         (JNIEnv *e, jclass cl) {
-    FILETIME ft;
-    static const uint64_t EPOCH_DIFFERENCE_MICROS = 11644473600000000ull;
-    GetSystemTimePreciseAsFileTime(&ft);
-    return (((uint64_t) ft.dwHighDateTime << 32) | (uint64_t)ft.dwLowDateTime) / 10 - EPOCH_DIFFERENCE_MICROS;
+    return now();
 }
 
 void SaveLastError() {

@@ -73,14 +73,6 @@ JNIEXPORT void JNICALL Java_com_questdb_std_Os_freeKrbToken
 JNIEXPORT jlong JNICALL Java_com_questdb_std_Os_forkExec
         (JNIEnv *, jclass, jlong);
 
-/*
- * Class:     com_questdb_std_Os
- * Method:    setupTimer
- * Signature: ()V
- */
-JNIEXPORT void JNICALL Java_com_questdb_std_Os_setupTimer
-        (JNIEnv *, jclass);
-
 #ifdef __cplusplus
 }
 #endif
