@@ -55,7 +55,9 @@ public class ReadWriteMemory extends VirtualMemory {
 
     @Override
     public void jumpTo(long offset) {
-        this.size = Math.max(this.size, getAppendOffset());
+        if (this.size < offset) {
+            this.size = offset;
+        }
         super.jumpTo(offset);
     }
 

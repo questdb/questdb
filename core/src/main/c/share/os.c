@@ -103,3 +103,9 @@ JNIEXPORT jlong JNICALL Java_com_questdb_std_Os_forkExec
         (JNIEnv *e, jclass cl, jlong argv) {
     return (jlong) forkExec((char **) argv);
 }
+
+
+JNIEXPORT void JNICALL Java_com_questdb_std_Os_setupTimer
+        (JNIEnv *e, jclass cl) {
+
+}

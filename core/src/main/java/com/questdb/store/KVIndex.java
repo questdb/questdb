@@ -123,21 +123,7 @@ public class KVIndex implements Closeable {
         long keyOffset = getKeyOffset(key);
 
         if (keyOffset >= firstEntryOffset + keyBlockSize) {
-            long oldSize = keyBlockSize;
             keyBlockSize = keyOffset + ENTRY_SIZE - firstEntryOffset;
-            // if keys are added in random order there will be gaps in key block with possibly random values
-            // to mitigate that as soon as we see an attempt to extend key block past ENTRY_SIZE we need to
-            // fill created gap with zeroes.
-            if (keyBlockSize - oldSize > ENTRY_SIZE) {
-                Unsafe.getUnsafe().setMemory(
-                        kData.addressOf(
-                                firstEntryOffset + oldSize
-                                , (int) (keyBlockSize - oldSize - ENTRY_SIZE)
-                        )
-                        , keyBlockSize - oldSize - ENTRY_SIZE
-                        , (byte) 0
-                );
-            }
         }
 
         long address = kData.addressOf(keyOffset, ENTRY_SIZE);
