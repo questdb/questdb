@@ -67,7 +67,7 @@ public class WriterPoolTest extends AbstractCairoTest {
             final AtomicInteger writerCount = new AtomicInteger();
             new Thread(() -> {
                 try {
-                    for (int i = 0; i < 1000000; i++) {
+                    for (int i = 0; i < 10000; i++) {
                         try (TableWriter ignored = pool.get("z")) {
                             writerCount.incrementAndGet();
                         } catch (EntryUnavailableException ignored) {
@@ -91,7 +91,7 @@ public class WriterPoolTest extends AbstractCairoTest {
                 try {
                     barrier.await();
 
-                    for (int i = 0; i < 1000000; i++) {
+                    for (int i = 0; i < 10000; i++) {
                         pool.releaseInactive();
                         LockSupport.parkNanos(1L);
                     }

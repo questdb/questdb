@@ -41,7 +41,6 @@ public final class Os {
     public static final int type;
     public static final int OSX = 1;
     public static final int LINUX = 2;
-    private static final int UNKNOWN = -1;
     private static final OperatingSystemMXBean bean = (OperatingSystemMXBean) ManagementFactory.getOperatingSystemMXBean();
 
     private Os() {
@@ -134,8 +133,6 @@ public final class Os {
 
     private static native long forkExec(long argv);
 
-    private static native void setupTimer();
-
     private static void loadLib(String lib) {
         InputStream is = Os.class.getResourceAsStream(lib);
         if (is == null) {
@@ -184,7 +181,6 @@ public final class Os {
             } else {
                 throw new Error("Unsupported OS: " + osName);
             }
-            setupTimer();
         } else {
             type = _32Bit;
         }
