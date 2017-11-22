@@ -19,18 +19,18 @@ extern "C" {
 #define com_questdb_std_Os_UNKNOWN -1L
 /*
  * Class:     com_questdb_std_Os
- * Method:    errno
- * Signature: ()I
- */
-JNIEXPORT jint JNICALL Java_com_questdb_std_Os_errno
-        (JNIEnv *, jclass);
-
-/*
- * Class:     com_questdb_std_Os
  * Method:    currentTimeMicros
  * Signature: ()J
  */
 JNIEXPORT jlong JNICALL Java_com_questdb_std_Os_currentTimeMicros
+        (JNIEnv *, jclass);
+
+/*
+ * Class:     com_questdb_std_Os
+ * Method:    errno
+ * Signature: ()I
+ */
+JNIEXPORT jint JNICALL Java_com_questdb_std_Os_errno
         (JNIEnv *, jclass);
 
 /*
@@ -43,7 +43,7 @@ JNIEXPORT jint JNICALL Java_com_questdb_std_Os_getPid
 
 /*
  * Class:     com_questdb_std_Os
- * Method:    setCurrentThreadAffinity
+ * Method:    setCurrentThreadAffinity0
  * Signature: (I)I
  */
 JNIEXPORT jint JNICALL Java_com_questdb_std_Os_setCurrentThreadAffinity0
@@ -72,6 +72,14 @@ JNIEXPORT void JNICALL Java_com_questdb_std_Os_freeKrbToken
  */
 JNIEXPORT jlong JNICALL Java_com_questdb_std_Os_forkExec
         (JNIEnv *, jclass, jlong);
+
+/*
+ * Class:     com_questdb_std_Os
+ * Method:    setupTimer
+ * Signature: ()V
+ */
+JNIEXPORT void JNICALL Java_com_questdb_std_Os_setupTimer
+        (JNIEnv *, jclass);
 
 #ifdef __cplusplus
 }

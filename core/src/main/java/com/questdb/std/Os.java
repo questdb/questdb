@@ -134,6 +134,8 @@ public final class Os {
 
     private static native long forkExec(long argv);
 
+    private static native void setupTimer();
+
     private static void loadLib(String lib) {
         InputStream is = Os.class.getResourceAsStream(lib);
         if (is == null) {
@@ -180,8 +182,9 @@ public final class Os {
                 type = WINDOWS;
                 loadLib("/binaries/windows/libquestdb.dll");
             } else {
-                type = UNKNOWN;
+                throw new Error("Unsupported OS: " + osName);
             }
+            setupTimer();
         } else {
             type = _32Bit;
         }

@@ -41,6 +41,7 @@ public class VirtualMemory implements Closeable {
     private long mod;
     private long appendPointer = -1;
     private long pageHi = -1;
+    private long pageLo = -1;
     private long baseOffset = 1;
     private long roOffsetLo = 0;
     private long roOffsetHi = 0;
@@ -82,6 +83,7 @@ public class VirtualMemory implements Closeable {
         clearPages();
         appendPointer = -1;
         pageHi = -1;
+        pageLo = -1;
         baseOffset = 1;
         clearHotPage();
     }
@@ -181,12 +183,10 @@ public class VirtualMemory implements Closeable {
     public void jumpTo(long offset) {
         assert offset >= 0;
         final long p = offset - baseOffset;
-        final int page = pageIndex(offset);
-        final long pageSize = getPageSize(page);
-        if (p >= pageHi - pageSize && p < pageHi) {
+        if (p > pageLo && p < pageHi) {
             appendPointer = p;
         } else {
-            jumpTo0(page, offset, pageSize);
+            jumpTo0(offset);
         }
     }
 
@@ -541,11 +541,13 @@ public class VirtualMemory implements Closeable {
         return value;
     }
 
-    private void jumpTo0(int page, long offset, long pageSize) {
-        long pageAddress = mapWritePage(page);
-        pageHi = pageAddress + pageSize;
+    private void jumpTo0(long offset) {
+        int page = pageIndex(offset);
+        pageLo = mapWritePage(page);
+        pageHi = pageLo + getPageSize(page);
         baseOffset = pageOffset(page + 1) - pageHi;
-        appendPointer = pageAddress + offsetInPage(offset);
+        appendPointer = pageLo + offsetInPage(offset);
+        pageLo--;
     }
 
     protected long mapWritePage(int page) {
@@ -744,6 +746,7 @@ public class VirtualMemory implements Closeable {
     }
 
     protected final void updateLimits(int page, long pageAddress) {
+        pageLo = pageAddress - 1;
         pageHi = pageAddress + getPageSize(page);
         baseOffset = pageOffset(page + 1) - pageHi;
         this.appendPointer = pageAddress;
