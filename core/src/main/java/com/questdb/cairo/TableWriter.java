@@ -922,7 +922,7 @@ public class TableWriter implements Closeable {
     private ReadWriteMemory openTxnFile() {
         try {
             if (ff.exists(path.concat(TableUtils.TXN_FILE_NAME).$())) {
-                return new ReadWriteMemory(ff, path, ff.getPageSize(), 0, ff.getPageSize());
+                return new ReadWriteMemory(ff, path, ff.getPageSize());
             }
             throw CairoException.instance(ff.errno()).put("Cannot append. File does not exist: ").put(path);
 

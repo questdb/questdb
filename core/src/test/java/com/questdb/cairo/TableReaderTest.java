@@ -608,6 +608,38 @@ public class TableReaderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testOver2GFile() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)
+                    .col("a", ColumnType.INT)) {
+                CairoTestUtils.create(model);
+            }
+
+            long N = 280000000;
+            Rnd rnd = new Rnd();
+            try (TableWriter writer = new TableWriter(configuration.getFilesFacade(), configuration.getRoot(), "x")) {
+                for (int i = 0; i < N; i++) {
+                    TableWriter.Row r = writer.newRow(0);
+                    r.putLong(0, rnd.nextLong());
+                    r.append();
+                }
+                writer.commit();
+            }
+
+            try (TableReader reader = new TableReader(configuration.getFilesFacade(), configuration.getRoot(), "x")) {
+                int count = 0;
+                rnd.reset();
+                while (reader.hasNext()) {
+                    Record record = reader.next();
+                    Assert.assertEquals(rnd.nextLong(), record.getLong(0));
+                    count++;
+                }
+                Assert.assertEquals(N, count);
+            }
+        });
+    }
+
+    @Test
     public void testPartialString() throws Exception {
         CairoTestUtils.createAllTable(configuration, PartitionBy.NONE);
         int N = 10000;
@@ -1549,13 +1581,12 @@ public class TableReaderTest extends AbstractCairoTest {
     }
 
     private void testTableCursor(long inc, String expected) throws IOException, NumericException {
-        final long increment = inc;
         Rnd rnd = new Rnd();
         int N = 100;
         long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z") / 1000;
         long blob = allocBlob();
         try {
-            testAppend(rnd, FF, ts, N, increment, blob, 0, BATCH1_GENERATOR);
+            testAppend(rnd, FF, ts, N, inc, blob, 0, BATCH1_GENERATOR);
 
             final StringSink sink = new StringSink();
             final RecordSourcePrinter printer = new RecordSourcePrinter(sink);
@@ -1578,7 +1609,7 @@ public class TableReaderTest extends AbstractCairoTest {
 
                 Rnd exp = new Rnd();
                 for (int i = 0, n = rows.size(); i < n; i++) {
-                    BATCH1_ASSERTER.assertRecord(reader.recordAt(rows.getQuick(i)), exp, ts += increment, blob);
+                    BATCH1_ASSERTER.assertRecord(reader.recordAt(rows.getQuick(i)), exp, ts += inc, blob);
                 }
             }
         } finally {
