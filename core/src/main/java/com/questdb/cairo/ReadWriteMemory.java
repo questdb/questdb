@@ -23,11 +23,14 @@
 
 package com.questdb.cairo;
 
+import com.questdb.log.Log;
+import com.questdb.log.LogFactory;
 import com.questdb.std.Files;
 import com.questdb.std.FilesFacade;
 import com.questdb.std.str.LPSZ;
 
 public class ReadWriteMemory extends VirtualMemory {
+    private static final Log LOG = LogFactory.getLog(ReadWriteMemory.class);
     private final FilesFacade ff;
     private long fd = -1;
     private long size;
@@ -49,6 +52,7 @@ public class ReadWriteMemory extends VirtualMemory {
         if (fd != -1) {
             ff.truncate(fd, size);
             ff.close(fd);
+            LOG.info().$("closed [fd=").$(fd).$(']').$();
             fd = -1;
         }
     }
@@ -97,6 +101,7 @@ public class ReadWriteMemory extends VirtualMemory {
             throw CairoException.instance(ff.errno()).put("Cannot open file: ").put(name);
         }
         configurePageSize(ff.length(fd), maxPageSize);
+        LOG.info().$("open ").$(name).$(" [fd=").$(fd).$(']').$();
     }
 
     public long size() {
