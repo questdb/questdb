@@ -23,28 +23,17 @@
 
 package com.questdb.cairo;
 
-import com.questdb.test.tools.TestUtils;
-import org.junit.Test;
+public class BitmapIndexEmptyCursor implements BitmapIndexCursor {
 
-public class BitmapIndexWriterTest extends AbstractCairoTest {
-    @Test
-    public void testAdd() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            try (BitmapIndexWriter writer = new BitmapIndexWriter(configuration.getFilesFacade(), root, "x", 64)) {
-                writer.add(0, 1000);
-                writer.add(256, 1234);
+    static final BitmapIndexCursor INSTANCE = new BitmapIndexEmptyCursor();
 
-                writer.add(64, 10);
-                writer.add(64, 987);
-                writer.add(256, 5567);
-            }
+    @Override
+    public boolean hasNext() {
+        return false;
+    }
 
-            try (BitmapIndexBackwardReader reader = new BitmapIndexBackwardReader(configuration.getFilesFacade(), root, "x")) {
-                BitmapIndexCursor cursor = reader.getCursor(256);
-                while (cursor.hasNext()) {
-                    System.out.println(cursor.next());
-                }
-            }
-        });
+    @Override
+    public long next() {
+        return 0;
     }
 }
