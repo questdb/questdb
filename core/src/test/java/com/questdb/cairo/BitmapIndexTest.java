@@ -32,6 +32,7 @@ import org.junit.Assert;
 import org.junit.Test;
 
 public class BitmapIndexTest extends AbstractCairoTest {
+
     @Test
     public void testAdd() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
