@@ -51,14 +51,12 @@ public class BitmapIndexBackwardReader implements Closeable {
             // This is always necessary in case reader is created at the same time as index itself.
 
             int blockValueCountMod;
-            int blockCapacity;
             long keyCount;
             while (true) {
                 long seq = this.keyMem.getLong(BitmapIndexConstants.KEY_RESERVED_SEQUENCE);
                 Unsafe.getUnsafe().loadFence();
 
                 blockValueCountMod = this.keyMem.getInt(BitmapIndexConstants.KEY_RESERVED_OFFSET_BLOCK_VALUE_COUNT) - 1;
-                blockCapacity = blockValueCountMod + 1 + BitmapIndexConstants.VALUE_BLOCK_FILE_RESERVED;
                 keyCount = this.keyMem.getLong(BitmapIndexConstants.KEY_RESERVED_OFFSET_KEY_COUNT);
                 Unsafe.getUnsafe().loadFence();
 
@@ -70,7 +68,7 @@ public class BitmapIndexBackwardReader implements Closeable {
             }
 
             this.blockValueCountMod = blockValueCountMod;
-            this.blockCapacity = blockCapacity;
+            this.blockCapacity = (blockValueCountMod + 1) * 8 + BitmapIndexConstants.VALUE_BLOCK_FILE_RESERVED;
             this.keyCount = keyCount;
 
             BitmapIndexConstants.valueFileName(path, root, name);
