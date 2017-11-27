@@ -81,7 +81,7 @@ public class BitmapIndexWriter implements Closeable {
             // block value count is always a power of two
             // to calculate remainder we use faster 'x & (count-1)', which is equivalent to (x % count)
             this.blockValueCountMod = this.keyMem.getInt(BitmapIndexConstants.KEY_RESERVED_OFFSET_BLOCK_VALUE_COUNT) - 1;
-            this.blockCapacity = this.blockValueCountMod + 1 + BitmapIndexConstants.VALUE_BLOCK_FILE_RESERVED;
+            this.blockCapacity = (this.blockValueCountMod + 1) * 8 + BitmapIndexConstants.VALUE_BLOCK_FILE_RESERVED;
         }
     }
 
@@ -96,7 +96,7 @@ public class BitmapIndexWriter implements Closeable {
      * @param value long value
      */
     public void add(int key, long value) {
-        long offset = BitmapIndexConstants.getKeyEntryOffset(key);
+        final long offset = BitmapIndexConstants.getKeyEntryOffset(key);
         if (key < keyCount) {
             // when key exists we have possible outcomes with regards to values
             // 1. last value block has space if value cell index is not the last in block
@@ -116,7 +116,7 @@ public class BitmapIndexWriter implements Closeable {
                 initValueBlockAndStoreValue(offset, value);
             } else {
                 // this is scenario #2: key exists but last block is full. We need to create new block and add value there
-                addVaueBlockAndStoreValue(offset, valueBlockOffset, valueCount, value);
+                addValueBlockAndStoreValue(offset, valueBlockOffset, valueCount, value);
             }
         } else {
             // This is a new key. Because index can have sparse keys whenever we think "key exists" we must deal
@@ -138,18 +138,19 @@ public class BitmapIndexWriter implements Closeable {
         Misc.free(valueMem);
     }
 
-    private void addVaueBlockAndStoreValue(long offset, long valueBlockOffset, long valueCount, long value) {
+    private void addValueBlockAndStoreValue(long offset, long valueBlockOffset, long valueCount, long value) {
         long newValueBlockOffset = allocateValueBlockAndStore(value);
 
         // update block linkage before we increase count
         // this is important to index readers, which will act on value count they read
 
         // we subtract 8 because we just written long value
+        // update this block reference to previous block
         valueMem.skip(blockCapacity - 8 - BitmapIndexConstants.VALUE_BLOCK_FILE_RESERVED);
-        // set previous block offset on new block
         valueMem.putLong(valueBlockOffset);
-        // set next block offset on previous block
-        valueMem.jumpTo(valueBlockOffset - BitmapIndexConstants.VALUE_BLOCK_FILE_RESERVED + 8);
+
+        // update previous block' "next" block reference to this block
+        valueMem.jumpTo(valueBlockOffset + blockCapacity - BitmapIndexConstants.VALUE_BLOCK_FILE_RESERVED + 8);
         valueMem.putLong(newValueBlockOffset);
 
         // update count and last value block offset for the key
@@ -163,7 +164,7 @@ public class BitmapIndexWriter implements Closeable {
         keyMem.skip(8);
 
         // write last block offset because it changed in this scenario
-        keyMem.putLong(valueBlockOffset);
+        keyMem.putLong(newValueBlockOffset);
         Unsafe.getUnsafe().storeFence();
 
         // write count check
