@@ -202,6 +202,8 @@ public class BitmapIndexWriter implements Closeable {
         valueMem.jumpTo(valueBlockOffset + valueCellIndex * 8);
         valueMem.putLong(value);
 
+        Unsafe.getUnsafe().storeFence();
+
         // update count and last value block offset for the key
         // in atomic fashion
         keyMem.jumpTo(offset);
@@ -215,7 +217,7 @@ public class BitmapIndexWriter implements Closeable {
 
         // we only set fence at the end because we don't care in which order these counts are updated
         // nothing in between has changed anyway
-//                Unsafe.getUnsafe().storeFence();
+//        Unsafe.getUnsafe().storeFence();
     }
 
     private void initKeyMemory(int blockValueCount) {

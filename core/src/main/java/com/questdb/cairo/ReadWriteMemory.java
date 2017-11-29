@@ -111,14 +111,9 @@ public class ReadWriteMemory extends VirtualMemory {
         return size;
     }
 
-    protected final void configurePageSize(long size, long maxPageSize) {
-        if (size > maxPageSize) {
-            setPageSize(maxPageSize);
-        } else {
-            setPageSize(Math.max(ff.getPageSize(), (size / ff.getPageSize()) * ff.getPageSize()));
-        }
+    private void configurePageSize(long size, long maxPageSize) {
+        setPageSize(maxPageSize);
         pages.ensureCapacity((int) (size / getMapPageSize() + 1));
         this.size = size;
     }
-
 }
