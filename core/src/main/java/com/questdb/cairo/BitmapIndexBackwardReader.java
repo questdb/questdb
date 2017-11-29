@@ -111,6 +111,7 @@ public class BitmapIndexBackwardReader implements Closeable {
 
             LockSupport.parkNanos(1);
         }
+
         if (keyCount > this.keyCount) {
             this.keyCount = keyCount;
         }
@@ -138,14 +139,17 @@ public class BitmapIndexBackwardReader implements Closeable {
 
         private void jumpToPreviousValueBlock() {
             valueBlockOffset = valueMem.getLong(valueBlockOffset + blockCapacity - BitmapIndexConstants.VALUE_BLOCK_FILE_RESERVED);
+            valueMem.grow(valueBlockOffset + blockCapacity);
         }
 
         void of(int key) {
             long offset = BitmapIndexConstants.getKeyEntryOffset(key);
-
+            keyMem.grow(offset + BitmapIndexConstants.KEY_ENTRY_SIZE);
             // Read value count and last block offset atomically. In that we must orderly read value count first and
             // value count check last. If they match - everything we read between those holds true. We must retry
             // should these values do not match.
+            long valueCount;
+            long valueBlockOffset;
             while (true) {
                 valueCount = keyMem.getLong(offset + BitmapIndexConstants.KEY_ENTRY_OFFSET_VALUE_COUNT);
                 Unsafe.getUnsafe().loadFence();
@@ -158,6 +162,10 @@ public class BitmapIndexBackwardReader implements Closeable {
                 }
                 LockSupport.parkNanos(1);
             }
+
+            this.valueCount = valueCount;
+            this.valueBlockOffset = valueBlockOffset;
+            valueMem.grow(valueBlockOffset + blockCapacity);
         }
     }
 }

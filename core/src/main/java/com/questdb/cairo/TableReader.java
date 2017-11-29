@@ -98,9 +98,9 @@ public class TableReader implements Closeable, RecordCursor {
         return false;
     };
     private static final ReloadMethod NON_PARTITIONED_RELOAD_METHOD = reader -> {
-        // calling readTxn will set "size" member variable
+        // calling readTxn will set "rowCount" member variable
         if (reader.readTxn()) {
-            reader.reloadPartition(0, reader.size);
+            reader.reloadPartition(0, reader.rowCount);
             reader.reloadStruct();
             return true;
         }
@@ -113,7 +113,7 @@ public class TableReader implements Closeable, RecordCursor {
     private final ReadOnlyMemory txMem;
     private final NativeLPSZ nativeLPSZ = new NativeLPSZ();
     private final TableReaderMetadata metadata;
-    private final LongList partitionSizes;
+    private final LongList partitionRowCounts;
     private final TableRecord record = new TableRecord();
     private final PartitionPathGenerator partitionPathGenerator;
     private final ReloadMethod reloadMethod;
@@ -127,7 +127,7 @@ public class TableReader implements Closeable, RecordCursor {
     private long transientRowCount;
     private long structVersion;
     private long prevStructVersion;
-    private long size;
+    private long rowCount;
     private long txn = -1;
     private long maxTimestamp;
     private int partitionCount;
@@ -187,8 +187,8 @@ public class TableReader implements Closeable, RecordCursor {
             int capacity = getColumnBase(partitionCount);
             this.columns = new ObjList<>(capacity);
             columns.setPos(capacity);
-            this.partitionSizes = new LongList(partitionCount);
-            this.partitionSizes.seed(partitionCount, -1);
+            this.partitionRowCounts = new LongList(partitionCount);
+            this.partitionRowCounts.seed(partitionCount, -1);
             this.columnTops = new LongList(capacity / 2);
             this.columnTops.setPos(capacity / 2);
         } catch (CairoException e) {
@@ -315,7 +315,7 @@ public class TableReader implements Closeable, RecordCursor {
     }
 
     public long size() {
-        return size;
+        return rowCount;
     }
 
     private static int getColumnBits(int columnCount) {
@@ -389,7 +389,7 @@ public class TableReader implements Closeable, RecordCursor {
         try {
             String name = metadata.getColumnName(columnIndex);
             if (ff.exists(TableUtils.dFile(path.trimTo(plen), name))) {
-                // we defer setting size
+                // we defer setting rowCount
 
                 columns.setQuick(getPrimaryColumnIndex(columnBase, columnIndex),
                         new ReadOnlyMemory(ff, path, TableUtils.getMapPageSize(ff)));
@@ -520,7 +520,7 @@ public class TableReader implements Closeable, RecordCursor {
     }
 
     private void incrementPartitionCountBy(int delta) {
-        partitionSizes.seed(partitionCount, delta, -1);
+        partitionRowCounts.seed(partitionCount, delta, -1);
         partitionCount += delta;
         int capacity = getColumnBase(partitionCount);
         columns.setPos(capacity);
@@ -550,7 +550,7 @@ public class TableReader implements Closeable, RecordCursor {
                     partitionSize = readPartitionSize(ff, path, tempMem8b);
                 }
 
-                LOG.info().$("open partition ").$(path.$()).$(" [size=").$(partitionSize).$(']').$();
+                LOG.info().$("open partition ").$(path.$()).$(" [rowCount=").$(partitionSize).$(']').$();
 
                 if (partitionSize > 0) {
                     openPartitionColumns(path, columnBase);
@@ -558,7 +558,7 @@ public class TableReader implements Closeable, RecordCursor {
             } else {
                 partitionSize = 0;
             }
-            partitionSizes.setQuick(partitionIndex, partitionSize);
+            partitionRowCounts.setQuick(partitionIndex, partitionSize);
             return partitionSize;
         } finally {
             path.trimTo(rootLen);
@@ -598,7 +598,7 @@ public class TableReader implements Closeable, RecordCursor {
             if (txn == txMem.getLong(TableUtils.TX_OFFSET_TXN)) {
                 this.txn = txn;
                 this.transientRowCount = transientRowCount;
-                this.size = fixedRowCount + transientRowCount;
+                this.rowCount = fixedRowCount + transientRowCount;
                 this.maxTimestamp = maxTimestamp;
                 this.structVersion = structVersion;
                 break;
@@ -608,8 +608,14 @@ public class TableReader implements Closeable, RecordCursor {
         return true;
     }
 
-    private void reloadPartition(int partitionIndex, long size) {
-        if (partitionSizes.getQuick(partitionIndex) > -1) {
+    /**
+     * Updates boundaries of all columns in partition.
+     *
+     * @param partitionIndex index of partition
+     * @param rowCount       number of rows in partition
+     */
+    private void reloadPartition(int partitionIndex, long rowCount) {
+        if (partitionRowCounts.getQuick(partitionIndex) > -1) {
             int columnBase = getColumnBase(partitionIndex);
             for (int i = 0; i < columnCount; i++) {
                 columns.getQuick(getPrimaryColumnIndex(columnBase, i)).trackFileSize();
@@ -618,7 +624,7 @@ public class TableReader implements Closeable, RecordCursor {
                     mem2.trackFileSize();
                 }
             }
-            partitionSizes.setQuick(partitionIndex, size);
+            partitionRowCounts.setQuick(partitionIndex, rowCount);
         }
     }
 
@@ -673,7 +679,7 @@ public class TableReader implements Closeable, RecordCursor {
         while (partitionIndex < partitionCount) {
             final int columnBase = getColumnBase(partitionIndex);
 
-            long partitionSize = partitionSizes.getQuick(partitionIndex);
+            long partitionSize = partitionRowCounts.getQuick(partitionIndex);
             if (partitionSize == -1) {
                 partitionSize = openPartition(partitionIndex++, columnBase, partitionIndex == partitionCount);
             } else {

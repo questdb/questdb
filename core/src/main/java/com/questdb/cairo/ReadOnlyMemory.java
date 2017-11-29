@@ -65,35 +65,27 @@ public class ReadOnlyMemory extends VirtualMemory implements ReadOnlyColumn {
     }
 
     @Override
-    public void trackFileSize() {
-        long size = ff.length(fd);
-        if (size < this.size) {
-            setInitialSize(size);
-        } else if (size > this.size) {
-            pages.ensureCapacity((int) (size / getMapPageSize() + 1));
-            if (lastPageSize < getMapPageSize()) {
-                int lastIndex = pages.size() - 1;
-                if (lastIndex > -1) {
-                    long address = pages.getQuick(lastIndex);
-                    if (address != 0) {
-                        release(lastIndex, address);
-                        pages.setQuick(lastIndex, 0);
-                    }
-                    clearHotPage();
-                }
-                this.lastPageIndex = 0;
-                this.lastPageSize = getMapPageSize();
-            }
-            this.size = size;
-        }
-    }
-
-    @Override
     protected long getPageSize(int page) {
         if (page == lastPageIndex) {
             return lastPageSize;
         } else {
             return super.getPageSize(page);
+        }
+    }
+
+    public void grow(long size) {
+        if (size > this.size) {
+            grow0(size);
+        }
+    }
+
+    @Override
+    public void trackFileSize() {
+        long size = ff.length(fd);
+        if (size < this.size) {
+            setInitialSize(size);
+        } else {
+            grow(size);
         }
     }
 
@@ -114,19 +106,34 @@ public class ReadOnlyMemory extends VirtualMemory implements ReadOnlyColumn {
         LOG.info().$("open ").$(name).$(" [fd=").$(fd).$(']').$();
     }
 
-    @Override
-    protected void release(int page, long address) {
-        if (address != 0) {
-            ff.munmap(address, getPageSize(page));
-            if (page == lastPageIndex) {
-                lastPageSize = getMapPageSize();
-            }
+    private long computePageSize(long memorySize) {
+        if (memorySize < maxPageSize) {
+            return Math.max(ff.getPageSize(), (memorySize / ff.getPageSize()) * ff.getPageSize());
         }
+        return maxPageSize;
     }
 
     @Override
     public long getFd() {
         return fd;
+    }
+
+    private void grow0(long size) {
+        pages.ensureCapacity((int) (size / getMapPageSize() + 1));
+        if (lastPageSize < getMapPageSize()) {
+            int lastIndex = pages.size() - 1;
+            if (lastIndex > -1) {
+                long address = pages.getQuick(lastIndex);
+                if (address != 0) {
+                    release(lastIndex, address);
+                    pages.setQuick(lastIndex, 0);
+                }
+                clearHotPage();
+            }
+            this.lastPageIndex = 0;
+            this.lastPageSize = getMapPageSize();
+        }
+        this.size = size;
     }
 
     private long mapPage(int page) {
@@ -144,20 +151,25 @@ public class ReadOnlyMemory extends VirtualMemory implements ReadOnlyColumn {
 
             address = ff.mmap(fd, sz, offset, Files.MAP_RO);
             if (address == -1L) {
-                throw CairoException.instance(ff.errno()).put("Cannot mmap(read) fd=").put(fd).put(", offset=").put(offset).put(", size=").put(sz);
+                throw CairoException.instance(ff.errno()).put("Cannot mmap(read) fd=").put(fd).put(", offset=").put(offset).put(", size=").put(this.size).put(", page=").put(sz);
             }
             return cachePageAddress(page, address);
         }
-        throw CairoException.instance(ff.errno()).put("Trying to map(read) page outside of file boundary. fd=").put(fd).put(", offset=").put(offset).put(", size=").put(sz);
+        throw CairoException.instance(ff.errno()).put("Trying to map(read) page outside of file boundary. fd=").put(fd).put(", offset=").put(offset).put(", size=").put(this.size).put(", page=").put(sz);
+    }
+
+    @Override
+    protected void release(int page, long address) {
+        if (address != 0) {
+            ff.munmap(address, getPageSize(page));
+            if (page == lastPageIndex) {
+                lastPageSize = getMapPageSize();
+            }
+        }
     }
 
     private void setInitialSize(long size) {
-        long targetPageSize;
-        if (size > maxPageSize) {
-            targetPageSize = maxPageSize;
-        } else {
-            targetPageSize = Math.max(ff.getPageSize(), (size / ff.getPageSize()) * ff.getPageSize());
-        }
+        long targetPageSize = computePageSize(size);
 
         if (targetPageSize != getMapPageSize()) {
             setPageSize(targetPageSize);

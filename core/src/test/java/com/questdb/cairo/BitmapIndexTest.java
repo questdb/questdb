@@ -76,7 +76,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
             // assert that index is populated correctly
             try (BitmapIndexWriter writer = new BitmapIndexWriter(configuration.getFilesFacade(), root, "x", 128)) {
                 for (int i = 0; i < N; i++) {
-                    int key = rnd.nextPositiveInt() % maxKeys;
+                    int key = i % maxKeys;
                     long value = rnd.nextLong();
                     writer.add(key, value);
 
@@ -111,12 +111,27 @@ public class BitmapIndexTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testConcurrentWriterAndReadBreadth() throws Exception {
+        testConcurrentRW(10000000, 1024);
+    }
+
+    @Test
     @Ignore
-    public void testConcurrentWriterAndRead() throws Exception {
+    public void testConcurrentWriterAndReadHeight() throws Exception {
+        testConcurrentRW(10000000, 5000000);
+    }
+
+    private void assertThat(String expected, BitmapIndexCursor cursor, LongList temp) {
+        temp.clear();
+        while (cursor.hasNext()) {
+            temp.add(cursor.next());
+        }
+        Assert.assertEquals(expected, temp.toString());
+    }
+
+    private void testConcurrentRW(int N, int maxKeys) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             Rnd rnd = new Rnd();
-            int maxKeys = 1024;
-            int N = 10000000;
 
             IntList keys = new IntList();
             IntObjHashMap<LongList> lists = new IntObjHashMap<>();
@@ -177,7 +192,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
                         LongList tmp = new LongList();
                         while (true) {
                             boolean keepGoing = false;
-                            for (int i = 0, n = keys.size(); i < n; i++) {
+                            for (int i = keys.size() - 1; i > -1; i--) {
                                 int key = keys.getQuick(i);
                                 LongList values = lists.get(key);
                                 BitmapIndexCursor cursor = reader.getCursor(key);
@@ -214,13 +229,5 @@ public class BitmapIndexTest extends AbstractCairoTest {
             Assert.assertTrue(stopLatch.await(20000, TimeUnit.SECONDS));
             Assert.assertEquals(0, errors.get());
         });
-    }
-
-    private void assertThat(String expected, BitmapIndexCursor cursor, LongList temp) {
-        temp.clear();
-        while (cursor.hasNext()) {
-            temp.add(cursor.next());
-        }
-        Assert.assertEquals(expected, temp.toString());
     }
 }
