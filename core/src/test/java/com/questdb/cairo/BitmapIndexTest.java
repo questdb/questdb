@@ -29,7 +29,13 @@ import com.questdb.std.LongList;
 import com.questdb.std.Rnd;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Ignore;
 import org.junit.Test;
+
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 public class BitmapIndexTest extends AbstractCairoTest {
 
@@ -101,6 +107,112 @@ public class BitmapIndexTest extends AbstractCairoTest {
                     Assert.assertEquals(0, z);
                 }
             }
+        });
+    }
+
+    @Test
+    @Ignore
+    public void testConcurrentWriterAndRead() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            Rnd rnd = new Rnd();
+            int maxKeys = 1024;
+            int N = 10000000;
+
+            IntList keys = new IntList();
+            IntObjHashMap<LongList> lists = new IntObjHashMap<>();
+
+            // populate model for both reader and writer
+            for (int i = 0; i < N; i++) {
+                int key = rnd.nextPositiveInt() % maxKeys;
+
+                LongList list = lists.get(key);
+                if (list == null) {
+                    lists.put(key, list = new LongList());
+                    keys.add(key);
+                }
+                list.add(i);
+            }
+
+            final int threadCount = 2;
+            CountDownLatch stopLatch = new CountDownLatch(threadCount);
+            CyclicBarrier startBarrier = new CyclicBarrier(threadCount);
+            AtomicInteger errors = new AtomicInteger();
+
+            new BitmapIndexWriter(configuration.getFilesFacade(), root, "x", 1024).close();
+
+            new Thread(() -> {
+                try {
+                    startBarrier.await();
+                    try (BitmapIndexWriter writer = new BitmapIndexWriter(configuration.getFilesFacade(), root, "x", 1024)) {
+                        int pass = 0;
+                        while (true) {
+                            boolean added = false;
+                            for (int i = 0, n = keys.size(); i < n; i++) {
+                                int key = keys.getQuick(i);
+                                LongList values = lists.get(key);
+                                if (pass < values.size()) {
+                                    writer.add(key, values.getQuick(pass));
+                                    added = true;
+                                }
+                            }
+                            pass++;
+                            if (!added) {
+                                break;
+                            }
+                        }
+                    }
+                } catch (Throwable e) {
+                    e.printStackTrace();
+                    errors.incrementAndGet();
+                } finally {
+                    stopLatch.countDown();
+                }
+            }).start();
+
+
+            new Thread(() -> {
+                try {
+                    startBarrier.await();
+                    try (BitmapIndexBackwardReader reader = new BitmapIndexBackwardReader(configuration.getFilesFacade(), root, "x")) {
+                        LongList tmp = new LongList();
+                        while (true) {
+                            boolean keepGoing = false;
+                            for (int i = 0, n = keys.size(); i < n; i++) {
+                                int key = keys.getQuick(i);
+                                LongList values = lists.get(key);
+                                BitmapIndexCursor cursor = reader.getCursor(key);
+
+                                tmp.clear();
+                                while (cursor.hasNext()) {
+                                    tmp.add(cursor.next());
+                                }
+
+                                int sz = tmp.size();
+                                for (int k = 0; k < sz; k++) {
+                                    Assert.assertEquals(values.getQuick(sz - k - 1), tmp.getQuick(k));
+                                }
+
+                                if (sz < values.size()) {
+                                    keepGoing = true;
+                                }
+                            }
+
+                            if (!keepGoing) {
+                                break;
+                            }
+                        }
+                    }
+                } catch (Throwable e) {
+                    errors.incrementAndGet();
+                    e.printStackTrace();
+                } finally {
+                    stopLatch.countDown();
+                }
+
+            }).start();
+
+            Assert.assertTrue(stopLatch.await(20000, TimeUnit.SECONDS));
+            Assert.assertEquals(0, errors.get());
         });
     }
 
