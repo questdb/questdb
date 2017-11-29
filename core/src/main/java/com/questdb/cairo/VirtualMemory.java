@@ -67,6 +67,10 @@ public class VirtualMemory implements Closeable {
         return STRING_LENGTH_BYTES + s.length() * 2;
     }
 
+    protected void ensurePagesListCapacity(long size) {
+        pages.ensureCapacity(pageIndex(size) + 1);
+    }
+
     public long addressOf(long offset) {
         if (roOffsetLo < offset && offset < roOffsetHi) {
             return absolutePointer + offset;

@@ -73,22 +73,6 @@ public class ReadOnlyMemory extends VirtualMemory implements ReadOnlyColumn {
         }
     }
 
-    public void grow(long size) {
-        if (size > this.size) {
-            grow0(size);
-        }
-    }
-
-    @Override
-    public void trackFileSize() {
-        long size = ff.length(fd);
-        if (size < this.size) {
-            setInitialSize(size);
-        } else {
-            grow(size);
-        }
-    }
-
     public void of(FilesFacade ff, LPSZ name, long maxPageSize) {
         close();
         this.ff = ff;
@@ -102,8 +86,25 @@ public class ReadOnlyMemory extends VirtualMemory implements ReadOnlyColumn {
         }
 
         this.maxPageSize = maxPageSize;
-        setInitialSize(ff.length(fd));
+        grow0(ff.length(fd));
         LOG.info().$("open ").$(name).$(" [fd=").$(fd).$(']').$();
+    }
+
+    @Override
+    public void trackFileSize() {
+        long size = ff.length(fd);
+        grow(size);
+    }
+
+    @Override
+    public long getFd() {
+        return fd;
+    }
+
+    void grow(long size) {
+        if (size > this.size) {
+            grow0(size);
+        }
     }
 
     private long computePageSize(long memorySize) {
@@ -113,27 +114,39 @@ public class ReadOnlyMemory extends VirtualMemory implements ReadOnlyColumn {
         return maxPageSize;
     }
 
-    @Override
-    public long getFd() {
-        return fd;
-    }
-
     private void grow0(long size) {
-        pages.ensureCapacity((int) (size / getMapPageSize() + 1));
-        if (lastPageSize < getMapPageSize()) {
-            int lastIndex = pages.size() - 1;
-            if (lastIndex > -1) {
-                long address = pages.getQuick(lastIndex);
-                if (address != 0) {
-                    release(lastIndex, address);
-                    pages.setQuick(lastIndex, 0);
+        long targetPageSize = computePageSize(size);
+        if (targetPageSize != getMapPageSize()) {
+            setPageSize(targetPageSize);
+            ensurePagesListCapacity(size);
+            this.lastPageSize = targetPageSize < size ? targetPageSize : size;
+        } else {
+            ensurePagesListCapacity(size);
+            if (lastPageSize < getMapPageSize()) {
+                int lastIndex = pages.size() - 1;
+                if (lastIndex > -1) {
+                    long address = pages.getQuick(lastIndex);
+                    if (address != 0) {
+                        release(lastIndex, address);
+                        pages.setQuick(lastIndex, 0);
+                    }
+                    clearHotPage();
                 }
-                clearHotPage();
+                this.lastPageIndex = 0;
+                this.lastPageSize = getMapPageSize();
             }
-            this.lastPageIndex = 0;
-            this.lastPageSize = getMapPageSize();
         }
         this.size = size;
+    }
+
+    @Override
+    protected void release(int page, long address) {
+        if (address != 0) {
+            ff.munmap(address, getPageSize(page));
+            if (page == lastPageIndex) {
+                lastPageSize = getMapPageSize();
+            }
+        }
     }
 
     private long mapPage(int page) {
@@ -156,29 +169,5 @@ public class ReadOnlyMemory extends VirtualMemory implements ReadOnlyColumn {
             return cachePageAddress(page, address);
         }
         throw CairoException.instance(ff.errno()).put("Trying to map(read) page outside of file boundary. fd=").put(fd).put(", offset=").put(offset).put(", size=").put(this.size).put(", page=").put(sz);
-    }
-
-    @Override
-    protected void release(int page, long address) {
-        if (address != 0) {
-            ff.munmap(address, getPageSize(page));
-            if (page == lastPageIndex) {
-                lastPageSize = getMapPageSize();
-            }
-        }
-    }
-
-    private void setInitialSize(long size) {
-        long targetPageSize = computePageSize(size);
-
-        if (targetPageSize != getMapPageSize()) {
-            setPageSize(targetPageSize);
-            pages.ensureCapacity((int) (size / getMapPageSize() + 1));
-            this.lastPageSize = targetPageSize < size ? targetPageSize : size;
-        } else {
-            this.lastPageSize = targetPageSize;
-        }
-
-        this.size = size;
     }
 }
