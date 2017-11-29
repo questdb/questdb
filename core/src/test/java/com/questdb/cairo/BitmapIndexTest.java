@@ -29,7 +29,6 @@ import com.questdb.std.LongList;
 import com.questdb.std.Rnd;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
-import org.junit.Ignore;
 import org.junit.Test;
 
 import java.util.concurrent.CountDownLatch;
@@ -116,9 +115,8 @@ public class BitmapIndexTest extends AbstractCairoTest {
     }
 
     @Test
-    @Ignore
     public void testConcurrentWriterAndReadHeight() throws Exception {
-        testConcurrentRW(10000000, 5000000);
+        testConcurrentRW(1000000, 1000000);
     }
 
     private void assertThat(String expected, BitmapIndexCursor cursor, LongList temp) {
