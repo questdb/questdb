@@ -92,8 +92,7 @@ public class ReadOnlyMemory extends VirtualMemory implements ReadOnlyColumn {
 
     @Override
     public void trackFileSize() {
-        long size = ff.length(fd);
-        grow(size);
+        grow0(ff.length(fd));
     }
 
     @Override
