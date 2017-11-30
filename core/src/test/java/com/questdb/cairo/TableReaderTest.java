@@ -569,7 +569,7 @@ public class TableReaderTest extends AbstractCairoTest {
     public void testDummyFacade() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             CairoTestUtils.createAllTable(configuration, PartitionBy.NONE);
-            try (TableReader reader = new TableReader(FF, root, "all")) {
+            try (TableReader reader = new TableReader(configuration, "all")) {
                 Assert.assertNull(reader.getStorageFacade());
             }
         });
@@ -599,7 +599,7 @@ public class TableReaderTest extends AbstractCairoTest {
                 w.commit();
             }
 
-            try (TableReader r = new TableReader(FF, root, "all")) {
+            try (TableReader r = new TableReader(configuration, "all")) {
                 sink.clear();
                 printer.print(r, true, r.getMetadata());
                 TestUtils.assertEquals(expected, sink);
@@ -626,7 +626,7 @@ public class TableReaderTest extends AbstractCairoTest {
                 writer.commit();
             }
 
-            try (TableReader reader = new TableReader(configuration.getFilesFacade(), configuration.getRoot(), "x")) {
+            try (TableReader reader = new TableReader(configuration, "x")) {
                 int count = 0;
                 rnd.reset();
                 while (reader.hasNext()) {
@@ -666,7 +666,7 @@ public class TableReaderTest extends AbstractCairoTest {
 
             rnd.reset();
 
-            try (TableReader reader = new TableReader(FF, root, "all")) {
+            try (TableReader reader = new TableReader(configuration, "all")) {
                 col = reader.getMetadata().getColumnIndex("str");
                 int count = 0;
                 while (reader.hasNext()) {
@@ -994,7 +994,7 @@ public class TableReaderTest extends AbstractCairoTest {
 
                 }
 
-                try (TableReader reader = new TableReader(FF, root, "all")) {
+                try (TableReader reader = new TableReader(configuration, "all")) {
                     Assert.assertFalse(reader.hasNext());
                 }
             }
@@ -1020,7 +1020,7 @@ public class TableReaderTest extends AbstractCairoTest {
             int count = 1000000;
             AtomicInteger reloadCount = new AtomicInteger(0);
 
-            try (TableWriter writer = new TableWriter(configuration, "x"); TableReader reader = new TableReader(FF, root, "x")) {
+            try (TableWriter writer = new TableWriter(configuration, "x"); TableReader reader = new TableReader(configuration, "x")) {
 
                 new Thread(() -> {
                     try {
@@ -1379,14 +1379,16 @@ public class TableReaderTest extends AbstractCairoTest {
             TestUtils.assertMemoryLeak(() -> {
                 CairoTestUtils.createAllTable(configuration, partitionBy);
                 long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
-                testAppend(rnd, new DefaultCairoConfiguration(root) {
+
+                CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
                     @Override
                     public FilesFacade getFilesFacade() {
                         return ff;
                     }
-                }, ts, count, increment, blob, 0, BATCH1_GENERATOR);
+                };
+                testAppend(rnd, configuration, ts, count, increment, blob, 0, BATCH1_GENERATOR);
 
-                try (TableReader reader = new TableReader(ff, root, "all")) {
+                try (TableReader reader = new TableReader(configuration, "all")) {
                     assertCursor(reader, ts, increment, blob, count, BATCH1_ASSERTER);
                     reader.closeColumn(column);
                 }
@@ -1414,7 +1416,7 @@ public class TableReaderTest extends AbstractCairoTest {
 
                 // test if reader behaves correctly when table is empty
 
-                try (TableReader reader = new TableReader(FF, root, "all")) {
+                try (TableReader reader = new TableReader(configuration, "all")) {
                     // reader can see all the rows ?
                     assertCursor(reader, ts, increment, blob, 0, null);
                 }
@@ -1422,7 +1424,7 @@ public class TableReaderTest extends AbstractCairoTest {
                 // create table with first batch populating all columns (there could be null values too)
                 long nextTs = testAppend(rnd, configuration, ts, count, increment, blob, 0, BATCH1_GENERATOR);
 
-                try (TableReader reader = new TableReader(FF, root, "all")) {
+                try (TableReader reader = new TableReader(configuration, "all")) {
 
                     // make sure we can see first batch right after table is open
                     assertCursor(reader, ts, increment, blob, count, BATCH1_ASSERTER);
@@ -1567,14 +1569,15 @@ public class TableReaderTest extends AbstractCairoTest {
             TestUtils.assertMemoryLeak(() -> {
                 CairoTestUtils.createAllTable(configuration, PartitionBy.DAY);
                 long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
-                testAppend(rnd, new DefaultCairoConfiguration(root) {
+                CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
                     @Override
                     public FilesFacade getFilesFacade() {
                         return ff;
                     }
-                }, ts, count, increment, blob, 0, BATCH1_GENERATOR);
+                };
+                testAppend(rnd, configuration, ts, count, increment, blob, 0, BATCH1_GENERATOR);
 
-                try (TableReader reader = new TableReader(ff, root, "all")) {
+                try (TableReader reader = new TableReader(configuration, "all")) {
                     try {
                         assertCursor(reader, ts, increment, blob, count, BATCH1_ASSERTER);
                         Assert.fail();
@@ -1601,7 +1604,7 @@ public class TableReaderTest extends AbstractCairoTest {
             final StringSink sink = new StringSink();
             final RecordSourcePrinter printer = new RecordSourcePrinter(sink);
             final LongList rows = new LongList();
-            try (TableReader reader = new TableReader(FF, root, "all")) {
+            try (TableReader reader = new TableReader(configuration, "all")) {
                 Assert.assertEquals(N, reader.size());
                 printer.print(reader, true, reader.getMetadata());
                 TestUtils.assertEquals(expected, sink);

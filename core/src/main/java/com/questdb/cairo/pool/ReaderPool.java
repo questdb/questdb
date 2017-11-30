@@ -33,9 +33,7 @@ import com.questdb.common.PoolConstants;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.std.ConcurrentHashMap;
-import com.questdb.std.FilesFacade;
 import com.questdb.std.Unsafe;
-import com.questdb.std.microtime.MicrosecondClock;
 
 import java.util.Arrays;
 import java.util.Map;
@@ -53,11 +51,9 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
     private final ConcurrentHashMap<CharSequence, Entry> entries = new ConcurrentHashMap<>();
     private final int maxSegments;
     private final int maxEntries;
-    private final MicrosecondClock clock;
 
     public ReaderPool(CairoConfiguration configuration) {
-        super(configuration.getFilesFacade(), configuration.getClock(), configuration.getRoot(), configuration.getInactiveReaderTTL());
-        this.clock = configuration.getClock();
+        super(configuration);
         this.maxSegments = configuration.getReaderPoolSegments();
         this.maxEntries = maxSegments * ENTRY_SIZE;
     }
@@ -95,7 +91,7 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
 
                         try {
                             LOG.info().$("open '").$(name).$("' [at=").$(e.index).$(':').$(i).$(']').$();
-                            r = new R(ff, this, e, i, root, name);
+                            r = new R(this, e, i, name);
                         } catch (CairoException ex) {
                             Unsafe.arrayPutOrdered(e.allocations, i, UNALLOCATED);
                             throw ex;
@@ -350,8 +346,8 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
         private ReaderPool pool;
         private Entry entry;
 
-        public R(FilesFacade ff, ReaderPool pool, Entry entry, int index, CharSequence root, CharSequence name) {
-            super(ff, root, name);
+        public R(ReaderPool pool, Entry entry, int index, CharSequence name) {
+            super(pool.getConfiguration(), name);
             this.pool = pool;
             this.entry = entry;
             this.index = index;

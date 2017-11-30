@@ -135,11 +135,11 @@ public class TableReader implements Closeable, RecordCursor {
     private long tempMem8b = Unsafe.malloc(8);
     private int partitionIndex = 0;
 
-    public TableReader(FilesFacade ff, CharSequence root, CharSequence name) {
+    public TableReader(CairoConfiguration configuration, CharSequence name) {
         LOG.info().$("open '").utf8(name).$('\'').$();
-        this.ff = ff;
+        this.ff = configuration.getFilesFacade();
         this.name = ImmutableCharSequence.of(name);
-        this.path = new Path().of(root).concat(name);
+        this.path = new Path().of(configuration.getRoot()).concat(name);
         this.rootLen = path.length();
         try {
             failOnPendingTodo();
