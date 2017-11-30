@@ -54,9 +54,9 @@ public class BitmapIndexTest extends AbstractCairoTest {
 
             try (BitmapIndexBackwardReader reader = new BitmapIndexBackwardReader(configuration.getFilesFacade(), root, "x")) {
                 LongList list = new LongList();
-                assertThat("[5567,1234]", reader.getCursor(256), list);
-                assertThat("[93,92,91,987,10]", reader.getCursor(64), list);
-                assertThat("[1000]", reader.getCursor(0), list);
+                assertThat("[5567,1234]", reader.getCursor(256, Long.MAX_VALUE), list);
+                assertThat("[93,92,91,987,10]", reader.getCursor(64, Long.MAX_VALUE), list);
+                assertThat("[1000]", reader.getCursor(0, Long.MAX_VALUE), list);
             }
         });
     }
@@ -94,7 +94,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
                     LongList list = lists.get(keys.getQuick(i));
                     Assert.assertNotNull(list);
 
-                    BitmapIndexCursor cursor = reader.getCursor(keys.getQuick(i));
+                    BitmapIndexCursor cursor = reader.getCursor(keys.getQuick(i), Long.MAX_VALUE);
                     int z = list.size();
                     while (cursor.hasNext()) {
                         Assert.assertTrue(z > -1);
@@ -117,6 +117,49 @@ public class BitmapIndexTest extends AbstractCairoTest {
     @Test
     public void testConcurrentWriterAndReadHeight() throws Exception {
         testConcurrentRW(1000000, 1000000);
+    }
+
+    @Test
+    public void testLimitBackwardCursor() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (BitmapIndexWriter writer = new BitmapIndexWriter(configuration.getFilesFacade(), root, "x", 128)) {
+                for (int i = 0; i < 265; i++) {
+                    if (i % 3 == 0) {
+                        continue;
+                    }
+                    writer.add(0, i);
+                    writer.add(0, i);
+                    writer.add(0, i);
+                }
+            }
+
+            LongList tmp = new LongList();
+            try (BitmapIndexBackwardReader reader = new BitmapIndexBackwardReader(configuration.getFilesFacade(), root, "x")) {
+                assertCursorLimit(reader, 260L, tmp);
+                assertCursorLimit(reader, 16L, tmp);
+                assertCursorLimit(reader, 9L, tmp);
+                Assert.assertFalse(reader.getCursor(0, -1L).hasNext());
+            }
+        });
+    }
+
+    private void assertCursorLimit(BitmapIndexBackwardReader reader, long max, LongList tmp) {
+        tmp.clear();
+        BitmapIndexCursor cursor = reader.getCursor(0, max);
+        while (cursor.hasNext()) {
+            tmp.add(cursor.next());
+        }
+
+        int len = tmp.size();
+        for (int i = 0; i < max; i++) {
+            if (i % 3 == 0) {
+                continue;
+            }
+
+            Assert.assertEquals(i, tmp.getQuick(--len));
+            Assert.assertEquals(i, tmp.getQuick(--len));
+            Assert.assertEquals(i, tmp.getQuick(--len));
+        }
     }
 
     private void assertThat(String expected, BitmapIndexCursor cursor, LongList temp) {
@@ -193,7 +236,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
                             for (int i = keys.size() - 1; i > -1; i--) {
                                 int key = keys.getQuick(i);
                                 LongList values = lists.get(key);
-                                BitmapIndexCursor cursor = reader.getCursor(key);
+                                BitmapIndexCursor cursor = reader.getCursor(key, Long.MAX_VALUE);
 
                                 tmp.clear();
                                 while (cursor.hasNext()) {

@@ -82,18 +82,50 @@ public class BitmapIndexBackwardReader implements Closeable {
         Misc.free(valueMem);
     }
 
-    public BitmapIndexCursor getCursor(int key) {
+    public BitmapIndexCursor getCursor(int key, long maxValue) {
 
         if (key >= keyCount) {
             updateKeyCount();
         }
 
         if (key < keyCount) {
-            cursor.of(key);
+            cursor.of(key, maxValue);
             return cursor;
         }
 
         return BitmapIndexEmptyCursor.INSTANCE;
+    }
+
+    private long searchValueBlock(long valueBlockOffset, long maxValue, long cellCount) {
+        // when block is "small", we just scan it linearly
+        if (cellCount < 64) {
+            for (long i = valueBlockOffset, n = valueBlockOffset + cellCount * 8; i < n; i += 8) {
+                if (valueMem.getLong(i) > maxValue) {
+                    return (i - valueBlockOffset) / 8;
+                }
+            }
+            return cellCount;
+        } else {
+            // use binary search on larger block
+            long low = 0;
+            long high = cellCount - 1;
+            long half;
+            long pivot;
+            do {
+                half = (high - low) / 2;
+                if (half == 0) {
+                    break;
+                }
+                pivot = valueMem.getLong(valueBlockOffset + (low + half) * 8);
+                if (pivot <= maxValue) {
+                    low += half;
+                } else {
+                    high = low + half;
+                }
+            } while (true);
+
+            return low + 1;
+        }
     }
 
     private void updateKeyCount() {
@@ -128,7 +160,7 @@ public class BitmapIndexBackwardReader implements Closeable {
 
         @Override
         public long next() {
-            long cellIndex = ((--valueCount) & blockValueCountMod);
+            long cellIndex = getValueCellIndex(--valueCount);
             long result = valueMem.getLong(valueBlockOffset + cellIndex * 8);
             if (cellIndex == 0) {
                 // we are at edge of block right now, next value will be in previous block
@@ -137,12 +169,21 @@ public class BitmapIndexBackwardReader implements Closeable {
             return result;
         }
 
-        private void jumpToPreviousValueBlock() {
-            valueBlockOffset = valueMem.getLong(valueBlockOffset + blockCapacity - BitmapIndexConstants.VALUE_BLOCK_FILE_RESERVED);
-            valueMem.grow(valueBlockOffset + blockCapacity);
+        private long getPreviousBlock(long currentValueBlockOffset) {
+            return valueMem.getLong(currentValueBlockOffset + blockCapacity - BitmapIndexConstants.VALUE_BLOCK_FILE_RESERVED);
         }
 
-        void of(int key) {
+        private long getValueCellIndex(long absoluteValueIndex) {
+            return absoluteValueIndex & blockValueCountMod;
+        }
+
+        private void jumpToPreviousValueBlock() {
+            // we don't need to grow valueMem because we going from fatherst block from start of file
+            // to closes, e.g. valueBlockOffset is decreasing.
+            valueBlockOffset = getPreviousBlock(valueBlockOffset);
+        }
+
+        void of(int key, long maxValue) {
             long offset = BitmapIndexConstants.getKeyEntryOffset(key);
             keyMem.grow(offset + BitmapIndexConstants.KEY_ENTRY_SIZE);
             // Read value count and last block offset atomically. In that we must orderly read value count first and
@@ -163,9 +204,37 @@ public class BitmapIndexBackwardReader implements Closeable {
                 LockSupport.parkNanos(1);
             }
 
+            valueMem.grow(valueBlockOffset + blockCapacity);
+
+            if (valueCount > 0) {
+                long cellCount;
+                do {
+                    // check block range by peeking at first and last value
+                    long lo = valueMem.getLong(valueBlockOffset);
+                    cellCount = getValueCellIndex(valueCount - 1) + 1;
+
+                    // can we skip this block ?
+                    if (lo > maxValue) {
+                        valueCount -= cellCount;
+                        // do we have previous block?
+                        if (valueCount > 0) {
+                            valueBlockOffset = getPreviousBlock(valueBlockOffset);
+                            continue;
+                        }
+                    }
+                    break;
+                } while (true);
+
+                // do we need to search this block?
+                long hi = valueMem.getLong(valueBlockOffset + (cellCount - 1) * 8);
+                if (maxValue < hi) {
+                    // yes, we do
+                    valueCount -= cellCount - searchValueBlock(valueBlockOffset, maxValue, cellCount);
+                }
+            }
+
             this.valueCount = valueCount;
             this.valueBlockOffset = valueBlockOffset;
-            valueMem.grow(valueBlockOffset + blockCapacity);
         }
     }
 }
