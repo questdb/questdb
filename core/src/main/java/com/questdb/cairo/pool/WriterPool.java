@@ -78,7 +78,7 @@ public class WriterPool extends AbstractPool implements ResourcePool<TableWriter
      * @param configuration configuration parameters.
      */
     public WriterPool(CairoConfiguration configuration) {
-        super(configuration);
+        super(configuration, configuration.getInactiveWriterTTL());
         this.configuration = configuration;
         this.clock = configuration.getClock();
         this.root = configuration.getRoot();

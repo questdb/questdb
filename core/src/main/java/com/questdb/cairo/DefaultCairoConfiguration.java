@@ -81,4 +81,9 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     public MicrosecondClock getClock() {
         return MicrosecondClockImpl.INSTANCE;
     }
+
+    @Override
+    public long getSpinLockTimeoutUs() {
+        return 1000;
+    }
 }

@@ -53,7 +53,7 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
     private final int maxEntries;
 
     public ReaderPool(CairoConfiguration configuration) {
-        super(configuration);
+        super(configuration, configuration.getInactiveReaderTTL());
         this.maxSegments = configuration.getReaderPoolSegments();
         this.maxEntries = maxSegments * ENTRY_SIZE;
     }
