@@ -43,11 +43,11 @@ abstract class AbstractPool implements Closeable {
     @SuppressWarnings("FieldCanBeLocal")
     private volatile int closed = FALSE;
 
-    public AbstractPool(CairoConfiguration configuration) {
+    public AbstractPool(CairoConfiguration configuration, long inactiveTtlMillis) {
         this.configuration = configuration;
         this.ff = configuration.getFilesFacade();
         this.clock = configuration.getClock();
-        this.inactiveTtlUs = configuration.getInactiveReaderTTL() * 1000;
+        this.inactiveTtlUs = inactiveTtlMillis * 1000;
     }
 
     @Override

@@ -25,6 +25,7 @@ package com.questdb.cairo;
 
 import com.questdb.std.Misc;
 import com.questdb.std.Unsafe;
+import com.questdb.std.microtime.MicrosecondClock;
 import com.questdb.std.str.Path;
 
 import java.io.Closeable;
@@ -36,10 +37,13 @@ public class BitmapIndexBackwardReader implements Closeable {
     private final Cursor cursor = new Cursor();
     private final int blockValueCountMod;
     private final int blockCapacity;
+    private final long spinLockTimeoutUs;
+    private final MicrosecondClock clock;
     private long keyCount;
 
     public BitmapIndexBackwardReader(CairoConfiguration configuration, CharSequence name) {
         long pageSize = TableUtils.getMapPageSize(configuration.getFilesFacade());
+        this.spinLockTimeoutUs = configuration.getSpinLockTimeoutUs();
 
         try (Path path = new Path()) {
             BitmapIndexConstants.keyFileName(path, configuration.getRoot(), name);
@@ -51,6 +55,8 @@ public class BitmapIndexBackwardReader implements Closeable {
 
             int blockValueCountMod;
             long keyCount;
+            this.clock = configuration.getClock();
+            long timestamp = clock.getTicks();
             while (true) {
                 long seq = this.keyMem.getLong(BitmapIndexConstants.KEY_RESERVED_SEQUENCE);
                 Unsafe.getUnsafe().loadFence();
@@ -63,7 +69,9 @@ public class BitmapIndexBackwardReader implements Closeable {
                     break;
                 }
 
-                LockSupport.parkNanos(1);
+                if (clock.getTicks() - timestamp > spinLockTimeoutUs) {
+                    throw CairoException.instance(0).put("Timed out reading index header. Corrupt index?");
+                }
             }
 
             this.blockValueCountMod = blockValueCountMod;
@@ -98,12 +106,12 @@ public class BitmapIndexBackwardReader implements Closeable {
     private long searchValueBlock(long valueBlockOffset, long maxValue, long cellCount) {
         // when block is "small", we just scan it linearly
         if (cellCount < 64) {
-            for (long i = valueBlockOffset, n = valueBlockOffset + cellCount * 8; i < n; i += 8) {
+            // this will definitely exit because we had checked that at least the last value is greater that maxValue
+            for (long i = valueBlockOffset; ; i += 8) {
                 if (valueMem.getLong(i) > maxValue) {
                     return (i - valueBlockOffset) / 8;
                 }
             }
-            return cellCount;
         } else {
             // use binary search on larger block
             long low = 0;
@@ -129,6 +137,7 @@ public class BitmapIndexBackwardReader implements Closeable {
 
     private void updateKeyCount() {
         long keyCount;
+        long timestamp = clock.getTicks();
         while (true) {
             long seq = this.keyMem.getLong(BitmapIndexConstants.KEY_RESERVED_SEQUENCE);
             Unsafe.getUnsafe().loadFence();
@@ -140,7 +149,9 @@ public class BitmapIndexBackwardReader implements Closeable {
                 break;
             }
 
-            LockSupport.parkNanos(1);
+            if (clock.getTicks() - timestamp > spinLockTimeoutUs) {
+                throw CairoException.instance(0).put("Key count update timed out. Corrupt index?");
+            }
         }
 
         if (keyCount > this.keyCount) {

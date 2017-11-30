@@ -44,4 +44,6 @@ public interface CairoConfiguration {
     CharSequence getRoot();
 
     MicrosecondClock getClock();
+
+    long getSpinLockTimeoutUs();
 }
