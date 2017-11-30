@@ -417,7 +417,7 @@ public class WriterPool extends AbstractPool implements ResourcePool<TableWriter
         private Entry entry;
 
         public PooledTableWriter(WriterPool pool, Entry e, CharSequence name) {
-            super(pool.ff, pool.root, name, pool.configuration.getMkDirMode(), pool.configuration.getFileOperationRetryCount());
+            super(pool.configuration, name);
             this.pool = pool;
             this.entry = e;
         }

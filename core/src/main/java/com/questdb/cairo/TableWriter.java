@@ -93,17 +93,13 @@ public class TableWriter implements Closeable {
     private int metaSwapIndex;
     private int metaPrevIndex;
 
-    public TableWriter(FilesFacade ff, CharSequence root, CharSequence name) {
-        this(ff, root, name, 509, 30);
-    }
-
-    public TableWriter(FilesFacade ff, CharSequence root, CharSequence name, int mkDirMode, int fileOperationRetryCount) {
+    public TableWriter(CairoConfiguration configuration, CharSequence name) {
         LOG.info().$("open '").utf8(name).$('\'').$();
-        this.ff = ff;
-        this.mkDirMode = mkDirMode;
-        this.fileOperationRetryCount = fileOperationRetryCount;
-        this.path = new Path().of(root).concat(name);
-        this.other = new Path().of(root).concat(name);
+        this.ff = configuration.getFilesFacade();
+        this.mkDirMode = configuration.getMkDirMode();
+        this.fileOperationRetryCount = configuration.getFileOperationRetryCount();
+        this.path = new Path().of(configuration.getRoot()).concat(name);
+        this.other = new Path().of(configuration.getRoot()).concat(name);
         this.name = ImmutableCharSequence.of(name);
         this.rootLen = path.length();
         try {
