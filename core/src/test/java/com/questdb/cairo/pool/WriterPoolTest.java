@@ -31,7 +31,6 @@ import com.questdb.common.ColumnType;
 import com.questdb.common.PartitionBy;
 import com.questdb.std.Chars;
 import com.questdb.std.FilesFacade;
-import com.questdb.std.FilesFacadeImpl;
 import com.questdb.std.str.LPSZ;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -163,7 +162,7 @@ public class WriterPoolTest extends AbstractCairoTest {
 
             // check that we can't create standalone writer either
             try {
-                new TableWriter(ff, root, "z");
+                new TableWriter(configuration, "z");
                 Assert.fail();
             } catch (CairoException ignored) {
             }
@@ -171,7 +170,7 @@ public class WriterPoolTest extends AbstractCairoTest {
             pool.unlock("z");
 
             // check if we can create standalone writer after pool unlocked it
-            writer = new TableWriter(ff, root, "z");
+            writer = new TableWriter(configuration, "z");
             Assert.assertNotNull(writer);
             writer.close();
 
@@ -538,7 +537,7 @@ public class WriterPoolTest extends AbstractCairoTest {
 
             pool.close();
 
-            TableWriter writer = new TableWriter(FilesFacadeImpl.INSTANCE, root, "z");
+            TableWriter writer = new TableWriter(configuration, "z");
             Assert.assertNotNull(writer);
             writer.close();
         });

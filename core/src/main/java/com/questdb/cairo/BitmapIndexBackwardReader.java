@@ -23,7 +23,6 @@
 
 package com.questdb.cairo;
 
-import com.questdb.std.FilesFacade;
 import com.questdb.std.Misc;
 import com.questdb.std.Unsafe;
 import com.questdb.std.str.Path;
@@ -39,12 +38,12 @@ public class BitmapIndexBackwardReader implements Closeable {
     private final int blockCapacity;
     private long keyCount;
 
-    public BitmapIndexBackwardReader(FilesFacade ff, CharSequence root, CharSequence name) {
-        long pageSize = TableUtils.getMapPageSize(ff);
+    public BitmapIndexBackwardReader(CairoConfiguration configuration, CharSequence name) {
+        long pageSize = TableUtils.getMapPageSize(configuration.getFilesFacade());
 
         try (Path path = new Path()) {
-            BitmapIndexConstants.keyFileName(path, root, name);
-            this.keyMem = new ReadOnlyMemory(ff, path, pageSize);
+            BitmapIndexConstants.keyFileName(path, configuration.getRoot(), name);
+            this.keyMem = new ReadOnlyMemory(configuration.getFilesFacade(), path, pageSize);
 
             // Read key memory header atomically, in that start and end sequence numbers
             // must be read orderly and their values must match. If they don't match - we must retry.
@@ -71,8 +70,8 @@ public class BitmapIndexBackwardReader implements Closeable {
             this.blockCapacity = (blockValueCountMod + 1) * 8 + BitmapIndexConstants.VALUE_BLOCK_FILE_RESERVED;
             this.keyCount = keyCount;
 
-            BitmapIndexConstants.valueFileName(path, root, name);
-            this.valueMem = new ReadOnlyMemory(ff, path, pageSize);
+            BitmapIndexConstants.valueFileName(path, configuration.getRoot(), name);
+            this.valueMem = new ReadOnlyMemory(configuration.getFilesFacade(), path, pageSize);
         }
     }
 

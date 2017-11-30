@@ -287,7 +287,7 @@ public class PerformanceTest extends AbstractTest {
                 .col("ex", ColumnType.SYMBOL)) {
             CairoTestUtils.create(model);
         }
-        try (TableWriter w = new TableWriter(FilesFacadeImpl.INSTANCE, root, "quote")) {
+        try (TableWriter w = new TableWriter(configuration, "quote")) {
             for (int i = -count; i < count; i++) {
                 if (i == 0) {
                     t = System.nanoTime();

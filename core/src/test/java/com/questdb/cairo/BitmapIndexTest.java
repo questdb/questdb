@@ -41,7 +41,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
     @Test
     public void testAdd() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (BitmapIndexWriter writer = new BitmapIndexWriter(configuration.getFilesFacade(), root, "x", 4)) {
+            try (BitmapIndexWriter writer = new BitmapIndexWriter(configuration, "x", 4)) {
                 writer.add(0, 1000);
                 writer.add(256, 1234);
                 writer.add(64, 10);
@@ -52,7 +52,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
                 writer.add(64, 93);
             }
 
-            try (BitmapIndexBackwardReader reader = new BitmapIndexBackwardReader(configuration.getFilesFacade(), root, "x")) {
+            try (BitmapIndexBackwardReader reader = new BitmapIndexBackwardReader(configuration, "x")) {
                 LongList list = new LongList();
                 assertThat("[5567,1234]", reader.getCursor(256, Long.MAX_VALUE), list);
                 assertThat("[93,92,91,987,10]", reader.getCursor(64, Long.MAX_VALUE), list);
@@ -73,7 +73,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
 
             // we need to have a conventional structure, which will unfortunately be memory-inefficient, to
             // assert that index is populated correctly
-            try (BitmapIndexWriter writer = new BitmapIndexWriter(configuration.getFilesFacade(), root, "x", 128)) {
+            try (BitmapIndexWriter writer = new BitmapIndexWriter(configuration, "x", 128)) {
                 for (int i = 0; i < N; i++) {
                     int key = i % maxKeys;
                     long value = rnd.nextLong();
@@ -89,7 +89,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
             }
 
             // read values and compare to the structure index is expected to be holding
-            try (BitmapIndexBackwardReader reader = new BitmapIndexBackwardReader(configuration.getFilesFacade(), root, "x")) {
+            try (BitmapIndexBackwardReader reader = new BitmapIndexBackwardReader(configuration, "x")) {
                 for (int i = 0, n = keys.size(); i < n; i++) {
                     LongList list = lists.get(keys.getQuick(i));
                     Assert.assertNotNull(list);
@@ -122,7 +122,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
     @Test
     public void testLimitBackwardCursor() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (BitmapIndexWriter writer = new BitmapIndexWriter(configuration.getFilesFacade(), root, "x", 128)) {
+            try (BitmapIndexWriter writer = new BitmapIndexWriter(configuration, "x", 128)) {
                 for (int i = 0; i < 265; i++) {
                     if (i % 3 == 0) {
                         continue;
@@ -134,7 +134,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
             }
 
             LongList tmp = new LongList();
-            try (BitmapIndexBackwardReader reader = new BitmapIndexBackwardReader(configuration.getFilesFacade(), root, "x")) {
+            try (BitmapIndexBackwardReader reader = new BitmapIndexBackwardReader(configuration, "x")) {
                 assertCursorLimit(reader, 260L, tmp);
                 assertCursorLimit(reader, 16L, tmp);
                 assertCursorLimit(reader, 9L, tmp);
@@ -194,12 +194,12 @@ public class BitmapIndexTest extends AbstractCairoTest {
             CyclicBarrier startBarrier = new CyclicBarrier(threadCount);
             AtomicInteger errors = new AtomicInteger();
 
-            new BitmapIndexWriter(configuration.getFilesFacade(), root, "x", 1024).close();
+            new BitmapIndexWriter(configuration, "x", 1024).close();
 
             new Thread(() -> {
                 try {
                     startBarrier.await();
-                    try (BitmapIndexWriter writer = new BitmapIndexWriter(configuration.getFilesFacade(), root, "x", 1024)) {
+                    try (BitmapIndexWriter writer = new BitmapIndexWriter(configuration, "x", 1024)) {
                         int pass = 0;
                         while (true) {
                             boolean added = false;
@@ -229,7 +229,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
             new Thread(() -> {
                 try {
                     startBarrier.await();
-                    try (BitmapIndexBackwardReader reader = new BitmapIndexBackwardReader(configuration.getFilesFacade(), root, "x")) {
+                    try (BitmapIndexBackwardReader reader = new BitmapIndexBackwardReader(configuration, "x")) {
                         LongList tmp = new LongList();
                         while (true) {
                             boolean keepGoing = false;

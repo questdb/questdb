@@ -583,7 +583,7 @@ public class TableReaderTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             CairoTestUtils.createAllTable(configuration, PartitionBy.NONE);
 
-            try (TableWriter w = new TableWriter(FF, root, "all")) {
+            try (TableWriter w = new TableWriter(configuration, "all")) {
                 TableWriter.Row r = w.newRow(1000000); // <-- higher timestamp
                 r.putInt(0, 10);
                 r.putByte(1, (byte) 56);
@@ -617,7 +617,7 @@ public class TableReaderTest extends AbstractCairoTest {
 
             long N = 280000000;
             Rnd rnd = new Rnd();
-            try (TableWriter writer = new TableWriter(configuration.getFilesFacade(), configuration.getRoot(), "x")) {
+            try (TableWriter writer = new TableWriter(configuration, "x")) {
                 for (int i = 0; i < N; i++) {
                     TableWriter.Row r = writer.newRow(0);
                     r.putLong(0, rnd.nextLong());
@@ -644,7 +644,7 @@ public class TableReaderTest extends AbstractCairoTest {
         CairoTestUtils.createAllTable(configuration, PartitionBy.NONE);
         int N = 10000;
         Rnd rnd = new Rnd();
-        try (TableWriter writer = new TableWriter(FF, root, "all")) {
+        try (TableWriter writer = new TableWriter(configuration, "all")) {
             int col = writer.getMetadata().getColumnIndex("str");
             for (int i = 0; i < N; i++) {
                 TableWriter.Row r = writer.newRow(0);
@@ -984,11 +984,11 @@ public class TableReaderTest extends AbstractCairoTest {
     public void testReadEmptyTable() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             CairoTestUtils.createAllTable(configuration, PartitionBy.NONE);
-            try (TableWriter ignored1 = new TableWriter(FF, root, "all")) {
+            try (TableWriter ignored1 = new TableWriter(configuration, "all")) {
 
                 // open another writer, which should fail
                 try {
-                    new TableWriter(FF, root, "all");
+                    new TableWriter(configuration, "all");
                     Assert.fail();
                 } catch (CairoException ignored) {
 
@@ -1020,7 +1020,7 @@ public class TableReaderTest extends AbstractCairoTest {
             int count = 1000000;
             AtomicInteger reloadCount = new AtomicInteger(0);
 
-            try (TableWriter writer = new TableWriter(FF, root, "x"); TableReader reader = new TableReader(FF, root, "x")) {
+            try (TableWriter writer = new TableWriter(configuration, "x"); TableReader reader = new TableReader(FF, root, "x")) {
 
                 new Thread(() -> {
                     try {
@@ -1312,8 +1312,8 @@ public class TableReaderTest extends AbstractCairoTest {
         return ts;
     }
 
-    private long testAppend(Rnd rnd, FilesFacade ff, long ts, int count, long inc, long blob, int testPartitionSwitch, FieldGenerator generator) throws NumericException {
-        try (TableWriter writer = new TableWriter(ff, root, "all")) {
+    private long testAppend(Rnd rnd, CairoConfiguration configuration, long ts, int count, long inc, long blob, int testPartitionSwitch, FieldGenerator generator) throws NumericException {
+        try (TableWriter writer = new TableWriter(configuration, "all")) {
             return testAppend(writer, rnd, ts, count, inc, blob, testPartitionSwitch, generator);
         }
     }
@@ -1379,7 +1379,12 @@ public class TableReaderTest extends AbstractCairoTest {
             TestUtils.assertMemoryLeak(() -> {
                 CairoTestUtils.createAllTable(configuration, partitionBy);
                 long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
-                testAppend(rnd, ff, ts, count, increment, blob, 0, BATCH1_GENERATOR);
+                testAppend(rnd, new DefaultCairoConfiguration(root) {
+                    @Override
+                    public FilesFacade getFilesFacade() {
+                        return ff;
+                    }
+                }, ts, count, increment, blob, 0, BATCH1_GENERATOR);
 
                 try (TableReader reader = new TableReader(ff, root, "all")) {
                     assertCursor(reader, ts, increment, blob, count, BATCH1_ASSERTER);
@@ -1415,7 +1420,7 @@ public class TableReaderTest extends AbstractCairoTest {
                 }
 
                 // create table with first batch populating all columns (there could be null values too)
-                long nextTs = testAppend(rnd, FF, ts, count, increment, blob, 0, BATCH1_GENERATOR);
+                long nextTs = testAppend(rnd, configuration, ts, count, increment, blob, 0, BATCH1_GENERATOR);
 
                 try (TableReader reader = new TableReader(FF, root, "all")) {
 
@@ -1426,7 +1431,7 @@ public class TableReaderTest extends AbstractCairoTest {
                     Assert.assertFalse(reader.reload());
 
                     // add second batch to test if reload of open table will pick it up
-                    nextTs = testAppend(rnd, FF, nextTs, count, increment, blob, testPartitionSwitch, BATCH1_GENERATOR);
+                    nextTs = testAppend(rnd, configuration, nextTs, count, increment, blob, testPartitionSwitch, BATCH1_GENERATOR);
 
                     // if we don't reload reader it should still see first batch
                     // reader can see all the rows ?
@@ -1440,7 +1445,7 @@ public class TableReaderTest extends AbstractCairoTest {
 
                     // writer will inflate last partition in order to optimise appends
                     // reader must be able to cope with that
-                    try (TableWriter writer = new TableWriter(FF, root, "all")) {
+                    try (TableWriter writer = new TableWriter(configuration, "all")) {
 
                         // this is a bit of paranoid check, but make sure our reader doesn't flinch when new writer is open
                         assertCursor(reader, ts, increment, blob, 2 * count, BATCH1_ASSERTER);
@@ -1562,7 +1567,12 @@ public class TableReaderTest extends AbstractCairoTest {
             TestUtils.assertMemoryLeak(() -> {
                 CairoTestUtils.createAllTable(configuration, PartitionBy.DAY);
                 long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
-                testAppend(rnd, ff, ts, count, increment, blob, 0, BATCH1_GENERATOR);
+                testAppend(rnd, new DefaultCairoConfiguration(root) {
+                    @Override
+                    public FilesFacade getFilesFacade() {
+                        return ff;
+                    }
+                }, ts, count, increment, blob, 0, BATCH1_GENERATOR);
 
                 try (TableReader reader = new TableReader(ff, root, "all")) {
                     try {
@@ -1586,7 +1596,7 @@ public class TableReaderTest extends AbstractCairoTest {
         long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z") / 1000;
         long blob = allocBlob();
         try {
-            testAppend(rnd, FF, ts, N, inc, blob, 0, BATCH1_GENERATOR);
+            testAppend(rnd, configuration, ts, N, inc, blob, 0, BATCH1_GENERATOR);
 
             final StringSink sink = new StringSink();
             final RecordSourcePrinter printer = new RecordSourcePrinter(sink);

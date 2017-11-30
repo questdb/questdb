@@ -23,7 +23,6 @@
 
 package com.questdb.cairo;
 
-import com.questdb.std.FilesFacade;
 import com.questdb.std.Misc;
 import com.questdb.std.Unsafe;
 import com.questdb.std.str.Path;
@@ -39,14 +38,14 @@ public class BitmapIndexWriter implements Closeable {
     private long valueMemSize = 0;
     private long keyCount;
 
-    public BitmapIndexWriter(FilesFacade ff, CharSequence root, CharSequence name, int blockCapacity) {
-        long pageSize = TableUtils.getMapPageSize(ff);
+    public BitmapIndexWriter(CairoConfiguration configuration, CharSequence name, int blockCapacity) {
+        long pageSize = TableUtils.getMapPageSize(configuration.getFilesFacade());
 
         try (Path path = new Path()) {
-            BitmapIndexConstants.keyFileName(path, root, name);
+            BitmapIndexConstants.keyFileName(path, configuration.getRoot(), name);
 
-            boolean exists = ff.exists(path);
-            this.keyMem = new ReadWriteMemory(ff, path, pageSize);
+            boolean exists = configuration.getFilesFacade().exists(path);
+            this.keyMem = new ReadWriteMemory(configuration.getFilesFacade(), path, pageSize);
             if (!exists) {
                 initKeyMemory(blockCapacity);
             }
@@ -70,9 +69,9 @@ public class BitmapIndexWriter implements Closeable {
 
             this.valueMemSize = this.keyMem.getLong(BitmapIndexConstants.KEY_RESERVED_OFFSET_VALUE_MEM_SIZE);
 
-            BitmapIndexConstants.valueFileName(path, root, name);
+            BitmapIndexConstants.valueFileName(path, configuration.getRoot(), name);
 
-            this.valueMem = new ReadWriteMemory(ff, path, pageSize);
+            this.valueMem = new ReadWriteMemory(configuration.getFilesFacade(), path, pageSize);
 
             if (this.valueMem.size() < this.valueMemSize) {
                 throw CairoException.instance(0).put("truncated value file");
