@@ -2130,7 +2130,7 @@ public class TableWriterTest extends AbstractCairoTest {
         }
 
         rnd.reset();
-        try (TableReader reader = new TableReader(FF, root, name)) {
+        try (TableReader reader = new TableReader(configuration, name)) {
             int col = reader.getMetadata().getColumnIndex("секьюрити");
             while (reader.hasNext()) {
                 Record r = reader.next();

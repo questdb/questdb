@@ -273,7 +273,7 @@ public class LinuxLineProtoReceiverTest extends AbstractCairoTest {
                         sender.flush();
                     }
 
-                    try (TableReader reader = new TableReader(cairoCfg.getFilesFacade(), root, "tab")) {
+                    try (TableReader reader = new TableReader(cairoCfg, "tab")) {
                         int count = 1000000;
                         while (true) {
                             if (count-- > 0 && reader.size() < 10) {

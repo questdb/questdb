@@ -31,7 +31,6 @@ import com.questdb.log.LogFactory;
 import com.questdb.model.Quote;
 import com.questdb.parser.sql.QueryCompiler;
 import com.questdb.ql.RecordSource;
-import com.questdb.std.FilesFacadeImpl;
 import com.questdb.std.LongList;
 import com.questdb.std.Rnd;
 import com.questdb.std.ex.JournalException;
@@ -274,8 +273,7 @@ public class PerformanceTest extends AbstractTest {
         long t = 0;
         long result;
 
-        CharSequence root = getFactory().getConfiguration().getJournalBase().getAbsolutePath();
-        CairoConfiguration configuration = new DefaultCairoConfiguration(root);
+        CairoConfiguration configuration = new DefaultCairoConfiguration(getFactory().getConfiguration().getJournalBase().getAbsolutePath());
         try (TableModel model = new TableModel(configuration, "quote", PartitionBy.NONE)
                 .timestamp()
                 .col("sym", ColumnType.SYMBOL)
@@ -316,7 +314,7 @@ public class PerformanceTest extends AbstractTest {
 
         LOG.info().$("Cairo append (1M): ").$(TimeUnit.NANOSECONDS.toMillis(result / count)).$("ms").$();
 
-        try (TableReader reader = new TableReader(FilesFacadeImpl.INSTANCE, root, "quote")) {
+        try (TableReader reader = new TableReader(configuration, "quote")) {
             for (int i = -count; i < count; i++) {
                 if (i == 0) {
                     t = System.nanoTime();

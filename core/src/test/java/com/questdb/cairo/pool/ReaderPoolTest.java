@@ -47,7 +47,6 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.LockSupport;
 
 public class ReaderPoolTest extends AbstractCairoTest {
-    private static final FilesFacade ff = FilesFacadeImpl.INSTANCE;
     private static final Log LOG = LogFactory.getLog(ReaderPoolTest.class);
 
     @Before
@@ -224,7 +223,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
             }
 
             sink.clear();
-            try (TableReader r = new TableReader(ff, root, names[i])) {
+            try (TableReader r = new TableReader(configuration, names[i])) {
                 printer.print(r, true, r.getMetadata());
             }
             expectedRows[i] = sink.toString();
@@ -444,7 +443,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
             }
 
             sink.clear();
-            try (TableReader r = new TableReader(ff, root, names[i])) {
+            try (TableReader r = new TableReader(configuration, names[i])) {
                 printer.print(r, true, r.getMetadata());
             }
             expectedRows[i] = sink.toString();
