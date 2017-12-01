@@ -108,6 +108,98 @@ public class BitmapIndexTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testBackwardReaderConstructorBadSequence() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (AppendMemory mem = openKey()) {
+                mem.putByte(BitmapIndexConstants.SIGNATURE);
+                mem.putLong(10); // sequence
+                mem.putLong(0); // value mem size
+                mem.putInt(64); // block length
+                mem.putLong(0); // key count
+                mem.putLong(9); // sequence check
+                mem.skip(BitmapIndexConstants.KEY_FILE_RESERVED - mem.getAppendOffset());
+            }
+            assertBackwardReaderConstructorFail("failed to read index header");
+        });
+    }
+
+    @Test
+    public void testBackwardReaderConstructorBadSig() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (AppendMemory mem = openKey()) {
+                mem.skip(BitmapIndexConstants.KEY_FILE_RESERVED);
+            }
+            assertBackwardReaderConstructorFail("Unknown format");
+        });
+    }
+
+    @Test
+    public void testBackwardReaderConstructorFileTooSmall() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            openKey().close();
+            assertBackwardReaderConstructorFail("Index file too short");
+        });
+    }
+
+    @Test
+    public void testBackwardReaderKeyUpdateFail() {
+        try (BitmapIndexWriter writer = new BitmapIndexWriter(configuration, "x", 1024)) {
+            writer.add(0, 1000);
+        }
+
+        try (BitmapIndexBackwardReader reader = new BitmapIndexBackwardReader(configuration, "x")) {
+
+            // should have single value in cursor
+            BitmapIndexCursor cursor = reader.getCursor(0, Long.MAX_VALUE);
+            Assert.assertTrue(cursor.hasNext());
+            Assert.assertEquals(1000, cursor.next());
+            Assert.assertFalse(cursor.hasNext());
+
+            try (Path path = new Path();
+                 ReadWriteMemory mem = new ReadWriteMemory(
+                         configuration.getFilesFacade(),
+                         path.of(root).concat("x").put(".k").$(),
+                         configuration.getFilesFacade().getPageSize())
+            ) {
+                // change sequence but not sequence check
+                long seq = mem.getLong(BitmapIndexConstants.KEY_RESERVED_SEQUENCE);
+                mem.jumpTo(BitmapIndexConstants.KEY_RESERVED_SEQUENCE);
+                mem.putLong(22);
+
+                try {
+                    reader.getCursor(10, Long.MAX_VALUE);
+                } catch (CairoException e) {
+                    Assert.assertTrue(Chars.contains(e.getMessage(), "failed to consistently"));
+                }
+
+                // make sure index fails until sequence is not up to date
+
+                try {
+                    reader.getCursor(0, Long.MAX_VALUE);
+                } catch (CairoException e) {
+                    Assert.assertTrue(Chars.contains(e.getMessage(), "failed to consistently"));
+                }
+
+                mem.jumpTo(BitmapIndexConstants.KEY_RESERVED_SEQUENCE);
+                mem.putLong(seq);
+
+                // test that index recovers
+                cursor = reader.getCursor(0, Long.MAX_VALUE);
+                Assert.assertTrue(cursor.hasNext());
+                Assert.assertEquals(1000, cursor.next());
+                Assert.assertFalse(cursor.hasNext());
+            }
+        }
+    }
+
+    @Test
+    public void testEmptyCursor() {
+        BitmapIndexCursor cursor = new BitmapIndexEmptyCursor();
+        Assert.assertFalse(cursor.hasNext());
+        Assert.assertEquals(0, cursor.next());
+    }
+
+    @Test
     public void testConcurrentWriterAndReadBreadth() throws Exception {
         testConcurrentRW(10000000, 1024);
     }
@@ -202,6 +294,15 @@ public class BitmapIndexTest extends AbstractCairoTest {
             }
             assertWriterConstructorFail("Key count");
         });
+    }
+
+    private void assertBackwardReaderConstructorFail(CharSequence contains) {
+        try {
+            new BitmapIndexBackwardReader(configuration, "x");
+            Assert.fail();
+        } catch (CairoException e) {
+            Assert.assertTrue(Chars.contains(e.getMessage(), contains));
+        }
     }
 
     private void assertCursorLimit(BitmapIndexBackwardReader reader, long max, LongList tmp) {

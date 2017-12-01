@@ -23,6 +23,8 @@
 
 package com.questdb.cairo;
 
+import com.questdb.log.Log;
+import com.questdb.log.LogFactory;
 import com.questdb.std.Misc;
 import com.questdb.std.Unsafe;
 import com.questdb.std.microtime.MicrosecondClock;
@@ -32,6 +34,7 @@ import java.io.Closeable;
 import java.util.concurrent.locks.LockSupport;
 
 public class BitmapIndexBackwardReader implements Closeable {
+    private final static Log LOG = LogFactory.getLog(BitmapIndexBackwardReader.class);
     private final ReadOnlyMemory keyMem;
     private final ReadOnlyMemory valueMem;
     private final Cursor cursor = new Cursor();
@@ -48,6 +51,20 @@ public class BitmapIndexBackwardReader implements Closeable {
         try (Path path = new Path()) {
             BitmapIndexConstants.keyFileName(path, configuration.getRoot(), name);
             this.keyMem = new ReadOnlyMemory(configuration.getFilesFacade(), path, pageSize);
+            this.clock = configuration.getClock();
+
+            // key file should already be created at least with header
+            long keyMemSize = this.keyMem.size();
+            if (keyMemSize < BitmapIndexConstants.KEY_FILE_RESERVED) {
+                LOG.error().$("file too short [corrupt] ").$(path).$();
+                throw CairoException.instance(0).put("Index file too short: ").put(path);
+            }
+
+            // verify header signature
+            if (this.keyMem.getByte(BitmapIndexConstants.KEY_RESERVED_OFFSET_SIGNATURE) != BitmapIndexConstants.SIGNATURE) {
+                LOG.error().$("unknown format [corrupt] ").$(path).$();
+                throw CairoException.instance(0).put("Unknown format: ").put(path);
+            }
 
             // Read key memory header atomically, in that start and end sequence numbers
             // must be read orderly and their values must match. If they don't match - we must retry.
@@ -55,7 +72,6 @@ public class BitmapIndexBackwardReader implements Closeable {
 
             int blockValueCountMod;
             long keyCount;
-            this.clock = configuration.getClock();
             long timestamp = clock.getTicks();
             while (true) {
                 long seq = this.keyMem.getLong(BitmapIndexConstants.KEY_RESERVED_SEQUENCE);
@@ -70,7 +86,8 @@ public class BitmapIndexBackwardReader implements Closeable {
                 }
 
                 if (clock.getTicks() - timestamp > spinLockTimeoutUs) {
-                    throw CairoException.instance(0).put("Timed out reading index header. Corrupt index?");
+                    LOG.error().$("failed to read index header consistently [corrupt?] [timeout(us)=").$(spinLockTimeoutUs).$(']').$();
+                    throw CairoException.instance(0).put("failed to read index header consistently [corrupt?]");
                 }
             }
 
@@ -80,6 +97,9 @@ public class BitmapIndexBackwardReader implements Closeable {
 
             BitmapIndexConstants.valueFileName(path, configuration.getRoot(), name);
             this.valueMem = new ReadOnlyMemory(configuration.getFilesFacade(), path, pageSize);
+        } catch (CairoException e) {
+            close();
+            throw e;
         }
     }
 
@@ -150,7 +170,9 @@ public class BitmapIndexBackwardReader implements Closeable {
             }
 
             if (clock.getTicks() - timestamp > spinLockTimeoutUs) {
-                throw CairoException.instance(0).put("Key count update timed out. Corrupt index?");
+                this.keyCount = 0;
+                LOG.error().$("failed to consistently update key count [corrupt index?] [timeout(us)=").$(spinLockTimeoutUs).$(']').$();
+                throw CairoException.instance(0).put("failed to consistently update key count [corrupt index?]");
             }
         }
 

@@ -37,7 +37,7 @@ public class BitmapIndexWriter implements Closeable {
     private final ReadWriteMemory valueMem;
     private final int blockCapacity;
     private final int blockValueCountMod;
-    private long valueMemSize = 0;
+    private long valueMemSize;
     private long keyCount;
 
     public BitmapIndexWriter(CairoConfiguration configuration, CharSequence name, int blockCapacity) {
