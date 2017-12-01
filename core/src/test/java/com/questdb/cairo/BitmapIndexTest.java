@@ -23,10 +23,8 @@
 
 package com.questdb.cairo;
 
-import com.questdb.std.IntList;
-import com.questdb.std.IntObjHashMap;
-import com.questdb.std.LongList;
-import com.questdb.std.Rnd;
+import com.questdb.std.*;
+import com.questdb.std.str.Path;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -143,6 +141,69 @@ public class BitmapIndexTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testWriterConstructorBadSequence() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (AppendMemory mem = openKey()) {
+                mem.putByte(BitmapIndexConstants.SIGNATURE);
+                mem.putLong(10); // sequence
+                mem.putLong(0); // value mem size
+                mem.putInt(64); // block length
+                mem.putLong(0); // key count
+                mem.putLong(9); // sequence check
+                mem.skip(BitmapIndexConstants.KEY_FILE_RESERVED - mem.getAppendOffset());
+            }
+            assertWriterConstructorFail("Sequence mismatch");
+        });
+    }
+
+    @Test
+    public void testWriterConstructorBadSig() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (AppendMemory mem = openKey()) {
+                mem.skip(BitmapIndexConstants.KEY_FILE_RESERVED);
+            }
+            assertWriterConstructorFail("Unknown format");
+        });
+    }
+
+    @Test
+    public void testWriterConstructorFileTooSmall() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            openKey().close();
+            assertWriterConstructorFail("Index file too short");
+        });
+    }
+
+    @Test
+    public void testWriterConstructorIncorrectValueCount() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (AppendMemory mem = openKey()) {
+                mem.putByte(BitmapIndexConstants.SIGNATURE);
+                mem.skip(9);
+                mem.putLong(1000);
+                mem.skip(4);
+                mem.putLong(0);
+                mem.skip(BitmapIndexConstants.KEY_FILE_RESERVED - mem.getAppendOffset());
+
+            }
+            assertWriterConstructorFail("Incorrect file size");
+        });
+    }
+
+    @Test
+    public void testWriterConstructorKeyMismatch() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (AppendMemory mem = openKey()) {
+                mem.putByte(BitmapIndexConstants.SIGNATURE);
+                mem.skip(20);
+                mem.putLong(300);
+                mem.skip(BitmapIndexConstants.KEY_FILE_RESERVED - mem.getAppendOffset());
+            }
+            assertWriterConstructorFail("Key count");
+        });
+    }
+
     private void assertCursorLimit(BitmapIndexBackwardReader reader, long max, LongList tmp) {
         tmp.clear();
         BitmapIndexCursor cursor = reader.getCursor(0, max);
@@ -168,6 +229,21 @@ public class BitmapIndexTest extends AbstractCairoTest {
             temp.add(cursor.next());
         }
         Assert.assertEquals(expected, temp.toString());
+    }
+
+    private void assertWriterConstructorFail(CharSequence contains) {
+        try {
+            new BitmapIndexWriter(configuration, "x", 1024);
+            Assert.fail();
+        } catch (CairoException e) {
+            Assert.assertTrue(Chars.contains(e.getMessage(), contains));
+        }
+    }
+
+    private AppendMemory openKey() {
+        try (Path path = new Path()) {
+            return new AppendMemory(configuration.getFilesFacade(), path.of(configuration.getRoot()).concat("x").put(".k").$(), configuration.getFilesFacade().getPageSize());
+        }
     }
 
     private void testConcurrentRW(int N, int maxKeys) throws Exception {

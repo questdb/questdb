@@ -29,13 +29,13 @@ public final class BitmapIndexConstants {
     static final int KEY_ENTRY_SIZE = 32;
     static final int KEY_ENTRY_OFFSET_VALUE_COUNT = 0;
     static final int KEY_ENTRY_OFFSET_LAST_VALUE_BLOCK_OFFSET = 16;
-    static final int KEY_ENTRY_OFFSET_FIRST_VALUE_BLOCK_OFFSET = 8;
+    //    static final int KEY_ENTRY_OFFSET_FIRST_VALUE_BLOCK_OFFSET = 8;
     static final int KEY_ENTRY_OFFSET_COUNT_CHECK = 24;
 
     /**
      * key file header offsets
      */
-    static final int KEY_FILE_RESERVED = 37;
+    static final int KEY_FILE_RESERVED = 64;
     static final int KEY_RESERVED_OFFSET_SIGNATURE = 0;
     static final int KEY_RESERVED_SEQUENCE = 1;
     static final int KEY_RESERVED_OFFSET_VALUE_MEM_SIZE = 9;

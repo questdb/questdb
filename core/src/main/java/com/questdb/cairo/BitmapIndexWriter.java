@@ -23,14 +23,16 @@
 
 package com.questdb.cairo;
 
+import com.questdb.log.Log;
+import com.questdb.log.LogFactory;
 import com.questdb.std.Misc;
 import com.questdb.std.Unsafe;
 import com.questdb.std.str.Path;
 
 import java.io.Closeable;
-import java.io.IOException;
 
 public class BitmapIndexWriter implements Closeable {
+    private static Log LOG = LogFactory.getLog(BitmapIndexWriter.class);
     private final ReadWriteMemory keyMem;
     private final ReadWriteMemory valueMem;
     private final int blockCapacity;
@@ -53,18 +55,27 @@ public class BitmapIndexWriter implements Closeable {
             long keyMemSize = this.keyMem.size();
             // check if key file header is present
             if (keyMemSize < BitmapIndexConstants.KEY_FILE_RESERVED) {
-                throw CairoException.instance(0).put("key file is too small");
+                LOG.error().$("file too short [corrupt] ").$(path).$();
+                throw CairoException.instance(0).put("Index file too short: ").put(path);
             }
 
             // verify header signature
             if (this.keyMem.getByte(BitmapIndexConstants.KEY_RESERVED_OFFSET_SIGNATURE) != BitmapIndexConstants.SIGNATURE) {
-                throw CairoException.instance(0).put("invalid header");
+                LOG.error().$("unknown format [corrupt] ").$(path).$();
+                throw CairoException.instance(0).put("Unknown format: ").put(path);
             }
 
             // verify key count
             this.keyCount = this.keyMem.getLong(BitmapIndexConstants.KEY_RESERVED_OFFSET_KEY_COUNT);
-            if (keyMemSize < keyMemSize()) {
-                throw CairoException.instance(0).put("truncated key file");
+            if (keyMemSize != keyMemSize()) {
+                LOG.error().$("key count does not match file length [corrupt] of ").$(path).$(" [keyCount=").$(this.keyCount).$(']').$();
+                throw CairoException.instance(0).put("Key count does not match file length of ").put(path);
+            }
+
+            // check if sequence is intact
+            if (this.keyMem.getLong(BitmapIndexConstants.KEY_RESERVED_SEQUENCE_CHECK) != this.keyMem.getLong(BitmapIndexConstants.KEY_RESERVED_SEQUENCE)) {
+                LOG.error().$("sequence mismatch [corrupt] at ").$(path).$();
+                throw CairoException.instance(0).put("Sequence mismatch on ").put(path);
             }
 
             this.valueMemSize = this.keyMem.getLong(BitmapIndexConstants.KEY_RESERVED_OFFSET_VALUE_MEM_SIZE);
@@ -73,14 +84,18 @@ public class BitmapIndexWriter implements Closeable {
 
             this.valueMem = new ReadWriteMemory(configuration.getFilesFacade(), path, pageSize);
 
-            if (this.valueMem.size() < this.valueMemSize) {
-                throw CairoException.instance(0).put("truncated value file");
+            if (this.valueMem.size() != this.valueMemSize) {
+                LOG.error().$("incorrect file size [corrupt] of ").$(path).$(" [expected=").$(this.valueMemSize).$(']').$();
+                throw CairoException.instance(0).put("Incorrect file size of ").put(path);
             }
 
             // block value count is always a power of two
             // to calculate remainder we use faster 'x & (count-1)', which is equivalent to (x % count)
             this.blockValueCountMod = this.keyMem.getInt(BitmapIndexConstants.KEY_RESERVED_OFFSET_BLOCK_VALUE_COUNT) - 1;
             this.blockCapacity = (this.blockValueCountMod + 1) * 8 + BitmapIndexConstants.VALUE_BLOCK_FILE_RESERVED;
+        } catch (CairoException e) {
+            this.close();
+            throw e;
         }
     }
 
@@ -109,12 +124,14 @@ public class BitmapIndexWriter implements Closeable {
             if (valueCellIndex > 0) {
                 // this is scenario #1: key exists and there is space in last block to add value
                 // we don't need to allocate new block, just add value and update value count on key
+                assert valueBlockOffset + blockCapacity <= valueMemSize;
                 appendValue(offset, valueBlockOffset, valueCount, valueCellIndex, value);
             } else if (valueCount == 0) {
                 // this is scenario #3: we are effectively adding a new key and creating new block
                 initValueBlockAndStoreValue(offset, value);
             } else {
                 // this is scenario #2: key exists but last block is full. We need to create new block and add value there
+                assert valueBlockOffset + blockCapacity <= valueMemSize;
                 addValueBlockAndStoreValue(offset, valueBlockOffset, valueCount, value);
             }
         } else {
@@ -130,11 +147,16 @@ public class BitmapIndexWriter implements Closeable {
     }
 
     @Override
-    public void close() throws IOException {
-        keyMem.jumpTo(keyMemSize());
-        valueMem.jumpTo(valueMemSize);
-        Misc.free(keyMem);
-        Misc.free(valueMem);
+    public void close() {
+        if (keyMem != null) {
+            keyMem.jumpTo(keyMemSize());
+            Misc.free(keyMem);
+        }
+
+        if (valueMem != null) {
+            valueMem.jumpTo(valueMemSize);
+            Misc.free(valueMem);
+        }
     }
 
     private void addValueBlockAndStoreValue(long offset, long valueBlockOffset, long valueCount, long value) {
@@ -213,10 +235,6 @@ public class BitmapIndexWriter implements Closeable {
 
         // write count check
         keyMem.putLong(valueCount + 1);
-
-        // we only set fence at the end because we don't care in which order these counts are updated
-        // nothing in between has changed anyway
-//        Unsafe.getUnsafe().storeFence();
     }
 
     private void initKeyMemory(int blockValueCount) {
@@ -228,6 +246,7 @@ public class BitmapIndexWriter implements Closeable {
         keyMem.putLong(0); // KEY COUNT
         Unsafe.getUnsafe().storeFence();
         keyMem.putLong(1); // SEQUENCE CHECK
+        keyMem.skip(BitmapIndexConstants.KEY_FILE_RESERVED - keyMem.getAppendOffset());
     }
 
     private void initValueBlockAndStoreValue(long offset, long value) {
