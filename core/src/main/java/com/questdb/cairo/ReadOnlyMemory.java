@@ -73,6 +73,16 @@ public class ReadOnlyMemory extends VirtualMemory implements ReadOnlyColumn {
         }
     }
 
+    public long size() {
+        return size;
+    }
+
+    void grow(long size) {
+        if (size > this.size) {
+            grow0(size);
+        }
+    }
+
     public void of(FilesFacade ff, LPSZ name, long maxPageSize) {
         close();
         this.ff = ff;
@@ -100,17 +110,21 @@ public class ReadOnlyMemory extends VirtualMemory implements ReadOnlyColumn {
         return fd;
     }
 
-    void grow(long size) {
-        if (size > this.size) {
-            grow0(size);
-        }
-    }
-
     private long computePageSize(long memorySize) {
         if (memorySize < maxPageSize) {
             return Math.max(ff.getPageSize(), (memorySize / ff.getPageSize()) * ff.getPageSize());
         }
         return maxPageSize;
+    }
+
+    @Override
+    protected void release(int page, long address) {
+        if (address != 0) {
+            ff.munmap(address, getPageSize(page));
+            if (page == lastPageIndex) {
+                lastPageSize = getMapPageSize();
+            }
+        }
     }
 
     private void grow0(long size) {
@@ -136,16 +150,6 @@ public class ReadOnlyMemory extends VirtualMemory implements ReadOnlyColumn {
             }
         }
         this.size = size;
-    }
-
-    @Override
-    protected void release(int page, long address) {
-        if (address != 0) {
-            ff.munmap(address, getPageSize(page));
-            if (page == lastPageIndex) {
-                lastPageSize = getMapPageSize();
-            }
-        }
     }
 
     private long mapPage(int page) {
