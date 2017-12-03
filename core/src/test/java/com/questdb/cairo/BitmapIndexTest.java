@@ -111,13 +111,13 @@ public class BitmapIndexTest extends AbstractCairoTest {
     public void testBackwardReaderConstructorBadSequence() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (AppendMemory mem = openKey()) {
-                mem.putByte(BitmapIndexConstants.SIGNATURE);
+                mem.putByte(BitmapIndexUtils.SIGNATURE);
                 mem.putLong(10); // sequence
                 mem.putLong(0); // value mem size
                 mem.putInt(64); // block length
                 mem.putLong(0); // key count
                 mem.putLong(9); // sequence check
-                mem.skip(BitmapIndexConstants.KEY_FILE_RESERVED - mem.getAppendOffset());
+                mem.skip(BitmapIndexUtils.KEY_FILE_RESERVED - mem.getAppendOffset());
             }
             assertBackwardReaderConstructorFail("failed to read index header");
         });
@@ -127,7 +127,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
     public void testBackwardReaderConstructorBadSig() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (AppendMemory mem = openKey()) {
-                mem.skip(BitmapIndexConstants.KEY_FILE_RESERVED);
+                mem.skip(BitmapIndexUtils.KEY_FILE_RESERVED);
             }
             assertBackwardReaderConstructorFail("Unknown format");
         });
@@ -162,8 +162,8 @@ public class BitmapIndexTest extends AbstractCairoTest {
                          configuration.getFilesFacade().getPageSize())
             ) {
                 // change sequence but not sequence check
-                long seq = mem.getLong(BitmapIndexConstants.KEY_RESERVED_SEQUENCE);
-                mem.jumpTo(BitmapIndexConstants.KEY_RESERVED_SEQUENCE);
+                long seq = mem.getLong(BitmapIndexUtils.KEY_RESERVED_SEQUENCE);
+                mem.jumpTo(BitmapIndexUtils.KEY_RESERVED_SEQUENCE);
                 mem.putLong(22);
 
                 try {
@@ -180,7 +180,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
                     Assert.assertTrue(Chars.contains(e.getMessage(), "failed to consistently"));
                 }
 
-                mem.jumpTo(BitmapIndexConstants.KEY_RESERVED_SEQUENCE);
+                mem.jumpTo(BitmapIndexUtils.KEY_RESERVED_SEQUENCE);
                 mem.putLong(seq);
 
                 // test that index recovers
@@ -193,13 +193,6 @@ public class BitmapIndexTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testEmptyCursor() {
-        BitmapIndexCursor cursor = new BitmapIndexEmptyCursor();
-        Assert.assertFalse(cursor.hasNext());
-        Assert.assertEquals(0, cursor.next());
-    }
-
-    @Test
     public void testConcurrentWriterAndReadBreadth() throws Exception {
         testConcurrentRW(10000000, 1024);
     }
@@ -207,6 +200,13 @@ public class BitmapIndexTest extends AbstractCairoTest {
     @Test
     public void testConcurrentWriterAndReadHeight() throws Exception {
         testConcurrentRW(1000000, 1000000);
+    }
+
+    @Test
+    public void testEmptyCursor() {
+        BitmapIndexCursor cursor = new BitmapIndexEmptyCursor();
+        Assert.assertFalse(cursor.hasNext());
+        Assert.assertEquals(0, cursor.next());
     }
 
     @Test
@@ -234,16 +234,70 @@ public class BitmapIndexTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSimpleRollback() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            Rnd rnd = new Rnd();
+            final int maxKeys = 1024;
+            final int N = 1000000;
+            final int CUTOFF = 60000;
+
+            assert CUTOFF < N;
+
+            IntList keys = new IntList();
+            IntObjHashMap<LongList> lists = new IntObjHashMap<>();
+
+            // populate model for both reader and writer
+            for (int i = 0; i < N; i++) {
+                int key = rnd.nextPositiveInt() % maxKeys;
+                LongList list = lists.get(key);
+                if (list == null) {
+                    lists.put(key, list = new LongList());
+                    keys.add(key);
+                }
+
+                if (i > CUTOFF) {
+                    continue;
+                }
+
+                list.add(i);
+            }
+
+            rnd.reset();
+            try (BitmapIndexWriter writer = new BitmapIndexWriter(configuration, "x", 1024)) {
+                for (int i = 0; i < N; i++) {
+                    writer.add(rnd.nextPositiveInt() % maxKeys, i);
+                }
+                writer.rollbackValues(CUTOFF);
+            }
+
+            try (BitmapIndexBackwardReader reader = new BitmapIndexBackwardReader(configuration, "x")) {
+                for (int i = 0, n = keys.size(); i < n; i++) {
+                    int key = keys.getQuick(i);
+                    // do not limit reader, we have to read everything index has
+                    BitmapIndexCursor cursor = reader.getCursor(key, Long.MAX_VALUE);
+                    LongList list = lists.get(key);
+
+                    int v = list.size();
+                    while (cursor.hasNext()) {
+                        Assert.assertEquals(list.getQuick(--v), cursor.next());
+                    }
+                    Assert.assertEquals(0, v);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testWriterConstructorBadSequence() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (AppendMemory mem = openKey()) {
-                mem.putByte(BitmapIndexConstants.SIGNATURE);
+                mem.putByte(BitmapIndexUtils.SIGNATURE);
                 mem.putLong(10); // sequence
                 mem.putLong(0); // value mem size
                 mem.putInt(64); // block length
                 mem.putLong(0); // key count
                 mem.putLong(9); // sequence check
-                mem.skip(BitmapIndexConstants.KEY_FILE_RESERVED - mem.getAppendOffset());
+                mem.skip(BitmapIndexUtils.KEY_FILE_RESERVED - mem.getAppendOffset());
             }
             assertWriterConstructorFail("Sequence mismatch");
         });
@@ -253,7 +307,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
     public void testWriterConstructorBadSig() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (AppendMemory mem = openKey()) {
-                mem.skip(BitmapIndexConstants.KEY_FILE_RESERVED);
+                mem.skip(BitmapIndexUtils.KEY_FILE_RESERVED);
             }
             assertWriterConstructorFail("Unknown format");
         });
@@ -271,12 +325,12 @@ public class BitmapIndexTest extends AbstractCairoTest {
     public void testWriterConstructorIncorrectValueCount() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (AppendMemory mem = openKey()) {
-                mem.putByte(BitmapIndexConstants.SIGNATURE);
+                mem.putByte(BitmapIndexUtils.SIGNATURE);
                 mem.skip(9);
                 mem.putLong(1000);
                 mem.skip(4);
                 mem.putLong(0);
-                mem.skip(BitmapIndexConstants.KEY_FILE_RESERVED - mem.getAppendOffset());
+                mem.skip(BitmapIndexUtils.KEY_FILE_RESERVED - mem.getAppendOffset());
 
             }
             assertWriterConstructorFail("Incorrect file size");
@@ -287,10 +341,10 @@ public class BitmapIndexTest extends AbstractCairoTest {
     public void testWriterConstructorKeyMismatch() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (AppendMemory mem = openKey()) {
-                mem.putByte(BitmapIndexConstants.SIGNATURE);
+                mem.putByte(BitmapIndexUtils.SIGNATURE);
                 mem.skip(20);
                 mem.putLong(300);
-                mem.skip(BitmapIndexConstants.KEY_FILE_RESERVED - mem.getAppendOffset());
+                mem.skip(BitmapIndexUtils.KEY_FILE_RESERVED - mem.getAppendOffset());
             }
             assertWriterConstructorFail("Key count");
         });
