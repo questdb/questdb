@@ -241,6 +241,8 @@ public class BitmapIndexTest extends AbstractCairoTest {
             final int N = 1000000;
             final int CUTOFF = 60000;
 
+            // this is an ssertion in case somebody change the test
+            //noinspection ConstantConditions
             assert CUTOFF < N;
 
             IntList keys = new IntList();
