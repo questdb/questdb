@@ -724,9 +724,9 @@ public class TableReader implements Closeable, RecordCursor {
 
     private class TableRecord implements Record {
 
-        protected int columnBase;
-        protected long recordIndex = 0;
-        protected long maxRecordIndex = -1;
+        private int columnBase;
+        private long recordIndex = 0;
+        private long maxRecordIndex = -1;
 
         @Override
         public byte get(int col) {

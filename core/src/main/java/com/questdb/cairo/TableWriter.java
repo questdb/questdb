@@ -46,7 +46,7 @@ import java.util.function.LongConsumer;
 public class TableWriter implements Closeable {
 
     private static final Log LOG = LogFactory.getLog(TableWriter.class);
-    private static final CharSequenceHashSet ignoredFiles = new CharSequenceHashSet();
+    private static final CharSequenceHashSet IGNORED_FILES = new CharSequenceHashSet();
     private static final Runnable NOOP = () -> {
     };
     final ObjList<AppendMemory> columns;
@@ -73,10 +73,10 @@ public class TableWriter implements Closeable {
     private final TableWriterMetadata metadata;
     private final Runnable MY_OPEN_META = this::openMetaFile;
     int txPartitionCount = 0;
-    private long lockFd = -1;
+    private long lockFd;
     private LongConsumer timestampSetter;
     private int columnCount;
-    private ObjList<Runnable> nullers = new ObjList<>();
+    private ObjList<Runnable> nullers;
     private long fixedRowCount = 0;
     private long txn;
     private long structVersion;
@@ -966,7 +966,7 @@ public class TableWriter implements Closeable {
         try {
             ff.iterateDir(path.$(), (file, type) -> {
                 nativeLPSZ.of(file);
-                if (type == Files.DT_DIR && !ignoredFiles.contains(nativeLPSZ)) {
+                if (type == Files.DT_DIR && !IGNORED_FILES.contains(nativeLPSZ)) {
                     path.trimTo(rootLen);
                     path.concat(nativeLPSZ);
                     int plen = path.length();
@@ -1048,7 +1048,7 @@ public class TableWriter implements Closeable {
                 path.trimTo(rootLen);
                 path.concat(name).$();
                 nativeLPSZ.of(name);
-                if (!ignoredFiles.contains(nativeLPSZ)) {
+                if (!IGNORED_FILES.contains(nativeLPSZ)) {
                     if (type == Files.DT_DIR && !ff.rmdir(path)) {
                         throw CairoException.instance(ff.errno()).put("Cannot remove directory: ").put(path);
                     } else if (type != Files.DT_DIR && !ff.remove(path)) {
@@ -1068,7 +1068,7 @@ public class TableWriter implements Closeable {
                 path.trimTo(rootLen);
                 path.concat(pName).$();
                 nativeLPSZ.of(pName);
-                if (!ignoredFiles.contains(nativeLPSZ)) {
+                if (!IGNORED_FILES.contains(nativeLPSZ)) {
                     try {
                         long dirTimestamp = partitionDirFmt.parse(nativeLPSZ, DateLocaleFactory.INSTANCE.getDefaultDateLocale());
                         if (dirTimestamp <= timestamp) {
@@ -1476,10 +1476,10 @@ public class TableWriter implements Closeable {
     }
 
     static {
-        ignoredFiles.add("..");
-        ignoredFiles.add(".");
-        ignoredFiles.add(TableUtils.META_FILE_NAME);
-        ignoredFiles.add(TableUtils.TXN_FILE_NAME);
-        ignoredFiles.add(TableUtils.TODO_FILE_NAME);
+        IGNORED_FILES.add("..");
+        IGNORED_FILES.add(".");
+        IGNORED_FILES.add(TableUtils.META_FILE_NAME);
+        IGNORED_FILES.add(TableUtils.TXN_FILE_NAME);
+        IGNORED_FILES.add(TableUtils.TODO_FILE_NAME);
     }
 }

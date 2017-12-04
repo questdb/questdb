@@ -55,7 +55,7 @@ public class BitmapIndexWriter implements Closeable {
                 initKeyMemory(blockCapacity);
             }
 
-            long keyMemSize = this.keyMem.size();
+            long keyMemSize = this.keyMem.getAppendOffset();
             // check if key file header is present
             if (keyMemSize < BitmapIndexUtils.KEY_FILE_RESERVED) {
                 LOG.error().$("file too short [corrupt] ").$(path).$();
@@ -87,7 +87,7 @@ public class BitmapIndexWriter implements Closeable {
 
             this.valueMem = new ReadWriteMemory(configuration.getFilesFacade(), path, pageSize);
 
-            if (this.valueMem.size() != this.valueMemSize) {
+            if (this.valueMem.getAppendOffset() != this.valueMemSize) {
                 LOG.error().$("incorrect file size [corrupt] of ").$(path).$(" [expected=").$(this.valueMemSize).$(']').$();
                 throw CairoException.instance(0).put("Incorrect file size of ").put(path);
             }

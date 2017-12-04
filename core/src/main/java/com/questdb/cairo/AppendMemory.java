@@ -35,25 +35,17 @@ public class AppendMemory extends VirtualMemory {
     private FilesFacade ff;
     private long fd = -1;
     private long pageAddress = 0;
-    private long size;
 
     public AppendMemory(FilesFacade ff, LPSZ name, long pageSize) {
         of(ff, name, pageSize);
     }
 
     public AppendMemory() {
-        size = 0;
     }
 
     @Override
     public void close() {
         close(true);
-    }
-
-    @Override
-    public void jumpTo(long offset) {
-        updateSize();
-        super.jumpTo(offset);
     }
 
     @Override
@@ -94,7 +86,6 @@ public class AppendMemory extends VirtualMemory {
     }
 
     public final void setSize(long size) {
-        this.size = size;
         jumpTo(size);
     }
 
@@ -113,13 +104,6 @@ public class AppendMemory extends VirtualMemory {
         LOG.info().$("open ").$(name).$(" [fd=").$(fd).$(']').$();
     }
 
-    public long size() {
-        if (size < getAppendOffset()) {
-            size = getAppendOffset();
-        }
-        return size;
-    }
-
     @Override
     protected void release(int page, long address) {
         ff.munmap(address, getPageSize(page));
@@ -131,7 +115,6 @@ public class AppendMemory extends VirtualMemory {
             return;
         }
 
-        this.size = 0;
         releaseCurrentPage();
         if (!ff.truncate(fd, getMapPageSize())) {
             throw CairoException.instance(Os.errno()).put("Cannot truncate fd=").put(fd).put(" to ").put(getMapPageSize()).put(" bytes");
@@ -162,9 +145,5 @@ public class AppendMemory extends VirtualMemory {
             release(0, pageAddress);
             pageAddress = 0;
         }
-    }
-
-    private void updateSize() {
-        this.size = Math.max(this.size, getAppendOffset());
     }
 }
