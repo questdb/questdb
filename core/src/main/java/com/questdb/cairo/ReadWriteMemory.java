@@ -33,7 +33,6 @@ public class ReadWriteMemory extends VirtualMemory {
     private static final Log LOG = LogFactory.getLog(ReadWriteMemory.class);
     private final FilesFacade ff;
     private long fd = -1;
-    private long size;
 
     public ReadWriteMemory(FilesFacade ff, LPSZ name, long maxPageSize) {
         this(ff);
@@ -42,12 +41,11 @@ public class ReadWriteMemory extends VirtualMemory {
 
     public ReadWriteMemory(FilesFacade ff) {
         this.ff = ff;
-        size = 0;
     }
 
     @Override
     public void close() {
-        long size = size();
+        long size = getAppendOffset();
         super.close();
         if (fd != -1) {
             ff.truncate(fd, size);
@@ -55,14 +53,6 @@ public class ReadWriteMemory extends VirtualMemory {
             LOG.info().$("closed [fd=").$(fd).$(']').$();
             fd = -1;
         }
-    }
-
-    @Override
-    public void jumpTo(long offset) {
-        if (this.size < offset) {
-            this.size = offset;
-        }
-        super.jumpTo(offset);
     }
 
     @Override
@@ -93,27 +83,24 @@ public class ReadWriteMemory extends VirtualMemory {
         ff.munmap(address, getPageSize(page));
     }
 
-    public final void of(LPSZ name, long maxPageSize) {
+    public final void of(LPSZ name, long pageSize) {
         close();
 
         fd = ff.openRW(name);
         if (fd == -1) {
             throw CairoException.instance(ff.errno()).put("Cannot open file: ").put(name);
         }
-        configurePageSize(ff.length(fd), maxPageSize);
-        LOG.info().$("open ").$(name).$(" [fd=").$(fd).$(']').$();
-    }
-
-    public long size() {
-        if (size < getAppendOffset()) {
-            size = getAppendOffset();
-        }
-        return size;
-    }
-
-    private void configurePageSize(long size, long maxPageSize) {
-        setPageSize(maxPageSize);
+        long size = ff.length(fd);
+        setPageSize(pageSize);
         ensurePagesListCapacity(size);
-        this.size = size;
+        LOG.info().$("open ").$(name).$(" [fd=").$(fd).$(']').$();
+        try {
+            // we may not be able to map page here
+            // make sure we close file before bailing out
+            jumpTo(size);
+        } catch (CairoException e) {
+            ff.close(fd);
+            throw e;
+        }
     }
 }

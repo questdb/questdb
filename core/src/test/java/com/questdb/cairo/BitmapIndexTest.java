@@ -110,15 +110,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
     @Test
     public void testBackwardReaderConstructorBadSequence() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (AppendMemory mem = openKey()) {
-                mem.putByte(BitmapIndexUtils.SIGNATURE);
-                mem.putLong(10); // sequence
-                mem.putLong(0); // value mem size
-                mem.putInt(64); // block length
-                mem.putLong(0); // key count
-                mem.putLong(9); // sequence check
-                mem.skip(BitmapIndexUtils.KEY_FILE_RESERVED - mem.getAppendOffset());
-            }
+            setupIndexHeader();
             assertBackwardReaderConstructorFail("failed to read index header");
         });
     }
@@ -236,12 +228,12 @@ public class BitmapIndexTest extends AbstractCairoTest {
     @Test
     public void testSimpleRollback() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            Rnd rnd = new Rnd();
+            Rnd modelRnd = new Rnd();
             final int maxKeys = 1024;
             final int N = 1000000;
             final int CUTOFF = 60000;
 
-            // this is an ssertion in case somebody change the test
+            // this is an assertion in case somebody change the test
             //noinspection ConstantConditions
             assert CUTOFF < N;
 
@@ -250,7 +242,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
 
             // populate model for both reader and writer
             for (int i = 0; i < N; i++) {
-                int key = rnd.nextPositiveInt() % maxKeys;
+                int key = modelRnd.nextPositiveInt() % maxKeys;
                 LongList list = lists.get(key);
                 if (list == null) {
                     lists.put(key, list = new LongList());
@@ -264,7 +256,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
                 list.add(i);
             }
 
-            rnd.reset();
+            Rnd rnd = new Rnd();
             try (BitmapIndexWriter writer = new BitmapIndexWriter(configuration, "x", 1024)) {
                 for (int i = 0; i < N; i++) {
                     writer.add(rnd.nextPositiveInt() % maxKeys, i);
@@ -286,23 +278,62 @@ public class BitmapIndexTest extends AbstractCairoTest {
                     Assert.assertEquals(0, v);
                 }
             }
+
+            // add more data to model
+            for (int i = 0; i < N; i++) {
+                int key = modelRnd.nextPositiveInt() % maxKeys;
+                LongList list = lists.get(key);
+                if (list == null) {
+                    lists.put(key, list = new LongList());
+                    keys.add(key);
+                }
+                list.add(i + N);
+            }
+
+            // add more date to index
+            try (BitmapIndexWriter writer = new BitmapIndexWriter(configuration, "x", 1024)) {
+                for (int i = 0; i < N; i++) {
+                    writer.add(rnd.nextPositiveInt() % maxKeys, i + N);
+                }
+            }
+
+            // assert against model again
+            try (BitmapIndexBackwardReader reader = new BitmapIndexBackwardReader(configuration, "x")) {
+                for (int i = 0, n = keys.size(); i < n; i++) {
+                    int key = keys.getQuick(i);
+                    // do not limit reader, we have to read everything index has
+                    BitmapIndexCursor cursor = reader.getCursor(key, Long.MAX_VALUE);
+                    LongList list = lists.get(key);
+
+                    int v = list.size();
+                    while (cursor.hasNext()) {
+                        Assert.assertEquals(list.getQuick(--v), cursor.next());
+                    }
+                    Assert.assertEquals(0, v);
+                }
+            }
+
         });
     }
 
     @Test
     public void testWriterConstructorBadSequence() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (AppendMemory mem = openKey()) {
-                mem.putByte(BitmapIndexUtils.SIGNATURE);
-                mem.putLong(10); // sequence
-                mem.putLong(0); // value mem size
-                mem.putInt(64); // block length
-                mem.putLong(0); // key count
-                mem.putLong(9); // sequence check
-                mem.skip(BitmapIndexUtils.KEY_FILE_RESERVED - mem.getAppendOffset());
-            }
+            setupIndexHeader();
             assertWriterConstructorFail("Sequence mismatch");
         });
+    }
+
+    private void setupIndexHeader() {
+        try (AppendMemory mem = openKey()) {
+            mem.putByte(BitmapIndexUtils.SIGNATURE);
+            mem.putLong(10); // sequence
+            mem.putLong(0); // value mem size
+            mem.putInt(64); // block length
+            mem.putLong(0); // key count
+            mem.putLong(9); // sequence check
+            mem.skip(BitmapIndexUtils.KEY_FILE_RESERVED - mem.getAppendOffset());
+        }
     }
 
     @Test
