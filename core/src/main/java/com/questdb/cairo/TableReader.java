@@ -106,6 +106,9 @@ public class TableReader implements Closeable, RecordCursor {
         }
         return false;
     };
+
+    private static final ReloadMethod FIRST_TIME_PARTITIONED_RELOAD_METHOD = TableReader::initialReload;
+
     private final ColumnCopyStruct tempCopyStruct = new ColumnCopyStruct();
     private final FilesFacade ff;
     private final Path path;
@@ -116,7 +119,7 @@ public class TableReader implements Closeable, RecordCursor {
     private final LongList partitionRowCounts;
     private final TableRecord record = new TableRecord();
     private final PartitionPathGenerator partitionPathGenerator;
-    private final ReloadMethod reloadMethod;
+    private final DateFormat dateFormat;
     private final TimestampFloorMethod timestampFloorMethod;
     private final IntervalLengthMethod intervalLengthMethod;
     private final CharSequence name;
@@ -132,6 +135,7 @@ public class TableReader implements Closeable, RecordCursor {
     private long maxTimestamp;
     private int partitionCount;
     private long partitionMin;
+    private ReloadMethod reloadMethod;
     private long tempMem8b = Unsafe.malloc(8);
     private int partitionIndex = 0;
 
@@ -149,39 +153,42 @@ public class TableReader implements Closeable, RecordCursor {
             this.columnCountBits = getColumnBits(columnCount);
             readTxn();
             this.prevStructVersion = structVersion;
-
             switch (this.metadata.getPartitionBy()) {
                 case PartitionBy.DAY:
                     partitionPathGenerator = DAY_GEN;
                     reloadMethod = PARTITIONED_RELOAD_METHOD;
                     timestampFloorMethod = Dates::floorDD;
                     intervalLengthMethod = Dates::getDaysBetween;
-                    partitionMin = findPartitionMinimum(TableUtils.fmtDay);
-                    partitionCount = calculatePartitionCount();
+                    dateFormat = TableUtils.fmtDay;
                     break;
                 case PartitionBy.MONTH:
                     partitionPathGenerator = MONTH_GEN;
                     reloadMethod = PARTITIONED_RELOAD_METHOD;
                     timestampFloorMethod = Dates::floorMM;
                     intervalLengthMethod = Dates::getMonthsBetween;
-                    partitionMin = findPartitionMinimum(TableUtils.fmtMonth);
-                    partitionCount = calculatePartitionCount();
+                    dateFormat = TableUtils.fmtMonth;
                     break;
                 case PartitionBy.YEAR:
                     partitionPathGenerator = YEAR_GEN;
                     reloadMethod = PARTITIONED_RELOAD_METHOD;
                     timestampFloorMethod = Dates::floorYYYY;
                     intervalLengthMethod = Dates::getYearsBetween;
-                    partitionMin = findPartitionMinimum(TableUtils.fmtYear);
-                    partitionCount = calculatePartitionCount();
+                    dateFormat = TableUtils.fmtYear;
                     break;
                 default:
                     partitionPathGenerator = DEFAULT_GEN;
                     reloadMethod = NON_PARTITIONED_RELOAD_METHOD;
                     timestampFloorMethod = null;
                     intervalLengthMethod = null;
+                    dateFormat = null;
                     partitionCount = 1;
                     break;
+            }
+
+            // this is a partitioned table
+            if (partitionCount == 0) {
+                partitionMin = findPartitionMinimum(dateFormat);
+                partitionCount = calculatePartitionCount();
             }
 
             int capacity = getColumnBase(partitionCount);
@@ -191,10 +198,33 @@ public class TableReader implements Closeable, RecordCursor {
             this.partitionRowCounts.seed(partitionCount, -1);
             this.columnTops = new LongList(capacity / 2);
             this.columnTops.setPos(capacity / 2);
+
+            // if partition count is still zero - prepare to load table for the
+            // first time when reload() is called.
+            if (partitionCount == 0) {
+                reloadMethod = FIRST_TIME_PARTITIONED_RELOAD_METHOD;
+            }
+
         } catch (CairoException e) {
             close();
             throw e;
         }
+    }
+
+    private boolean initialReload() {
+        if (readTxn()) {
+            partitionMin = findPartitionMinimum(dateFormat);
+            partitionCount = calculatePartitionCount();
+            if (partitionCount > 0) {
+                int capacity = getColumnBase(partitionCount);
+                columns.setPos(capacity);
+                partitionRowCounts.seed(partitionCount, -1);
+                columnTops.setPos(capacity / 2);
+                reloadMethod = PARTITIONED_RELOAD_METHOD;
+            }
+            return true;
+        }
+        return false;
     }
 
     @Override
@@ -595,7 +625,7 @@ public class TableReader implements Closeable, RecordCursor {
             long maxTimestamp = txMem.getLong(TableUtils.TX_OFFSET_MAX_TIMESTAMP);
             long structVersion = txMem.getLong(TableUtils.TX_OFFSET_STRUCT_VERSION);
             Unsafe.getUnsafe().loadFence();
-            if (txn == txMem.getLong(TableUtils.TX_OFFSET_TXN)) {
+            if (txn == txMem.getLong(TableUtils.TX_OFFSET_TXN_CHECK)) {
                 this.txn = txn;
                 this.transientRowCount = transientRowCount;
                 this.rowCount = fixedRowCount + transientRowCount;
@@ -618,7 +648,9 @@ public class TableReader implements Closeable, RecordCursor {
         if (partitionRowCounts.getQuick(partitionIndex) > -1) {
             int columnBase = getColumnBase(partitionIndex);
             for (int i = 0; i < columnCount; i++) {
-                columns.getQuick(getPrimaryColumnIndex(columnBase, i)).trackFileSize();
+                ReadOnlyColumn col = columns.getQuick(getPrimaryColumnIndex(columnBase, i));
+                assert col != null : "oops, base:" + columnBase + ", i:" + i + ", partition:" + partitionIndex + ", rowCount:" + rowCount + ", partitionSize:" + partitionRowCounts.getQuick(partitionIndex);
+                col.trackFileSize();
                 ReadOnlyColumn mem2 = columns.getQuick(getSecondaryColumnIndex(columnBase, i));
                 if (mem2 != null) {
                     mem2.trackFileSize();

@@ -1523,7 +1523,7 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testGetColumnIndex() throws Exception {
+    public void testGetColumnIndex() {
         CairoTestUtils.createAllTable(configuration, PartitionBy.NONE);
         try (TableWriter writer = new TableWriter(configuration, "all")) {
             Assert.assertEquals(1, writer.getColumnIndex("short"));
@@ -1911,7 +1911,7 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testRemoveTimestampFromPartitionedTable() throws Exception {
+    public void testRemoveTimestampFromPartitionedTable() {
         try (TableModel model = new TableModel(configuration, "ABC", PartitionBy.DAY)
                 .col("productId", ColumnType.INT)
                 .col("productName", ColumnType.STRING)
@@ -2037,7 +2037,7 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testTableLock() throws Exception {
+    public void testTableLock() {
         CairoTestUtils.createAllTable(configuration, PartitionBy.NONE);
 
         try (TableWriter ignored = new TableWriter(configuration, "all")) {
@@ -2108,7 +2108,7 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testTwoByteUtf8() throws Exception {
+    public void testTwoByteUtf8() {
         String name = "соотечественник";
         try (TableModel model = new TableModel(configuration, name, PartitionBy.NONE)
                 .col("секьюрити", ColumnType.STRING)
@@ -2508,7 +2508,7 @@ public class TableWriterTest extends AbstractCairoTest {
         });
     }
 
-    private long testAppendNulls(Rnd rnd, FilesFacade ff, long ts) throws NumericException {
+    private long testAppendNulls(Rnd rnd, FilesFacade ff, long ts) {
         final int blobLen = 64 * 1024;
         long blob = Unsafe.malloc(blobLen);
         try (TableWriter writer = new TableWriter(new DefaultCairoConfiguration(root) {
