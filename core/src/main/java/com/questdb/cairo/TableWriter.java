@@ -114,7 +114,6 @@ public class TableWriter implements Closeable {
             }
 
             this.txMem = openTxnFile();
-            this.txMem.jumpTo(TableUtils.TX_EOF);
             long todo = readTodoTaskCode();
             if (todo != -1L) {
                 switch ((int) (todo & 0xff)) {
@@ -248,7 +247,10 @@ public class TableWriter implements Closeable {
     public void close() {
         if (isOpen()) {
             closeColumns(true);
-            Misc.free(txMem);
+            if (txMem != null) {
+                txMem.jumpTo(TableUtils.TX_EOF);
+                txMem.close();
+            }
             Misc.free(metaMem);
             Misc.free(columnSizeMem);
             Misc.free(ddlMem);
@@ -277,6 +279,10 @@ public class TableWriter implements Closeable {
         }
 
         if (inTransaction()) {
+            txMem.jumpTo(TableUtils.TX_OFFSET_TXN);
+            txMem.putLong(++txn);
+            Unsafe.getUnsafe().storeFence();
+
             txMem.jumpTo(TableUtils.TX_OFFSET_TRANSIENT_ROW_COUNT);
             txMem.putLong(transientRowCount);
 
@@ -290,7 +296,10 @@ public class TableWriter implements Closeable {
             }
 
             txMem.putLong(maxTimestamp);
-            fencedTxnBump();
+            Unsafe.getUnsafe().storeFence();
+
+            txMem.jumpTo(TableUtils.TX_OFFSET_TXN_CHECK);
+            txMem.putLong(txn);
             prevTransientRowCount = transientRowCount;
         }
     }
@@ -449,7 +458,6 @@ public class TableWriter implements Closeable {
         txn = 0;
         txPartitionCount = 1;
 
-        txMem.jumpTo(TableUtils.TX_OFFSET_TXN);
         TableUtils.resetTxn(txMem);
         try {
             removeTodoFile();
@@ -613,9 +621,16 @@ public class TableWriter implements Closeable {
     }
 
     private void bumpStructureVersion() {
+        txMem.jumpTo(TableUtils.TX_OFFSET_TXN);
+        txMem.putLong(++txn);
+        Unsafe.getUnsafe().storeFence();
+
         txMem.jumpTo(TableUtils.TX_OFFSET_STRUCT_VERSION);
         txMem.putLong(++structVersion);
-        fencedTxnBump();
+        Unsafe.getUnsafe().storeFence();
+
+        txMem.jumpTo(TableUtils.TX_OFFSET_TXN_CHECK);
+        txMem.putLong(txn);
     }
 
     private void cancelRow() {
@@ -824,14 +839,6 @@ public class TableWriter implements Closeable {
             nullers.setQuick(index, NOOP);
             return getPrimaryColumn(index)::putLong;
         }
-    }
-
-    private void fencedTxnBump() {
-        Unsafe.getUnsafe().storeFence();
-        txMem.jumpTo(TableUtils.TX_OFFSET_TXN);
-        txMem.putLong(++txn);
-        Unsafe.getUnsafe().storeFence();
-        txMem.jumpTo(TableUtils.TX_EOF);
     }
 
     private AppendMemory getPrimaryColumn(int column) {
@@ -1209,7 +1216,6 @@ public class TableWriter implements Closeable {
         if (partitionBy != PartitionBy.NONE) {
             removePartitionDirectories();
         }
-        txMem.jumpTo(TableUtils.TX_OFFSET_TXN);
         TableUtils.resetTxn(txMem);
         removeTodoFile();
     }

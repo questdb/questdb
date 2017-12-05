@@ -52,7 +52,8 @@ public final class TableUtils {
     static final long TX_OFFSET_FIXED_ROW_COUNT = 16;
     static final long TX_OFFSET_MAX_TIMESTAMP = 24;
     static final long TX_OFFSET_STRUCT_VERSION = 32;
-    static final long TX_EOF = 40;
+    static final long TX_OFFSET_TXN_CHECK = 40;
+    static final long TX_EOF = 48;
     static final String META_SWAP_FILE_NAME = "_meta.swp";
     static final String META_PREV_FILE_NAME = "_meta.prev";
     static final String TODO_FILE_NAME = "_todo";
@@ -124,8 +125,11 @@ public final class TableUtils {
     }
 
     public static void resetTxn(VirtualMemory txMem) {
+        txMem.jumpTo(TX_OFFSET_TXN);
         // txn to let readers know table is being reset
-        txMem.putLong(-1);
+        txMem.putLong(0);
+        Unsafe.getUnsafe().storeFence();
+
         // transient row count
         txMem.putLong(0);
         // fixed row count
@@ -136,11 +140,8 @@ public final class TableUtils {
         txMem.putLong(0);
         //
         Unsafe.getUnsafe().storeFence();
-        txMem.jumpTo(0);
-        // txn
+        // txn check
         txMem.putLong(0);
-        Unsafe.getUnsafe().storeFence();
-        txMem.jumpTo(TX_EOF);
     }
 
     public static void validate(FilesFacade ff, ReadOnlyMemory metaMem, CharSequenceIntHashMap nameIndex) {

@@ -39,13 +39,13 @@ import org.junit.Test;
 import java.io.IOException;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class TableReaderTest extends AbstractCairoTest {
     public static final int MUST_SWITCH = 1;
     public static final int MUST_NOT_SWITCH = 2;
     public static final int DONT_CARE = 0;
-    private static final FilesFacade FF = FilesFacadeImpl.INSTANCE;
     private static final int blobLen = 64 * 1024;
     private static final RecordAssert BATCH1_ASSERTER = (r, exp, ts, blob) -> {
         if (exp.nextBoolean()) {
@@ -640,45 +640,80 @@ public class TableReaderTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testPartialString() throws Exception {
-        CairoTestUtils.createAllTable(configuration, PartitionBy.NONE);
-        int N = 10000;
-        Rnd rnd = new Rnd();
-        try (TableWriter writer = new TableWriter(configuration, "all")) {
-            int col = writer.getMetadata().getColumnIndex("str");
+    public void testConcurrentReload() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            // model data
+            LongList list = new LongList();
+            final int N = 1024;
+            final int scale = 10000;
             for (int i = 0; i < N; i++) {
-                TableWriter.Row r = writer.newRow(0);
-                CharSequence chars = rnd.nextChars(15);
-                r.putStr(col, chars, 2, 10);
-                r.append();
+                list.add(i);
             }
-            writer.commit();
 
-            // add more rows for good measure and rollback
-
-            for (int i = 0; i < N; i++) {
-                TableWriter.Row r = writer.newRow(0);
-                CharSequence chars = rnd.nextChars(15);
-                r.putStr(col, chars, 2, 10);
-                r.append();
+            // model table
+            try (TableModel model = new TableModel(configuration, "w", PartitionBy.NONE).col("l", ColumnType.LONG)) {
+                CairoTestUtils.create(model);
             }
-            writer.rollback();
 
-            rnd.reset();
+            final int threads = 2;
+            final CyclicBarrier startBarrier = new CyclicBarrier(threads);
+            final CountDownLatch stopLatch = new CountDownLatch(threads);
+            final AtomicInteger errors = new AtomicInteger(0);
 
-            try (TableReader reader = new TableReader(configuration, "all")) {
-                col = reader.getMetadata().getColumnIndex("str");
-                int count = 0;
-                while (reader.hasNext()) {
-                    Record record = reader.next();
-                    CharSequence expected = rnd.nextChars(15);
-                    CharSequence actual = record.getFlyweightStr(col);
-                    Assert.assertTrue(Chars.equals(expected, 2, 10, actual, 0, 8));
-                    count++;
+            // start writer
+            new Thread(() -> {
+                try {
+                    startBarrier.await();
+                    try (TableWriter writer = new TableWriter(configuration, "w")) {
+                        for (int i = 0; i < N * scale; i++) {
+                            TableWriter.Row row = writer.newRow(0);
+                            row.putLong(0, list.getQuick(i % N));
+                            row.append();
+                            writer.commit();
+                        }
+                    } finally {
+                        stopLatch.countDown();
+                    }
+                } catch (Exception e) {
+                    e.printStackTrace();
+                    errors.incrementAndGet();
                 }
-                Assert.assertEquals(N, count);
-            }
-        }
+            }).start();
+
+            // start reader
+            new Thread(() -> {
+                try {
+                    startBarrier.await();
+
+                    try {
+                        try (TableReader reader = new TableReader(configuration, "w")) {
+                            do {
+                                if (reader.reload()) {
+                                    reader.toTop();
+                                    int count = 0;
+                                    while (reader.hasNext()) {
+                                        Assert.assertEquals(list.get(count++ % N), reader.next().getLong(0));
+                                    }
+
+                                    if (count == N * scale) {
+                                        break;
+                                    }
+                                }
+                            } while (true);
+                        }
+                    } finally {
+                        stopLatch.countDown();
+                    }
+
+                } catch (Exception e) {
+                    e.printStackTrace();
+                    errors.incrementAndGet();
+                }
+            }).start();
+
+            Assert.assertTrue(stopLatch.await(3, TimeUnit.SECONDS));
+            Assert.assertEquals(0, errors.get());
+        });
     }
 
     @Test
@@ -1312,9 +1347,45 @@ public class TableReaderTest extends AbstractCairoTest {
         return ts;
     }
 
-    private long testAppend(Rnd rnd, CairoConfiguration configuration, long ts, int count, long inc, long blob, int testPartitionSwitch, FieldGenerator generator) throws NumericException {
+    @Test
+    public void testPartialString() {
+        CairoTestUtils.createAllTable(configuration, PartitionBy.NONE);
+        int N = 10000;
+        Rnd rnd = new Rnd();
         try (TableWriter writer = new TableWriter(configuration, "all")) {
-            return testAppend(writer, rnd, ts, count, inc, blob, testPartitionSwitch, generator);
+            int col = writer.getMetadata().getColumnIndex("str");
+            for (int i = 0; i < N; i++) {
+                TableWriter.Row r = writer.newRow(0);
+                CharSequence chars = rnd.nextChars(15);
+                r.putStr(col, chars, 2, 10);
+                r.append();
+            }
+            writer.commit();
+
+            // add more rows for good measure and rollback
+
+            for (int i = 0; i < N; i++) {
+                TableWriter.Row r = writer.newRow(0);
+                CharSequence chars = rnd.nextChars(15);
+                r.putStr(col, chars, 2, 10);
+                r.append();
+            }
+            writer.rollback();
+
+            rnd.reset();
+
+            try (TableReader reader = new TableReader(configuration, "all")) {
+                col = reader.getMetadata().getColumnIndex("str");
+                int count = 0;
+                while (reader.hasNext()) {
+                    Record record = reader.next();
+                    CharSequence expected = rnd.nextChars(15);
+                    CharSequence actual = record.getFlyweightStr(col);
+                    Assert.assertTrue(Chars.equals(expected, 2, 10, actual, 0, 8));
+                    count++;
+                }
+                Assert.assertEquals(N, count);
+            }
         }
     }
 
@@ -1401,6 +1472,12 @@ public class TableReaderTest extends AbstractCairoTest {
         }
     }
 
+    private long testAppend(Rnd rnd, CairoConfiguration configuration, long ts, int count, long inc, long blob, int testPartitionSwitch, FieldGenerator generator) {
+        try (TableWriter writer = new TableWriter(configuration, "all")) {
+            return testAppend(writer, rnd, ts, count, inc, blob, testPartitionSwitch, generator);
+        }
+    }
+
     private void testReload(int partitionBy, int count, long inct, final int testPartitionSwitch) throws Exception {
         final long increment = inct * 1000;
 
@@ -1417,17 +1494,29 @@ public class TableReaderTest extends AbstractCairoTest {
                 // test if reader behaves correctly when table is empty
 
                 try (TableReader reader = new TableReader(configuration, "all")) {
-                    // reader can see all the rows ?
+                    // can we reload empty table?
+                    Assert.assertFalse(reader.reload());
+                    // reader can see all the rows ? Meaning none?
                     assertCursor(reader, ts, increment, blob, 0, null);
                 }
 
-                // create table with first batch populating all columns (there could be null values too)
-                long nextTs = testAppend(rnd, configuration, ts, count, increment, blob, 0, BATCH1_GENERATOR);
 
                 try (TableReader reader = new TableReader(configuration, "all")) {
 
+                    // create table with first batch populating all columns (there could be null values too)
+                    long nextTs = testAppend(rnd, configuration, ts, count, increment, blob, 0, BATCH1_GENERATOR);
+
+                    // can we reload from empty to first batch?
+                    Assert.assertTrue(reader.reload());
+
                     // make sure we can see first batch right after table is open
                     assertCursor(reader, ts, increment, blob, count, BATCH1_ASSERTER);
+
+                    // create another reader to make sure it can load data from constructor
+                    try (TableReader reader2 = new TableReader(configuration, "all")) {
+                        // make sure we can see first batch right after table is open
+                        assertCursor(reader2, ts, increment, blob, count, BATCH1_ASSERTER);
+                    }
 
                     // try reload when table hasn't changed
                     Assert.assertFalse(reader.reload());
@@ -1558,6 +1647,7 @@ public class TableReaderTest extends AbstractCairoTest {
             }
         });
     }
+
 
     private void testSwitchPartitionFail(RecoverableTestFilesFacade ff) throws Exception {
         final Rnd rnd = new Rnd();
