@@ -84,6 +84,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public long getSpinLockTimeoutUs() {
-        return 1000;
+        return 1000000;
     }
 }
