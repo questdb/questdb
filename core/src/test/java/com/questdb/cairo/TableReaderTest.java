@@ -1498,10 +1498,18 @@ public class TableReaderTest extends AbstractCairoTest {
                     Assert.assertFalse(reader.reload());
                     // reader can see all the rows ? Meaning none?
                     assertCursor(reader, ts, increment, blob, 0, null);
+
                 }
 
 
                 try (TableReader reader = new TableReader(configuration, "all")) {
+
+                    // this combination of reload/iterate/reload is deliberate
+                    // we make sure that reload() behavior is not affected by
+                    // iterating empty result set
+                    Assert.assertFalse(reader.reload());
+                    assertCursor(reader, ts, increment, blob, 0, null);
+                    Assert.assertFalse(reader.reload());
 
                     // create table with first batch populating all columns (there could be null values too)
                     long nextTs = testAppend(rnd, configuration, ts, count, increment, blob, 0, BATCH1_GENERATOR);
