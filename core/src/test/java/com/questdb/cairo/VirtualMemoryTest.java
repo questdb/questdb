@@ -36,12 +36,12 @@ import static org.junit.Assert.assertNull;
 public class VirtualMemoryTest {
 
     @Test
-    public void testBinBuf() throws Exception {
+    public void testBinBuf() {
         assertBuf(ByteBuffer.allocate(1024 * 1024), 1024);
     }
 
     @Test
-    public void testBinBufDirect() throws Exception {
+    public void testBinBufDirect() {
         ByteBuffer buf = ByteBuffer.allocateDirect(1024 * 1024);
         try {
             assertBuf(buf, 1024);
@@ -51,17 +51,17 @@ public class VirtualMemoryTest {
     }
 
     @Test
-    public void testBinSequence() throws Exception {
+    public void testBinSequence() {
         testBinSequence0(700, 2048);
     }
 
     @Test
-    public void testBinSequence2() throws Exception {
+    public void testBinSequence2() {
         testBinSequence0(1024, 600);
     }
 
     @Test
-    public void testBulkCopy() throws Exception {
+    public void testBulkCopy() {
         int N = 1000;
         try (VirtualMemory mem = new VirtualMemory(128)) {
             for (int i = 0; i < N; i++) {
@@ -86,7 +86,7 @@ public class VirtualMemoryTest {
     }
 
     @Test
-    public void testByte() throws Exception {
+    public void testByte() {
         try (VirtualMemory mem = new VirtualMemory(11)) {
             int n = 120;
 
@@ -103,7 +103,7 @@ public class VirtualMemoryTest {
     }
 
     @Test
-    public void testDouble() throws Exception {
+    public void testDouble() {
         try (VirtualMemory mem = new VirtualMemory(11)) {
             Rnd rnd = new Rnd();
             int n = 999;
@@ -127,7 +127,7 @@ public class VirtualMemoryTest {
     }
 
     @Test
-    public void testDoubleCompatibility() throws Exception {
+    public void testDoubleCompatibility() {
         long pageSize = 64;
         try (VirtualMemory mem = new VirtualMemory(pageSize)) {
             mem.putDouble(8980980284.22234);
@@ -138,14 +138,14 @@ public class VirtualMemoryTest {
     }
 
     @Test
-    public void testEvenPageSize() throws Exception {
+    public void testEvenPageSize() {
         try (VirtualMemory mem = new VirtualMemory(32)) {
             assertStrings(mem, false);
         }
     }
 
     @Test
-    public void testFloat() throws Exception {
+    public void testFloat() {
         try (VirtualMemory mem = new VirtualMemory(11)) {
             Rnd rnd = new Rnd();
             int n = 999;
@@ -167,7 +167,7 @@ public class VirtualMemoryTest {
     }
 
     @Test
-    public void testFloatCompatibility() throws Exception {
+    public void testFloatCompatibility() {
         try (VirtualMemory mem = new VirtualMemory(64)) {
             mem.putFloat(1024f);
             mem.putFloatBytes(2048f);
@@ -177,7 +177,7 @@ public class VirtualMemoryTest {
     }
 
     @Test
-    public void testInt() throws Exception {
+    public void testInt() {
         try (VirtualMemory mem = new VirtualMemory(7)) {
             mem.putByte((byte) 1);
             int n = 999;
@@ -196,7 +196,7 @@ public class VirtualMemoryTest {
     }
 
     @Test
-    public void testIntCompatibility() throws Exception {
+    public void testIntCompatibility() {
         try (VirtualMemory mem = new VirtualMemory(64)) {
             mem.putInt(1024);
             mem.putIntBytes(2048);
@@ -206,7 +206,7 @@ public class VirtualMemoryTest {
     }
 
     @Test
-    public void testJumpTo() throws Exception {
+    public void testJumpTo() {
         try (VirtualMemory mem = new VirtualMemory(11)) {
             mem.putByte((byte) 1);
             int n = 999;
@@ -231,7 +231,7 @@ public class VirtualMemoryTest {
     }
 
     @Test
-    public void testJumpTo2() throws Exception {
+    public void testJumpTo2() {
         try (VirtualMemory mem = new VirtualMemory(11)) {
             mem.jumpTo(8);
             int n = 999;
@@ -248,7 +248,7 @@ public class VirtualMemoryTest {
     }
 
     @Test
-    public void testJumpTo3() throws Exception {
+    public void testJumpTo3() {
         try (VirtualMemory mem = new VirtualMemory(11)) {
             mem.jumpTo(256);
             int n = 999;
@@ -278,12 +278,12 @@ public class VirtualMemoryTest {
     }
 
     @Test
-    public void testLargePageBinBuf() throws Exception {
+    public void testLargePageBinBuf() {
         assertBuf(ByteBuffer.allocate(1024 * 1024), 4 * 1024 * 1024);
     }
 
     @Test
-    public void testLargePageBinBufDirect() throws Exception {
+    public void testLargePageBinBufDirect() {
         ByteBuffer buf = ByteBuffer.allocateDirect(1024 * 1024);
         try {
             assertBuf(buf, 4 * 1024 * 1024);
@@ -293,7 +293,7 @@ public class VirtualMemoryTest {
     }
 
     @Test
-    public void testLongCompatibility() throws Exception {
+    public void testLongCompatibility() {
         long pageSize = 64;
         try (VirtualMemory mem = new VirtualMemory(pageSize)) {
             mem.putLong(8980980284302834L);
@@ -304,7 +304,7 @@ public class VirtualMemoryTest {
     }
 
     @Test
-    public void testLongEven() throws Exception {
+    public void testLongEven() {
         try (VirtualMemory mem = new VirtualMemory(11)) {
             int n = 999;
             for (int i = n; i > 0; i--) {
@@ -320,7 +320,7 @@ public class VirtualMemoryTest {
     }
 
     @Test
-    public void testLongOdd() throws Exception {
+    public void testLongOdd() {
         try (VirtualMemory mem = new VirtualMemory(11)) {
             mem.putByte((byte) 1);
             int n = 999;
@@ -339,7 +339,7 @@ public class VirtualMemoryTest {
     }
 
     @Test
-    public void testNullBin() throws Exception {
+    public void testNullBin() {
         try (VirtualMemory mem = new VirtualMemory(1024)) {
             ByteBuffer buf = ByteBuffer.allocate(1024);
             mem.putBin((ByteBuffer) null);
@@ -358,21 +358,21 @@ public class VirtualMemoryTest {
     }
 
     @Test
-    public void testOffPageSize() throws Exception {
+    public void testOffPageSize() {
         try (VirtualMemory mem = new VirtualMemory(12)) {
             assertStrings(mem, true);
         }
     }
 
     @Test
-    public void testOkSize() throws Exception {
+    public void testOkSize() {
         try (VirtualMemory mem = new VirtualMemory(1024)) {
             assertStrings(mem, false);
         }
     }
 
     @Test
-    public void testShort() throws Exception {
+    public void testShort() {
         try (VirtualMemory mem = new VirtualMemory(7)) {
             mem.putByte((byte) 1);
             short n = 999;
@@ -391,7 +391,7 @@ public class VirtualMemoryTest {
     }
 
     @Test
-    public void testShortCompatibility() throws Exception {
+    public void testShortCompatibility() {
         long pageSize = 64;
         try (VirtualMemory mem = new VirtualMemory(pageSize)) {
             mem.putShort((short) 1024);
@@ -402,7 +402,7 @@ public class VirtualMemoryTest {
     }
 
     @Test
-    public void testSkip() throws Exception {
+    public void testSkip() {
         try (VirtualMemory mem = new VirtualMemory(11)) {
             mem.putByte((byte) 1);
             int n = 999;
@@ -423,21 +423,21 @@ public class VirtualMemoryTest {
     }
 
     @Test
-    public void testSmallEven() throws Exception {
+    public void testSmallEven() {
         try (VirtualMemory mem = new VirtualMemory(2)) {
             assertStrings(mem, false);
         }
     }
 
     @Test
-    public void testSmallOdd() throws Exception {
+    public void testSmallOdd() {
         try (VirtualMemory mem = new VirtualMemory(2)) {
             assertStrings(mem, true);
         }
     }
 
     @Test
-    public void testStringStorageDimensions() throws Exception {
+    public void testStringStorageDimensions() {
         assertEquals(10, VirtualMemory.getStorageLength("xyz"));
         assertEquals(4, VirtualMemory.getStorageLength(""));
         assertEquals(4, VirtualMemory.getStorageLength(null));

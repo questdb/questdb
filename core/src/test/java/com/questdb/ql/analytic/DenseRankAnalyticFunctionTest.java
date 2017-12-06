@@ -116,7 +116,7 @@ public class DenseRankAnalyticFunctionTest extends AbstractAllTypeTest {
     }
 
     @Test
-    public void testRankWithArg() throws Exception {
+    public void testRankWithArg() {
         try {
             expectFailure("select str, dense_rank(sym) rank over(partition by str) from 'abc'");
         } catch (ParserException e) {

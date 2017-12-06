@@ -28,7 +28,7 @@ import org.junit.Test;
 
 public class IntStackTest {
     @Test
-    public void testStack() throws Exception {
+    public void testStack() {
 
         int expected[] = new int[29];
         int l = expected.length - 1;

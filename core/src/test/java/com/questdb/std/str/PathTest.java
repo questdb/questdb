@@ -40,17 +40,17 @@ public class PathTest {
     private final char separator = System.getProperty("file.separator").charAt(0);
 
     @Test
-    public void testConcatNoSlash() throws Exception {
+    public void testConcatNoSlash() {
         TestUtils.assertEquals("xyz" + separator + "123", path.of("xyz").concat("123").$());
     }
 
     @Test
-    public void testConcatWithSlash() throws Exception {
+    public void testConcatWithSlash() {
         TestUtils.assertEquals("xyz" + separator + "123", path.of("xyz/").concat("123").$());
     }
 
     @Test
-    public void testLpszConcat() throws Exception {
+    public void testLpszConcat() {
         try (Path p1 = new Path()) {
             p1.of("abc").concat("123").$();
             try (Path p = new Path()) {
@@ -61,7 +61,7 @@ public class PathTest {
     }
 
     @Test
-    public void testOverflow() throws Exception {
+    public void testOverflow() {
         StringBuilder b = new StringBuilder();
         for (int i = 0; i < 256; i++) {
             b.append('9');
@@ -74,7 +74,7 @@ public class PathTest {
     }
 
     @Test
-    public void testSimple() throws Exception {
+    public void testSimple() {
         TestUtils.assertEquals("xyz", path.of("xyz").$());
     }
 

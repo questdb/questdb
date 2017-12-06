@@ -39,7 +39,7 @@ public class LogFactoryTest {
     public final TemporaryFolder temp = new TemporaryFolder();
 
     @Test(expected = LogError.class)
-    public void testBadWriter() throws Exception {
+    public void testBadWriter() {
         System.setProperty(LogFactory.CONFIG_SYSTEM_PROPERTY, "/nfslog-bad-writer.conf");
 
         try (LogFactory factory = new LogFactory()) {
@@ -48,7 +48,7 @@ public class LogFactoryTest {
     }
 
     @Test
-    public void testDefaultLevel() throws Exception {
+    public void testDefaultLevel() {
         try (LogFactory factory = new LogFactory()) {
             factory.add(new LogWriterConfig(LogLevel.LOG_LEVEL_ALL, LogConsoleWriter::new));
 
@@ -99,7 +99,7 @@ public class LogFactoryTest {
     }
 
     @Test
-    public void testNoConfig() throws Exception {
+    public void testNoConfig() {
         System.setProperty(LogFactory.CONFIG_SYSTEM_PROPERTY, "/nfslog2.conf");
 
         try (LogFactory factory = new LogFactory()) {
@@ -113,7 +113,7 @@ public class LogFactoryTest {
     }
 
     @Test
-    public void testNoDefault() throws Exception {
+    public void testNoDefault() {
         System.setProperty(LogFactory.CONFIG_SYSTEM_PROPERTY, "/nfslog1.conf");
 
         try (LogFactory factory = new LogFactory()) {
@@ -215,7 +215,7 @@ public class LogFactoryTest {
     }
 
     @Test
-    public void testProgrammaticConfig() throws Exception {
+    public void testProgrammaticConfig() {
         try (LogFactory factory = new LogFactory()) {
             factory.add(new LogWriterConfig(LogLevel.LOG_LEVEL_INFO | LogLevel.LOG_LEVEL_DEBUG, LogConsoleWriter::new));
 
@@ -264,7 +264,7 @@ public class LogFactoryTest {
     }
 
     @Test
-    public void testSilent() throws Exception {
+    public void testSilent() {
         System.setProperty(LogFactory.CONFIG_SYSTEM_PROPERTY, "/nfslog-silent.conf");
 
         try (LogFactory factory = new LogFactory()) {

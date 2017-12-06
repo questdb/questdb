@@ -35,7 +35,7 @@ public class CollectionsTest {
     public final TemporaryFolder temp = new TemporaryFolder();
 
     @Test
-    public void testIntHash() throws Exception {
+    public void testIntHash() {
         IntHashSet set = new IntHashSet(10);
 
         for (int i = 0; i < 1000; i++) {
@@ -48,7 +48,7 @@ public class CollectionsTest {
     }
 
     @Test
-    public void testIntList() throws Exception {
+    public void testIntList() {
         IntList list = new IntList();
         final int N = 1000;
         for (int i = 0; i < N; i++) {
@@ -84,7 +84,7 @@ public class CollectionsTest {
     }
 
     @Test
-    public void testIntObjHashMap() throws Exception {
+    public void testIntObjHashMap() {
         IntObjHashMap<String> map = new IntObjHashMap<>();
         Rnd rnd = new Rnd();
 
@@ -101,7 +101,7 @@ public class CollectionsTest {
     }
 
     @Test
-    public void testLongSearch2() throws Exception {
+    public void testLongSearch2() {
         LongList list = new LongList();
         Rnd rnd = new Rnd();
 
@@ -116,7 +116,7 @@ public class CollectionsTest {
 
 
     @Test
-    public void testObjIntHashMap() throws Exception {
+    public void testObjIntHashMap() {
         ObjIntHashMap<String> map = new ObjIntHashMap<>();
         Rnd rnd = new Rnd();
 

@@ -50,7 +50,7 @@ public class SortTest extends AbstractTest {
     }
 
     @After
-    public void tearDown() throws Exception {
+    public void tearDown() {
         w.close();
     }
 

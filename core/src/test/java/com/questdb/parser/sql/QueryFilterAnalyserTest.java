@@ -59,7 +59,7 @@ public class QueryFilterAnalyserTest extends AbstractTest {
     }
 
     @After
-    public void tearDown() throws Exception {
+    public void tearDown() {
         w.close();
     }
 
@@ -71,7 +71,7 @@ public class QueryFilterAnalyserTest extends AbstractTest {
     }
 
     @Test
-    public void testBadCountInInterval() throws Exception {
+    public void testBadCountInInterval() {
         try {
             modelOf("timestamp = '2015-02-23T10:00:55.000Z;30m;10;z'");
             Assert.fail();
@@ -81,7 +81,7 @@ public class QueryFilterAnalyserTest extends AbstractTest {
     }
 
     @Test
-    public void testBadDate() throws Exception {
+    public void testBadDate() {
         try {
             modelOf("timestamp = '2015-02-23T10:00:55.00z;30m'");
             Assert.fail();
@@ -91,7 +91,7 @@ public class QueryFilterAnalyserTest extends AbstractTest {
     }
 
     @Test
-    public void testBadDateInGreater() throws Exception {
+    public void testBadDateInGreater() {
         try {
             modelOf("'2014-0x-01T12:30:00.000Z' > timestamp");
             Assert.fail();
@@ -101,7 +101,7 @@ public class QueryFilterAnalyserTest extends AbstractTest {
     }
 
     @Test
-    public void testBadDateInGreater2() throws Exception {
+    public void testBadDateInGreater2() {
         try {
             modelOf("timestamp > '2014-0x-01T12:30:00.000Z'");
             Assert.fail();
@@ -111,7 +111,7 @@ public class QueryFilterAnalyserTest extends AbstractTest {
     }
 
     @Test
-    public void testBadDateInInterval() throws Exception {
+    public void testBadDateInInterval() {
         try {
             modelOf("timestamp = '2014-0x-01T12:30:00.000Z'");
             Assert.fail();
@@ -121,7 +121,7 @@ public class QueryFilterAnalyserTest extends AbstractTest {
     }
 
     @Test
-    public void testBadDateInLess1() throws Exception {
+    public void testBadDateInLess1() {
         try {
             modelOf("timestamp < '2014-0x-01T12:30:00.000Z'");
             Assert.fail();
@@ -131,7 +131,7 @@ public class QueryFilterAnalyserTest extends AbstractTest {
     }
 
     @Test
-    public void testBadDateInLess2() throws Exception {
+    public void testBadDateInLess2() {
         try {
             modelOf("'2014-0x-01T12:30:00.000Z' < timestamp");
             Assert.fail();
@@ -141,7 +141,7 @@ public class QueryFilterAnalyserTest extends AbstractTest {
     }
 
     @Test
-    public void testBadEndDate() throws Exception {
+    public void testBadEndDate() {
         try {
             modelOf("timestamp in (\"2014-01-02T12:30:00.000Z\", \"2014-01Z\")");
             Assert.fail("Exception expected");
@@ -151,7 +151,7 @@ public class QueryFilterAnalyserTest extends AbstractTest {
     }
 
     @Test
-    public void testBadOperators() throws Exception {
+    public void testBadOperators() {
         testBadOperator(">");
         testBadOperator(">=");
         testBadOperator("<");
@@ -161,7 +161,7 @@ public class QueryFilterAnalyserTest extends AbstractTest {
     }
 
     @Test
-    public void testBadPeriodInInterval() throws Exception {
+    public void testBadPeriodInInterval() {
         try {
             modelOf("timestamp = '2015-02-23T10:00:55.000Z;30m;x;5'");
             Assert.fail();
@@ -171,7 +171,7 @@ public class QueryFilterAnalyserTest extends AbstractTest {
     }
 
     @Test
-    public void testBadPeriodInInterval2() throws Exception {
+    public void testBadPeriodInInterval2() {
         try {
             modelOf("timestamp = '2015-02-23T10:00:55.000Z;30m;10x;5'");
             Assert.fail();
@@ -181,7 +181,7 @@ public class QueryFilterAnalyserTest extends AbstractTest {
     }
 
     @Test
-    public void testBadRangeInInterval() throws Exception {
+    public void testBadRangeInInterval() {
         try {
             modelOf("timestamp = '2014-03-01T12:30:00.000Z;x'");
             Assert.fail();
@@ -191,7 +191,7 @@ public class QueryFilterAnalyserTest extends AbstractTest {
     }
 
     @Test
-    public void testBadStartDate() throws Exception {
+    public void testBadStartDate() {
         try {
             modelOf("timestamp in (\"2014-01Z\", \"2014-01-02T12:30:00.000Z\")");
             Assert.fail("Exception expected");
@@ -316,7 +316,7 @@ public class QueryFilterAnalyserTest extends AbstractTest {
     }
 
     @Test
-    public void testEqualsInvalidColumn() throws Exception {
+    public void testEqualsInvalidColumn() {
         try {
             modelOf("sym = 'X' and x = 'Y'");
             Assert.fail("Exception expected");
@@ -426,7 +426,7 @@ public class QueryFilterAnalyserTest extends AbstractTest {
     }
 
     @Test
-    public void testIndexedFieldTooFewArgs3() throws Exception {
+    public void testIndexedFieldTooFewArgs3() {
         try {
             modelOf("sym in ()");
             Assert.fail("exception expected");
@@ -529,7 +529,7 @@ public class QueryFilterAnalyserTest extends AbstractTest {
     }
 
     @Test
-    public void testIntervalTooFewArgs() throws Exception {
+    public void testIntervalTooFewArgs() {
         try {
             modelOf("timestamp in (\"2014-01-01T12:30:00.000Z\")");
             Assert.fail("Exception expected");
@@ -539,7 +539,7 @@ public class QueryFilterAnalyserTest extends AbstractTest {
     }
 
     @Test
-    public void testIntervalTooFewArgs2() throws Exception {
+    public void testIntervalTooFewArgs2() {
         try {
             modelOf("timestamp in ()");
             Assert.fail("Exception expected");
@@ -549,7 +549,7 @@ public class QueryFilterAnalyserTest extends AbstractTest {
     }
 
     @Test
-    public void testIntervalTooManyArgs() throws Exception {
+    public void testIntervalTooManyArgs() {
         try {
             modelOf("timestamp in (\"2014-01-01T12:30:00.000Z\", \"2014-01-02T12:30:00.000Z\", \"2014-01-03T12:30:00.000Z\")");
             Assert.fail("Exception expected");
@@ -639,7 +639,7 @@ public class QueryFilterAnalyserTest extends AbstractTest {
     }
 
     @Test
-    public void testLiteralInListOfValuesInvalidColumn() throws Exception {
+    public void testLiteralInListOfValuesInvalidColumn() {
         try {
             modelOf("timestamp in ('2014-01-01T12:30:00.000Z', '2014-01-02T12:30:00.000Z') and x in ('a', z)");
             Assert.fail("Exception expected");
@@ -682,7 +682,7 @@ public class QueryFilterAnalyserTest extends AbstractTest {
     }
 
     @Test
-    public void testNonLiteralColumn() throws Exception {
+    public void testNonLiteralColumn() {
         try {
             modelOf("10 in (\"2014-01-01T12:30:00.000Z\", \"2014-01-02T12:30:00.000Z\")");
             Assert.fail("Exception expected");
@@ -833,7 +833,7 @@ public class QueryFilterAnalyserTest extends AbstractTest {
     }
 
     @Test
-    public void testTwoSameColLambdas() throws Exception {
+    public void testTwoSameColLambdas() {
         try {
             modelOf("sym in (`xyz`) and sym in (`kkk`)");
             Assert.fail("exception expected");

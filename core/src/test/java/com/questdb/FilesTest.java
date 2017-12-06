@@ -144,7 +144,7 @@ public class FilesTest {
     }
 
     @Test
-    public void testListDir() throws Exception {
+    public void testListDir() {
         String temp = temporaryFolder.getRoot().getAbsolutePath();
         ObjList<String> names = new ObjList<>();
         try (Path path = new Path().of(temp).$()) {
@@ -169,7 +169,7 @@ public class FilesTest {
     }
 
     @Test
-    public void testListNonExistingDir() throws Exception {
+    public void testListNonExistingDir() {
         String temp = temporaryFolder.getRoot().getAbsolutePath();
         try (Path path = new Path().of(temp).concat("xyz")) {
             long pFind = Files.findFirst(path);

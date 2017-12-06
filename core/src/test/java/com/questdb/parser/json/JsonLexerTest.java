@@ -37,7 +37,7 @@ public class JsonLexerTest {
     private static final JsonAssemblingParser listener = new JsonAssemblingParser();
 
     @AfterClass
-    public static void tearDown() throws Exception {
+    public static void tearDown() {
         LEXER.close();
     }
 
@@ -92,17 +92,17 @@ public class JsonLexerTest {
     }
 
     @Test
-    public void testDanglingArrayEnd() throws Exception {
+    public void testDanglingArrayEnd() {
         assertError("Dangling ]", 8, "[1,2,3]]");
     }
 
     @Test
-    public void testDanglingComma() throws Exception {
+    public void testDanglingComma() {
         assertError("Attribute name expected", 12, "{\"x\": \"abc\",}");
     }
 
     @Test
-    public void testDanglingObjectEnd() throws Exception {
+    public void testDanglingObjectEnd() {
         assertError("Dangling }", 8, "[1,2,3]}");
     }
 
@@ -122,12 +122,12 @@ public class JsonLexerTest {
     }
 
     @Test
-    public void testIncorrectArrayStart() throws Exception {
+    public void testIncorrectArrayStart() {
         assertError("[ is not expected here", 3, "[1[]]");
     }
 
     @Test
-    public void testInvalidObjectNesting() throws Exception {
+    public void testInvalidObjectNesting() {
         assertError("{ is not expected here", 11, "{\"a\":\"x\", {}}");
     }
 
@@ -156,32 +156,32 @@ public class JsonLexerTest {
     }
 
     @Test
-    public void testMisplacedArrayEnd() throws Exception {
+    public void testMisplacedArrayEnd() {
         assertError("] is not expected here. You have non-terminated object", 18, "{\"a\":1, \"b\": 15.2]}");
     }
 
     @Test
-    public void testMisplacedColon() throws Exception {
+    public void testMisplacedColon() {
         assertError("Misplaced ':'", 9, "{\"a\":\"x\":}");
     }
 
     @Test
-    public void testMisplacedQuote() throws Exception {
+    public void testMisplacedQuote() {
         assertError("Unexpected quote '\"'", 9, "{\"a\":\"1\"\", \"b\": 15.2}");
     }
 
     @Test
-    public void testMisplacesObjectEnd() throws Exception {
+    public void testMisplacesObjectEnd() {
         assertError("} is not expected here. You have non-terminated array", 7, "[1,2,3}");
     }
 
     @Test
-    public void testMissingArrayValue() throws Exception {
+    public void testMissingArrayValue() {
         assertError("Unexpected comma", 2, "[,]");
     }
 
     @Test
-    public void testMissingAttributeValue() throws Exception {
+    public void testMissingAttributeValue() {
         assertError("Attribute value expected", 6, "{\"x\": }");
     }
 
@@ -250,7 +250,7 @@ public class JsonLexerTest {
     }
 
     @Test
-    public void testUnclosedQuote() throws Exception {
+    public void testUnclosedQuote() {
         assertError("Unexpected symbol", 11, "{\"a\":\"1, \"b\": 15.2}");
     }
 
@@ -262,22 +262,22 @@ public class JsonLexerTest {
     }
 
     @Test
-    public void testUnterminatedArray() throws Exception {
+    public void testUnterminatedArray() {
         assertError("Unterminated array", 37, "{\"x\": { \"y\": [[1,2,3], [5,2,3], [0,1]");
     }
 
     @Test
-    public void testUnterminatedObject() throws Exception {
+    public void testUnterminatedObject() {
         assertError("Unterminated object", 38, "{\"x\": { \"y\": [[1,2,3], [5,2,3], [0,1]]");
     }
 
     @Test
-    public void testUnterminatedString() throws Exception {
+    public void testUnterminatedString() {
         assertError("Unterminated string", 46, "{\"x\": { \"y\": [[1,2,3], [5,2,3], [0,1]], \"a\":\"b");
     }
 
     @Test
-    public void testWrongQuote() throws Exception {
+    public void testWrongQuote() {
         assertError("Unexpected symbol", 10, "{\"x\": \"a\"bc\",}");
     }
 

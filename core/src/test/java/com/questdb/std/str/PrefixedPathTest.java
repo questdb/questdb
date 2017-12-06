@@ -29,21 +29,21 @@ import org.junit.Test;
 
 public class PrefixedPathTest {
     @Test
-    public void testBorderlineChild() throws Exception {
+    public void testBorderlineChild() {
         try (PrefixedPath path = new PrefixedPath("/home/xterm/public", 12)) {
             assertThat(path, "/home/xterm/public/xyz/123456789/abcd", "xyz/123456789/abcd");
         }
     }
 
     @Test
-    public void testLargeChild() throws Exception {
+    public void testLargeChild() {
         try (PrefixedPath path = new PrefixedPath("/home/xterm/public", 24)) {
             assertThat(path, "/home/xterm/public/xyz/123456789/abcdef", "xyz/123456789/abcdef");
         }
     }
 
     @Test
-    public void testReuse() throws Exception {
+    public void testReuse() {
         try (PrefixedPath path = new PrefixedPath("/home/xterm/public", 12)) {
             assertThat(path, "/home/xterm/public/xyz", "xyz");
             assertThat(path, "/home/xterm/public/xyz", "xyz");
@@ -52,21 +52,21 @@ public class PrefixedPathTest {
     }
 
     @Test
-    public void testSimpleNoSlash() throws Exception {
+    public void testSimpleNoSlash() {
         try (PrefixedPath path = new PrefixedPath("/home/xterm/public")) {
             Assert.assertEquals(transform("/home/xterm/public/"), path.$().toString());
         }
     }
 
     @Test
-    public void testSimpleSlash() throws Exception {
+    public void testSimpleSlash() {
         try (PrefixedPath path = new PrefixedPath("/home/xterm/public/")) {
             Assert.assertEquals(transform("/home/xterm/public/"), path.$().toString());
         }
     }
 
     @Test
-    public void testSmallChild() throws Exception {
+    public void testSmallChild() {
         try (PrefixedPath path = new PrefixedPath("/home/xterm/public")) {
             assertThat(path, "/home/xterm/public/xyz", "xyz");
         }

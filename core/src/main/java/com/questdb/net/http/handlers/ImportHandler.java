@@ -107,7 +107,7 @@ public class ImportHandler extends AbstractMultipartHandler {
     }
 
     @Override
-    protected void onComplete0(IOContext context) throws IOException {
+    protected void onComplete0(IOContext context) {
     }
 
     @Override

@@ -44,7 +44,7 @@ public class BinarySearchTest {
     }
 
     @Test
-    public void testSearchGreaterOrEquals() throws Exception {
+    public void testSearchGreaterOrEquals() {
         assertEquals(new long[]{1, 2, 3, 4, 5, 6, 9, 12, 17, 23}, BSearchType.NEWER_OR_SAME, 7, 6);
         assertEquals(new long[]{1, 2, 3, 4, 5, 6, 6, 6, 7, 12, 17, 23}, BSearchType.NEWER_OR_SAME, 6, 5);
         assertEquals(new long[]{2, 2, 3, 4, 5, 6, 6, 6, 7, 12, 17, 23}, BSearchType.NEWER_OR_SAME, 1, 0);
@@ -54,7 +54,7 @@ public class BinarySearchTest {
     }
 
     @Test
-    public void testSearchLessOrEquals() throws Exception {
+    public void testSearchLessOrEquals() {
         assertEquals(new long[]{1, 2, 3, 4, 5, 6, 9, 12, 17, 23}, BSearchType.OLDER_OR_SAME, 11, 6);
         assertEquals(new long[]{1, 2, 3, 4, 9, 9, 9, 12, 17, 23}, BSearchType.OLDER_OR_SAME, 9, 6);
         assertEquals(new long[]{1, 2, 3, 4, 9, 9, 9, 12, 17, 23}, BSearchType.OLDER_OR_SAME, 25, 9);

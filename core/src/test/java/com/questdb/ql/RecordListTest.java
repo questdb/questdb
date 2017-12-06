@@ -115,7 +115,7 @@ public class RecordListTest extends AbstractTest {
                 new RecordGenerator<Binary>() {
 
                     @Override
-                    public void assertRecord(Record value, int i) throws IOException {
+                    public void assertRecord(Record value, int i) {
                         DirectInputStream binCol = value.getBin(0);
                         Binary expected = generate(i);
                         Assert.assertEquals(expected.aBinary.remaining(), binCol.size());
@@ -189,7 +189,7 @@ public class RecordListTest extends AbstractTest {
                 new RecordGenerator<StringLongBinary>() {
 
                     @Override
-                    public void assertRecord(Record value, int i) throws IOException {
+                    public void assertRecord(Record value, int i) {
                         StringLongBinary expected = generate(i);
 
                         CharSequence str = value.getFlyweightStr(0);

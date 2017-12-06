@@ -245,7 +245,7 @@ public class AsOfPartitionedJoinRecordSourceTest extends AbstractOptimiserTest {
     }
 
     @Test
-    public void testAmbiguousColumn() throws Exception {
+    public void testAmbiguousColumn() {
         try {
             expectFailure("select timestamp from y asof join x on x.ccy = y.ccy");
         } catch (ParserException e) {
@@ -255,7 +255,7 @@ public class AsOfPartitionedJoinRecordSourceTest extends AbstractOptimiserTest {
     }
 
     @Test
-    public void testAmbiguousColumnInFunc() throws Exception {
+    public void testAmbiguousColumnInFunc() {
         try {
             expectFailure("select sum(timestamp) from y asof join x on x.ccy = y.ccy");
         } catch (ParserException e) {
@@ -265,7 +265,7 @@ public class AsOfPartitionedJoinRecordSourceTest extends AbstractOptimiserTest {
     }
 
     @Test
-    public void testAnonymousSubqueriesFunc() throws Exception {
+    public void testAnonymousSubqueriesFunc() {
         try {
             expectFailure("select sum(timestamp) from (y) asof join (x) on x.ccy = y.ccy");
         } catch (ParserException e) {

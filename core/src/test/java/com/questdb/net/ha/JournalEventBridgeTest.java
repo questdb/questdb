@@ -33,7 +33,7 @@ import java.util.concurrent.*;
 
 public class JournalEventBridgeTest {
     @Test
-    public void testStartStop() throws Exception {
+    public void testStartStop() {
         JournalEventBridge bridge = new JournalEventBridge(2, TimeUnit.SECONDS);
         for (int i = 0; i < 10000; i++) {
             bridge.publish(10, System.currentTimeMillis());

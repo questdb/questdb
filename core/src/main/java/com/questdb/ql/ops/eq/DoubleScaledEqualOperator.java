@@ -26,7 +26,6 @@ package com.questdb.ql.ops.eq;
 import com.questdb.common.ColumnType;
 import com.questdb.common.Record;
 import com.questdb.common.StorageFacade;
-import com.questdb.ex.ParserException;
 import com.questdb.ql.ops.AbstractVirtualColumn;
 import com.questdb.ql.ops.Function;
 import com.questdb.ql.ops.VirtualColumn;
@@ -62,7 +61,7 @@ public class DoubleScaledEqualOperator extends AbstractVirtualColumn implements 
     }
 
     @Override
-    public void setArg(int pos, VirtualColumn arg) throws ParserException {
+    public void setArg(int pos, VirtualColumn arg) {
         switch (pos) {
             case 0:
                 lhs = arg;

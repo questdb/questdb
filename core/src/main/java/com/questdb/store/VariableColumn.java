@@ -382,7 +382,7 @@ public class VariableColumn extends AbstractColumn {
         private int blockRemaining;
 
         @Override
-        public void write(int b) throws IOException {
+        public void write(int b) {
             if (blockRemaining == 0) {
                 renew();
             }
@@ -450,7 +450,7 @@ public class VariableColumn extends AbstractColumn {
         }
 
         @Override
-        public int read() throws IOException {
+        public int read() {
             if (remaining == 0) {
                 return -1;
             }

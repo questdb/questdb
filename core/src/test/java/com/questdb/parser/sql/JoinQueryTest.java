@@ -51,7 +51,7 @@ public class JoinQueryTest extends AbstractOptimiserTest {
     }
 
     @After
-    public void tearDown() throws Exception {
+    public void tearDown() {
         Assert.assertEquals(0, FACTORY_CONTAINER.getFactory().getBusyReaderCount());
         Assert.assertEquals(0, FACTORY_CONTAINER.getFactory().getBusyWriterCount());
     }
@@ -75,7 +75,7 @@ public class JoinQueryTest extends AbstractOptimiserTest {
     }
 
     @Test
-    public void testAmbiguousColumn() throws Exception {
+    public void testAmbiguousColumn() {
         try {
             assertPlan2("", "orders join customers on customerId = customerId");
             Assert.fail("Exception expected");
@@ -409,7 +409,7 @@ public class JoinQueryTest extends AbstractOptimiserTest {
     }
 
     @Test
-    public void testDuplicateAlias() throws Exception {
+    public void testDuplicateAlias() {
         try {
             assertPlan2("", "customers a" +
                     " cross join orders a");
@@ -575,7 +575,7 @@ public class JoinQueryTest extends AbstractOptimiserTest {
     }
 
     @Test
-    public void testInvalidAlias() throws Exception {
+    public void testInvalidAlias() {
         try {
             assertPlan2("", "orders join customers on orders.customerId = c.customerId");
             Assert.fail("Exception expected");
@@ -586,7 +586,7 @@ public class JoinQueryTest extends AbstractOptimiserTest {
     }
 
     @Test
-    public void testInvalidColumn() throws Exception {
+    public void testInvalidColumn() {
         try {
             assertPlan2("", "orders join customers on customerIdx = customerId");
             Assert.fail("Exception expected");
@@ -597,7 +597,7 @@ public class JoinQueryTest extends AbstractOptimiserTest {
     }
 
     @Test
-    public void testInvalidSelectColumn() throws Exception {
+    public void testInvalidSelectColumn() {
         try {
             expectFailure("select c.customerId, orderIdx, o.productId from " +
                     "customers c " +
@@ -633,7 +633,7 @@ public class JoinQueryTest extends AbstractOptimiserTest {
     }
 
     @Test
-    public void testInvalidTableName() throws Exception {
+    public void testInvalidTableName() {
         try {
             assertPlan2("", "orders join customer on customerId = customerId");
             Assert.fail("Exception expected");
@@ -1583,7 +1583,7 @@ public class JoinQueryTest extends AbstractOptimiserTest {
     }
 
     @Test
-    public void testSymRegex() throws Exception {
+    public void testSymRegex() {
         try {
             expectFailure("select country, avg(quantity) from orders o " +
                     "join customers c on c.customerId = o.customerId " +
@@ -1595,7 +1595,7 @@ public class JoinQueryTest extends AbstractOptimiserTest {
     }
 
     @Test
-    public void testSymRegexSyntaxError() throws Exception {
+    public void testSymRegexSyntaxError() {
         try {
             expectFailure("select country, avg(quantity) from orders o join customers c on c.customerId = o.customerId join orderDetails d on o.orderId = d.orderId where country ~ '^Z)'");
         } catch (ParserException e) {
@@ -1649,7 +1649,7 @@ public class JoinQueryTest extends AbstractOptimiserTest {
     }
 
     @Test
-    public void testWithClauseErrorOffset() throws Exception {
+    public void testWithClauseErrorOffset() {
         try {
             expectFailure("with o as (select '1' blah, lastName, employeeId customerId, timestamp from employees where lastName ~ '(' order by lastName)," +
                     " a as (select '1' blah, lastName, employeeId customerId, timestamp from employees where lastName ~ 'UBB' order by lastName)" +

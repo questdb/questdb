@@ -95,7 +95,7 @@ public class ExprParserTest {
     }
 
     @Test
-    public void testMissingArgAtBraceError() throws Exception {
+    public void testMissingArgAtBraceError() {
         try {
             x("", "x * 4 + c(x,y,)");
             Assert.fail("Expected syntax exception");
@@ -105,7 +105,7 @@ public class ExprParserTest {
     }
 
     @Test
-    public void testMissingArgError() throws Exception {
+    public void testMissingArgError() {
         try {
             x("", "x * 4 + c(x,,y)");
             Assert.fail("Expected syntax exception");
@@ -145,7 +145,7 @@ public class ExprParserTest {
     }
 
     @Test
-    public void testUnbalancedLeftBrace() throws Exception {
+    public void testUnbalancedLeftBrace() {
         try {
             x("", "a+b(5,c(x,y)");
             Assert.fail("Expected exception");

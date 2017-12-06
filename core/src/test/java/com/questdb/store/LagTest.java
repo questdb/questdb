@@ -49,7 +49,7 @@ public class LagTest extends AbstractTest {
     }
 
     @After
-    public void tearDown() throws Exception {
+    public void tearDown() {
         rw.close();
     }
 

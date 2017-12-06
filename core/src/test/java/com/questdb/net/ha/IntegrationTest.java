@@ -63,7 +63,7 @@ public class IntegrationTest extends AbstractTest {
 
     @Test
     @Ignore
-    public void testBadJournalDoesNotResubscribe() throws Exception {
+    public void testBadJournalDoesNotResubscribe() {
         // todo: test that when client reconnects it doesn't retry bad subscriptions
         Assert.fail();
     }
@@ -493,7 +493,7 @@ public class IntegrationTest extends AbstractTest {
 
     @Test
     @Ignore
-    public void testResubscribeAfterUnsubscribe() throws Exception {
+    public void testResubscribeAfterUnsubscribe() {
         //todo: test that it is possible to re-subscribe after unsubscribe call
         Assert.fail();
     }
@@ -557,7 +557,7 @@ public class IntegrationTest extends AbstractTest {
 
     @Test
     @Ignore
-    public void testSubscribeCopyOnTheFly() throws Exception {
+    public void testSubscribeCopyOnTheFly() {
         // todo: test that server can multiplex journal when needed
         Assert.fail();
     }
@@ -1007,21 +1007,21 @@ public class IntegrationTest extends AbstractTest {
 
     @Test
     @Ignore
-    public void testUnsubscribe() throws Exception {
+    public void testUnsubscribe() {
         //todo: check that unsubscribe triggers correct event sequence
         Assert.fail();
     }
 
     @Test
     @Ignore
-    public void testUnsubscribeOnTheFly() throws Exception {
+    public void testUnsubscribeOnTheFly() {
         //todo: test that unsubscribe on the fly does not impact existing data flow
         Assert.fail();
     }
 
     @Test
     @Ignore
-    public void testUnsubscribeReconnectBehaviour() throws Exception {
+    public void testUnsubscribeReconnectBehaviour() {
         // todo: test that unsubscribed journal does not cause re-subscription on client failover
         Assert.fail();
     }

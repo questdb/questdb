@@ -30,7 +30,7 @@ import org.junit.Test;
 public class FreeListTest {
 
     @Test
-    public void testFindAndRemove() throws Exception {
+    public void testFindAndRemove() {
         FreeList list = new FreeList();
 
         list.add(100000L, 11);
@@ -68,7 +68,7 @@ public class FreeListTest {
     }
 
     @Test
-    public void testSimple() throws Exception {
+    public void testSimple() {
         FreeList list = new FreeList();
 
         list.add(100000L, 11);

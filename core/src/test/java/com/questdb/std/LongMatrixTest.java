@@ -29,7 +29,7 @@ import org.junit.Test;
 public class LongMatrixTest {
 
     @Test
-    public void testApproxBinarySearch() throws Exception {
+    public void testApproxBinarySearch() {
         int k = 0;
         LongMatrix<String> m = new LongMatrix<>(2);
         for (int i = 0; i < 1000; i++) {
@@ -49,7 +49,7 @@ public class LongMatrixTest {
     }
 
     @Test
-    public void testBinarySearch() throws Exception {
+    public void testBinarySearch() {
         LongMatrix<String> m = new LongMatrix<>(2);
         for (int i = 0; i < 1000; i++) {
             int r = m.addRow();
@@ -63,7 +63,7 @@ public class LongMatrixTest {
     }
 
     @Test
-    public void testDeleteRow() throws Exception {
+    public void testDeleteRow() {
         LongMatrix<String> m = new LongMatrix<>(2);
         for (int i = 0; i < 1000; i++) {
             int r = m.addRow();
@@ -101,7 +101,7 @@ public class LongMatrixTest {
     }
 
     @Test
-    public void testResize() throws Exception {
+    public void testResize() {
         LongMatrix<String> m = new LongMatrix<>(2);
         for (int i = 0; i < 1000; i++) {
             int r = m.addRow();
@@ -119,7 +119,7 @@ public class LongMatrixTest {
     }
 
     @Test
-    public void testZapTop() throws Exception {
+    public void testZapTop() {
         LongMatrix<String> m = new LongMatrix<>(2);
         for (int i = 0; i < 1000; i++) {
             int r = m.addRow();

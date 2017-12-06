@@ -34,7 +34,7 @@ public class MemoryPagesTest {
     public final ExpectedException exception = ExpectedException.none();
 
     @Test
-    public void testGetWriteOffsetQuick() throws Exception {
+    public void testGetWriteOffsetQuick() {
         int pageLen = 128;
 
         try (MemoryPages mem = new MemoryPages(127)) {

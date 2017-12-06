@@ -49,7 +49,7 @@ public class QueryParserTest extends AbstractTest {
     }
 
     @Test
-    public void testAliasWithSpacex() throws Exception {
+    public void testAliasWithSpacex() {
         try {
             parser.parse("from x 'a b' where x > 1");
         } catch (ParserException e) {
@@ -93,7 +93,7 @@ public class QueryParserTest extends AbstractTest {
     }
 
     @Test
-    public void testCrossJoin() throws Exception {
+    public void testCrossJoin() {
         try {
             parser.parse("select x from a a cross join b on b.x = a.x");
             Assert.fail("Exception expected");
@@ -142,7 +142,7 @@ public class QueryParserTest extends AbstractTest {
     }
 
     @Test
-    public void testEmptyGroupBy() throws Exception {
+    public void testEmptyGroupBy() {
         try {
             parser.parse("select x, y from tab sample by");
             Assert.fail("Expected exception");
@@ -152,7 +152,7 @@ public class QueryParserTest extends AbstractTest {
     }
 
     @Test
-    public void testEmptyOrderBy() throws Exception {
+    public void testEmptyOrderBy() {
         try {
             parser.parse("select x, y from tab order by");
             Assert.fail("Expected exception");
@@ -163,7 +163,7 @@ public class QueryParserTest extends AbstractTest {
     }
 
     @Test
-    public void testExtraComma2OrderByInAnalyticFunction() throws Exception {
+    public void testExtraComma2OrderByInAnalyticFunction() {
         try {
             parser.parse("select a,b, f(c) my over (partition by b order by ts,) from xyz");
             Assert.fail();
@@ -173,7 +173,7 @@ public class QueryParserTest extends AbstractTest {
     }
 
     @Test
-    public void testExtraCommaOrderByInAnalyticFunction() throws Exception {
+    public void testExtraCommaOrderByInAnalyticFunction() {
         try {
             parser.parse("select a,b, f(c) my over (partition by b order by ,ts) from xyz");
             Assert.fail();
@@ -183,7 +183,7 @@ public class QueryParserTest extends AbstractTest {
     }
 
     @Test
-    public void testExtraCommaPartitionByInAnalyticFunction() throws Exception {
+    public void testExtraCommaPartitionByInAnalyticFunction() {
         try {
             parser.parse("select a,b, f(c) my over (partition by b, order by ts) from xyz");
             Assert.fail();
@@ -203,7 +203,7 @@ public class QueryParserTest extends AbstractTest {
     }
 
     @Test
-    public void testInvalidGroupBy1() throws Exception {
+    public void testInvalidGroupBy1() {
         try {
             parser.parse("select x, y from tab sample by x,");
             Assert.fail("Expected exception");
@@ -214,7 +214,7 @@ public class QueryParserTest extends AbstractTest {
     }
 
     @Test
-    public void testInvalidGroupBy2() throws Exception {
+    public void testInvalidGroupBy2() {
         try {
             parser.parse("select x, y from (tab sample by x,)");
             Assert.fail("Expected exception");
@@ -224,7 +224,7 @@ public class QueryParserTest extends AbstractTest {
     }
 
     @Test
-    public void testInvalidGroupBy3() throws Exception {
+    public void testInvalidGroupBy3() {
         try {
             parser.parse("select x, y from tab sample by x, order by y");
             Assert.fail("Expected exception");
@@ -234,7 +234,7 @@ public class QueryParserTest extends AbstractTest {
     }
 
     @Test
-    public void testInvalidInnerJoin1() throws Exception {
+    public void testInvalidInnerJoin1() {
         try {
             parser.parse("select x from a a inner join b z");
             Assert.fail("Exception expected");
@@ -245,7 +245,7 @@ public class QueryParserTest extends AbstractTest {
     }
 
     @Test
-    public void testInvalidInnerJoin2() throws Exception {
+    public void testInvalidInnerJoin2() {
         try {
             parser.parse("select x from a a inner join b z on");
             Assert.fail("Exception expected");
@@ -256,7 +256,7 @@ public class QueryParserTest extends AbstractTest {
     }
 
     @Test
-    public void testInvalidOrderBy1() throws Exception {
+    public void testInvalidOrderBy1() {
         try {
             parser.parse("select x, y from tab order by x,");
             Assert.fail("Expected exception");
@@ -267,7 +267,7 @@ public class QueryParserTest extends AbstractTest {
     }
 
     @Test
-    public void testInvalidOrderBy2() throws Exception {
+    public void testInvalidOrderBy2() {
         try {
             parser.parse("select x, y from (tab order by x,)");
             Assert.fail("Expected exception");
@@ -278,7 +278,7 @@ public class QueryParserTest extends AbstractTest {
     }
 
     @Test
-    public void testInvalidOuterJoin1() throws Exception {
+    public void testInvalidOuterJoin1() {
         try {
             parser.parse("select x from a a outer join b z");
             Assert.fail("Exception expected");
@@ -289,7 +289,7 @@ public class QueryParserTest extends AbstractTest {
     }
 
     @Test
-    public void testInvalidOuterJoin2() throws Exception {
+    public void testInvalidOuterJoin2() {
         try {
             parser.parse("select x from a a outer join b z on");
             Assert.fail("Exception expected");
@@ -300,7 +300,7 @@ public class QueryParserTest extends AbstractTest {
     }
 
     @Test
-    public void testInvalidSubQuery() throws Exception {
+    public void testInvalidSubQuery() {
         try {
             parser.parse("select x,y from (tab where x = 100) latest by x");
             Assert.fail("Exception expected");
@@ -363,7 +363,7 @@ public class QueryParserTest extends AbstractTest {
     }
 
     @Test
-    public void testLexerReset() throws Exception {
+    public void testLexerReset() {
 
         for (int i = 0; i < 10; i++) {
             try {
@@ -381,7 +381,7 @@ public class QueryParserTest extends AbstractTest {
     }
 
     @Test
-    public void testMissingWhere() throws Exception {
+    public void testMissingWhere() {
         try {
             parser.parse("select id, x + 10, x from tab id ~ 'HBRO'");
             Assert.fail("Exception expected");
@@ -473,7 +473,7 @@ public class QueryParserTest extends AbstractTest {
     }
 
     @Test
-    public void testOrderByExpression() throws Exception {
+    public void testOrderByExpression() {
         try {
             parser.parse("select x, y from tab order by x+y");
             Assert.fail("Expected exception");
@@ -560,7 +560,7 @@ public class QueryParserTest extends AbstractTest {
     }
 
     @Test
-    public void testSingleJournalLimitLoHiExtraToken() throws Exception {
+    public void testSingleJournalLimitLoHiExtraToken() {
         try {
             parser.parse("select x x, y y from tab where x > z limit 100,200 b");
         } catch (ParserException e) {
@@ -646,7 +646,7 @@ public class QueryParserTest extends AbstractTest {
     }
 
     @Test
-    public void testTooManyColumnsInOrderBy() throws Exception {
+    public void testTooManyColumnsInOrderBy() {
         StringBuilder b = new StringBuilder();
         b.append("x order by ");
         for (int i = 0; i < QueryParser.MAX_ORDER_BY_COLUMNS; i++) {
@@ -683,7 +683,7 @@ public class QueryParserTest extends AbstractTest {
     }
 
     @Test
-    public void testUnbalancedBracketInSubQuery() throws Exception {
+    public void testUnbalancedBracketInSubQuery() {
         try {
             parser.parse("select x from (tab where x > 10 t1");
             Assert.fail("Exception expected");
@@ -694,7 +694,7 @@ public class QueryParserTest extends AbstractTest {
     }
 
     @Test
-    public void testUnderTerminatedOver() throws Exception {
+    public void testUnderTerminatedOver() {
         try {
             parser.parse("select a,b, f(c) my over (partition by b order by ts from xyz");
             Assert.fail();
@@ -704,7 +704,7 @@ public class QueryParserTest extends AbstractTest {
     }
 
     @Test
-    public void testUnderTerminatedOver2() throws Exception {
+    public void testUnderTerminatedOver2() {
         try {
             parser.parse("select a,b, f(c) my over (partition by b order by ts");
             Assert.fail();
@@ -714,7 +714,7 @@ public class QueryParserTest extends AbstractTest {
     }
 
     @Test
-    public void testUnexpectedTokenInAnalyticFunction() throws Exception {
+    public void testUnexpectedTokenInAnalyticFunction() {
         try {
             parser.parse("select a,b, f(c) my over (by b order by ts) from xyz");
             Assert.fail();

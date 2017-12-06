@@ -105,7 +105,7 @@ public class ComparatorCompilerTest extends AbstractOptimiserTest {
     }
 
     @Test
-    public void testCompileAll() throws Exception {
+    public void testCompileAll() {
         TestRecordMetadata m = new TestRecordMetadata().addDistinct();
         IntList indices = new IntList(m.getColumnCount());
         for (int i = 0, n = m.getColumnCount(); i < n; i++) {
@@ -116,7 +116,7 @@ public class ComparatorCompilerTest extends AbstractOptimiserTest {
     }
 
     @Test
-    public void testCompileLarge() throws Exception {
+    public void testCompileLarge() {
         TestRecordMetadata m = new TestRecordMetadata();
         for (int i = 0; i < 155; i++) {
             m.addDistinct();
@@ -130,7 +130,7 @@ public class ComparatorCompilerTest extends AbstractOptimiserTest {
     }
 
     @Test
-    public void testCompileMultipleOfSame() throws Exception {
+    public void testCompileMultipleOfSame() {
         TestRecordMetadata m = new TestRecordMetadata();
         for (int i = 0; i < 155; i++) {
             m.asType(ColumnType.STRING);
@@ -144,7 +144,7 @@ public class ComparatorCompilerTest extends AbstractOptimiserTest {
     }
 
     @Test
-    public void testTwoClassesSameClassloader() throws Exception {
+    public void testTwoClassesSameClassloader() {
         TestRecordMetadata m = new TestRecordMetadata();
         for (int i = 0; i < 155; i++) {
             m.asType(ColumnType.STRING);

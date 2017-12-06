@@ -30,7 +30,7 @@ import java.util.HashMap;
 
 public class ObjIntHashMapTest {
     @Test
-    public void testAddAndIterate() throws Exception {
+    public void testAddAndIterate() {
         Rnd rnd = new Rnd();
 
         ObjIntHashMap<String> map = new ObjIntHashMap<>();
@@ -52,7 +52,7 @@ public class ObjIntHashMapTest {
     }
 
     @Test
-    public void testClassBehaviour() throws Exception {
+    public void testClassBehaviour() {
         ObjIntHashMap<Class> map = new ObjIntHashMap<>();
         Assert.assertEquals(-1, map.get(Object.class));
     }

@@ -308,12 +308,12 @@ public class DatesTest {
     }
 
     @Test
-    public void testOverflowDate() throws Exception {
+    public void testOverflowDate() {
         Assert.assertEquals("6477-07-27T03:15:50.400Z", Dates.toString(142245170150400L));
     }
 
     @Test
-    public void testParseBadISODate() throws Exception {
+    public void testParseBadISODate() {
         expectExceptionDateTime("201");
         expectExceptionDateTime("2014");
         expectExceptionDateTime("2014-");

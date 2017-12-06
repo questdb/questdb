@@ -440,7 +440,7 @@ public class SymbolNullQueryTest extends AbstractOptimiserTest {
     }
 
     @Test
-    public void testInvalidLambdaContext() throws Exception {
+    public void testInvalidLambdaContext() {
         try {
             expectFailure("trades where quoteId in (`quotes where tag ~ 'UM'`)");
         } catch (ParserException e) {

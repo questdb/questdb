@@ -87,7 +87,7 @@ public class PerformanceTest extends AbstractTest {
 
     @SuppressWarnings("StatementWithEmptyBody")
     @Test
-    public void testAllBySymbolValueOverIntervalNew() throws JournalException, ParserException, InterruptedException, NumericException {
+    public void testAllBySymbolValueOverIntervalNew() throws JournalException, ParserException, NumericException {
 
         try (JournalWriter<Quote> w = getFactory().writer(Quote.class, "quote", TEST_DATA_SIZE)) {
             TestUtils.generateQuoteData(w, TEST_DATA_SIZE, DateFormatUtils.parseDateTime("2013-10-05T10:00:00.000Z"), 1000);
@@ -267,7 +267,7 @@ public class PerformanceTest extends AbstractTest {
     }
 
     @Test
-    public void testNewAppenderPerformance() throws JournalException, ParserException, NumericException {
+    public void testNewAppenderPerformance() throws NumericException {
 
         int count = 10;
         long t = 0;
@@ -339,7 +339,7 @@ public class PerformanceTest extends AbstractTest {
     }
 
     @Test
-    public void testRawAppendPerformance() throws JournalException, ParserException, NumericException {
+    public void testRawAppendPerformance() throws JournalException, NumericException {
         try (JournalWriter<Quote> w = getFactory().writer(Quote.class, "quote", TEST_DATA_SIZE)) {
             long t = 0;
             int count = 10;

@@ -37,7 +37,7 @@ import java.util.Iterator;
 public class LexerTest {
 
     @Test
-    public void testBlockComments() throws Exception {
+    public void testBlockComments() {
         Lexer lex = new Lexer();
         lex.defineSymbol("+");
         lex.defineSymbol("++");
@@ -56,7 +56,7 @@ public class LexerTest {
     }
 
     @Test
-    public void testEdgeSymbol() throws Exception {
+    public void testEdgeSymbol() {
         Lexer ts = new Lexer();
         ts.defineSymbol(" ");
         ts.defineSymbol("+");
@@ -74,7 +74,7 @@ public class LexerTest {
     }
 
     @Test
-    public void testLineComment() throws Exception {
+    public void testLineComment() {
         Lexer lex = new Lexer();
         lex.defineSymbol("+");
         lex.defineSymbol("++");
@@ -94,7 +94,7 @@ public class LexerTest {
     }
 
     @Test
-    public void testNullContent() throws Exception {
+    public void testNullContent() {
         Lexer ts = new Lexer();
         ts.defineSymbol(" ");
         ts.setContent(null);
@@ -102,7 +102,7 @@ public class LexerTest {
     }
 
     @Test
-    public void testQuotedToken() throws Exception {
+    public void testQuotedToken() {
         Lexer ts = new Lexer();
         ts.defineSymbol("+");
         ts.defineSymbol("++");
@@ -119,7 +119,7 @@ public class LexerTest {
     }
 
     @Test
-    public void testSingleQuotedToken() throws Exception {
+    public void testSingleQuotedToken() {
         Lexer ts = new Lexer();
         ts.defineSymbol("+");
         ts.defineSymbol("++");
@@ -136,7 +136,7 @@ public class LexerTest {
     }
 
     @Test
-    public void testSymbolLookup() throws Exception {
+    public void testSymbolLookup() {
         Lexer ts = new Lexer();
         ts.defineSymbol("+");
         ts.defineSymbol("++");

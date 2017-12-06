@@ -27,7 +27,6 @@ import com.questdb.std.ByteBuffers;
 import com.questdb.std.NetworkChannel;
 import com.questdb.std.Unsafe;
 
-import java.io.IOException;
 import java.nio.ByteBuffer;
 
 public class TestChannel implements NetworkChannel {
@@ -77,12 +76,12 @@ public class TestChannel implements NetworkChannel {
     }
 
     @Override
-    public void close() throws IOException {
+    public void close() {
         reset();
     }
 
     @Override
-    public int read(ByteBuffer dst) throws IOException {
+    public int read(ByteBuffer dst) {
         if (!fullyRead) {
             Unsafe.getUnsafe().copyMemory(reqAddress, ByteBuffers.getAddress(dst), reqLen);
             dst.position(reqLen);
@@ -105,7 +104,7 @@ public class TestChannel implements NetworkChannel {
     }
 
     @Override
-    public int write(ByteBuffer src) throws IOException {
+    public int write(ByteBuffer src) {
         int count = src.remaining();
 
         while (src.hasRemaining()) {

@@ -31,7 +31,6 @@ import com.questdb.printer.converter.*;
 import com.questdb.std.Unsafe;
 
 import java.io.Closeable;
-import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -46,7 +45,7 @@ public class JournalPrinter implements Closeable {
     private String nullString;
     private boolean configured = false;
 
-    public void close() throws IOException {
+    public void close() {
         appender.close();
         ff.clear();
         configured = false;

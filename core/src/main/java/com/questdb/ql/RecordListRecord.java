@@ -270,7 +270,7 @@ public class RecordListRecord implements Record {
         }
 
         @Override
-        public int read() throws IOException {
+        public int read() {
             if (position < length) {
                 if (position < blockEndOffset) {
                     return Unsafe.getUnsafe().getByte(blockStartAddress + offset + position++ - blockStartOffset);

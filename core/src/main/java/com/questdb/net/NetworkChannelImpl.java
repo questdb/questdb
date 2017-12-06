@@ -67,7 +67,7 @@ public class NetworkChannelImpl implements NetworkChannel {
     }
 
     @Override
-    public int read(ByteBuffer dst) throws IOException {
+    public int read(ByteBuffer dst) {
         int p = dst.position();
         int read = Net.recv(fd, ByteBuffers.getAddress(dst) + p, dst.remaining());
         if (read > 0) {
@@ -89,7 +89,7 @@ public class NetworkChannelImpl implements NetworkChannel {
     }
 
     @Override
-    public int write(ByteBuffer src) throws IOException {
+    public int write(ByteBuffer src) {
         int written = Net.send(fd, ByteBuffers.getAddress(src) + src.position(), src.remaining());
         if (written > 0) {
             totalWritten += written;

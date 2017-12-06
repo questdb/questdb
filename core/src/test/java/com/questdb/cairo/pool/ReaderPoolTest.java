@@ -50,7 +50,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
     private static final Log LOG = LogFactory.getLog(ReaderPoolTest.class);
 
     @Before
-    public void setUpInstance() throws Exception {
+    public void setUpInstance() {
         try (TableModel model = new TableModel(configuration, "u", PartitionBy.NONE).col("ts", ColumnType.DATE)) {
             CairoTestUtils.create(model);
         }

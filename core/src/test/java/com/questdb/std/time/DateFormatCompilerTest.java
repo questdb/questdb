@@ -1,3 +1,26 @@
+/*******************************************************************************
+ *    ___                  _   ____  ____
+ *   / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *  | | | | | | |/ _ \/ __| __| | | |  _ \
+ *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *   \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ * Copyright (C) 2014-2017 Appsicle
+ *
+ * This program is free software: you can redistribute it and/or  modify
+ * it under the terms of the GNU Affero General Public License, version 3,
+ * as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Affero General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ *
+ ******************************************************************************/
+
 package com.questdb.std.time;
 
 import com.questdb.common.NumericException;
@@ -17,7 +40,7 @@ public class DateFormatCompilerTest {
     private final static StringSink sink = new StringSink();
 
     @BeforeClass
-    public static void setUp() throws Exception {
+    public static void setUp() {
         DateFormatUtils.updateReferenceYear(Dates.toMillis(1997, 1, 1, 0, 0));
     }
 
@@ -479,7 +502,7 @@ public class DateFormatCompilerTest {
     }
 
     @Test(expected = BytecodeException.class)
-    public void testLongPattern() throws Exception {
+    public void testLongPattern() {
         StringBuffer b = new StringBuffer();
         for (int i = 0; i < 1000; i++) {
             b.append("KK").append(' ').append('Z').append(',');
@@ -554,7 +577,7 @@ public class DateFormatCompilerTest {
     }
 
     @Test
-    public void testOperationUniqueness() throws Exception {
+    public void testOperationUniqueness() {
 
         Assert.assertTrue(DateFormatCompiler.opList.size() > 0);
 

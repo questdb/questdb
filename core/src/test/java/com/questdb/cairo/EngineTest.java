@@ -167,7 +167,7 @@ public class EngineTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testRemoveNewTable() throws Exception {
+    public void testRemoveNewTable() {
 
         createX();
 

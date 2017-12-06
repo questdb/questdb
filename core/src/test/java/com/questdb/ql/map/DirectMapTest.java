@@ -42,7 +42,7 @@ public class DirectMapTest {
     private static final ColumnTypeResolver VALUE_RESOLVER = new TypeListResolver().of(COLUMN_TYPES);
 
     @BeforeClass
-    public static void setUp() throws Exception {
+    public static void setUp() {
         COLUMN_TYPES.add(ColumnType.INT);
         COLUMN_TYPES.add(ColumnType.LONG);
         COLUMN_TYPES.add(ColumnType.SHORT);
@@ -64,7 +64,7 @@ public class DirectMapTest {
     }
 
     @Test
-    public void testAllKeysAndCursor() throws Exception {
+    public void testAllKeysAndCursor() {
 
         // Objective of this test is to create DirectMap with all
         // possible types in both key and value. Simultaneously create
@@ -216,7 +216,7 @@ public class DirectMapTest {
     }
 
     @Test
-    public void testValuesReadWrite() throws Exception {
+    public void testValuesReadWrite() {
         DirectMap map = new DirectMap(1024, KEY_RESOLVER, VALUE_RESOLVER);
         HashMap<String, MapValue> hashMap = new HashMap<>();
         Rnd rnd = new Rnd();

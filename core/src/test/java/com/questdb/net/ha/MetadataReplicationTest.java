@@ -37,7 +37,7 @@ import java.io.File;
 
 public class MetadataReplicationTest extends AbstractTest {
     @Test
-    public void testReplication() throws Exception {
+    public void testReplication() {
 
         try (JournalWriter w = getFactory().writer(Quote.class)) {
 

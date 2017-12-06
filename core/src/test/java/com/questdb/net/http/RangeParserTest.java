@@ -31,36 +31,36 @@ public class RangeParserTest {
     private final RangeParser parser = RangeParser.FACTORY.newInstance();
 
     @Test
-    public void testFmt1() throws Exception {
+    public void testFmt1() {
         Assert.assertTrue(parser.of("bytes=79990-"));
         Assert.assertEquals(79990L, parser.getLo());
         Assert.assertEquals(Long.MAX_VALUE, parser.getHi());
     }
 
     @Test
-    public void testFmt2() throws Exception {
+    public void testFmt2() {
         Assert.assertTrue(parser.of("bytes=79990-43343245"));
         Assert.assertEquals(79990L, parser.getLo());
         Assert.assertEquals(43343245L, parser.getHi());
     }
 
     @Test
-    public void testInvalid1() throws Exception {
+    public void testInvalid1() {
         Assert.assertFalse(parser.of("zeroes=79990-43343245"));
     }
 
     @Test
-    public void testInvalid2() throws Exception {
+    public void testInvalid2() {
         Assert.assertFalse(parser.of("bytes=79990x-43343245"));
     }
 
     @Test
-    public void testInvalid3() throws Exception {
+    public void testInvalid3() {
         Assert.assertFalse(parser.of("bytes=7999-0-43343245"));
     }
 
     @Test
-    public void testInvalid4() throws Exception {
+    public void testInvalid4() {
         Assert.assertFalse(parser.of("bytes=7999"));
     }
 }

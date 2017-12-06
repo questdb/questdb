@@ -45,7 +45,7 @@ public class UrlDecodeTest {
     }
 
     @Test
-    public void testDuplicateAmp() throws Exception {
+    public void testDuplicateAmp() {
         String v = "x=a&&y==b";
         long p = TestUtils.toMemory(v);
         try {
@@ -58,7 +58,7 @@ public class UrlDecodeTest {
     }
 
     @Test
-    public void testSimple() throws Exception {
+    public void testSimple() {
         String v = "x=a&y=b";
         long p = TestUtils.toMemory(v);
         try {
@@ -71,7 +71,7 @@ public class UrlDecodeTest {
     }
 
     @Test
-    public void testSingleQuote() throws Exception {
+    public void testSingleQuote() {
         String v = "x=%27a%27&y==b";
         long p = TestUtils.toMemory(v);
         try {
@@ -86,7 +86,7 @@ public class UrlDecodeTest {
     }
 
     @Test
-    public void testTrailingEmpty() throws Exception {
+    public void testTrailingEmpty() {
         String v = "x=a&y=b&z=";
         long p = TestUtils.toMemory(v);
         try {
@@ -100,7 +100,7 @@ public class UrlDecodeTest {
     }
 
     @Test
-    public void testTrailingNull() throws Exception {
+    public void testTrailingNull() {
         String v = "x=a&y=b&";
         long p = TestUtils.toMemory(v);
         try {
@@ -113,7 +113,7 @@ public class UrlDecodeTest {
     }
 
     @Test
-    public void testURLDec() throws Exception {
+    public void testURLDec() {
         String v = "x=a&y=b+c%26&z=ab%20ba&w=2";
         long p = TestUtils.toMemory(v);
         try {
@@ -128,7 +128,7 @@ public class UrlDecodeTest {
     }
 
     @Test
-    public void testURLDecSpace() throws Exception {
+    public void testURLDecSpace() {
         String v = "x=a&y=b+c&z=123";
         long p = TestUtils.toMemory(v);
         try {
@@ -142,7 +142,7 @@ public class UrlDecodeTest {
     }
 
     @Test
-    public void testURLDecTrailingSpace() throws Exception {
+    public void testURLDecTrailingSpace() {
         String v = "x=a&y=b+c";
         long p = TestUtils.toMemory(v);
         try {

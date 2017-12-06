@@ -578,7 +578,7 @@ public class HttpServerTest extends AbstractJournalTest {
     }
 
     @Test
-    public void testImportUnknownFormat() throws Exception {
+    public void testImportUnknownFormat() {
         BootstrapEnv env = new BootstrapEnv();
         env.configuration = new ServerConfiguration();
         env.factory = getFactory();
@@ -842,7 +842,7 @@ public class HttpServerTest extends AbstractJournalTest {
     }
 
     @Test
-    public void testStartStop() throws Exception {
+    public void testStartStop() {
         BootstrapEnv env = new BootstrapEnv();
         env.configuration = new ServerConfiguration();
         env.matcher = new SimpleUrlMatcher();

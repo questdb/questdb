@@ -64,7 +64,7 @@ public class VariableColumnTest {
     }
 
     @Test
-    public void testConsumerEqualToProducer() throws Exception {
+    public void testConsumerEqualToProducer() {
         VariableColumn col1 = new VariableColumn(file, indexFile);
         VariableColumn col2 = new VariableColumn(file2, indexFile2);
         VariableColumnDeltaProducer producer = new VariableColumnDeltaProducer(col1);
@@ -91,7 +91,7 @@ public class VariableColumnTest {
     }
 
     @Test
-    public void testConsumerLargerThanProducer() throws Exception {
+    public void testConsumerLargerThanProducer() {
         VariableColumn col1 = new VariableColumn(file, indexFile);
         VariableColumn col2 = new VariableColumn(file2, indexFile2);
         VariableColumnDeltaProducer producer = new VariableColumnDeltaProducer(col1);
@@ -221,7 +221,7 @@ public class VariableColumnTest {
     }
 
     @Test
-    public void testEmptyConsumerAndProducer() throws Exception {
+    public void testEmptyConsumerAndProducer() {
         VariableColumn col1 = new VariableColumn(file, indexFile);
         VariableColumn col2 = new VariableColumn(file2, indexFile2);
         VariableColumnDeltaProducer producer = new VariableColumnDeltaProducer(col1);

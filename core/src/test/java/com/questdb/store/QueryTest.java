@@ -58,12 +58,12 @@ public class QueryTest extends AbstractTest {
     }
 
     @After
-    public void tearDown() throws Exception {
+    public void tearDown() {
         w.close();
     }
 
     @Test
-    public void testAll() throws Exception {
+    public void testAll() {
         Assert.assertEquals(1000, q.all().size());
     }
 
@@ -320,7 +320,7 @@ public class QueryTest extends AbstractTest {
     }
 
     @Test
-    public void testAllOverInterval() throws Exception {
+    public void testAllOverInterval() {
         String expected = "2013-04-28T17:20:00.000Z\tADM.L\t0.9991330212896724\t0.2543630254606476\t1427291982\t1788924502\tFast trading\tGR\n" +
                 "2013-04-28T18:43:20.000Z\tRRS.L\t0.18670502698896196\t0.0885706583279452\t505468688\t2038459861\tFast trading\tGR\n" +
                 "2013-04-28T20:06:40.000Z\tAGK.L\t0.915779154884911\t0.1072445825833257\t659123462\t1516991412\tFast trading\tGR\n" +
@@ -418,7 +418,7 @@ public class QueryTest extends AbstractTest {
     }
 
     @Test
-    public void testAllSinceRowid() throws Exception {
+    public void testAllSinceRowid() {
         String expected = "2013-05-06T17:00:00.000Z\tABF.L\t0.9643251238886018\t0.8129177499445661\t1945548281\t499978914\tFast trading\tSK\n" +
                 "2013-05-06T18:23:20.000Z\tBP.L\t0.45621034230309654\t0.1747016272521107\t1179616540\t908015035\tFast trading\tGR\n" +
                 "2013-05-06T19:46:40.000Z\tLLOY.L\t0.7193355196302277\t0.9404701555734597\t704067095\t1668582762\tFast trading\tGR\n" +
@@ -468,7 +468,7 @@ public class QueryTest extends AbstractTest {
     }
 
     @Test
-    public void testIterate() throws Exception {
+    public void testIterate() {
         int count = 0;
         long timestamp = 0;
         for (Quote a : q.all().bufferedIterator()) {
@@ -480,7 +480,7 @@ public class QueryTest extends AbstractTest {
     }
 
     @Test
-    public void testIterateOverInterval() throws Exception {
+    public void testIterateOverInterval() {
         int count = 0;
         long timestamp = 0;
         for (Quote a : q.all().bufferedIterator(new Interval(ts2, ts1))) {
