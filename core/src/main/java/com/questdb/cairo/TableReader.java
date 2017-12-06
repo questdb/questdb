@@ -39,53 +39,13 @@ import java.util.concurrent.locks.LockSupport;
 
 public class TableReader implements Closeable, RecordCursor {
     private static final Log LOG = LogFactory.getLog(TableReader.class);
-    private static final PartitionPathGenerator YEAR_GEN = (reader, partitionIndex) -> {
-        TableUtils.fmtYear.format(
-                Dates.addYear(reader.partitionMin, partitionIndex),
-                DateLocaleFactory.INSTANCE.getDefaultDateLocale(),
-                null,
-                reader.path.put(Files.SEPARATOR)
-        );
-        return reader.path.$();
-
-    };
-
-    private static final PartitionPathGenerator MONTH_GEN = (reader, partitionIndex) -> {
-        TableUtils.fmtMonth.format(
-                Dates.addMonths(reader.partitionMin, partitionIndex),
-                DateLocaleFactory.INSTANCE.getDefaultDateLocale(),
-                null,
-                reader.path.put(Files.SEPARATOR)
-        );
-        return reader.path.$();
-    };
-
-    private static final PartitionPathGenerator DAY_GEN = (reader, partitionIndex) -> {
-        TableUtils.fmtDay.format(
-                Dates.addDays(reader.partitionMin, partitionIndex),
-                DateLocaleFactory.INSTANCE.getDefaultDateLocale(),
-                null,
-                reader.path.put(Files.SEPARATOR)
-        );
-        return reader.path.$();
-    };
-
-    private static final PartitionPathGenerator DEFAULT_GEN = (reader, partitionIndex) -> reader.path.concat(TableUtils.DEFAULT_PARTITION_NAME).$();
-
+    private static final PartitionPathGenerator YEAR_GEN = TableReader::pathGenYear;
+    private static final PartitionPathGenerator MONTH_GEN = TableReader::pathGenMonth;
+    private static final PartitionPathGenerator DAY_GEN = TableReader::pathGenDay;
+    private static final PartitionPathGenerator DEFAULT_GEN = (reader, partitionIndex) -> reader.pathGenDefault();
     private static final ReloadMethod PARTITIONED_RELOAD_METHOD = TableReader::reloadPartitioned;
-
-    private static final ReloadMethod NON_PARTITIONED_RELOAD_METHOD = reader -> {
-        // calling readTxn will set "rowCount" member variable
-        if (reader.readTxn()) {
-            reader.reloadPartition(0, reader.rowCount);
-            reader.reloadStruct();
-            return true;
-        }
-        return false;
-    };
-
+    private static final ReloadMethod NON_PARTITIONED_RELOAD_METHOD = TableReader::reloadNonPartitioned;
     private static final ReloadMethod FIRST_TIME_PARTITIONED_RELOAD_METHOD = TableReader::reloadInitialPartitioned;
-
     private static final ReloadMethod FIRST_TIME_NON_PARTITIONED_RELOAD_METHOD = TableReader::reloadInitialNonPartitioned;
 
     private final ColumnCopyStruct tempCopyStruct = new ColumnCopyStruct();
@@ -183,6 +143,40 @@ public class TableReader implements Closeable, RecordCursor {
         }
     }
 
+    private Path pathGenDay(int partitionIndex) {
+        TableUtils.fmtDay.format(
+                Dates.addDays(partitionMin, partitionIndex),
+                DateLocaleFactory.INSTANCE.getDefaultDateLocale(),
+                null,
+                path.put(Files.SEPARATOR)
+        );
+        return path.$();
+    }
+
+    private Path pathGenDefault() {
+        return path.concat(TableUtils.DEFAULT_PARTITION_NAME).$();
+    }
+
+    private Path pathGenMonth(int partitionIndex) {
+        TableUtils.fmtMonth.format(
+                Dates.addMonths(partitionMin, partitionIndex),
+                DateLocaleFactory.INSTANCE.getDefaultDateLocale(),
+                null,
+                path.put(Files.SEPARATOR)
+        );
+        return path.$();
+    }
+
+    private Path pathGenYear(int partitionIndex) {
+        TableUtils.fmtYear.format(
+                Dates.addYear(partitionMin, partitionIndex),
+                DateLocaleFactory.INSTANCE.getDefaultDateLocale(),
+                null,
+                path.put(Files.SEPARATOR)
+        );
+        return path.$();
+    }
+
     private int calculatePartitionCount() {
         if (partitionMin == Long.MAX_VALUE) {
             return 0;
@@ -252,6 +246,16 @@ public class TableReader implements Closeable, RecordCursor {
                 updateCapacities();
                 reloadMethod = PARTITIONED_RELOAD_METHOD;
             }
+            return true;
+        }
+        return false;
+    }
+
+    private boolean reloadNonPartitioned() {
+        // calling readTxn will set "rowCount" member variable
+        if (readTxn()) {
+            reloadPartition(0, rowCount);
+            reloadStruct();
             return true;
         }
         return false;

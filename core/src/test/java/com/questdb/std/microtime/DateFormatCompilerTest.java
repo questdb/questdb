@@ -1,3 +1,26 @@
+/*******************************************************************************
+ *    ___                  _   ____  ____
+ *   / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *  | | | | | | |/ _ \/ __| __| | | |  _ \
+ *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *   \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ * Copyright (C) 2014-2017 Appsicle
+ *
+ * This program is free software: you can redistribute it and/or  modify
+ * it under the terms of the GNU Affero General Public License, version 3,
+ * as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Affero General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ *
+ ******************************************************************************/
+
 package com.questdb.std.microtime;
 
 import com.questdb.common.NumericException;
@@ -15,10 +38,10 @@ public class DateFormatCompilerTest {
     private static final DateFormatCompiler compiler = new DateFormatCompiler();
     private static final DateLocale defaultLocale = DateLocaleFactory.INSTANCE.getDateLocale("en-GB");
     private final static StringSink sink = new StringSink();
-    private final static DateFormat REFERENCE = compiler.compile("yyyy-MM-ddTHH:mm:ss.SSSNNNz");
+    private final static DateFormat REFERENCE = compiler.compile("yyyy-MM-ddTHH:mm:ss.SSSUUUz");
 
     @BeforeClass
-    public static void setUp() throws Exception {
+    public static void setUp() {
         DateFormatUtils.updateReferenceYear(Dates.toMicros(1997, 1, 1, 0, 0));
     }
 
@@ -219,10 +242,10 @@ public class DateFormatCompilerTest {
 
     @Test
     public void testFormatMicros() throws Exception {
-        assertFormat("678-15", "S-N", "1978-03-19T21:20:45.678Z", 15);
-        assertFormat("678.025", "S.NNN", "1978-03-19T21:20:45.678Z", 25);
-        assertFormat("1978, .025", "yyyy, .NNN", "1978-03-19T21:20:45.678Z", 25);
-        assertFormat("1978, .25 678", "yyyy, .N SSS", "1978-03-19T21:20:45.678Z", 25);
+        assertFormat("678-15", "S-U", "1978-03-19T21:20:45.678Z", 15);
+        assertFormat("678.025", "S.UUU", "1978-03-19T21:20:45.678Z", 25);
+        assertFormat("1978, .025", "yyyy, .UUU", "1978-03-19T21:20:45.678Z", 25);
+        assertFormat("1978, .25 678", "yyyy, .U SSS", "1978-03-19T21:20:45.678Z", 25);
     }
 
     @Test
@@ -490,7 +513,7 @@ public class DateFormatCompilerTest {
     }
 
     @Test(expected = BytecodeException.class)
-    public void testLongPattern() throws Exception {
+    public void testLongPattern() {
         StringBuffer b = new StringBuffer();
         for (int i = 0; i < 1000; i++) {
             b.append("KK").append(' ').append('Z').append(',');
@@ -500,19 +523,19 @@ public class DateFormatCompilerTest {
 
     @Test
     public void testMicrosGreedy() throws Exception {
-        assertMicros("yyyy N", "2017-01-01T00:00:00.000055Z", "2017 55");
-        assertMicros("N dd-MM-yyyy", "2014-10-03T00:00:00.000314Z", "314 03-10-2014");
+        assertMicros("yyyy U", "2017-01-01T00:00:00.000055Z", "2017 55");
+        assertMicros("U dd-MM-yyyy", "2014-10-03T00:00:00.000314Z", "314 03-10-2014");
     }
 
     @Test
     public void testMicrosOneDigit() throws Exception {
-        assertMicros("mmNHH MMy", "2010-09-01T13:55:00.000002Z", "55213 0910");
-        assertMicros("NHH dd-MM-yyyy", "2014-10-03T14:00:00.000003Z", "314 03-10-2014");
+        assertMicros("mmUHH MMy", "2010-09-01T13:55:00.000002Z", "55213 0910");
+        assertMicros("UHH dd-MM-yyyy", "2014-10-03T14:00:00.000003Z", "314 03-10-2014");
     }
 
     @Test
     public void testMicrosThreeDigit() throws Exception {
-        assertMicros("mmNNNHH MMy", "2010-09-01T13:55:00.000015Z", "5501513 0910");
+        assertMicros("mmUUUHH MMy", "2010-09-01T13:55:00.000015Z", "5501513 0910");
     }
 
     @Test
@@ -582,7 +605,7 @@ public class DateFormatCompilerTest {
     }
 
     @Test
-    public void testOperationUniqueness() throws Exception {
+    public void testOperationUniqueness() {
 
         Assert.assertTrue(DateFormatCompiler.opList.size() > 0);
 
