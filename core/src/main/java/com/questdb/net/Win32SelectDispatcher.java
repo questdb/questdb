@@ -30,8 +30,6 @@ import com.questdb.std.*;
 import com.questdb.std.ex.NetworkError;
 import com.questdb.std.time.MillisecondClock;
 
-import java.io.IOException;
-
 public class Win32SelectDispatcher<C extends Context> extends SynchronizedJob implements Dispatcher<C> {
 
     private static final int M_TIMESTAMP = 0;
@@ -99,7 +97,7 @@ public class Win32SelectDispatcher<C extends Context> extends SynchronizedJob im
     }
 
     @Override
-    public void close() throws IOException {
+    public void close() {
         readFdSet.close();
         writeFdSet.close();
 

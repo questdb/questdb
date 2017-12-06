@@ -30,7 +30,6 @@ import com.questdb.std.ObjList;
 import com.questdb.std.ThreadLocal;
 
 import java.io.Closeable;
-import java.io.IOException;
 
 public class DenseRankPartitionedAnalyticFunction extends AbstractRankAnalyticFunction implements Closeable {
 
@@ -45,7 +44,7 @@ public class DenseRankPartitionedAnalyticFunction extends AbstractRankAnalyticFu
     }
 
     @Override
-    public void close() throws IOException {
+    public void close() {
         map.close();
     }
 

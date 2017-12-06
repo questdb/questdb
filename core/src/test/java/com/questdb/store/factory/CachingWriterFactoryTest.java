@@ -48,7 +48,7 @@ public class CachingWriterFactoryTest extends AbstractTest {
     private CachingWriterFactory wf;
 
     @Before
-    public void setUp() throws Exception {
+    public void setUp() {
         this.wf = new CachingWriterFactory(factoryContainer.getConfiguration(), 0);
     }
 

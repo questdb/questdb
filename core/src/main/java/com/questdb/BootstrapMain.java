@@ -61,7 +61,7 @@ import static java.nio.file.StandardCopyOption.REPLACE_EXISTING;
 class BootstrapMain {
 
     public static void main(String[] args) throws Exception {
-        System.err.printf("QuestDB HTTP Server %s%nCopyright (C) Appsicle 2014-2017, all rights reserved.%n%n", getVersion());
+        System.err.printf("QuestDB HTTP Server %s%nCopyright (C) Appsicle 2014-2018, all rights reserved.%n%n", getVersion());
         if (args.length < 1) {
             System.err.println("Root directory name expected");
             return;
@@ -290,5 +290,4 @@ class BootstrapMain {
             }
         }
     }
-
 }

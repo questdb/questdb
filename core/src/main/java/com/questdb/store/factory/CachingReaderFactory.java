@@ -324,7 +324,7 @@ public class CachingReaderFactory extends AbstractFactory implements JournalClos
         @SuppressWarnings("unused")
         long nextStatus = 0;
         volatile Entry next;
-        int index = 0;
+        int index;
 
         public Entry(int index) {
             this.index = index;

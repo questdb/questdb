@@ -36,19 +36,18 @@ import com.questdb.store.MMappedSymbolTable;
 import com.questdb.store.VariableColumn;
 
 import java.io.Closeable;
-import java.io.IOException;
 
 public class PrevStrAnalyticFunction implements AnalyticFunction, Closeable {
     private final DirectCharSequence cs = new DirectCharSequence();
     private final DirectCharSequence csB = new DirectCharSequence();
     private final VirtualColumn valueColumn;
     private boolean closed = false;
-    private long bufA = 0;
+    private long bufA;
     private int bufALen = -1;
-    private int bufASz = 0;
-    private long bufB = 0;
+    private int bufASz;
+    private long bufB;
     private int bufBLen = -1;
-    private int bufBSz = 0;
+    private int bufBSz;
     private long buf;
     private int bufLen;
 
@@ -168,7 +167,7 @@ public class PrevStrAnalyticFunction implements AnalyticFunction, Closeable {
     }
 
     @Override
-    public void close() throws IOException {
+    public void close() {
         if (closed) {
             return;
         }

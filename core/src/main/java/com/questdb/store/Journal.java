@@ -40,6 +40,7 @@ import com.questdb.store.factory.configuration.JournalMetadata;
 import com.questdb.store.query.AbstractResultSetBuilder;
 import com.questdb.store.query.api.Query;
 import com.questdb.store.query.spi.QueryImpl;
+import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
 import java.io.File;
@@ -402,6 +403,7 @@ public class Journal<T> implements Iterable<T>, Closeable {
         return builder.getResult();
     }
 
+    @NotNull
     @Override
     public Iterator<T> iterator() {
         return JournalIterators.iterator(this);

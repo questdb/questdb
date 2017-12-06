@@ -60,7 +60,7 @@ public class SubqueryOptimiserTest extends AbstractOptimiserTest {
     }
 
     @Before
-    public void setUp() throws Exception {
+    public void setUp() {
         sink.clear();
     }
 

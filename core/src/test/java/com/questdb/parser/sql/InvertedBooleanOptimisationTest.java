@@ -45,7 +45,7 @@ public class InvertedBooleanOptimisationTest extends AbstractTest {
     private final QueryCompiler compiler = new QueryCompiler();
 
     @Before
-    public void setUp() throws Exception {
+    public void setUp() {
         exprNodeObjectPool.clear();
         ExprParser.configureLexer(lexer);
     }

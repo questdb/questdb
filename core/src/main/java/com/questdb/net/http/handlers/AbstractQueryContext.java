@@ -98,7 +98,7 @@ public abstract class AbstractQueryContext implements Mutable, Closeable {
     }
 
     @Override
-    public void close() throws IOException {
+    public void close() {
         debug().$("Closing context").$();
         clear();
     }

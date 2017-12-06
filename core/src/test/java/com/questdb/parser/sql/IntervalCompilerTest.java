@@ -39,7 +39,7 @@ public class IntervalCompilerTest {
     private final LongList out = new LongList();
 
     @Before
-    public void setUp() throws Exception {
+    public void setUp() {
         a.clear();
         b.clear();
         out.clear();

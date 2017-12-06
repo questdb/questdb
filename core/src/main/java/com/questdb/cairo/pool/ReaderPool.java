@@ -332,7 +332,7 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
         @SuppressWarnings("unused")
         long nextStatus = 0;
         volatile Entry next;
-        int index = 0;
+        int index;
 
         public Entry(int index, long currentMicros) {
             this.index = index;

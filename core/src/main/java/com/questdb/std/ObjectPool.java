@@ -33,7 +33,7 @@ public class ObjectPool<T extends Mutable> implements Mutable {
     private final ObjList<T> list;
     private final ObjectFactory<T> factory;
     private int pos = 0;
-    private int size = 0;
+    private int size;
 
     public ObjectPool(@NotNull ObjectFactory<T> factory, int size) {
         this.list = new ObjList<>(size);

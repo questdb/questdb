@@ -62,15 +62,13 @@ public class LongHashSet implements Mutable {
         clear();
     }
 
-    public boolean add(long key) {
-        boolean r = insertKey(key);
-        if (r) {
+    public void add(long key) {
+        if (insertKey(key)) {
             list.add(key);
             if (free == 0) {
                 rehash();
             }
         }
-        return r;
     }
 
     public final void clear() {

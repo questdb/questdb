@@ -91,14 +91,14 @@ final class QueryFilterAnalyser {
                         if (meta.isIndexed()) {
 
                             // check if we are limited by preferred column
-                            if (preferredKeyColumn != null && !preferredKeyColumn.equals(column)) {
+                            if (preferredKeyColumn != null && !Chars.equals(preferredKeyColumn, column)) {
                                 return false;
                             }
 
                             boolean newColumn = true;
                             // check if we already have indexed column and it is of worse selectivity
                             if (model.keyColumn != null
-                                    && (newColumn = !model.keyColumn.equals(column))
+                                    && (newColumn = !Chars.equals(model.keyColumn, column))
                                     && meta.getBucketCount() <= m.getColumn(model.keyColumn).getBucketCount()) {
                                 return false;
                             }

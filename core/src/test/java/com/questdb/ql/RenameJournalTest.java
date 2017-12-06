@@ -47,7 +47,7 @@ public class RenameJournalTest extends AbstractTest {
     private final RecordSourcePrinter printer = new RecordSourcePrinter(sink);
 
     @Before
-    public void setUp() throws Exception {
+    public void setUp() {
         sink.clear();
     }
 

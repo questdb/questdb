@@ -32,7 +32,7 @@ import com.questdb.std.str.Path;
 import java.io.Closeable;
 
 public class BitmapIndexWriter implements Closeable {
-    private static Log LOG = LogFactory.getLog(BitmapIndexWriter.class);
+    private static final Log LOG = LogFactory.getLog(BitmapIndexWriter.class);
     private final ReadWriteMemory keyMem;
     private final ReadWriteMemory valueMem;
     private final int blockCapacity;

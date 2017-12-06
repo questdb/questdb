@@ -42,7 +42,7 @@ public class JsonLexerTest {
     }
 
     @Before
-    public void setUp() throws Exception {
+    public void setUp() {
         LEXER.clear();
         listener.clear();
         listener.recordPositions = false;
