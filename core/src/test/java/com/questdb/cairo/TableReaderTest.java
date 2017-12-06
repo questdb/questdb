@@ -640,7 +640,16 @@ public class TableReaderTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testConcurrentReload() throws Exception {
+    public void testConcurrentReloadByDay() throws Exception {
+        testConcurrentReloadSinglePartition(PartitionBy.DAY);
+    }
+
+    @Test
+    public void testConcurrentReloadNonPartitioned() throws Exception {
+        testConcurrentReloadSinglePartition(PartitionBy.NONE);
+    }
+
+    public void testConcurrentReloadSinglePartition(int partitionBy) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             // model data
             LongList list = new LongList();
@@ -651,7 +660,7 @@ public class TableReaderTest extends AbstractCairoTest {
             }
 
             // model table
-            try (TableModel model = new TableModel(configuration, "w", PartitionBy.NONE).col("l", ColumnType.LONG)) {
+            try (TableModel model = new TableModel(configuration, "w", partitionBy).col("l", ColumnType.LONG)) {
                 CairoTestUtils.create(model);
             }
 
@@ -671,12 +680,12 @@ public class TableReaderTest extends AbstractCairoTest {
                             row.append();
                             writer.commit();
                         }
-                    } finally {
-                        stopLatch.countDown();
                     }
                 } catch (Exception e) {
                     e.printStackTrace();
                     errors.incrementAndGet();
+                } finally {
+                    stopLatch.countDown();
                 }
             }).start();
 
@@ -684,30 +693,28 @@ public class TableReaderTest extends AbstractCairoTest {
             new Thread(() -> {
                 try {
                     startBarrier.await();
+                    try (TableReader reader = new TableReader(configuration, "w")) {
+                        do {
+                            // we deliberately ignore result of reload()
+                            // to create more race conditions
+                            reader.reload();
+                            reader.toTop();
+                            int count = 0;
+                            while (reader.hasNext()) {
+                                Assert.assertEquals(list.get(count++ % N), reader.next().getLong(0));
+                            }
 
-                    try {
-                        try (TableReader reader = new TableReader(configuration, "w")) {
-                            do {
-                                if (reader.reload()) {
-                                    reader.toTop();
-                                    int count = 0;
-                                    while (reader.hasNext()) {
-                                        Assert.assertEquals(list.get(count++ % N), reader.next().getLong(0));
-                                    }
 
-                                    if (count == N * scale) {
-                                        break;
-                                    }
-                                }
-                            } while (true);
-                        }
-                    } finally {
-                        stopLatch.countDown();
+                            if (count == N * scale) {
+                                break;
+                            }
+                        } while (true);
                     }
-
-                } catch (Exception e) {
+                } catch (Throwable e) {
                     e.printStackTrace();
                     errors.incrementAndGet();
+                } finally {
+                    stopLatch.countDown();
                 }
             }).start();
 
