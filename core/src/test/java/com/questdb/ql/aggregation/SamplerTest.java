@@ -56,7 +56,7 @@ public class SamplerTest {
     }
 
     @Test
-    public void testInvalidQualifier() throws Exception {
+    public void testInvalidQualifier() {
         Assert.assertNull(SamplerFactory.from("2z"));
     }
 
@@ -82,7 +82,7 @@ public class SamplerTest {
     }
 
     @Test
-    public void testNoQualifier() throws Exception {
+    public void testNoQualifier() {
         Assert.assertNull(SamplerFactory.from("2"));
     }
 
@@ -104,7 +104,7 @@ public class SamplerTest {
     }
 
     @Test
-    public void testYears() throws Exception {
+    public void testYears() {
         Assert.assertNull(SamplerFactory.from("2Y"));
     }
 }

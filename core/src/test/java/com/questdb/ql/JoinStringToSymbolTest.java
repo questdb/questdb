@@ -60,7 +60,7 @@ public class JoinStringToSymbolTest {
     }
 
     @After
-    public void tearDown() throws Exception {
+    public void tearDown() {
         aw.close();
         bw.close();
 

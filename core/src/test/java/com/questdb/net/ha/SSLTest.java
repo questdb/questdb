@@ -51,7 +51,7 @@ public class SSLTest {
     }});
 
     @After
-    public void tearDown() throws Exception {
+    public void tearDown() {
         Assert.assertEquals(0, getFactory().getBusyWriterCount());
         Assert.assertEquals(0, getFactory().getBusyReaderCount());
     }

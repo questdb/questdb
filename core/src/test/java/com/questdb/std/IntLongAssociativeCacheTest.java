@@ -29,7 +29,7 @@ import org.junit.Test;
 public class IntLongAssociativeCacheTest {
 
     @Test
-    public void testFull() throws Exception {
+    public void testFull() {
         IntLongAssociativeCache cache = new IntLongAssociativeCache(8, 64);
         IntHashSet all = new IntHashSet();
         IntHashSet reject = new IntHashSet();

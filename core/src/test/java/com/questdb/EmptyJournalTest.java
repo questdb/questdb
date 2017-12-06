@@ -49,7 +49,7 @@ public class EmptyJournalTest extends AbstractTest {
         }
     }
 
-    private void testJournalIterator(Journal journal) throws Exception {
+    private void testJournalIterator(Journal journal) {
         Assert.assertFalse(journal.iterator().hasNext());
     }
 }

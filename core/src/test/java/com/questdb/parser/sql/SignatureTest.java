@@ -33,7 +33,7 @@ import java.util.Arrays;
 
 public class SignatureTest {
     @Test
-    public void testMapBehaviour() throws Exception {
+    public void testMapBehaviour() {
         ObjObjHashMap<Signature, String> sigs = new ObjObjHashMap<Signature, String>() {{
 
             put(new Signature().setName("-").setParamCount(1).paramType(0, ColumnType.INT, false), "sig1");

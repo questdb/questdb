@@ -331,7 +331,7 @@ public class AggregationTest extends AbstractOptimiserTest {
     }
 
     @Test
-    public void testResamplingAliasClash() throws Exception {
+    public void testResamplingAliasClash() {
         try {
             expectFailure("select dtoa4(orderDate) orderDate, sum(price*quantity)/lsum(quantity), vwap(price, quantity) sum from orders sample by 1d");
         } catch (ParserException e) {
@@ -340,7 +340,7 @@ public class AggregationTest extends AbstractOptimiserTest {
     }
 
     @Test
-    public void testResamplingNoAggregates() throws Exception {
+    public void testResamplingNoAggregates() {
         try {
             expectFailure("select orderDate, price+quantity from orders sample by 8h");
         } catch (ParserException e) {

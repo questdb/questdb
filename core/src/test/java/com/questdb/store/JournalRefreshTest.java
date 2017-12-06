@@ -47,7 +47,7 @@ public class JournalRefreshTest extends AbstractTest {
     }
 
     @After
-    public void tearDown() throws Exception {
+    public void tearDown() {
         rw.close();
     }
 

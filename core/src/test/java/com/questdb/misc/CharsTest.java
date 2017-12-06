@@ -37,12 +37,12 @@ public class CharsTest {
     private static char separator;
 
     @BeforeClass
-    public static void setUp() throws Exception {
+    public static void setUp() {
         separator = System.getProperty("file.separator").charAt(0);
     }
 
     @Test
-    public void testConcat() throws Exception {
+    public void testConcat() {
         ConcatCharSequence concat = new ConcatCharSequence();
         concat.add("this");
         concat.add(" is ");
@@ -54,12 +54,12 @@ public class CharsTest {
     }
 
     @Test
-    public void testEmptyString() throws Exception {
+    public void testEmptyString() {
         TestUtils.assertEquals("", extractor.of(""));
     }
 
     @Test
-    public void testEndsWith() throws Exception {
+    public void testEndsWith() {
         Assert.assertFalse(Chars.endsWith(null, null));
         Assert.assertFalse(Chars.endsWith("a", null));
         Assert.assertFalse(Chars.endsWith(null, "a"));
@@ -71,44 +71,44 @@ public class CharsTest {
     }
 
     @Test
-    public void testNameFromPath() throws Exception {
+    public void testNameFromPath() {
         StringBuilder name = new StringBuilder();
         name.append(separator).append("xyz").append(separator).append("dir1").append(separator).append("dir2").append(separator).append("this is my name");
         TestUtils.assertEquals("this is my name", extractor.of(name));
     }
 
     @Test
-    public void testPathList() throws Exception {
+    public void testPathList() {
         assertThat("[abc,d1]", Chars.splitLpsz("abc d1"));
     }
 
     @Test
-    public void testPathListLeadingSpaces() throws Exception {
+    public void testPathListLeadingSpaces() {
         assertThat("[abc,d1]", Chars.splitLpsz("   abc d1"));
     }
 
     @Test
-    public void testPathListQuotedSpace() throws Exception {
+    public void testPathListQuotedSpace() {
         assertThat("[abc,d1 cd,x]", Chars.splitLpsz("abc \"d1 cd\" x"));
     }
 
     @Test
-    public void testPathListQuotedSpaceEmpty() throws Exception {
+    public void testPathListQuotedSpaceEmpty() {
         assertThat("[abc,x]", Chars.splitLpsz("abc \"\" x"));
     }
 
     @Test
-    public void testPathListTrailingSpace() throws Exception {
+    public void testPathListTrailingSpace() {
         assertThat("[abc,d1]", Chars.splitLpsz("abc d1    "));
     }
 
     @Test
-    public void testPathListUnclosedQuote() throws Exception {
+    public void testPathListUnclosedQuote() {
         assertThat("[abc,c cd]", Chars.splitLpsz("abc \"c cd"));
     }
 
     @Test
-    public void testPlainName() throws Exception {
+    public void testPlainName() {
         TestUtils.assertEquals("xyz.txt", extractor.of("xyz.txt"));
     }
 

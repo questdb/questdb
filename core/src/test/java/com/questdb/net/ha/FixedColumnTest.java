@@ -64,7 +64,7 @@ public class FixedColumnTest {
     }
 
     @Test
-    public void testConsumerEqualToProducer() throws Exception {
+    public void testConsumerEqualToProducer() {
         FixedColumn col1 = new FixedColumn(file, 4);
         FixedColumn col2 = new FixedColumn(file2, 4);
 
@@ -95,7 +95,7 @@ public class FixedColumnTest {
     }
 
     @Test
-    public void testConsumerLargerThanProducer() throws Exception {
+    public void testConsumerLargerThanProducer() {
         FixedColumn col1 = new FixedColumn(file, 4);
         FixedColumn col2 = new FixedColumn(file2, 4);
 
@@ -232,7 +232,7 @@ public class FixedColumnTest {
     }
 
     @Test
-    public void testEmptyConsumerAndProducer() throws Exception {
+    public void testEmptyConsumerAndProducer() {
         FixedColumn col1 = new FixedColumn(file, 4);
         FixedColumn col2 = new FixedColumn(file2, 4);
 

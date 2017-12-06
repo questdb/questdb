@@ -85,11 +85,11 @@ public final class TestUtils {
         }
     }
 
-    public static <T> void assertEquals(String expected, ResultSet<T> rs) throws IOException {
+    public static <T> void assertEquals(String expected, ResultSet<T> rs) {
         assertEquals(expected, rs.bufferedIterator());
     }
 
-    public static <T> void assertEquals(String expected, JournalIterator<T> actual) throws IOException {
+    public static <T> void assertEquals(String expected, JournalIterator<T> actual) {
         try (JournalPrinter p = new JournalPrinter()) {
             p.setAppender(new AssertingAppender(expected));
             configure(p, actual.getJournal().getMetadata());

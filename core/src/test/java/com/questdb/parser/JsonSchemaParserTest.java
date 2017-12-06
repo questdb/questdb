@@ -1,3 +1,26 @@
+/*******************************************************************************
+ *    ___                  _   ____  ____
+ *   / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *  | | | | | | |/ _ \/ __| __| | | |  _ \
+ *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *   \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ * Copyright (C) 2014-2017 Appsicle
+ *
+ * This program is free software: you can redistribute it and/or  modify
+ * it under the terms of the GNU Affero General Public License, version 3,
+ * as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Affero General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ *
+ ******************************************************************************/
+
 package com.questdb.parser;
 
 import com.questdb.BootstrapEnv;
@@ -17,7 +40,7 @@ public class JsonSchemaParserTest {
     private static String defaultLocaleId;
 
     @BeforeClass
-    public static void setUpClass() throws Exception {
+    public static void setUpClass() {
         BootstrapEnv env = new BootstrapEnv();
         env.dateFormatFactory = new DateFormatFactory();
         env.dateLocaleFactory = new DateLocaleFactory(new TimeZoneRuleFactory());
@@ -26,7 +49,7 @@ public class JsonSchemaParserTest {
     }
 
     @AfterClass
-    public static void tearDown() throws Exception {
+    public static void tearDown() {
         LEXER.close();
     }
 
@@ -37,7 +60,7 @@ public class JsonSchemaParserTest {
     }
 
     @Test
-    public void testArrayProperty() throws Exception {
+    public void testArrayProperty() {
         String in = "[\n" +
                 "{\"name\": \"x\", \"type\": \"DOUBLE\", \"pattern\":\"xyz\", \"locale\": []}\n" +
                 "]";
@@ -69,7 +92,7 @@ public class JsonSchemaParserTest {
     }
 
     @Test
-    public void testEmptyObject() throws Exception {
+    public void testEmptyObject() {
         try {
             parseMetadata("[{}]");
             Assert.fail();
@@ -79,7 +102,7 @@ public class JsonSchemaParserTest {
     }
 
     @Test
-    public void testMissingName() throws Exception {
+    public void testMissingName() {
         String in = "[\n" +
                 "{\"name\": \"x\", \"type\": \"INT\", \"pattern\":\"xyz\", \"locale\": \"en-GB\"},\n" +
                 "{\"type\": \"DOUBLE\", \"pattern\":\"xyz\"}\n" +
@@ -95,7 +118,7 @@ public class JsonSchemaParserTest {
     }
 
     @Test
-    public void testMissingType() throws Exception {
+    public void testMissingType() {
         String in = "[\n" +
                 "{\"name\": \"x\", \"pattern\":\"xyz\", \"locale\": \"en-GB\"},\n" +
                 "{\"name\": \"y\", \"type\": \"DOUBLE\", \"pattern\":\"xyz\"}\n" +
@@ -110,7 +133,7 @@ public class JsonSchemaParserTest {
     }
 
     @Test
-    public void testNonArray() throws Exception {
+    public void testNonArray() {
         try {
             parseMetadata("{}");
             Assert.fail();
@@ -121,7 +144,7 @@ public class JsonSchemaParserTest {
     }
 
     @Test
-    public void testNonObjectArrayMember() throws Exception {
+    public void testNonObjectArrayMember() {
         String in = "[2,\n" +
                 "{\"name\": \"x\", \"type\": \"DOUBLE\", \"pattern\":\"xyz\"}\n" +
                 "]";
@@ -135,7 +158,7 @@ public class JsonSchemaParserTest {
     }
 
     @Test
-    public void testWrongDateLocale() throws Exception {
+    public void testWrongDateLocale() {
         String in = "[\n" +
                 "{\"name\": \"x\", \"type\": \"DOUBLE\", \"pattern\":\"xyz\", \"locale\": \"enk\"}\n" +
                 "]";
@@ -149,7 +172,7 @@ public class JsonSchemaParserTest {
     }
 
     @Test
-    public void testWrongType() throws Exception {
+    public void testWrongType() {
         String in = "[\n" +
                 "{\"name\": \"y\", \"type\": \"ABC\", \"pattern\":\"xyz\"}\n" +
                 "]";

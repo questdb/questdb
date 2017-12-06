@@ -1,3 +1,26 @@
+/*******************************************************************************
+ *    ___                  _   ____  ____
+ *   / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *  | | | | | | |/ _ \/ __| __| | | |  _ \
+ *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *   \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ * Copyright (C) 2014-2017 Appsicle
+ *
+ * This program is free software: you can redistribute it and/or  modify
+ * it under the terms of the GNU Affero General Public License, version 3,
+ * as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Affero General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ *
+ ******************************************************************************/
+
 package com.questdb.cairo;
 
 import com.questdb.std.Numbers;
@@ -7,77 +30,77 @@ import org.junit.Test;
 public class NullColumnTest {
 
     @Test
-    public void close() throws Exception {
+    public void close() {
         NullColumn.INSTANCE.close();
     }
 
     @Test
-    public void getBin() throws Exception {
+    public void getBin() {
         Assert.assertNull(NullColumn.INSTANCE.getBin(1234));
     }
 
     @Test
-    public void getBinLen() throws Exception {
+    public void getBinLen() {
         Assert.assertEquals(-1L, NullColumn.INSTANCE.getBinLen(1234));
     }
 
     @Test
-    public void getBool() throws Exception {
+    public void getBool() {
         Assert.assertFalse(NullColumn.INSTANCE.getBool(1234));
     }
 
     @Test
-    public void getByte() throws Exception {
+    public void getByte() {
         Assert.assertEquals(0, NullColumn.INSTANCE.getByte(1234));
     }
 
     @Test
-    public void getDouble() throws Exception {
+    public void getDouble() {
         Assert.assertTrue(Double.isNaN(NullColumn.INSTANCE.getDouble(1234)));
     }
 
     @Test
-    public void getFd() throws Exception {
+    public void getFd() {
         Assert.assertEquals(-1, NullColumn.INSTANCE.getFd());
     }
 
     @Test
-    public void getFloat() throws Exception {
+    public void getFloat() {
         Assert.assertTrue(Float.isNaN(NullColumn.INSTANCE.getFloat(123)));
     }
 
     @Test
-    public void getInt() throws Exception {
+    public void getInt() {
         Assert.assertEquals(Numbers.INT_NaN, NullColumn.INSTANCE.getInt(1234));
     }
 
     @Test
-    public void getLong() throws Exception {
+    public void getLong() {
         Assert.assertEquals(Numbers.LONG_NaN, NullColumn.INSTANCE.getLong(1234));
     }
 
     @Test
-    public void getShort() throws Exception {
+    public void getShort() {
         Assert.assertEquals(0, NullColumn.INSTANCE.getShort(1234));
     }
 
     @Test
-    public void getStr() throws Exception {
+    public void getStr() {
         Assert.assertNull(NullColumn.INSTANCE.getStr(1234));
     }
 
     @Test
-    public void getStr2() throws Exception {
+    public void getStr2() {
         Assert.assertNull(NullColumn.INSTANCE.getStr2(1234));
     }
 
     @Test
-    public void getStrLen() throws Exception {
+    public void getStrLen() {
         Assert.assertEquals(-1, NullColumn.INSTANCE.getStrLen(1234));
     }
 
     @Test
-    public void trackFileSize() throws Exception {
+    public void trackFileSize() {
         NullColumn.INSTANCE.trackFileSize();
     }
 

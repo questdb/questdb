@@ -27,13 +27,12 @@ import org.junit.Assert;
 import org.junit.Test;
 
 import java.io.Closeable;
-import java.io.IOException;
 
 public class LocalValueTest {
 
     @Test
     @SuppressWarnings("unchecked")
-    public void testCloseable() throws Exception {
+    public void testCloseable() {
         LocalValue<Closeable>[] values = new LocalValue[1024];
         ClosableImpl[] closeables = new ClosableImpl[values.length];
 
@@ -53,7 +52,7 @@ public class LocalValueTest {
 
     @Test
     @SuppressWarnings("unchecked")
-    public void testLocalValue() throws Exception {
+    public void testLocalValue() {
         LocalValue<Integer>[] values = new LocalValue[512 * 1024];
 
         Locality locality1 = new LocalityImpl();
@@ -75,7 +74,7 @@ public class LocalValueTest {
         private boolean closed = false;
 
         @Override
-        public void close() throws IOException {
+        public void close() {
             closed = true;
         }
     }

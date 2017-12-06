@@ -67,7 +67,7 @@ public class ClusterControllerTest extends AbstractTest {
     public final FactoryContainer tf5 = new FactoryContainer(ModelConfiguration.MAIN);
 
     @After
-    public void tearDown() throws Exception {
+    public void tearDown() {
         Assert.assertEquals(0, tf.getFactory().getBusyWriterCount());
         Assert.assertEquals(0, tf1.getFactory().getBusyWriterCount());
         Assert.assertEquals(0, tf2.getFactory().getBusyWriterCount());

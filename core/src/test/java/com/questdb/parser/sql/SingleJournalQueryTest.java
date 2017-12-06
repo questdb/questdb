@@ -348,7 +348,7 @@ public class SingleJournalQueryTest extends AbstractTest {
     }
 
     @Test
-    public void testAndArgCheck() throws Exception {
+    public void testAndArgCheck() {
         // missing left arg on 'and'
         try {
             expectFailure("select id,w,x,z,x + -w, z+-w from tab where and id = 'FYXPVKNCBWLNLRH'");
@@ -358,7 +358,7 @@ public class SingleJournalQueryTest extends AbstractTest {
     }
 
     @Test
-    public void testAndArgCheck2() throws Exception {
+    public void testAndArgCheck2() {
         // missing left arg on 'and'
         try {
             expectFailure("select id,w,x,z,x + -w, z+-w from tab where id = 'FYXPVKNCBWLNLRH' and ");
@@ -1414,7 +1414,7 @@ public class SingleJournalQueryTest extends AbstractTest {
     }
 
     @Test
-    public void testJournalDoesNotExist() throws Exception {
+    public void testJournalDoesNotExist() {
         try {
             expectFailure("select id, x, y, timestamp from q where id = ");
         } catch (ParserException e) {
@@ -2481,7 +2481,7 @@ public class SingleJournalQueryTest extends AbstractTest {
     }
 
     @Test
-    public void testOrArgCheck() throws Exception {
+    public void testOrArgCheck() {
         // missing left arg on 'and'
         try {
             expectFailure("select id,w,x,z,x + -w, z+-w from tab where or id = 'FYXPVKNCBWLNLRH'");
@@ -2491,7 +2491,7 @@ public class SingleJournalQueryTest extends AbstractTest {
     }
 
     @Test
-    public void testOrArgCheck2() throws Exception {
+    public void testOrArgCheck2() {
         // missing left arg on 'and'
         try {
             expectFailure("select id,w,x,z,x + -w, z+-w from tab where id = 'FYXPVKNCBWLNLRH' or");

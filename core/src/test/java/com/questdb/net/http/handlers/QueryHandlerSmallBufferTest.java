@@ -64,7 +64,7 @@ public class QueryHandlerSmallBufferTest extends AbstractOptimiserTest {
     }
 
     @AfterClass
-    public static void tearDown2() throws Exception {
+    public static void tearDown2() {
         server.halt();
     }
 

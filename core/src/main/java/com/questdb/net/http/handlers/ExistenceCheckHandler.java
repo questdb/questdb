@@ -59,7 +59,7 @@ public class ExistenceCheckHandler implements ContextHandler {
     }
 
     @Override
-    public void resume(IOContext context) throws IOException {
+    public void resume(IOContext context) {
         // nothing to do
     }
 

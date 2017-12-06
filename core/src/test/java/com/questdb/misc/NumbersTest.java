@@ -60,7 +60,7 @@ public class NumbersTest {
     }
 
     @Test
-    public void testCeilPow2() throws Exception {
+    public void testCeilPow2() {
         Assert.assertEquals(16, Numbers.ceilPow2(15));
         Assert.assertEquals(16, Numbers.ceilPow2(16));
         Assert.assertEquals(32, Numbers.ceilPow2(17));
@@ -82,7 +82,7 @@ public class NumbersTest {
     }
 
     @Test
-    public void testFormatByte() throws Exception {
+    public void testFormatByte() {
         for (int i = 0; i < 1000; i++) {
             byte n = (byte) rnd.nextInt();
 
@@ -93,7 +93,7 @@ public class NumbersTest {
     }
 
     @Test
-    public void testFormatChar() throws Exception {
+    public void testFormatChar() {
         for (int i = 0; i < 1000; i++) {
             char n = (char) rnd.nextInt();
 
@@ -104,7 +104,7 @@ public class NumbersTest {
     }
 
     @Test
-    public void testFormatDouble() throws Exception {
+    public void testFormatDouble() {
         Numbers.append(sink, Double.POSITIVE_INFINITY, 3);
         Assert.assertEquals(Double.toString(Double.POSITIVE_INFINITY), sink.toString());
 
@@ -128,7 +128,7 @@ public class NumbersTest {
     }
 
     @Test
-    public void testFormatDoubleNoPadding() throws Exception {
+    public void testFormatDoubleNoPadding() {
         sink.clear();
         Numbers.appendTrim(sink, 40.2345d, 12);
         Assert.assertEquals("40.2345", sink.toString());
@@ -139,7 +139,7 @@ public class NumbersTest {
     }
 
     @Test
-    public void testFormatFloat() throws Exception {
+    public void testFormatFloat() {
         Numbers.append(sink, Float.POSITIVE_INFINITY, 3);
         Assert.assertEquals(Float.toString(Float.POSITIVE_INFINITY), sink.toString());
 
@@ -163,7 +163,7 @@ public class NumbersTest {
     }
 
     @Test
-    public void testFormatInt() throws Exception {
+    public void testFormatInt() {
         for (int i = 0; i < 1000; i++) {
             int n = rnd.nextInt();
             sink.clear();
@@ -173,7 +173,7 @@ public class NumbersTest {
     }
 
     @Test
-    public void testFormatLong() throws Exception {
+    public void testFormatLong() {
         for (int i = 0; i < 1000; i++) {
             long n = rnd.nextLong();
             sink.clear();
@@ -183,7 +183,7 @@ public class NumbersTest {
     }
 
     @Test
-    public void testFormatShort() throws Exception {
+    public void testFormatShort() {
         for (int i = 0; i < 1000; i++) {
             short n = (short) rnd.nextInt();
 
@@ -194,7 +194,7 @@ public class NumbersTest {
     }
 
     @Test
-    public void testFormatSpecialDouble() throws Exception {
+    public void testFormatSpecialDouble() {
         double d = -1.040218505859375E10d;
         Numbers.append(sink, d, 8);
         Assert.assertEquals(Double.toString(d), sink.toString());

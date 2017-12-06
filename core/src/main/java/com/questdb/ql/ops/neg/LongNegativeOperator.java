@@ -26,7 +26,6 @@ package com.questdb.ql.ops.neg;
 import com.questdb.common.ColumnType;
 import com.questdb.common.Record;
 import com.questdb.common.StorageFacade;
-import com.questdb.ex.ParserException;
 import com.questdb.ql.ops.AbstractVirtualColumn;
 import com.questdb.ql.ops.Function;
 import com.questdb.ql.ops.VirtualColumn;
@@ -65,7 +64,7 @@ public class LongNegativeOperator extends AbstractVirtualColumn implements Funct
     }
 
     @Override
-    public void setArg(int pos, VirtualColumn arg) throws ParserException {
+    public void setArg(int pos, VirtualColumn arg) {
         value = arg;
     }
 }

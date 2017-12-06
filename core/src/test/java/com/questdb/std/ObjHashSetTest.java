@@ -28,7 +28,7 @@ import org.junit.Test;
 
 public class ObjHashSetTest {
     @Test
-    public void testNull() throws Exception {
+    public void testNull() {
         ObjHashSet<String> set = new ObjHashSet<>();
         set.add("X");
         set.add(null);

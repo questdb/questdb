@@ -116,7 +116,7 @@ public final class JournalIterators {
         try {
             journal.iteratePartitions(new OrderedResultSetBuilder<T>(interval) {
                 @Override
-                public void read(long lo, long hi) throws JournalException {
+                public void read(long lo, long hi) {
                     ranges.add(new JournalIteratorRange(partition.getPartitionIndex(), lo, hi));
                 }
             });

@@ -28,7 +28,7 @@ import org.junit.Test;
 
 public class IntListTest {
     @Test
-    public void testBinarySearch() throws Exception {
+    public void testBinarySearch() {
         IntList list = new IntList();
         for (int i = 0; i < 65; i++) {
             list.add(i);

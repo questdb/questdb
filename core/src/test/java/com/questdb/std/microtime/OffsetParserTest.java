@@ -1,3 +1,26 @@
+/*******************************************************************************
+ *    ___                  _   ____  ____
+ *   / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *  | | | | | | |/ _ \/ __| __| | | |  _ \
+ *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *   \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ * Copyright (C) 2014-2017 Appsicle
+ *
+ * This program is free software: you can redistribute it and/or  modify
+ * it under the terms of the GNU Affero General Public License, version 3,
+ * as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Affero General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ *
+ ******************************************************************************/
+
 package com.questdb.std.microtime;
 
 import com.questdb.std.Numbers;
@@ -7,127 +30,127 @@ import org.junit.Test;
 public class OffsetParserTest {
 
     @Test
-    public void testBadDelim() throws Exception {
+    public void testBadDelim() {
         assertError("UTC+01x30");
     }
 
     @Test
-    public void testBadGMT() throws Exception {
+    public void testBadGMT() {
         assertError("GMX+03:30");
     }
 
     @Test
-    public void testBadHour() throws Exception {
+    public void testBadHour() {
         assertError("UTC+0x:30");
     }
 
     @Test
-    public void testBadMinute() throws Exception {
+    public void testBadMinute() {
         assertError("UTC+01:3x");
     }
 
     @Test
-    public void testBadSign() throws Exception {
+    public void testBadSign() {
         assertError("GMT*08:00");
     }
 
     @Test
-    public void testBadStart() throws Exception {
+    public void testBadStart() {
         assertError("*08");
     }
 
     @Test
-    public void testBadUtc() throws Exception {
+    public void testBadUtc() {
         assertError("UTX+09:00");
     }
 
     @Test
-    public void testGMTCamelCasePositive() throws Exception {
+    public void testGMTCamelCasePositive() {
         assertThat(2 * 60 + 15, "gMt+02:15");
     }
 
     @Test
-    public void testGMTNegative() throws Exception {
+    public void testGMTNegative() {
         assertThat(-2 * 60 + -15, "gMt-02:15");
     }
 
     @Test
-    public void testGMTPositive() throws Exception {
+    public void testGMTPositive() {
         assertThat(3 * 60 + 30, "GMT+03:30");
     }
 
     @Test
-    public void testHourMinNoDelim() throws Exception {
+    public void testHourMinNoDelim() {
         assertThat(8 * 60 + 15, "0815");
     }
 
     @Test
-    public void testHourMinNoDelimNegative() throws Exception {
+    public void testHourMinNoDelimNegative() {
         assertThat(-3 * 60 - 30, "-0330");
     }
 
     @Test
-    public void testHourMinNoDelimPositive() throws Exception {
+    public void testHourMinNoDelimPositive() {
         assertThat(8 * 60 + 15, "+0815");
     }
 
     @Test
-    public void testHoursOnly() throws Exception {
+    public void testHoursOnly() {
         assertThat(8 * 60, "08");
     }
 
     @Test
-    public void testLargeHour() throws Exception {
+    public void testLargeHour() {
         assertError("UTC+24:00");
     }
 
     @Test
-    public void testLargeMinute() throws Exception {
+    public void testLargeMinute() {
         assertError("UTC+12:60");
     }
 
     @Test
-    public void testMissingHour() throws Exception {
+    public void testMissingHour() {
         assertError("UTC+");
     }
 
     @Test
-    public void testMissingMinute() throws Exception {
+    public void testMissingMinute() {
         assertError("UTC+01:");
     }
 
     @Test
-    public void testNegativeHoursOnly() throws Exception {
+    public void testNegativeHoursOnly() {
         assertThat(-4 * 60, "-04");
     }
 
     @Test
-    public void testPositiveHoursOnly() throws Exception {
+    public void testPositiveHoursOnly() {
         assertThat(8 * 60, "+08");
     }
 
     @Test
-    public void testShortHour() throws Exception {
+    public void testShortHour() {
         assertError("UTC+1");
     }
 
     @Test
-    public void testShortMinute() throws Exception {
+    public void testShortMinute() {
         assertError("UTC+01:3");
     }
 
     @Test
-    public void testUTCCamelCasePositive() throws Exception {
+    public void testUTCCamelCasePositive() {
         assertThat(9 * 60, "uTc+09:00");
     }
 
     @Test
-    public void testUTCNegative() throws Exception {
+    public void testUTCNegative() {
         assertThat(-4 * 60 - 15, "UTC-04:15");
     }
 
     @Test
-    public void testUTCPositive() throws Exception {
+    public void testUTCPositive() {
         assertThat(9 * 60, "UTC+09:00");
     }
 

@@ -67,7 +67,7 @@ public class OrderByOptimiserTest extends AbstractOptimiserTest {
     }
 
     @Test
-    public void testLiteralAnalysis() throws Exception {
+    public void testLiteralAnalysis() {
         try {
             expectFailure("select x,count() from tab order by timestamp");
         } catch (ParserException e) {

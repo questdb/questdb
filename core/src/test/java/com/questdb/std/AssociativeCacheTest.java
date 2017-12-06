@@ -28,7 +28,7 @@ import org.junit.Test;
 
 public class AssociativeCacheTest {
     @Test
-    public void testBasic() throws Exception {
+    public void testBasic() {
         AssociativeCache<String> cache = new AssociativeCache<>(8, 64);
         cache.put("X", "1");
         cache.put("Y", "2");
@@ -39,7 +39,7 @@ public class AssociativeCacheTest {
     }
 
     @Test
-    public void testFull() throws Exception {
+    public void testFull() {
         AssociativeCache<String> cache = new AssociativeCache<>(8, 64);
         CharSequenceHashSet all = new CharSequenceHashSet();
         CharSequenceHashSet reject = new CharSequenceHashSet();

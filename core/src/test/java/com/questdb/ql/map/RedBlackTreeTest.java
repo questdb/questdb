@@ -35,7 +35,7 @@ import java.util.TreeSet;
 public class RedBlackTreeTest {
 
     @Test
-    public void testAddAndGet() throws Exception {
+    public void testAddAndGet() {
         Rnd rnd = new Rnd();
         TreeSet<Long> control = new TreeSet<>();
         try (RedBlackTree tree = new RedBlackTree(new RedBlackTree.LongComparator() {
@@ -72,7 +72,7 @@ public class RedBlackTreeTest {
     }
 
     @Test
-    public void testNonUnique() throws Exception {
+    public void testNonUnique() {
         try (RedBlackTree set = new RedBlackTree(new RedBlackTree.LongComparator() {
             private long left;
 

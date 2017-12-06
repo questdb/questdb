@@ -30,7 +30,6 @@ import com.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
-import java.io.IOException;
 
 /**
  * Builder class that allows JNI layer access CharSequence without copying memory. It is typically used
@@ -123,7 +122,7 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
     }
 
     @Override
-    public void flush() throws IOException {
+    public void flush() {
         $();
     }
 

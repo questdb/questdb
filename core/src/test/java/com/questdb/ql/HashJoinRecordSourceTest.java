@@ -56,7 +56,7 @@ public class HashJoinRecordSourceTest {
     }
 
     @After
-    public void tearDown() throws Exception {
+    public void tearDown() {
         bw.close();
         aw.close();
 

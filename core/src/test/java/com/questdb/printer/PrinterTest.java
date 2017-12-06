@@ -41,7 +41,7 @@ public class PrinterTest {
     private final TestAppender testAppender = new TestAppender();
 
     @Test
-    public void testCRLFStripping() throws Exception {
+    public void testCRLFStripping() {
         try (JournalPrinter printer = new JournalPrinter()) {
             printer.setAppender(testAppender).setNullString("")
                     .types(String.class, TestEntity.class)

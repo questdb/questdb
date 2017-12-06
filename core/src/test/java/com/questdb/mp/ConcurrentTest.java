@@ -37,7 +37,7 @@ public class ConcurrentTest {
     private final static Log LOG = LogFactory.getLog(ConcurrentTest.class);
 
     @Test
-    public void testFanOutChain() throws Exception {
+    public void testFanOutChain() {
         LOG.info().$("testFanOutChain").$();
         int cycle = 1024;
         Sequence a = new SPSequence(cycle);

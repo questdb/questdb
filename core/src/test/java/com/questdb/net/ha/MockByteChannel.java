@@ -24,7 +24,6 @@
 package com.questdb.net.ha;
 
 import java.io.ByteArrayOutputStream;
-import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.channels.ByteChannel;
 
@@ -40,7 +39,7 @@ class MockByteChannel extends ByteArrayOutputStream implements ByteChannel {
     }
 
     @Override
-    public int read(ByteBuffer dst) throws IOException {
+    public int read(ByteBuffer dst) {
 
         if (offset == buf.length) {
             return -1;
@@ -79,12 +78,12 @@ class MockByteChannel extends ByteArrayOutputStream implements ByteChannel {
     }
 
     @Override
-    public void close() throws IOException {
+    public void close() {
 
     }
 
     @Override
-    public int write(ByteBuffer src) throws IOException {
+    public int write(ByteBuffer src) {
         int result = src.remaining();
         while (src.remaining() > 0) {
             write(src.get());

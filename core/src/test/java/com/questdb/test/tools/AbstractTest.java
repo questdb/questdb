@@ -82,7 +82,7 @@ public abstract class AbstractTest {
     }
 
     @Before
-    public void setUp2() throws Exception {
+    public void setUp2() {
         factoryContainer.getConfiguration().exists("none");
     }
 

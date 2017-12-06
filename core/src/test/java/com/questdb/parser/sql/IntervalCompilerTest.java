@@ -140,27 +140,27 @@ public class IntervalCompilerTest {
     }
 
     @Test
-    public void testParseShortDayErr() throws Exception {
+    public void testParseShortDayErr() {
         assertIntervalError("2016-02-30");
     }
 
     @Test
-    public void testParseShortDayErr2() throws Exception {
+    public void testParseShortDayErr2() {
         assertIntervalError("2016-02-3");
     }
 
     @Test
-    public void testParseShortHourErr1() throws Exception {
+    public void testParseShortHourErr1() {
         assertIntervalError("2016-02-15T1");
     }
 
     @Test
-    public void testParseShortHourErr2() throws Exception {
+    public void testParseShortHourErr2() {
         assertIntervalError("2016-02-15T31");
     }
 
     @Test
-    public void testParseShortHourErr3() throws Exception {
+    public void testParseShortHourErr3() {
         assertIntervalError("2016-02-15X1");
     }
 
@@ -205,47 +205,47 @@ public class IntervalCompilerTest {
     }
 
     @Test
-    public void testParseShortMilliErr() throws Exception {
+    public void testParseShortMilliErr() {
         assertIntervalError("2016-03-21T10:31:61.23");
     }
 
     @Test
-    public void testParseShortMinErr() throws Exception {
+    public void testParseShortMinErr() {
         assertIntervalError("2016-03-21T10:3");
     }
 
     @Test
-    public void testParseShortMinErr2() throws Exception {
+    public void testParseShortMinErr2() {
         assertIntervalError("2016-03-21T10:69");
     }
 
     @Test
-    public void testParseShortMonthErr() throws Exception {
+    public void testParseShortMonthErr() {
         assertIntervalError("2016-1");
     }
 
     @Test
-    public void testParseShortMonthErr2() throws Exception {
+    public void testParseShortMonthErr2() {
         assertIntervalError("2016x11");
     }
 
     @Test
-    public void testParseShortMonthRange() throws Exception {
+    public void testParseShortMonthRange() {
         assertIntervalError("2016-66");
     }
 
     @Test
-    public void testParseShortSecErr() throws Exception {
+    public void testParseShortSecErr() {
         assertIntervalError("2016-03-21T10:31:61");
     }
 
     @Test
-    public void testParseShortSecErr1() throws Exception {
+    public void testParseShortSecErr1() {
         assertIntervalError("2016-03-21T10:31:1");
     }
 
     @Test
-    public void testParseShortYearErr() throws Exception {
+    public void testParseShortYearErr() {
         assertIntervalError("201");
     }
 

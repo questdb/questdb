@@ -105,7 +105,7 @@ public class JournalTest extends AbstractTest {
     }
 
     @Test
-    public void testInvalidColumnName() throws Exception {
+    public void testInvalidColumnName() {
         File base = getFactory().getConfiguration().getJournalBase();
         File dir = new File(base, "x");
         Assert.assertFalse(dir.exists());

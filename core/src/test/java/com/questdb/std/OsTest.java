@@ -50,7 +50,7 @@ public class OsTest {
     }
 
     @Test
-    public void testCurrentTime() throws Exception {
+    public void testCurrentTime() {
         long reference = System.currentTimeMillis();
         long actual = Os.currentTimeMicros();
         long delta = actual / 1000 - reference;

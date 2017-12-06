@@ -85,7 +85,7 @@ public class MultiColumnJoinTest extends AbstractTest {
     }
 
     @Test
-    public void testNonLiteral() throws Exception {
+    public void testNonLiteral() {
         try {
             expectFailure("a join b on (1+2)");
         } catch (ParserException e) {

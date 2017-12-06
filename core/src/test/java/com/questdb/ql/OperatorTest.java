@@ -135,7 +135,7 @@ public class OperatorTest extends AbstractOptimiserTest {
     }
 
     @Test
-    public void testDateGreaterThanNonConstStr() throws Exception {
+    public void testDateGreaterThanNonConstStr() {
         try {
             expectFailure("select timestamp, date from abc where timestamp > str limit 5");
         } catch (ParserException e) {
@@ -168,7 +168,7 @@ public class OperatorTest extends AbstractOptimiserTest {
     }
 
     @Test
-    public void testDateInNulls() throws Exception {
+    public void testDateInNulls() {
         try {
             expectFailure("select date, timestamp, f from abc where date in ('2016-05-01T10:25:15.000Z', null)");
         } catch (ParserException e) {
@@ -177,7 +177,7 @@ public class OperatorTest extends AbstractOptimiserTest {
     }
 
     @Test
-    public void testDateInTooFewArgs() throws Exception {
+    public void testDateInTooFewArgs() {
         try {
             expectFailure("select date, timestamp, f from abc where date in ('2016-05-01T10:25:15.000Z')");
         } catch (ParserException e) {
@@ -186,7 +186,7 @@ public class OperatorTest extends AbstractOptimiserTest {
     }
 
     @Test
-    public void testDateInTooManyArgs() throws Exception {
+    public void testDateInTooManyArgs() {
         try {
             expectFailure("select date, timestamp, f from abc where date in ('2016-05-01T10:25:15.000Z', '2016-05-01T10:27:30.000Z','2016-05-01T10:27:30.000Z')");
         } catch (ParserException e) {
@@ -195,7 +195,7 @@ public class OperatorTest extends AbstractOptimiserTest {
     }
 
     @Test
-    public void testDateInWrongArgs() throws Exception {
+    public void testDateInWrongArgs() {
         try {
             expectFailure("select date, timestamp, f from abc where date in ('2016-05-01T10:25:15.000Z', 10)");
         } catch (ParserException e) {
@@ -296,7 +296,7 @@ public class OperatorTest extends AbstractOptimiserTest {
     }
 
     @Test
-    public void testIntInNonConst() throws Exception {
+    public void testIntInNonConst() {
         try {
             expectFailure("select i, timestamp from abc where i in (1978144263, l) limit 20");
         } catch (ParserException e) {
@@ -305,7 +305,7 @@ public class OperatorTest extends AbstractOptimiserTest {
     }
 
     @Test
-    public void testIntInWrongType() throws Exception {
+    public void testIntInWrongType() {
         try {
             expectFailure("select i, timestamp from abc where i in (1978144263L, NaN) limit 20");
         } catch (ParserException e) {
@@ -344,7 +344,7 @@ public class OperatorTest extends AbstractOptimiserTest {
     }
 
     @Test
-    public void testLongInWrongType() throws Exception {
+    public void testLongInWrongType() {
         try {
             expectFailure("select l, timestamp from abc where l in ('NaN', 9036423629723776443L, 3) limit 10");
         } catch (ParserException e) {
@@ -508,7 +508,7 @@ public class OperatorTest extends AbstractOptimiserTest {
     }
 
     @Test
-    public void testStrInNonConst() throws Exception {
+    public void testStrInNonConst() {
         try {
             expectFailure("select str, timestamp from abc where str in ('X', sym) limit 20");
         } catch (ParserException e) {
@@ -542,7 +542,7 @@ public class OperatorTest extends AbstractOptimiserTest {
     }
 
     @Test
-    public void testStrInWrongType() throws Exception {
+    public void testStrInWrongType() {
         try {
             expectFailure("select str, timestamp from abc where str in (10) limit 20");
         } catch (ParserException e) {

@@ -30,7 +30,7 @@ import org.junit.Test;
 
 public class ObjListTest {
     @Test
-    public void testAdd() throws Exception {
+    public void testAdd() {
         Rnd rnd = new Rnd();
 
         ObjList<String> list = new ObjList<>();
@@ -47,7 +47,7 @@ public class ObjListTest {
     }
 
     @Test
-    public void testExtendAndSet() throws Exception {
+    public void testExtendAndSet() {
         ObjList<String> list = new ObjList<>();
         list.extendAndSet(10, "XYZ");
         list.extendAndSet(76, "BBB");

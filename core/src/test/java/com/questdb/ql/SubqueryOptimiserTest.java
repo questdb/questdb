@@ -65,7 +65,7 @@ public class SubqueryOptimiserTest extends AbstractOptimiserTest {
     }
 
     @Test
-    public void testAmbiguousColumn() throws Exception {
+    public void testAmbiguousColumn() {
         try {
             expectFailure("(((tab order by y) where y = 5) a join tex b on a.id = b.id) a where a.x = 10 and id > 100");
         } catch (ParserException e) {

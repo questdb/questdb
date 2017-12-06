@@ -33,7 +33,7 @@ import org.junit.Test;
 public class HashTest {
 
     @Test
-    public void testStringHash() throws Exception {
+    public void testStringHash() {
         Rnd rnd = new Rnd();
         IntHashSet hashes = new IntHashSet(100000);
         final int LEN = 64;

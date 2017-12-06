@@ -38,7 +38,7 @@ import org.junit.Test;
 public class TableReaderMetadataTest extends AbstractCairoTest {
 
     @Before
-    public void setUp2() throws Exception {
+    public void setUp2() {
         CairoTestUtils.createAllTable(configuration, PartitionBy.DAY);
     }
 
@@ -60,7 +60,7 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testColumnIndex() throws Exception {
+    public void testColumnIndex() {
         ObjIntHashMap<String> expected = new ObjIntHashMap<>();
         expected.put("int", 0);
         expected.put("byte", 2);
@@ -103,7 +103,7 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testFreeNullAddressAsIndex() throws Exception {
+    public void testFreeNullAddressAsIndex() {
         TableReaderMetadata.freeTransitionIndex(0);
     }
 

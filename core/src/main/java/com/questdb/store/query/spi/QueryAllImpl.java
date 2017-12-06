@@ -35,6 +35,7 @@ import com.questdb.store.query.OrderedResultSetBuilder;
 import com.questdb.store.query.api.QueryAll;
 import com.questdb.store.query.api.QueryAllBuilder;
 import com.questdb.store.query.iter.*;
+import org.jetbrains.annotations.NotNull;
 
 import java.util.Iterator;
 
@@ -50,7 +51,7 @@ public class QueryAllImpl<T> implements QueryAll<T> {
     public OrderedResultSet<T> asResultSet() throws JournalException {
         return journal.iteratePartitions(new OrderedResultSetBuilder<T>() {
             @Override
-            public void read(long lo, long hi) throws JournalException {
+            public void read(long lo, long hi) {
                 result.ensureCapacity((int) (hi - lo + 1));
                 for (long i = lo; i < hi + 1; i++) {
                     result.add(Rows.toRowID(partition.getPartitionIndex(), i));
@@ -142,6 +143,7 @@ public class QueryAllImpl<T> implements QueryAll<T> {
         return result;
     }
 
+    @NotNull
     @Override
     public Iterator<T> iterator() {
         return new JournalIteratorImpl<>(journal, createRanges());
@@ -169,7 +171,7 @@ public class QueryAllImpl<T> implements QueryAll<T> {
         try {
             journal.iteratePartitions(new OrderedResultSetBuilder<T>(interval) {
                 @Override
-                public void read(long lo, long hi) throws JournalException {
+                public void read(long lo, long hi) {
                     ranges.add(new JournalIteratorRange(partition.getPartitionIndex(), lo, hi));
                 }
             });

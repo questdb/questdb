@@ -443,7 +443,7 @@ public class Response implements Closeable, Mutable {
     private class FixedSizeResponseImpl implements FixedSizeResponse {
 
         @Override
-        public void done() throws DisconnectedChannelException, SlowWritableChannelException {
+        public void done() {
         }
 
         @Override

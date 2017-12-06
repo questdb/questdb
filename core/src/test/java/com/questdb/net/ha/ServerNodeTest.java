@@ -31,38 +31,38 @@ import org.junit.Test;
 public class ServerNodeTest {
 
     @Test(expected = JournalRuntimeException.class)
-    public void testAddressValidation() throws Exception {
+    public void testAddressValidation() {
         new ServerNode(0, "192.168:x");
     }
 
     @Test
-    public void testHostAndPort() throws Exception {
+    public void testHostAndPort() {
         ServerNode node = new ServerNode(0, "github.questdb.org:8080");
         Assert.assertEquals("github.questdb.org", node.getHostname());
         Assert.assertEquals(8080, node.getPort());
     }
 
     @Test
-    public void testIPv4() throws Exception {
+    public void testIPv4() {
         ServerNode node = new ServerNode(0, "192.168.1.10");
         Assert.assertEquals("192.168.1.10", node.getHostname());
     }
 
     @Test
-    public void testIPv4AndPort() throws Exception {
+    public void testIPv4AndPort() {
         ServerNode node = new ServerNode(0, "192.168.1.10:8080");
         Assert.assertEquals("192.168.1.10", node.getHostname());
         Assert.assertEquals(8080, node.getPort());
     }
 
     @Test
-    public void testIPv6() throws Exception {
+    public void testIPv6() {
         ServerNode node = new ServerNode(0, "[fe80::5fc:43c:eef0:5b8e%3]");
         Assert.assertEquals("fe80::5fc:43c:eef0:5b8e%3", node.getHostname());
     }
 
     @Test
-    public void testIPv6AndPort() throws Exception {
+    public void testIPv6AndPort() {
         ServerNode node = new ServerNode(0, "[fe80::5fc:43c:eef0:5b8e%3]:7090");
         Assert.assertEquals("fe80::5fc:43c:eef0:5b8e%3", node.getHostname());
         Assert.assertEquals(7090, node.getPort());

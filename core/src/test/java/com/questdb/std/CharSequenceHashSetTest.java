@@ -31,7 +31,7 @@ import java.util.HashSet;
 public class CharSequenceHashSetTest {
 
     @Test
-    public void testNullHandling() throws Exception {
+    public void testNullHandling() {
         Rnd rnd = new Rnd();
         CharSequenceHashSet set = new CharSequenceHashSet();
         int n = 1000;
@@ -53,7 +53,7 @@ public class CharSequenceHashSetTest {
     }
 
     @Test
-    public void testStress() throws Exception {
+    public void testStress() {
         Rnd rnd = new Rnd();
         CharSequenceHashSet set = new CharSequenceHashSet();
         int n = 10000;

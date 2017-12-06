@@ -26,7 +26,6 @@ package com.questdb.ql.ops.conv;
 import com.questdb.common.ColumnType;
 import com.questdb.common.Record;
 import com.questdb.common.StorageFacade;
-import com.questdb.ex.ParserException;
 import com.questdb.ql.ops.AbstractVirtualColumn;
 import com.questdb.ql.ops.Function;
 import com.questdb.ql.ops.VirtualColumn;
@@ -65,6 +64,6 @@ public class SysdateFunction extends AbstractVirtualColumn implements Function {
     }
 
     @Override
-    public void setArg(int pos, VirtualColumn arg) throws ParserException {
+    public void setArg(int pos, VirtualColumn arg) {
     }
 }

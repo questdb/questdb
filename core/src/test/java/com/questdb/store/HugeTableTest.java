@@ -48,7 +48,7 @@ public class HugeTableTest {
     }});
 
     @After
-    public void tearDown() throws Exception {
+    public void tearDown() {
         Assert.assertEquals(0, getFactory().getBusyReaderCount());
         Assert.assertEquals(0, getFactory().getBusyWriterCount());
     }

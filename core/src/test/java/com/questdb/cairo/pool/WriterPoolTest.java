@@ -49,7 +49,7 @@ public class WriterPoolTest extends AbstractCairoTest {
     private static final DefaultCairoConfiguration CONFIGURATION = new DefaultCairoConfiguration(root);
 
     @Before
-    public void setUpInstance() throws Exception {
+    public void setUpInstance() {
         try (TableModel model = new TableModel(configuration, "z", PartitionBy.NONE).col("ts", ColumnType.DATE)) {
             CairoTestUtils.create(model);
         }

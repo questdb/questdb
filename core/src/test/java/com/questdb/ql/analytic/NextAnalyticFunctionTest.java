@@ -440,7 +440,7 @@ public class NextAnalyticFunctionTest extends AbstractAllTypeTest {
     }
 
     @Test
-    public void testNoArg() throws Exception {
+    public void testNoArg() {
         try {
             expectFailure("select str, next() rank over(partition by str) from 'abc'");
         } catch (ParserException e) {
@@ -722,7 +722,7 @@ public class NextAnalyticFunctionTest extends AbstractAllTypeTest {
     }
 
     @Test
-    public void testWrongColumnInFunc() throws Exception {
+    public void testWrongColumnInFunc() {
         try {
             expectFailure("select str, sym, timestamp , next(symx) over (partition by str) from abc");
         } catch (ParserException e) {
@@ -731,7 +731,7 @@ public class NextAnalyticFunctionTest extends AbstractAllTypeTest {
     }
 
     @Test
-    public void testWrongColumnInPartition() throws Exception {
+    public void testWrongColumnInPartition() {
         try {
             expectFailure("select str, sym, timestamp , next(sym) over (partition by strx) from abc");
         } catch (ParserException e) {

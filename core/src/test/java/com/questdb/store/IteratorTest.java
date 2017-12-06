@@ -270,7 +270,7 @@ public class IteratorTest extends AbstractTest {
     }
 
     @Test
-    public void testMergingIterator() throws Exception {
+    public void testMergingIterator() {
         ArrayList<Integer> listA = new ArrayList<Integer>() {{
             add(1);
             add(3);

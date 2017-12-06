@@ -141,7 +141,7 @@ public class PrevAnalyticFunctionTest extends AbstractAllTypeTest {
     }
 
     @Test
-    public void testAggregationContext() throws Exception {
+    public void testAggregationContext() {
         try {
             expectFailure("select sym, sum(d) x, prev(x) over() from abc");
         } catch (ParserException e) {
@@ -887,7 +887,7 @@ public class PrevAnalyticFunctionTest extends AbstractAllTypeTest {
     }
 
     @Test
-    public void testNoArg() throws Exception {
+    public void testNoArg() {
         try {
             expectFailure("select str, prev() rank over(partition by str) from 'abc'");
         } catch (ParserException e) {
@@ -1493,7 +1493,7 @@ public class PrevAnalyticFunctionTest extends AbstractAllTypeTest {
     }
 
     @Test
-    public void testWrongColumnInFunc() throws Exception {
+    public void testWrongColumnInFunc() {
         try {
             expectFailure("select str, sym, timestamp , prev(symx) over (partition by str) from abc");
         } catch (ParserException e) {
@@ -1502,7 +1502,7 @@ public class PrevAnalyticFunctionTest extends AbstractAllTypeTest {
     }
 
     @Test
-    public void testWrongColumnInPartition() throws Exception {
+    public void testWrongColumnInPartition() {
         try {
             expectFailure("select str, sym, timestamp , prev(sym) over (partition by strx) from abc");
         } catch (ParserException e) {

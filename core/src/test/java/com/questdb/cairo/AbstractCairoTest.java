@@ -35,13 +35,13 @@ public class AbstractCairoTest extends AbstractOptimiserTest {
     protected static CairoConfiguration configuration;
 
     @BeforeClass
-    public static void setUp() throws Exception {
+    public static void setUp() {
         root = FACTORY_CONTAINER.getConfiguration().getJournalBase().getAbsolutePath();
         configuration = new DefaultCairoConfiguration(root);
     }
 
     @Before
-    public void setUp0() throws Exception {
+    public void setUp0() {
         try (Path path = new Path().of(root).$()) {
             if (Files.exists(path)) {
                 return;
@@ -51,7 +51,7 @@ public class AbstractCairoTest extends AbstractOptimiserTest {
     }
 
     @After
-    public void tearDown0() throws Exception {
+    public void tearDown0() {
         try (Path path = new Path().of(root)) {
             Files.rmdir(path.$());
         }

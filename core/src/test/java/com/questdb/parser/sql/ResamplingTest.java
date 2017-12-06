@@ -279,7 +279,7 @@ public class ResamplingTest extends AbstractOptimiserTest {
     }
 
     @Test
-    public void testResamplingExplicitTimestampAsFunc() throws Exception {
+    public void testResamplingExplicitTimestampAsFunc() {
         try {
             expectFailure("select orderDate, employeeId, sum(price*quantity)/lsum(quantity), vwap(price, quantity) sum from orders2 timestamp(orderDate()) sample by 1d");
         } catch (ParserException e) {
