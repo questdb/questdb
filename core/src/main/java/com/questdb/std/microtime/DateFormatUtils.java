@@ -600,6 +600,6 @@ public class DateFormatUtils {
         DateFormatCompiler compiler = new DateFormatCompiler();
         UTC_FORMAT = compiler.compile(UTC_PATTERN);
         HTTP_FORMAT = compiler.compile("E, d MMM yyyy HH:mm:ss Z");
-        USEC_UTC_FORMAT = compiler.compile("yyyy-MM-ddTHH:mm:ss.SSSNNNz");
+        USEC_UTC_FORMAT = compiler.compile("yyyy-MM-ddTHH:mm:ss.SSSUUUz");
     }
 }
