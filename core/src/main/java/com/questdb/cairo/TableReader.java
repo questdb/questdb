@@ -586,7 +586,7 @@ public class TableReader implements Closeable, RecordCursor {
                     openPartitionColumns(path, columnBase);
                 }
             } else {
-                partitionSize = 0;
+                partitionSize = -1;
             }
             partitionRowCounts.setQuick(partitionIndex, partitionSize);
             return partitionSize;
