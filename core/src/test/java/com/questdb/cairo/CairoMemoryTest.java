@@ -358,7 +358,7 @@ public class CairoMemoryTest {
         try (Path path = new Path()) {
             path.of(temp.getRoot().getAbsolutePath());
             int prefixLen = path.length();
-            try (ReadWriteMemory mem = new ReadWriteMemory(ff)) {
+            try (ReadWriteMemory mem = new ReadWriteMemory()) {
                 Rnd rnd = new Rnd();
                 for (int k = 0; k < 10; k++) {
                     path.trimTo(prefixLen).concat(rnd.nextString(10));
@@ -374,12 +374,12 @@ public class CairoMemoryTest {
 
                     if (fail) {
                         try {
-                            mem.of(path, 2 * ff.getPageSize());
+                            mem.of(ff, path, 2 * ff.getPageSize());
                             Assert.fail();
                         } catch (CairoException ignored) {
                         }
                     } else {
-                        mem.of(path, 2 * ff.getPageSize());
+                        mem.of(ff, path, 2 * ff.getPageSize());
                         for (int i = 0; i < N; i++) {
                             mem.putLong(i);
                         }

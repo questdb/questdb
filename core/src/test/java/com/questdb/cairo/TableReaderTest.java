@@ -718,7 +718,7 @@ public class TableReaderTest extends AbstractCairoTest {
                 }
             }).start();
 
-            Assert.assertTrue(stopLatch.await(3, TimeUnit.SECONDS));
+            Assert.assertTrue(stopLatch.await(30, TimeUnit.SECONDS));
             Assert.assertEquals(0, errors.get());
         });
     }

@@ -429,21 +429,11 @@ public class TableReader implements Closeable, RecordCursor {
 
     private boolean reloadPartitioned() {
         assert timestampFloorMethod != null;
-        long currentPartitionTimestamp;
-        if (maxTimestamp == Numbers.LONG_NaN) {
-            currentPartitionTimestamp = timestampFloorMethod.floor(partitionMin);
-        } else {
-            currentPartitionTimestamp = timestampFloorMethod.floor(maxTimestamp);
-        }
+        long currentPartitionTimestamp = timestampFloorMethod.floor(maxTimestamp);
         boolean b = readTxn();
         if (b) {
             assert intervalLengthMethod != null;
-            int delta;
-            if (maxTimestamp == Numbers.LONG_NaN) {
-                delta = 0;
-            } else {
-                delta = (int) intervalLengthMethod.calculate(currentPartitionTimestamp, timestampFloorMethod.floor(maxTimestamp));
-            }
+            int delta = (int) intervalLengthMethod.calculate(currentPartitionTimestamp, timestampFloorMethod.floor(maxTimestamp));
             int partitionIndex = partitionCount - 1;
             if (delta > 0) {
                 incrementPartitionCountBy(delta);

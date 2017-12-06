@@ -337,6 +337,36 @@ public class BitmapIndexTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCursorTimeout() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (BitmapIndexWriter w = new BitmapIndexWriter(configuration, "x", 1024)) {
+                w.add(0, 10);
+            }
+
+            try (BitmapIndexBackwardReader reader = new BitmapIndexBackwardReader(configuration, "x")) {
+
+                try (ReadWriteMemory mem = new ReadWriteMemory()) {
+                    try (Path path = new Path()) {
+                        path.of(configuration.getRoot()).concat("x").put(".k").$();
+                        mem.of(configuration.getFilesFacade(), path, configuration.getFilesFacade().getPageSize());
+                    }
+
+                    long offset = BitmapIndexUtils.getKeyEntryOffset(0);
+                    mem.jumpTo(offset + BitmapIndexUtils.KEY_ENTRY_OFFSET_VALUE_COUNT);
+                    mem.putLong(10);
+
+                    try {
+                        reader.getCursor(0, Long.MAX_VALUE);
+                        Assert.fail();
+                    } catch (CairoException e) {
+                        Assert.assertTrue(Chars.contains(e.getMessage(), "cursor failed"));
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testWriterConstructorBadSig() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (AppendMemory mem = openKey()) {
