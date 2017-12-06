@@ -31,16 +31,14 @@ import com.questdb.std.str.LPSZ;
 
 public class ReadWriteMemory extends VirtualMemory {
     private static final Log LOG = LogFactory.getLog(ReadWriteMemory.class);
-    private final FilesFacade ff;
+    private FilesFacade ff;
     private long fd = -1;
 
     public ReadWriteMemory(FilesFacade ff, LPSZ name, long maxPageSize) {
-        this(ff);
-        of(name, maxPageSize);
+        of(ff, name, maxPageSize);
     }
 
-    public ReadWriteMemory(FilesFacade ff) {
-        this.ff = ff;
+    public ReadWriteMemory() {
     }
 
     @Override
@@ -83,9 +81,9 @@ public class ReadWriteMemory extends VirtualMemory {
         ff.munmap(address, getPageSize(page));
     }
 
-    public final void of(LPSZ name, long pageSize) {
+    public final void of(FilesFacade ff, LPSZ name, long pageSize) {
         close();
-
+        this.ff = ff;
         fd = ff.openRW(name);
         if (fd == -1) {
             throw CairoException.instance(ff.errno()).put("Cannot open file: ").put(name);

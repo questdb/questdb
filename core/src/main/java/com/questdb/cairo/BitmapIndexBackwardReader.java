@@ -31,7 +31,6 @@ import com.questdb.std.microtime.MicrosecondClock;
 import com.questdb.std.str.Path;
 
 import java.io.Closeable;
-import java.util.concurrent.locks.LockSupport;
 
 public class BitmapIndexBackwardReader implements Closeable {
     private final static Log LOG = LogFactory.getLog(BitmapIndexBackwardReader.class);
@@ -86,7 +85,7 @@ public class BitmapIndexBackwardReader implements Closeable {
                 }
 
                 if (clock.getTicks() - timestamp > spinLockTimeoutUs) {
-                    LOG.error().$("failed to read index header consistently [corrupt?] [timeout(us)=").$(spinLockTimeoutUs).$(']').$();
+                    LOG.error().$("failed to read index header consistently [corrupt?] [timeout=").$(spinLockTimeoutUs).$("us]").$();
                     throw CairoException.instance(0).put("failed to read index header consistently [corrupt?]");
                 }
             }
@@ -193,6 +192,7 @@ public class BitmapIndexBackwardReader implements Closeable {
             // should these values do not match.
             long valueCount;
             long valueBlockOffset;
+            long timestamp = clock.getTicks();
             while (true) {
                 valueCount = keyMem.getLong(offset + BitmapIndexUtils.KEY_ENTRY_OFFSET_VALUE_COUNT);
                 Unsafe.getUnsafe().loadFence();
@@ -203,7 +203,11 @@ public class BitmapIndexBackwardReader implements Closeable {
                 if (keyMem.getLong(offset + BitmapIndexUtils.KEY_ENTRY_OFFSET_COUNT_CHECK) == valueCount) {
                     break;
                 }
-                LockSupport.parkNanos(1);
+
+                if (clock.getTicks() - timestamp > spinLockTimeoutUs) {
+                    LOG.error().$("cursor failed to read index header consistently [corrupt?] [timeout=").$(spinLockTimeoutUs).$("us, key=").$(key).$(", offset=").$(offset).$(']').$();
+                    throw CairoException.instance(0).put("cursor failed to read index header consistently [corrupt?]");
+                }
             }
 
             valueMem.grow(valueBlockOffset + blockCapacity);
