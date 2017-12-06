@@ -37,7 +37,6 @@ import com.questdb.store.MMappedSymbolTable;
 import com.questdb.store.VariableColumn;
 
 import java.io.Closeable;
-import java.io.IOException;
 
 public class PrevStrPartitionedAnalyticFunction implements AnalyticFunction, Closeable {
 
@@ -147,7 +146,7 @@ public class PrevStrPartitionedAnalyticFunction implements AnalyticFunction, Clo
     }
 
     @Override
-    public void close() throws IOException {
+    public void close() {
         if (closed) {
             return;
         }

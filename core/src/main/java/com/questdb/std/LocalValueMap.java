@@ -30,7 +30,7 @@ public class LocalValueMap implements Closeable, Mutable {
 
     private static final int INITIAL_CAPACITY = 32;
     private Entry[] table;
-    private int size = 0;
+    private int size;
     private int threshold;
 
     public LocalValueMap() {

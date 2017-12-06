@@ -253,7 +253,7 @@ public class CsvHandler implements ContextHandler {
         }
 
         @Override
-        public void close() throws IOException {
+        public void close() {
             debug().$("Closing context").$();
             clear();
         }

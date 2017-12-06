@@ -32,7 +32,7 @@ import com.questdb.store.Journal;
 public class JournalIteratorImpl<T> implements JournalPeekingIterator<T>, com.questdb.std.ImmutableIterator<T> {
     private final ObjList<JournalIteratorRange> ranges;
     private final Journal<T> journal;
-    private boolean hasNext = true;
+    private boolean hasNext;
     private int currentIndex = 0;
     private long currentRowID;
     private long currentUpperBound;
@@ -113,6 +113,7 @@ public class JournalIteratorImpl<T> implements JournalPeekingIterator<T>, com.qu
             currentRowID = w.lo;
             currentUpperBound = w.hi;
             currentPartitionID = w.partitionID;
+            hasNext = true;
         } else {
             hasNext = false;
         }

@@ -54,7 +54,7 @@ public class JsonSchemaParserTest {
     }
 
     @Before
-    public void setUp() throws Exception {
+    public void setUp() {
         LEXER.clear();
         jsonSchemaParser.clear();
     }

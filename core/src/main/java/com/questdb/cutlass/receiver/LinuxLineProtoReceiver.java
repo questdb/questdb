@@ -47,8 +47,8 @@ public class LinuxLineProtoReceiver implements Closeable, Job {
     private final LineProtoLexer lexer;
     private final CairoLineProtoParser parser;
     private final NetFacade nf;
-    private long fd = -1;
-    private long msgVec = 0;
+    private long fd;
+    private long msgVec;
     private int commitRate;
     private long totalCount = 0;
 

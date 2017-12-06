@@ -30,8 +30,6 @@ import com.questdb.std.*;
 import com.questdb.std.ex.NetworkError;
 import com.questdb.std.time.MillisecondClock;
 
-import java.io.IOException;
-
 public class EpollDispatcher<C extends Context> extends SynchronizedJob implements Dispatcher<C> {
     private static final int M_TIMESTAMP = 1;
     private static final int M_FD = 2;
@@ -87,7 +85,7 @@ public class EpollDispatcher<C extends Context> extends SynchronizedJob implemen
     }
 
     @Override
-    public void close() throws IOException {
+    public void close() {
         this.epoll.close();
         Net.close(socketFd);
         int n = pending.size();

@@ -33,8 +33,6 @@ import com.questdb.std.ObjectFactory;
 import com.questdb.std.ex.NetworkError;
 import com.questdb.std.time.MillisecondClock;
 
-import java.io.IOException;
-
 public class KQueueDispatcher<C extends Context> extends SynchronizedJob implements Dispatcher<C> {
     private static final Log LOG = LogFactory.getLog(KQueueDispatcher.class);
 
@@ -89,7 +87,7 @@ public class KQueueDispatcher<C extends Context> extends SynchronizedJob impleme
     }
 
     @Override
-    public void close() throws IOException {
+    public void close() {
         this.kqueue.close();
         Net.close(socketFd);
         int n = pending.size();

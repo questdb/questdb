@@ -964,6 +964,7 @@ public class QueryCompiler {
                     functionGroups
             );
         } else {
+            assert naturalOrderFunctions != null;
             return new AnalyticRecordSource(rs, naturalOrderFunctions);
         }
     }

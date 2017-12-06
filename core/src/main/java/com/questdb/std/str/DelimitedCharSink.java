@@ -42,7 +42,7 @@ public class DelimitedCharSink extends AbstractCharSink implements CharSink, Clo
     }
 
     @Override
-    public void close() throws IOException {
+    public void close() {
         Misc.free(delegate);
     }
 

@@ -32,7 +32,6 @@ import com.questdb.ql.map.RecordKeyCopier;
 import com.questdb.std.Mutable;
 
 import java.io.Closeable;
-import java.io.IOException;
 
 public class MultiRecordMap implements Closeable, Mutable {
     private static final ColumnTypeResolver VALUE_RESOLVER = new ColumnTypeResolver() {
@@ -73,7 +72,7 @@ public class MultiRecordMap implements Closeable, Mutable {
     }
 
     @Override
-    public void close() throws IOException {
+    public void close() {
         map.close();
         records.close();
     }

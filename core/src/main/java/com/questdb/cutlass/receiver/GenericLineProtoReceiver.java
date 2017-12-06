@@ -47,7 +47,7 @@ public class GenericLineProtoReceiver implements Closeable, Job {
     private final CairoLineProtoParser parser;
     private final NetFacade nf;
     private final int bufLen;
-    private long fd = -1;
+    private long fd;
     private int commitRate;
     private long totalCount = 0;
     private long buf;

@@ -27,7 +27,6 @@ import com.questdb.std.ByteBuffers;
 import com.questdb.std.Net;
 import com.questdb.std.NetworkChannel;
 
-import java.io.IOException;
 import java.nio.ByteBuffer;
 
 public class NetworkChannelImpl implements NetworkChannel {
@@ -62,7 +61,7 @@ public class NetworkChannelImpl implements NetworkChannel {
     }
 
     @Override
-    public void close() throws IOException {
+    public void close() {
         Net.close(fd);
     }
 
