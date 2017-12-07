@@ -126,7 +126,7 @@ public class TableReader implements Closeable, RecordCursor {
                     timestampFloorMethod = null;
                     intervalLengthMethod = null;
                     dateFormat = null;
-                    partitionCount = findDefaultPartitionCount();
+                    countDefaultPartitions();
                     break;
             }
 
@@ -185,17 +185,10 @@ public class TableReader implements Closeable, RecordCursor {
         }
     }
 
-    private int findDefaultPartitionCount() {
-        try {
-            Path path = partitionPathGenerator.generate(this, 0);
-            if (ff.exists(path)) {
-                return 1;
-            } else {
-                return 0;
-            }
-        } finally {
-            path.trimTo(rootLen);
-        }
+    private void countDefaultPartitions() {
+        Path path = pathGenDefault();
+        partitionCount = ff.exists(path) ? 1 : 0;
+        path.trimTo(rootLen);
     }
 
     private long openPartition(int partitionIndex, int columnBase, boolean last) {
@@ -228,7 +221,7 @@ public class TableReader implements Closeable, RecordCursor {
 
     private boolean reloadInitialNonPartitioned() {
         if (readTxn()) {
-            partitionCount = findDefaultPartitionCount();
+            countDefaultPartitions();
             if (partitionCount > 0) {
                 updateCapacities();
                 reloadMethod = NON_PARTITIONED_RELOAD_METHOD;
