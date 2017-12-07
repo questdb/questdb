@@ -483,11 +483,12 @@ public class BitmapIndexTest extends AbstractCairoTest {
                 list.add(i);
             }
 
-            final int threadCount = 2;
+            final int threadCount = 3;
             CountDownLatch stopLatch = new CountDownLatch(threadCount);
             CyclicBarrier startBarrier = new CyclicBarrier(threadCount);
             AtomicInteger errors = new AtomicInteger();
 
+            // create empty index
             new BitmapIndexWriter(configuration, "x", 1024).close();
 
             new Thread(() -> {
@@ -519,18 +520,17 @@ public class BitmapIndexTest extends AbstractCairoTest {
                 }
             }).start();
 
-
-            new Thread(() -> {
+            Runnable reader = () -> {
                 try {
                     startBarrier.await();
-                    try (BitmapIndexBackwardReader reader = new BitmapIndexBackwardReader(configuration, "x")) {
+                    try (BitmapIndexBackwardReader reader1 = new BitmapIndexBackwardReader(configuration, "x")) {
                         LongList tmp = new LongList();
                         while (true) {
                             boolean keepGoing = false;
                             for (int i = keys.size() - 1; i > -1; i--) {
                                 int key = keys.getQuick(i);
                                 LongList values = lists.get(key);
-                                BitmapIndexCursor cursor = reader.getCursor(key, Long.MAX_VALUE);
+                                BitmapIndexCursor cursor = reader1.getCursor(key, Long.MAX_VALUE);
 
                                 tmp.clear();
                                 while (cursor.hasNext()) {
@@ -558,8 +558,10 @@ public class BitmapIndexTest extends AbstractCairoTest {
                 } finally {
                     stopLatch.countDown();
                 }
+            };
 
-            }).start();
+            new Thread(reader).start();
+            new Thread(reader).start();
 
             Assert.assertTrue(stopLatch.await(20000, TimeUnit.SECONDS));
             Assert.assertEquals(0, errors.get());
