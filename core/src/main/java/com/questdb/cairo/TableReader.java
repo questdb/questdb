@@ -510,11 +510,11 @@ public class TableReader implements Closeable, RecordCursor {
 
                 if (partitionSize > -1) {
                     openPartitionColumns(path, columnBase);
+                    partitionRowCounts.setQuick(partitionIndex, partitionSize);
                 }
             } else {
                 partitionSize = -1;
             }
-            partitionRowCounts.setQuick(partitionIndex, partitionSize);
             return partitionSize;
         } finally {
             path.trimTo(rootLen);
@@ -614,9 +614,11 @@ public class TableReader implements Closeable, RecordCursor {
         if (readTxn()) {
             partitionMin = findPartitionMinimum(dateFormat);
             partitionCount = calculatePartitionCount();
-            if (partitionCount > 0 && maxTimestamp != Numbers.LONG_NaN) {
+            if (partitionCount > 0) {
                 updateCapacities();
-                reloadMethod = PARTITIONED_RELOAD_METHOD;
+                if (maxTimestamp != Numbers.LONG_NaN) {
+                    reloadMethod = PARTITIONED_RELOAD_METHOD;
+                }
             }
             return true;
         }
@@ -732,6 +734,7 @@ public class TableReader implements Closeable, RecordCursor {
         while (partitionIndex < partitionCount) {
             final int columnBase = getColumnBase(partitionIndex);
 
+            assert partitionRowCounts.size() > 0 : "index: " + partitionIndex + ", count: " + partitionCount;
             long partitionSize = partitionRowCounts.getQuick(partitionIndex);
             if (partitionSize == -1) {
                 partitionSize = openPartition(partitionIndex++, columnBase, partitionIndex == partitionCount);
