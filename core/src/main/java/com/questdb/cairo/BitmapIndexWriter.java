@@ -76,7 +76,7 @@ public class BitmapIndexWriter implements Closeable {
             }
 
             // check if sequence is intact
-            if (this.keyMem.getLong(BitmapIndexUtils.KEY_RESERVED_SEQUENCE_CHECK) != this.keyMem.getLong(BitmapIndexUtils.KEY_RESERVED_SEQUENCE)) {
+            if (this.keyMem.getLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE_CHECK) != this.keyMem.getLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE)) {
                 LOG.error().$("sequence mismatch [corrupt] at ").$(path).$();
                 throw CairoException.instance(0).put("Sequence mismatch on ").put(path);
             }
@@ -327,8 +327,8 @@ public class BitmapIndexWriter implements Closeable {
         keyCount = key + 1;
 
         // also write key count to header of key memory
-        keyMem.jumpTo(BitmapIndexUtils.KEY_RESERVED_SEQUENCE);
-        long seq = keyMem.getLong(BitmapIndexUtils.KEY_RESERVED_SEQUENCE) + 1;
+        keyMem.jumpTo(BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE);
+        long seq = keyMem.getLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE) + 1;
         keyMem.putLong(seq);
         Unsafe.getUnsafe().storeFence();
 
@@ -336,19 +336,19 @@ public class BitmapIndexWriter implements Closeable {
         keyMem.putLong(keyCount);
         Unsafe.getUnsafe().storeFence();
 
-        keyMem.jumpTo(BitmapIndexUtils.KEY_RESERVED_SEQUENCE_CHECK);
+        keyMem.jumpTo(BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE_CHECK);
         keyMem.putLong(seq);
     }
 
     private void updateValueMemSize() {
-        keyMem.jumpTo(BitmapIndexUtils.KEY_RESERVED_SEQUENCE);
-        long seq = keyMem.getLong(BitmapIndexUtils.KEY_RESERVED_SEQUENCE) + 1;
+        keyMem.jumpTo(BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE);
+        long seq = keyMem.getLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE) + 1;
         keyMem.putLong(seq);
         Unsafe.getUnsafe().storeFence();
 
         keyMem.jumpTo(BitmapIndexUtils.KEY_RESERVED_OFFSET_VALUE_MEM_SIZE);
         keyMem.putLong(valueMemSize);
-        keyMem.jumpTo(BitmapIndexUtils.KEY_RESERVED_SEQUENCE_CHECK);
+        keyMem.jumpTo(BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE_CHECK);
         Unsafe.getUnsafe().storeFence();
         keyMem.putLong(seq);
     }

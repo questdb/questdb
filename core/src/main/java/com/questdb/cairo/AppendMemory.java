@@ -135,7 +135,7 @@ public class AppendMemory extends VirtualMemory {
         long offset = pageOffset(page);
         long address = ff.mmap(fd, getMapPageSize(), offset, Files.MAP_RW);
         if (address == -1) {
-            throw CairoException.instance(ff.errno()).put("Cannot mmap(append) fd=").put(fd).put(", offset=").put(offset).put(", size=").put(getMapPageSize());
+            throw CairoException.instance(ff.errno()).put("Cannot mmap append fd=").put(fd).put(", offset=").put(offset).put(", size=").put(getMapPageSize());
         }
         return address;
     }

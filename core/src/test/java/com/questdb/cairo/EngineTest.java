@@ -348,7 +348,7 @@ public class EngineTest extends AbstractCairoTest {
                 try {
                     engine.rename("x", "y");
                     Assert.fail();
-                } catch (Exception e) {
+                } catch (CairoException e) {
                     TestUtils.assertContains(e.getMessage(), "exists");
                 }
                 assertWriter(engine, "x");

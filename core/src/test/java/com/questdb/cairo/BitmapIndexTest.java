@@ -154,8 +154,8 @@ public class BitmapIndexTest extends AbstractCairoTest {
                          configuration.getFilesFacade().getPageSize())
             ) {
                 // change sequence but not sequence check
-                long seq = mem.getLong(BitmapIndexUtils.KEY_RESERVED_SEQUENCE);
-                mem.jumpTo(BitmapIndexUtils.KEY_RESERVED_SEQUENCE);
+                long seq = mem.getLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE);
+                mem.jumpTo(BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE);
                 mem.putLong(22);
 
                 try {
@@ -172,7 +172,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
                     Assert.assertTrue(Chars.contains(e.getMessage(), "failed to consistently"));
                 }
 
-                mem.jumpTo(BitmapIndexUtils.KEY_RESERVED_SEQUENCE);
+                mem.jumpTo(BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE);
                 mem.putLong(seq);
 
                 // test that index recovers

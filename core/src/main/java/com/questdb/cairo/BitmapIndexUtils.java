@@ -37,11 +37,11 @@ public final class BitmapIndexUtils {
      */
     static final int KEY_FILE_RESERVED = 64;
     static final int KEY_RESERVED_OFFSET_SIGNATURE = 0;
-    static final int KEY_RESERVED_SEQUENCE = 1;
+    static final int KEY_RESERVED_OFFSET_SEQUENCE = 1;
     static final int KEY_RESERVED_OFFSET_VALUE_MEM_SIZE = 9;
     static final int KEY_RESERVED_OFFSET_BLOCK_VALUE_COUNT = 17;
     static final int KEY_RESERVED_OFFSET_KEY_COUNT = 21;
-    static final int KEY_RESERVED_SEQUENCE_CHECK = 29;
+    static final int KEY_RESERVED_OFFSET_SEQUENCE_CHECK = 29;
 
     static final byte SIGNATURE = (byte) 0xfa;
     static final int VALUE_BLOCK_FILE_RESERVED = 16;

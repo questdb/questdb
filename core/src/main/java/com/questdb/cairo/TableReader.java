@@ -137,7 +137,7 @@ public class TableReader implements Closeable, RecordCursor {
             this.partitionRowCounts.seed(partitionCount, -1);
             this.columnTops = new LongList(capacity / 2);
             this.columnTops.setPos(capacity / 2);
-        } catch (CairoException e) {
+        } catch (AssertionError e) {
             close();
             throw e;
         }

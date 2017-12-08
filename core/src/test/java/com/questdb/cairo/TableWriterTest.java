@@ -2044,7 +2044,7 @@ public class TableWriterTest extends AbstractCairoTest {
             try {
                 new TableWriter(configuration, "all");
                 Assert.fail();
-            } catch (Exception ignored2) {
+            } catch (CairoException ignored2) {
             }
         }
     }
