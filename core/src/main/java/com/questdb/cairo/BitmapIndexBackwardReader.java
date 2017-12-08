@@ -73,14 +73,14 @@ public class BitmapIndexBackwardReader implements Closeable {
             long keyCount;
             long timestamp = clock.getTicks();
             while (true) {
-                long seq = this.keyMem.getLong(BitmapIndexUtils.KEY_RESERVED_SEQUENCE);
+                long seq = this.keyMem.getLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE);
                 Unsafe.getUnsafe().loadFence();
 
                 blockValueCountMod = this.keyMem.getInt(BitmapIndexUtils.KEY_RESERVED_OFFSET_BLOCK_VALUE_COUNT) - 1;
                 keyCount = this.keyMem.getLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_KEY_COUNT);
                 Unsafe.getUnsafe().loadFence();
 
-                if (this.keyMem.getLong(BitmapIndexUtils.KEY_RESERVED_SEQUENCE_CHECK) == seq) {
+                if (this.keyMem.getLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE_CHECK) == seq) {
                     break;
                 }
 
@@ -127,13 +127,13 @@ public class BitmapIndexBackwardReader implements Closeable {
         long keyCount;
         long timestamp = clock.getTicks();
         while (true) {
-            long seq = this.keyMem.getLong(BitmapIndexUtils.KEY_RESERVED_SEQUENCE);
+            long seq = this.keyMem.getLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE);
             Unsafe.getUnsafe().loadFence();
 
             keyCount = this.keyMem.getLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_KEY_COUNT);
             Unsafe.getUnsafe().loadFence();
 
-            if (this.keyMem.getLong(BitmapIndexUtils.KEY_RESERVED_SEQUENCE_CHECK) == seq) {
+            if (this.keyMem.getLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE_CHECK) == seq) {
                 break;
             }
 

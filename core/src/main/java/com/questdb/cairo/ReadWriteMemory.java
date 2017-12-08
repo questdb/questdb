@@ -66,7 +66,7 @@ public class ReadWriteMemory extends VirtualMemory {
         address = ff.mmap(fd, pageSize, offset, Files.MAP_RW);
 
         if (address == -1) {
-            throw CairoException.instance(ff.errno()).put("Cannot mmap(RW) fd=").put(fd).put(", offset=").put(offset).put(", size=").put(pageSize);
+            throw CairoException.instance(ff.errno()).put("Cannot mmap read-write fd=").put(fd).put(", offset=").put(offset).put(", size=").put(pageSize);
         }
         return address;
     }

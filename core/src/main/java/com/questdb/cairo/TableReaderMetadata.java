@@ -59,7 +59,7 @@ class TableReaderMetadata extends AbstractRecordMetadata implements Closeable {
                 columnMetadata.add(new TableColumnMetadata(columnNameIndexMap.keyAt(index).toString(), TableUtils.getColumnType(metaMem, i)));
                 offset += ReadOnlyMemory.getStorageLength(name);
             }
-        } catch (CairoException e) {
+        } catch (AssertionError e) {
             close();
             throw e;
         }

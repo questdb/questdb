@@ -190,7 +190,7 @@ public class TableReaderMetadataCorruptionTest extends AbstractCairoTest {
                 try {
                     new TableReaderMetadata(FilesFacadeImpl.INSTANCE, path);
                     Assert.fail();
-                } catch (CairoException e) {
+                } catch (AssertionError e) {
                     TestUtils.assertContains(e.getMessage(), contains);
                 }
             }

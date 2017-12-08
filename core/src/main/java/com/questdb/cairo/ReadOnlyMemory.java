@@ -77,12 +77,6 @@ public class ReadOnlyMemory extends VirtualMemory implements ReadOnlyColumn {
         return size;
     }
 
-    void grow(long size) {
-        if (size > this.size) {
-            grow0(size);
-        }
-    }
-
     public void of(FilesFacade ff, LPSZ name, long maxPageSize) {
         close();
         this.ff = ff;
@@ -98,6 +92,12 @@ public class ReadOnlyMemory extends VirtualMemory implements ReadOnlyColumn {
         this.maxPageSize = maxPageSize;
         grow0(ff.length(fd));
         LOG.info().$("open ").$(name).$(" [fd=").$(fd).$(']').$();
+    }
+
+    void grow(long size) {
+        if (size > this.size) {
+            grow0(size);
+        }
     }
 
     @Override
@@ -117,14 +117,28 @@ public class ReadOnlyMemory extends VirtualMemory implements ReadOnlyColumn {
         return maxPageSize;
     }
 
-    @Override
-    protected void release(int page, long address) {
-        if (address != 0) {
-            ff.munmap(address, getPageSize(page));
-            if (page == lastPageIndex) {
-                lastPageSize = getMapPageSize();
+    private long mapPage(int page) {
+        long address;
+        long offset = pageOffset(page);
+        long sz = size - offset;
+
+        if (sz > 0) {
+            if (sz >= getMapPageSize()) {
+                sz = getMapPageSize();
+            } else {
+                this.lastPageSize = sz;
+                this.lastPageIndex = page;
             }
+
+            address = ff.mmap(fd, sz, offset, Files.MAP_RO);
+            if (address == -1L) {
+                throw CairoException.instance(ff.errno()).put("Cannot mmap read-only fd=").put(fd).put(", offset=").put(offset).put(", size=").put(this.size).put(", page=").put(sz);
+            }
+            return cachePageAddress(page, address);
         }
+        CairoException ex = CairoException.instance(ff.errno()).put("Trying to map read-only page outside of file boundary. fd=").put(fd).put(", offset=").put(offset).put(", size=").put(this.size).put(", page=").put(sz);
+        assert false : ex.getMessage();
+        throw ex;
     }
 
     private void grow0(long size) {
@@ -152,25 +166,13 @@ public class ReadOnlyMemory extends VirtualMemory implements ReadOnlyColumn {
         this.size = size;
     }
 
-    private long mapPage(int page) {
-        long address;
-        long offset = pageOffset(page);
-        long sz = size - offset;
-
-        if (sz > 0) {
-            if (sz >= getMapPageSize()) {
-                sz = getMapPageSize();
-            } else {
-                this.lastPageSize = sz;
-                this.lastPageIndex = page;
+    @Override
+    protected void release(int page, long address) {
+        if (address != 0) {
+            ff.munmap(address, getPageSize(page));
+            if (page == lastPageIndex) {
+                lastPageSize = getMapPageSize();
             }
-
-            address = ff.mmap(fd, sz, offset, Files.MAP_RO);
-            if (address == -1L) {
-                throw CairoException.instance(ff.errno()).put("Cannot mmap(read) fd=").put(fd).put(", offset=").put(offset).put(", size=").put(this.size).put(", page=").put(sz);
-            }
-            return cachePageAddress(page, address);
         }
-        throw CairoException.instance(ff.errno()).put("Trying to map(read) page outside of file boundary. fd=").put(fd).put(", offset=").put(offset).put(", size=").put(this.size).put(", page=").put(sz);
     }
 }
