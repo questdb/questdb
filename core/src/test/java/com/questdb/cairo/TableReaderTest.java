@@ -566,82 +566,103 @@ public class TableReaderTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testDummyFacade() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            CairoTestUtils.createAllTable(configuration, PartitionBy.NONE);
-            try (TableReader reader = new TableReader(configuration, "all")) {
-                Assert.assertNull(reader.getStorageFacade());
-            }
-        });
+    public void testConcurrentReloadByDay() throws Exception {
+        testConcurrentReloadSinglePartition(PartitionBy.DAY);
     }
 
     @Test
-    public void testNullValueRecovery() throws Exception {
-        final String expected = "int\tshort\tbyte\tdouble\tfloat\tlong\tstr\tsym\tbool\tbin\tdate\n" +
-                "NaN\t0\t0\tNaN\tNaN\tNaN\t\tabc\ttrue\t\t\n";
-
-        TestUtils.assertMemoryLeak(() -> {
-            CairoTestUtils.createAllTable(configuration, PartitionBy.NONE);
-
-            try (TableWriter w = new TableWriter(configuration, "all")) {
-                TableWriter.Row r = w.newRow(1000000); // <-- higher timestamp
-                r.putInt(0, 10);
-                r.putByte(1, (byte) 56);
-                r.putDouble(2, 4.3223);
-                r.putStr(6, "xyz");
-                r.cancel();
-
-                r = w.newRow(100000); // <-- lower timestamp
-                r.putStr(7, "abc");
-                r.putBool(8, true);
-                r.append();
-
-                w.commit();
-            }
-
-            try (TableReader r = new TableReader(configuration, "all")) {
-                sink.clear();
-                printer.print(r, true, r.getMetadata());
-                TestUtils.assertEquals(expected, sink);
-            }
-        });
+    public void testConcurrentReloadMultipleByDay() throws Exception {
+        testConcurrentReloadMultiplePartitions(PartitionBy.DAY, 100000);
     }
 
     @Test
-    public void testOver2GFile() throws Exception {
+    public void testConcurrentReloadMultipleByMonth() throws Exception {
+        testConcurrentReloadMultiplePartitions(PartitionBy.MONTH, 3000000);
+    }
+
+    @Test
+    public void testConcurrentReloadMultipleByYear() throws Exception {
+        testConcurrentReloadMultiplePartitions(PartitionBy.MONTH, 12 * 3000000);
+    }
+
+    public void testConcurrentReloadMultiplePartitions(int partitionBy, long stride) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)
-                    .col("a", ColumnType.INT)) {
+            // model data
+            LongList list = new LongList();
+            final int N = 1024;
+            final int scale = 10000;
+            for (int i = 0; i < N; i++) {
+                list.add(i);
+            }
+
+            // model table
+            try (TableModel model = new TableModel(configuration, "w", partitionBy).col("l", ColumnType.LONG).timestamp()) {
                 CairoTestUtils.create(model);
             }
 
-            long N = 280000000;
-            Rnd rnd = new Rnd();
-            try (TableWriter writer = new TableWriter(configuration, "x")) {
-                for (int i = 0; i < N; i++) {
-                    TableWriter.Row r = writer.newRow(0);
-                    r.putLong(0, rnd.nextLong());
-                    r.append();
-                }
-                writer.commit();
-            }
+            final int threads = 2;
+            final CyclicBarrier startBarrier = new CyclicBarrier(threads);
+            final CountDownLatch stopLatch = new CountDownLatch(threads);
+            final AtomicInteger errors = new AtomicInteger(0);
 
-            try (TableReader reader = new TableReader(configuration, "x")) {
-                int count = 0;
-                rnd.reset();
-                while (reader.hasNext()) {
-                    Record record = reader.next();
-                    Assert.assertEquals(rnd.nextLong(), record.getLong(0));
-                    count++;
+            // start writer
+            new Thread(() -> {
+                try {
+                    startBarrier.await();
+                    long timestampUs = DateFormatUtils.parseDateTime("2017-12-11T00:00:00.000Z");
+                    try (TableWriter writer = new TableWriter(configuration, "w")) {
+                        for (int i = 0; i < N * scale; i++) {
+                            TableWriter.Row row = writer.newRow(timestampUs);
+                            row.putLong(0, list.getQuick(i % N));
+                            row.append();
+                            writer.commit();
+                            timestampUs += stride;
+                        }
+                    }
+                } catch (Exception e) {
+                    e.printStackTrace();
+                    errors.incrementAndGet();
+                } finally {
+                    stopLatch.countDown();
                 }
-                Assert.assertEquals(N, count);
+            }).start();
+
+            // start reader
+            new Thread(() -> {
+                try {
+                    startBarrier.await();
+                    try (TableReader reader = new TableReader(configuration, "w")) {
+                        do {
+                            // we deliberately ignore result of reload()
+                            // to create more race conditions
+                            reader.reload();
+                            reader.toTop();
+                            int count = 0;
+                            while (reader.hasNext()) {
+                                Assert.assertEquals(list.get(count++ % N), reader.next().getLong(0));
+                            }
+
+                            if (count == N * scale) {
+                                break;
+                            }
+                        } while (true);
+                    }
+                } catch (Throwable e) {
+                    e.printStackTrace();
+                    errors.incrementAndGet();
+                } finally {
+                    stopLatch.countDown();
+                }
+            }).start();
+
+            Assert.assertTrue(stopLatch.await(30, TimeUnit.SECONDS));
+            Assert.assertEquals(0, errors.get());
+
+            // check that we had multiple partitions created during the test
+            try (TableReader reader = new TableReader(configuration, "w")) {
+                Assert.assertTrue(reader.getPartitionCount() > 10);
             }
         });
-    }
-
-    @Test
-    public void testConcurrentReloadByDay() throws Exception {
-        testConcurrentReloadSinglePartition(PartitionBy.DAY);
     }
 
     @Test
@@ -721,6 +742,122 @@ public class TableReaderTest extends AbstractCairoTest {
             Assert.assertTrue(stopLatch.await(30, TimeUnit.SECONDS));
             Assert.assertEquals(0, errors.get());
         });
+    }
+
+    @Test
+    public void testDummyFacade() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            CairoTestUtils.createAllTable(configuration, PartitionBy.NONE);
+            try (TableReader reader = new TableReader(configuration, "all")) {
+                Assert.assertNull(reader.getStorageFacade());
+            }
+        });
+    }
+
+    @Test
+    public void testNullValueRecovery() throws Exception {
+        final String expected = "int\tshort\tbyte\tdouble\tfloat\tlong\tstr\tsym\tbool\tbin\tdate\n" +
+                "NaN\t0\t0\tNaN\tNaN\tNaN\t\tabc\ttrue\t\t\n";
+
+        TestUtils.assertMemoryLeak(() -> {
+            CairoTestUtils.createAllTable(configuration, PartitionBy.NONE);
+
+            try (TableWriter w = new TableWriter(configuration, "all")) {
+                TableWriter.Row r = w.newRow(1000000); // <-- higher timestamp
+                r.putInt(0, 10);
+                r.putByte(1, (byte) 56);
+                r.putDouble(2, 4.3223);
+                r.putStr(6, "xyz");
+                r.cancel();
+
+                r = w.newRow(100000); // <-- lower timestamp
+                r.putStr(7, "abc");
+                r.putBool(8, true);
+                r.append();
+
+                w.commit();
+            }
+
+            try (TableReader r = new TableReader(configuration, "all")) {
+                sink.clear();
+                printer.print(r, true, r.getMetadata());
+                TestUtils.assertEquals(expected, sink);
+            }
+        });
+    }
+
+    @Test
+    public void testOver2GFile() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)
+                    .col("a", ColumnType.INT)) {
+                CairoTestUtils.create(model);
+            }
+
+            long N = 280000000;
+            Rnd rnd = new Rnd();
+            try (TableWriter writer = new TableWriter(configuration, "x")) {
+                for (int i = 0; i < N; i++) {
+                    TableWriter.Row r = writer.newRow(0);
+                    r.putLong(0, rnd.nextLong());
+                    r.append();
+                }
+                writer.commit();
+            }
+
+            try (TableReader reader = new TableReader(configuration, "x")) {
+                int count = 0;
+                rnd.reset();
+                while (reader.hasNext()) {
+                    Record record = reader.next();
+                    Assert.assertEquals(rnd.nextLong(), record.getLong(0));
+                    count++;
+                }
+                Assert.assertEquals(N, count);
+            }
+        });
+    }
+
+    @Test
+    public void testPartialString() {
+        CairoTestUtils.createAllTable(configuration, PartitionBy.NONE);
+        int N = 10000;
+        Rnd rnd = new Rnd();
+        try (TableWriter writer = new TableWriter(configuration, "all")) {
+            int col = writer.getMetadata().getColumnIndex("str");
+            for (int i = 0; i < N; i++) {
+                TableWriter.Row r = writer.newRow(0);
+                CharSequence chars = rnd.nextChars(15);
+                r.putStr(col, chars, 2, 10);
+                r.append();
+            }
+            writer.commit();
+
+            // add more rows for good measure and rollback
+
+            for (int i = 0; i < N; i++) {
+                TableWriter.Row r = writer.newRow(0);
+                CharSequence chars = rnd.nextChars(15);
+                r.putStr(col, chars, 2, 10);
+                r.append();
+            }
+            writer.rollback();
+
+            rnd.reset();
+
+            try (TableReader reader = new TableReader(configuration, "all")) {
+                col = reader.getMetadata().getColumnIndex("str");
+                int count = 0;
+                while (reader.hasNext()) {
+                    Record record = reader.next();
+                    CharSequence expected = rnd.nextChars(15);
+                    CharSequence actual = record.getFlyweightStr(col);
+                    Assert.assertTrue(Chars.equals(expected, 2, 10, actual, 0, 8));
+                    count++;
+                }
+                Assert.assertEquals(N, count);
+            }
+        }
     }
 
     @Test
@@ -1354,48 +1491,6 @@ public class TableReaderTest extends AbstractCairoTest {
         return ts;
     }
 
-    @Test
-    public void testPartialString() {
-        CairoTestUtils.createAllTable(configuration, PartitionBy.NONE);
-        int N = 10000;
-        Rnd rnd = new Rnd();
-        try (TableWriter writer = new TableWriter(configuration, "all")) {
-            int col = writer.getMetadata().getColumnIndex("str");
-            for (int i = 0; i < N; i++) {
-                TableWriter.Row r = writer.newRow(0);
-                CharSequence chars = rnd.nextChars(15);
-                r.putStr(col, chars, 2, 10);
-                r.append();
-            }
-            writer.commit();
-
-            // add more rows for good measure and rollback
-
-            for (int i = 0; i < N; i++) {
-                TableWriter.Row r = writer.newRow(0);
-                CharSequence chars = rnd.nextChars(15);
-                r.putStr(col, chars, 2, 10);
-                r.append();
-            }
-            writer.rollback();
-
-            rnd.reset();
-
-            try (TableReader reader = new TableReader(configuration, "all")) {
-                col = reader.getMetadata().getColumnIndex("str");
-                int count = 0;
-                while (reader.hasNext()) {
-                    Record record = reader.next();
-                    CharSequence expected = rnd.nextChars(15);
-                    CharSequence actual = record.getFlyweightStr(col);
-                    Assert.assertTrue(Chars.equals(expected, 2, 10, actual, 0, 8));
-                    count++;
-                }
-                Assert.assertEquals(N, count);
-            }
-        }
-    }
-
     private long testAppend(TableWriter writer, Rnd rnd, long ts, int count, long inc, long blob, int testPartitionSwitch, FieldGenerator generator) {
         long size = writer.size();
 
@@ -1416,6 +1511,12 @@ public class TableReaderTest extends AbstractCairoTest {
 
         Assert.assertEquals(size + count, writer.size());
         return ts;
+    }
+
+    private long testAppend(Rnd rnd, CairoConfiguration configuration, long ts, int count, long inc, long blob, int testPartitionSwitch, FieldGenerator generator) {
+        try (TableWriter writer = new TableWriter(configuration, "all")) {
+            return testAppend(writer, rnd, ts, count, inc, blob, testPartitionSwitch, generator);
+        }
     }
 
     private void testCloseColumn(int partitionBy, int count, long increment, String column) throws Exception {
@@ -1476,12 +1577,6 @@ public class TableReaderTest extends AbstractCairoTest {
             });
         } finally {
             freeBlob(blob);
-        }
-    }
-
-    private long testAppend(Rnd rnd, CairoConfiguration configuration, long ts, int count, long inc, long blob, int testPartitionSwitch, FieldGenerator generator) {
-        try (TableWriter writer = new TableWriter(configuration, "all")) {
-            return testAppend(writer, rnd, ts, count, inc, blob, testPartitionSwitch, generator);
         }
     }
 

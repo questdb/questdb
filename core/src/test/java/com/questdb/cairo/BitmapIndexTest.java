@@ -520,48 +520,51 @@ public class BitmapIndexTest extends AbstractCairoTest {
                 }
             }).start();
 
-            Runnable reader = () -> {
-                try {
-                    startBarrier.await();
-                    try (BitmapIndexBackwardReader reader1 = new BitmapIndexBackwardReader(configuration, "x")) {
-                        LongList tmp = new LongList();
-                        while (true) {
-                            boolean keepGoing = false;
-                            for (int i = keys.size() - 1; i > -1; i--) {
-                                int key = keys.getQuick(i);
-                                LongList values = lists.get(key);
-                                BitmapIndexCursor cursor = reader1.getCursor(key, Long.MAX_VALUE);
+            class MyReader implements Runnable {
+                @Override
+                public void run() {
+                    try {
+                        startBarrier.await();
+                        try (BitmapIndexBackwardReader reader1 = new BitmapIndexBackwardReader(configuration, "x")) {
+                            LongList tmp = new LongList();
+                            while (true) {
+                                boolean keepGoing = false;
+                                for (int i = keys.size() - 1; i > -1; i--) {
+                                    int key = keys.getQuick(i);
+                                    LongList values = lists.get(key);
+                                    BitmapIndexCursor cursor = reader1.getCursor(key, Long.MAX_VALUE);
 
-                                tmp.clear();
-                                while (cursor.hasNext()) {
-                                    tmp.add(cursor.next());
+                                    tmp.clear();
+                                    while (cursor.hasNext()) {
+                                        tmp.add(cursor.next());
+                                    }
+
+                                    int sz = tmp.size();
+                                    for (int k = 0; k < sz; k++) {
+                                        Assert.assertEquals(values.getQuick(sz - k - 1), tmp.getQuick(k));
+                                    }
+
+                                    if (sz < values.size()) {
+                                        keepGoing = true;
+                                    }
                                 }
 
-                                int sz = tmp.size();
-                                for (int k = 0; k < sz; k++) {
-                                    Assert.assertEquals(values.getQuick(sz - k - 1), tmp.getQuick(k));
+                                if (!keepGoing) {
+                                    break;
                                 }
-
-                                if (sz < values.size()) {
-                                    keepGoing = true;
-                                }
-                            }
-
-                            if (!keepGoing) {
-                                break;
                             }
                         }
+                    } catch (Throwable e) {
+                        errors.incrementAndGet();
+                        e.printStackTrace();
+                    } finally {
+                        stopLatch.countDown();
                     }
-                } catch (Throwable e) {
-                    errors.incrementAndGet();
-                    e.printStackTrace();
-                } finally {
-                    stopLatch.countDown();
                 }
-            };
+            }
 
-            new Thread(reader).start();
-            new Thread(reader).start();
+            new Thread(new MyReader()).start();
+            new Thread(new MyReader()).start();
 
             Assert.assertTrue(stopLatch.await(20000, TimeUnit.SECONDS));
             Assert.assertEquals(0, errors.get());
