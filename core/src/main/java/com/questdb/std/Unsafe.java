@@ -66,7 +66,7 @@ public final class Unsafe {
     }
 
     public static long arrayGet(long[] array, int index) {
-        assert index > -1 && index < array.length;
+        assert index > -1 && index < array.length : "index: " + index + ", len: " + array.length;
         return Unsafe.getUnsafe().getLong(array, LONG_OFFSET + (index << LONG_SCALE));
     }
 
