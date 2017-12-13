@@ -188,7 +188,7 @@ public class MMappedSymbolTable implements Closeable, SymbolTable {
             data.commit();
             index.add(hashKey(value), key);
             size++;
-            cache(key, value.toString());
+            cache(key, value);
         }
         return key;
     }
@@ -230,13 +230,14 @@ public class MMappedSymbolTable implements Closeable, SymbolTable {
         return iter;
     }
 
-    private void cache(int key, String value) {
+    private void cache(int key, CharSequence value) {
         if (noCache) {
             return;
         }
 
-        valueCache.put(value, key);
-        keyCache.extendAndSet(key, value);
+        final String str = value.toString();
+        valueCache.put(str, key);
+        keyCache.extendAndSet(key, str);
     }
 
     private void clearCache() {
@@ -255,7 +256,7 @@ public class MMappedSymbolTable implements Closeable, SymbolTable {
         while (cursor.hasNext()) {
             int key;
             if (data.cmpStr((key = (int) cursor.next()), value)) {
-                cache(key, value.toString());
+                cache(key, value);
                 return key;
             }
         }

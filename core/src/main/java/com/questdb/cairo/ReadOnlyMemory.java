@@ -66,6 +66,9 @@ public class ReadOnlyMemory extends VirtualMemory implements ReadOnlyColumn {
 
     @Override
     protected long getPageSize(int page) {
+        // in some cases VirtualMemory.getPageSize() is called
+        // before page is mapped, where lastPageIndex is set
+        // if this is the case I need to test better
         if (page == lastPageIndex) {
             return lastPageSize;
         } else {
@@ -123,11 +126,11 @@ public class ReadOnlyMemory extends VirtualMemory implements ReadOnlyColumn {
         long sz = size - offset;
 
         if (sz > 0) {
-            if (sz >= getMapPageSize()) {
-                sz = getMapPageSize();
-            } else {
+            if (sz < getMapPageSize()) {
                 this.lastPageSize = sz;
                 this.lastPageIndex = page;
+            } else {
+                sz = getMapPageSize();
             }
 
             address = ff.mmap(fd, sz, offset, Files.MAP_RO);

@@ -33,10 +33,10 @@ import java.nio.ByteBuffer;
 public class VirtualMemory implements Closeable {
     private static final int STRING_LENGTH_BYTES = 4;
     protected final LongList pages = new LongList(4, 0);
+    private final ByteSequenceView bsview = new ByteSequenceView();
+    private final CharSequenceView csview = new CharSequenceView();
+    private final CharSequenceView csview2 = new CharSequenceView();
     private long pageSize;
-    private ByteSequenceView bsview;
-    private CharSequenceView csview;
-    private CharSequenceView csview2;
     private int bits;
     private long mod;
     private long appendPointer = -1;
@@ -46,8 +46,6 @@ public class VirtualMemory implements Closeable {
     private long roOffsetLo = 0;
     private long roOffsetHi = 0;
     private long absolutePointer;
-    private ViewSupplier<CharSequenceView> csViewSupplier;
-    private ViewSupplier<ByteSequenceView> bsViewSupplier;
 
     public VirtualMemory(long pageSize) {
         this();
@@ -55,8 +53,6 @@ public class VirtualMemory implements Closeable {
     }
 
     protected VirtualMemory() {
-        csViewSupplier = VirtualMemory::createCharSequenceView;
-        bsViewSupplier = VirtualMemory::createByteSequenceView;
     }
 
     public static int getStorageLength(CharSequence s) {
@@ -65,10 +61,6 @@ public class VirtualMemory implements Closeable {
         }
 
         return STRING_LENGTH_BYTES + s.length() * 2;
-    }
-
-    protected void ensurePagesListCapacity(long size) {
-        pages.ensureCapacity(pageIndex(size) + 1);
     }
 
     public long addressOf(long offset) {
@@ -101,7 +93,7 @@ public class VirtualMemory implements Closeable {
         if (len == -1) {
             return null;
         }
-        return getByteSequenceView().of(offset + 8, len);
+        return bsview.of(offset + 8, len);
     }
 
     public final long getBinLen(long offset) {
@@ -159,16 +151,13 @@ public class VirtualMemory implements Closeable {
         if (len == -1) {
             return null;
         }
-        return getCharSequenceView().of(offset + STRING_LENGTH_BYTES, len);
+        return csview.of(offset + STRING_LENGTH_BYTES, len);
     }
 
     public final CharSequence getStr2(long offset) {
         final int len = getInt(offset);
         if (len == -1) {
             return null;
-        }
-        if (csview2 == null) {
-            csview2 = new CharSequenceView();
         }
         return csview2.of(offset + STRING_LENGTH_BYTES, len);
     }
@@ -396,26 +385,13 @@ public class VirtualMemory implements Closeable {
         }
     }
 
-    private ByteSequenceView createByteSequenceView() {
-        bsViewSupplier = (mem) -> mem.bsview;
-        return bsview = new ByteSequenceView();
-    }
 
-    private CharSequenceView createCharSequenceView() {
-        csViewSupplier = (mem) -> mem.csview;
-        return csview = new CharSequenceView();
+    protected void ensurePagesListCapacity(long size) {
+        pages.ensureCapacity(pageIndex(size) + 1);
     }
 
     private byte getByte0(long offset) {
         return Unsafe.getUnsafe().getByte(computeHotPage(pageIndex(offset)) + offsetInPage(offset));
-    }
-
-    private ByteSequenceView getByteSequenceView() {
-        return bsViewSupplier.get(this);
-    }
-
-    private CharSequenceView getCharSequenceView() {
-        return csViewSupplier.get(this);
     }
 
     private double getDouble0(long offset) {
@@ -754,11 +730,6 @@ public class VirtualMemory implements Closeable {
         pageHi = pageAddress + getPageSize(page);
         baseOffset = pageOffset(page + 1) - pageHi;
         this.appendPointer = pageAddress;
-    }
-
-    @FunctionalInterface
-    private interface ViewSupplier<T> {
-        T get(VirtualMemory mem);
     }
 
     public class CharSequenceView extends AbstractCharSequence {
