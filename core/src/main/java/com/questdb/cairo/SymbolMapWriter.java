@@ -27,9 +27,8 @@ import com.questdb.std.Chars;
 import com.questdb.std.Hash;
 import com.questdb.std.Misc;
 import com.questdb.std.str.Path;
-import com.sun.xml.internal.ws.Closeable;
 
-import javax.xml.ws.WebServiceException;
+import java.io.Closeable;
 
 public class SymbolMapWriter implements Closeable {
     private final BitmapIndexWriter writer;
@@ -51,7 +50,7 @@ public class SymbolMapWriter implements Closeable {
     }
 
     @Override
-    public void close() throws WebServiceException {
+    public void close() {
         Misc.free(writer);
         Misc.free(reader);
         Misc.free(charMem);
