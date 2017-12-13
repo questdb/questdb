@@ -47,7 +47,7 @@ public class SymbolMapWriterTest extends AbstractCairoTest {
                     CharSequence cs = rnd.nextChars(10);
                     long key = writer.put(cs);
                     Assert.assertEquals(prev + 1, key);
-//                    Assert.assertEquals(key, writer.put(cs));
+                    Assert.assertEquals(key, writer.put(cs));
                     prev = key;
                 }
             }
