@@ -99,7 +99,8 @@ public class ReadOnlyMemory extends VirtualMemory implements ReadOnlyColumn {
 
     void grow(long size) {
         if (size > this.size) {
-            grow0(size);
+            long fileSize = ff.length(fd);
+            grow0(size > fileSize ? size : fileSize);
         }
     }
 
