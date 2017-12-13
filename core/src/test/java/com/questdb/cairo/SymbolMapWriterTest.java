@@ -30,10 +30,12 @@ import com.questdb.store.JournalMode;
 import com.questdb.store.MMappedSymbolTable;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Ignore;
 import org.junit.Test;
 
 import java.io.File;
 
+@Ignore
 public class SymbolMapWriterTest extends AbstractCairoTest {
 
     @Test
