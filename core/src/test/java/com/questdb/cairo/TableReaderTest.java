@@ -1700,7 +1700,6 @@ public class TableReaderTest extends AbstractCairoTest {
 
                 }
 
-
                 try (TableReader reader = new TableReader(configuration, "all")) {
 
                     // this combination of reload/iterate/reload is deliberate
@@ -1733,7 +1732,8 @@ public class TableReaderTest extends AbstractCairoTest {
 
                     // if we don't reload reader it should still see first batch
                     // reader can see all the rows ?
-                    assertCursor(reader, ts, increment, blob, count, BATCH1_ASSERTER);
+                    reader.toTop();
+                    assertPartialCursor(reader, new Rnd(), ts, increment, blob, count / 4, BATCH1_ASSERTER);
 
                     // reload should be successful because we have new data in the table
                     Assert.assertTrue(reader.reload());
