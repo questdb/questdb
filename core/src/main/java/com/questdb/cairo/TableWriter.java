@@ -863,10 +863,10 @@ public class TableWriter implements Closeable {
         AppendMemory mem1 = getPrimaryColumn(i);
         AppendMemory mem2 = getSecondaryColumn(i);
 
-        mem1.of(ff, TableUtils.dFile(path.trimTo(plen), name), TableUtils.getMapPageSize(ff));
+        mem1.of(ff, TableUtils.dFile(path.trimTo(plen), name), ff.getMapPageSize());
 
         if (mem2 != null) {
-            mem2.of(ff, TableUtils.iFile(path.trimTo(plen), name), TableUtils.getMapPageSize(ff));
+            mem2.of(ff, TableUtils.iFile(path.trimTo(plen), name), ff.getMapPageSize());
         }
 
         path.trimTo(plen);

@@ -40,10 +40,11 @@ public class SymbolMapWriter implements Closeable {
     public SymbolMapWriter(CairoConfiguration configuration, CharSequence name, int capacity, int maxHash) {
         this.writer = new BitmapIndexWriter(configuration, name, capacity);
         this.reader = new BitmapIndexBackwardReader(configuration, name);
+        long mapPageSize = configuration.getFilesFacade().getMapPageSize();
 
         try (Path path = new Path()) {
-            this.charMem = new ReadWriteMemory(configuration.getFilesFacade(), path.of(configuration.getRoot()).concat(name).put(".c").$(), TableUtils.getMapPageSize(configuration.getFilesFacade()));
-            this.offsetMem = new ReadWriteMemory(configuration.getFilesFacade(), path.of(configuration.getRoot()).concat(name).put(".o").$(), TableUtils.getMapPageSize(configuration.getFilesFacade()));
+            this.charMem = new ReadWriteMemory(configuration.getFilesFacade(), path.of(configuration.getRoot()).concat(name).put(".c").$(), mapPageSize);
+            this.offsetMem = new ReadWriteMemory(configuration.getFilesFacade(), path.of(configuration.getRoot()).concat(name).put(".o").$(), mapPageSize);
         }
 
         this.maxHash = maxHash;

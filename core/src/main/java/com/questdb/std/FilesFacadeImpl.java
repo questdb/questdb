@@ -30,6 +30,8 @@ import com.questdb.std.str.Path;
 public class FilesFacadeImpl implements FilesFacade {
 
     public static final FilesFacade INSTANCE = new FilesFacadeImpl();
+    private static final int _16M = 16 * 1024 * 1024;
+    private long mapPageSize = 0;
 
     @Override
     public long append(long fd, long buf, int len) {
@@ -49,6 +51,11 @@ public class FilesFacadeImpl implements FilesFacade {
     @Override
     public boolean exists(LPSZ path) {
         return Files.exists(path);
+    }
+
+    @Override
+    public boolean exists(long fd) {
+        return Files.exists(fd);
     }
 
     @Override
@@ -85,6 +92,14 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
+    public long getMapPageSize() {
+        if (mapPageSize == 0) {
+            mapPageSize = computeMapPageSize();
+        }
+        return mapPageSize;
+    }
+
+    @Override
     public long getOpenFileCount() {
         return Files.getOpenFileCount();
     }
@@ -115,6 +130,11 @@ public class FilesFacadeImpl implements FilesFacade {
     @Override
     public long length(LPSZ name) {
         return Files.length(name);
+    }
+
+    @Override
+    public int lock(long fd) {
+        return Files.lock(fd);
     }
 
     @Override
@@ -168,6 +188,11 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
+    public boolean supportsTruncateMappedFiles() {
+        return Os.type != Os.WINDOWS;
+    }
+
+    @Override
     public boolean truncate(long fd, long size) {
         return Files.truncate(fd, size);
     }
@@ -177,18 +202,16 @@ public class FilesFacadeImpl implements FilesFacade {
         return Files.write(fd, address, len, offset);
     }
 
-    @Override
-    public boolean exists(long fd) {
-        return Files.exists(fd);
-    }
-
-    @Override
-    public boolean supportsTruncateMappedFiles() {
-        return Os.type != Os.WINDOWS;
-    }
-
-    @Override
-    public int lock(long fd) {
-        return Files.lock(fd);
+    private long computeMapPageSize() {
+        long pageSize = getPageSize();
+        long mapPageSize = pageSize * pageSize;
+        if (mapPageSize < pageSize || mapPageSize > _16M) {
+            if (_16M % pageSize == 0) {
+                return _16M;
+            }
+            return pageSize;
+        } else {
+            return mapPageSize;
+        }
     }
 }

@@ -60,7 +60,6 @@ public final class TableUtils {
     static final long META_OFFSET_COUNT = 0;
     static final long META_OFFSET_PARTITION_BY = 4;
     static final long META_OFFSET_TIMESTAMP_INDEX = 8;
-    private static final int _16M = 16 * 1024 * 1024;
     private final static Log LOG = LogFactory.getLog(TableUtils.class);
 
     public static void create(FilesFacade ff, Path path, AppendMemory memory, CharSequence root, JournalMetadata metadata, int mode) {
@@ -227,18 +226,6 @@ public final class TableUtils {
 
     static LPSZ iFile(Path path, CharSequence columnName) {
         return path.concat(columnName).put(".i").$();
-    }
-
-    static long getMapPageSize(FilesFacade ff) {
-        long pageSize = ff.getPageSize() * ff.getPageSize();
-        if (pageSize < ff.getPageSize() || pageSize > _16M) {
-            if (_16M % ff.getPageSize() == 0) {
-                return _16M;
-            }
-            return ff.getPageSize();
-        } else {
-            return pageSize;
-        }
     }
 
     static int getColumnType(ReadOnlyMemory metaMem, int columnIndex) {

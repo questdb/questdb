@@ -348,14 +348,14 @@ public class TableReader implements Closeable, RecordCursor {
                 // we defer setting rowCount
 
                 columns.setQuick(getPrimaryColumnIndex(columnBase, columnIndex),
-                        new ReadOnlyMemory(ff, path, TableUtils.getMapPageSize(ff)));
+                        new ReadOnlyMemory(ff, path, ff.getMapPageSize()));
 
                 switch (metadata.getColumnQuick(columnIndex).getType()) {
                     case ColumnType.BINARY:
                     case ColumnType.STRING:
                     case ColumnType.SYMBOL:
                         columns.setQuick(getSecondaryColumnIndex(columnBase, columnIndex),
-                                new ReadOnlyMemory(ff, TableUtils.iFile(path.trimTo(plen), name), TableUtils.getMapPageSize(ff)));
+                                new ReadOnlyMemory(ff, TableUtils.iFile(path.trimTo(plen), name), ff.getMapPageSize()));
                         break;
                     default:
                         break;
