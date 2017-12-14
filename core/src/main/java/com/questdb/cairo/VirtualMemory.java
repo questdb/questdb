@@ -111,6 +111,13 @@ public class VirtualMemory implements Closeable {
         return getByte0(offset);
     }
 
+    public final char getChar(long offset) {
+        if (roOffsetLo < offset && offset < roOffsetHi - 2) {
+            return Unsafe.getUnsafe().getChar(absolutePointer + offset);
+        }
+        return getChar0(offset);
+    }
+
     public final double getDouble(long offset) {
         if (roOffsetLo < offset && offset < roOffsetHi - 8) {
             return Unsafe.getUnsafe().getDouble(absolutePointer + offset);
@@ -392,6 +399,34 @@ public class VirtualMemory implements Closeable {
 
     private byte getByte0(long offset) {
         return Unsafe.getUnsafe().getByte(computeHotPage(pageIndex(offset)) + offsetInPage(offset));
+    }
+
+    private char getChar0(long offset) {
+        int page = pageIndex(offset);
+        long pageOffset = offsetInPage(offset);
+        final long pageSize = getPageSize(page);
+
+        if (pageSize - pageOffset > 1) {
+            return Unsafe.getUnsafe().getChar(computeHotPage(page) + pageOffset);
+        }
+
+        return getCharBytes(page, pageOffset, pageSize);
+    }
+
+    char getCharBytes(int page, long pageOffset, long pageSize) {
+        char value = 0;
+        long pageAddress = getPageAddress(page);
+
+        for (int i = 0; i < 2; i++) {
+            if (pageOffset == pageSize) {
+                pageAddress = getPageAddress(++page);
+                pageOffset = 0;
+            }
+            char b = (char) (Unsafe.getUnsafe().getByte(pageAddress + pageOffset++));
+            value = (char) ((value << (8 * i)) | b);
+        }
+
+        return value;
     }
 
     private double getDouble0(long offset) {
@@ -733,14 +768,8 @@ public class VirtualMemory implements Closeable {
     }
 
     public class CharSequenceView extends AbstractCharSequence {
-        private long offset;
         private int len;
-        private int lastIndex;
-        private int page;
-        private long pageSize;
-        private long pageAddress;
-        private long pageOffset;
-        private long mod;
+        private long offset;
 
         @Override
         public int length() {
@@ -749,49 +778,13 @@ public class VirtualMemory implements Closeable {
 
         @Override
         public char charAt(int index) {
-            char c;
-            if (index == lastIndex + 1 && pageOffset < mod) {
-                // sequential read
-                c = Unsafe.getUnsafe().getChar(pageAddress + pageOffset);
-                pageOffset += 2;
-            } else {
-                c = updatePosAndGet(index);
-            }
-            lastIndex = index;
-            return c;
+            return VirtualMemory.this.getChar(offset + index * 2);
         }
 
         CharSequenceView of(long offset, int len) {
             this.offset = offset;
             this.len = len;
-            this.lastIndex = -1;
-            this.page = pageIndex(offset);
-            this.pageSize = getPageSize(page);
-            this.mod = pageSize - 1;
-            this.pageAddress = getPageAddress(page);
-            this.pageOffset = offsetInPage(offset);
             return this;
-        }
-
-        private char updatePosAndGet(int index) {
-            char c;
-            long offset = this.offset + index * 2;
-            page = pageIndex(offset);
-            pageSize = getPageSize(page);
-            mod = pageSize - 1;
-            pageAddress = getPageAddress(page);
-            pageOffset = offsetInPage(offset);
-
-            if (pageSize - pageOffset > 1) {
-                c = Unsafe.getUnsafe().getChar(pageAddress + pageOffset);
-                pageOffset += 2;
-            } else {
-                c = (char) (Unsafe.getUnsafe().getByte(pageAddress + pageOffset) << 8);
-                pageAddress = getPageAddress(++page);
-                c = (char) (c | Unsafe.getUnsafe().getByte(pageAddress));
-                pageOffset = 1;
-            }
-            return c;
         }
     }
 
