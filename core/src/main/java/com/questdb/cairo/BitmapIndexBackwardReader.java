@@ -44,7 +44,7 @@ public class BitmapIndexBackwardReader implements Closeable {
     private long keyCount;
 
     public BitmapIndexBackwardReader(CairoConfiguration configuration, CharSequence name) {
-        long pageSize = TableUtils.getMapPageSize(configuration.getFilesFacade());
+        long pageSize = configuration.getFilesFacade().getMapPageSize();
         this.spinLockTimeoutUs = configuration.getSpinLockTimeoutUs();
 
         try (Path path = new Path()) {

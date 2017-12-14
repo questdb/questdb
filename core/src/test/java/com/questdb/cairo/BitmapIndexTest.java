@@ -195,6 +195,36 @@ public class BitmapIndexTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCursorTimeout() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (BitmapIndexWriter w = new BitmapIndexWriter(configuration, "x", 1024)) {
+                w.add(0, 10);
+            }
+
+            try (BitmapIndexBackwardReader reader = new BitmapIndexBackwardReader(configuration, "x")) {
+
+                try (ReadWriteMemory mem = new ReadWriteMemory()) {
+                    try (Path path = new Path()) {
+                        path.of(configuration.getRoot()).concat("x").put(".k").$();
+                        mem.of(configuration.getFilesFacade(), path, configuration.getFilesFacade().getPageSize());
+                    }
+
+                    long offset = BitmapIndexUtils.getKeyEntryOffset(0);
+                    mem.jumpTo(offset + BitmapIndexUtils.KEY_ENTRY_OFFSET_VALUE_COUNT);
+                    mem.putLong(10);
+
+                    try {
+                        reader.getCursor(0, Long.MAX_VALUE);
+                        Assert.fail();
+                    } catch (CairoException e) {
+                        Assert.assertTrue(Chars.contains(e.getMessage(), "cursor failed"));
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testEmptyCursor() {
         BitmapIndexCursor cursor = new BitmapIndexEmptyCursor();
         Assert.assertFalse(cursor.hasNext());
@@ -221,6 +251,57 @@ public class BitmapIndexTest extends AbstractCairoTest {
                 assertCursorLimit(reader, 16L, tmp);
                 assertCursorLimit(reader, 9L, tmp);
                 Assert.assertFalse(reader.getCursor(0, -1L).hasNext());
+            }
+        });
+    }
+
+    @Test
+    public void testReaderDoesNotUnmapPages() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            Rnd rnd = new Rnd();
+
+            class CountingFacade extends FilesFacadeImpl {
+                private int count = 0;
+
+                @Override
+                public long getMapPageSize() {
+                    return 1024 * 1024;
+                }
+
+                @Override
+                public void munmap(long address, long size) {
+                    super.munmap(address, size);
+                    count++;
+                }
+            }
+
+            final CountingFacade facade = new CountingFacade();
+
+            CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+                @Override
+                public FilesFacade getFilesFacade() {
+                    return facade;
+                }
+            };
+            try (BitmapIndexWriter writer = new BitmapIndexWriter(configuration, "x", 1024)) {
+                try (BitmapIndexBackwardReader reader = new BitmapIndexBackwardReader(configuration, "x")) {
+                    for (int i = 0; i < 100000; i++) {
+                        int key = rnd.nextPositiveInt() % 1024;
+                        long value = rnd.nextPositiveLong();
+                        writer.add(key, value);
+
+                        BitmapIndexCursor cursor = reader.getCursor(key, Long.MAX_VALUE);
+                        boolean found = false;
+                        while (cursor.hasNext()) {
+                            if (value == cursor.next()) {
+                                found = true;
+                                break;
+                            }
+                        }
+                        Assert.assertTrue(found);
+                    }
+                    Assert.assertEquals(0, facade.count);
+                }
             }
         });
     }
@@ -324,48 +405,6 @@ public class BitmapIndexTest extends AbstractCairoTest {
         });
     }
 
-    private void setupIndexHeader() {
-        try (AppendMemory mem = openKey()) {
-            mem.putByte(BitmapIndexUtils.SIGNATURE);
-            mem.putLong(10); // sequence
-            mem.putLong(0); // value mem size
-            mem.putInt(64); // block length
-            mem.putLong(0); // key count
-            mem.putLong(9); // sequence check
-            mem.skip(BitmapIndexUtils.KEY_FILE_RESERVED - mem.getAppendOffset());
-        }
-    }
-
-    @Test
-    public void testCursorTimeout() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            try (BitmapIndexWriter w = new BitmapIndexWriter(configuration, "x", 1024)) {
-                w.add(0, 10);
-            }
-
-            try (BitmapIndexBackwardReader reader = new BitmapIndexBackwardReader(configuration, "x")) {
-
-                try (ReadWriteMemory mem = new ReadWriteMemory()) {
-                    try (Path path = new Path()) {
-                        path.of(configuration.getRoot()).concat("x").put(".k").$();
-                        mem.of(configuration.getFilesFacade(), path, configuration.getFilesFacade().getPageSize());
-                    }
-
-                    long offset = BitmapIndexUtils.getKeyEntryOffset(0);
-                    mem.jumpTo(offset + BitmapIndexUtils.KEY_ENTRY_OFFSET_VALUE_COUNT);
-                    mem.putLong(10);
-
-                    try {
-                        reader.getCursor(0, Long.MAX_VALUE);
-                        Assert.fail();
-                    } catch (CairoException e) {
-                        Assert.assertTrue(Chars.contains(e.getMessage(), "cursor failed"));
-                    }
-                }
-            }
-        });
-    }
-
     @Test
     public void testWriterConstructorBadSig() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
@@ -461,6 +500,18 @@ public class BitmapIndexTest extends AbstractCairoTest {
     private AppendMemory openKey() {
         try (Path path = new Path()) {
             return new AppendMemory(configuration.getFilesFacade(), path.of(configuration.getRoot()).concat("x").put(".k").$(), configuration.getFilesFacade().getPageSize());
+        }
+    }
+
+    private void setupIndexHeader() {
+        try (AppendMemory mem = openKey()) {
+            mem.putByte(BitmapIndexUtils.SIGNATURE);
+            mem.putLong(10); // sequence
+            mem.putLong(0); // value mem size
+            mem.putInt(64); // block length
+            mem.putLong(0); // key count
+            mem.putLong(9); // sequence check
+            mem.skip(BitmapIndexUtils.KEY_FILE_RESERVED - mem.getAppendOffset());
         }
     }
 

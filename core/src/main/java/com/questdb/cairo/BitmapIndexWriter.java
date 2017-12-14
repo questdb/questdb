@@ -44,7 +44,7 @@ public class BitmapIndexWriter implements Closeable {
     private final BitmapIndexUtils.ValueBlockSeeker SEEKER = this::seek;
 
     public BitmapIndexWriter(CairoConfiguration configuration, CharSequence name, int blockCapacity) {
-        long pageSize = TableUtils.getMapPageSize(configuration.getFilesFacade());
+        long pageSize = configuration.getFilesFacade().getMapPageSize();
 
         try (Path path = new Path()) {
             BitmapIndexUtils.keyFileName(path, configuration.getRoot(), name);

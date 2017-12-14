@@ -35,6 +35,8 @@ public interface FilesFacade {
 
     boolean exists(LPSZ path);
 
+    boolean exists(long fd);
+
     void findClose(long findPtr);
 
     long findFirst(LPSZ path);
@@ -45,6 +47,8 @@ public interface FilesFacade {
 
     int findType(long findPtr);
 
+    long getMapPageSize();
+
     long getOpenFileCount();
 
     long getPageSize();
@@ -54,6 +58,8 @@ public interface FilesFacade {
     long length(long fd);
 
     long length(LPSZ name);
+
+    int lock(long fd);
 
     int mkdirs(LPSZ path, int mode);
 
@@ -75,13 +81,9 @@ public interface FilesFacade {
 
     boolean rmdir(Path name);
 
+    boolean supportsTruncateMappedFiles();
+
     boolean truncate(long fd, long size);
 
     long write(long fd, long address, long len, long offset);
-
-    boolean exists(long fd);
-
-    boolean supportsTruncateMappedFiles();
-
-    int lock(long fd);
 }
