@@ -498,8 +498,19 @@ public class VirtualMemoryTest {
         TestUtils.assertEquals("123", mem.getStr(o1));
         Assert.assertEquals(3, mem.getStrLen(o1));
         TestUtils.assertEquals("123", mem.getStr2(o1));
+
+        String expected = "0987654321abcd";
         TestUtils.assertEquals("0987654321abcd", mem.getStr(o2));
         TestUtils.assertEquals("0987654321abcd", mem.getStr2(o2));
+
+        for (int i = 0; i < expected.length(); i++) {
+            long offset = o2 + 4 + i * 2;
+            int page = mem.pageIndex(offset);
+            long pageOffset = mem.offsetInPage(offset);
+            final long pageSize = mem.getPageSize(page);
+            Assert.assertEquals(expected.charAt(i), mem.getCharBytes(page, pageOffset, pageSize));
+        }
+
         assertNull(mem.getStr(o3));
         assertNull(mem.getStr2(o3));
         TestUtils.assertEquals("xyz123", mem.getStr(o4));

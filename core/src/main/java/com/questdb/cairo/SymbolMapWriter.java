@@ -32,14 +32,12 @@ import java.io.Closeable;
 
 public class SymbolMapWriter implements Closeable {
     private final BitmapIndexWriter writer;
-    private final BitmapIndexBackwardReader reader;
     private final ReadWriteMemory charMem;
     private final ReadWriteMemory offsetMem;
     private final int maxHash;
 
     public SymbolMapWriter(CairoConfiguration configuration, CharSequence name, int capacity, int maxHash) {
         this.writer = new BitmapIndexWriter(configuration, name, capacity);
-        this.reader = new BitmapIndexBackwardReader(configuration, name);
         long mapPageSize = configuration.getFilesFacade().getMapPageSize();
 
         try (Path path = new Path()) {
@@ -53,14 +51,13 @@ public class SymbolMapWriter implements Closeable {
     @Override
     public void close() {
         Misc.free(writer);
-        Misc.free(reader);
         Misc.free(charMem);
         Misc.free(offsetMem);
     }
 
     public long put(CharSequence symbol) {
         int key = Hash.boundedHash(symbol, maxHash - 1);
-        BitmapIndexCursor cursor = reader.getCursor(key, Long.MAX_VALUE);
+        BitmapIndexCursor cursor = writer.getCursor(key);
         while (cursor.hasNext()) {
             long offsetOffset = cursor.next();
             long offset = offsetMem.getLong(offsetOffset);

@@ -37,13 +37,14 @@ public class BitmapIndexWriter implements Closeable {
     private final ReadWriteMemory valueMem;
     private final int blockCapacity;
     private final int blockValueCountMod;
+    private final Cursor cursor = new Cursor();
     private long valueMemSize;
     private long keyCount;
     private long seekValueCount;
     private long seekValueBlockOffset;
     private final BitmapIndexUtils.ValueBlockSeeker SEEKER = this::seek;
 
-    public BitmapIndexWriter(CairoConfiguration configuration, CharSequence name, int blockCapacity) {
+    public BitmapIndexWriter(CairoConfiguration configuration, CharSequence name, int valueBlockCapacity) {
         long pageSize = configuration.getFilesFacade().getMapPageSize();
 
         try (Path path = new Path()) {
@@ -52,7 +53,7 @@ public class BitmapIndexWriter implements Closeable {
             boolean exists = configuration.getFilesFacade().exists(path);
             this.keyMem = new ReadWriteMemory(configuration.getFilesFacade(), path, pageSize);
             if (!exists) {
-                initKeyMemory(blockCapacity);
+                initKeyMemory(valueBlockCapacity);
             }
 
             long keyMemSize = this.keyMem.getAppendOffset();
@@ -163,6 +164,14 @@ public class BitmapIndexWriter implements Closeable {
         }
     }
 
+    public BitmapIndexCursor getCursor(int key) {
+        if (key < keyCount) {
+            cursor.of(key);
+            return cursor;
+        }
+        return BitmapIndexEmptyCursor.INSTANCE;
+    }
+
     /**
      * Rolls values back. Removes values that are strictly greater than given maximum. Empty value blocks
      * will also be removed as well as blank space at end of value memory.
@@ -216,7 +225,6 @@ public class BitmapIndexWriter implements Closeable {
         // we subtract 8 because we just written long value
         // update this block reference to previous block
         valueMem.jumpTo(valueMemSize - BitmapIndexUtils.VALUE_BLOCK_FILE_RESERVED);
-//        valueMem.skip(blockCapacity - 8 - BitmapIndexUtils.VALUE_BLOCK_FILE_RESERVED);
         valueMem.putLong(valueBlockOffset);
 
         // update previous block' "next" block reference to this block
@@ -356,5 +364,45 @@ public class BitmapIndexWriter implements Closeable {
         keyMem.jumpTo(BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE_CHECK);
         Unsafe.getUnsafe().storeFence();
         keyMem.putLong(seq);
+    }
+
+    private class Cursor implements BitmapIndexCursor {
+        private long valueBlockOffset;
+        private long valueCount;
+
+        @Override
+        public boolean hasNext() {
+            return valueCount > 0;
+        }
+
+        @Override
+        public long next() {
+            long cellIndex = getValueCellIndex(--valueCount);
+            long result = valueMem.getLong(valueBlockOffset + cellIndex * 8);
+            if (cellIndex == 0 && valueCount > 0) {
+                // we are at edge of block right now, next value will be in previous block
+                jumpToPreviousValueBlock();
+            }
+            return result;
+        }
+
+        private long getPreviousBlock(long currentValueBlockOffset) {
+            return valueMem.getLong(currentValueBlockOffset + blockCapacity - BitmapIndexUtils.VALUE_BLOCK_FILE_RESERVED);
+        }
+
+        private long getValueCellIndex(long absoluteValueIndex) {
+            return absoluteValueIndex & blockValueCountMod;
+        }
+
+        private void jumpToPreviousValueBlock() {
+            valueBlockOffset = getPreviousBlock(valueBlockOffset);
+        }
+
+        void of(int key) {
+            assert key > -1 : "key must be positive integer: " + key;
+            long offset = BitmapIndexUtils.getKeyEntryOffset(key);
+            this.valueCount = keyMem.getLong(offset + BitmapIndexUtils.KEY_ENTRY_OFFSET_VALUE_COUNT);
+            this.valueBlockOffset = keyMem.getLong(offset + BitmapIndexUtils.KEY_ENTRY_OFFSET_LAST_VALUE_BLOCK_OFFSET);
+        }
     }
 }
