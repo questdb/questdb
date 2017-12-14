@@ -423,7 +423,7 @@ public class VirtualMemory implements Closeable {
                 pageOffset = 0;
             }
             char b = (char) (Unsafe.getUnsafe().getByte(pageAddress + pageOffset++));
-            value = (char) ((value << (8 * i)) | b);
+            value = (char) ((b << (8 * i)) | value);
         }
 
         return value;
@@ -576,7 +576,7 @@ public class VirtualMemory implements Closeable {
         return cachePageAddress(page, allocateNextPage(page));
     }
 
-    private long offsetInPage(long offset) {
+    long offsetInPage(long offset) {
         return offset & mod;
     }
 
@@ -713,9 +713,9 @@ public class VirtualMemory implements Closeable {
     }
 
     private void putSplitChar(char c) {
-        Unsafe.getUnsafe().putByte(pageHi - 1, (byte) (c >> 8));
+        Unsafe.getUnsafe().putByte(pageHi - 1, (byte) c);
         pageAt(baseOffset + pageHi);
-        Unsafe.getUnsafe().putByte(appendPointer++, (byte) c);
+        Unsafe.getUnsafe().putByte(appendPointer++, (byte) (c >> 8));
     }
 
     private void putStrSplit(CharSequence value, int pos, int len) {
