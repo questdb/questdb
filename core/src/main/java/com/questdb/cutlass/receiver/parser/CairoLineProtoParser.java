@@ -33,7 +33,6 @@ import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.std.*;
 import com.questdb.std.microtime.MicrosecondClock;
-import com.questdb.std.str.ImmutableCharSequence;
 import com.questdb.std.str.Path;
 
 import java.io.Closeable;
@@ -479,7 +478,7 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
             entry = writerCache.valueAt(entryIndex);
         } else {
             entry = new CacheEntry();
-            writerCache.putAt(entryIndex, ImmutableCharSequence.of(tableName), entry);
+            writerCache.putAt(entryIndex, Chars.stringOf(tableName), entry);
             // adjust writer map index to negative, which indicates that entry exists
             entryIndex = -entryIndex - 1;
         }

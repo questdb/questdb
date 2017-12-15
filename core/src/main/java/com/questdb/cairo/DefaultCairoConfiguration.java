@@ -23,18 +23,18 @@
 
 package com.questdb.cairo;
 
+import com.questdb.std.Chars;
 import com.questdb.std.FilesFacade;
 import com.questdb.std.FilesFacadeImpl;
 import com.questdb.std.microtime.MicrosecondClock;
 import com.questdb.std.microtime.MicrosecondClockImpl;
-import com.questdb.std.str.ImmutableCharSequence;
 
 public class DefaultCairoConfiguration implements CairoConfiguration {
 
     private final CharSequence root;
 
     public DefaultCairoConfiguration(CharSequence root) {
-        this.root = ImmutableCharSequence.of(root);
+        this.root = Chars.stringOf(root);
     }
 
     @Override
