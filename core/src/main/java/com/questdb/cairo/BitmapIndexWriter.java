@@ -44,11 +44,12 @@ public class BitmapIndexWriter implements Closeable {
     private long seekValueBlockOffset;
     private final BitmapIndexUtils.ValueBlockSeeker SEEKER = this::seek;
 
-    public BitmapIndexWriter(CairoConfiguration configuration, CharSequence name, int valueBlockCapacity) {
+    public BitmapIndexWriter(CairoConfiguration configuration, Path path, CharSequence name, int valueBlockCapacity) {
         long pageSize = configuration.getFilesFacade().getMapPageSize();
+        int plen = path.length();
 
-        try (Path path = new Path()) {
-            BitmapIndexUtils.keyFileName(path, configuration.getRoot(), name);
+        try {
+            BitmapIndexUtils.keyFileName(path, name);
 
             boolean exists = configuration.getFilesFacade().exists(path);
             this.keyMem = new ReadWriteMemory(configuration.getFilesFacade(), path, pageSize);
@@ -84,7 +85,7 @@ public class BitmapIndexWriter implements Closeable {
 
             this.valueMemSize = this.keyMem.getLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_VALUE_MEM_SIZE);
 
-            BitmapIndexUtils.valueFileName(path, configuration.getRoot(), name);
+            BitmapIndexUtils.valueFileName(path.trimTo(plen), name);
 
             this.valueMem = new ReadWriteMemory(configuration.getFilesFacade(), path, pageSize);
 

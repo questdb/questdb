@@ -26,6 +26,7 @@ package com.questdb.cairo;
 import com.questdb.std.Chars;
 import com.questdb.std.Hash;
 import com.questdb.std.Misc;
+import com.questdb.std.Numbers;
 import com.questdb.std.str.Path;
 
 import java.io.Closeable;
@@ -36,16 +37,14 @@ public class SymbolMapWriter implements Closeable {
     private final ReadWriteMemory offsetMem;
     private final int maxHash;
 
-    public SymbolMapWriter(CairoConfiguration configuration, CharSequence name, int capacity, int maxHash) {
-        this.writer = new BitmapIndexWriter(configuration, name, capacity);
-        long mapPageSize = configuration.getFilesFacade().getMapPageSize();
+    public SymbolMapWriter(CairoConfiguration configuration, Path path, CharSequence name, int symbolCapacity) {
+        final int plen = path.length();
+        final long mapPageSize = configuration.getFilesFacade().getMapPageSize();
 
-        try (Path path = new Path()) {
-            this.charMem = new ReadWriteMemory(configuration.getFilesFacade(), path.of(configuration.getRoot()).concat(name).put(".c").$(), mapPageSize);
-            this.offsetMem = new ReadWriteMemory(configuration.getFilesFacade(), path.of(configuration.getRoot()).concat(name).put(".o").$(), mapPageSize);
-        }
-
-        this.maxHash = maxHash;
+        this.writer = new BitmapIndexWriter(configuration, path, name, 4);
+        this.charMem = new ReadWriteMemory(configuration.getFilesFacade(), path.trimTo(plen).concat(name).put(".c").$(), mapPageSize);
+        this.offsetMem = new ReadWriteMemory(configuration.getFilesFacade(), path.trimTo(plen).concat(name).put(".o").$(), mapPageSize);
+        this.maxHash = Numbers.ceilPow2(symbolCapacity / 2) - 1;
     }
 
     @Override
@@ -56,7 +55,7 @@ public class SymbolMapWriter implements Closeable {
     }
 
     public long put(CharSequence symbol) {
-        int key = Hash.boundedHash(symbol, maxHash - 1);
+        int key = Hash.boundedHash(symbol, maxHash);
         BitmapIndexCursor cursor = writer.getCursor(key);
         while (cursor.hasNext()) {
             long offsetOffset = cursor.next();

@@ -86,12 +86,12 @@ public final class BitmapIndexUtils {
         seeker.seek(valueCount, valueBlockOffset);
     }
 
-    static void keyFileName(Path path, CharSequence root, CharSequence name) {
-        path.of(root).concat(name).put(".k").$();
+    static void keyFileName(Path path, CharSequence name) {
+        path.concat(name).put(".k").$();
     }
 
-    static void valueFileName(Path path, CharSequence root, CharSequence name) {
-        path.of(root).concat(name).put(".v").$();
+    static void valueFileName(Path path, CharSequence name) {
+        path.concat(name).put(".v").$();
     }
 
     static long getKeyEntryOffset(int key) {

@@ -23,8 +23,9 @@
 
 package com.questdb.cairo;
 
-import com.questdb.std.Numbers;
+import com.questdb.std.ObjList;
 import com.questdb.std.Rnd;
+import com.questdb.std.str.Path;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -32,18 +33,74 @@ import org.junit.Test;
 public class SymbolMapWriterTest extends AbstractCairoTest {
 
     @Test
+    public void testLookupPerformance() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            int N = 100000000;
+            int symbolCount = 1024;
+            ObjList<String> symbols = new ObjList<>();
+            try (Path path = new Path().of(configuration.getRoot())) {
+                try (SymbolMapWriter writer = new SymbolMapWriter(configuration, path, "x", symbolCount)) {
+                    Rnd rnd = new Rnd();
+                    long prev = -1L;
+                    for (int i = 0; i < symbolCount; i++) {
+                        CharSequence cs = rnd.nextChars(10);
+                        long key = writer.put(cs);
+                        symbols.add(cs.toString());
+                        Assert.assertEquals(prev + 1, key);
+                        prev = key;
+                    }
+
+                    long t = System.nanoTime();
+                    for (int i = 0; i < N; i++) {
+                        int key = rnd.nextPositiveInt() % symbolCount;
+                        Assert.assertEquals(key, writer.put(symbols.getQuick(key)));
+                    }
+                    System.out.println(System.nanoTime() - t);
+
+                }
+            }
+        });
+    }
+
+//    @Test
+//    public void testLookupPerformanceOld() throws JournalException {
+//        int N = 100000000;
+//        int symbolCount = 1024;
+//        ObjList<String> symbols = new ObjList<>();
+//        MMappedSymbolTable tab = new MMappedSymbolTable(symbolCount, 256, 1, new File(configuration.getRoot().toString()), "x", JournalMode.APPEND, 0, 0, false, true);
+//        Rnd rnd = new Rnd();
+//        long prev = -1L;
+//        for (int i = 0; i < symbolCount; i++) {
+//            CharSequence cs = rnd.nextChars(10);
+//            long key = tab.put(cs);
+//            symbols.add(cs.toString());
+//            Assert.assertEquals(prev + 1, key);
+//            prev = key;
+//        }
+//
+//        long t = System.nanoTime();
+//        for (int i = 0; i < N; i++) {
+//            int key = rnd.nextPositiveInt() % symbolCount;
+//            Assert.assertEquals(key, tab.put(symbols.getQuick(key)));
+//        }
+//        System.out.println(System.nanoTime() - t);
+//    }
+
+    @Test
     public void testSimpleAdd() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            int N = 100000;
-            try (SymbolMapWriter writer = new SymbolMapWriter(configuration, "x", 4, Numbers.ceilPow2(N / 2))) {
-                Rnd rnd = new Rnd();
-                long prev = -1L;
-                for (int i = 0; i < N; i++) {
-                    CharSequence cs = rnd.nextChars(10);
-                    long key = writer.put(cs);
-                    Assert.assertEquals(prev + 1, key);
-                    Assert.assertEquals(key, writer.put(cs));
-                    prev = key;
+            int N = 10000000;
+            try (Path path = new Path().of(configuration.getRoot())) {
+                try (SymbolMapWriter writer = new SymbolMapWriter(configuration, path, "x", N)) {
+                    Rnd rnd = new Rnd();
+                    long prev = -1L;
+                    for (int i = 0; i < N; i++) {
+                        CharSequence cs = rnd.nextChars(10);
+                        long key = writer.put(cs);
+                        Assert.assertEquals(prev + 1, key);
+                        Assert.assertEquals(key, writer.put(cs));
+                        prev = key;
+                    }
                 }
             }
         });

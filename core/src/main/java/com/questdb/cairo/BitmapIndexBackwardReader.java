@@ -43,12 +43,13 @@ public class BitmapIndexBackwardReader implements Closeable {
     private final MicrosecondClock clock;
     private long keyCount;
 
-    public BitmapIndexBackwardReader(CairoConfiguration configuration, CharSequence name) {
-        long pageSize = configuration.getFilesFacade().getMapPageSize();
+    public BitmapIndexBackwardReader(CairoConfiguration configuration, Path path, CharSequence name) {
+        final int plen = path.length();
+        final long pageSize = configuration.getFilesFacade().getMapPageSize();
         this.spinLockTimeoutUs = configuration.getSpinLockTimeoutUs();
 
-        try (Path path = new Path()) {
-            BitmapIndexUtils.keyFileName(path, configuration.getRoot(), name);
+        try {
+            BitmapIndexUtils.keyFileName(path, name);
             this.keyMem = new ReadOnlyMemory(configuration.getFilesFacade(), path, pageSize);
             this.clock = configuration.getClock();
 
@@ -94,7 +95,7 @@ public class BitmapIndexBackwardReader implements Closeable {
             this.blockCapacity = (blockValueCountMod + 1) * 8 + BitmapIndexUtils.VALUE_BLOCK_FILE_RESERVED;
             this.keyCount = keyCount;
 
-            BitmapIndexUtils.valueFileName(path, configuration.getRoot(), name);
+            BitmapIndexUtils.valueFileName(path.trimTo(plen), name);
             this.valueMem = new ReadOnlyMemory(configuration.getFilesFacade(), path, pageSize);
         } catch (CairoException e) {
             close();
