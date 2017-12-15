@@ -56,7 +56,6 @@ public class SymbolMapWriterTest extends AbstractCairoTest {
                         Assert.assertEquals(key, writer.put(symbols.getQuick(key)));
                     }
                     System.out.println(System.nanoTime() - t);
-
                 }
             }
         });

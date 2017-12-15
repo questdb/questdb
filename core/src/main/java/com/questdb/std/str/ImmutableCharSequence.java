@@ -26,9 +26,10 @@ package com.questdb.std.str;
 public final class ImmutableCharSequence extends AbstractCharSequence {
 
     private final char[] chars;
+    private final int len;
 
     private ImmutableCharSequence(CharSequence that) {
-        int len = that.length();
+        this.len = that.length();
         this.chars = new char[len];
         for (int i = 0; i < len; i++) {
             chars[i] = that.charAt(i);
@@ -44,7 +45,7 @@ public final class ImmutableCharSequence extends AbstractCharSequence {
 
     @Override
     public int length() {
-        return chars.length;
+        return len;
     }
 
     @Override

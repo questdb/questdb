@@ -35,6 +35,7 @@ import com.questdb.test.tools.AbstractTest;
 import com.questdb.test.tools.TestData;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Ignore;
 import org.junit.Test;
 
 import java.util.ArrayList;
@@ -42,6 +43,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
+@Ignore
 public class ScenarioTest extends AbstractTest {
 
     private final ServerConfig serverConfig = new ServerConfig() {{
