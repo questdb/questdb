@@ -23,10 +23,7 @@
 
 package com.questdb.cairo;
 
-import com.questdb.std.Chars;
-import com.questdb.std.Hash;
-import com.questdb.std.Misc;
-import com.questdb.std.Numbers;
+import com.questdb.std.*;
 import com.questdb.std.str.Path;
 
 import java.io.Closeable;
@@ -35,6 +32,7 @@ public class SymbolMapWriter implements Closeable {
     private final BitmapIndexWriter writer;
     private final ReadWriteMemory charMem;
     private final ReadWriteMemory offsetMem;
+    private final CharSequenceIntHashMap cache;
     private final int maxHash;
 
     public SymbolMapWriter(CairoConfiguration configuration, Path path, CharSequence name, int symbolCapacity) {
@@ -45,6 +43,7 @@ public class SymbolMapWriter implements Closeable {
         this.charMem = new ReadWriteMemory(configuration.getFilesFacade(), path.trimTo(plen).concat(name).put(".c").$(), mapPageSize);
         this.offsetMem = new ReadWriteMemory(configuration.getFilesFacade(), path.trimTo(plen).concat(name).put(".o").$(), mapPageSize);
         this.maxHash = Numbers.ceilPow2(symbolCapacity / 2) - 1;
+        this.cache = new CharSequenceIntHashMap(symbolCapacity);
     }
 
     @Override
@@ -55,8 +54,16 @@ public class SymbolMapWriter implements Closeable {
     }
 
     public long put(CharSequence symbol) {
-        int key = Hash.boundedHash(symbol, maxHash);
-        BitmapIndexCursor cursor = writer.getCursor(key);
+        long result = cache.get(symbol);
+        if (result != -1) {
+            return result;
+        }
+        return lookupAndPut(symbol);
+    }
+
+    private long lookupAndPut(CharSequence symbol) {
+        int hash = Hash.boundedHash(symbol, maxHash);
+        BitmapIndexCursor cursor = writer.getCursor(hash);
         while (cursor.hasNext()) {
             long offsetOffset = cursor.next();
             long offset = offsetMem.getLong(offsetOffset);
@@ -65,10 +72,15 @@ public class SymbolMapWriter implements Closeable {
             }
         }
 
+        return put0(symbol, hash);
+    }
+
+    private long put0(CharSequence symbol, int hash) {
         long offset = charMem.putStr(symbol);
         long offsetOffset = offsetMem.getAppendOffset();
         offsetMem.putLong(offset);
-        writer.add(key, offsetOffset);
+        writer.add(hash, offsetOffset);
+        cache.put(symbol.toString(), (int) (offsetOffset / 8));
         return offsetOffset / 8;
     }
 }

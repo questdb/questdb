@@ -23,17 +23,12 @@
 
 package com.questdb.std;
 
-import com.questdb.common.JournalRuntimeException;
 import com.questdb.std.str.ByteSequence;
 import com.questdb.std.str.CharSink;
 import com.questdb.std.str.DirectBytes;
 import com.questdb.std.str.Path;
 
-import java.lang.ThreadLocal;
-
 public final class Chars {
-    private final static java.lang.ThreadLocal<char[]> builder = new ThreadLocal<>();
-
     private Chars() {
     }
 
@@ -201,34 +196,11 @@ public final class Chars {
         return r != null && equals(l, r);
     }
 
-    public static String getFileName(CharSequence path) {
-        int pos = -1;
-        for (int i = 0, k = path.length(); i < k; i++) {
-            char c = path.charAt(i);
-            if (c == '\\' || c == '/') {
-                pos = i;
-            }
-        }
-
-        int l = path.length() - pos - 1;
-        if (l == 0) {
-            throw new JournalRuntimeException("Invalid path: %s", path);
-        }
-
-        char buf[] = builder.get();
-        if (buf == null || buf.length < l) {
-            builder.set(buf = new char[l]);
-        }
-
-        int p = 0;
-        for (int i = pos + 1, k = path.length(); i < k; i++) {
-            buf[p++] = path.charAt(i);
-        }
-
-        return new String(buf, 0, l);
-    }
-
     public static int hashCode(CharSequence value) {
+        if (value instanceof String) {
+            return value.hashCode();
+        }
+
         int len = value.length();
         if (len == 0) {
             return 0;
