@@ -24,7 +24,7 @@
 package com.questdb.std.microtime;
 
 
-import com.questdb.std.str.ImmutableCharSequence;
+import com.questdb.std.Chars;
 
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -43,6 +43,6 @@ public class DateFormatFactory {
      * @return compiled implementation of DateFormat
      */
     public DateFormat get(CharSequence pattern) {
-        return cache.computeIfAbsent(ImmutableCharSequence.of(pattern), p -> tlCompiler.get().compile(p));
+        return cache.computeIfAbsent(Chars.stringOf(pattern), p -> tlCompiler.get().compile(p));
     }
 }

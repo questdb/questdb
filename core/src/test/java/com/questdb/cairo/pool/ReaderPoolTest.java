@@ -33,7 +33,6 @@ import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.ql.RecordSourcePrinter;
 import com.questdb.std.*;
-import com.questdb.std.str.ImmutableCharSequence;
 import com.questdb.std.str.LPSZ;
 import com.questdb.std.str.StringSink;
 import com.questdb.test.tools.TestUtils;
@@ -642,7 +641,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
 
                 @Override
                 public void onEvent(byte factoryType, long thread, CharSequence name, short event, short segment, short position) {
-                    names.add(name == null ? "" : ImmutableCharSequence.of(name));
+                    names.add(name == null ? "" : Chars.stringOf(name));
                     events.add(event);
                 }
             }

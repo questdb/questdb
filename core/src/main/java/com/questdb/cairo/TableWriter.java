@@ -34,7 +34,6 @@ import com.questdb.std.microtime.DateFormat;
 import com.questdb.std.microtime.DateFormatUtils;
 import com.questdb.std.microtime.DateLocaleFactory;
 import com.questdb.std.microtime.Dates;
-import com.questdb.std.str.ImmutableCharSequence;
 import com.questdb.std.str.LPSZ;
 import com.questdb.std.str.NativeLPSZ;
 import com.questdb.std.str.Path;
@@ -100,7 +99,7 @@ public class TableWriter implements Closeable {
         this.fileOperationRetryCount = configuration.getFileOperationRetryCount();
         this.path = new Path().of(configuration.getRoot()).concat(name);
         this.other = new Path().of(configuration.getRoot()).concat(name);
-        this.name = ImmutableCharSequence.of(name);
+        this.name = Chars.stringOf(name);
         this.rootLen = path.length();
         try {
             try {

@@ -30,7 +30,6 @@ import com.questdb.std.*;
 import com.questdb.std.microtime.DateFormat;
 import com.questdb.std.microtime.DateLocaleFactory;
 import com.questdb.std.microtime.Dates;
-import com.questdb.std.str.ImmutableCharSequence;
 import com.questdb.std.str.NativeLPSZ;
 import com.questdb.std.str.Path;
 
@@ -81,7 +80,7 @@ public class TableReader implements Closeable, RecordCursor {
     public TableReader(CairoConfiguration configuration, CharSequence name) {
         LOG.info().$("open '").utf8(name).$('\'').$();
         this.ff = configuration.getFilesFacade();
-        this.name = ImmutableCharSequence.of(name);
+        this.name = Chars.stringOf(name);
         this.path = new Path().of(configuration.getRoot()).concat(name);
         this.rootLen = path.length();
         try {

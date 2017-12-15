@@ -250,6 +250,17 @@ public final class Chars {
         return -1;
     }
 
+    public static CharSequence stringOf(CharSequence charSequence) {
+        if (charSequence instanceof String) {
+            return charSequence;
+        }
+
+        if (charSequence == null) {
+            return null;
+        }
+        return charSequence.toString();
+    }
+
     public static void putCharsOnly(long address, CharSequence value) {
         strcpyw(value, value.length(), address);
     }
