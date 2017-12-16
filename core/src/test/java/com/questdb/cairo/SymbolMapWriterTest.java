@@ -23,6 +23,8 @@
 
 package com.questdb.cairo;
 
+import com.questdb.std.Chars;
+import com.questdb.std.Files;
 import com.questdb.std.ObjList;
 import com.questdb.std.Rnd;
 import com.questdb.std.str.Path;
@@ -35,11 +37,12 @@ public class SymbolMapWriterTest extends AbstractCairoTest {
     @Test
     public void testLookupPerformance() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            int N = 100000000;
+            int N = 10000000;
             int symbolCount = 1024;
             ObjList<String> symbols = new ObjList<>();
             try (Path path = new Path().of(configuration.getRoot())) {
-                try (SymbolMapWriter writer = new SymbolMapWriter(configuration, path, "x", symbolCount)) {
+                SymbolMapWriter.create(configuration, path, "x", symbolCount);
+                try (SymbolMapWriter writer = new SymbolMapWriter(configuration, path, "x", true)) {
                     Rnd rnd = new Rnd();
                     long prev = -1L;
                     for (int i = 0; i < symbolCount; i++) {
@@ -55,7 +58,7 @@ public class SymbolMapWriterTest extends AbstractCairoTest {
                         int key = rnd.nextPositiveInt() % symbolCount;
                         Assert.assertEquals(key, writer.put(symbols.getQuick(key)));
                     }
-                    System.out.println(System.nanoTime() - t);
+                    System.out.println("SymbolMapWriter lookup performance [10M <500ms]: " + (System.nanoTime() - t) / 1000000);
                 }
             }
         });
@@ -86,11 +89,42 @@ public class SymbolMapWriterTest extends AbstractCairoTest {
 //    }
 
     @Test
+    public void testMapDoesNotExist() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getRoot())) {
+                try {
+                    new SymbolMapWriter(configuration, path, "x", false);
+                    Assert.fail();
+                } catch (CairoException e) {
+                    Assert.assertTrue(Chars.contains(e.getMessage(), "does not exist"));
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testShortHeader() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getRoot())) {
+                int plen = path.length();
+                Assert.assertTrue(Files.touch(path.concat("x").put(".o").$()));
+                try {
+                    new SymbolMapWriter(configuration, path.trimTo(plen), "x", false);
+                    Assert.fail();
+                } catch (CairoException e) {
+                    Assert.assertTrue(Chars.contains(e.getMessage(), "too short"));
+                }
+            }
+        });
+    }
+
+    @Test
     public void testSimpleAdd() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             int N = 10000000;
             try (Path path = new Path().of(configuration.getRoot())) {
-                try (SymbolMapWriter writer = new SymbolMapWriter(configuration, path, "x", N)) {
+                SymbolMapWriter.create(configuration, path, "x", N);
+                try (SymbolMapWriter writer = new SymbolMapWriter(configuration, path, "x", false)) {
                     Rnd rnd = new Rnd();
                     long prev = -1L;
                     for (int i = 0; i < N; i++) {

@@ -81,6 +81,10 @@ public class ReadWriteMemory extends VirtualMemory {
         ff.munmap(address, getPageSize(page));
     }
 
+    public long getFd() {
+        return fd;
+    }
+
     public final void of(FilesFacade ff, LPSZ name, long pageSize) {
         close();
         this.ff = ff;
