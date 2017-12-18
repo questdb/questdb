@@ -26,22 +26,27 @@ package com.questdb.cairo;
 import com.questdb.common.SymbolTable;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
-import com.questdb.std.*;
+import com.questdb.std.Chars;
+import com.questdb.std.Hash;
+import com.questdb.std.Misc;
+import com.questdb.std.Numbers;
 import com.questdb.std.str.Path;
 
 import java.io.Closeable;
 
-public class SymbolMapWriter implements Closeable {
-    static final int HEADER_SIZE = 64;
-    private static final Log LOG = LogFactory.getLog(SymbolMapWriter.class);
+public class SymbolMapReader implements Closeable {
+    private static final Log LOG = LogFactory.getLog(SymbolMapReader.class);
 
-    private final BitmapIndexWriter indexWriter;
-    private final ReadWriteMemory charMem;
-    private final ReadWriteMemory offsetMem;
-    private final CharSequenceLongHashMap cache;
+    private final BitmapIndexBackwardReader indexReader;
+    private final ReadOnlyMemory charMem;
+    private final ReadOnlyMemory offsetMem;
     private final int maxHash;
+    private long symbolCount;
+    private long maxOffset;
 
-    public SymbolMapWriter(CairoConfiguration configuration, Path path, CharSequence name, boolean useCache, long symbolCount) {
+    public SymbolMapReader(CairoConfiguration configuration, Path path, CharSequence name, long symbolCount) {
+        this.symbolCount = symbolCount;
+        this.maxOffset = SymbolMapWriter.keyToOffset(symbolCount);
         final int plen = path.length();
         try {
             final long mapPageSize = configuration.getFilesFacade().getMapPageSize();
@@ -56,22 +61,22 @@ public class SymbolMapWriter implements Closeable {
 
             // is there enough length in "offset" file for "header"?
             long len = configuration.getFilesFacade().length(path);
-            if (len < HEADER_SIZE) {
+            if (len < SymbolMapWriter.HEADER_SIZE) {
                 LOG.error().$(path).$(" is too short [len=").$(len).$(']').$();
                 throw CairoException.instance(0).put("SymbolMap is too short: ").put(path);
             }
 
             // open "offset" memory and make sure we start appending from where
             // we left off. Where we left off is stored externally to symbol map
-            this.offsetMem = new ReadWriteMemory(configuration.getFilesFacade(), path, mapPageSize);
+            this.offsetMem = new ReadOnlyMemory(configuration.getFilesFacade(), path, mapPageSize);
             final int symbolCapacity = offsetMem.getInt(0);
-            this.offsetMem.jumpTo(keyToOffset(symbolCount));
+            this.offsetMem.jumpTo(maxOffset);
 
             // index writer is used to identify attempts to store duplicate symbol value
-            this.indexWriter = new BitmapIndexWriter(configuration, path.trimTo(plen), name, 4);
+            this.indexReader = new BitmapIndexBackwardReader(configuration, path.trimTo(plen), name);
 
             // this is the place where symbol values are stored
-            this.charMem = new ReadWriteMemory(configuration.getFilesFacade(), path.trimTo(plen).concat(name).put(".c").$(), mapPageSize);
+            this.charMem = new ReadOnlyMemory(configuration.getFilesFacade(), path.trimTo(plen).concat(name).put(".c").$(), mapPageSize);
 
             // move append pointer for symbol values in the correct place
             jumpCharMemToSymbolCount(symbolCount);
@@ -80,13 +85,7 @@ public class SymbolMapWriter implements Closeable {
             // theoretically should require 2 value cells in index per hash
             // we use 4 cells to compensate for occasionally unlucky hash distribution
             this.maxHash = Numbers.ceilPow2(symbolCapacity / 2) - 1;
-
-            if (useCache) {
-                this.cache = new CharSequenceLongHashMap(symbolCapacity);
-            } else {
-                this.cache = null;
-            }
-            LOG.info().$("open [name=").$(path.trimTo(plen).concat(name).$()).$(", fd=").$(this.offsetMem.getFd()).$(", cache=").$(cache != null).$(", capacity=").$(symbolCapacity).$(']').$();
+            LOG.info().$("open [name=").$(path.trimTo(plen).concat(name).$()).$(", fd=").$(this.offsetMem.getFd()).$(", capacity=").$(symbolCapacity).$(']').$();
         } catch (CairoException e) {
             close();
             throw e;
@@ -95,19 +94,9 @@ public class SymbolMapWriter implements Closeable {
         }
     }
 
-    public static void create(CairoConfiguration configuration, Path path, CharSequence name, int symbolCapacity) {
-        int plen = path.length();
-        try (ReadWriteMemory mem = new ReadWriteMemory(configuration.getFilesFacade(), path.concat(name).put(".o").$(), configuration.getFilesFacade().getMapPageSize())) {
-            mem.putInt(symbolCapacity);
-            mem.jumpTo(HEADER_SIZE);
-        } finally {
-            path.trimTo(plen);
-        }
-    }
-
     @Override
     public void close() {
-        Misc.free(indexWriter);
+        Misc.free(indexReader);
         Misc.free(charMem);
         if (this.offsetMem != null) {
             long fd = this.offsetMem.getFd();
@@ -116,67 +105,40 @@ public class SymbolMapWriter implements Closeable {
         }
     }
 
-    public long put(CharSequence symbol) {
-
+    public long getQuick(CharSequence symbol) {
         if (symbol == null) {
             return SymbolTable.VALUE_IS_NULL;
         }
 
-        if (cache != null) {
-            long result = cache.get(symbol);
-            if (result != -1) {
-                return result;
+        int hash = Hash.boundedHash(symbol, maxHash);
+        BitmapIndexCursor cursor = indexReader.getCursor(hash, maxOffset);
+        while (cursor.hasNext()) {
+            long offsetOffset = cursor.next();
+            if (Chars.equals(symbol, charMem.getStr(offsetMem.getLong(offsetOffset)))) {
+                return SymbolMapWriter.offsetToKey(offsetOffset);
             }
-            result = lookupAndPut(symbol);
-            cache.put(symbol.toString(), result);
-            return result;
         }
-        return lookupAndPut(symbol);
+        return SymbolTable.VALUE_NOT_FOUND;
     }
 
-    public void rollback(long symbolCount) {
-        indexWriter.rollbackValues(keyToOffset(symbolCount));
-        offsetMem.jumpTo(keyToOffset(symbolCount));
-        jumpCharMemToSymbolCount(symbolCount);
-        if (cache != null) {
-            cache.clear();
+    public CharSequence value(long key) {
+        if (key < 0) {
+            return null;
         }
-    }
 
-    static long offsetToKey(long offset) {
-        return (offset - HEADER_SIZE) / 8;
-    }
-
-    static long keyToOffset(long key) {
-        return HEADER_SIZE + key * 8;
+        if (key < symbolCount) {
+            return charMem.getStr(offsetMem.getLong(SymbolMapWriter.keyToOffset(key)));
+        }
+        throw CairoException.instance(0).put("Invalid key: ").put(key);
     }
 
     private void jumpCharMemToSymbolCount(long symbolCount) {
         if (symbolCount > 0) {
-            long lastSymbolOffset = this.offsetMem.getLong(keyToOffset(symbolCount - 1));
+            long lastSymbolOffset = this.offsetMem.getLong(SymbolMapWriter.keyToOffset(symbolCount - 1));
             int l = VirtualMemory.getStorageLength(this.charMem.getStr(lastSymbolOffset));
             this.charMem.jumpTo(lastSymbolOffset + l);
         } else {
             this.charMem.jumpTo(0);
         }
-    }
-
-    private long lookupAndPut(CharSequence symbol) {
-        int hash = Hash.boundedHash(symbol, maxHash);
-        BitmapIndexCursor cursor = indexWriter.getCursor(hash);
-        while (cursor.hasNext()) {
-            long offsetOffset = cursor.next();
-            if (Chars.equals(symbol, charMem.getStr(offsetMem.getLong(offsetOffset)))) {
-                return offsetToKey(offsetOffset);
-            }
-        }
-        return put0(symbol, hash);
-    }
-
-    private long put0(CharSequence symbol, int hash) {
-        long offsetOffset = offsetMem.getAppendOffset();
-        offsetMem.putLong(charMem.putStr(symbol));
-        indexWriter.add(hash, offsetOffset);
-        return offsetToKey(offsetOffset);
     }
 }

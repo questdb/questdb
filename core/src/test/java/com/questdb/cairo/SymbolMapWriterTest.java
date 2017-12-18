@@ -23,6 +23,7 @@
 
 package com.questdb.cairo;
 
+import com.questdb.common.SymbolTable;
 import com.questdb.std.Chars;
 import com.questdb.std.Files;
 import com.questdb.std.ObjList;
@@ -35,30 +36,45 @@ import org.junit.Test;
 public class SymbolMapWriterTest extends AbstractCairoTest {
 
     @Test
-    public void testLookupPerformance() throws Exception {
+    public void testAppend() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            int N = 10000000;
-            int symbolCount = 1024;
-            ObjList<String> symbols = new ObjList<>();
+            int N = 1000;
             try (Path path = new Path().of(configuration.getRoot())) {
-                SymbolMapWriter.create(configuration, path, "x", symbolCount);
-                try (SymbolMapWriter writer = new SymbolMapWriter(configuration, path, "x", true)) {
-                    Rnd rnd = new Rnd();
+                SymbolMapWriter.create(configuration, path, "x", N);
+                Rnd rnd = new Rnd();
+
+                try (SymbolMapWriter writer = new SymbolMapWriter(configuration, path, "x", true, 0)) {
                     long prev = -1L;
-                    for (int i = 0; i < symbolCount; i++) {
+                    for (int i = 0; i < N; i++) {
                         CharSequence cs = rnd.nextChars(10);
                         long key = writer.put(cs);
-                        symbols.add(cs.toString());
                         Assert.assertEquals(prev + 1, key);
+                        Assert.assertEquals(key, writer.put(cs));
+                        prev = key;
+                    }
+                }
+
+                try (SymbolMapWriter writer = new SymbolMapWriter(configuration, path, "x", true, N)) {
+                    long prev = N - 1;
+                    // append second batch and check that symbol keys start with N
+                    for (int i = 0; i < N; i++) {
+                        CharSequence cs = rnd.nextChars(10);
+                        long key = writer.put(cs);
+                        Assert.assertEquals(prev + 1, key);
+                        Assert.assertEquals(key, writer.put(cs));
                         prev = key;
                     }
 
-                    long t = System.nanoTime();
+                    // try append first batch - this should return symbol keys starting with 0
+                    rnd.reset();
+                    prev = -1;
                     for (int i = 0; i < N; i++) {
-                        int key = rnd.nextPositiveInt() % symbolCount;
-                        Assert.assertEquals(key, writer.put(symbols.getQuick(key)));
+                        CharSequence cs = rnd.nextChars(10);
+                        long key = writer.put(cs);
+                        Assert.assertEquals(prev + 1, key);
+                        prev = key;
                     }
-                    System.out.println("SymbolMapWriter lookup performance [10M <500ms]: " + (System.nanoTime() - t) / 1000000);
+                    Assert.assertEquals(SymbolTable.VALUE_IS_NULL, writer.put(null));
                 }
             }
         });
@@ -89,14 +105,77 @@ public class SymbolMapWriterTest extends AbstractCairoTest {
 //    }
 
     @Test
+    public void testLookupPerformance() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            int N = 10000000;
+            int symbolCount = 1024;
+            ObjList<String> symbols = new ObjList<>();
+            try (Path path = new Path().of(configuration.getRoot())) {
+                SymbolMapWriter.create(configuration, path, "x", symbolCount);
+                try (SymbolMapWriter writer = new SymbolMapWriter(configuration, path, "x", true, 0)) {
+                    Rnd rnd = new Rnd();
+                    long prev = -1L;
+                    for (int i = 0; i < symbolCount; i++) {
+                        CharSequence cs = rnd.nextChars(10);
+                        long key = writer.put(cs);
+                        symbols.add(cs.toString());
+                        Assert.assertEquals(prev + 1, key);
+                        prev = key;
+                    }
+
+                    long t = System.nanoTime();
+                    for (int i = 0; i < N; i++) {
+                        int key = rnd.nextPositiveInt() % symbolCount;
+                        Assert.assertEquals(key, writer.put(symbols.getQuick(key)));
+                    }
+                    System.out.println("SymbolMapWriter lookup performance [10M <500ms]: " + (System.nanoTime() - t) / 1000000);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testMapDoesNotExist() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (Path path = new Path().of(configuration.getRoot())) {
                 try {
-                    new SymbolMapWriter(configuration, path, "x", false);
+                    new SymbolMapWriter(configuration, path, "x", false, 0);
                     Assert.fail();
                 } catch (CairoException e) {
                     Assert.assertTrue(Chars.contains(e.getMessage(), "does not exist"));
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testRollback() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            int N = 1024;
+            try (Path path = new Path().of(configuration.getRoot())) {
+                SymbolMapWriter.create(configuration, path, "x", N);
+                try (SymbolMapWriter writer = new SymbolMapWriter(configuration, path, "x", true, 0)) {
+                    Rnd rnd = new Rnd();
+                    long prev = -1L;
+                    for (int i = 0; i < N; i++) {
+                        CharSequence cs = rnd.nextChars(10);
+                        long key = writer.put(cs);
+                        Assert.assertEquals(prev + 1, key);
+                        Assert.assertEquals(key, writer.put(cs));
+                        prev = key;
+                    }
+
+                    writer.rollback(N / 2);
+
+                    prev = N / 2 - 1;
+                    for (int i = 0; i < N; i++) {
+                        CharSequence cs = rnd.nextChars(10);
+                        long key = writer.put(cs);
+                        Assert.assertEquals(prev + 1, key);
+                        Assert.assertEquals(key, writer.put(cs));
+                        prev = key;
+                    }
+
                 }
             }
         });
@@ -109,7 +188,7 @@ public class SymbolMapWriterTest extends AbstractCairoTest {
                 int plen = path.length();
                 Assert.assertTrue(Files.touch(path.concat("x").put(".o").$()));
                 try {
-                    new SymbolMapWriter(configuration, path.trimTo(plen), "x", false);
+                    new SymbolMapWriter(configuration, path.trimTo(plen), "x", false, 0);
                     Assert.fail();
                 } catch (CairoException e) {
                     Assert.assertTrue(Chars.contains(e.getMessage(), "too short"));
@@ -121,10 +200,10 @@ public class SymbolMapWriterTest extends AbstractCairoTest {
     @Test
     public void testSimpleAdd() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            int N = 10000000;
+            int N = 1000000;
             try (Path path = new Path().of(configuration.getRoot())) {
                 SymbolMapWriter.create(configuration, path, "x", N);
-                try (SymbolMapWriter writer = new SymbolMapWriter(configuration, path, "x", false)) {
+                try (SymbolMapWriter writer = new SymbolMapWriter(configuration, path, "x", false, 0)) {
                     Rnd rnd = new Rnd();
                     long prev = -1L;
                     for (int i = 0; i < N; i++) {
@@ -133,6 +212,43 @@ public class SymbolMapWriterTest extends AbstractCairoTest {
                         Assert.assertEquals(prev + 1, key);
                         Assert.assertEquals(key, writer.put(cs));
                         prev = key;
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testSimpleRead() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            int N = 1000000;
+            Rnd rnd = new Rnd();
+            try (Path path = new Path().of(configuration.getRoot())) {
+                SymbolMapWriter.create(configuration, path, "x", N);
+                try (SymbolMapWriter writer = new SymbolMapWriter(configuration, path, "x", false, 0)) {
+                    long prev = -1L;
+                    for (int i = 0; i < N; i++) {
+                        CharSequence cs = rnd.nextChars(10);
+                        long key = writer.put(cs);
+                        Assert.assertEquals(prev + 1, key);
+                        prev = key;
+                    }
+                }
+                rnd.reset();
+                try (SymbolMapReader reader = new SymbolMapReader(configuration, path, "x", N)) {
+                    for (int i = 0; i < N; i++) {
+                        CharSequence cs = rnd.nextChars(10);
+                        TestUtils.assertEquals(cs, reader.value(i));
+                        Assert.assertEquals(i, reader.getQuick(cs));
+                    }
+
+                    Assert.assertNull(reader.value(-1));
+
+                    try {
+                        reader.value(N + 1);
+                        Assert.fail();
+                    } catch (CairoException e) {
+                        Assert.assertTrue(Chars.contains(e.getMessage(), "Invalid key"));
                     }
                 }
             }

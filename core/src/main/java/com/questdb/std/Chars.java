@@ -57,20 +57,20 @@ public final class Chars {
         return Integer.compare(ll, rl);
     }
 
-    public static boolean contains(CharSequence _this, CharSequence that) {
-        int m = that.length();
+    public static boolean contains(CharSequence sequence, CharSequence term) {
+        int m = term.length();
         if (m == 0) {
             return false;
         }
 
-        for (int i = 0, n = _this.length(); i < n; i++) {
-            if (_this.charAt(i) == that.charAt(0)) {
+        for (int i = 0, n = sequence.length(); i < n; i++) {
+            if (sequence.charAt(i) == term.charAt(0)) {
                 if (n - i < m) {
                     return false;
                 }
                 boolean found = true;
                 for (int k = 1; k < m && k + i < n; k++) {
-                    if (_this.charAt(i + k) != that.charAt(k)) {
+                    if (sequence.charAt(i + k) != term.charAt(k)) {
                         found = false;
                         break;
                     }
@@ -250,17 +250,6 @@ public final class Chars {
         return -1;
     }
 
-    public static CharSequence stringOf(CharSequence charSequence) {
-        if (charSequence instanceof String) {
-            return charSequence;
-        }
-
-        if (charSequence == null) {
-            return null;
-        }
-        return charSequence.toString();
-    }
-
     public static void putCharsOnly(long address, CharSequence value) {
         strcpyw(value, value.length(), address);
     }
@@ -355,6 +344,17 @@ public final class Chars {
         for (int i = 0; i < len; i++) {
             Unsafe.getUnsafe().putChar(address + (i << 1), value.charAt(i));
         }
+    }
+
+    public static CharSequence stringOf(CharSequence charSequence) {
+        if (charSequence instanceof String) {
+            return charSequence;
+        }
+
+        if (charSequence == null) {
+            return null;
+        }
+        return charSequence.toString();
     }
 
     public static String stripQuotes(String s) {
