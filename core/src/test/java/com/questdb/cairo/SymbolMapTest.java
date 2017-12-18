@@ -25,7 +25,6 @@ package com.questdb.cairo;
 
 import com.questdb.common.SymbolTable;
 import com.questdb.std.Chars;
-import com.questdb.std.Files;
 import com.questdb.std.ObjList;
 import com.questdb.std.Rnd;
 import com.questdb.std.str.Path;
@@ -33,7 +32,7 @@ import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class SymbolMapWriterTest extends AbstractCairoTest {
+public class SymbolMapTest extends AbstractCairoTest {
 
     @Test
     public void testAppend() throws Exception {
@@ -149,6 +148,50 @@ public class SymbolMapWriterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testReadEmptySymbolMap() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            int N = 10000;
+            try (Path path = new Path().of(configuration.getRoot())) {
+                SymbolMapWriter.create(configuration, path, "x", N);
+                try (SymbolMapReader reader = new SymbolMapReader(configuration, path, "x", 0)) {
+                    Assert.assertNull(reader.value(-1));
+                    Assert.assertEquals(SymbolTable.VALUE_IS_NULL, reader.getQuick(null));
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testReaderWhenMapDoesNotExist() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getRoot())) {
+                try {
+                    new SymbolMapReader(configuration, path, "x", 0);
+                    Assert.fail();
+                } catch (CairoException e) {
+                    Assert.assertTrue(Chars.contains(e.getMessage(), "does not exist"));
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testReaderWithShortHeader() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getRoot())) {
+                int plen = path.length();
+                Assert.assertTrue(configuration.getFilesFacade().touch(path.concat("x").put(".o").$()));
+                try {
+                    new SymbolMapReader(configuration, path.trimTo(plen), "x", 0);
+                    Assert.fail();
+                } catch (CairoException e) {
+                    Assert.assertTrue(Chars.contains(e.getMessage(), "too short"));
+                }
+            }
+        });
+    }
+
+    @Test
     public void testRollback() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             int N = 1024;
@@ -186,7 +229,7 @@ public class SymbolMapWriterTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             try (Path path = new Path().of(configuration.getRoot())) {
                 int plen = path.length();
-                Assert.assertTrue(Files.touch(path.concat("x").put(".o").$()));
+                Assert.assertTrue(configuration.getFilesFacade().touch(path.concat("x").put(".o").$()));
                 try {
                     new SymbolMapWriter(configuration, path.trimTo(plen), "x", false, 0);
                     Assert.fail();
@@ -245,10 +288,66 @@ public class SymbolMapWriterTest extends AbstractCairoTest {
                     Assert.assertNull(reader.value(-1));
 
                     try {
-                        reader.value(N + 1);
+                        reader.value(N);
                         Assert.fail();
                     } catch (CairoException e) {
                         Assert.assertTrue(Chars.contains(e.getMessage(), "Invalid key"));
+                    }
+
+                    Assert.assertEquals(SymbolTable.VALUE_NOT_FOUND, reader.getQuick("hola"));
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testTransactionalRead() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            int N = 1000000;
+            Rnd rnd = new Rnd();
+            try (Path path = new Path().of(configuration.getRoot())) {
+                SymbolMapWriter.create(configuration, path, "x", N);
+                try (SymbolMapWriter writer = new SymbolMapWriter(configuration, path, "x", false, 0)) {
+                    long prev = -1L;
+                    for (int i = 0; i < N; i++) {
+                        CharSequence cs = rnd.nextChars(10);
+                        long key = writer.put(cs);
+                        Assert.assertEquals(prev + 1, key);
+                        prev = key;
+                    }
+
+                    rnd.reset();
+                    try (SymbolMapReader reader = new SymbolMapReader(configuration, path, "x", N)) {
+                        for (int i = 0; i < N; i++) {
+                            CharSequence cs = rnd.nextChars(10);
+                            TestUtils.assertEquals(cs, reader.value(i));
+                            Assert.assertEquals(i, reader.getQuick(cs));
+                        }
+
+                        try {
+                            reader.value(N);
+                            Assert.fail();
+                        } catch (CairoException e) {
+                            Assert.assertTrue(Chars.contains(e.getMessage(), "Invalid key"));
+                        }
+
+                        Assert.assertEquals(SymbolTable.VALUE_NOT_FOUND, reader.getQuick("hola"));
+
+                        Assert.assertEquals(N, writer.put("XYZ"));
+
+                        // must not be able to read new symbol
+                        try {
+                            reader.value(N);
+                            Assert.fail();
+                        } catch (CairoException e) {
+                            Assert.assertTrue(Chars.contains(e.getMessage(), "Invalid key"));
+                        }
+
+                        Assert.assertEquals(SymbolTable.VALUE_NOT_FOUND, reader.getQuick("XYZ"));
+
+                        reader.updateSymbolCount(N + 1);
+                        TestUtils.assertEquals("XYZ", reader.value(N));
+                        Assert.assertEquals(N, reader.getQuick("XYZ"));
                     }
                 }
             }

@@ -97,9 +97,14 @@ public class SymbolMapWriter implements Closeable {
 
     public static void create(CairoConfiguration configuration, Path path, CharSequence name, int symbolCapacity) {
         int plen = path.length();
-        try (ReadWriteMemory mem = new ReadWriteMemory(configuration.getFilesFacade(), path.concat(name).put(".o").$(), configuration.getFilesFacade().getMapPageSize())) {
-            mem.putInt(symbolCapacity);
-            mem.jumpTo(HEADER_SIZE);
+        try {
+            try (ReadWriteMemory mem = new ReadWriteMemory(configuration.getFilesFacade(), path.concat(name).put(".o").$(), configuration.getFilesFacade().getMapPageSize())) {
+                mem.putInt(symbolCapacity);
+                mem.jumpTo(HEADER_SIZE);
+            }
+
+            configuration.getFilesFacade().touch(path.trimTo(plen).concat(name).put(".c").$());
+            new BitmapIndexWriter(configuration, path.trimTo(plen), name, 4).close();
         } finally {
             path.trimTo(plen);
         }

@@ -51,6 +51,8 @@ public interface FilesFacade {
 
     long getOpenFileCount();
 
+    boolean touch(LPSZ path);
+
     long getPageSize();
 
     void iterateDir(LPSZ path, FindVisitor func);

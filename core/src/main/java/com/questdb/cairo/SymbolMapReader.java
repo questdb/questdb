@@ -46,7 +46,7 @@ public class SymbolMapReader implements Closeable {
 
     public SymbolMapReader(CairoConfiguration configuration, Path path, CharSequence name, long symbolCount) {
         this.symbolCount = symbolCount;
-        this.maxOffset = SymbolMapWriter.keyToOffset(symbolCount);
+        this.maxOffset = SymbolMapWriter.keyToOffset(symbolCount - 1);
         final int plen = path.length();
         try {
             final long mapPageSize = configuration.getFilesFacade().getMapPageSize();
@@ -70,7 +70,7 @@ public class SymbolMapReader implements Closeable {
             // we left off. Where we left off is stored externally to symbol map
             this.offsetMem = new ReadOnlyMemory(configuration.getFilesFacade(), path, mapPageSize);
             final int symbolCapacity = offsetMem.getInt(0);
-            this.offsetMem.jumpTo(maxOffset);
+            this.offsetMem.grow(maxOffset);
 
             // index writer is used to identify attempts to store duplicate symbol value
             this.indexReader = new BitmapIndexBackwardReader(configuration, path.trimTo(plen), name);
@@ -79,7 +79,7 @@ public class SymbolMapReader implements Closeable {
             this.charMem = new ReadOnlyMemory(configuration.getFilesFacade(), path.trimTo(plen).concat(name).put(".c").$(), mapPageSize);
 
             // move append pointer for symbol values in the correct place
-            jumpCharMemToSymbolCount(symbolCount);
+            growCharMemToSymbolCount(symbolCount);
 
             // we use index hash maximum equals to half of symbol capacity, which
             // theoretically should require 2 value cells in index per hash
@@ -121,6 +121,15 @@ public class SymbolMapReader implements Closeable {
         return SymbolTable.VALUE_NOT_FOUND;
     }
 
+    public void updateSymbolCount(long symbolCount) {
+        if (symbolCount > this.symbolCount) {
+            this.symbolCount = symbolCount;
+            this.maxOffset = SymbolMapWriter.keyToOffset(symbolCount - 1);
+            this.offsetMem.grow(maxOffset);
+            growCharMemToSymbolCount(symbolCount);
+        }
+    }
+
     public CharSequence value(long key) {
         if (key < 0) {
             return null;
@@ -132,13 +141,13 @@ public class SymbolMapReader implements Closeable {
         throw CairoException.instance(0).put("Invalid key: ").put(key);
     }
 
-    private void jumpCharMemToSymbolCount(long symbolCount) {
+    private void growCharMemToSymbolCount(long symbolCount) {
         if (symbolCount > 0) {
             long lastSymbolOffset = this.offsetMem.getLong(SymbolMapWriter.keyToOffset(symbolCount - 1));
             int l = VirtualMemory.getStorageLength(this.charMem.getStr(lastSymbolOffset));
-            this.charMem.jumpTo(lastSymbolOffset + l);
+            this.charMem.grow(lastSymbolOffset + l);
         } else {
-            this.charMem.jumpTo(0);
+            this.charMem.grow(0);
         }
     }
 }

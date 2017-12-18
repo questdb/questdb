@@ -1365,7 +1365,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
             try (Path path = new Path().of(root)) {
                 path.concat(PRODUCT).concat("test.dat").$();
-                Assert.assertTrue(Files.touch(path));
+                Assert.assertTrue(configuration.getFilesFacade().touch(path));
             }
 
             Rnd rnd = new Rnd();
