@@ -334,6 +334,18 @@ public class CairoMemoryTest {
     }
 
     @Test
+    public void testReadOnlyMemoryJump() {
+        try (ReadOnlyMemory mem = new ReadOnlyMemory()) {
+            try {
+                mem.jumpTo(100);
+                Assert.fail();
+            } catch (UnsupportedOperationException e) {
+                Assert.assertTrue(Chars.contains(e.getMessage(), "Use grow"));
+            }
+        }
+    }
+
+    @Test
     public void testReadWriteCannotOpenFile() {
         long used = Unsafe.getMemUsed();
 

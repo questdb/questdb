@@ -56,6 +56,11 @@ public class ReadOnlyMemory extends VirtualMemory implements ReadOnlyColumn {
     }
 
     @Override
+    protected long mapWritePage(int page) {
+        throw new UnsupportedOperationException("Cannot jump() read-only memory. Use grow() instead.");
+    }
+
+    @Override
     protected long getPageAddress(int page) {
         long address = super.getPageAddress(page);
         if (address != 0) {

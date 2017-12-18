@@ -105,6 +105,11 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
+    public boolean touch(LPSZ path) {
+        return Files.touch(path);
+    }
+
+    @Override
     public long getPageSize() {
         return Files.PAGE_SIZE;
     }
