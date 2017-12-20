@@ -46,4 +46,8 @@ public interface CairoConfiguration {
     MicrosecondClock getClock();
 
     long getSpinLockTimeoutUs();
+
+    boolean getCutlassSymbolCacheFlag();
+
+    int getCutlassSymbolCapacity();
 }

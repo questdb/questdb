@@ -32,7 +32,7 @@ import com.questdb.std.str.Path;
 import java.io.Closeable;
 
 public class SymbolMapWriter implements Closeable {
-    static final int HEADER_SIZE = 64;
+    public static final int HEADER_SIZE = 64;
     private static final Log LOG = LogFactory.getLog(SymbolMapWriter.class);
 
     private final BitmapIndexWriter indexWriter;

@@ -292,7 +292,7 @@ public class BitmapIndexWriter implements Closeable {
         keyMem.putLong(valueCount + 1);
     }
 
-    static void initKeyMemory(VirtualMemory keyMem, int blockValueCount) {
+    public static void initKeyMemory(VirtualMemory keyMem, int blockValueCount) {
         keyMem.putByte(BitmapIndexUtils.SIGNATURE);
         keyMem.putLong(1); // SEQUENCE
         Unsafe.getUnsafe().storeFence();
