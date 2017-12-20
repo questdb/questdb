@@ -1502,6 +1502,11 @@ public class TableWriter implements Closeable {
             notNull(index);
         }
 
+        public void putSym(int index, CharSequence value) {
+            getSecondaryColumn(index).putLong(getPrimaryColumn(index).putStr(value));
+            notNull(index);
+        }
+
         public void putStr(int index, CharSequence value, int pos, int len) {
             getSecondaryColumn(index).putLong(getPrimaryColumn(index).putStr(value, pos, len));
             notNull(index);

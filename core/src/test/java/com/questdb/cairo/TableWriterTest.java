@@ -662,8 +662,8 @@ public class TableWriterTest extends AbstractCairoTest {
                 TableWriter.Row r = writer.newRow(ts += increment);
                 r.putInt(0, rnd.nextPositiveInt());
                 r.putStr(1, rnd.nextString(7));
-                r.putStr(2, rnd.nextString(4));
-                r.putStr(3, rnd.nextString(11));
+                r.putSym(2, rnd.nextString(4));
+                r.putSym(3, rnd.nextString(11));
                 r.putDouble(4, rnd.nextDouble());
 
                 ff.fail = true;
@@ -732,8 +732,8 @@ public class TableWriterTest extends AbstractCairoTest {
                 TableWriter.Row r = writer.newRow(ts += increment);
                 r.putInt(0, rnd.nextPositiveInt());
                 r.putStr(1, rnd.nextString(7));
-                r.putStr(2, rnd.nextString(4));
-                r.putStr(3, rnd.nextString(11));
+                r.putSym(2, rnd.nextString(4));
+                r.putSym(3, rnd.nextString(11));
                 r.putDouble(4, rnd.nextDouble());
 
                 for (int i = 0; i < 1000; i++) {
@@ -768,8 +768,8 @@ public class TableWriterTest extends AbstractCairoTest {
                         TableWriter.Row r = writer.newRow(ts += 60000 * 1000L);
                         r.putInt(0, rnd.nextPositiveInt());
                         r.putStr(1, rnd.nextString(7));
-                        r.putStr(2, rnd.nextString(4));
-                        r.putStr(3, rnd.nextString(11));
+                        r.putSym(2, rnd.nextString(4));
+                        r.putSym(3, rnd.nextString(11));
                         r.putDouble(4, rnd.nextDouble());
                         if (rnd.nextPositiveInt() % 30 == 0) {
                             r.cancel();
@@ -806,8 +806,8 @@ public class TableWriterTest extends AbstractCairoTest {
                     r = writer.newRow(ts += 60000 * 1000L);
                     r.putInt(0, rnd.nextPositiveInt());
                     r.putStr(1, rnd.nextString(7));
-                    r.putStr(2, rnd.nextString(4));
-                    r.putStr(3, rnd.nextString(11));
+                    r.putSym(2, rnd.nextString(4));
+                    r.putSym(3, rnd.nextString(11));
                     r.putDouble(4, rnd.nextDouble());
                     if (rnd.nextBoolean()) {
                         r.append();
@@ -817,7 +817,7 @@ public class TableWriterTest extends AbstractCairoTest {
                     }
                 }
                 r = writer.newRow(ts);
-                r.putStr(2, "XYZ");
+                r.putSym(2, "XYZ");
 
                 writer.commit();
                 Assert.assertTrue(cancelCount > 0);
@@ -902,8 +902,8 @@ public class TableWriterTest extends AbstractCairoTest {
                         TableWriter.Row r = writer.newRow(ts += 60 * 60000 * 1000L);
                         r.putInt(0, rnd.nextPositiveInt());
                         r.putStr(1, rnd.nextString(7));
-                        r.putStr(2, rnd.nextString(4));
-                        r.putStr(3, rnd.nextString(11));
+                        r.putSym(2, rnd.nextString(4));
+                        r.putSym(3, rnd.nextString(11));
                         r.putDouble(4, rnd.nextDouble());
                         if (rnd.nextPositiveInt() % 50 == 0) {
                             ff.fail = true;
@@ -972,8 +972,8 @@ public class TableWriterTest extends AbstractCairoTest {
                         TableWriter.Row r = writer.newRow(ts += 60000 * 1000L);
                         r.putInt(0, rnd.nextPositiveInt());
                         r.putStr(1, rnd.nextString(7));
-                        r.putStr(2, rnd.nextString(4));
-                        r.putStr(3, rnd.nextString(11));
+                        r.putSym(2, rnd.nextString(4));
+                        r.putSym(3, rnd.nextString(11));
                         r.putDouble(4, rnd.nextDouble());
                         if (rnd.nextPositiveInt() % 50 == 0) {
                             ff.fail = true;
@@ -2121,7 +2121,7 @@ public class TableWriterTest extends AbstractCairoTest {
             TableWriter.Row r = writer.newRow(ts += 60000L * 1000L);
             r.putInt(productId, rnd.nextPositiveInt());
             r.putStr(productName, rnd.nextString(4));
-            r.putStr(category, rnd.nextString(11));
+            r.putSym(category, rnd.nextString(11));
             r.putDouble(price, rnd.nextDouble());
             r.append();
         }
@@ -2139,8 +2139,8 @@ public class TableWriterTest extends AbstractCairoTest {
             TableWriter.Row r = writer.newRow(0);
             r.putInt(productId, rnd.nextPositiveInt());
             r.putStr(productName, rnd.nextString(10));
-            r.putStr(supplier, rnd.nextString(4));
-            r.putStr(category, rnd.nextString(11));
+            r.putSym(supplier, rnd.nextString(4));
+            r.putSym(category, rnd.nextString(11));
             r.putDouble(price, rnd.nextDouble());
             r.append();
         }
@@ -2157,8 +2157,8 @@ public class TableWriterTest extends AbstractCairoTest {
             TableWriter.Row r = writer.newRow(ts += 60000L * 1000L);
             r.putInt(productId, rnd.nextPositiveInt());
             r.putStr(productName, rnd.nextString(10));
-            r.putStr(supplier, rnd.nextString(4));
-            r.putStr(category, rnd.nextString(11));
+            r.putSym(supplier, rnd.nextString(4));
+            r.putSym(category, rnd.nextString(11));
             r.putDouble(price, rnd.nextDouble());
             r.append();
         }
@@ -2245,8 +2245,8 @@ public class TableWriterTest extends AbstractCairoTest {
         TableWriter.Row r = writer.newRow(ts += increment);
         r.putInt(0, rnd.nextPositiveInt());
         r.putStr(1, rnd.nextString(7));
-        r.putStr(2, rnd.nextString(4));
-        r.putStr(3, rnd.nextString(11));
+        r.putSym(2, rnd.nextString(4));
+        r.putSym(3, rnd.nextString(11));
         r.putDouble(4, rnd.nextDouble());
         r.append();
         return ts;
@@ -2286,8 +2286,8 @@ public class TableWriterTest extends AbstractCairoTest {
             TableWriter.Row r = writer.newRow(ts += interval);
             r.putInt(0, rnd.nextPositiveInt());
             r.putStr(1, rnd.nextString(7));
-            r.putStr(2, rnd.nextString(4));
-            r.putStr(3, rnd.nextString(11));
+            r.putSym(2, rnd.nextString(4));
+            r.putSym(3, rnd.nextString(11));
             r.putDouble(4, rnd.nextDouble());
             r.putStr(6, rnd.nextString(5));
             r.append();
@@ -2362,8 +2362,8 @@ public class TableWriterTest extends AbstractCairoTest {
                     TableWriter.Row r = writer.newRow(ts += 60L * 60000 * 1000L);
                     r.putInt(0, rnd.nextPositiveInt());
                     r.putStr(1, rnd.nextString(7));
-                    r.putStr(2, rnd.nextString(4));
-                    r.putStr(3, rnd.nextString(11));
+                    r.putSym(2, rnd.nextString(4));
+                    r.putSym(3, rnd.nextString(11));
                     r.putDouble(4, rnd.nextDouble());
                     r.putStr(6, rnd.nextString(10));
                     r.append();
@@ -2605,8 +2605,8 @@ public class TableWriterTest extends AbstractCairoTest {
                     }
                     r.putInt(0, rnd.nextPositiveInt());
                     r.putStr(1, rnd.nextString(7));
-                    r.putStr(2, rnd.nextString(4));
-                    r.putStr(3, rnd.nextString(11));
+                    r.putSym(2, rnd.nextString(4));
+                    r.putSym(3, rnd.nextString(11));
                     r.putDouble(4, rnd.nextDouble());
                     r.append();
                     i++;

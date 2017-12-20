@@ -494,7 +494,7 @@ public class TableReaderTest extends AbstractCairoTest {
         }
 
         if (rnd.nextBoolean()) {
-            r.putStr(18, rnd.nextChars(10));
+            r.putSym(18, rnd.nextChars(10));
         }
 
         if (rnd.nextBoolean()) {
@@ -535,7 +535,7 @@ public class TableReaderTest extends AbstractCairoTest {
         }
 
         if (rnd.nextBoolean()) {
-            r.putStr(18, rnd.nextChars(10));
+            r.putSym(18, rnd.nextChars(10));
         }
 
         if (rnd.nextBoolean()) {
@@ -773,7 +773,7 @@ public class TableReaderTest extends AbstractCairoTest {
                 r.cancel();
 
                 r = w.newRow(100000); // <-- lower timestamp
-                r.putStr(7, "abc");
+                r.putSym(7, "abc");
                 r.putBool(8, true);
                 r.append();
 
