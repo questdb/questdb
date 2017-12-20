@@ -467,7 +467,7 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
                 row.putStr(index, value, 1, value.length() - 2);
                 break;
             case ColumnType.SYMBOL:
-                row.putStr(index, value);
+                row.putSym(index, value);
             default:
                 break;
 

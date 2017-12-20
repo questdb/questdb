@@ -297,13 +297,13 @@ public class PerformanceTest extends AbstractTest {
                 int n = symbols.length - 1;
                 for (int i1 = 0; i1 < TEST_DATA_SIZE; i1++) {
                     TableWriter.Row row = w.newRow(timestamp);
-                    row.putStr(1, symbols[Math.abs(r.nextInt() % n)]);
+                    row.putSym(1, symbols[Math.abs(r.nextInt() % n)]);
                     row.putDouble(2, Math.abs(r.nextDouble()));
                     row.putDouble(3, Math.abs(r.nextDouble()));
                     row.putInt(4, Math.abs(r.nextInt()));
                     row.putInt(5, Math.abs(r.nextInt()));
-                    row.putStr(6, "LXE");
-                    row.putStr(7, "Fast trading");
+                    row.putSym(6, "LXE");
+                    row.putSym(7, "Fast trading");
                     row.append();
                     timestamp += (long) 1000;
                 }
