@@ -100,6 +100,8 @@ public class BitmapIndexBackwardReader implements Closeable {
         } catch (CairoException e) {
             close();
             throw e;
+        } finally {
+            path.trimTo(plen);
         }
     }
 

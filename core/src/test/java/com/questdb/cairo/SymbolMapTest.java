@@ -34,12 +34,28 @@ import org.junit.Test;
 
 public class SymbolMapTest extends AbstractCairoTest {
 
+    public static void create(Path path, CharSequence name, int symbolCapacity, boolean useCache) {
+        int plen = path.length();
+        try {
+            try (ReadWriteMemory mem = new ReadWriteMemory(configuration.getFilesFacade(), path.concat(name).put(".o").$(), configuration.getFilesFacade().getMapPageSize())) {
+                mem.putInt(symbolCapacity);
+                mem.putBool(useCache);
+                mem.jumpTo(SymbolMapWriter.HEADER_SIZE);
+            }
+
+            configuration.getFilesFacade().touch(path.trimTo(plen).concat(name).put(".c").$());
+            BitmapIndexWriter.create(configuration, path.trimTo(plen), name, 4);
+        } finally {
+            path.trimTo(plen);
+        }
+    }
+
     @Test
     public void testAppend() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             int N = 1000;
             try (Path path = new Path().of(configuration.getRoot())) {
-                SymbolMapWriter.create(configuration, path, "x", N, true);
+                create(path, "x", N, true);
                 Rnd rnd = new Rnd();
 
                 try (SymbolMapWriter writer = new SymbolMapWriter(configuration, path, "x", 0)) {
@@ -110,7 +126,7 @@ public class SymbolMapTest extends AbstractCairoTest {
             int symbolCount = 1024;
             ObjList<String> symbols = new ObjList<>();
             try (Path path = new Path().of(configuration.getRoot())) {
-                SymbolMapWriter.create(configuration, path, "x", symbolCount, true);
+                create(path, "x", symbolCount, true);
                 try (SymbolMapWriter writer = new SymbolMapWriter(configuration, path, "x", 0)) {
                     Rnd rnd = new Rnd();
                     long prev = -1L;
@@ -152,7 +168,7 @@ public class SymbolMapTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             int N = 10000;
             try (Path path = new Path().of(configuration.getRoot())) {
-                SymbolMapWriter.create(configuration, path, "x", N, true);
+                create(path, "x", N, true);
                 try (SymbolMapReader reader = new SymbolMapReader(configuration, path, "x", 0)) {
                     Assert.assertNull(reader.value(-1));
                     Assert.assertEquals(SymbolTable.VALUE_IS_NULL, reader.getQuick(null));
@@ -196,7 +212,7 @@ public class SymbolMapTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             int N = 1024;
             try (Path path = new Path().of(configuration.getRoot())) {
-                SymbolMapWriter.create(configuration, path, "x", N, true);
+                create(path, "x", N, true);
                 try (SymbolMapWriter writer = new SymbolMapWriter(configuration, path, "x", 0)) {
                     Rnd rnd = new Rnd();
                     long prev = -1L;
@@ -245,7 +261,7 @@ public class SymbolMapTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             int N = 1000000;
             try (Path path = new Path().of(configuration.getRoot())) {
-                SymbolMapWriter.create(configuration, path, "x", N, false);
+                create(path, "x", N, false);
                 try (SymbolMapWriter writer = new SymbolMapWriter(configuration, path, "x", 0)) {
                     Rnd rnd = new Rnd();
                     long prev = -1L;
@@ -267,7 +283,7 @@ public class SymbolMapTest extends AbstractCairoTest {
             int N = 1000000;
             Rnd rnd = new Rnd();
             try (Path path = new Path().of(configuration.getRoot())) {
-                SymbolMapWriter.create(configuration, path, "x", N, false);
+                create(path, "x", N, false);
                 try (SymbolMapWriter writer = new SymbolMapWriter(configuration, path, "x", 0)) {
                     long prev = -1L;
                     for (int i = 0; i < N; i++) {
@@ -306,7 +322,7 @@ public class SymbolMapTest extends AbstractCairoTest {
             int N = 1000000;
             Rnd rnd = new Rnd();
             try (Path path = new Path().of(configuration.getRoot())) {
-                SymbolMapWriter.create(configuration, path, "x", N, false);
+                create(path, "x", N, false);
                 try (SymbolMapWriter writer = new SymbolMapWriter(configuration, path, "x", 0)) {
                     long prev = -1L;
                     for (int i = 0; i < N; i++) {
