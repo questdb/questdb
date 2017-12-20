@@ -53,7 +53,7 @@ public final class TableUtils {
     static final long TX_OFFSET_MAX_TIMESTAMP = 24;
     static final long TX_OFFSET_STRUCT_VERSION = 32;
     static final long TX_OFFSET_TXN_CHECK = 40;
-    static final long TX_EOF = 48;
+    static final long TX_OFFSET_MAP_WRITER_COUNT = 48;
     static final String META_SWAP_FILE_NAME = "_meta.swp";
     static final String META_PREV_FILE_NAME = "_meta.prev";
     static final String TODO_FILE_NAME = "_todo";
@@ -74,18 +74,22 @@ public final class TableUtils {
             mem.of(ff, path.trimTo(rootLen).concat(META_FILE_NAME).$(), ff.getPageSize());
 
             int count = metadata.getColumnCount();
+            int symbolMapCount = 0;
             mem.putInt(count);
             mem.putInt(metadata.getPartitionBy());
             mem.putInt(metadata.getTimestampIndex());
             for (int i = 0; i < count; i++) {
                 mem.putInt(metadata.getColumnQuick(i).type);
+                if (metadata.getColumnQuick(i).type == ColumnType.SYMBOL) {
+                    symbolMapCount++;
+                }
             }
             for (int i = 0; i < count; i++) {
                 mem.putStr(metadata.getColumnQuick(i).name);
             }
 
             mem.of(ff, path.trimTo(rootLen).concat(TXN_FILE_NAME).$(), ff.getPageSize());
-            resetTxn(mem);
+            resetTxn(mem, symbolMapCount);
         }
     }
 
@@ -123,7 +127,7 @@ public final class TableUtils {
         return fd;
     }
 
-    public static void resetTxn(VirtualMemory txMem) {
+    public static void resetTxn(VirtualMemory txMem, int symbolMapCount) {
         txMem.jumpTo(TX_OFFSET_TXN);
         // txn to let readers know table is being reset
         txMem.putLong(0);
@@ -137,10 +141,21 @@ public final class TableUtils {
         txMem.putLong(Long.MIN_VALUE);
         // structure version
         txMem.putLong(0);
-        //
+
+        // skip over txn check
+        txMem.skip(8);
+        txMem.putInt(symbolMapCount);
+        for (int i = 0; i < symbolMapCount; i++) {
+            txMem.putLong(0);
+        }
+
+        long offset = txMem.getAppendOffset();
+        txMem.jumpTo(TX_OFFSET_TXN_CHECK);
+
         Unsafe.getUnsafe().storeFence();
         // txn check
         txMem.putLong(0);
+        txMem.jumpTo(offset);
     }
 
     public static void validate(FilesFacade ff, ReadOnlyMemory metaMem, CharSequenceIntHashMap nameIndex) {

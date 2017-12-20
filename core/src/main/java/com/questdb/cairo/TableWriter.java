@@ -23,10 +23,7 @@
 
 package com.questdb.cairo;
 
-import com.questdb.common.ColumnType;
-import com.questdb.common.NumericException;
-import com.questdb.common.PartitionBy;
-import com.questdb.common.RecordMetadata;
+import com.questdb.common.*;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.std.*;
@@ -42,6 +39,9 @@ import org.jetbrains.annotations.NotNull;
 import java.io.Closeable;
 import java.util.function.LongConsumer;
 
+import static com.questdb.cairo.TableUtils.TX_OFFSET_MAP_WRITER_COUNT;
+import static com.questdb.cairo.TableUtils.TX_OFFSET_TXN_CHECK;
+
 public class TableWriter implements Closeable {
 
     private static final Log LOG = LogFactory.getLog(TableWriter.class);
@@ -49,6 +49,7 @@ public class TableWriter implements Closeable {
     private static final Runnable NOOP = () -> {
     };
     final ObjList<AppendMemory> columns;
+    private final ObjList<SymbolMapWriter> symbolMapWriters;
     private final Path path;
     private final Path other;
     private final LongList refs = new LongList();
@@ -71,6 +72,7 @@ public class TableWriter implements Closeable {
     private final CharSequence name;
     private final TableWriterMetadata metadata;
     private final Runnable MY_OPEN_META = this::openMetaFile;
+    private final CairoConfiguration configuration;
     int txPartitionCount = 0;
     private long lockFd;
     private LongConsumer timestampSetter;
@@ -94,6 +96,7 @@ public class TableWriter implements Closeable {
 
     public TableWriter(CairoConfiguration configuration, CharSequence name) {
         LOG.info().$("open '").utf8(name).$('\'').$();
+        this.configuration = configuration;
         this.ff = configuration.getFilesFacade();
         this.mkDirMode = configuration.getMkDirMode();
         this.fileOperationRetryCount = configuration.getFileOperationRetryCount();
@@ -114,28 +117,35 @@ public class TableWriter implements Closeable {
 
             this.txMem = openTxnFile();
             long todo = readTodoTaskCode();
+            if (todo != -1L && (int) (todo & 0xff) == TableUtils.TODO_RESTORE_META) {
+                repairMetaRename((int) (todo >> 8));
+            }
+            this.ddlMem = new AppendMemory();
+            this.metaMem = new ReadOnlyMemory();
+            openMetaFile();
+            this.metadata = new TableWriterMetadata(ff, metaMem);
+
+            // we have to do truncate repair at this stage of constructor
+            // because this operation requires metadata
             if (todo != -1L) {
                 switch ((int) (todo & 0xff)) {
                     case TableUtils.TODO_TRUNCATE:
                         repairTruncate();
                         break;
                     case TableUtils.TODO_RESTORE_META:
-                        repairMetaRename((int) (todo >> 8));
                         break;
                     default:
                         LOG.error().$("ignoring unknown *todo* code: ").$(todo).$();
                         break;
                 }
             }
-            this.ddlMem = new AppendMemory();
-            this.metaMem = new ReadOnlyMemory();
-            openMetaFile();
-            this.metadata = new TableWriterMetadata(ff, metaMem);
+
             this.columnCount = metadata.getColumnCount();
             this.partitionBy = metaMem.getInt(TableUtils.META_OFFSET_PARTITION_BY);
             this.columnSizeMem = new VirtualMemory(ff.getPageSize());
             this.refs.extendAndSet(columnCount, 0);
-            this.columns = new ObjList<>(columnCount);
+            this.columns = new ObjList<>(columnCount * 2);
+            this.symbolMapWriters = new ObjList<>(columnCount);
             this.nullers = new ObjList<>(columnCount);
             this.columnTops = new LongList(columnCount);
             this.partitionDirFmt = selectPartitionDirFmt(partitionBy);
@@ -246,8 +256,15 @@ public class TableWriter implements Closeable {
     public void close() {
         if (isOpen()) {
             closeColumns(true);
+            if (symbolMapWriters != null) {
+                for (int i = 0, n = symbolMapWriters.size(); i < n; i++) {
+                    Misc.free(symbolMapWriters.getQuick(i));
+                }
+                symbolMapWriters.clear();
+            }
+
             if (txMem != null) {
-                txMem.jumpTo(TableUtils.TX_EOF);
+                txMem.jumpTo(getTxEofOffset());
                 txMem.close();
             }
             Misc.free(metaMem);
@@ -297,7 +314,7 @@ public class TableWriter implements Closeable {
             txMem.putLong(maxTimestamp);
             Unsafe.getUnsafe().storeFence();
 
-            txMem.jumpTo(TableUtils.TX_OFFSET_TXN_CHECK);
+            txMem.jumpTo(TX_OFFSET_TXN_CHECK);
             txMem.putLong(txn);
             prevTransientRowCount = transientRowCount;
         }
@@ -457,7 +474,7 @@ public class TableWriter implements Closeable {
         txn = 0;
         txPartitionCount = 1;
 
-        TableUtils.resetTxn(txMem);
+        TableUtils.resetTxn(txMem, metadata.getSymbolMapCount());
         try {
             removeTodoFile();
         } catch (CairoException err) {
@@ -628,7 +645,7 @@ public class TableWriter implements Closeable {
         txMem.putLong(++structVersion);
         Unsafe.getUnsafe().storeFence();
 
-        txMem.jumpTo(TableUtils.TX_OFFSET_TXN_CHECK);
+        txMem.jumpTo(TX_OFFSET_TXN_CHECK);
         txMem.putLong(txn);
     }
 
@@ -786,8 +803,17 @@ public class TableWriter implements Closeable {
     }
 
     private void configureColumnMemory() {
+        int expectedMapWriters = txMem.getInt(TX_OFFSET_MAP_WRITER_COUNT);
+        long nextSymbolCountOffset = TX_OFFSET_MAP_WRITER_COUNT + 4;
         for (int i = 0; i < columnCount; i++) {
-            configureColumn(TableUtils.getColumnType(metaMem, i));
+            RecordColumnMetadata m = metadata.getColumnQuick(i);
+            int type = m.getType();
+            configureColumn(type);
+            if (type == ColumnType.SYMBOL) {
+                assert nextSymbolCountOffset < TX_OFFSET_MAP_WRITER_COUNT + 4 + 8 * expectedMapWriters;
+                symbolMapWriters.add(new SymbolMapWriter(configuration, path.trimTo(rootLen), m.getName(), txMem.getLong(nextSymbolCountOffset)));
+                nextSymbolCountOffset += 8;
+            }
         }
     }
 
@@ -848,6 +874,14 @@ public class TableWriter implements Closeable {
     private AppendMemory getSecondaryColumn(int column) {
         assert column < columnCount : "Column index is out of bounds: " + column + " >= " + columnCount;
         return columns.getQuick(getSecondaryColumnIndex(column));
+    }
+
+    private long getTxEofOffset() {
+        if (metadata != null) {
+            return TX_OFFSET_TXN_CHECK + 8 + 4 + (metadata.getSymbolMapCount() * 8);
+        } else {
+            return ff.length(txMem.getFd());
+        }
     }
 
     private long openAppend(LPSZ name) {
@@ -1057,8 +1091,6 @@ public class TableWriter implements Closeable {
                 if (!IGNORED_FILES.contains(nativeLPSZ)) {
                     if (type == Files.DT_DIR && !ff.rmdir(path)) {
                         throw CairoException.instance(ff.errno()).put("Cannot remove directory: ").put(path);
-                    } else if (type != Files.DT_DIR && !ff.remove(path)) {
-                        throw CairoException.instance(ff.errno()).put("Cannot remove file: ").put(path);
                     }
                 }
             });
@@ -1215,7 +1247,7 @@ public class TableWriter implements Closeable {
         if (partitionBy != PartitionBy.NONE) {
             removePartitionDirectories();
         }
-        TableUtils.resetTxn(txMem);
+        TableUtils.resetTxn(txMem, metadata.getSymbolMapCount());
         removeTodoFile();
     }
 

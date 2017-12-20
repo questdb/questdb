@@ -24,6 +24,7 @@
 package com.questdb.cairo;
 
 import com.questdb.common.AbstractRecordMetadata;
+import com.questdb.common.ColumnType;
 import com.questdb.common.RecordColumnMetadata;
 import com.questdb.std.CharSequenceIntHashMap;
 import com.questdb.std.FilesFacade;
@@ -32,8 +33,9 @@ import com.questdb.std.ObjList;
 public class TableWriterMetadata extends AbstractRecordMetadata {
     private final ObjList<TableColumnMetadata> columnMetadata;
     private final CharSequenceIntHashMap columnNameIndexMap = new CharSequenceIntHashMap();
-    private int columnCount;
     private final int timestampIndex;
+    private int columnCount;
+    private int symbolMapCount;
 
     public TableWriterMetadata(FilesFacade ff, ReadOnlyMemory metaMem) {
         TableUtils.validate(ff, metaMem, columnNameIndexMap);
@@ -42,12 +44,16 @@ public class TableWriterMetadata extends AbstractRecordMetadata {
         this.columnMetadata = new ObjList<>(this.columnCount);
 
         long offset = TableUtils.getColumnNameOffset(columnCount);
-
+        this.symbolMapCount = 0;
         // don't create strings in this loop, we already have them in columnNameIndexMap
         for (int i = 0; i < columnCount; i++) {
             CharSequence name = metaMem.getStr(offset);
             int index = columnNameIndexMap.keyIndex(name);
-            columnMetadata.add(new TableColumnMetadata(columnNameIndexMap.keyAt(index).toString(), TableUtils.getColumnType(metaMem, i)));
+            int type = TableUtils.getColumnType(metaMem, i);
+            columnMetadata.add(new TableColumnMetadata(columnNameIndexMap.keyAt(index).toString(), type));
+            if (type == ColumnType.SYMBOL) {
+                symbolMapCount++;
+            }
             offset += ReadOnlyMemory.getStorageLength(name);
         }
     }
@@ -56,6 +62,7 @@ public class TableWriterMetadata extends AbstractRecordMetadata {
     public int getColumnCount() {
         return columnCount;
     }
+
 
     @Override
     public int getColumnIndexQuiet(CharSequence name) {
@@ -72,16 +79,26 @@ public class TableWriterMetadata extends AbstractRecordMetadata {
         return timestampIndex;
     }
 
+    public int getSymbolMapCount() {
+        return symbolMapCount;
+    }
+
     void addColumn(CharSequence name, int type) {
         String str = name.toString();
         columnNameIndexMap.put(str, columnMetadata.size());
         columnMetadata.add(new TableColumnMetadata(str, type));
         columnCount++;
+        if (type == ColumnType.SYMBOL) {
+            symbolMapCount++;
+        }
     }
 
     void removeColumn(CharSequence name) {
         int index = columnNameIndexMap.keyIndex(name);
         int columnIndex = columnNameIndexMap.valueAt(index);
+        if (columnMetadata.getQuick(columnIndex).getType() == ColumnType.SYMBOL) {
+            symbolMapCount--;
+        }
         columnMetadata.remove(columnIndex);
         columnNameIndexMap.removeAt(index);
         columnCount--;
