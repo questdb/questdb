@@ -41,7 +41,7 @@ public class SymbolMapWriter implements Closeable {
     private final CharSequenceLongHashMap cache;
     private final int maxHash;
 
-    public SymbolMapWriter(CairoConfiguration configuration, Path path, CharSequence name, boolean useCache, long symbolCount) {
+    public SymbolMapWriter(CairoConfiguration configuration, Path path, CharSequence name, long symbolCount) {
         final int plen = path.length();
         try {
             final long mapPageSize = configuration.getFilesFacade().getMapPageSize();
@@ -65,6 +65,7 @@ public class SymbolMapWriter implements Closeable {
             // we left off. Where we left off is stored externally to symbol map
             this.offsetMem = new ReadWriteMemory(configuration.getFilesFacade(), path, mapPageSize);
             final int symbolCapacity = offsetMem.getInt(0);
+            final boolean useCache = offsetMem.getBool(4);
             this.offsetMem.jumpTo(keyToOffset(symbolCount));
 
             // index writer is used to identify attempts to store duplicate symbol value
@@ -95,11 +96,12 @@ public class SymbolMapWriter implements Closeable {
         }
     }
 
-    public static void create(CairoConfiguration configuration, Path path, CharSequence name, int symbolCapacity) {
+    public static void create(CairoConfiguration configuration, Path path, CharSequence name, int symbolCapacity, boolean useCache) {
         int plen = path.length();
         try {
             try (ReadWriteMemory mem = new ReadWriteMemory(configuration.getFilesFacade(), path.concat(name).put(".o").$(), configuration.getFilesFacade().getMapPageSize())) {
                 mem.putInt(symbolCapacity);
+                mem.putBool(useCache);
                 mem.jumpTo(HEADER_SIZE);
             }
 

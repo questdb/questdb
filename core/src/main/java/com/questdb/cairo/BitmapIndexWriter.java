@@ -54,7 +54,7 @@ public class BitmapIndexWriter implements Closeable {
             boolean exists = configuration.getFilesFacade().exists(path);
             this.keyMem = new ReadWriteMemory(configuration.getFilesFacade(), path, pageSize);
             if (!exists) {
-                initKeyMemory(valueBlockCapacity);
+                initKeyMemory(this.keyMem, valueBlockCapacity);
             }
 
             long keyMemSize = this.keyMem.getAppendOffset();
@@ -292,7 +292,7 @@ public class BitmapIndexWriter implements Closeable {
         keyMem.putLong(valueCount + 1);
     }
 
-    private void initKeyMemory(int blockValueCount) {
+    static void initKeyMemory(VirtualMemory keyMem, int blockValueCount) {
         keyMem.putByte(BitmapIndexUtils.SIGNATURE);
         keyMem.putLong(1); // SEQUENCE
         Unsafe.getUnsafe().storeFence();

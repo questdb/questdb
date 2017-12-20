@@ -25,7 +25,7 @@ package com.questdb.cairo;
 
 import com.questdb.common.ColumnType;
 import com.questdb.std.Chars;
-import com.questdb.std.IntList;
+import com.questdb.std.LongList;
 import com.questdb.std.Misc;
 import com.questdb.std.ObjList;
 import com.questdb.std.str.Path;
@@ -37,7 +37,7 @@ public class TableModel implements Closeable {
     private final int partitionBy;
     private final AppendMemory mem = new AppendMemory();
     private final ObjList<CharSequence> columnNames = new ObjList<>();
-    private final IntList columnTypes = new IntList();
+    private final LongList columnBits = new LongList();
     private final Path path = new Path();
     private final CairoConfiguration cairoCfg;
     private int timestampIndex = -1;
@@ -56,7 +56,9 @@ public class TableModel implements Closeable {
 
     public TableModel col(CharSequence name, int type) {
         columnNames.add(Chars.stringOf(name));
-        columnTypes.add(type);
+        // set default symbol capacity
+        columnBits.add((128L << 32) | type);
+        columnBits.add(1L);
         return this;
     }
 
@@ -68,12 +70,12 @@ public class TableModel implements Closeable {
         return columnNames.size();
     }
 
-    public ObjList<CharSequence> getColumnNames() {
-        return columnNames;
+    public CharSequence getColumnName(int index) {
+        return columnNames.getQuick(index);
     }
 
-    public IntList getColumnTypes() {
-        return columnTypes;
+    public int getColumnType(int index) {
+        return (int) columnBits.getQuick(index * 2);
     }
 
     public AppendMemory getMem() {
@@ -92,8 +94,28 @@ public class TableModel implements Closeable {
         return path;
     }
 
+    public boolean getSymbolCacheFlag(int index) {
+        long bits = columnBits.getQuick(index * 2 + 1);
+        return (bits & 1L) == 1L;
+    }
+
+    public int getSymbolCapacity(int index) {
+        long bits = columnBits.getQuick(index * 2);
+        return (int) (bits >> 32);
+    }
+
     public int getTimestampIndex() {
         return timestampIndex;
+    }
+
+    public TableModel symbolCapacity(int capacity) {
+        int last = columnBits.size() - 2;
+        assert last > -1;
+        long bits = columnBits.getQuick(last);
+        assert ((int) bits == ColumnType.SYMBOL);
+        bits = (((long) capacity) << 32) | (int) bits;
+        columnBits.setQuick(last, bits);
+        return this;
     }
 
     public TableModel timestamp() {
