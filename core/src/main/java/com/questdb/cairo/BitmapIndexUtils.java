@@ -86,7 +86,7 @@ public final class BitmapIndexUtils {
         seeker.seek(valueCount, valueBlockOffset);
     }
 
-    static void keyFileName(Path path, CharSequence name) {
+    public static void keyFileName(Path path, CharSequence name) {
         path.concat(name).put(".k").$();
     }
 

@@ -86,4 +86,14 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     public long getSpinLockTimeoutUs() {
         return 1000000;
     }
+
+    @Override
+    public boolean getCutlassSymbolCacheFlag() {
+        return true;
+    }
+
+    @Override
+    public int getCutlassSymbolCapacity() {
+        return 64;
+    }
 }

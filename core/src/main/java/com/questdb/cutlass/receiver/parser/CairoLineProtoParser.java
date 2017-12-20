@@ -250,12 +250,13 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
     private void createTable(CharSequenceCache cache) {
         path.of(configuration.getRoot()).concat(cache.get(tableName));
         final int rootLen = path.length();
-        if (configuration.getFilesFacade().mkdirs(path.put(Files.SEPARATOR).$(), configuration.getMkDirMode()) == -1) {
+        FilesFacade ff = configuration.getFilesFacade();
+        if (ff.mkdirs(path.put(Files.SEPARATOR).$(), configuration.getMkDirMode()) == -1) {
             throw CairoException.instance(0).put("cannot create directory: ").put(path);
         }
 
         try (AppendMemory mem = appendMemory) {
-            mem.of(configuration.getFilesFacade(), path.trimTo(rootLen).concat(TableUtils.META_FILE_NAME).$(), configuration.getFilesFacade().getPageSize());
+            mem.of(ff, path.trimTo(rootLen).concat(TableUtils.META_FILE_NAME).$(), configuration.getFilesFacade().getPageSize());
 
             int count = columnNameType.size() / 2;
             int symbolMapCount = 0;
@@ -276,6 +277,28 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
                 mem.putStr(cache.get(columnNameType.getQuick(i * 2)));
             }
             mem.putStr("timestamp");
+
+            // create symbol maps
+            for (int i = 0; i < count; i++) {
+                int type = (int) columnNameType.getQuick(i * 2 + 1);
+                if (type == ColumnType.SYMBOL) {
+                    CharSequence columnName = cache.get(columnNameType.getQuick(i * 2));
+
+                    mem.of(ff, path.trimTo(rootLen).concat(columnName).put(".o").$(), ff.getPageSize());
+                    mem.putInt(configuration.getCutlassSymbolCapacity());
+                    mem.putBool(configuration.getCutlassSymbolCacheFlag());
+                    mem.jumpTo(SymbolMapWriter.HEADER_SIZE);
+                    mem.close();
+
+                    if (!ff.touch(path.trimTo(rootLen).concat(columnName).put(".c").$())) {
+                        throw CairoException.instance(ff.errno()).put("Cannot create ").put(path);
+                    }
+
+                    BitmapIndexUtils.keyFileName(path.trimTo(rootLen), columnName);
+                    mem.of(ff, path, ff.getPageSize());
+                    BitmapIndexWriter.initKeyMemory(mem, 4);
+                }
+            }
 
             mem.of(configuration.getFilesFacade(), path.trimTo(rootLen).concat(TableUtils.TXN_FILE_NAME).$(), configuration.getFilesFacade().getPageSize());
             TableUtils.resetTxn(mem, symbolMapCount);
