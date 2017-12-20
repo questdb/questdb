@@ -44,7 +44,7 @@ public class BitmapIndexWriter implements Closeable {
     private long seekValueBlockOffset;
     private final BitmapIndexUtils.ValueBlockSeeker SEEKER = this::seek;
 
-    public BitmapIndexWriter(CairoConfiguration configuration, Path path, CharSequence name, int valueBlockCapacity) {
+    public BitmapIndexWriter(CairoConfiguration configuration, Path path, CharSequence name) {
         long pageSize = configuration.getFilesFacade().getMapPageSize();
         int plen = path.length();
 
@@ -54,7 +54,8 @@ public class BitmapIndexWriter implements Closeable {
             boolean exists = configuration.getFilesFacade().exists(path);
             this.keyMem = new ReadWriteMemory(configuration.getFilesFacade(), path, pageSize);
             if (!exists) {
-                initKeyMemory(this.keyMem, valueBlockCapacity);
+                LOG.error().$("file not found: ").$(path).$();
+                throw CairoException.instance(0).put("Index does not exist: ").put(path);
             }
 
             long keyMemSize = this.keyMem.getAppendOffset();
@@ -101,7 +102,36 @@ public class BitmapIndexWriter implements Closeable {
         } catch (CairoException e) {
             this.close();
             throw e;
+        } finally {
+            path.trimTo(plen);
         }
+    }
+
+    public static void create(CairoConfiguration configuration, Path path, CharSequence name, int valueBlockCapacity) {
+        int plen = path.length();
+        try {
+            BitmapIndexUtils.keyFileName(path, name);
+            try (AppendMemory mem = new AppendMemory(configuration.getFilesFacade(), path, configuration.getFilesFacade().getPageSize())) {
+                initKeyMemory(mem, valueBlockCapacity);
+            }
+
+            BitmapIndexUtils.valueFileName(path.trimTo(plen), name);
+            configuration.getFilesFacade().touch(path);
+        } finally {
+            path.trimTo(plen);
+        }
+    }
+
+    public static void initKeyMemory(VirtualMemory keyMem, int blockValueCount) {
+        keyMem.putByte(BitmapIndexUtils.SIGNATURE);
+        keyMem.putLong(1); // SEQUENCE
+        Unsafe.getUnsafe().storeFence();
+        keyMem.putLong(0); // VALUE MEM SIZE
+        keyMem.putInt(blockValueCount); // BLOCK VALUE COUNT
+        keyMem.putLong(0); // KEY COUNT
+        Unsafe.getUnsafe().storeFence();
+        keyMem.putLong(1); // SEQUENCE CHECK
+        keyMem.skip(BitmapIndexUtils.KEY_FILE_RESERVED - keyMem.getAppendOffset());
     }
 
     /**
@@ -290,18 +320,6 @@ public class BitmapIndexWriter implements Closeable {
 
         // write count check
         keyMem.putLong(valueCount + 1);
-    }
-
-    public static void initKeyMemory(VirtualMemory keyMem, int blockValueCount) {
-        keyMem.putByte(BitmapIndexUtils.SIGNATURE);
-        keyMem.putLong(1); // SEQUENCE
-        Unsafe.getUnsafe().storeFence();
-        keyMem.putLong(0); // VALUE MEM SIZE
-        keyMem.putInt(blockValueCount); // BLOCK VALUE COUNT
-        keyMem.putLong(0); // KEY COUNT
-        Unsafe.getUnsafe().storeFence();
-        keyMem.putLong(1); // SEQUENCE CHECK
-        keyMem.skip(BitmapIndexUtils.KEY_FILE_RESERVED - keyMem.getAppendOffset());
     }
 
     private void initValueBlockAndStoreValue(long offset, long value) {

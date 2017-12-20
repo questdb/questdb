@@ -69,7 +69,7 @@ public class SymbolMapWriter implements Closeable {
             this.offsetMem.jumpTo(keyToOffset(symbolCount));
 
             // index writer is used to identify attempts to store duplicate symbol value
-            this.indexWriter = new BitmapIndexWriter(configuration, path.trimTo(plen), name, 4);
+            this.indexWriter = new BitmapIndexWriter(configuration, path.trimTo(plen), name);
 
             // this is the place where symbol values are stored
             this.charMem = new ReadWriteMemory(configuration.getFilesFacade(), path.trimTo(plen).concat(name).put(".c").$(), mapPageSize);
@@ -91,22 +91,6 @@ public class SymbolMapWriter implements Closeable {
         } catch (CairoException e) {
             close();
             throw e;
-        } finally {
-            path.trimTo(plen);
-        }
-    }
-
-    public static void create(CairoConfiguration configuration, Path path, CharSequence name, int symbolCapacity, boolean useCache) {
-        int plen = path.length();
-        try {
-            try (ReadWriteMemory mem = new ReadWriteMemory(configuration.getFilesFacade(), path.concat(name).put(".o").$(), configuration.getFilesFacade().getMapPageSize())) {
-                mem.putInt(symbolCapacity);
-                mem.putBool(useCache);
-                mem.jumpTo(HEADER_SIZE);
-            }
-
-            configuration.getFilesFacade().touch(path.trimTo(plen).concat(name).put(".c").$());
-            new BitmapIndexWriter(configuration, path.trimTo(plen), name, 4).close();
         } finally {
             path.trimTo(plen);
         }

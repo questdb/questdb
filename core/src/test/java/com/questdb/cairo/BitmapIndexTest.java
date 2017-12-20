@@ -58,7 +58,8 @@ public class BitmapIndexTest extends AbstractCairoTest {
     @Test
     public void testAdd() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (BitmapIndexWriter writer = new BitmapIndexWriter(configuration, path.trimTo(plen), "x", 4)) {
+            BitmapIndexWriter.create(configuration, path.trimTo(plen), "x", 4);
+            try (BitmapIndexWriter writer = new BitmapIndexWriter(configuration, path, "x")) {
                 writer.add(0, 1000);
                 writer.add(256, 1234);
                 writer.add(64, 10);
@@ -90,7 +91,8 @@ public class BitmapIndexTest extends AbstractCairoTest {
 
             // we need to have a conventional structure, which will unfortunately be memory-inefficient, to
             // assert that index is populated correctly
-            try (BitmapIndexWriter writer = new BitmapIndexWriter(configuration, path.trimTo(plen), "x", 128)) {
+            BitmapIndexWriter.create(configuration, path.trimTo(plen), "x", 128);
+            try (BitmapIndexWriter writer = new BitmapIndexWriter(configuration, path, "x")) {
                 for (int i = 0; i < N; i++) {
                     int key = i % maxKeys;
                     long value = rnd.nextLong();
@@ -154,7 +156,9 @@ public class BitmapIndexTest extends AbstractCairoTest {
 
     @Test
     public void testBackwardReaderKeyUpdateFail() {
-        try (BitmapIndexWriter writer = new BitmapIndexWriter(configuration, path.trimTo(plen), "x", 1024)) {
+        BitmapIndexWriter.create(configuration, path.trimTo(plen), "x", 1024);
+
+        try (BitmapIndexWriter writer = new BitmapIndexWriter(configuration, path, "x")) {
             writer.add(0, 1000);
         }
 
@@ -216,7 +220,9 @@ public class BitmapIndexTest extends AbstractCairoTest {
     @Test
     public void testCursorTimeout() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (BitmapIndexWriter w = new BitmapIndexWriter(configuration, path.trimTo(plen), "x", 1024)) {
+            BitmapIndexWriter.create(configuration, path.trimTo(plen), "x", 1024);
+
+            try (BitmapIndexWriter w = new BitmapIndexWriter(configuration, path.trimTo(plen), "x")) {
                 w.add(0, 10);
             }
 
@@ -253,7 +259,9 @@ public class BitmapIndexTest extends AbstractCairoTest {
     @Test
     public void testLimitBackwardCursor() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (BitmapIndexWriter writer = new BitmapIndexWriter(configuration, path.trimTo(plen), "x", 128)) {
+            BitmapIndexWriter.create(configuration, path.trimTo(plen), "x", 128);
+
+            try (BitmapIndexWriter writer = new BitmapIndexWriter(configuration, path.trimTo(plen), "x")) {
                 for (int i = 0; i < 265; i++) {
                     if (i % 3 == 0) {
                         continue;
@@ -279,6 +287,8 @@ public class BitmapIndexTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             Rnd rnd = new Rnd();
 
+            BitmapIndexWriter.create(configuration, path.trimTo(plen), "x", 1024);
+
             class CountingFacade extends FilesFacadeImpl {
                 private int count = 0;
 
@@ -302,7 +312,9 @@ public class BitmapIndexTest extends AbstractCairoTest {
                     return facade;
                 }
             };
-            try (BitmapIndexWriter writer = new BitmapIndexWriter(configuration, path.trimTo(plen), "x", 1024)) {
+
+
+            try (BitmapIndexWriter writer = new BitmapIndexWriter(configuration, path.trimTo(plen), "x")) {
                 try (BitmapIndexBackwardReader reader = new BitmapIndexBackwardReader(configuration, path.trimTo(plen), "x")) {
                     for (int i = 0; i < 100000; i++) {
                         int key = rnd.nextPositiveInt() % 1024;
@@ -357,7 +369,8 @@ public class BitmapIndexTest extends AbstractCairoTest {
             }
 
             Rnd rnd = new Rnd();
-            try (BitmapIndexWriter writer = new BitmapIndexWriter(configuration, path.trimTo(plen), "x", 1024)) {
+            BitmapIndexWriter.create(configuration, path.trimTo(plen), "x", 1024);
+            try (BitmapIndexWriter writer = new BitmapIndexWriter(configuration, path.trimTo(plen), "x")) {
                 for (int i = 0; i < N; i++) {
                     writer.add(rnd.nextPositiveInt() % maxKeys, i);
                 }
@@ -391,7 +404,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
             }
 
             // add more date to index
-            try (BitmapIndexWriter writer = new BitmapIndexWriter(configuration, path.trimTo(plen), "x", 1024)) {
+            try (BitmapIndexWriter writer = new BitmapIndexWriter(configuration, path.trimTo(plen), "x")) {
                 for (int i = 0; i < N; i++) {
                     writer.add(rnd.nextPositiveInt() % maxKeys, i + N);
                 }
@@ -509,7 +522,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
 
     private void assertWriterConstructorFail(CharSequence contains) {
         try {
-            new BitmapIndexWriter(configuration, path.trimTo(plen), "x", 1024);
+            new BitmapIndexWriter(configuration, path.trimTo(plen), "x");
             Assert.fail();
         } catch (CairoException e) {
             Assert.assertTrue(Chars.contains(e.getMessage(), contains));
@@ -559,13 +572,13 @@ public class BitmapIndexTest extends AbstractCairoTest {
             AtomicInteger errors = new AtomicInteger();
 
             // create empty index
-            new BitmapIndexWriter(configuration, path.trimTo(plen), "x", 1024).close();
+            BitmapIndexWriter.create(configuration, path.trimTo(plen), "x", 1024);
 
             new Thread(() -> {
                 try {
                     startBarrier.await();
                     try (Path path = new Path().of(configuration.getRoot())) {
-                        try (BitmapIndexWriter writer = new BitmapIndexWriter(configuration, path, "x", 1024)) {
+                        try (BitmapIndexWriter writer = new BitmapIndexWriter(configuration, path, "x")) {
                             int pass = 0;
                             while (true) {
                                 boolean added = false;
