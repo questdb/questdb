@@ -173,7 +173,7 @@ public class TableReaderTest extends AbstractCairoTest {
         Assert.assertEquals(0, r.get(14));
         Assert.assertTrue(Float.isNaN(r.getFloat(15)));
         Assert.assertTrue(Double.isNaN(r.getDouble(16)));
-        assertNullStr(r, 17);
+        Assert.assertNull(r.getSym(17));
         Assert.assertEquals(Numbers.LONG_NaN, r.getLong(18));
         Assert.assertEquals(Numbers.LONG_NaN, r.getDate(19));
     };
@@ -216,7 +216,7 @@ public class TableReaderTest extends AbstractCairoTest {
         Assert.assertEquals(0, r.get(15));
         Assert.assertTrue(Float.isNaN(r.getFloat(16)));
         Assert.assertTrue(Double.isNaN(r.getDouble(17)));
-        assertNullStr(r, 18);
+        Assert.assertNull(r.getSym(18));
         Assert.assertEquals(Numbers.LONG_NaN, r.getLong(19));
         Assert.assertEquals(Numbers.LONG_NaN, r.getDate(20));
         Assert.assertNull(r.getBin2(21));
@@ -229,7 +229,7 @@ public class TableReaderTest extends AbstractCairoTest {
         Assert.assertEquals(0, r.get(15));
         Assert.assertTrue(Float.isNaN(r.getFloat(16)));
         Assert.assertTrue(Double.isNaN(r.getDouble(17)));
-        assertNullStr(r, 18);
+        Assert.assertNull(r.getSym(18));
         Assert.assertEquals(Numbers.LONG_NaN, r.getLong(19));
         Assert.assertEquals(Numbers.LONG_NaN, r.getDate(20));
     };
@@ -268,9 +268,9 @@ public class TableReaderTest extends AbstractCairoTest {
         }
 
         if (rnd.nextBoolean()) {
-            assertStrColumn(rnd.nextChars(10), r, 18);
+            TestUtils.assertEquals(rnd.nextChars(10), r.getSym(18));
         } else {
-            assertNullStr(r, 18);
+            Assert.assertNull(r.getSym(18));
         }
 
         if (rnd.nextBoolean()) {
@@ -322,9 +322,9 @@ public class TableReaderTest extends AbstractCairoTest {
         }
 
         if (rnd.nextBoolean()) {
-            assertStrColumn(rnd.nextChars(10), r, 18);
+            TestUtils.assertEquals(rnd.nextChars(10), r.getSym(18));
         } else {
-            assertNullStr(r, 18);
+            Assert.assertNull(r.getSym(18));
         }
 
         if (rnd.nextBoolean()) {
@@ -374,9 +374,9 @@ public class TableReaderTest extends AbstractCairoTest {
         }
 
         if (rnd.nextBoolean()) {
-            assertStrColumn(rnd.nextChars(10), r, 17);
+            TestUtils.assertEquals(rnd.nextChars(10), r.getSym(17));
         } else {
-            assertNullStr(r, 17);
+            Assert.assertNull(r.getSym(17));
         }
 
         if (rnd.nextBoolean()) {

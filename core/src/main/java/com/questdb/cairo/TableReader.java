@@ -942,7 +942,11 @@ public class TableReader implements Closeable, RecordCursor {
 
         @Override
         public CharSequence getSym(int col) {
-            return getFlyweightStr(col);
+            long index = getIndex(col);
+            if (index < 0) {
+                return null;
+            }
+            return colA(col).getStr(colB(col).getLong(index * 8));
         }
 
         private ReadOnlyColumn colA(int col) {
