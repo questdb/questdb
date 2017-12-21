@@ -54,7 +54,7 @@ public class BitmapIndexWriter implements Closeable {
             boolean exists = configuration.getFilesFacade().exists(path);
             this.keyMem = new ReadWriteMemory(configuration.getFilesFacade(), path, pageSize);
             if (!exists) {
-                LOG.error().$("file not found: ").$(path).$();
+                LOG.error().$(path).$(" not found").$();
                 throw CairoException.instance(0).put("Index does not exist: ").put(path);
             }
 

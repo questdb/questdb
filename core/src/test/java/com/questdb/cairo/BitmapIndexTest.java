@@ -26,7 +26,10 @@ package com.questdb.cairo;
 import com.questdb.std.*;
 import com.questdb.std.str.Path;
 import com.questdb.test.tools.TestUtils;
-import org.junit.*;
+import org.junit.After;
+import org.junit.Assert;
+import org.junit.Before;
+import org.junit.Test;
 
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
@@ -55,6 +58,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
     @Test
     public void testAdd() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
+            LongList list = new LongList();
             BitmapIndexWriter.create(configuration, path.trimTo(plen), "x", 4);
             try (BitmapIndexWriter writer = new BitmapIndexWriter(configuration, path, "x")) {
                 writer.add(0, 1000);
@@ -65,15 +69,25 @@ public class BitmapIndexTest extends AbstractCairoTest {
                 writer.add(64, 91);
                 writer.add(64, 92);
                 writer.add(64, 93);
+
+                assertThat("[5567,1234]", writer.getCursor(256), list);
+                assertThat("[93,92,91,987,10]", writer.getCursor(64), list);
+                assertThat("[1000]", writer.getCursor(0), list);
+                assertThat("[]", writer.getCursor(1000), list);
             }
 
             try (BitmapIndexBackwardReader reader = new BitmapIndexBackwardReader(configuration, path.trimTo(plen), "x")) {
-                LongList list = new LongList();
                 assertThat("[5567,1234]", reader.getCursor(256, Long.MAX_VALUE), list);
                 assertThat("[93,92,91,987,10]", reader.getCursor(64, Long.MAX_VALUE), list);
                 assertThat("[1000]", reader.getCursor(0, Long.MAX_VALUE), list);
             }
+
         });
+    }
+
+    @Test
+    public void testConcurrentWriterAndReadHeight() throws Exception {
+        testConcurrentRW(1000000, 100000);
     }
 
     @Test
@@ -210,9 +224,15 @@ public class BitmapIndexTest extends AbstractCairoTest {
     }
 
     @Test
-    @Ignore
-    public void testConcurrentWriterAndReadHeight() throws Exception {
-        testConcurrentRW(1000000, 1000000);
+    public void testIndexDoesNotExist() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try {
+                new BitmapIndexWriter(configuration, path, "x");
+                Assert.fail();
+            } catch (CairoException e) {
+                Assert.assertTrue(Chars.contains(e.getMessage(), "does not exist"));
+            }
+        });
     }
 
     @Test
