@@ -285,8 +285,8 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
                             configuration.getCutlassSymbolCapacity(),
                             configuration.getCutlassSymbolCacheFlag()
                     );
+                    symbolMapCount++;
                 }
-                symbolMapCount++;
             }
 
             mem.of(configuration.getFilesFacade(), path.trimTo(rootLen).concat(TableUtils.TXN_FILE_NAME).$(), configuration.getFilesFacade().getPageSize());

@@ -50,7 +50,7 @@ public class TableWriter implements Closeable {
     };
     final ObjList<AppendMemory> columns;
     private final ObjList<SymbolMapWriter> symbolMapWriters;
-    private final ObjList<SymbolMapWriter> desnseSymbolMapWriters;
+    private final ObjList<SymbolMapWriter> denseSymbolMapWriters;
     private final Path path;
     private final Path other;
     private final LongList refs = new LongList();
@@ -147,7 +147,7 @@ public class TableWriter implements Closeable {
             this.refs.extendAndSet(columnCount, 0);
             this.columns = new ObjList<>(columnCount * 2);
             this.symbolMapWriters = new ObjList<>(columnCount);
-            this.desnseSymbolMapWriters = new ObjList<>(metadata.getSymbolMapCount());
+            this.denseSymbolMapWriters = new ObjList<>(metadata.getSymbolMapCount());
             this.nullers = new ObjList<>(columnCount);
             this.columnTops = new LongList(columnCount);
             this.partitionDirFmt = selectPartitionDirFmt(partitionBy);
@@ -270,9 +270,9 @@ public class TableWriter implements Closeable {
     public void close() {
         if (isOpen()) {
             closeColumns(true);
-            if (desnseSymbolMapWriters != null) {
-                for (int i = 0, n = desnseSymbolMapWriters.size(); i < n; i++) {
-                    Misc.free(desnseSymbolMapWriters.getQuick(i));
+            if (denseSymbolMapWriters != null) {
+                for (int i = 0, n = denseSymbolMapWriters.size(); i < n; i++) {
+                    Misc.free(denseSymbolMapWriters.getQuick(i));
                 }
                 symbolMapWriters.clear();
             }
@@ -333,8 +333,8 @@ public class TableWriter implements Closeable {
 
             // store symbol counts
             txMem.jumpTo(TX_OFFSET_MAP_WRITER_COUNT + 4);
-            for (int i = 0, n = desnseSymbolMapWriters.size(); i < n; i++) {
-                txMem.putLong(desnseSymbolMapWriters.getQuick(i).getSymbolCount());
+            for (int i = 0, n = denseSymbolMapWriters.size(); i < n; i++) {
+                txMem.putLong(denseSymbolMapWriters.getQuick(i).getSymbolCount());
             }
 
             Unsafe.getUnsafe().storeFence();
@@ -667,6 +667,13 @@ public class TableWriter implements Closeable {
 
         txMem.jumpTo(TableUtils.TX_OFFSET_STRUCT_VERSION);
         txMem.putLong(++structVersion);
+
+        txMem.jumpTo(TableUtils.TX_OFFSET_MAP_WRITER_COUNT);
+        int count = denseSymbolMapWriters.size();
+        txMem.putInt(count);
+        for (int i = 0; i < count; i++) {
+            txMem.putLong(denseSymbolMapWriters.getQuick(i).getSymbolCount());
+        }
         Unsafe.getUnsafe().storeFence();
 
         txMem.jumpTo(TX_OFFSET_TXN_CHECK);
@@ -838,7 +845,7 @@ public class TableWriter implements Closeable {
                 // keep symbol map writers list sparse for ease of access
                 SymbolMapWriter symbolMapWriter = new SymbolMapWriter(configuration, path.trimTo(rootLen), m.getName(), txMem.getLong(nextSymbolCountOffset));
                 symbolMapWriters.extendAndSet(i, symbolMapWriter);
-                desnseSymbolMapWriters.add(symbolMapWriter);
+                denseSymbolMapWriters.add(symbolMapWriter);
                 nextSymbolCountOffset += 8;
             }
         }
