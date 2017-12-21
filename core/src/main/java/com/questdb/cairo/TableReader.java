@@ -62,6 +62,7 @@ public class TableReader implements Closeable, RecordCursor {
     private final IntervalLengthMethod intervalLengthMethod;
     private final CharSequence name;
     private final ObjList<SymbolMapReader> symbolMapReaders = new ObjList<>();
+    private final ObjList<SymbolMapReader> denseSymbolMapReaders = new ObjList<>();
     private final CairoConfiguration configuration;
     private LongList columnTops;
     private ObjList<ReadOnlyColumn> columns;
@@ -149,10 +150,12 @@ public class TableReader implements Closeable, RecordCursor {
     @Override
     public void close() {
         if (isOpen()) {
-            for (int i = 0, n = symbolMapReaders.size(); i < n; i++) {
-                Misc.free(symbolMapReaders.getQuick(i));
+            for (int i = 0, n = denseSymbolMapReaders.size(); i < n; i++) {
+                Misc.free(denseSymbolMapReaders.getQuick(i));
             }
+            denseSymbolMapReaders.clear();
             symbolMapReaders.clear();
+
             Misc.free(path);
             Misc.free(metadata);
             Misc.free(txMem);
@@ -540,7 +543,9 @@ public class TableReader implements Closeable, RecordCursor {
         for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
             RecordColumnMetadata m = metadata.getColumnQuick(i);
             if (m.getType() == ColumnType.SYMBOL) {
-                symbolMapReaders.add(new SymbolMapReader(configuration, path, m.getName(), 0));
+                SymbolMapReader symbolMapReader = new SymbolMapReader(configuration, path, m.getName(), 0);
+                symbolMapReaders.extendAndSet(i, symbolMapReader);
+                denseSymbolMapReaders.add(symbolMapReader);
             }
         }
     }
