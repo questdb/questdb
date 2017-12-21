@@ -259,17 +259,12 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
             mem.of(ff, path.trimTo(rootLen).concat(TableUtils.META_FILE_NAME).$(), configuration.getFilesFacade().getPageSize());
 
             int count = columnNameType.size() / 2;
-            int symbolMapCount = 0;
             mem.putInt(count + 1);       // number of columns gathered + timestamp
             mem.putInt(PartitionBy.NONE);     // not available on protocol
             mem.putInt(count);                // timestamp is always last
             for (int i = 0; i < count; i++) {
                 // type is second value in pair
-                int type = (int) columnNameType.getQuick(i * 2 + 1);
-                mem.putInt(type);
-                if (type == ColumnType.SYMBOL) {
-                    symbolMapCount++;
-                }
+                mem.putInt((int) columnNameType.getQuick(i * 2 + 1));
             }
             mem.putInt(ColumnType.TIMESTAMP);
 
@@ -279,25 +274,19 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
             mem.putStr("timestamp");
 
             // create symbol maps
+            int symbolMapCount = 0;
             for (int i = 0; i < count; i++) {
-                int type = (int) columnNameType.getQuick(i * 2 + 1);
-                if (type == ColumnType.SYMBOL) {
-                    CharSequence columnName = cache.get(columnNameType.getQuick(i * 2));
-
-                    mem.of(ff, path.trimTo(rootLen).concat(columnName).put(".o").$(), ff.getPageSize());
-                    mem.putInt(configuration.getCutlassSymbolCapacity());
-                    mem.putBool(configuration.getCutlassSymbolCacheFlag());
-                    mem.jumpTo(SymbolMapWriter.HEADER_SIZE);
-                    mem.close();
-
-                    if (!ff.touch(path.trimTo(rootLen).concat(columnName).put(".c").$())) {
-                        throw CairoException.instance(ff.errno()).put("Cannot create ").put(path);
-                    }
-
-                    BitmapIndexUtils.keyFileName(path.trimTo(rootLen), columnName);
-                    mem.of(ff, path, ff.getPageSize());
-                    BitmapIndexWriter.initKeyMemory(mem, 4);
+                if ((int) columnNameType.getQuick(i * 2 + 1) == ColumnType.SYMBOL) {
+                    SymbolMapWriter.createSymbolMapFiles(
+                            ff,
+                            mem,
+                            path.trimTo(rootLen),
+                            cache.get(columnNameType.getQuick(i * 2)),
+                            configuration.getCutlassSymbolCapacity(),
+                            configuration.getCutlassSymbolCacheFlag()
+                    );
                 }
+                symbolMapCount++;
             }
 
             mem.of(configuration.getFilesFacade(), path.trimTo(rootLen).concat(TableUtils.TXN_FILE_NAME).$(), configuration.getFilesFacade().getPageSize());

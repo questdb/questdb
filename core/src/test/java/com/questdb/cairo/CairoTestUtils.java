@@ -50,16 +50,11 @@ public class CairoTestUtils {
             mem.of(ff, path.trimTo(rootLen).concat(META_FILE_NAME).$(), ff.getPageSize());
 
             int count = model.getColumnCount();
-            int symbolMapCount = 0;
             mem.putInt(count);
             mem.putInt(model.getPartitionBy());
             mem.putInt(model.getTimestampIndex());
             for (int i = 0; i < count; i++) {
-                int type = model.getColumnType(i);
-                mem.putInt(type);
-                if (type == ColumnType.SYMBOL) {
-                    symbolMapCount++;
-                }
+                mem.putInt(model.getColumnType(i));
 
             }
             for (int i = 0; i < count; i++) {
@@ -67,23 +62,18 @@ public class CairoTestUtils {
             }
 
             // create symbol maps
+            int symbolMapCount = 0;
             for (int i = 0; i < count; i++) {
-                int type = model.getColumnType(i);
-                if (type == ColumnType.SYMBOL) {
-                    CharSequence columnName = model.getColumnName(i);
-                    mem.of(ff, path.trimTo(rootLen).concat(columnName).put(".o").$(), ff.getPageSize());
-                    mem.putInt(model.getSymbolCapacity(i));
-                    mem.putBool(model.getSymbolCacheFlag(i));
-                    mem.jumpTo(SymbolMapWriter.HEADER_SIZE);
-                    mem.close();
-
-                    if (!ff.touch(path.trimTo(rootLen).concat(columnName).put(".c").$())) {
-                        throw CairoException.instance(ff.errno()).put("Cannot create ").put(path);
-                    }
-
-                    BitmapIndexUtils.keyFileName(path.trimTo(rootLen), columnName);
-                    mem.of(ff, path, ff.getPageSize());
-                    BitmapIndexWriter.initKeyMemory(mem, 4);
+                if (model.getColumnType(i) == ColumnType.SYMBOL) {
+                    SymbolMapWriter.createSymbolMapFiles(
+                            ff,
+                            mem,
+                            path.trimTo(rootLen),
+                            model.getColumnName(i),
+                            model.getSymbolCapacity(i),
+                            model.getSymbolCacheFlag(i)
+                    );
+                    symbolMapCount++;
                 }
             }
             mem.of(ff, path.trimTo(rootLen).concat(TXN_FILE_NAME).$(), ff.getPageSize());

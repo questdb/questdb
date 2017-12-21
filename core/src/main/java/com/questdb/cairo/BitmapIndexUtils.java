@@ -90,7 +90,7 @@ public final class BitmapIndexUtils {
         path.concat(name).put(".k").$();
     }
 
-    static void valueFileName(Path path, CharSequence name) {
+    public static void valueFileName(Path path, CharSequence name) {
         path.concat(name).put(".v").$();
     }
 

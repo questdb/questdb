@@ -115,7 +115,7 @@ public class CairoLineProtoParserTest extends AbstractCairoTest {
                 "y,asym1=66,asym2=box adouble=7.9 1700000000\n" +
                 "x,sym1=row4 double=.3,int=91i,bool=true,str=\"string4\" 1500000000\n";
 
-        assertMultiiTable(expected1, expected2, lines);
+        assertMultiTable(expected1, expected2, lines);
     }
 
     @Test
@@ -136,7 +136,7 @@ public class CairoLineProtoParserTest extends AbstractCairoTest {
                 "y,asym1=66,asym2=box adouble=7.9 1700000000\n" +
                 "x,sym1=row4 double=.3,int=91i,bool=true,str=\"string4\" 1500000000\n";
 
-        assertMultiiTable(expected1, expected2, lines);
+        assertMultiTable(expected1, expected2, lines);
     }
 
     @Test
@@ -157,7 +157,7 @@ public class CairoLineProtoParserTest extends AbstractCairoTest {
                 "y,asym1=66,asym2=box adouble=7.9 1700000000\n" +
                 "x,sym1=row4 double=.3,int=91i,bool=true,str=\"string4\" 1500000000\n";
 
-        assertMultiiTable(expected1, expected2, lines);
+        assertMultiTable(expected1, expected2, lines);
     }
 
     @Test
@@ -178,7 +178,7 @@ public class CairoLineProtoParserTest extends AbstractCairoTest {
                 "y,asym1=66,asym2=box adouble=7.9 1700000000\n" +
                 "x,sym1=row4 double=.3,int=91i,bool=true,str=\"string4\" 1500000000\n";
 
-        assertMultiiTable(expected1, expected2, lines);
+        assertMultiTable(expected1, expected2, lines);
     }
 
     @Test
@@ -199,7 +199,7 @@ public class CairoLineProtoParserTest extends AbstractCairoTest {
                 "y,asym1=66,asym2=box adouble=7.9 1700000000\n" +
                 "x,sym1=row4 double=.3,int=91i,bool=true,str=\"string4\" 1500000000\n";
 
-        assertMultiiTable(expected1, expected2, lines);
+        assertMultiTable(expected1, expected2, lines);
     }
 
     @Test
@@ -220,7 +220,7 @@ public class CairoLineProtoParserTest extends AbstractCairoTest {
                 "y,asym1=66,asym2=box adouble=7.9 1700000000\n" +
                 "x,sym1=row4 double=.3,int=91i,bool=true,str=\"string4\" 1500000000\n";
 
-        assertMultiiTable(expected1, expected2, lines);
+        assertMultiTable(expected1, expected2, lines);
     }
 
     @Test
@@ -344,7 +344,7 @@ public class CairoLineProtoParserTest extends AbstractCairoTest {
                 "y,asym1=66,asym2=box adouble=7.9\n" +
                 "x,sym1=row4 double=.3,int=91i,bool=true,str=\"string4\"\n";
 
-        assertMultiiTable(expected1, expected2, lines);
+        assertMultiTable(expected1, expected2, lines);
     }
 
     @Test
@@ -401,7 +401,7 @@ public class CairoLineProtoParserTest extends AbstractCairoTest {
                 "y,asym1=66,asym2=box adouble=7.9\n" +
                 "x,sym1=row4 double=.3,int=91i,bool=true,str=\"string4\"\n";
 
-        assertMultiiTable(expected1, expected2, lines);
+        assertMultiTable(expected1, expected2, lines);
     }
 
     @Test
@@ -422,7 +422,7 @@ public class CairoLineProtoParserTest extends AbstractCairoTest {
                 "y,asym1=66,asym2=box adouble=7.9\n" +
                 "x,sym1=row4 double=.3,int=91i,bool=true,str=\"string4\"\n";
 
-        assertMultiiTable(expected1, expected2, lines);
+        assertMultiTable(expected1, expected2, lines);
     }
 
     @Test
@@ -443,7 +443,7 @@ public class CairoLineProtoParserTest extends AbstractCairoTest {
                 "y,asym1=66,asym2=box adouble=7.9\n" +
                 "x,sym1=row4 double=.3,int=91i,bool=true,str=\"string4\"\n";
 
-        assertMultiiTable(expected1, expected2, lines);
+        assertMultiTable(expected1, expected2, lines);
     }
 
     @Test
@@ -464,7 +464,7 @@ public class CairoLineProtoParserTest extends AbstractCairoTest {
                 "y,asym1=66,asym2=box adouble=7.9\n" +
                 "x,sym1=row4 double=.3,int=91i,bool=true,str=\"string4\"\n";
 
-        assertMultiiTable(expected1, expected2, lines);
+        assertMultiTable(expected1, expected2, lines);
     }
 
     @Test
@@ -485,10 +485,10 @@ public class CairoLineProtoParserTest extends AbstractCairoTest {
                 "y,asym1=66,asym2=box adouble=7.9\n" +
                 "x,sym1=row4 double=.3,int=91i,bool=true,str=\"string4\"\n";
 
-        assertMultiiTable(expected1, expected2, lines);
+        assertMultiTable(expected1, expected2, lines);
     }
 
-    private void assertMultiiTable(String expected1, String expected2, String lines) throws Exception {
+    private void assertMultiTable(String expected1, String expected2, String lines) throws Exception {
         CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
             @Override
             public MicrosecondClock getClock() {
