@@ -26,10 +26,7 @@ package com.questdb.cairo;
 import com.questdb.std.*;
 import com.questdb.std.str.Path;
 import com.questdb.test.tools.TestUtils;
-import org.junit.After;
-import org.junit.Assert;
-import org.junit.Before;
-import org.junit.Test;
+import org.junit.*;
 
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
@@ -213,6 +210,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
     }
 
     @Test
+    @Ignore
     public void testConcurrentWriterAndReadHeight() throws Exception {
         testConcurrentRW(1000000, 1000000);
     }

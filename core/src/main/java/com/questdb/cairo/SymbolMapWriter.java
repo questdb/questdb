@@ -117,6 +117,7 @@ public class SymbolMapWriter implements Closeable {
             ff.touch(path);
         } finally {
             path.trimTo(plen);
+            mem.close();
         }
     }
 
