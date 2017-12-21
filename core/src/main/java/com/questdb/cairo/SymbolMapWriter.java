@@ -96,6 +96,30 @@ public class SymbolMapWriter implements Closeable {
         }
     }
 
+    public static void createSymbolMapFiles(FilesFacade ff, AppendMemory mem, Path path, CharSequence columnName, int symbolCapacity, boolean symbolCacheFlag) {
+        int plen = path.length();
+        try {
+            mem.of(ff, path.trimTo(plen).concat(columnName).put(".o").$(), ff.getPageSize());
+            mem.putInt(symbolCapacity);
+            mem.putBool(symbolCacheFlag);
+            mem.jumpTo(HEADER_SIZE);
+            mem.close();
+
+            if (!ff.touch(path.trimTo(plen).concat(columnName).put(".c").$())) {
+                throw CairoException.instance(ff.errno()).put("Cannot create ").put(path);
+            }
+
+            BitmapIndexUtils.keyFileName(path.trimTo(plen), columnName);
+            mem.of(ff, path, ff.getPageSize());
+            BitmapIndexWriter.initKeyMemory(mem, 4);
+
+            BitmapIndexUtils.valueFileName(path.trimTo(plen), columnName);
+            ff.touch(path);
+        } finally {
+            path.trimTo(plen);
+        }
+    }
+
     @Override
     public void close() {
         Misc.free(indexWriter);
@@ -150,6 +174,10 @@ public class SymbolMapWriter implements Closeable {
         } else {
             this.charMem.jumpTo(0);
         }
+    }
+
+    public long getSymbolCount() {
+        return offsetToKey(offsetMem.getAppendOffset());
     }
 
     private long lookupAndPut(CharSequence symbol) {

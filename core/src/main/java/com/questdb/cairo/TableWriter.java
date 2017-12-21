@@ -50,6 +50,7 @@ public class TableWriter implements Closeable {
     };
     final ObjList<AppendMemory> columns;
     private final ObjList<SymbolMapWriter> symbolMapWriters;
+    private final ObjList<SymbolMapWriter> desnseSymbolMapWriters;
     private final Path path;
     private final Path other;
     private final LongList refs = new LongList();
@@ -146,6 +147,7 @@ public class TableWriter implements Closeable {
             this.refs.extendAndSet(columnCount, 0);
             this.columns = new ObjList<>(columnCount * 2);
             this.symbolMapWriters = new ObjList<>(columnCount);
+            this.desnseSymbolMapWriters = new ObjList<>(metadata.getSymbolMapCount());
             this.nullers = new ObjList<>(columnCount);
             this.columnTops = new LongList(columnCount);
             this.partitionDirFmt = selectPartitionDirFmt(partitionBy);
@@ -158,6 +160,10 @@ public class TableWriter implements Closeable {
             close();
             throw e;
         }
+    }
+
+    public void addColumn(CharSequence name, int type) {
+        addColumn(name, type, configuration.getCutlassSymbolCapacity(), configuration.getCutlassSymbolCacheFlag());
     }
 
     /**
@@ -180,10 +186,14 @@ public class TableWriter implements Closeable {
      * Pending transaction will be committed before function attempts to add column. Even when function is unsuccessful it may
      * still have committed transaction.
      *
-     * @param name of column either ASCII or UTF8 encoded.
-     * @param type {@link ColumnType}
+     * @param name            of column either ASCII or UTF8 encoded.
+     * @param symbolCapacity  when column type is SYMBOL this parameter specifies approximate capacity for symbol map.
+     *                        It should be equal to number of unique symbol values stored in the table and getting this
+     *                        value badly wrong will cause performance degradation.
+     * @param symbolCacheFlag when set to true, symbol values will be cached on Java heap.
+     * @param type            {@link ColumnType}
      */
-    public void addColumn(CharSequence name, int type) {
+    public void addColumn(CharSequence name, int type, int symbolCapacity, boolean symbolCacheFlag) {
 
         if (getColumnIndexQuiet(metaMem, name, columnCount) != -1) {
             throw CairoException.instance(0).put("Duplicate column name: ").put(name);
@@ -208,6 +218,10 @@ public class TableWriter implements Closeable {
 
         // rename _meta.swp to _meta
         renameSwapMetaToMeta();
+
+        if (type == ColumnType.SYMBOL) {
+            SymbolMapWriter.createSymbolMapFiles(ff, ddlMem, path, name, symbolCapacity, symbolCacheFlag);
+        }
 
         // add column objects
         configureColumn(type);
@@ -256,10 +270,14 @@ public class TableWriter implements Closeable {
     public void close() {
         if (isOpen()) {
             closeColumns(true);
-            if (symbolMapWriters != null) {
-                for (int i = 0, n = symbolMapWriters.size(); i < n; i++) {
-                    Misc.free(symbolMapWriters.getQuick(i));
+            if (desnseSymbolMapWriters != null) {
+                for (int i = 0, n = desnseSymbolMapWriters.size(); i < n; i++) {
+                    Misc.free(desnseSymbolMapWriters.getQuick(i));
                 }
+                symbolMapWriters.clear();
+            }
+
+            if (symbolMapWriters != null) {
                 symbolMapWriters.clear();
             }
 
@@ -312,8 +330,14 @@ public class TableWriter implements Closeable {
             }
 
             txMem.putLong(maxTimestamp);
-            Unsafe.getUnsafe().storeFence();
 
+            // store symbol counts
+            txMem.jumpTo(TX_OFFSET_MAP_WRITER_COUNT + 4);
+            for (int i = 0, n = desnseSymbolMapWriters.size(); i < n; i++) {
+                txMem.putLong(desnseSymbolMapWriters.getQuick(i).getSymbolCount());
+            }
+
+            Unsafe.getUnsafe().storeFence();
             txMem.jumpTo(TX_OFFSET_TXN_CHECK);
             txMem.putLong(txn);
             prevTransientRowCount = transientRowCount;
@@ -811,7 +835,10 @@ public class TableWriter implements Closeable {
             configureColumn(type);
             if (type == ColumnType.SYMBOL) {
                 assert nextSymbolCountOffset < TX_OFFSET_MAP_WRITER_COUNT + 4 + 8 * expectedMapWriters;
-                symbolMapWriters.add(new SymbolMapWriter(configuration, path.trimTo(rootLen), m.getName(), txMem.getLong(nextSymbolCountOffset)));
+                // keep symbol map writers list sparse for ease of access
+                SymbolMapWriter symbolMapWriter = new SymbolMapWriter(configuration, path.trimTo(rootLen), m.getName(), txMem.getLong(nextSymbolCountOffset));
+                symbolMapWriters.extendAndSet(i, symbolMapWriter);
+                desnseSymbolMapWriters.add(symbolMapWriter);
                 nextSymbolCountOffset += 8;
             }
         }
@@ -1502,13 +1529,13 @@ public class TableWriter implements Closeable {
             notNull(index);
         }
 
-        public void putSym(int index, CharSequence value) {
-            getSecondaryColumn(index).putLong(getPrimaryColumn(index).putStr(value));
+        public void putStr(int index, CharSequence value, int pos, int len) {
+            getSecondaryColumn(index).putLong(getPrimaryColumn(index).putStr(value, pos, len));
             notNull(index);
         }
 
-        public void putStr(int index, CharSequence value, int pos, int len) {
-            getSecondaryColumn(index).putLong(getPrimaryColumn(index).putStr(value, pos, len));
+        public void putSym(int index, CharSequence value) {
+            getSecondaryColumn(index).putLong(getPrimaryColumn(index).putStr(value));
             notNull(index);
         }
 
