@@ -44,7 +44,7 @@ public class SymbolMapReader implements Closeable {
     private long symbolCount;
     private long maxOffset;
 
-    public SymbolMapReader(CairoConfiguration configuration, Path path, CharSequence name, long symbolCount) {
+    public SymbolMapReader(CairoConfiguration configuration, Path path, CharSequence name, int symbolCount) {
         this.symbolCount = symbolCount;
         this.maxOffset = SymbolMapWriter.keyToOffset(symbolCount - 1);
         final int plen = path.length();
@@ -105,7 +105,7 @@ public class SymbolMapReader implements Closeable {
         }
     }
 
-    public long getQuick(CharSequence symbol) {
+    public int getQuick(CharSequence symbol) {
         if (symbol == null) {
             return SymbolTable.VALUE_IS_NULL;
         }
@@ -121,7 +121,7 @@ public class SymbolMapReader implements Closeable {
         return SymbolTable.VALUE_NOT_FOUND;
     }
 
-    public void updateSymbolCount(long symbolCount) {
+    public void updateSymbolCount(int symbolCount) {
         if (symbolCount > this.symbolCount) {
             this.symbolCount = symbolCount;
             this.maxOffset = SymbolMapWriter.keyToOffset(symbolCount - 1);
@@ -130,7 +130,7 @@ public class SymbolMapReader implements Closeable {
         }
     }
 
-    public CharSequence value(long key) {
+    public CharSequence value(int key) {
         if (key < 0) {
             return null;
         }
@@ -141,7 +141,7 @@ public class SymbolMapReader implements Closeable {
         throw CairoException.instance(0).put("Invalid key: ").put(key);
     }
 
-    private void growCharMemToSymbolCount(long symbolCount) {
+    private void growCharMemToSymbolCount(int symbolCount) {
         if (symbolCount > 0) {
             long lastSymbolOffset = this.offsetMem.getLong(SymbolMapWriter.keyToOffset(symbolCount - 1));
             int l = VirtualMemory.getStorageLength(this.charMem.getStr(lastSymbolOffset));
