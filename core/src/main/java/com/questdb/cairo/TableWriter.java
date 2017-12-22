@@ -334,7 +334,7 @@ public class TableWriter implements Closeable {
             // store symbol counts
             txMem.jumpTo(TX_OFFSET_MAP_WRITER_COUNT + 4);
             for (int i = 0, n = denseSymbolMapWriters.size(); i < n; i++) {
-                txMem.putLong(denseSymbolMapWriters.getQuick(i).getSymbolCount());
+                txMem.putInt(denseSymbolMapWriters.getQuick(i).getSymbolCount());
             }
 
             Unsafe.getUnsafe().storeFence();
@@ -672,7 +672,7 @@ public class TableWriter implements Closeable {
         int count = denseSymbolMapWriters.size();
         txMem.putInt(count);
         for (int i = 0; i < count; i++) {
-            txMem.putLong(denseSymbolMapWriters.getQuick(i).getSymbolCount());
+            txMem.putInt(denseSymbolMapWriters.getQuick(i).getSymbolCount());
         }
         Unsafe.getUnsafe().storeFence();
 
@@ -843,7 +843,7 @@ public class TableWriter implements Closeable {
             if (type == ColumnType.SYMBOL) {
                 assert nextSymbolCountOffset < TX_OFFSET_MAP_WRITER_COUNT + 4 + 8 * expectedMapWriters;
                 // keep symbol map writers list sparse for ease of access
-                SymbolMapWriter symbolMapWriter = new SymbolMapWriter(configuration, path.trimTo(rootLen), m.getName(), txMem.getLong(nextSymbolCountOffset));
+                SymbolMapWriter symbolMapWriter = new SymbolMapWriter(configuration, path.trimTo(rootLen), m.getName(), txMem.getInt(nextSymbolCountOffset));
                 symbolMapWriters.extendAndSet(i, symbolMapWriter);
                 denseSymbolMapWriters.add(symbolMapWriter);
                 nextSymbolCountOffset += 8;
@@ -912,7 +912,7 @@ public class TableWriter implements Closeable {
 
     private long getTxEofOffset() {
         if (metadata != null) {
-            return TX_OFFSET_TXN_CHECK + 8 + 4 + (metadata.getSymbolMapCount() * 8);
+            return TX_OFFSET_MAP_WRITER_COUNT + 4 + (metadata.getSymbolMapCount() * 4);
         } else {
             return ff.length(txMem.getFd());
         }

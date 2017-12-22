@@ -64,7 +64,7 @@ public class TableReader implements Closeable, RecordCursor {
     private final ObjList<SymbolMapReader> symbolMapReaders = new ObjList<>();
     private final ObjList<SymbolMapReader> denseSymbolMapReaders = new ObjList<>();
     private final CairoConfiguration configuration;
-    private final LongList symbolCountSnapshot = new LongList();
+    private final IntList symbolCountSnapshot = new IntList();
     private LongList columnTops;
     private ObjList<ReadOnlyColumn> columns;
     private int columnCount;
@@ -610,7 +610,7 @@ public class TableReader implements Closeable, RecordCursor {
             this.symbolCountSnapshot.clear();
             int symbolMapCount = txMem.getInt(TableUtils.TX_OFFSET_MAP_WRITER_COUNT);
             for (int i = 0; i < symbolMapCount; i++) {
-                symbolCountSnapshot.add(txMem.getLong(TableUtils.TX_OFFSET_MAP_WRITER_COUNT + 4 + i * 8));
+                symbolCountSnapshot.add(txMem.getInt(TableUtils.TX_OFFSET_MAP_WRITER_COUNT + 4 + i * 4));
             }
 
             Unsafe.getUnsafe().loadFence();

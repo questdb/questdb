@@ -38,10 +38,10 @@ public class SymbolMapWriter implements Closeable {
     private final BitmapIndexWriter indexWriter;
     private final ReadWriteMemory charMem;
     private final ReadWriteMemory offsetMem;
-    private final CharSequenceLongHashMap cache;
+    private final CharSequenceIntHashMap cache;
     private final int maxHash;
 
-    public SymbolMapWriter(CairoConfiguration configuration, Path path, CharSequence name, long symbolCount) {
+    public SymbolMapWriter(CairoConfiguration configuration, Path path, CharSequence name, int symbolCount) {
         final int plen = path.length();
         try {
             final long mapPageSize = configuration.getFilesFacade().getMapPageSize();
@@ -83,7 +83,7 @@ public class SymbolMapWriter implements Closeable {
             this.maxHash = Numbers.ceilPow2(symbolCapacity / 2) - 1;
 
             if (useCache) {
-                this.cache = new CharSequenceLongHashMap(symbolCapacity);
+                this.cache = new CharSequenceIntHashMap(symbolCapacity);
             } else {
                 this.cache = null;
             }
@@ -132,14 +132,18 @@ public class SymbolMapWriter implements Closeable {
         }
     }
 
-    public long put(CharSequence symbol) {
+    public int getSymbolCount() {
+        return offsetToKey(offsetMem.getAppendOffset());
+    }
+
+    public int put(CharSequence symbol) {
 
         if (symbol == null) {
             return SymbolTable.VALUE_IS_NULL;
         }
 
         if (cache != null) {
-            long result = cache.get(symbol);
+            int result = cache.get(symbol);
             if (result != -1) {
                 return result;
             }
@@ -150,7 +154,7 @@ public class SymbolMapWriter implements Closeable {
         return lookupAndPut(symbol);
     }
 
-    public void rollback(long symbolCount) {
+    public void rollback(int symbolCount) {
         indexWriter.rollbackValues(keyToOffset(symbolCount));
         offsetMem.jumpTo(keyToOffset(symbolCount));
         jumpCharMemToSymbolCount(symbolCount);
@@ -159,15 +163,15 @@ public class SymbolMapWriter implements Closeable {
         }
     }
 
-    static long offsetToKey(long offset) {
-        return (offset - HEADER_SIZE) / 8;
+    static int offsetToKey(long offset) {
+        return (int) ((offset - HEADER_SIZE) / 8L);
     }
 
-    static long keyToOffset(long key) {
-        return HEADER_SIZE + key * 8;
+    static long keyToOffset(int key) {
+        return HEADER_SIZE + key * 8L;
     }
 
-    private void jumpCharMemToSymbolCount(long symbolCount) {
+    private void jumpCharMemToSymbolCount(int symbolCount) {
         if (symbolCount > 0) {
             long lastSymbolOffset = this.offsetMem.getLong(keyToOffset(symbolCount - 1));
             int l = VirtualMemory.getStorageLength(this.charMem.getStr(lastSymbolOffset));
@@ -177,11 +181,7 @@ public class SymbolMapWriter implements Closeable {
         }
     }
 
-    public long getSymbolCount() {
-        return offsetToKey(offsetMem.getAppendOffset());
-    }
-
-    private long lookupAndPut(CharSequence symbol) {
+    private int lookupAndPut(CharSequence symbol) {
         int hash = Hash.boundedHash(symbol, maxHash);
         BitmapIndexCursor cursor = indexWriter.getCursor(hash);
         while (cursor.hasNext()) {
@@ -193,7 +193,7 @@ public class SymbolMapWriter implements Closeable {
         return put0(symbol, hash);
     }
 
-    private long put0(CharSequence symbol, int hash) {
+    private int put0(CharSequence symbol, int hash) {
         long offsetOffset = offsetMem.getAppendOffset();
         offsetMem.putLong(charMem.putStr(symbol));
         indexWriter.add(hash, offsetOffset);
