@@ -27,7 +27,6 @@ import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.std.Files;
 import com.questdb.std.FilesFacade;
-import com.questdb.std.Os;
 import com.questdb.std.str.LPSZ;
 
 public class AppendMemory extends VirtualMemory {
@@ -74,7 +73,7 @@ public class AppendMemory extends VirtualMemory {
                                 return;
                             }
                         }
-                        LOG.info().$("closed without truncate [fd=").$(fd).$(", errno=").$(Os.errno()).$(']').$();
+                        LOG.info().$("closed without truncate [fd=").$(fd).$(", errno=").$(ff.errno()).$(']').$();
                     }
                 } else {
                     LOG.info().$("closed [fd=").$(fd).$(']').$();
@@ -104,11 +103,6 @@ public class AppendMemory extends VirtualMemory {
         LOG.info().$("open ").$(name).$(" [fd=").$(fd).$(']').$();
     }
 
-    @Override
-    protected void release(int page, long address) {
-        ff.munmap(address, getPageSize(page));
-    }
-
     public void truncate() {
         if (fd == -1) {
             // are we closed ?
@@ -117,9 +111,14 @@ public class AppendMemory extends VirtualMemory {
 
         releaseCurrentPage();
         if (!ff.truncate(fd, getMapPageSize())) {
-            throw CairoException.instance(Os.errno()).put("Cannot truncate fd=").put(fd).put(" to ").put(getMapPageSize()).put(" bytes");
+            throw CairoException.instance(ff.errno()).put("Cannot truncate fd=").put(fd).put(" to ").put(getMapPageSize()).put(" bytes");
         }
         updateLimits(0, pageAddress = mapPage(0));
+    }
+
+    @Override
+    protected void release(int page, long address) {
+        ff.munmap(address, getPageSize(page));
     }
 
     private void closeFd() {

@@ -73,7 +73,7 @@ public class BitmapIndexWriter implements Closeable {
 
             // verify key count
             this.keyCount = this.keyMem.getLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_KEY_COUNT);
-            if (keyMemSize != keyMemSize()) {
+            if (keyMemSize < keyMemSize()) {
                 LOG.error().$("key count does not match file length [corrupt] of ").$(path).$(" [keyCount=").$(this.keyCount).$(']').$();
                 throw CairoException.instance(0).put("Key count does not match file length of ").put(path);
             }
