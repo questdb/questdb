@@ -46,10 +46,25 @@ public class ReadWriteMemory extends VirtualMemory {
         long size = getAppendOffset();
         super.close();
         if (fd != -1) {
-            ff.truncate(fd, size);
-            ff.close(fd);
-            LOG.info().$("closed [fd=").$(fd).$(']').$();
-            fd = -1;
+            try {
+                if (ff.truncate(fd, size)) {
+                    LOG.info().$("truncated and closed [fd=").$(fd).$(']').$();
+                } else {
+                    if (!ff.supportsTruncateMappedFiles()) {
+                        // Windows does truncate file if it has a mapped page somewhere, could be another handle and process.
+                        // To make it work size needs to be rounded up to nearest page.
+                        long n = size / getMapPageSize();
+                        if (ff.truncate(fd, (n + 1) * getMapPageSize())) {
+                            LOG.info().$("truncated and closed, second attempt [fd=").$(fd).$(']').$();
+                            return;
+                        }
+                    }
+                    LOG.info().$("closed without truncate [fd=").$(fd).$(", errno=").$(ff.errno()).$(']').$();
+                }
+            } finally {
+                ff.close(fd);
+                fd = -1;
+            }
         }
     }
 

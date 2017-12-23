@@ -115,8 +115,9 @@ class TableReaderMetadata extends AbstractRecordMetadata implements Closeable {
             // check where we source entry:
             // 1. from another entry
             // 2. create new instance
+            TableColumnMetadata tmp;
             if (copyFrom > 0) {
-                TableColumnMetadata tmp = moveMetadata(copyFrom - 1, null);
+                tmp = moveMetadata(copyFrom - 1, null);
                 columnNameIndexMap.put(tmp.getName(), i);
                 tmp = moveMetadata(i, tmp);
 
@@ -159,7 +160,8 @@ class TableReaderMetadata extends AbstractRecordMetadata implements Closeable {
             } else {
                 // new instance
                 TableColumnMetadata m = newInstance(i, columnCount);
-                moveMetadata(i, m);
+                tmp = moveMetadata(i, m);
+                assert tmp == null;
                 columnNameIndexMap.put(m.getName(), i);
             }
         }
