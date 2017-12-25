@@ -259,10 +259,10 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
                         manipulator.restructure(writer);
                     }
 
-                    long address = metadata.createTransitionIndex();
+                    long pTranstionIndex = metadata.createTransitionIndex();
                     StringSink sink = new StringSink();
                     try {
-                        metadata.applyTransitionIndex(address);
+                        metadata.applyTransitionIndex(pTranstionIndex);
                         Assert.assertEquals(columnCount, metadata.getColumnCount());
                         for (int i = 0; i < columnCount; i++) {
                             RecordColumnMetadata m = metadata.getColumnQuick(i);
@@ -281,7 +281,7 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
                             }
                         }
                     } finally {
-                        TableReaderMetadata.freeTransitionIndex(address);
+                        TableReaderMetadata.freeTransitionIndex(pTranstionIndex);
                     }
                 }
             }

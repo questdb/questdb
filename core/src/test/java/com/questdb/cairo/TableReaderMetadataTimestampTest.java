@@ -210,10 +210,10 @@ public class TableReaderMetadataTimestampTest extends AbstractCairoTest {
                         writer.removeColumn("timestamp");
                     }
 
-                    long address = metadata.createTransitionIndex();
+                    long pTransitionIndex = metadata.createTransitionIndex();
                     StringSink sink = new StringSink();
                     try {
-                        metadata.applyTransitionIndex(address);
+                        metadata.applyTransitionIndex(pTransitionIndex);
                         Assert.assertEquals(columnCount, metadata.getColumnCount());
                         for (int i = 0; i < columnCount; i++) {
                             RecordColumnMetadata m = metadata.getColumnQuick(i);
@@ -223,7 +223,7 @@ public class TableReaderMetadataTimestampTest extends AbstractCairoTest {
                         TestUtils.assertEquals(expected, sink);
                         Assert.assertEquals(-1, metadata.getTimestampIndex());
                     } finally {
-                        TableReaderMetadata.freeTransitionIndex(address);
+                        TableReaderMetadata.freeTransitionIndex(pTransitionIndex);
                     }
                 }
             }

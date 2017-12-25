@@ -381,21 +381,22 @@ public class TableReader implements Closeable, RecordCursor {
         }
     }
 
-    private void createNewColumnList(int columnCount, long address, int columnBits) {
+    private void createNewColumnList(int columnCount, long pTransitionIndex, int columnBits) {
         int capacity = partitionCount << columnBits;
         ObjList<ReadOnlyColumn> columns = new ObjList<>(capacity);
         LongList columnTops = new LongList();
         columns.setPos(capacity);
         columnTops.setPos(capacity / 2);
+        final long pIndexBase = pTransitionIndex + 8;
 
         for (int partitionIndex = 0; partitionIndex < partitionCount; partitionIndex++) {
-            int base = partitionIndex << columnBits;
-            int oldBase = partitionIndex << columnCountBits;
+            final int base = partitionIndex << columnBits;
+            final int oldBase = partitionIndex << columnCountBits;
 
             try {
                 Path path = partitionPathGenerator.generate(this, partitionIndex);
                 for (int i = 0; i < columnCount; i++) {
-                    final int copyFrom = Unsafe.getUnsafe().getInt(address + i * 8) - 1;
+                    final int copyFrom = Unsafe.getUnsafe().getInt(pIndexBase + i * 8) - 1;
                     if (copyFrom > -1) {
                         fetchColumnsFrom(this.columns, this.columnTops, oldBase, copyFrom);
                         copyColumnsTo(columns, columnTops, base, i);
@@ -420,20 +421,25 @@ public class TableReader implements Closeable, RecordCursor {
     }
 
     private void doReloadStruct() {
-        long address = metadata.createTransitionIndex();
+        // create transition index, which will help us reuse already open resources
+        long pTransitionIndex = metadata.createTransitionIndex();
         try {
-            metadata.applyTransitionIndex(address);
-            final int columnCount = Unsafe.getUnsafe().getInt(address + 4);
+            metadata.applyTransitionIndex(pTransitionIndex);
+            final int columnCount = Unsafe.getUnsafe().getInt(pTransitionIndex + 4);
 
             int columnCountBits = getColumnBits(columnCount);
+            // when a column is added we cannot easily reshuffle columns in-place
+            // the reason is that we'd have to create gaps in columns list between
+            // partitions. It is possible in theory, but this could be an algo for
+            // another day.
             if (columnCountBits > this.columnCountBits) {
-                createNewColumnList(columnCount, address + 8, columnCountBits);
+                createNewColumnList(columnCount, pTransitionIndex, columnCountBits);
             } else {
-                reshuffleExistingColumnList(columnCount, address + 8, address + 8 + columnCount * 8);
+                reshuffleExistingColumnList(columnCount, pTransitionIndex);
             }
             this.columnCount = columnCount;
         } finally {
-            TableReaderMetadata.freeTransitionIndex(address);
+            TableReaderMetadata.freeTransitionIndex(pTransitionIndex);
         }
     }
 
@@ -719,19 +725,22 @@ public class TableReader implements Closeable, RecordCursor {
         }
     }
 
-    private void reshuffleExistingColumnList(int columnCount, long address, long stateAddress) {
+    private void reshuffleExistingColumnList(int columnCount, long pTransitionIndex) {
+
+        final long pIndexBase = pTransitionIndex + 8;
+        final long pState = pIndexBase + columnCount * 8;
 
         for (int partitionIndex = 0; partitionIndex < partitionCount; partitionIndex++) {
             int base = getColumnBase(partitionIndex);
             try {
                 Path path = partitionPathGenerator.generate(this, partitionIndex);
 
-                Unsafe.getUnsafe().setMemory(stateAddress, columnCount, (byte) 0);
+                Unsafe.getUnsafe().setMemory(pState, columnCount, (byte) 0);
 
                 for (int i = 0; i < columnCount; i++) {
 
-                    if (isEntryToBeProcessed(stateAddress, i)) {
-                        final int copyFrom = Unsafe.getUnsafe().getInt(address + i * 8) - 1;
+                    if (isEntryToBeProcessed(pState, i)) {
+                        final int copyFrom = Unsafe.getUnsafe().getInt(pIndexBase + i * 8) - 1;
 
                         if (copyFrom == i) {
                             continue;
@@ -740,10 +749,10 @@ public class TableReader implements Closeable, RecordCursor {
                         if (copyFrom > -1) {
                             fetchColumnsFrom(this.columns, this.columnTops, base, copyFrom);
                             copyColumnsTo(this.columns, this.columnTops, base, i);
-                            int copyTo = Unsafe.getUnsafe().getInt(address + i * 8 + 4) - 1;
-                            while (copyTo > -1 && isEntryToBeProcessed(stateAddress, copyTo)) {
+                            int copyTo = Unsafe.getUnsafe().getInt(pIndexBase + i * 8 + 4) - 1;
+                            while (copyTo > -1 && isEntryToBeProcessed(pState, copyTo)) {
                                 copyColumnsTo(this.columns, this.columnTops, base, copyTo);
-                                copyTo = Unsafe.getUnsafe().getInt(address + (copyTo - 1) * 8 + 4);
+                                copyTo = Unsafe.getUnsafe().getInt(pIndexBase + (copyTo - 1) * 8 + 4);
                             }
                             Misc.free(tempCopyStruct.mem1);
                             Misc.free(tempCopyStruct.mem2);
