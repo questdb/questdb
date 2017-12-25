@@ -72,14 +72,14 @@ class TableReaderMetadata extends AbstractRecordMetadata implements Closeable {
         Unsafe.free(address, Unsafe.getUnsafe().getInt(address));
     }
 
-    public void applyTransitionIndex(long address) {
+    public void applyTransitionIndex(long pTransitionIndex) {
         // re-open _meta file
         this.metaMem.of(ff, path, ff.getPageSize());
 
         this.columnNameIndexMap.clear();
 
-        final int columnCount = Unsafe.getUnsafe().getInt(address + 4);
-        final long index = address + 8;
+        final int columnCount = Unsafe.getUnsafe().getInt(pTransitionIndex + 4);
+        final long index = pTransitionIndex + 8;
         final long stateAddress = index + columnCount * 8;
 
         // this also copies metadata entries exactly once
@@ -196,11 +196,11 @@ class TableReaderMetadata extends AbstractRecordMetadata implements Closeable {
 
             int columnCount = metaMem.getInt(TableUtils.META_OFFSET_COUNT);
             int n = Math.max(this.columnCount, columnCount);
-            final long address;
+            final long pTransitionIndex;
             final int size = n * 16;
 
-            long index = address = Unsafe.malloc(size);
-            Unsafe.getUnsafe().setMemory(address, size, (byte) 0);
+            long index = pTransitionIndex = Unsafe.malloc(size);
+            Unsafe.getUnsafe().setMemory(pTransitionIndex, size, (byte) 0);
             Unsafe.getUnsafe().putInt(index, size);
             Unsafe.getUnsafe().putInt(index + 4, columnCount);
             index += 8;
@@ -229,7 +229,7 @@ class TableReaderMetadata extends AbstractRecordMetadata implements Closeable {
                     Unsafe.getUnsafe().putLong(index + i * 8, 0);
                 }
             }
-            return address;
+            return pTransitionIndex;
         }
     }
 

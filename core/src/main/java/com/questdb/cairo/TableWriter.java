@@ -220,7 +220,7 @@ public class TableWriter implements Closeable {
         renameSwapMetaToMeta();
 
         if (type == ColumnType.SYMBOL) {
-            SymbolMapWriter.createSymbolMapFiles(ff, ddlMem, path, name, symbolCapacity, symbolCacheFlag);
+            createSymbolWriter(name, symbolCapacity, symbolCacheFlag);
         }
 
         // add column objects
@@ -898,6 +898,13 @@ public class TableWriter implements Closeable {
             nullers.setQuick(index, NOOP);
             return getPrimaryColumn(index)::putLong;
         }
+    }
+
+    private void createSymbolWriter(CharSequence name, int symbolCapacity, boolean symbolCacheFlag) {
+        SymbolMapWriter.createSymbolMapFiles(ff, ddlMem, path, name, symbolCapacity, symbolCacheFlag);
+        SymbolMapWriter w = new SymbolMapWriter(configuration, path, name, 0);
+        denseSymbolMapWriters.add(w);
+        symbolMapWriters.extendAndSet(columnCount, w);
     }
 
     private AppendMemory getPrimaryColumn(int column) {
