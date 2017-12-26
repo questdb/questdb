@@ -34,6 +34,9 @@ import com.questdb.std.str.Path;
 
 import java.io.Closeable;
 
+import static com.questdb.cairo.SymbolMapWriter.charFileName;
+import static com.questdb.cairo.SymbolMapWriter.offsetFileName;
+
 public class SymbolMapReader implements Closeable {
     private static final Log LOG = LogFactory.getLog(SymbolMapReader.class);
 
@@ -53,7 +56,7 @@ public class SymbolMapReader implements Closeable {
 
             // this constructor does not create index. Index must exist
             // and we use "offset" file to store "header"
-            path.trimTo(plen).concat(name).put(".o").$();
+            offsetFileName(path.trimTo(plen), name);
             if (!configuration.getFilesFacade().exists(path)) {
                 LOG.error().$(path).$(" is not found").$();
                 throw CairoException.instance(0).put("SymbolMap does not exist: ").put(path);
@@ -76,7 +79,7 @@ public class SymbolMapReader implements Closeable {
             this.indexReader = new BitmapIndexBackwardReader(configuration, path.trimTo(plen), name);
 
             // this is the place where symbol values are stored
-            this.charMem = new ReadOnlyMemory(configuration.getFilesFacade(), path.trimTo(plen).concat(name).put(".c").$(), mapPageSize);
+            this.charMem = new ReadOnlyMemory(configuration.getFilesFacade(), charFileName(path.trimTo(plen), name), mapPageSize);
 
             // move append pointer for symbol values in the correct place
             growCharMemToSymbolCount(symbolCount);

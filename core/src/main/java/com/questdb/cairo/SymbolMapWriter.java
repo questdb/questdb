@@ -48,7 +48,7 @@ public class SymbolMapWriter implements Closeable {
 
             // this constructor does not create index. Index must exist
             // and we use "offset" file to store "header"
-            path.trimTo(plen).concat(name).put(".o").$();
+            offsetFileName(path.trimTo(plen), name);
             if (!configuration.getFilesFacade().exists(path)) {
                 LOG.error().$(path).$(" is not found").$();
                 throw CairoException.instance(0).put("SymbolMap does not exist: ").put(path);
@@ -72,7 +72,7 @@ public class SymbolMapWriter implements Closeable {
             this.indexWriter = new BitmapIndexWriter(configuration, path.trimTo(plen), name);
 
             // this is the place where symbol values are stored
-            this.charMem = new ReadWriteMemory(configuration.getFilesFacade(), path.trimTo(plen).concat(name).put(".c").$(), mapPageSize);
+            this.charMem = new ReadWriteMemory(configuration.getFilesFacade(), charFileName(path.trimTo(plen), name), mapPageSize);
 
             // move append pointer for symbol values in the correct place
             jumpCharMemToSymbolCount(symbolCount);
@@ -96,29 +96,34 @@ public class SymbolMapWriter implements Closeable {
         }
     }
 
+    public static Path charFileName(Path path, CharSequence columnName) {
+        return path.concat(columnName).put(".c").$();
+    }
+
     public static void createSymbolMapFiles(FilesFacade ff, AppendMemory mem, Path path, CharSequence columnName, int symbolCapacity, boolean symbolCacheFlag) {
         int plen = path.length();
         try {
-            mem.of(ff, path.trimTo(plen).concat(columnName).put(".o").$(), ff.getPageSize());
+            mem.of(ff, offsetFileName(path.trimTo(plen), columnName), ff.getPageSize());
             mem.putInt(symbolCapacity);
             mem.putBool(symbolCacheFlag);
             mem.jumpTo(HEADER_SIZE);
             mem.close();
 
-            if (!ff.touch(path.trimTo(plen).concat(columnName).put(".c").$())) {
+            if (!ff.touch(charFileName(path.trimTo(plen), columnName))) {
                 throw CairoException.instance(ff.errno()).put("Cannot create ").put(path);
             }
 
-            BitmapIndexUtils.keyFileName(path.trimTo(plen), columnName);
-            mem.of(ff, path, ff.getPageSize());
+            mem.of(ff, BitmapIndexUtils.keyFileName(path.trimTo(plen), columnName), ff.getPageSize());
             BitmapIndexWriter.initKeyMemory(mem, 4);
-
-            BitmapIndexUtils.valueFileName(path.trimTo(plen), columnName);
-            ff.touch(path);
+            ff.touch(BitmapIndexUtils.valueFileName(path.trimTo(plen), columnName));
         } finally {
             path.trimTo(plen);
             mem.close();
         }
+    }
+
+    public static Path offsetFileName(Path path, CharSequence columnName) {
+        return path.concat(columnName).put(".o").$();
     }
 
     @Override

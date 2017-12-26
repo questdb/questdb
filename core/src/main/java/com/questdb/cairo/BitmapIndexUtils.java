@@ -46,6 +46,14 @@ public final class BitmapIndexUtils {
     static final byte SIGNATURE = (byte) 0xfa;
     static final int VALUE_BLOCK_FILE_RESERVED = 16;
 
+    public static Path keyFileName(Path path, CharSequence name) {
+        return path.concat(name).put(".k").$();
+    }
+
+    public static Path valueFileName(Path path, CharSequence name) {
+        return path.concat(name).put(".v").$();
+    }
+
     static void seekValueBlock(
             long initialCount,
             long initialOffset,
@@ -84,14 +92,6 @@ public final class BitmapIndexUtils {
             }
         }
         seeker.seek(valueCount, valueBlockOffset);
-    }
-
-    public static void keyFileName(Path path, CharSequence name) {
-        path.concat(name).put(".k").$();
-    }
-
-    public static void valueFileName(Path path, CharSequence name) {
-        path.concat(name).put(".v").$();
     }
 
     static long getKeyEntryOffset(int key) {

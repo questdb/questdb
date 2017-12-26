@@ -62,7 +62,6 @@ public class TableReader implements Closeable, RecordCursor {
     private final IntervalLengthMethod intervalLengthMethod;
     private final CharSequence name;
     private final ObjList<SymbolMapReader> symbolMapReaders = new ObjList<>();
-    private final ObjList<SymbolMapReader> denseSymbolMapReaders = new ObjList<>();
     private final CairoConfiguration configuration;
     private final IntList symbolCountSnapshot = new IntList();
     private LongList columnTops;
@@ -94,8 +93,8 @@ public class TableReader implements Closeable, RecordCursor {
             this.metadata = openMetaFile();
             this.columnCount = this.metadata.getColumnCount();
             this.columnCountBits = getColumnBits(columnCount);
-            openSymbolMaps();
             readTxn();
+            openSymbolMaps();
             this.prevStructVersion = structVersion;
             switch (this.metadata.getPartitionBy()) {
                 case PartitionBy.DAY:
@@ -148,13 +147,87 @@ public class TableReader implements Closeable, RecordCursor {
         }
     }
 
+    public void applyTransitionIndexToSymbolMapReaders(long pTransitionIndex) {
+        final int columnCount = Unsafe.getUnsafe().getInt(pTransitionIndex + 4);
+        final long index = pTransitionIndex + 8;
+        final long stateAddress = index + columnCount * 8;
+
+        if (columnCount > this.columnCount) {
+            symbolMapReaders.setPos(columnCount);
+        }
+
+        Unsafe.getUnsafe().setMemory(stateAddress, columnCount, (byte) 0);
+
+        // this is a silly exercise in walking the index
+        for (int i = 0; i < columnCount; i++) {
+
+            // prevent writing same entry once
+            if (Unsafe.getUnsafe().getByte(stateAddress + i) == -1) {
+                continue;
+            }
+
+            Unsafe.getUnsafe().putByte(stateAddress + i, (byte) -1);
+
+            int copyFrom = Unsafe.getUnsafe().getInt(index + i * 8);
+
+            // don't copy entries to themselves
+            if (copyFrom == i + 1) {
+                continue;
+            }
+
+            // check where we source entry:
+            // 1. from another entry
+            // 2. create new instance
+            SymbolMapReader tmp;
+            if (copyFrom > 0) {
+                tmp = symbolMapReaders.getAndSetQuick(copyFrom - 1, null);
+                tmp = symbolMapReaders.getAndSetQuick(i, tmp);
+
+                int copyTo = Unsafe.getUnsafe().getInt(index + i * 8 + 4);
+
+                // now we copied entry, what do we do with value that was already there?
+                // do we copy it somewhere else?
+                while (copyTo > 0) {
+                    // Yeah, we do. This can get recursive!
+                    // prevent writing same entry twice
+                    if (Unsafe.getUnsafe().getByte(stateAddress + copyTo - 1) == -1) {
+                        break;
+                    }
+                    Unsafe.getUnsafe().putByte(stateAddress + copyTo - 1, (byte) -1);
+
+                    tmp = symbolMapReaders.getAndSetQuick(copyTo - 1, tmp);
+                    copyTo = Unsafe.getUnsafe().getInt(index + (copyTo - 1) * 8 + 4);
+                }
+                Misc.free(tmp);
+            } else {
+                // new instance
+                RecordColumnMetadata m = metadata.getColumnQuick(i);
+                if (m.getType() == ColumnType.SYMBOL) {
+                    SymbolMapReader reader = new SymbolMapReader(configuration, path, metadata.getColumnName(i), 0);
+                    tmp = symbolMapReaders.getAndSetQuick(i, reader);
+                    Misc.free(tmp);
+                } else {
+                    Misc.free(symbolMapReaders.getAndSetQuick(i, null));
+                }
+            }
+        }
+
+        // ended up with fewer columns than before?
+        // free resources for the "extra" symbol map readers and contract the list
+        if (columnCount < this.columnCount) {
+            for (int i = columnCount; i < this.columnCount; i++) {
+                Misc.free(symbolMapReaders.getQuick(i));
+            }
+            symbolMapReaders.setPos(columnCount);
+        }
+    }
+
     @Override
     public void close() {
         if (isOpen()) {
-            for (int i = 0, n = denseSymbolMapReaders.size(); i < n; i++) {
-                Misc.free(denseSymbolMapReaders.getQuick(i));
+            for (int i = 0, n = symbolMapReaders.size(); i < n; i++) {
+                Misc.free(symbolMapReaders.getQuick(i));
             }
-            denseSymbolMapReaders.clear();
             symbolMapReaders.clear();
 
             Misc.free(path);
@@ -437,6 +510,8 @@ public class TableReader implements Closeable, RecordCursor {
             } else {
                 reshuffleExistingColumnList(columnCount, pTransitionIndex);
             }
+            // rearrange symbol map reader list
+            applyTransitionIndexToSymbolMapReaders(pTransitionIndex);
             this.columnCount = columnCount;
         } finally {
             TableReaderMetadata.freeTransitionIndex(pTransitionIndex);
@@ -547,12 +622,12 @@ public class TableReader implements Closeable, RecordCursor {
     }
 
     private void openSymbolMaps() {
+        int symbolColumnIndex = 0;
         for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
             RecordColumnMetadata m = metadata.getColumnQuick(i);
             if (m.getType() == ColumnType.SYMBOL) {
-                SymbolMapReader symbolMapReader = new SymbolMapReader(configuration, path, m.getName(), 0);
+                SymbolMapReader symbolMapReader = new SymbolMapReader(configuration, path, m.getName(), symbolCountSnapshot.getQuick(symbolColumnIndex++));
                 symbolMapReaders.extendAndSet(i, symbolMapReader);
-                denseSymbolMapReaders.add(symbolMapReader);
             }
         }
     }
@@ -635,6 +710,8 @@ public class TableReader implements Closeable, RecordCursor {
 
     private boolean reloadInitialNonPartitioned() {
         if (readTxn()) {
+            reloadStruct();
+            reloadSymbolMapCounts();
             countDefaultPartitions();
             if (partitionCount > 0) {
                 updateCapacities();
@@ -647,6 +724,8 @@ public class TableReader implements Closeable, RecordCursor {
 
     private boolean reloadInitialPartitioned() {
         if (readTxn()) {
+            reloadStruct();
+            reloadSymbolMapCounts();
             partitionMin = findPartitionMinimum(dateFormat);
             partitionCount = calculatePartitionCount();
             if (partitionCount > 0) {
@@ -663,8 +742,8 @@ public class TableReader implements Closeable, RecordCursor {
     private boolean reloadNonPartitioned() {
         // calling readTxn will set "rowCount" member variable
         if (readTxn()) {
-            reloadPartition(0, rowCount);
             reloadStruct();
+            reloadPartition(0, rowCount);
             return true;
         }
         return false;
@@ -677,6 +756,7 @@ public class TableReader implements Closeable, RecordCursor {
      * @param rowCount       number of rows in partition
      */
     private void reloadPartition(int partitionIndex, long rowCount) {
+        int symbolMapIndex = 0;
         if (partitionRowCounts.getQuick(partitionIndex) > -1) {
             int columnBase = getColumnBase(partitionIndex);
             for (int i = 0; i < columnCount; i++) {
@@ -686,6 +766,12 @@ public class TableReader implements Closeable, RecordCursor {
                 ReadOnlyColumn mem2 = columns.getQuick(getSecondaryColumnIndex(columnBase, i));
                 if (mem2 != null) {
                     mem2.trackFileSize();
+                }
+
+                // reload symbol map
+                SymbolMapReader reader = symbolMapReaders.getQuick(i);
+                if (reader != null) {
+                    reader.updateSymbolCount(symbolCountSnapshot.getQuick(symbolMapIndex++));
                 }
             }
             partitionRowCounts.setQuick(partitionIndex, rowCount);
@@ -697,6 +783,7 @@ public class TableReader implements Closeable, RecordCursor {
         long currentPartitionTimestamp = timestampFloorMethod.floor(maxTimestamp);
         boolean b = readTxn();
         if (b) {
+            reloadStruct();
             assert intervalLengthMethod != null;
             int delta = (int) intervalLengthMethod.calculate(currentPartitionTimestamp, timestampFloorMethod.floor(maxTimestamp));
             int partitionIndex = partitionCount - 1;
@@ -711,8 +798,6 @@ public class TableReader implements Closeable, RecordCursor {
             } else {
                 reloadPartition(partitionIndex, transientRowCount);
             }
-
-            reloadStruct();
             return true;
         }
         return false;
@@ -722,6 +807,15 @@ public class TableReader implements Closeable, RecordCursor {
         if (this.prevStructVersion != this.structVersion) {
             doReloadStruct();
             this.prevStructVersion = this.structVersion;
+        }
+    }
+
+    private void reloadSymbolMapCounts() {
+        int symbolMapIndex = 0;
+        for (int i = 0; i < columnCount; i++) {
+            if (metadata.getColumnQuick(i).getType() == ColumnType.SYMBOL) {
+                symbolMapReaders.getQuick(i).updateSymbolCount(symbolCountSnapshot.getQuick(symbolMapIndex++));
+            }
         }
     }
 
