@@ -25,6 +25,7 @@ package com.questdb.cairo;
 
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
+import com.questdb.std.FilesFacade;
 import com.questdb.std.Misc;
 import com.questdb.std.Unsafe;
 import com.questdb.std.str.Path;
@@ -49,9 +50,7 @@ public class BitmapIndexWriter implements Closeable {
         int plen = path.length();
 
         try {
-            BitmapIndexUtils.keyFileName(path, name);
-
-            boolean exists = configuration.getFilesFacade().exists(path);
+            boolean exists = configuration.getFilesFacade().exists(BitmapIndexUtils.keyFileName(path, name));
             this.keyMem = new ReadWriteMemory(configuration.getFilesFacade(), path, pageSize);
             if (!exists) {
                 LOG.error().$(path).$(" not found").$();
@@ -85,10 +84,7 @@ public class BitmapIndexWriter implements Closeable {
             }
 
             this.valueMemSize = this.keyMem.getLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_VALUE_MEM_SIZE);
-
-            BitmapIndexUtils.valueFileName(path.trimTo(plen), name);
-
-            this.valueMem = new ReadWriteMemory(configuration.getFilesFacade(), path, pageSize);
+            this.valueMem = new ReadWriteMemory(configuration.getFilesFacade(), BitmapIndexUtils.valueFileName(path.trimTo(plen), name), pageSize);
 
             if (this.valueMem.getAppendOffset() != this.valueMemSize) {
                 LOG.error().$("incorrect file size [corrupt] of ").$(path).$(" [expected=").$(this.valueMemSize).$(']').$();
@@ -110,13 +106,11 @@ public class BitmapIndexWriter implements Closeable {
     public static void create(CairoConfiguration configuration, Path path, CharSequence name, int valueBlockCapacity) {
         int plen = path.length();
         try {
-            BitmapIndexUtils.keyFileName(path, name);
-            try (AppendMemory mem = new AppendMemory(configuration.getFilesFacade(), path, configuration.getFilesFacade().getPageSize())) {
+            FilesFacade ff = configuration.getFilesFacade();
+            try (AppendMemory mem = new AppendMemory(ff, BitmapIndexUtils.keyFileName(path, name), ff.getPageSize())) {
                 initKeyMemory(mem, valueBlockCapacity);
             }
-
-            BitmapIndexUtils.valueFileName(path.trimTo(plen), name);
-            configuration.getFilesFacade().touch(path);
+            ff.touch(BitmapIndexUtils.valueFileName(path.trimTo(plen), name));
         } finally {
             path.trimTo(plen);
         }

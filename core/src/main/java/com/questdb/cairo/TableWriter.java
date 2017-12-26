@@ -381,7 +381,8 @@ public class TableWriter implements Closeable {
     }
 
     public void removeColumn(CharSequence name) {
-        int index = getColumnIndex(name);
+        final int index = getColumnIndex(name);
+        final int type = metadata.getColumnQuick(index).getType();
 
         LOG.info().$("removing column '").utf8(name).$("' from ").$(path).$();
 
@@ -391,6 +392,9 @@ public class TableWriter implements Closeable {
         if (timestamp && partitionBy != PartitionBy.NONE) {
             throw CairoException.instance(0).put("Cannot remove timestamp from partitioned table");
         }
+
+        // remove symbol map writer or entry for such
+        removeSymbolMapWriter(index);
 
         commit();
 
@@ -432,6 +436,10 @@ public class TableWriter implements Closeable {
             // remove column files has to be done after _todo is removed
             removeColumnFiles(name);
 
+            if (type == ColumnType.SYMBOL) {
+                removeSymbolFiles(name);
+            }
+
         } catch (CairoException err) {
             throw new CairoError(err);
         }
@@ -441,6 +449,12 @@ public class TableWriter implements Closeable {
         metadata.removeColumn(name);
 
         LOG.info().$("REMOVED column '").utf8(name).$("' from ").$(path).$();
+    }
+
+    private static void removeOrException(FilesFacade ff, Path path) {
+        if (!ff.remove(path)) {
+            throw CairoException.instance(ff.errno()).put("Cannot remove ").put(path);
+        }
     }
 
     public void rollback() {
@@ -623,6 +637,17 @@ public class TableWriter implements Closeable {
             throw new CairoError(err);
         }
         throw e;
+    }
+
+    private void removeSymbolFiles(CharSequence name) {
+        try {
+            removeOrException(ff, SymbolMapWriter.offsetFileName(path.trimTo(rootLen), name));
+            removeOrException(ff, SymbolMapWriter.charFileName(path.trimTo(rootLen), name));
+            removeOrException(ff, BitmapIndexUtils.keyFileName(path.trimTo(rootLen), name));
+            removeOrException(ff, BitmapIndexUtils.valueFileName(path.trimTo(rootLen), name));
+        } finally {
+            path.trimTo(rootLen);
+        }
     }
 
     private int addColumnToMeta(CharSequence name, int type) {
@@ -1169,6 +1194,15 @@ public class TableWriter implements Closeable {
             });
         } finally {
             path.trimTo(rootLen);
+        }
+    }
+
+    private void removeSymbolMapWriter(int index) {
+        SymbolMapWriter writer = symbolMapWriters.getQuick(index);
+        symbolMapWriters.remove(index);
+        if (writer != null) {
+            denseSymbolMapWriters.remove(writer);
+            Misc.free(writer);
         }
     }
 

@@ -49,8 +49,7 @@ public class BitmapIndexBackwardReader implements Closeable {
         this.spinLockTimeoutUs = configuration.getSpinLockTimeoutUs();
 
         try {
-            BitmapIndexUtils.keyFileName(path, name);
-            this.keyMem = new ReadOnlyMemory(configuration.getFilesFacade(), path, pageSize);
+            this.keyMem = new ReadOnlyMemory(configuration.getFilesFacade(), BitmapIndexUtils.keyFileName(path, name), pageSize);
             this.clock = configuration.getClock();
 
             // key file should already be created at least with header
@@ -86,7 +85,7 @@ public class BitmapIndexBackwardReader implements Closeable {
                 }
 
                 if (clock.getTicks() - timestamp > spinLockTimeoutUs) {
-                    LOG.error().$("failed to read index header consistently [corrupt?] [timeout=").$(spinLockTimeoutUs).$("us]").$();
+                    LOG.error().$("failed to read index header consistently [corrupt?] [timeout=").$(spinLockTimeoutUs).utf8("μs]").$();
                     throw CairoException.instance(0).put("failed to read index header consistently [corrupt?]");
                 }
             }
@@ -94,9 +93,7 @@ public class BitmapIndexBackwardReader implements Closeable {
             this.blockValueCountMod = blockValueCountMod;
             this.blockCapacity = (blockValueCountMod + 1) * 8 + BitmapIndexUtils.VALUE_BLOCK_FILE_RESERVED;
             this.keyCount = keyCount;
-
-            BitmapIndexUtils.valueFileName(path.trimTo(plen), name);
-            this.valueMem = new ReadOnlyMemory(configuration.getFilesFacade(), path, pageSize);
+            this.valueMem = new ReadOnlyMemory(configuration.getFilesFacade(), BitmapIndexUtils.valueFileName(path.trimTo(plen), name), pageSize);
         } catch (CairoException e) {
             close();
             throw e;
@@ -142,7 +139,7 @@ public class BitmapIndexBackwardReader implements Closeable {
 
             if (clock.getTicks() - timestamp > spinLockTimeoutUs) {
                 this.keyCount = 0;
-                LOG.error().$("failed to consistently update key count [corrupt index?] [timeout(us)=").$(spinLockTimeoutUs).$(']').$();
+                LOG.error().$("failed to consistently update key count [corrupt index?] [timeout=").$(spinLockTimeoutUs).utf8("μs]").$();
                 throw CairoException.instance(0).put("failed to consistently update key count [corrupt index?]");
             }
         }
@@ -209,7 +206,7 @@ public class BitmapIndexBackwardReader implements Closeable {
                 }
 
                 if (clock.getTicks() - timestamp > spinLockTimeoutUs) {
-                    LOG.error().$("cursor failed to read index header consistently [corrupt?] [timeout=").$(spinLockTimeoutUs).$("us, key=").$(key).$(", offset=").$(offset).$(']').$();
+                    LOG.error().$("cursor failed to read index header consistently [corrupt?] [timeout=").$(spinLockTimeoutUs).utf8("μs, key=").$(key).$(", offset=").$(offset).$(']').$();
                     throw CairoException.instance(0).put("cursor failed to read index header consistently [corrupt?]");
                 }
             }
