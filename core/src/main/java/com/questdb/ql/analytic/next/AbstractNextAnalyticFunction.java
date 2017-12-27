@@ -119,7 +119,7 @@ public abstract class AbstractNextAnalyticFunction implements AnalyticFunction, 
     }
 
     @Override
-    public String getSym() {
+    public CharSequence getSym() {
         return (next instanceof NullRecord) ? null : valueColumn.getSymbolTable().value(getInt());
     }
 

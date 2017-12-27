@@ -1666,7 +1666,7 @@ public class TableReaderTest extends AbstractCairoTest {
 
                 try (TableReader reader = new TableReader(configuration, "all")) {
                     assertCursor(reader, ts, increment, blob, count, BATCH1_ASSERTER);
-                    reader.closeColumn(column);
+                    reader.closeColumnForRemove(column);
                 }
 
                 Assert.assertTrue(ff.wasCalled());
@@ -1816,7 +1816,7 @@ public class TableReaderTest extends AbstractCairoTest {
                         // now delete last column
 
                         if (Os.type == Os.WINDOWS) {
-                            reader.closeColumn("bin2");
+                            reader.closeColumnForRemove("bin2");
                         }
 
                         writer.removeColumn("bin2");
@@ -1836,7 +1836,7 @@ public class TableReaderTest extends AbstractCairoTest {
                         assertBatch6(count, increment, ts, blob, reader);
 
                         if (Os.type == Os.WINDOWS) {
-                            reader.closeColumn("int");
+                            reader.closeColumnForRemove("int");
                         }
                         // remove first column and add new column by same name
                         writer.removeColumn("int");
