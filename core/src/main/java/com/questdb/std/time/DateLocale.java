@@ -118,7 +118,7 @@ public class DateLocale {
     }
 
     private static void defineToken(String token, int pos, IntObjHashMap<ObjList<CharSequence>> map) {
-        if (token.length() == 0) {
+        if (token == null || token.length() == 0) {
             return;
         }
 
