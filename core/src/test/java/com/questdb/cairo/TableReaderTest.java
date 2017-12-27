@@ -1401,7 +1401,7 @@ public class TableReaderTest extends AbstractCairoTest {
     private static void assertStrColumn(CharSequence expected, Record r, int index) {
         TestUtils.assertEquals(expected, r.getFlyweightStr(index));
         TestUtils.assertEquals(expected, r.getFlyweightStrB(index));
-        Assert.assertFalse(r.getFlyweightStr(index) == r.getFlyweightStrB(6));
+        Assert.assertFalse(r.getFlyweightStr(index) == r.getFlyweightStrB(index));
         Assert.assertEquals(expected.length(), r.getStrLen(index));
     }
 
