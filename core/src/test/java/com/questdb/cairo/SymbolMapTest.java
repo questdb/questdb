@@ -169,7 +169,7 @@ public class SymbolMapTest extends AbstractCairoTest {
             int N = 10000;
             try (Path path = new Path().of(configuration.getRoot())) {
                 create(path, "x", N, true);
-                try (SymbolMapReader reader = new SymbolMapReader(configuration, path, "x", 0)) {
+                try (SymbolMapReaderImpl reader = new SymbolMapReaderImpl(configuration, path, "x", 0)) {
                     Assert.assertNull(reader.value(-1));
                     Assert.assertEquals(SymbolTable.VALUE_IS_NULL, reader.getQuick(null));
                 }
@@ -182,7 +182,7 @@ public class SymbolMapTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             try (Path path = new Path().of(configuration.getRoot())) {
                 try {
-                    new SymbolMapReader(configuration, path, "x", 0);
+                    new SymbolMapReaderImpl(configuration, path, "x", 0);
                     Assert.fail();
                 } catch (CairoException e) {
                     Assert.assertTrue(Chars.contains(e.getMessage(), "does not exist"));
@@ -198,7 +198,7 @@ public class SymbolMapTest extends AbstractCairoTest {
                 int plen = path.length();
                 Assert.assertTrue(configuration.getFilesFacade().touch(path.concat("x").put(".o").$()));
                 try {
-                    new SymbolMapReader(configuration, path.trimTo(plen), "x", 0);
+                    new SymbolMapReaderImpl(configuration, path.trimTo(plen), "x", 0);
                     Assert.fail();
                 } catch (CairoException e) {
                     Assert.assertTrue(Chars.contains(e.getMessage(), "too short"));
@@ -294,7 +294,7 @@ public class SymbolMapTest extends AbstractCairoTest {
                     }
                 }
                 rnd.reset();
-                try (SymbolMapReader reader = new SymbolMapReader(configuration, path, "x", N)) {
+                try (SymbolMapReaderImpl reader = new SymbolMapReaderImpl(configuration, path, "x", N)) {
                     for (int i = 0; i < N; i++) {
                         CharSequence cs = rnd.nextChars(10);
                         TestUtils.assertEquals(cs, reader.value(i));
@@ -302,14 +302,7 @@ public class SymbolMapTest extends AbstractCairoTest {
                     }
 
                     Assert.assertNull(reader.value(-1));
-
-                    try {
-                        reader.value(N);
-                        Assert.fail();
-                    } catch (CairoException e) {
-                        Assert.assertTrue(Chars.contains(e.getMessage(), "Invalid key"));
-                    }
-
+                    Assert.assertNull(reader.value(N));
                     Assert.assertEquals(SymbolTable.VALUE_NOT_FOUND, reader.getQuick("hola"));
                 }
             }
@@ -333,32 +326,19 @@ public class SymbolMapTest extends AbstractCairoTest {
                     }
 
                     rnd.reset();
-                    try (SymbolMapReader reader = new SymbolMapReader(configuration, path, "x", N)) {
+                    try (SymbolMapReaderImpl reader = new SymbolMapReaderImpl(configuration, path, "x", N)) {
                         for (int i = 0; i < N; i++) {
                             CharSequence cs = rnd.nextChars(10);
                             TestUtils.assertEquals(cs, reader.value(i));
                             Assert.assertEquals(i, reader.getQuick(cs));
                         }
 
-                        try {
-                            reader.value(N);
-                            Assert.fail();
-                        } catch (CairoException e) {
-                            Assert.assertTrue(Chars.contains(e.getMessage(), "Invalid key"));
-                        }
-
+                        Assert.assertNull(reader.value(N));
                         Assert.assertEquals(SymbolTable.VALUE_NOT_FOUND, reader.getQuick("hola"));
-
                         Assert.assertEquals(N, writer.put("XYZ"));
 
                         // must not be able to read new symbol
-                        try {
-                            reader.value(N);
-                            Assert.fail();
-                        } catch (CairoException e) {
-                            Assert.assertTrue(Chars.contains(e.getMessage(), "Invalid key"));
-                        }
-
+                        Assert.assertNull(reader.value(N));
                         Assert.assertEquals(SymbolTable.VALUE_NOT_FOUND, reader.getQuick("XYZ"));
 
                         reader.updateSymbolCount(N + 1);

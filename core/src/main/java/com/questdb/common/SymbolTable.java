@@ -31,6 +31,6 @@ public interface SymbolTable {
 
     int size();
 
-    String value(int key);
+    CharSequence value(int key);
 
 }

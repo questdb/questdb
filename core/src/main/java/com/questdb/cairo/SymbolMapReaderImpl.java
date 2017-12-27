@@ -35,18 +35,18 @@ import java.io.Closeable;
 import static com.questdb.cairo.SymbolMapWriter.charFileName;
 import static com.questdb.cairo.SymbolMapWriter.offsetFileName;
 
-public class SymbolMapReader implements Closeable {
-    private static final Log LOG = LogFactory.getLog(SymbolMapReader.class);
+public class SymbolMapReaderImpl implements Closeable, SymbolTable {
+    private static final Log LOG = LogFactory.getLog(SymbolMapReaderImpl.class);
 
     private final BitmapIndexBackwardReader indexReader;
     private final ReadOnlyMemory charMem;
     private final ReadOnlyMemory offsetMem;
     private final int maxHash;
     private final ObjList<String> cache;
-    private long symbolCount;
+    private int symbolCount;
     private long maxOffset;
 
-    public SymbolMapReader(CairoConfiguration configuration, Path path, CharSequence name, int symbolCount) {
+    public SymbolMapReaderImpl(CairoConfiguration configuration, Path path, CharSequence name, int symbolCount) {
         this.symbolCount = symbolCount;
         this.maxOffset = SymbolMapWriter.keyToOffset(symbolCount - 1);
         final int plen = path.length();
@@ -114,6 +114,7 @@ public class SymbolMapReader implements Closeable {
         }
     }
 
+    @Override
     public int getQuick(CharSequence symbol) {
         if (symbol == null) {
             return SymbolTable.VALUE_IS_NULL;
@@ -139,18 +140,20 @@ public class SymbolMapReader implements Closeable {
         }
     }
 
-    public CharSequence value(int key) {
-        if (key < 0) {
-            return null;
-        }
+    @Override
+    public int size() {
+        return symbolCount;
+    }
 
-        if (key < symbolCount) {
+    @Override
+    public CharSequence value(int key) {
+        if (key > -1 && key < symbolCount) {
             if (cache != null) {
                 return cachedValue(key);
             }
             return uncachedValue(key);
         }
-        throw CairoException.instance(0).put("Invalid key: ").put(key);
+        return null;
     }
 
     private CharSequence cachedValue(int key) {

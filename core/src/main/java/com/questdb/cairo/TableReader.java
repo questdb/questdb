@@ -61,7 +61,7 @@ public class TableReader implements Closeable, RecordCursor {
     private final TimestampFloorMethod timestampFloorMethod;
     private final IntervalLengthMethod intervalLengthMethod;
     private final CharSequence name;
-    private final ObjList<SymbolMapReader> symbolMapReaders = new ObjList<>();
+    private final ObjList<SymbolMapReaderImpl> symbolMapReaders = new ObjList<>();
     private final CairoConfiguration configuration;
     private final IntList symbolCountSnapshot = new IntList();
     private LongList columnTops;
@@ -178,7 +178,7 @@ public class TableReader implements Closeable, RecordCursor {
             // check where we source entry:
             // 1. from another entry
             // 2. create new instance
-            SymbolMapReader tmp;
+            SymbolMapReaderImpl tmp;
             if (copyFrom > 0) {
                 tmp = symbolMapReaders.getAndSetQuick(copyFrom - 1, null);
                 tmp = symbolMapReaders.getAndSetQuick(i, tmp);
@@ -203,7 +203,7 @@ public class TableReader implements Closeable, RecordCursor {
                 // new instance
                 RecordColumnMetadata m = metadata.getColumnQuick(i);
                 if (m.getType() == ColumnType.SYMBOL) {
-                    SymbolMapReader reader = new SymbolMapReader(configuration, path, m.getName(), 0);
+                    SymbolMapReaderImpl reader = new SymbolMapReaderImpl(configuration, path, m.getName(), 0);
                     tmp = symbolMapReaders.getAndSetQuick(i, reader);
                     Misc.free(tmp);
                 } else {
@@ -257,18 +257,18 @@ public class TableReader implements Closeable, RecordCursor {
      * @param columnName name of column to be closed.
      * @throws NoSuchColumnException when column is not found.
      */
-    public void closeColumn(CharSequence columnName) {
-        closeColumn(metadata.getColumnIndex(columnName));
+    public void closeColumnForRemove(CharSequence columnName) {
+        closeColumnForRemove(metadata.getColumnIndex(columnName));
     }
 
     /**
-     * Closed column files. Similarly to {@link #closeColumn(CharSequence)} closed reader column files before
+     * Closed column files. Similarly to {@link #closeColumnForRemove(CharSequence)} closed reader column files before
      * column can be removed. This method takes column index usually resolved from column name by #TableReaderMetadata.
      * Bounds checking is performed via assertion.
      *
      * @param columnIndex column index
      */
-    public void closeColumn(int columnIndex) {
+    public void closeColumnForRemove(int columnIndex) {
         assert columnIndex > -1 && columnIndex < columnCount;
         for (int partitionIndex = 0; partitionIndex < partitionCount; partitionIndex++) {
             final int base = getColumnBase(partitionIndex);
@@ -625,7 +625,7 @@ public class TableReader implements Closeable, RecordCursor {
         for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
             RecordColumnMetadata m = metadata.getColumnQuick(i);
             if (m.getType() == ColumnType.SYMBOL) {
-                SymbolMapReader symbolMapReader = new SymbolMapReader(configuration, path, m.getName(), symbolCountSnapshot.getQuick(symbolColumnIndex++));
+                SymbolMapReaderImpl symbolMapReader = new SymbolMapReaderImpl(configuration, path, m.getName(), symbolCountSnapshot.getQuick(symbolColumnIndex++));
                 symbolMapReaders.extendAndSet(i, symbolMapReader);
             }
         }
@@ -768,7 +768,7 @@ public class TableReader implements Closeable, RecordCursor {
                 }
 
                 // reload symbol map
-                SymbolMapReader reader = symbolMapReaders.getQuick(i);
+                SymbolMapReaderImpl reader = symbolMapReaders.getQuick(i);
                 if (reader != null) {
                     reader.updateSymbolCount(symbolCountSnapshot.getQuick(symbolMapIndex++));
                 }
