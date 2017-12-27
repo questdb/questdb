@@ -393,9 +393,6 @@ public class TableWriter implements Closeable {
             throw CairoException.instance(0).put("Cannot remove timestamp from partitioned table");
         }
 
-        // remove symbol map writer or entry for such
-        removeSymbolMapWriter(index);
-
         commit();
 
         this.metaSwapIndex = removeColumnFromMeta(index);
@@ -415,6 +412,9 @@ public class TableWriter implements Closeable {
 
         // remove column objects
         removeColumn(index);
+
+        // remove symbol map writer or entry for such
+        removeSymbolMapWriter(index);
 
         // decrement column count
         columnCount--;
@@ -449,12 +449,6 @@ public class TableWriter implements Closeable {
         metadata.removeColumn(name);
 
         LOG.info().$("REMOVED column '").utf8(name).$("' from ").$(path).$();
-    }
-
-    private static void removeOrException(FilesFacade ff, Path path) {
-        if (!ff.remove(path)) {
-            throw CairoException.instance(ff.errno()).put("Cannot remove ").put(path);
-        }
     }
 
     public void rollback() {
@@ -528,10 +522,16 @@ public class TableWriter implements Closeable {
         Row r = newRow(maxTimestamp);
         try {
             for (int i = 0; i < columnCount; i++) {
-                r.putByte(0, (byte) 0);
+                r.putByte(i, (byte) 0);
             }
         } finally {
             r.cancel();
+        }
+    }
+
+    private static void removeOrException(FilesFacade ff, Path path) {
+        if (!ff.remove(path)) {
+            throw CairoException.instance(ff.errno()).put("Cannot remove ").put(path);
         }
     }
 
@@ -567,7 +567,6 @@ public class TableWriter implements Closeable {
                     mem2.setSize(actualPosition * 8);
                     break;
                 case ColumnType.STRING:
-                case ColumnType.SYMBOL:
                     assert mem2 != null;
                     if (ff.read(mem2.getFd(), buf, 8, (actualPosition - 1) * 8) != 8) {
                         throw CairoException.instance(ff.errno()).put("Cannot read offset, fd=").put(mem2.getFd()).put(", offset=").put((actualPosition - 1) * 8);
@@ -637,17 +636,6 @@ public class TableWriter implements Closeable {
             throw new CairoError(err);
         }
         throw e;
-    }
-
-    private void removeSymbolFiles(CharSequence name) {
-        try {
-            removeOrException(ff, SymbolMapWriter.offsetFileName(path.trimTo(rootLen), name));
-            removeOrException(ff, SymbolMapWriter.charFileName(path.trimTo(rootLen), name));
-            removeOrException(ff, BitmapIndexUtils.keyFileName(path.trimTo(rootLen), name));
-            removeOrException(ff, BitmapIndexUtils.valueFileName(path.trimTo(rootLen), name));
-        } finally {
-            path.trimTo(rootLen);
-        }
     }
 
     private int addColumnToMeta(CharSequence name, int type) {
@@ -844,7 +832,6 @@ public class TableWriter implements Closeable {
         final AppendMemory secondary;
         switch (type) {
             case ColumnType.BINARY:
-            case ColumnType.SYMBOL:
             case ColumnType.STRING:
                 secondary = new AppendMemory();
                 break;
@@ -900,12 +887,11 @@ public class TableWriter implements Closeable {
                 nullers.add(() -> mem1.putShort((short) 0));
                 break;
             case ColumnType.STRING:
-            case ColumnType.SYMBOL:
                 nullers.add(() -> mem2.putLong(mem1.putNullStr()));
                 break;
-//            case ColumnType.SYMBOL:
-//                nullers[index] = () -> mem1.putInt(SymbolTable.VALUE_IS_NULL);
-//                break;
+            case ColumnType.SYMBOL:
+                nullers.add(() -> mem1.putInt(SymbolTable.VALUE_IS_NULL));
+                break;
             case ColumnType.BINARY:
                 nullers.add(() -> mem2.putLong(mem1.putNullBin()));
                 break;
@@ -1192,6 +1178,17 @@ public class TableWriter implements Closeable {
                     }
                 }
             });
+        } finally {
+            path.trimTo(rootLen);
+        }
+    }
+
+    private void removeSymbolFiles(CharSequence name) {
+        try {
+            removeOrException(ff, SymbolMapWriter.offsetFileName(path.trimTo(rootLen), name));
+            removeOrException(ff, SymbolMapWriter.charFileName(path.trimTo(rootLen), name));
+            removeOrException(ff, BitmapIndexUtils.keyFileName(path.trimTo(rootLen), name));
+            removeOrException(ff, BitmapIndexUtils.valueFileName(path.trimTo(rootLen), name));
         } finally {
             path.trimTo(rootLen);
         }
@@ -1583,7 +1580,7 @@ public class TableWriter implements Closeable {
         }
 
         public void putSym(int index, CharSequence value) {
-            getSecondaryColumn(index).putLong(getPrimaryColumn(index).putStr(value));
+            getPrimaryColumn(index).putInt(symbolMapWriters.getQuick(index).put(value));
             notNull(index);
         }
 

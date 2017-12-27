@@ -26,11 +26,9 @@ package com.questdb.cairo;
 import com.questdb.common.SymbolTable;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
-import com.questdb.std.Chars;
-import com.questdb.std.Hash;
-import com.questdb.std.Misc;
-import com.questdb.std.Numbers;
+import com.questdb.std.*;
 import com.questdb.std.str.Path;
+import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
 
@@ -44,6 +42,7 @@ public class SymbolMapReader implements Closeable {
     private final ReadOnlyMemory charMem;
     private final ReadOnlyMemory offsetMem;
     private final int maxHash;
+    private final ObjList<String> cache;
     private long symbolCount;
     private long maxOffset;
 
@@ -73,6 +72,7 @@ public class SymbolMapReader implements Closeable {
             // we left off. Where we left off is stored externally to symbol map
             this.offsetMem = new ReadOnlyMemory(configuration.getFilesFacade(), path, mapPageSize);
             final int symbolCapacity = offsetMem.getInt(0);
+            final boolean useCache = offsetMem.getBool(4);
             this.offsetMem.grow(maxOffset);
 
             // index writer is used to identify attempts to store duplicate symbol value
@@ -88,6 +88,12 @@ public class SymbolMapReader implements Closeable {
             // theoretically should require 2 value cells in index per hash
             // we use 4 cells to compensate for occasionally unlucky hash distribution
             this.maxHash = Numbers.ceilPow2(symbolCapacity / 2) - 1;
+            if (useCache) {
+                this.cache = new ObjList<>(symbolCapacity);
+                this.cache.setPos(symbolCapacity);
+            } else {
+                this.cache = null;
+            }
             LOG.info().$("open [name=").$(path.trimTo(plen).concat(name).$()).$(", fd=").$(this.offsetMem.getFd()).$(", capacity=").$(symbolCapacity).$(']').$();
         } catch (CairoException e) {
             close();
@@ -139,9 +145,26 @@ public class SymbolMapReader implements Closeable {
         }
 
         if (key < symbolCount) {
-            return charMem.getStr(offsetMem.getLong(SymbolMapWriter.keyToOffset(key)));
+            if (cache != null) {
+                return cachedValue(key);
+            }
+            return uncachedValue(key);
         }
         throw CairoException.instance(0).put("Invalid key: ").put(key);
+    }
+
+    private CharSequence cachedValue(int key) {
+        String symbol = cache.getQuiet(key);
+        return symbol != null ? symbol : fetchAndCache(key);
+    }
+
+    @NotNull
+    private CharSequence fetchAndCache(int key) {
+        String symbol;
+        CharSequence cs = charMem.getStr(offsetMem.getLong(SymbolMapWriter.keyToOffset(key)));
+        assert cs != null;
+        cache.extendAndSet(key, symbol = cs.toString());
+        return symbol;
     }
 
     private void growCharMemToSymbolCount(int symbolCount) {
@@ -152,5 +175,9 @@ public class SymbolMapReader implements Closeable {
         } else {
             this.charMem.grow(0);
         }
+    }
+
+    private CharSequence uncachedValue(int key) {
+        return charMem.getStr(offsetMem.getLong(SymbolMapWriter.keyToOffset(key)));
     }
 }

@@ -203,7 +203,7 @@ public class TableReader implements Closeable, RecordCursor {
                 // new instance
                 RecordColumnMetadata m = metadata.getColumnQuick(i);
                 if (m.getType() == ColumnType.SYMBOL) {
-                    SymbolMapReader reader = new SymbolMapReader(configuration, path, metadata.getColumnName(i), 0);
+                    SymbolMapReader reader = new SymbolMapReader(configuration, path, m.getName(), 0);
                     tmp = symbolMapReaders.getAndSetQuick(i, reader);
                     Misc.free(tmp);
                 } else {
@@ -437,7 +437,6 @@ public class TableReader implements Closeable, RecordCursor {
                 switch (metadata.getColumnQuick(columnIndex).getType()) {
                     case ColumnType.BINARY:
                     case ColumnType.STRING:
-                    case ColumnType.SYMBOL:
                         columns.setQuick(getSecondaryColumnIndex(columnBase, columnIndex),
                                 new ReadOnlyMemory(ff, TableUtils.iFile(path.trimTo(plen), name), ff.getMapPageSize()));
                         break;
@@ -775,6 +774,8 @@ public class TableReader implements Closeable, RecordCursor {
                 }
             }
             partitionRowCounts.setQuick(partitionIndex, rowCount);
+        } else {
+            reloadSymbolMapCounts();
         }
     }
 
@@ -1049,7 +1050,7 @@ public class TableReader implements Closeable, RecordCursor {
             if (index < 0) {
                 return null;
             }
-            return colA(col).getStr(colB(col).getLong(index * 8));
+            return symbolMapReaders.getQuick(col).value(colA(col).getInt(index * 4));
         }
 
         private ReadOnlyColumn colA(int col) {

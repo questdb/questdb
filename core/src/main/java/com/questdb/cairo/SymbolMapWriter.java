@@ -148,15 +148,17 @@ public class SymbolMapWriter implements Closeable {
         }
 
         if (cache != null) {
-            int result = cache.get(symbol);
-            if (result != -1) {
-                return result;
-            }
-            result = lookupAndPut(symbol);
-            cache.put(symbol.toString(), result);
-            return result;
+            int key = cache.get(symbol);
+            return key != -1 ? key : lookupPutAndCache(symbol);
         }
         return lookupAndPut(symbol);
+    }
+
+    private int lookupPutAndCache(CharSequence symbol) {
+        int result;
+        result = lookupAndPut(symbol);
+        cache.put(symbol.toString(), result);
+        return result;
     }
 
     public void rollback(int symbolCount) {
