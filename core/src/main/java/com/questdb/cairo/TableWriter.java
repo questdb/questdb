@@ -1052,6 +1052,7 @@ public class TableWriter implements Closeable {
         columns.remove(getSecondaryColumnIndex(index));
         columns.remove(getPrimaryColumnIndex(index));
         columnTops.removeIndex(index);
+        nullers.remove(index);
     }
 
     private void removeColumnFiles(CharSequence name) {

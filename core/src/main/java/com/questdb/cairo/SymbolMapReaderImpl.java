@@ -35,7 +35,7 @@ import java.io.Closeable;
 import static com.questdb.cairo.SymbolMapWriter.charFileName;
 import static com.questdb.cairo.SymbolMapWriter.offsetFileName;
 
-public class SymbolMapReaderImpl implements Closeable, SymbolTable {
+public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
     private static final Log LOG = LogFactory.getLog(SymbolMapReaderImpl.class);
 
     private final BitmapIndexBackwardReader indexReader;
@@ -131,15 +131,6 @@ public class SymbolMapReaderImpl implements Closeable, SymbolTable {
         return SymbolTable.VALUE_NOT_FOUND;
     }
 
-    public void updateSymbolCount(int symbolCount) {
-        if (symbolCount > this.symbolCount) {
-            this.symbolCount = symbolCount;
-            this.maxOffset = SymbolMapWriter.keyToOffset(symbolCount - 1);
-            this.offsetMem.grow(maxOffset);
-            growCharMemToSymbolCount(symbolCount);
-        }
-    }
-
     @Override
     public int size() {
         return symbolCount;
@@ -154,6 +145,16 @@ public class SymbolMapReaderImpl implements Closeable, SymbolTable {
             return uncachedValue(key);
         }
         return null;
+    }
+
+    @Override
+    public void updateSymbolCount(int symbolCount) {
+        if (symbolCount > this.symbolCount) {
+            this.symbolCount = symbolCount;
+            this.maxOffset = SymbolMapWriter.keyToOffset(symbolCount - 1);
+            this.offsetMem.grow(maxOffset);
+            growCharMemToSymbolCount(symbolCount);
+        }
     }
 
     private CharSequence cachedValue(int key) {
@@ -173,8 +174,8 @@ public class SymbolMapReaderImpl implements Closeable, SymbolTable {
     private void growCharMemToSymbolCount(int symbolCount) {
         if (symbolCount > 0) {
             long lastSymbolOffset = this.offsetMem.getLong(SymbolMapWriter.keyToOffset(symbolCount - 1));
-            int l = VirtualMemory.getStorageLength(this.charMem.getStr(lastSymbolOffset));
-            this.charMem.grow(lastSymbolOffset + l);
+            this.charMem.grow(lastSymbolOffset + 4);
+            this.charMem.grow(lastSymbolOffset + this.charMem.getStrLen(lastSymbolOffset) * 2 + 4);
         } else {
             this.charMem.grow(0);
         }

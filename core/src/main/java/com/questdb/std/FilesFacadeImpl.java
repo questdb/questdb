@@ -193,8 +193,8 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
-    public boolean supportsTruncateMappedFiles() {
-        return Os.type != Os.WINDOWS;
+    public boolean isRestrictedFileSystem() {
+        return Os.type == Os.WINDOWS;
     }
 
     @Override

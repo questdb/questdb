@@ -1206,8 +1206,8 @@ public class TableWriterTest extends AbstractCairoTest {
             }
 
             @Override
-            public boolean supportsTruncateMappedFiles() {
-                return true;
+            public boolean isRestrictedFileSystem() {
+                return false;
             }
 
             @Override
@@ -1242,8 +1242,8 @@ public class TableWriterTest extends AbstractCairoTest {
             }
 
             @Override
-            public boolean supportsTruncateMappedFiles() {
-                return false;
+            public boolean isRestrictedFileSystem() {
+                return true;
             }
 
             @Override
@@ -1282,8 +1282,8 @@ public class TableWriterTest extends AbstractCairoTest {
             }
 
             @Override
-            public boolean supportsTruncateMappedFiles() {
-                return false;
+            public boolean isRestrictedFileSystem() {
+                return true;
             }
 
             @Override

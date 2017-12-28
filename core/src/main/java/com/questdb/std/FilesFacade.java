@@ -83,7 +83,7 @@ public interface FilesFacade {
 
     boolean rmdir(Path name);
 
-    boolean supportsTruncateMappedFiles();
+    boolean isRestrictedFileSystem();
 
     boolean truncate(long fd, long size);
 
