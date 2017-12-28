@@ -48,9 +48,9 @@ public class TableReaderTest extends AbstractCairoTest {
     private static final int blobLen = 64 * 1024;
     private static final RecordAssert BATCH1_ASSERTER = (r, exp, ts, blob) -> {
         if (exp.nextBoolean()) {
-            Assert.assertEquals(exp.nextByte(), r.get(2));
+            Assert.assertEquals(exp.nextByte(), r.getByte(2));
         } else {
-            Assert.assertEquals(0, r.get(2));
+            Assert.assertEquals(0, r.getByte(2));
         }
 
         if (exp.nextBoolean()) {
@@ -114,9 +114,9 @@ public class TableReaderTest extends AbstractCairoTest {
         // same as BATCH1_ASSERTER + special treatment of "bin" column
 
         if (exp.nextBoolean()) {
-            Assert.assertEquals(exp.nextByte(), r.get(2));
+            Assert.assertEquals(exp.nextByte(), r.getByte(2));
         } else {
-            Assert.assertEquals(0, r.get(2));
+            Assert.assertEquals(0, r.getByte(2));
         }
 
         if (exp.nextBoolean()) {
@@ -184,9 +184,9 @@ public class TableReaderTest extends AbstractCairoTest {
 
     private static final RecordAssert BATCH1_ASSERTER_NULL_SYM = (r, exp, ts, blob) -> {
         if (exp.nextBoolean()) {
-            Assert.assertEquals(exp.nextByte(), r.get(2));
+            Assert.assertEquals(exp.nextByte(), r.getByte(2));
         } else {
-            Assert.assertEquals(0, r.get(2));
+            Assert.assertEquals(0, r.getByte(2));
         }
 
         if (exp.nextBoolean()) {
@@ -248,9 +248,9 @@ public class TableReaderTest extends AbstractCairoTest {
     private static final RecordAssert BATCH1_ASSERTER_NULL_INT = (r, exp, ts, blob) -> {
         // same as BATCH1_ASSERTER + special treatment of int field
         if (exp.nextBoolean()) {
-            Assert.assertEquals(exp.nextByte(), r.get(2));
+            Assert.assertEquals(exp.nextByte(), r.getByte(2));
         } else {
-            Assert.assertEquals(0, r.get(2));
+            Assert.assertEquals(0, r.getByte(2));
         }
 
         if (exp.nextBoolean()) {
@@ -313,9 +313,9 @@ public class TableReaderTest extends AbstractCairoTest {
     private static final RecordAssert BATCH2_BEFORE_ASSERTER = (r, rnd, ts, blob) -> assertNullStr(r, 11);
     private static final RecordAssert BATCH1_7_ASSERTER = (r, exp, ts, blob) -> {
         if (exp.nextBoolean()) {
-            Assert.assertEquals(exp.nextByte(), r.get(1));
+            Assert.assertEquals(exp.nextByte(), r.getByte(1));
         } else {
-            Assert.assertEquals(0, r.get(1));
+            Assert.assertEquals(0, r.getByte(1));
         }
 
         if (exp.nextBoolean()) {
@@ -376,9 +376,9 @@ public class TableReaderTest extends AbstractCairoTest {
     };
     private static final RecordAssert BATCH1_9_ASSERTER = (r, exp, ts, blob) -> {
         if (exp.nextBoolean()) {
-            Assert.assertEquals(exp.nextByte(), r.get(1));
+            Assert.assertEquals(exp.nextByte(), r.getByte(1));
         } else {
-            Assert.assertEquals(0, r.get(1));
+            Assert.assertEquals(0, r.getByte(1));
         }
 
         if (exp.nextBoolean()) {
@@ -443,7 +443,7 @@ public class TableReaderTest extends AbstractCairoTest {
     private static final RecordAssert BATCH_4_7_BEFORE_ASSERTER = (r, rnd, ts, blob) -> {
         Assert.assertEquals(0, r.getShort(12));
         Assert.assertFalse(r.getBool(13));
-        Assert.assertEquals(0, r.get(14));
+        Assert.assertEquals(0, r.getByte(14));
         Assert.assertTrue(Float.isNaN(r.getFloat(15)));
         Assert.assertTrue(Double.isNaN(r.getDouble(16)));
         Assert.assertNull(r.getSym(17));
@@ -453,7 +453,7 @@ public class TableReaderTest extends AbstractCairoTest {
     private static final RecordAssert BATCH_4_9_BEFORE_ASSERTER = (r, rnd, ts, blob) -> {
         Assert.assertEquals(0, r.getShort(11));
         Assert.assertFalse(r.getBool(12));
-        Assert.assertEquals(0, r.get(13));
+        Assert.assertEquals(0, r.getByte(13));
         Assert.assertTrue(Float.isNaN(r.getFloat(14)));
         Assert.assertTrue(Double.isNaN(r.getDouble(15)));
         Assert.assertNull(r.getSym(16));
@@ -511,7 +511,7 @@ public class TableReaderTest extends AbstractCairoTest {
     private static final RecordAssert BATCH4_BEFORE_ASSERTER = (r, rnd, ts, blob) -> {
         Assert.assertEquals(0, r.getShort(13));
         Assert.assertFalse(r.getBool(14));
-        Assert.assertEquals(0, r.get(15));
+        Assert.assertEquals(0, r.getByte(15));
         Assert.assertTrue(Float.isNaN(r.getFloat(16)));
         Assert.assertTrue(Double.isNaN(r.getDouble(17)));
         Assert.assertNull(r.getSym(18));
@@ -524,7 +524,7 @@ public class TableReaderTest extends AbstractCairoTest {
     private static final RecordAssert BATCH5_BEFORE_ASSERTER = (r, rnd, ts, blob) -> {
         Assert.assertEquals(0, r.getShort(13));
         Assert.assertFalse(r.getBool(14));
-        Assert.assertEquals(0, r.get(15));
+        Assert.assertEquals(0, r.getByte(15));
         Assert.assertTrue(Float.isNaN(r.getFloat(16)));
         Assert.assertTrue(Double.isNaN(r.getDouble(17)));
         Assert.assertNull(r.getSym(18));
@@ -548,9 +548,9 @@ public class TableReaderTest extends AbstractCairoTest {
         }
 
         if (rnd.nextBoolean()) {
-            Assert.assertEquals(rnd.nextByte(), r.get(15));
+            Assert.assertEquals(rnd.nextByte(), r.getByte(15));
         } else {
-            Assert.assertEquals(0, r.get(15));
+            Assert.assertEquals(0, r.getByte(15));
         }
 
         if (rnd.nextBoolean()) {
@@ -602,9 +602,9 @@ public class TableReaderTest extends AbstractCairoTest {
         }
 
         if (rnd.nextBoolean()) {
-            Assert.assertEquals(rnd.nextByte(), r.get(15));
+            Assert.assertEquals(rnd.nextByte(), r.getByte(15));
         } else {
-            Assert.assertEquals(0, r.get(15));
+            Assert.assertEquals(0, r.getByte(15));
         }
 
         if (rnd.nextBoolean()) {
@@ -654,9 +654,9 @@ public class TableReaderTest extends AbstractCairoTest {
         }
 
         if (rnd.nextBoolean()) {
-            Assert.assertEquals(rnd.nextByte(), r.get(14));
+            Assert.assertEquals(rnd.nextByte(), r.getByte(14));
         } else {
-            Assert.assertEquals(0, r.get(14));
+            Assert.assertEquals(0, r.getByte(14));
         }
 
         if (rnd.nextBoolean()) {
@@ -706,9 +706,9 @@ public class TableReaderTest extends AbstractCairoTest {
         }
 
         if (rnd.nextBoolean()) {
-            Assert.assertEquals(rnd.nextByte(), r.get(13));
+            Assert.assertEquals(rnd.nextByte(), r.getByte(13));
         } else {
-            Assert.assertEquals(0, r.get(13));
+            Assert.assertEquals(0, r.getByte(13));
         }
 
         if (rnd.nextBoolean()) {
@@ -819,9 +819,9 @@ public class TableReaderTest extends AbstractCairoTest {
 
     private static final RecordAssert BATCH8_ASSERTER = (r, rnd, ts, blob) -> {
         if (rnd.nextBoolean()) {
-            Assert.assertEquals(rnd.nextByte(), r.get(1));
+            Assert.assertEquals(rnd.nextByte(), r.getByte(1));
         } else {
-            Assert.assertEquals(0, r.get(1));
+            Assert.assertEquals(0, r.getByte(1));
         }
 
         if (rnd.nextBoolean()) {
@@ -899,9 +899,9 @@ public class TableReaderTest extends AbstractCairoTest {
         }
 
         if (rnd.nextBoolean()) {
-            Assert.assertEquals(rnd.nextByte(), r.get(14));
+            Assert.assertEquals(rnd.nextByte(), r.getByte(14));
         } else {
-            Assert.assertEquals(0, r.get(14));
+            Assert.assertEquals(0, r.getByte(14));
         }
 
         if (rnd.nextBoolean()) {
@@ -943,9 +943,9 @@ public class TableReaderTest extends AbstractCairoTest {
 
     private static final RecordAssert BATCH8_9_ASSERTER = (r, rnd, ts, blob) -> {
         if (rnd.nextBoolean()) {
-            Assert.assertEquals(rnd.nextByte(), r.get(1));
+            Assert.assertEquals(rnd.nextByte(), r.getByte(1));
         } else {
-            Assert.assertEquals(0, r.get(1));
+            Assert.assertEquals(0, r.getByte(1));
         }
 
         if (rnd.nextBoolean()) {
@@ -1021,9 +1021,9 @@ public class TableReaderTest extends AbstractCairoTest {
         }
 
         if (rnd.nextBoolean()) {
-            Assert.assertEquals(rnd.nextByte(), r.get(13));
+            Assert.assertEquals(rnd.nextByte(), r.getByte(13));
         } else {
-            Assert.assertEquals(0, r.get(13));
+            Assert.assertEquals(0, r.getByte(13));
         }
 
         if (rnd.nextBoolean()) {
@@ -1067,9 +1067,9 @@ public class TableReaderTest extends AbstractCairoTest {
 
     private static final RecordAssert BATCH9_ASSERTER = (r, rnd, ts, blob) -> {
         if (rnd.nextBoolean()) {
-            Assert.assertEquals(rnd.nextByte(), r.get(1));
+            Assert.assertEquals(rnd.nextByte(), r.getByte(1));
         } else {
-            Assert.assertEquals(0, r.get(1));
+            Assert.assertEquals(0, r.getByte(1));
         }
 
         if (rnd.nextBoolean()) {
@@ -1141,9 +1141,9 @@ public class TableReaderTest extends AbstractCairoTest {
         }
 
         if (rnd.nextBoolean()) {
-            Assert.assertEquals(rnd.nextByte(), r.get(13));
+            Assert.assertEquals(rnd.nextByte(), r.getByte(13));
         } else {
-            Assert.assertEquals(0, r.get(13));
+            Assert.assertEquals(0, r.getByte(13));
         }
 
         if (rnd.nextBoolean()) {

@@ -35,7 +35,7 @@ public class DirectMapRecord implements Record {
     }
 
     @Override
-    public byte get(int col) {
+    public byte getByte(int col) {
         return entry.get(col);
     }
 

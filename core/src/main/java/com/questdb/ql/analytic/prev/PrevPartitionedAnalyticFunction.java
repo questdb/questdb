@@ -58,11 +58,11 @@ public class PrevPartitionedAnalyticFunction extends AbstractPrevAnalyticFunctio
             nextNull = false;
             switch (valueColumn.getType()) {
                 case ColumnType.BOOLEAN:
-                    Unsafe.getUnsafe().putByte(bufPtr, values.get(0));
+                    Unsafe.getUnsafe().putByte(bufPtr, values.getByte(0));
                     values.putByte(0, (byte) (valueColumn.getBool(record) ? 1 : 0));
                     break;
                 case ColumnType.BYTE:
-                    Unsafe.getUnsafe().putByte(bufPtr, values.get(0));
+                    Unsafe.getUnsafe().putByte(bufPtr, values.getByte(0));
                     values.putByte(0, valueColumn.get(record));
                     break;
                 case ColumnType.DOUBLE:

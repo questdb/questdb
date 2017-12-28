@@ -233,7 +233,7 @@ public class RecordChain implements Closeable, RecordCursor, Mutable {
                     putBool(record.getBool(i));
                     break;
                 case ColumnType.BYTE:
-                    putByte(record.get(i));
+                    putByte(record.getByte(i));
                     break;
                 case ColumnType.DOUBLE:
                     putDouble(record.getDouble(i));
@@ -278,7 +278,7 @@ public class RecordChain implements Closeable, RecordCursor, Mutable {
         long baseOffset;
 
         @Override
-        public byte get(int col) {
+        public byte getByte(int col) {
             return mem.getByte(fixedWithColumnOffset(col));
         }
 

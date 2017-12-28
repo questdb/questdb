@@ -112,7 +112,7 @@ public class RecordSourcePrinter {
                 Numbers.append(sink, r.getLong(i));
                 break;
             case ColumnType.BYTE:
-                Numbers.append(sink, r.get(i));
+                Numbers.append(sink, r.getByte(i));
                 break;
             case ColumnType.BOOLEAN:
                 sink.put(r.getBool(i) ? "true" : "false");

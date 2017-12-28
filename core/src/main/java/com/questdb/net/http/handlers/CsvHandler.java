@@ -177,7 +177,7 @@ public class CsvHandler implements ContextHandler {
                 sink.put(rec.getBool(col));
                 break;
             case ColumnType.BYTE:
-                sink.put(rec.get(col));
+                sink.put(rec.getByte(col));
                 break;
             case ColumnType.DOUBLE:
                 double d = rec.getDouble(col);

@@ -40,8 +40,8 @@ public class AnalyticRecord implements Record {
     }
 
     @Override
-    public byte get(int col) {
-        return col < split ? base.get(col) : functions.getQuick(col - split).get();
+    public byte getByte(int col) {
+        return col < split ? base.getByte(col) : functions.getQuick(col - split).get();
     }
 
     @Override

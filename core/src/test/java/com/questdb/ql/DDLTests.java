@@ -120,7 +120,7 @@ public class DDLTests extends AbstractTest {
                                     Assert.assertEquals((long) rnd.nextInt(), cursor.next().getLong(0));
                                     break;
                                 case ColumnType.BYTE:
-                                    Assert.assertEquals((byte) rnd.nextInt(), cursor.next().get(0));
+                                    Assert.assertEquals((byte) rnd.nextInt(), cursor.next().getByte(0));
                                     break;
                                 case ColumnType.FLOAT:
                                     Assert.assertEquals((float) rnd.nextInt(), cursor.next().getFloat(0), 0.000000001f);
@@ -148,7 +148,7 @@ public class DDLTests extends AbstractTest {
                                     Assert.assertEquals(rnd.nextLong(), cursor.next().getLong(0));
                                     break;
                                 case ColumnType.BYTE:
-                                    Assert.assertEquals((byte) rnd.nextLong(), cursor.next().get(0));
+                                    Assert.assertEquals((byte) rnd.nextLong(), cursor.next().getByte(0));
                                     break;
                                 case ColumnType.FLOAT:
                                     Assert.assertEquals((float) rnd.nextLong(), cursor.next().getFloat(0), 0.000000001f);
@@ -175,7 +175,7 @@ public class DDLTests extends AbstractTest {
                                     Assert.assertEquals((long) rnd.nextByte(), cursor.next().getLong(0));
                                     break;
                                 case ColumnType.BYTE:
-                                    Assert.assertEquals(rnd.nextByte(), cursor.next().get(0));
+                                    Assert.assertEquals(rnd.nextByte(), cursor.next().getByte(0));
                                     break;
                                 case ColumnType.FLOAT:
                                     Assert.assertEquals((float) rnd.nextByte(), cursor.next().getFloat(0), 0.000000001f);
@@ -202,7 +202,7 @@ public class DDLTests extends AbstractTest {
                                     Assert.assertEquals((long) rnd.nextShort(), cursor.next().getLong(0));
                                     break;
                                 case ColumnType.BYTE:
-                                    Assert.assertEquals((byte) rnd.nextShort(), cursor.next().get(0));
+                                    Assert.assertEquals((byte) rnd.nextShort(), cursor.next().getByte(0));
                                     break;
                                 case ColumnType.FLOAT:
                                     Assert.assertEquals((float) rnd.nextShort(), cursor.next().getFloat(0), 0.000000001f);
@@ -229,7 +229,7 @@ public class DDLTests extends AbstractTest {
                                     Assert.assertEquals((long) rnd.nextFloat(), cursor.next().getLong(0));
                                     break;
                                 case ColumnType.BYTE:
-                                    Assert.assertEquals((byte) rnd.nextFloat(), cursor.next().get(0));
+                                    Assert.assertEquals((byte) rnd.nextFloat(), cursor.next().getByte(0));
                                     break;
                                 case ColumnType.FLOAT:
                                     Assert.assertEquals(rnd.nextFloat(), cursor.next().getFloat(0), 0.000000001f);
@@ -256,7 +256,7 @@ public class DDLTests extends AbstractTest {
                                     Assert.assertEquals((long) rnd.nextDouble(), cursor.next().getLong(0));
                                     break;
                                 case ColumnType.BYTE:
-                                    Assert.assertEquals((byte) rnd.nextDouble(), cursor.next().get(0));
+                                    Assert.assertEquals((byte) rnd.nextDouble(), cursor.next().getByte(0));
                                     break;
                                 case ColumnType.FLOAT:
                                     Assert.assertEquals((float) rnd.nextDouble(), cursor.next().getFloat(0), 0.000000001f);
@@ -661,7 +661,7 @@ public class DDLTests extends AbstractTest {
                 while (cursor.hasNext()) {
                     Record rec = cursor.next();
                     Assert.assertEquals(count, rec.getInt(0));
-                    Assert.assertTrue((byte) rnd.nextInt() == rec.get(1));
+                    Assert.assertTrue((byte) rnd.nextInt() == rec.getByte(1));
                     Assert.assertEquals((short) rnd.nextInt(), rec.getShort(2));
                     Assert.assertEquals(rnd.nextLong(), rec.getLong(3));
                     Assert.assertEquals(rnd.nextFloat(), rec.getFloat(4), 0.00001f);

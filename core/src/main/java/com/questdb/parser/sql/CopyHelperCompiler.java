@@ -47,7 +47,7 @@ public class CopyHelperCompiler {
         int rGetLong = asm.poolInterfaceMethod(Record.class, "getLong", "(I)J");
         int rGetDate = asm.poolInterfaceMethod(Record.class, "getDate", "(I)J");
         //
-        int rGetByte = asm.poolInterfaceMethod(Record.class, "get", "(I)B");
+        int rGetByte = asm.poolInterfaceMethod(Record.class, "getByte", "(I)B");
         int rGetShort = asm.poolInterfaceMethod(Record.class, "getShort", "(I)S");
         int rGetBool = asm.poolInterfaceMethod(Record.class, "getBool", "(I)Z");
         int rGetFloat = asm.poolInterfaceMethod(Record.class, "getFloat", "(I)F");

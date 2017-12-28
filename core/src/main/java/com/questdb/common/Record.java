@@ -31,7 +31,7 @@ import java.io.OutputStream;
 
 public interface Record {
 
-    default byte get(int col) {
+    default byte getByte(int col) {
         throw new UnsupportedOperationException();
     }
 

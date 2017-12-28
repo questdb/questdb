@@ -40,8 +40,8 @@ public class SplitRecord implements Record {
     }
 
     @Override
-    public byte get(int col) {
-        return getRec(col).get(idx(col));
+    public byte getByte(int col) {
+        return getRec(col).getByte(idx(col));
     }
 
     @Override

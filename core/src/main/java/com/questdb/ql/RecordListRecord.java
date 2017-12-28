@@ -77,7 +77,7 @@ public class RecordListRecord implements Record {
     }
 
     @Override
-    public byte get(int col) {
+    public byte getByte(int col) {
         assert offsets[col] >= 0;
         return Unsafe.getUnsafe().getByte(address + Unsafe.arrayGet(offsets, col));
     }

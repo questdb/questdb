@@ -54,8 +54,8 @@ public class SelectedColumnsRecord implements Record {
     }
 
     @Override
-    public byte get(int col) {
-        return base.get(Unsafe.arrayGet(reindex, col));
+    public byte getByte(int col) {
+        return base.getByte(Unsafe.arrayGet(reindex, col));
     }
 
     @Override
