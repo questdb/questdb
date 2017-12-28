@@ -61,7 +61,7 @@ public class TableReader implements Closeable, RecordCursor {
     private final TimestampFloorMethod timestampFloorMethod;
     private final IntervalLengthMethod intervalLengthMethod;
     private final CharSequence name;
-    private final ObjList<SymbolMapReaderImpl> symbolMapReaders = new ObjList<>();
+    private final ObjList<SymbolMapReader> symbolMapReaders = new ObjList<>();
     private final CairoConfiguration configuration;
     private final IntList symbolCountSnapshot = new IntList();
     private LongList columnTops;
@@ -178,7 +178,7 @@ public class TableReader implements Closeable, RecordCursor {
             // check where we source entry:
             // 1. from another entry
             // 2. create new instance
-            SymbolMapReaderImpl tmp;
+            SymbolMapReader tmp;
             if (copyFrom > 0) {
                 tmp = symbolMapReaders.getAndSetQuick(copyFrom - 1, null);
                 tmp = symbolMapReaders.getAndSetQuick(i, tmp);
@@ -274,6 +274,10 @@ public class TableReader implements Closeable, RecordCursor {
             final int base = getColumnBase(partitionIndex);
             Misc.free(columns.getAndSetQuick(getPrimaryColumnIndex(base, columnIndex), NullColumn.INSTANCE));
             Misc.free(columns.getAndSetQuick(getSecondaryColumnIndex(base, columnIndex), NullColumn.INSTANCE));
+        }
+
+        if (metadata.getColumnQuick(columnIndex).getType() == ColumnType.SYMBOL) {
+            Misc.free(symbolMapReaders.getAndSetQuick(columnIndex, EmptySymbolMapReader.INSTANCE));
         }
     }
 
@@ -768,7 +772,7 @@ public class TableReader implements Closeable, RecordCursor {
                 }
 
                 // reload symbol map
-                SymbolMapReaderImpl reader = symbolMapReaders.getQuick(i);
+                SymbolMapReader reader = symbolMapReaders.getQuick(i);
                 if (reader != null) {
                     reader.updateSymbolCount(symbolCountSnapshot.getQuick(symbolMapIndex++));
                 }

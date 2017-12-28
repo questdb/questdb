@@ -23,6 +23,8 @@
 
 package com.questdb.common;
 
+import com.questdb.std.str.CharSink;
+
 public interface RecordMetadata {
 
     String getAlias();
@@ -54,4 +56,25 @@ public interface RecordMetadata {
     RecordColumnMetadata getColumnQuick(int index);
 
     int getTimestampIndex();
+
+    default void toJson(CharSink sink) {
+        sink.put('{');
+        sink.putQuoted("columnCount").put(':').put(getColumnCount());
+        sink.put(',');
+        sink.putQuoted("columns").put(':');
+        sink.put('[');
+        for (int i = 0, n = getColumnCount(); i < n; i++) {
+            RecordColumnMetadata m = getColumnQuick(i);
+            if (i > 0) {
+                sink.put(',');
+            }
+            sink.put('{');
+            sink.putQuoted("index").put(':').put(i).put(',');
+            sink.putQuoted("name").put(':').putQuoted(m.getName()).put(',');
+            sink.putQuoted("type").put(':').putQuoted(ColumnType.nameOf(m.getType()));
+            sink.put('}');
+        }
+        sink.put(']');
+        sink.put('}');
+    }
 }

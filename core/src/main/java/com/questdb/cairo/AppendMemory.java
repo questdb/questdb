@@ -64,7 +64,7 @@ public class AppendMemory extends VirtualMemory {
                     if (ff.truncate(fd, sz)) {
                         LOG.info().$("truncated and closed [fd=").$(fd).$(']').$();
                     } else {
-                        if (!ff.supportsTruncateMappedFiles()) {
+                        if (ff.isRestrictedFileSystem()) {
                             // Windows does truncate file if it has a mapped page somewhere, could be another handle and process.
                             // To make it work size needs to be rounded up to nearest page.
                             long n = sz / getMapPageSize();

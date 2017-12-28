@@ -27,18 +27,15 @@ import com.questdb.common.ColumnType;
 import com.questdb.common.NumericException;
 import com.questdb.common.PartitionBy;
 import com.questdb.common.Record;
-import com.questdb.ql.RecordSourcePrinter;
 import com.questdb.std.*;
 import com.questdb.std.microtime.DateFormatUtils;
 import com.questdb.std.microtime.Dates;
 import com.questdb.std.str.LPSZ;
 import com.questdb.std.str.Path;
-import com.questdb.std.str.StringSink;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-import java.io.IOException;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
@@ -105,7 +102,214 @@ public class TableReaderTest extends AbstractCairoTest {
         } else {
             assertNullStr(r, 6);
         }
+
+        if (exp.nextBoolean()) {
+            TestUtils.assertEquals(exp.nextChars(7), r.getSym(7));
+        } else {
+            Assert.assertNull(r.getSym(7));
+        }
     };
+
+    private static final RecordAssert BATCH1_ASSERTER_NULL_BIN = (r, exp, ts, blob) -> {
+        // same as BATCH1_ASSERTER + special treatment of "bin" column
+
+        if (exp.nextBoolean()) {
+            Assert.assertEquals(exp.nextByte(), r.get(2));
+        } else {
+            Assert.assertEquals(0, r.get(2));
+        }
+
+        if (exp.nextBoolean()) {
+            Assert.assertEquals(exp.nextBoolean(), r.getBool(8));
+        } else {
+            Assert.assertFalse(r.getBool(8));
+        }
+
+        if (exp.nextBoolean()) {
+            Assert.assertEquals(exp.nextShort(), r.getShort(1));
+        } else {
+            Assert.assertEquals(0, r.getShort(1));
+        }
+
+        if (exp.nextBoolean()) {
+            Assert.assertEquals(exp.nextInt(), r.getInt(0));
+        } else {
+            Assert.assertEquals(Numbers.INT_NaN, r.getInt(0));
+        }
+
+        if (exp.nextBoolean()) {
+            Assert.assertEquals(exp.nextDouble(), r.getDouble(3), 0.00000001);
+        } else {
+            Assert.assertTrue(Double.isNaN(r.getDouble(3)));
+        }
+
+        if (exp.nextBoolean()) {
+            Assert.assertEquals(exp.nextFloat(), r.getFloat(4), 0.000001f);
+        } else {
+            Assert.assertTrue(Float.isNaN(r.getFloat(4)));
+        }
+
+        if (exp.nextBoolean()) {
+            Assert.assertEquals(exp.nextLong(), r.getLong(5));
+        } else {
+            Assert.assertEquals(Numbers.LONG_NaN, r.getLong(5));
+        }
+
+        if (exp.nextBoolean()) {
+            Assert.assertEquals(ts, r.getDate(10));
+        } else {
+            Assert.assertEquals(Numbers.LONG_NaN, r.getDate(10));
+        }
+
+        // generate random bin for random generator state consistency
+        if (exp.nextBoolean()) {
+            exp.nextChars(blob, blobLen / 2);
+        }
+
+        Assert.assertEquals(-1, r.getBinLen(9));
+        Assert.assertNull(r.getBin2(9));
+
+        if (exp.nextBoolean()) {
+            assertStrColumn(exp.nextChars(10), r, 6);
+        } else {
+            assertNullStr(r, 6);
+        }
+
+        if (exp.nextBoolean()) {
+            TestUtils.assertEquals(exp.nextChars(7), r.getSym(7));
+        } else {
+            Assert.assertNull(r.getSym(7));
+        }
+    };
+
+    private static final RecordAssert BATCH1_ASSERTER_NULL_SYM = (r, exp, ts, blob) -> {
+        if (exp.nextBoolean()) {
+            Assert.assertEquals(exp.nextByte(), r.get(2));
+        } else {
+            Assert.assertEquals(0, r.get(2));
+        }
+
+        if (exp.nextBoolean()) {
+            Assert.assertEquals(exp.nextBoolean(), r.getBool(8));
+        } else {
+            Assert.assertFalse(r.getBool(8));
+        }
+
+        if (exp.nextBoolean()) {
+            Assert.assertEquals(exp.nextShort(), r.getShort(1));
+        } else {
+            Assert.assertEquals(0, r.getShort(1));
+        }
+
+        if (exp.nextBoolean()) {
+            Assert.assertEquals(exp.nextInt(), r.getInt(0));
+        } else {
+            Assert.assertEquals(Numbers.INT_NaN, r.getInt(0));
+        }
+
+        if (exp.nextBoolean()) {
+            Assert.assertEquals(exp.nextDouble(), r.getDouble(3), 0.00000001);
+        } else {
+            Assert.assertTrue(Double.isNaN(r.getDouble(3)));
+        }
+
+        if (exp.nextBoolean()) {
+            Assert.assertEquals(exp.nextFloat(), r.getFloat(4), 0.000001f);
+        } else {
+            Assert.assertTrue(Float.isNaN(r.getFloat(4)));
+        }
+
+        if (exp.nextBoolean()) {
+            Assert.assertEquals(exp.nextLong(), r.getLong(5));
+        } else {
+            Assert.assertEquals(Numbers.LONG_NaN, r.getLong(5));
+        }
+
+        if (exp.nextBoolean()) {
+            Assert.assertEquals(ts, r.getDate(10));
+        } else {
+            Assert.assertEquals(Numbers.LONG_NaN, r.getDate(10));
+        }
+
+        assertBin(r, exp, blob, 9);
+
+        if (exp.nextBoolean()) {
+            assertStrColumn(exp.nextChars(10), r, 6);
+        } else {
+            assertNullStr(r, 6);
+        }
+
+        if (exp.nextBoolean()) {
+            exp.nextChars(7);
+        }
+        Assert.assertNull(r.getSym(7));
+    };
+
+    private static final RecordAssert BATCH1_ASSERTER_NULL_INT = (r, exp, ts, blob) -> {
+        // same as BATCH1_ASSERTER + special treatment of int field
+        if (exp.nextBoolean()) {
+            Assert.assertEquals(exp.nextByte(), r.get(2));
+        } else {
+            Assert.assertEquals(0, r.get(2));
+        }
+
+        if (exp.nextBoolean()) {
+            Assert.assertEquals(exp.nextBoolean(), r.getBool(8));
+        } else {
+            Assert.assertFalse(r.getBool(8));
+        }
+
+        if (exp.nextBoolean()) {
+            Assert.assertEquals(exp.nextShort(), r.getShort(1));
+        } else {
+            Assert.assertEquals(0, r.getShort(1));
+        }
+
+        if (exp.nextBoolean()) {
+            exp.nextInt();
+        }
+
+        Assert.assertEquals(Numbers.INT_NaN, r.getInt(0));
+
+        if (exp.nextBoolean()) {
+            Assert.assertEquals(exp.nextDouble(), r.getDouble(3), 0.00000001);
+        } else {
+            Assert.assertTrue(Double.isNaN(r.getDouble(3)));
+        }
+
+        if (exp.nextBoolean()) {
+            Assert.assertEquals(exp.nextFloat(), r.getFloat(4), 0.000001f);
+        } else {
+            Assert.assertTrue(Float.isNaN(r.getFloat(4)));
+        }
+
+        if (exp.nextBoolean()) {
+            Assert.assertEquals(exp.nextLong(), r.getLong(5));
+        } else {
+            Assert.assertEquals(Numbers.LONG_NaN, r.getLong(5));
+        }
+
+        if (exp.nextBoolean()) {
+            Assert.assertEquals(ts, r.getDate(10));
+        } else {
+            Assert.assertEquals(Numbers.LONG_NaN, r.getDate(10));
+        }
+
+        assertBin(r, exp, blob, 9);
+
+        if (exp.nextBoolean()) {
+            assertStrColumn(exp.nextChars(10), r, 6);
+        } else {
+            assertNullStr(r, 6);
+        }
+
+        if (exp.nextBoolean()) {
+            TestUtils.assertEquals(exp.nextChars(7), r.getSym(7));
+        } else {
+            Assert.assertNull(r.getSym(7));
+        }
+    };
+
     private static final RecordAssert BATCH2_BEFORE_ASSERTER = (r, rnd, ts, blob) -> assertNullStr(r, 11);
     private static final RecordAssert BATCH1_7_ASSERTER = (r, exp, ts, blob) -> {
         if (exp.nextBoolean()) {
@@ -162,11 +366,80 @@ public class TableReaderTest extends AbstractCairoTest {
             assertNullStr(r, 5);
         }
 
+        if (exp.nextBoolean()) {
+            TestUtils.assertEquals(exp.nextChars(7), r.getSym(6));
+        } else {
+            Assert.assertNull(r.getSym(6));
+        }
+
         Assert.assertEquals(Numbers.INT_NaN, r.getInt(20));
+    };
+    private static final RecordAssert BATCH1_9_ASSERTER = (r, exp, ts, blob) -> {
+        if (exp.nextBoolean()) {
+            Assert.assertEquals(exp.nextByte(), r.get(1));
+        } else {
+            Assert.assertEquals(0, r.get(1));
+        }
+
+        if (exp.nextBoolean()) {
+            Assert.assertEquals(exp.nextBoolean(), r.getBool(6));
+        } else {
+            Assert.assertFalse(r.getBool(6));
+        }
+
+        if (exp.nextBoolean()) {
+            Assert.assertEquals(exp.nextShort(), r.getShort(0));
+        } else {
+            Assert.assertEquals(0, r.getShort(0));
+        }
+
+        if (exp.nextBoolean()) {
+            exp.nextInt();
+        }
+
+        if (exp.nextBoolean()) {
+            Assert.assertEquals(exp.nextDouble(), r.getDouble(2), 0.00000001);
+        } else {
+            Assert.assertTrue(Double.isNaN(r.getDouble(2)));
+        }
+
+        if (exp.nextBoolean()) {
+            Assert.assertEquals(exp.nextFloat(), r.getFloat(3), 0.000001f);
+        } else {
+            Assert.assertTrue(Float.isNaN(r.getFloat(3)));
+        }
+
+        if (exp.nextBoolean()) {
+            Assert.assertEquals(exp.nextLong(), r.getLong(4));
+        } else {
+            Assert.assertEquals(Numbers.LONG_NaN, r.getLong(4));
+        }
+
+        if (exp.nextBoolean()) {
+            Assert.assertEquals(ts, r.getDate(8));
+        } else {
+            Assert.assertEquals(Numbers.LONG_NaN, r.getDate(8));
+        }
+
+        assertBin(r, exp, blob, 7);
+
+        if (exp.nextBoolean()) {
+            assertStrColumn(exp.nextChars(10), r, 5);
+        } else {
+            assertNullStr(r, 5);
+        }
+
+        // exercise random generator for column we removed
+        if (exp.nextBoolean()) {
+            exp.nextChars(7);
+        }
+        Assert.assertEquals(Numbers.INT_NaN, r.getInt(19));
     };
 
     private static final RecordAssert BATCH_2_7_BEFORE_ASSERTER = (r, rnd, ts, blob) -> assertNullStr(r, 10);
+    private static final RecordAssert BATCH_2_9_BEFORE_ASSERTER = (r, rnd, ts, blob) -> assertNullStr(r, 9);
     private static final RecordAssert BATCH_3_7_BEFORE_ASSERTER = (r, rnd, ts, blob) -> Assert.assertEquals(Numbers.INT_NaN, r.getInt(11));
+    private static final RecordAssert BATCH_3_9_BEFORE_ASSERTER = (r, rnd, ts, blob) -> Assert.assertEquals(Numbers.INT_NaN, r.getInt(10));
     private static final RecordAssert BATCH_4_7_BEFORE_ASSERTER = (r, rnd, ts, blob) -> {
         Assert.assertEquals(0, r.getShort(12));
         Assert.assertFalse(r.getBool(13));
@@ -176,6 +449,16 @@ public class TableReaderTest extends AbstractCairoTest {
         Assert.assertNull(r.getSym(17));
         Assert.assertEquals(Numbers.LONG_NaN, r.getLong(18));
         Assert.assertEquals(Numbers.LONG_NaN, r.getDate(19));
+    };
+    private static final RecordAssert BATCH_4_9_BEFORE_ASSERTER = (r, rnd, ts, blob) -> {
+        Assert.assertEquals(0, r.getShort(11));
+        Assert.assertFalse(r.getBool(12));
+        Assert.assertEquals(0, r.get(13));
+        Assert.assertTrue(Float.isNaN(r.getFloat(14)));
+        Assert.assertTrue(Double.isNaN(r.getDouble(15)));
+        Assert.assertNull(r.getSym(16));
+        Assert.assertEquals(Numbers.LONG_NaN, r.getLong(17));
+        Assert.assertEquals(Numbers.LONG_NaN, r.getDate(18));
     };
 
     private static final RecordAssert BATCH2_ASSERTER = (r, rnd, ts, blob) -> {
@@ -189,6 +472,13 @@ public class TableReaderTest extends AbstractCairoTest {
         BATCH1_7_ASSERTER.assertRecord(r, rnd, ts, blob);
         if ((rnd.nextPositiveInt() & 3) == 0) {
             assertStrColumn(rnd.nextChars(15), r, 10);
+        }
+    };
+
+    private static final RecordAssert BATCH2_9_ASSERTER = (r, rnd, ts, blob) -> {
+        BATCH1_9_ASSERTER.assertRecord(r, rnd, ts, blob);
+        if ((rnd.nextPositiveInt() & 3) == 0) {
+            assertStrColumn(rnd.nextChars(15), r, 9);
         }
     };
 
@@ -207,6 +497,14 @@ public class TableReaderTest extends AbstractCairoTest {
 
         if ((rnd.nextPositiveInt() & 3) == 0) {
             Assert.assertEquals(rnd.nextInt(), r.getInt(11));
+        }
+    };
+
+    private static final RecordAssert BATCH3_9_ASSERTER = (r, rnd, ts, blob) -> {
+        BATCH2_9_ASSERTER.assertRecord(r, rnd, ts, blob);
+
+        if ((rnd.nextPositiveInt() & 3) == 0) {
+            Assert.assertEquals(rnd.nextInt(), r.getInt(10));
         }
     };
 
@@ -392,8 +690,69 @@ public class TableReaderTest extends AbstractCairoTest {
         }
     };
 
+    private static final RecordAssert BATCH6_9_ASSERTER = (r, rnd, ts, blob) -> {
+        BATCH3_9_ASSERTER.assertRecord(r, rnd, ts, blob);
+
+        if (rnd.nextBoolean()) {
+            Assert.assertEquals(rnd.nextShort(), r.getShort(11));
+        } else {
+            Assert.assertEquals(0, r.getShort(11));
+        }
+
+        if (rnd.nextBoolean()) {
+            Assert.assertEquals(rnd.nextBoolean(), r.getBool(12));
+        } else {
+            Assert.assertFalse(r.getBool(12));
+        }
+
+        if (rnd.nextBoolean()) {
+            Assert.assertEquals(rnd.nextByte(), r.get(13));
+        } else {
+            Assert.assertEquals(0, r.get(13));
+        }
+
+        if (rnd.nextBoolean()) {
+            Assert.assertEquals(rnd.nextFloat(), r.getFloat(14), 0.00000001f);
+        } else {
+            Assert.assertTrue(Float.isNaN(r.getFloat(14)));
+        }
+
+        if (rnd.nextBoolean()) {
+            Assert.assertEquals(rnd.nextDouble(), r.getDouble(15), 0.0000001d);
+        } else {
+            Assert.assertTrue(Double.isNaN(r.getDouble(15)));
+        }
+
+        if (rnd.nextBoolean()) {
+            TestUtils.assertEquals(rnd.nextChars(10), r.getSym(16));
+        } else {
+            Assert.assertNull(r.getSym(16));
+        }
+
+        if (rnd.nextBoolean()) {
+            Assert.assertEquals(rnd.nextLong(), r.getLong(17));
+        } else {
+            Assert.assertEquals(Numbers.LONG_NaN, r.getLong(17));
+        }
+
+        if (rnd.nextBoolean()) {
+            Assert.assertEquals(rnd.nextLong(), r.getDate(18));
+        } else {
+            Assert.assertEquals(Numbers.LONG_NaN, r.getDate(18));
+        }
+    };
+
     private static final RecordAssert BATCH5_7_ASSERTER = (r, rnd, ts, blob) -> {
         BATCH6_7_ASSERTER.assertRecord(r, rnd, ts, blob);
+
+        // generate blob to roll forward random generator, don't assert blob value
+        if (rnd.nextBoolean()) {
+            rnd.nextChars(blob, blobLen / 2);
+        }
+    };
+
+    private static final RecordAssert BATCH5_9_ASSERTER = (r, rnd, ts, blob) -> {
+        BATCH6_9_ASSERTER.assertRecord(r, rnd, ts, blob);
 
         // generate blob to roll forward random generator, don't assert blob value
         if (rnd.nextBoolean()) {
@@ -411,62 +770,438 @@ public class TableReaderTest extends AbstractCairoTest {
     };
 
 
-    private static final FieldGenerator BATCH1_GENERATOR = (r, rnd, ts, blob) -> {
-        if (rnd.nextBoolean()) {
-            r.putByte(2, rnd.nextByte());
+    private static final FieldGenerator BATCH1_GENERATOR = (r1, rnd1, ts1, blob1) -> {
+        if (rnd1.nextBoolean()) {
+            r1.putByte(2, rnd1.nextByte());
         }
 
-        if (rnd.nextBoolean()) {
-            r.putBool(8, rnd.nextBoolean());
+        if (rnd1.nextBoolean()) {
+            r1.putBool(8, rnd1.nextBoolean());
         }
 
-        if (rnd.nextBoolean()) {
-            r.putShort(1, rnd.nextShort());
+        if (rnd1.nextBoolean()) {
+            r1.putShort(1, rnd1.nextShort());
         }
 
-        if (rnd.nextBoolean()) {
-            r.putInt(0, rnd.nextInt());
+        if (rnd1.nextBoolean()) {
+            r1.putInt(0, rnd1.nextInt());
         }
 
-        if (rnd.nextBoolean()) {
-            r.putDouble(3, rnd.nextDouble());
+        if (rnd1.nextBoolean()) {
+            r1.putDouble(3, rnd1.nextDouble());
         }
 
-        if (rnd.nextBoolean()) {
-            r.putFloat(4, rnd.nextFloat());
+        if (rnd1.nextBoolean()) {
+            r1.putFloat(4, rnd1.nextFloat());
         }
 
-        if (rnd.nextBoolean()) {
-            r.putLong(5, rnd.nextLong());
+        if (rnd1.nextBoolean()) {
+            r1.putLong(5, rnd1.nextLong());
         }
 
-        if (rnd.nextBoolean()) {
-            r.putDate(10, ts);
+        if (rnd1.nextBoolean()) {
+            r1.putDate(10, ts1);
         }
 
-        if (rnd.nextBoolean()) {
-            rnd.nextChars(blob, blobLen / 2);
-            r.putBin(9, blob, blobLen);
+        if (rnd1.nextBoolean()) {
+            rnd1.nextChars(blob1, blobLen / 2);
+            r1.putBin(9, blob1, blobLen);
         }
 
-        if (rnd.nextBoolean()) {
-            r.putStr(6, rnd.nextChars(10));
+        if (rnd1.nextBoolean()) {
+            r1.putStr(6, rnd1.nextChars(10));
         }
-    };
 
-    private static final FieldGenerator BATCH2_GENERATOR = (r, rnd, ts, blob) -> {
-        BATCH1_GENERATOR.generate(r, rnd, ts, blob);
-
-        if ((rnd.nextPositiveInt() & 3) == 0) {
-            r.putStr(11, rnd.nextChars(15));
+        if (rnd1.nextBoolean()) {
+            r1.putSym(7, rnd1.nextChars(7));
         }
     };
 
-    private static final FieldGenerator BATCH3_GENERATOR = (r, rnd, ts, blob) -> {
-        BATCH2_GENERATOR.generate(r, rnd, ts, blob);
+    private static final RecordAssert BATCH8_ASSERTER = (r, rnd, ts, blob) -> {
+        if (rnd.nextBoolean()) {
+            Assert.assertEquals(rnd.nextByte(), r.get(1));
+        } else {
+            Assert.assertEquals(0, r.get(1));
+        }
+
+        if (rnd.nextBoolean()) {
+            Assert.assertEquals(rnd.nextBoolean(), r.getBool(7));
+        } else {
+            Assert.assertFalse(r.getBool(7));
+        }
+
+        if (rnd.nextBoolean()) {
+            Assert.assertEquals(rnd.nextShort(), r.getShort(0));
+        } else {
+            Assert.assertEquals(0, r.getShort(0));
+        }
+
+        if (rnd.nextBoolean()) {
+            Assert.assertEquals(rnd.nextDouble(), r.getDouble(2), 0.0000001d);
+        } else {
+            Assert.assertTrue(Double.isNaN(r.getDouble(2)));
+        }
+
+        if (rnd.nextBoolean()) {
+            Assert.assertEquals(rnd.nextFloat(), r.getFloat(3), 0.000001f);
+        } else {
+            Assert.assertTrue(Float.isNaN(r.getFloat(3)));
+        }
+
+        if (rnd.nextBoolean()) {
+            Assert.assertEquals(rnd.nextLong(), r.getLong(4));
+        } else {
+            Assert.assertEquals(Numbers.LONG_NaN, r.getLong(4));
+        }
+
+        if (rnd.nextBoolean()) {
+            Assert.assertEquals(ts, r.getDate(9));
+        } else {
+            Assert.assertEquals(Numbers.LONG_NaN, r.getDate(9));
+        }
+
+        assertBin(r, rnd, blob, 8);
+
+        if (rnd.nextBoolean()) {
+            assertStrColumn(rnd.nextChars(10), r, 5);
+        } else {
+            assertNullStr(r, 5);
+        }
+
+        if (rnd.nextBoolean()) {
+            TestUtils.assertEquals(rnd.nextChars(7), r.getSym(6));
+        } else {
+            Assert.assertNull(r.getSym(6));
+        }
 
         if ((rnd.nextPositiveInt() & 3) == 0) {
-            r.putInt(12, rnd.nextInt());
+            assertStrColumn(rnd.nextChars(15), r, 10);
+        } else {
+            assertNullStr(r, 10);
+        }
+
+        if ((rnd.nextPositiveInt() & 3) == 0) {
+            Assert.assertEquals(rnd.nextInt(), r.getInt(11));
+        } else {
+            Assert.assertEquals(Numbers.INT_NaN, r.getInt(11));
+        }
+
+        if (rnd.nextBoolean()) {
+            Assert.assertEquals(rnd.nextShort(), r.getShort(12));
+        } else {
+            Assert.assertEquals(0, r.getShort(12));
+        }
+
+        if (rnd.nextBoolean()) {
+            Assert.assertEquals(rnd.nextBoolean(), r.getBool(13));
+        } else {
+            Assert.assertFalse(r.getBool(13));
+        }
+
+        if (rnd.nextBoolean()) {
+            Assert.assertEquals(rnd.nextByte(), r.get(14));
+        } else {
+            Assert.assertEquals(0, r.get(14));
+        }
+
+        if (rnd.nextBoolean()) {
+            Assert.assertEquals(rnd.nextFloat(), r.getFloat(15), 0.000001f);
+        } else {
+            Assert.assertTrue(Float.isNaN(r.getFloat(15)));
+        }
+
+        if (rnd.nextBoolean()) {
+            Assert.assertEquals(rnd.nextDouble(), r.getDouble(16), 0.0000001d);
+        } else {
+            Assert.assertTrue(Double.isNaN(r.getDouble(16)));
+        }
+
+        if (rnd.nextBoolean()) {
+            TestUtils.assertEquals(rnd.nextChars(10), r.getSym(17));
+        } else {
+            Assert.assertNull(r.getSym(17));
+        }
+
+        if (rnd.nextBoolean()) {
+            Assert.assertEquals(rnd.nextLong(), r.getLong(18));
+        } else {
+            Assert.assertEquals(Numbers.LONG_NaN, r.getLong(18));
+        }
+
+        if (rnd.nextBoolean()) {
+            Assert.assertEquals(rnd.nextLong(), r.getDate(19));
+        } else {
+            Assert.assertEquals(Numbers.LONG_NaN, r.getDate(19));
+        }
+
+        if (rnd.nextBoolean()) {
+            Assert.assertEquals(rnd.nextInt(), r.getInt(20));
+        } else {
+            Assert.assertEquals(Numbers.INT_NaN, r.getInt(20));
+        }
+    };
+
+    private static final RecordAssert BATCH8_9_ASSERTER = (r, rnd, ts, blob) -> {
+        if (rnd.nextBoolean()) {
+            Assert.assertEquals(rnd.nextByte(), r.get(1));
+        } else {
+            Assert.assertEquals(0, r.get(1));
+        }
+
+        if (rnd.nextBoolean()) {
+            Assert.assertEquals(rnd.nextBoolean(), r.getBool(6));
+        } else {
+            Assert.assertFalse(r.getBool(6));
+        }
+
+        if (rnd.nextBoolean()) {
+            Assert.assertEquals(rnd.nextShort(), r.getShort(0));
+        } else {
+            Assert.assertEquals(0, r.getShort(0));
+        }
+
+        if (rnd.nextBoolean()) {
+            Assert.assertEquals(rnd.nextDouble(), r.getDouble(2), 0.0000001d);
+        } else {
+            Assert.assertTrue(Double.isNaN(r.getDouble(2)));
+        }
+
+        if (rnd.nextBoolean()) {
+            Assert.assertEquals(rnd.nextFloat(), r.getFloat(3), 0.000001f);
+        } else {
+            Assert.assertTrue(Float.isNaN(r.getFloat(3)));
+        }
+
+        if (rnd.nextBoolean()) {
+            Assert.assertEquals(rnd.nextLong(), r.getLong(4));
+        } else {
+            Assert.assertEquals(Numbers.LONG_NaN, r.getLong(4));
+        }
+
+        if (rnd.nextBoolean()) {
+            Assert.assertEquals(ts, r.getDate(8));
+        } else {
+            Assert.assertEquals(Numbers.LONG_NaN, r.getDate(8));
+        }
+
+        assertBin(r, rnd, blob, 7);
+
+        if (rnd.nextBoolean()) {
+            assertStrColumn(rnd.nextChars(10), r, 5);
+        } else {
+            assertNullStr(r, 5);
+        }
+
+        if (rnd.nextBoolean()) {
+            rnd.nextChars(7);
+        }
+
+        if ((rnd.nextPositiveInt() & 3) == 0) {
+            assertStrColumn(rnd.nextChars(15), r, 9);
+        } else {
+            assertNullStr(r, 9);
+        }
+
+        if ((rnd.nextPositiveInt() & 3) == 0) {
+            Assert.assertEquals(rnd.nextInt(), r.getInt(10));
+        } else {
+            Assert.assertEquals(Numbers.INT_NaN, r.getInt(10));
+        }
+
+        if (rnd.nextBoolean()) {
+            Assert.assertEquals(rnd.nextShort(), r.getShort(11));
+        } else {
+            Assert.assertEquals(0, r.getShort(11));
+        }
+
+        if (rnd.nextBoolean()) {
+            Assert.assertEquals(rnd.nextBoolean(), r.getBool(12));
+        } else {
+            Assert.assertFalse(r.getBool(12));
+        }
+
+        if (rnd.nextBoolean()) {
+            Assert.assertEquals(rnd.nextByte(), r.get(13));
+        } else {
+            Assert.assertEquals(0, r.get(13));
+        }
+
+        if (rnd.nextBoolean()) {
+            Assert.assertEquals(rnd.nextFloat(), r.getFloat(14), 0.000001f);
+        } else {
+            Assert.assertTrue(Float.isNaN(r.getFloat(14)));
+        }
+
+        if (rnd.nextBoolean()) {
+            Assert.assertEquals(rnd.nextDouble(), r.getDouble(15), 0.0000001d);
+        } else {
+            Assert.assertTrue(Double.isNaN(r.getDouble(15)));
+        }
+
+        if (rnd.nextBoolean()) {
+            TestUtils.assertEquals(rnd.nextChars(10), r.getSym(16));
+        } else {
+            Assert.assertNull(r.getSym(16));
+        }
+
+        if (rnd.nextBoolean()) {
+            Assert.assertEquals(rnd.nextLong(), r.getLong(17));
+        } else {
+            Assert.assertEquals(Numbers.LONG_NaN, r.getLong(17));
+        }
+
+        if (rnd.nextBoolean()) {
+            Assert.assertEquals(rnd.nextLong(), r.getDate(18));
+        } else {
+            Assert.assertEquals(Numbers.LONG_NaN, r.getDate(18));
+        }
+
+        if (rnd.nextBoolean()) {
+            Assert.assertEquals(rnd.nextInt(), r.getInt(19));
+        } else {
+            Assert.assertEquals(Numbers.INT_NaN, r.getInt(19));
+        }
+
+        Assert.assertNull(r.getSym(20));
+    };
+
+    private static final RecordAssert BATCH9_ASSERTER = (r, rnd, ts, blob) -> {
+        if (rnd.nextBoolean()) {
+            Assert.assertEquals(rnd.nextByte(), r.get(1));
+        } else {
+            Assert.assertEquals(0, r.get(1));
+        }
+
+        if (rnd.nextBoolean()) {
+            Assert.assertEquals(rnd.nextBoolean(), r.getBool(6));
+        } else {
+            Assert.assertFalse(r.getBool(6));
+        }
+
+        if (rnd.nextBoolean()) {
+            Assert.assertEquals(rnd.nextShort(), r.getShort(0));
+        } else {
+            Assert.assertEquals(0, r.getShort(0));
+        }
+
+        if (rnd.nextBoolean()) {
+            Assert.assertEquals(rnd.nextDouble(), r.getDouble(2), 0.0000001d);
+        } else {
+            Assert.assertTrue(Double.isNaN(r.getDouble(2)));
+        }
+
+        if (rnd.nextBoolean()) {
+            Assert.assertEquals(rnd.nextFloat(), r.getFloat(3), 0.000001f);
+        } else {
+            Assert.assertTrue(Float.isNaN(r.getFloat(3)));
+        }
+
+        if (rnd.nextBoolean()) {
+            Assert.assertEquals(rnd.nextLong(), r.getLong(4));
+        } else {
+            Assert.assertEquals(Numbers.LONG_NaN, r.getLong(4));
+        }
+
+        if (rnd.nextBoolean()) {
+            Assert.assertEquals(ts, r.getDate(8));
+        } else {
+            Assert.assertEquals(Numbers.LONG_NaN, r.getDate(8));
+        }
+
+        assertBin(r, rnd, blob, 7);
+
+        if (rnd.nextBoolean()) {
+            assertStrColumn(rnd.nextChars(10), r, 5);
+        } else {
+            assertNullStr(r, 5);
+        }
+
+        if ((rnd.nextPositiveInt() & 3) == 0) {
+            assertStrColumn(rnd.nextChars(15), r, 9);
+        } else {
+            assertNullStr(r, 9);
+        }
+
+        if ((rnd.nextPositiveInt() & 3) == 0) {
+            Assert.assertEquals(rnd.nextInt(), r.getInt(10));
+        } else {
+            Assert.assertEquals(Numbers.INT_NaN, r.getInt(10));
+        }
+
+        if (rnd.nextBoolean()) {
+            Assert.assertEquals(rnd.nextShort(), r.getShort(11));
+        } else {
+            Assert.assertEquals(0, r.getShort(11));
+        }
+
+        if (rnd.nextBoolean()) {
+            Assert.assertEquals(rnd.nextBoolean(), r.getBool(12));
+        } else {
+            Assert.assertFalse(r.getBool(12));
+        }
+
+        if (rnd.nextBoolean()) {
+            Assert.assertEquals(rnd.nextByte(), r.get(13));
+        } else {
+            Assert.assertEquals(0, r.get(13));
+        }
+
+        if (rnd.nextBoolean()) {
+            Assert.assertEquals(rnd.nextFloat(), r.getFloat(14), 0.000001f);
+        } else {
+            Assert.assertTrue(Float.isNaN(r.getFloat(14)));
+        }
+
+        if (rnd.nextBoolean()) {
+            Assert.assertEquals(rnd.nextDouble(), r.getDouble(15), 0.0000001d);
+        } else {
+            Assert.assertTrue(Double.isNaN(r.getDouble(15)));
+        }
+
+        if (rnd.nextBoolean()) {
+            TestUtils.assertEquals(rnd.nextChars(10), r.getSym(16));
+        } else {
+            Assert.assertNull(r.getSym(16));
+        }
+
+        if (rnd.nextBoolean()) {
+            Assert.assertEquals(rnd.nextLong(), r.getLong(17));
+        } else {
+            Assert.assertEquals(Numbers.LONG_NaN, r.getLong(17));
+        }
+
+        if (rnd.nextBoolean()) {
+            Assert.assertEquals(rnd.nextLong(), r.getDate(18));
+        } else {
+            Assert.assertEquals(Numbers.LONG_NaN, r.getDate(18));
+        }
+
+        if (rnd.nextBoolean()) {
+            Assert.assertEquals(rnd.nextInt(), r.getInt(19));
+        } else {
+            Assert.assertEquals(Numbers.INT_NaN, r.getInt(19));
+        }
+
+        if (rnd.nextBoolean()) {
+            TestUtils.assertEquals(rnd.nextChars(8), r.getSym(20));
+        } else {
+            Assert.assertNull(r.getSym(20));
+        }
+    };
+
+    private static final FieldGenerator BATCH2_GENERATOR = (r1, rnd1, ts1, blob1) -> {
+        BATCH1_GENERATOR.generate(r1, rnd1, ts1, blob1);
+
+        if ((rnd1.nextPositiveInt() & 3) == 0) {
+            r1.putStr(11, rnd1.nextChars(15));
+        }
+    };
+
+    private static final FieldGenerator BATCH3_GENERATOR = (r1, rnd1, ts1, blob1) -> {
+        BATCH2_GENERATOR.generate(r1, rnd1, ts1, blob1);
+
+        if ((rnd1.nextPositiveInt() & 3) == 0) {
+            r1.putInt(12, rnd1.nextInt());
         }
     };
 
@@ -547,24 +1282,209 @@ public class TableReaderTest extends AbstractCairoTest {
         }
     };
 
+    private static final FieldGenerator BATCH8_GENERATOR = (r, rnd, ts, blob) -> {
+        if (rnd.nextBoolean()) {
+            r.putByte(1, rnd.nextByte());
+        }
+
+        if (rnd.nextBoolean()) {
+            r.putBool(7, rnd.nextBoolean());
+        }
+
+        if (rnd.nextBoolean()) {
+            r.putShort(0, rnd.nextShort());
+        }
+
+        if (rnd.nextBoolean()) {
+            r.putDouble(2, rnd.nextDouble());
+        }
+
+        if (rnd.nextBoolean()) {
+            r.putFloat(3, rnd.nextFloat());
+        }
+
+        if (rnd.nextBoolean()) {
+            r.putLong(4, rnd.nextLong());
+        }
+
+        if (rnd.nextBoolean()) {
+            r.putDate(9, ts);
+        }
+
+        if (rnd.nextBoolean()) {
+            rnd.nextChars(blob, blobLen / 2);
+            r.putBin(8, blob, blobLen);
+        }
+
+        if (rnd.nextBoolean()) {
+            r.putStr(5, rnd.nextChars(10));
+        }
+
+        if (rnd.nextBoolean()) {
+            r.putSym(6, rnd.nextChars(7));
+        }
+
+        if ((rnd.nextPositiveInt() & 3) == 0) {
+            r.putStr(10, rnd.nextChars(15));
+        }
+
+        if ((rnd.nextPositiveInt() & 3) == 0) {
+            r.putInt(11, rnd.nextInt());
+        }
+
+        if (rnd.nextBoolean()) {
+            r.putShort(12, rnd.nextShort());
+        }
+
+        if (rnd.nextBoolean()) {
+            r.putBool(13, rnd.nextBoolean());
+        }
+
+        if (rnd.nextBoolean()) {
+            r.putByte(14, rnd.nextByte());
+        }
+
+        if (rnd.nextBoolean()) {
+            r.putFloat(15, rnd.nextFloat());
+        }
+
+        if (rnd.nextBoolean()) {
+            r.putDouble(16, rnd.nextDouble());
+        }
+
+        if (rnd.nextBoolean()) {
+            r.putSym(17, rnd.nextChars(10));
+        }
+
+        if (rnd.nextBoolean()) {
+            r.putLong(18, rnd.nextLong());
+        }
+
+        if (rnd.nextBoolean()) {
+            r.putDate(19, rnd.nextLong());
+        }
+
+        if (rnd.nextBoolean()) {
+            r.putInt(20, rnd.nextInt());
+        }
+    };
+
+    private static final FieldGenerator BATCH9_GENERATOR = (r, rnd, ts, blob) -> {
+        if (rnd.nextBoolean()) {
+            r.putByte(1, rnd.nextByte());
+        }
+
+        if (rnd.nextBoolean()) {
+            r.putBool(6, rnd.nextBoolean());
+        }
+
+        if (rnd.nextBoolean()) {
+            r.putShort(0, rnd.nextShort());
+        }
+
+        if (rnd.nextBoolean()) {
+            r.putDouble(2, rnd.nextDouble());
+        }
+
+        if (rnd.nextBoolean()) {
+            r.putFloat(3, rnd.nextFloat());
+        }
+
+        if (rnd.nextBoolean()) {
+            r.putLong(4, rnd.nextLong());
+        }
+
+        if (rnd.nextBoolean()) {
+            r.putDate(8, ts);
+        }
+
+        if (rnd.nextBoolean()) {
+            rnd.nextChars(blob, blobLen / 2);
+            r.putBin(7, blob, blobLen);
+        }
+
+        if (rnd.nextBoolean()) {
+            r.putStr(5, rnd.nextChars(10));
+        }
+
+
+        if ((rnd.nextPositiveInt() & 3) == 0) {
+            r.putStr(9, rnd.nextChars(15));
+        }
+
+        if ((rnd.nextPositiveInt() & 3) == 0) {
+            r.putInt(10, rnd.nextInt());
+        }
+
+        if (rnd.nextBoolean()) {
+            r.putShort(11, rnd.nextShort());
+        }
+
+        if (rnd.nextBoolean()) {
+            r.putBool(12, rnd.nextBoolean());
+        }
+
+        if (rnd.nextBoolean()) {
+            r.putByte(13, rnd.nextByte());
+        }
+
+        if (rnd.nextBoolean()) {
+            r.putFloat(14, rnd.nextFloat());
+        }
+
+        if (rnd.nextBoolean()) {
+            r.putDouble(15, rnd.nextDouble());
+        }
+
+        if (rnd.nextBoolean()) {
+            r.putSym(16, rnd.nextChars(10));
+        }
+
+        if (rnd.nextBoolean()) {
+            r.putLong(17, rnd.nextLong());
+        }
+
+        if (rnd.nextBoolean()) {
+            r.putDate(18, rnd.nextLong());
+        }
+
+        if (rnd.nextBoolean()) {
+            r.putInt(19, rnd.nextInt());
+        }
+
+        if (rnd.nextBoolean()) {
+            r.putSym(20, rnd.nextChars(8));
+        }
+    };
+
     @Test
     public void testCloseColumnNonPartitioned1() throws Exception {
-        testCloseColumn(PartitionBy.NONE, 2000, 6000L, "bin");
+        testCloseColumn(PartitionBy.NONE, 2000, 6000L, "bin", BATCH1_ASSERTER_NULL_BIN);
     }
 
     @Test
     public void testCloseColumnNonPartitioned2() throws Exception {
-        testCloseColumn(PartitionBy.NONE, 2000, 6000L, "int");
+        testCloseColumn(PartitionBy.NONE, 2000, 6000L, "int", BATCH1_ASSERTER_NULL_INT);
+    }
+
+    @Test
+    public void testCloseColumnNonPartitioned3() throws Exception {
+        testCloseColumn(PartitionBy.NONE, 2000, 6000L, "sym", BATCH1_ASSERTER_NULL_SYM);
     }
 
     @Test
     public void testCloseColumnPartitioned1() throws Exception {
-        testCloseColumn(PartitionBy.DAY, 1000, 60000L, "bin");
+        testCloseColumn(PartitionBy.DAY, 1000, 60000L, "bin", BATCH1_ASSERTER_NULL_BIN);
     }
 
     @Test
     public void testCloseColumnPartitioned2() throws Exception {
-        testCloseColumn(PartitionBy.DAY, 1000, 60000L, "double");
+        testCloseColumn(PartitionBy.DAY, 1000, 60000L, "int", BATCH1_ASSERTER_NULL_INT);
+    }
+
+    @Test
+    public void testCloseColumnPartitioned3() throws Exception {
+        testCloseColumn(PartitionBy.DAY, 1000, 60000L, "sym", BATCH1_ASSERTER_NULL_SYM);
     }
 
     @Test
@@ -950,215 +1870,13 @@ public class TableReaderTest extends AbstractCairoTest {
     @Test
     public void testReadByMonth() throws Exception {
         CairoTestUtils.createAllTable(configuration, PartitionBy.MONTH);
-        final String expected = "int\tshort\tbyte\tdouble\tfloat\tlong\tstr\tsym\tbool\tbin\tdate\n" +
-                "73575701\t0\t0\tNaN\t0.7097\t-1675638984090602536\t\t\tfalse\t\t\n" +
-                "NaN\t0\t89\tNaN\tNaN\t6236292340460979716\tPMIUPLYJVB\t\ttrue\t\t\n" +
-                "NaN\t0\t60\tNaN\t0.6454\t-2715397729034539921\tOEYVSCKKDJ\t\tfalse\t\t2013-03-11T12:00:00.000Z\n" +
-                "NaN\t0\t113\tNaN\tNaN\t-6905112719978615298\t\t\tfalse\t\t2013-03-14T00:00:00.000Z\n" +
-                "-801004676\t0\t0\t0.000242509581\tNaN\t-7064303592482002884\t\t\tfalse\t\t2013-03-16T12:00:00.000Z\n" +
-                "NaN\t-24062\t0\t272.000000000000\t0.4387\tNaN\tTGSOOWYGSD\t\ttrue\t\t\n" +
-                "-640548855\t3093\t0\t-960.000000000000\t0.6056\t8522034740532776473\t\t\tfalse\t\t\n" +
-                "61976253\t0\t0\t0.000000000000\t0.5092\tNaN\t\t\tfalse\t\t\n" +
-                "NaN\t0\t0\t0.000041838453\t0.3185\tNaN\tZMGKVSIWRP\t\tfalse\t\t\n" +
-                "NaN\t0\t22\tNaN\tNaN\tNaN\t\t\tfalse\t\t2013-03-29T00:00:00.000Z\n" +
-                "777797854\t0\t0\tNaN\tNaN\t-3561042134139364009\t\t\tfalse\t\t2013-03-31T12:00:00.000Z\n" +
-                "NaN\t0\t106\tNaN\t0.4809\tNaN\t\t\ttrue\t\t\n" +
-                "1204862303\t-20282\t0\tNaN\tNaN\t8715974436393319034\t\t\ttrue\t\t2013-04-05T12:00:00.000Z\n" +
-                "NaN\t0\t53\t-222.738281250000\tNaN\tNaN\tWOWDODUFGU\t\tfalse\t\t\n" +
-                "2095297876\t21923\t0\t256.000000000000\t0.8653\t-6418805892627297273\t\t\ttrue\t\t2013-04-10T12:00:00.000Z\n" +
-                "NaN\t-19019\t0\tNaN\tNaN\tNaN\t\t\tfalse\t\t2013-04-13T00:00:00.000Z\n" +
-                "NaN\t-25663\t0\t-92.000000000000\t0.3888\tNaN\t\t\ttrue\t\t2013-04-15T12:00:00.000Z\n" +
-                "-1601554634\t3379\t0\t1020.793212890625\tNaN\tNaN\tKSJZPZZKUM\t\tfalse\t\t\n" +
-                "NaN\t26260\t0\t46.750000000000\tNaN\tNaN\t\t\ttrue\t\t\n" +
-                "-1050143454\t0\t0\tNaN\tNaN\t-4944873630491810081\t\t\tfalse\t\t\n" +
-                "NaN\t0\t34\t0.013004892273\tNaN\tNaN\t\t\tfalse\t\t2013-04-25T12:00:00.000Z\n" +
-                "-1242020108\t-11546\t-82\t0.000000004717\t0.4724\tNaN\t\t\tfalse\t\t\n" +
-                "1512203086\t0\t0\t797.846359252930\tNaN\t6753493100272204912\t\t\tfalse\t\t\n" +
-                "77063638\t870\t-100\tNaN\tNaN\tNaN\t\t\ttrue\t\t2013-05-03T00:00:00.000Z\n" +
-                "NaN\t0\t0\tNaN\tNaN\tNaN\t\t\tfalse\t\t\n" +
-                "NaN\t27339\t0\t0.000000010539\tNaN\tNaN\t\t\tfalse\t\t2013-05-08T00:00:00.000Z\n" +
-                "235357628\t0\t-120\t0.000156953447\tNaN\tNaN\tTTNGDKZVVS\t\tfalse\t\t\n" +
-                "NaN\t0\t0\tNaN\tNaN\tNaN\tJIVTDTVOFK\t\tfalse\t\t\n" +
-                "NaN\t0\t-122\tNaN\tNaN\tNaN\tKNSVTCFVTQ\t\tfalse\t\t2013-05-15T12:00:00.000Z\n" +
-                "NaN\t30566\t20\tNaN\t0.9818\t-5466726161969343552\t\t\tfalse\t\t2013-05-18T00:00:00.000Z\n" +
-                "NaN\t-15656\t0\tNaN\t0.6098\t-6217010216024734623\t\t\ttrue\t\t2013-05-20T12:00:00.000Z\n" +
-                "NaN\t0\t0\tNaN\t0.3901\tNaN\t\t\tfalse\t\t\n" +
-                "NaN\t2882\t0\t-105.500000000000\tNaN\tNaN\tOKIIHSWTEH\t\tfalse\t\t2013-05-25T12:00:00.000Z\n" +
-                "NaN\t0\t-104\tNaN\tNaN\tNaN\t\t\tfalse\t\t2013-05-28T00:00:00.000Z\n" +
-                "NaN\t0\t0\tNaN\tNaN\tNaN\tODHWKFENXM\t\tfalse\t\t\n" +
-                "-659184089\t-13800\t-2\t2.392256617546\t0.6519\t-7751136309261449149\tOKYULJBQTL\t\tfalse\t\t2013-06-02T00:00:00.000Z\n" +
-                "-1883104688\t0\t0\tNaN\t0.6757\t8196181258827495370\t\t\tfalse\t\t\n" +
-                "-2139859771\t0\t-79\t344.729835510254\tNaN\tNaN\tIBJCVFPFBC\t\tfalse\t\t\n" +
-                "NaN\t10225\t0\t-572.296875000000\t0.2967\t-5767634907351262282\tTBWDVSZOIX\t\tfalse\t\t\n" +
-                "NaN\t0\t-19\tNaN\t0.7135\t8969196340878943365\t\t\tfalse\t\t2013-06-12T00:00:00.000Z\n" +
-                "NaN\t0\t-38\t-86.000000000000\tNaN\tNaN\tXKELTCVZXQ\t\tfalse\t\t2013-06-14T12:00:00.000Z\n" +
-                "NaN\t29304\t0\tNaN\tNaN\t-1515294165892907204\t\t\tfalse\t\t2013-06-17T00:00:00.000Z\n" +
-                "NaN\t17701\t0\t0.916345536709\tNaN\tNaN\t\t\tfalse\t\t\n" +
-                "-2139370311\t-32277\t65\tNaN\tNaN\t-7601183786211855388\t\t\ttrue\t\t2013-06-22T00:00:00.000Z\n" +
-                "NaN\t0\t0\tNaN\tNaN\tNaN\t\t\tfalse\t\t2013-06-24T12:00:00.000Z\n" +
-                "1198081577\t0\t0\tNaN\tNaN\t-7481237079546197800\t\t\ttrue\t\t2013-06-27T00:00:00.000Z\n" +
-                "NaN\t-17836\t0\tNaN\t0.5251\t-7316664068900365888\t\t\tfalse\t\t\n" +
-                "NaN\t0\t60\t-1024.000000000000\t0.9287\t1451757238409137883\t\t\tfalse\t\t\n" +
-                "632261185\t14561\t0\t447.342773437500\tNaN\tNaN\t\t\tfalse\t\t2013-07-04T12:00:00.000Z\n" +
-                "NaN\t0\t-96\t0.005665154895\t0.5212\tNaN\tJEQMWTHZNH\t\ttrue\t\t\n" +
-                "NaN\t4882\t0\t-721.570068359375\tNaN\tNaN\t\t\tfalse\t\t2013-07-09T12:00:00.000Z\n" +
-                "NaN\t0\t0\tNaN\tNaN\tNaN\t\t\tfalse\t\t\n" +
-                "NaN\t0\t0\tNaN\tNaN\tNaN\t\t\tfalse\t\t\n" +
-                "1216600919\t23298\t-117\tNaN\tNaN\tNaN\tMNWBTIVJEW\t\ttrue\t\t2013-07-17T00:00:00.000Z\n" +
-                "NaN\t0\t119\tNaN\tNaN\tNaN\t\t\tfalse\t\t\n" +
-                "NaN\t17913\t0\t0.020569519140\t0.5912\tNaN\t\t\tfalse\t\t2013-07-22T00:00:00.000Z\n" +
-                "1610742551\t0\t0\tNaN\tNaN\tNaN\t\t\tfalse\t\t2013-07-24T12:00:00.000Z\n" +
-                "-1205646285\t0\t0\tNaN\t0.9289\t8642403514325899452\t\t\tfalse\t\t2013-07-27T00:00:00.000Z\n" +
-                "NaN\t-23295\t0\tNaN\t0.8926\t-9150462926608062120\tWQLJNZCGCT\t\ttrue\t\t\n" +
-                "NaN\t0\t0\tNaN\t0.6798\t-5864575418630714346\t\t\tfalse\t\t2013-08-01T00:00:00.000Z\n" +
-                "1683275019\t-26804\t0\t4.128064155579\t0.2032\tNaN\t\t\tfalse\t\t2013-08-03T12:00:00.000Z\n" +
-                "NaN\t0\t-94\tNaN\tNaN\t-9051427420978437586\t\t\tfalse\t\t2013-08-06T00:00:00.000Z\n" +
-                "1934973454\t0\t0\tNaN\tNaN\tNaN\t\t\tfalse\t\t\n" +
-                "NaN\t0\t0\tNaN\tNaN\t-5303405449347886958\t\t\tfalse\t\t2013-08-11T00:00:00.000Z\n" +
-                "NaN\t29170\t14\t-953.945312500000\t0.6473\t-6346552295544744665\t\t\ttrue\t\t2013-08-13T12:00:00.000Z\n" +
-                "-1551250112\t0\t0\tNaN\tNaN\t-9153807758920642614\tUJXSVCWGHT\t\tfalse\t\t\n" +
-                "-636263795\t0\t-76\tNaN\t0.5857\tNaN\t\t\ttrue\t\t\n" +
-                "NaN\t-27755\t0\tNaN\t0.7426\t5259909879721818696\t\t\tfalse\t\t\n" +
-                "731479609\t-20511\t0\t28.810546875000\t0.7764\t-8118558905916637434\t\t\tfalse\t\t\n" +
-                "-1334703041\t-1358\t0\t0.000000017793\t0.3070\t-3883507671731232196\t\t\ttrue\t\t2013-08-26T00:00:00.000Z\n" +
-                "NaN\t25020\t-107\tNaN\t0.6154\tNaN\tUYHVBTQZNP\t\ttrue\t\t\n" +
-                "NaN\t0\t58\tNaN\tNaN\t-5516374931389294840\t\t\tfalse\t\t2013-08-31T00:00:00.000Z\n" +
-                "964528173\t0\t0\t0.003956267610\t0.8607\t-3067936391188226389\t\t\tfalse\t\t2013-09-02T12:00:00.000Z\n" +
-                "NaN\t0\t-105\t0.000000338487\tNaN\tNaN\t\t\tfalse\t\t2013-09-05T00:00:00.000Z\n" +
-                "NaN\t0\t0\tNaN\tNaN\t7354668637892666879\t\t\tfalse\t\t\n" +
-                "-448961895\t0\t0\tNaN\tNaN\t-9161200384798064634\tGZKHINLGPK\t\tfalse\t\t\n" +
-                "NaN\t-27897\t40\tNaN\tNaN\t-7520515938192868059\t\t\ttrue\t\t2013-09-12T12:00:00.000Z\n" +
-                "371473906\t0\t0\tNaN\t0.6473\t4656851861563783983\t\t\tfalse\t\t\n" +
-                "-1346903540\t0\t0\tNaN\t0.5894\t-8299437881884939478\tNYWRPCINVX\t\tfalse\t\t2013-09-17T12:00:00.000Z\n" +
-                "-1948757473\t0\t-46\tNaN\tNaN\t-6824321255992266244\t\t\tfalse\t\t\n" +
-                "-268192526\t10310\t0\tNaN\t0.5699\t-6083767479706055886\t\t\ttrue\t\t\n" +
-                "1294560337\t0\t0\t0.000000126063\tNaN\tNaN\t\t\tfalse\t\t2013-09-25T00:00:00.000Z\n" +
-                "NaN\t0\t0\tNaN\t0.5528\t-6393296971707706969\t\t\tfalse\t\t2013-09-27T12:00:00.000Z\n" +
-                "NaN\t0\t0\tNaN\tNaN\t-8345528960002638166\t\t\ttrue\t\t\n" +
-                "1744814812\t455\t0\t0.001713166508\tNaN\tNaN\t\t\tfalse\t\t\n" +
-                "NaN\t0\t-127\t0.015959210694\t0.7250\t8725410536784858046\t\t\tfalse\t\t\n" +
-                "NaN\t0\t16\t939.765625000000\t0.7319\t-7413379514400996037\t\t\ttrue\t\t2013-10-07T12:00:00.000Z\n" +
-                "NaN\t0\t0\tNaN\t0.7553\tNaN\t\t\tfalse\t\t\n" +
-                "1168191792\t21539\t-123\tNaN\tNaN\t-7702162217093176347\t\t\ttrue\t\t2013-10-12T12:00:00.000Z\n" +
-                "NaN\t-21809\t0\tNaN\tNaN\t-3135568653781063174\t\t\tfalse\t\t2013-10-15T00:00:00.000Z\n" +
-                "NaN\t0\t0\tNaN\tNaN\tNaN\t\t\tfalse\t\t2013-10-17T12:00:00.000Z\n" +
-                "2003366662\t0\t0\tNaN\tNaN\t-1621062241930578783\t\t\tfalse\t\t2013-10-20T00:00:00.000Z\n" +
-                "NaN\t4277\t0\tNaN\tNaN\tNaN\tMHDSESFOOY\t\ttrue\t\t2013-10-22T12:00:00.000Z\n" +
-                "1375853278\t0\t0\tNaN\tNaN\tNaN\t\t\tfalse\t\t2013-10-25T00:00:00.000Z\n" +
-                "NaN\t-19723\t0\tNaN\tNaN\tNaN\t\t\tfalse\t\t\n" +
-                "NaN\t0\t-52\tNaN\tNaN\tNaN\t\t\ttrue\t\t\n" +
-                "NaN\t0\t116\tNaN\tNaN\t-4675510353991993979\t\t\ttrue\t\t2013-11-01T12:00:00.000Z\n" +
-                "NaN\t0\t72\tNaN\tNaN\t-1653512736810729151\t\t\tfalse\t\t2013-11-04T00:00:00.000Z\n" +
-                "NaN\t-22994\t0\tNaN\tNaN\tNaN\t\t\ttrue\t\t\n" +
-                "NaN\t0\t0\tNaN\tNaN\tNaN\tOJZOVQGFZU\t\tfalse\t\t\n";
-        TestUtils.assertMemoryLeak(() -> testTableCursor(60 * 60 * 60000, expected));
+        TestUtils.assertMemoryLeak(() -> testTableCursor(60 * 60 * 60000));
     }
 
     @Test
     public void testReadByYear() throws Exception {
         CairoTestUtils.createAllTable(configuration, PartitionBy.YEAR);
-        final String expected = "int\tshort\tbyte\tdouble\tfloat\tlong\tstr\tsym\tbool\tbin\tdate\n" +
-                "73575701\t0\t0\tNaN\t0.7097\t-1675638984090602536\t\t\tfalse\t\t\n" +
-                "NaN\t0\t89\tNaN\tNaN\t6236292340460979716\tPMIUPLYJVB\t\ttrue\t\t\n" +
-                "NaN\t0\t60\tNaN\t0.6454\t-2715397729034539921\tOEYVSCKKDJ\t\tfalse\t\t2013-08-31T00:00:00.000Z\n" +
-                "NaN\t0\t113\tNaN\tNaN\t-6905112719978615298\t\t\tfalse\t\t2013-10-30T00:00:00.000Z\n" +
-                "-801004676\t0\t0\t0.000242509581\tNaN\t-7064303592482002884\t\t\tfalse\t\t2013-12-29T00:00:00.000Z\n" +
-                "NaN\t-24062\t0\t272.000000000000\t0.4387\tNaN\tTGSOOWYGSD\t\ttrue\t\t\n" +
-                "-640548855\t3093\t0\t-960.000000000000\t0.6056\t8522034740532776473\t\t\tfalse\t\t\n" +
-                "61976253\t0\t0\t0.000000000000\t0.5092\tNaN\t\t\tfalse\t\t\n" +
-                "NaN\t0\t0\t0.000041838453\t0.3185\tNaN\tZMGKVSIWRP\t\tfalse\t\t\n" +
-                "NaN\t0\t22\tNaN\tNaN\tNaN\t\t\tfalse\t\t2014-10-25T00:00:00.000Z\n" +
-                "777797854\t0\t0\tNaN\tNaN\t-3561042134139364009\t\t\tfalse\t\t2014-12-24T00:00:00.000Z\n" +
-                "NaN\t0\t106\tNaN\t0.4809\tNaN\t\t\ttrue\t\t\n" +
-                "1204862303\t-20282\t0\tNaN\tNaN\t8715974436393319034\t\t\ttrue\t\t2015-04-23T00:00:00.000Z\n" +
-                "NaN\t0\t53\t-222.738281250000\tNaN\tNaN\tWOWDODUFGU\t\tfalse\t\t\n" +
-                "2095297876\t21923\t0\t256.000000000000\t0.8653\t-6418805892627297273\t\t\ttrue\t\t2015-08-21T00:00:00.000Z\n" +
-                "NaN\t-19019\t0\tNaN\tNaN\tNaN\t\t\tfalse\t\t2015-10-20T00:00:00.000Z\n" +
-                "NaN\t-25663\t0\t-92.000000000000\t0.3888\tNaN\t\t\ttrue\t\t2015-12-19T00:00:00.000Z\n" +
-                "-1601554634\t3379\t0\t1020.793212890625\tNaN\tNaN\tKSJZPZZKUM\t\tfalse\t\t\n" +
-                "NaN\t26260\t0\t46.750000000000\tNaN\tNaN\t\t\ttrue\t\t\n" +
-                "-1050143454\t0\t0\tNaN\tNaN\t-4944873630491810081\t\t\tfalse\t\t\n" +
-                "NaN\t0\t34\t0.013004892273\tNaN\tNaN\t\t\tfalse\t\t2016-08-15T00:00:00.000Z\n" +
-                "-1242020108\t-11546\t-82\t0.000000004717\t0.4724\tNaN\t\t\tfalse\t\t\n" +
-                "1512203086\t0\t0\t797.846359252930\tNaN\t6753493100272204912\t\t\tfalse\t\t\n" +
-                "77063638\t870\t-100\tNaN\tNaN\tNaN\t\t\ttrue\t\t2017-02-11T00:00:00.000Z\n" +
-                "NaN\t0\t0\tNaN\tNaN\tNaN\t\t\tfalse\t\t\n" +
-                "NaN\t27339\t0\t0.000000010539\tNaN\tNaN\t\t\tfalse\t\t2017-06-11T00:00:00.000Z\n" +
-                "235357628\t0\t-120\t0.000156953447\tNaN\tNaN\tTTNGDKZVVS\t\tfalse\t\t\n" +
-                "NaN\t0\t0\tNaN\tNaN\tNaN\tJIVTDTVOFK\t\tfalse\t\t\n" +
-                "NaN\t0\t-122\tNaN\tNaN\tNaN\tKNSVTCFVTQ\t\tfalse\t\t2017-12-08T00:00:00.000Z\n" +
-                "NaN\t30566\t20\tNaN\t0.9818\t-5466726161969343552\t\t\tfalse\t\t2018-02-06T00:00:00.000Z\n" +
-                "NaN\t-15656\t0\tNaN\t0.6098\t-6217010216024734623\t\t\ttrue\t\t2018-04-07T00:00:00.000Z\n" +
-                "NaN\t0\t0\tNaN\t0.3901\tNaN\t\t\tfalse\t\t\n" +
-                "NaN\t2882\t0\t-105.500000000000\tNaN\tNaN\tOKIIHSWTEH\t\tfalse\t\t2018-08-05T00:00:00.000Z\n" +
-                "NaN\t0\t-104\tNaN\tNaN\tNaN\t\t\tfalse\t\t2018-10-04T00:00:00.000Z\n" +
-                "NaN\t0\t0\tNaN\tNaN\tNaN\tODHWKFENXM\t\tfalse\t\t\n" +
-                "-659184089\t-13800\t-2\t2.392256617546\t0.6519\t-7751136309261449149\tOKYULJBQTL\t\tfalse\t\t2019-02-01T00:00:00.000Z\n" +
-                "-1883104688\t0\t0\tNaN\t0.6757\t8196181258827495370\t\t\tfalse\t\t\n" +
-                "-2139859771\t0\t-79\t344.729835510254\tNaN\tNaN\tIBJCVFPFBC\t\tfalse\t\t\n" +
-                "NaN\t10225\t0\t-572.296875000000\t0.2967\t-5767634907351262282\tTBWDVSZOIX\t\tfalse\t\t\n" +
-                "NaN\t0\t-19\tNaN\t0.7135\t8969196340878943365\t\t\tfalse\t\t2019-09-29T00:00:00.000Z\n" +
-                "NaN\t0\t-38\t-86.000000000000\tNaN\tNaN\tXKELTCVZXQ\t\tfalse\t\t2019-11-28T00:00:00.000Z\n" +
-                "NaN\t29304\t0\tNaN\tNaN\t-1515294165892907204\t\t\tfalse\t\t2020-01-27T00:00:00.000Z\n" +
-                "NaN\t17701\t0\t0.916345536709\tNaN\tNaN\t\t\tfalse\t\t\n" +
-                "-2139370311\t-32277\t65\tNaN\tNaN\t-7601183786211855388\t\t\ttrue\t\t2020-05-26T00:00:00.000Z\n" +
-                "NaN\t0\t0\tNaN\tNaN\tNaN\t\t\tfalse\t\t2020-07-25T00:00:00.000Z\n" +
-                "1198081577\t0\t0\tNaN\tNaN\t-7481237079546197800\t\t\ttrue\t\t2020-09-23T00:00:00.000Z\n" +
-                "NaN\t-17836\t0\tNaN\t0.5251\t-7316664068900365888\t\t\tfalse\t\t\n" +
-                "NaN\t0\t60\t-1024.000000000000\t0.9287\t1451757238409137883\t\t\tfalse\t\t\n" +
-                "632261185\t14561\t0\t447.342773437500\tNaN\tNaN\t\t\tfalse\t\t2021-03-22T00:00:00.000Z\n" +
-                "NaN\t0\t-96\t0.005665154895\t0.5212\tNaN\tJEQMWTHZNH\t\ttrue\t\t\n" +
-                "NaN\t4882\t0\t-721.570068359375\tNaN\tNaN\t\t\tfalse\t\t2021-07-20T00:00:00.000Z\n" +
-                "NaN\t0\t0\tNaN\tNaN\tNaN\t\t\tfalse\t\t\n" +
-                "NaN\t0\t0\tNaN\tNaN\tNaN\t\t\tfalse\t\t\n" +
-                "1216600919\t23298\t-117\tNaN\tNaN\tNaN\tMNWBTIVJEW\t\ttrue\t\t2022-01-16T00:00:00.000Z\n" +
-                "NaN\t0\t119\tNaN\tNaN\tNaN\t\t\tfalse\t\t\n" +
-                "NaN\t17913\t0\t0.020569519140\t0.5912\tNaN\t\t\tfalse\t\t2022-05-16T00:00:00.000Z\n" +
-                "1610742551\t0\t0\tNaN\tNaN\tNaN\t\t\tfalse\t\t2022-07-15T00:00:00.000Z\n" +
-                "-1205646285\t0\t0\tNaN\t0.9289\t8642403514325899452\t\t\tfalse\t\t2022-09-13T00:00:00.000Z\n" +
-                "NaN\t-23295\t0\tNaN\t0.8926\t-9150462926608062120\tWQLJNZCGCT\t\ttrue\t\t\n" +
-                "NaN\t0\t0\tNaN\t0.6798\t-5864575418630714346\t\t\tfalse\t\t2023-01-11T00:00:00.000Z\n" +
-                "1683275019\t-26804\t0\t4.128064155579\t0.2032\tNaN\t\t\tfalse\t\t2023-03-12T00:00:00.000Z\n" +
-                "NaN\t0\t-94\tNaN\tNaN\t-9051427420978437586\t\t\tfalse\t\t2023-05-11T00:00:00.000Z\n" +
-                "1934973454\t0\t0\tNaN\tNaN\tNaN\t\t\tfalse\t\t\n" +
-                "NaN\t0\t0\tNaN\tNaN\t-5303405449347886958\t\t\tfalse\t\t2023-09-08T00:00:00.000Z\n" +
-                "NaN\t29170\t14\t-953.945312500000\t0.6473\t-6346552295544744665\t\t\ttrue\t\t2023-11-07T00:00:00.000Z\n" +
-                "-1551250112\t0\t0\tNaN\tNaN\t-9153807758920642614\tUJXSVCWGHT\t\tfalse\t\t\n" +
-                "-636263795\t0\t-76\tNaN\t0.5857\tNaN\t\t\ttrue\t\t\n" +
-                "NaN\t-27755\t0\tNaN\t0.7426\t5259909879721818696\t\t\tfalse\t\t\n" +
-                "731479609\t-20511\t0\t28.810546875000\t0.7764\t-8118558905916637434\t\t\tfalse\t\t\n" +
-                "-1334703041\t-1358\t0\t0.000000017793\t0.3070\t-3883507671731232196\t\t\ttrue\t\t2024-09-02T00:00:00.000Z\n" +
-                "NaN\t25020\t-107\tNaN\t0.6154\tNaN\tUYHVBTQZNP\t\ttrue\t\t\n" +
-                "NaN\t0\t58\tNaN\tNaN\t-5516374931389294840\t\t\tfalse\t\t2024-12-31T00:00:00.000Z\n" +
-                "964528173\t0\t0\t0.003956267610\t0.8607\t-3067936391188226389\t\t\tfalse\t\t2025-03-01T00:00:00.000Z\n" +
-                "NaN\t0\t-105\t0.000000338487\tNaN\tNaN\t\t\tfalse\t\t2025-04-30T00:00:00.000Z\n" +
-                "NaN\t0\t0\tNaN\tNaN\t7354668637892666879\t\t\tfalse\t\t\n" +
-                "-448961895\t0\t0\tNaN\tNaN\t-9161200384798064634\tGZKHINLGPK\t\tfalse\t\t\n" +
-                "NaN\t-27897\t40\tNaN\tNaN\t-7520515938192868059\t\t\ttrue\t\t2025-10-27T00:00:00.000Z\n" +
-                "371473906\t0\t0\tNaN\t0.6473\t4656851861563783983\t\t\tfalse\t\t\n" +
-                "-1346903540\t0\t0\tNaN\t0.5894\t-8299437881884939478\tNYWRPCINVX\t\tfalse\t\t2026-02-24T00:00:00.000Z\n" +
-                "-1948757473\t0\t-46\tNaN\tNaN\t-6824321255992266244\t\t\tfalse\t\t\n" +
-                "-268192526\t10310\t0\tNaN\t0.5699\t-6083767479706055886\t\t\ttrue\t\t\n" +
-                "1294560337\t0\t0\t0.000000126063\tNaN\tNaN\t\t\tfalse\t\t2026-08-23T00:00:00.000Z\n" +
-                "NaN\t0\t0\tNaN\t0.5528\t-6393296971707706969\t\t\tfalse\t\t2026-10-22T00:00:00.000Z\n" +
-                "NaN\t0\t0\tNaN\tNaN\t-8345528960002638166\t\t\ttrue\t\t\n" +
-                "1744814812\t455\t0\t0.001713166508\tNaN\tNaN\t\t\tfalse\t\t\n" +
-                "NaN\t0\t-127\t0.015959210694\t0.7250\t8725410536784858046\t\t\tfalse\t\t\n" +
-                "NaN\t0\t16\t939.765625000000\t0.7319\t-7413379514400996037\t\t\ttrue\t\t2027-06-19T00:00:00.000Z\n" +
-                "NaN\t0\t0\tNaN\t0.7553\tNaN\t\t\tfalse\t\t\n" +
-                "1168191792\t21539\t-123\tNaN\tNaN\t-7702162217093176347\t\t\ttrue\t\t2027-10-17T00:00:00.000Z\n" +
-                "NaN\t-21809\t0\tNaN\tNaN\t-3135568653781063174\t\t\tfalse\t\t2027-12-16T00:00:00.000Z\n" +
-                "NaN\t0\t0\tNaN\tNaN\tNaN\t\t\tfalse\t\t2028-02-14T00:00:00.000Z\n" +
-                "2003366662\t0\t0\tNaN\tNaN\t-1621062241930578783\t\t\tfalse\t\t2028-04-14T00:00:00.000Z\n" +
-                "NaN\t4277\t0\tNaN\tNaN\tNaN\tMHDSESFOOY\t\ttrue\t\t2028-06-13T00:00:00.000Z\n" +
-                "1375853278\t0\t0\tNaN\tNaN\tNaN\t\t\tfalse\t\t2028-08-12T00:00:00.000Z\n" +
-                "NaN\t-19723\t0\tNaN\tNaN\tNaN\t\t\tfalse\t\t\n" +
-                "NaN\t0\t-52\tNaN\tNaN\tNaN\t\t\ttrue\t\t\n" +
-                "NaN\t0\t116\tNaN\tNaN\t-4675510353991993979\t\t\ttrue\t\t2029-02-08T00:00:00.000Z\n" +
-                "NaN\t0\t72\tNaN\tNaN\t-1653512736810729151\t\t\tfalse\t\t2029-04-09T00:00:00.000Z\n" +
-                "NaN\t-22994\t0\tNaN\tNaN\tNaN\t\t\ttrue\t\t\n" +
-                "NaN\t0\t0\tNaN\tNaN\tNaN\tOJZOVQGFZU\t\tfalse\t\t\n";
-        TestUtils.assertMemoryLeak(() -> testTableCursor(24 * 60 * 60 * 60000L, expected));
+        TestUtils.assertMemoryLeak(() -> testTableCursor(24 * 60 * 60 * 60000L));
     }
 
     @Test
@@ -1530,6 +2248,60 @@ public class TableReaderTest extends AbstractCairoTest {
         assertPartialCursor(reader, exp, ts2, increment, blob, count, BATCH6_7_ASSERTER);
     }
 
+    private void assertBatch8(int count, long increment, long ts, long blob, TableReader reader) {
+        reader.toTop();
+        Rnd exp = new Rnd();
+        long ts2 = assertPartialCursor(reader, exp, ts, increment, blob, 3 * count, (r, rnd1, ts1, blob1) -> {
+            BATCH1_7_ASSERTER.assertRecord(r, rnd1, ts1, blob1);
+            BATCH_2_7_BEFORE_ASSERTER.assertRecord(r, rnd1, ts1, blob1);
+            BATCH_3_7_BEFORE_ASSERTER.assertRecord(r, rnd1, ts1, blob1);
+            BATCH_4_7_BEFORE_ASSERTER.assertRecord(r, rnd1, ts1, blob1);
+        });
+
+        ts2 = assertPartialCursor(reader, exp, ts2, increment, blob, count, (r, rnd1, ts1, blob1) -> {
+            BATCH2_7_ASSERTER.assertRecord(r, rnd1, ts1, blob1);
+            BATCH_3_7_BEFORE_ASSERTER.assertRecord(r, rnd1, ts1, blob1);
+            BATCH_4_7_BEFORE_ASSERTER.assertRecord(r, rnd1, ts1, blob1);
+        });
+
+        ts2 = assertPartialCursor(reader, exp, ts2, increment, blob, count, (r, rnd1, ts1, blob1) -> {
+            BATCH3_7_ASSERTER.assertRecord(r, rnd1, ts1, blob1);
+            BATCH_4_7_BEFORE_ASSERTER.assertRecord(r, rnd1, ts1, blob1);
+        });
+
+        ts2 = assertPartialCursor(reader, exp, ts2, increment, blob, count, BATCH5_7_ASSERTER);
+        ts2 = assertPartialCursor(reader, exp, ts2, increment, blob, count, BATCH6_7_ASSERTER);
+        assertPartialCursor(reader, exp, ts2, increment, blob, count, BATCH8_ASSERTER);
+    }
+
+    private void assertBatch9(int count, long increment, long ts, long blob, TableReader reader) {
+        reader.toTop();
+        Rnd exp = new Rnd();
+        long ts2 = assertPartialCursor(reader, exp, ts, increment, blob, 3 * count, (r, rnd1, ts1, blob1) -> {
+            BATCH1_9_ASSERTER.assertRecord(r, rnd1, ts1, blob1);
+            BATCH_2_9_BEFORE_ASSERTER.assertRecord(r, rnd1, ts1, blob1);
+            BATCH_3_9_BEFORE_ASSERTER.assertRecord(r, rnd1, ts1, blob1);
+            BATCH_4_9_BEFORE_ASSERTER.assertRecord(r, rnd1, ts1, blob1);
+        });
+
+        ts2 = assertPartialCursor(reader, exp, ts2, increment, blob, count, (r, rnd1, ts1, blob1) -> {
+            BATCH2_9_ASSERTER.assertRecord(r, rnd1, ts1, blob1);
+            BATCH_3_9_BEFORE_ASSERTER.assertRecord(r, rnd1, ts1, blob1);
+            BATCH_4_9_BEFORE_ASSERTER.assertRecord(r, rnd1, ts1, blob1);
+        });
+
+        ts2 = assertPartialCursor(reader, exp, ts2, increment, blob, count, (r, rnd1, ts1, blob1) -> {
+            BATCH3_9_ASSERTER.assertRecord(r, rnd1, ts1, blob1);
+            BATCH_4_9_BEFORE_ASSERTER.assertRecord(r, rnd1, ts1, blob1);
+        });
+
+        ts2 = assertPartialCursor(reader, exp, ts2, increment, blob, count, BATCH5_9_ASSERTER);
+        ts2 = assertPartialCursor(reader, exp, ts2, increment, blob, count, BATCH6_9_ASSERTER);
+        ts2 = assertPartialCursor(reader, exp, ts2, increment, blob, count, BATCH8_9_ASSERTER);
+        assertPartialCursor(reader, exp, ts2, increment, blob, count, BATCH9_ASSERTER);
+    }
+
+
     private void assertCursor(TableReader reader, long ts, long increment, long blob, long expectedSize, RecordAssert asserter) {
         Rnd rnd = new Rnd();
         Assert.assertEquals(expectedSize, reader.size());
@@ -1616,7 +2388,7 @@ public class TableReaderTest extends AbstractCairoTest {
         }
     }
 
-    private void testCloseColumn(int partitionBy, int count, long increment, String column) throws Exception {
+    private void testCloseColumn(int partitionBy, int count, long increment, String column, RecordAssert assertAfter) throws Exception {
         final Rnd rnd = new Rnd();
         final LongList fds = new LongList();
         String dcol = column + ".d";
@@ -1667,6 +2439,7 @@ public class TableReaderTest extends AbstractCairoTest {
                 try (TableReader reader = new TableReader(configuration, "all")) {
                     assertCursor(reader, ts, increment, blob, count, BATCH1_ASSERTER);
                     reader.closeColumnForRemove(column);
+                    assertCursor(reader, ts, increment, blob, count, assertAfter);
                 }
 
                 Assert.assertTrue(ff.wasCalled());
@@ -1815,7 +2588,7 @@ public class TableReaderTest extends AbstractCairoTest {
 
                         // now delete last column
 
-                        if (Os.type == Os.WINDOWS) {
+                        if (configuration.getFilesFacade().isRestrictedFileSystem()) {
                             reader.closeColumnForRemove("bin2");
                         }
 
@@ -1828,16 +2601,21 @@ public class TableReaderTest extends AbstractCairoTest {
                         assertBatch5(count, increment, ts, blob, reader, new Rnd());
 
                         // append all columns excluding the one we just deleted
-                        testAppend(writer, rnd, nextTs, count, increment, blob, 0, BATCH6_GENERATOR);
+                        nextTs = testAppend(writer, rnd, nextTs, count, increment, blob, 0, BATCH6_GENERATOR);
 
                         Assert.assertTrue(reader.reload());
 
                         // and assert that all columns that have not been deleted contain correct values
                         assertBatch6(count, increment, ts, blob, reader);
 
-                        if (Os.type == Os.WINDOWS) {
+                        if (configuration.getFilesFacade().isRestrictedFileSystem()) {
                             reader.closeColumnForRemove("int");
                         }
+
+//                        writer.getMetadata().toJson(sink);
+//                        System.out.println("before:");
+//                        System.out.println(sink);
+
                         // remove first column and add new column by same name
                         writer.removeColumn("int");
                         writer.addColumn("int", ColumnType.INT);
@@ -1847,6 +2625,24 @@ public class TableReaderTest extends AbstractCairoTest {
                         assertBatch7(count, increment, ts, blob, reader);
 
                         Assert.assertFalse(reader.reload());
+
+                        nextTs = testAppend(writer, rnd, nextTs, count, increment, blob, 0, BATCH8_GENERATOR);
+
+                        Assert.assertTrue(reader.reload());
+
+                        assertBatch8(count, increment, ts, blob, reader);
+
+                        writer.removeColumn("sym");
+                        Assert.assertTrue(reader.reload());
+                        writer.addColumn("sym", ColumnType.SYMBOL);
+                        Assert.assertTrue(reader.reload());
+
+                        testAppend(writer, rnd, nextTs, count, increment, blob, 0, BATCH9_GENERATOR);
+
+                        Assert.assertTrue(reader.reload());
+
+                        assertBatch9(count, increment, ts, blob, reader);
+
                     }
                 }
             } finally {
@@ -1889,27 +2685,18 @@ public class TableReaderTest extends AbstractCairoTest {
         }
     }
 
-    private void testTableCursor(long inc, String expected) throws IOException, NumericException {
+    private void testTableCursor(long inc) throws NumericException {
         Rnd rnd = new Rnd();
         int N = 100;
         long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z") / 1000;
         long blob = allocBlob();
         try {
             testAppend(rnd, configuration, ts, N, inc, blob, 0, BATCH1_GENERATOR);
-
-            final StringSink sink = new StringSink();
-            final RecordSourcePrinter printer = new RecordSourcePrinter(sink);
             final LongList rows = new LongList();
             try (TableReader reader = new TableReader(configuration, "all")) {
                 Assert.assertEquals(N, reader.size());
-                printer.print(reader, true, reader.getMetadata());
-                TestUtils.assertEquals(expected, sink);
 
-                sink.clear();
-                reader.toTop();
-
-                printer.print(reader, true, reader.getMetadata());
-                TestUtils.assertEquals(expected, sink);
+                assertCursor(reader, ts, inc, blob, N, BATCH1_ASSERTER);
 
                 reader.toTop();
                 while (reader.hasNext()) {
@@ -1926,109 +2713,8 @@ public class TableReaderTest extends AbstractCairoTest {
         }
     }
 
-    private void testTableCursor() throws IOException, NumericException {
-        final String expected = "int\tshort\tbyte\tdouble\tfloat\tlong\tstr\tsym\tbool\tbin\tdate\n" +
-                "73575701\t0\t0\tNaN\t0.7097\t-1675638984090602536\t\t\tfalse\t\t\n" +
-                "NaN\t0\t89\tNaN\tNaN\t6236292340460979716\tPMIUPLYJVB\t\ttrue\t\t\n" +
-                "NaN\t0\t60\tNaN\t0.6454\t-2715397729034539921\tOEYVSCKKDJ\t\tfalse\t\t2013-03-04T03:00:00.000Z\n" +
-                "NaN\t0\t113\tNaN\tNaN\t-6905112719978615298\t\t\tfalse\t\t2013-03-04T04:00:00.000Z\n" +
-                "-801004676\t0\t0\t0.000242509581\tNaN\t-7064303592482002884\t\t\tfalse\t\t2013-03-04T05:00:00.000Z\n" +
-                "NaN\t-24062\t0\t272.000000000000\t0.4387\tNaN\tTGSOOWYGSD\t\ttrue\t\t\n" +
-                "-640548855\t3093\t0\t-960.000000000000\t0.6056\t8522034740532776473\t\t\tfalse\t\t\n" +
-                "61976253\t0\t0\t0.000000000000\t0.5092\tNaN\t\t\tfalse\t\t\n" +
-                "NaN\t0\t0\t0.000041838453\t0.3185\tNaN\tZMGKVSIWRP\t\tfalse\t\t\n" +
-                "NaN\t0\t22\tNaN\tNaN\tNaN\t\t\tfalse\t\t2013-03-04T10:00:00.000Z\n" +
-                "777797854\t0\t0\tNaN\tNaN\t-3561042134139364009\t\t\tfalse\t\t2013-03-04T11:00:00.000Z\n" +
-                "NaN\t0\t106\tNaN\t0.4809\tNaN\t\t\ttrue\t\t\n" +
-                "1204862303\t-20282\t0\tNaN\tNaN\t8715974436393319034\t\t\ttrue\t\t2013-03-04T13:00:00.000Z\n" +
-                "NaN\t0\t53\t-222.738281250000\tNaN\tNaN\tWOWDODUFGU\t\tfalse\t\t\n" +
-                "2095297876\t21923\t0\t256.000000000000\t0.8653\t-6418805892627297273\t\t\ttrue\t\t2013-03-04T15:00:00.000Z\n" +
-                "NaN\t-19019\t0\tNaN\tNaN\tNaN\t\t\tfalse\t\t2013-03-04T16:00:00.000Z\n" +
-                "NaN\t-25663\t0\t-92.000000000000\t0.3888\tNaN\t\t\ttrue\t\t2013-03-04T17:00:00.000Z\n" +
-                "-1601554634\t3379\t0\t1020.793212890625\tNaN\tNaN\tKSJZPZZKUM\t\tfalse\t\t\n" +
-                "NaN\t26260\t0\t46.750000000000\tNaN\tNaN\t\t\ttrue\t\t\n" +
-                "-1050143454\t0\t0\tNaN\tNaN\t-4944873630491810081\t\t\tfalse\t\t\n" +
-                "NaN\t0\t34\t0.013004892273\tNaN\tNaN\t\t\tfalse\t\t2013-03-04T21:00:00.000Z\n" +
-                "-1242020108\t-11546\t-82\t0.000000004717\t0.4724\tNaN\t\t\tfalse\t\t\n" +
-                "1512203086\t0\t0\t797.846359252930\tNaN\t6753493100272204912\t\t\tfalse\t\t\n" +
-                "77063638\t870\t-100\tNaN\tNaN\tNaN\t\t\ttrue\t\t2013-03-05T00:00:00.000Z\n" +
-                "NaN\t0\t0\tNaN\tNaN\tNaN\t\t\tfalse\t\t\n" +
-                "NaN\t27339\t0\t0.000000010539\tNaN\tNaN\t\t\tfalse\t\t2013-03-05T02:00:00.000Z\n" +
-                "235357628\t0\t-120\t0.000156953447\tNaN\tNaN\tTTNGDKZVVS\t\tfalse\t\t\n" +
-                "NaN\t0\t0\tNaN\tNaN\tNaN\tJIVTDTVOFK\t\tfalse\t\t\n" +
-                "NaN\t0\t-122\tNaN\tNaN\tNaN\tKNSVTCFVTQ\t\tfalse\t\t2013-03-05T05:00:00.000Z\n" +
-                "NaN\t30566\t20\tNaN\t0.9818\t-5466726161969343552\t\t\tfalse\t\t2013-03-05T06:00:00.000Z\n" +
-                "NaN\t-15656\t0\tNaN\t0.6098\t-6217010216024734623\t\t\ttrue\t\t2013-03-05T07:00:00.000Z\n" +
-                "NaN\t0\t0\tNaN\t0.3901\tNaN\t\t\tfalse\t\t\n" +
-                "NaN\t2882\t0\t-105.500000000000\tNaN\tNaN\tOKIIHSWTEH\t\tfalse\t\t2013-03-05T09:00:00.000Z\n" +
-                "NaN\t0\t-104\tNaN\tNaN\tNaN\t\t\tfalse\t\t2013-03-05T10:00:00.000Z\n" +
-                "NaN\t0\t0\tNaN\tNaN\tNaN\tODHWKFENXM\t\tfalse\t\t\n" +
-                "-659184089\t-13800\t-2\t2.392256617546\t0.6519\t-7751136309261449149\tOKYULJBQTL\t\tfalse\t\t2013-03-05T12:00:00.000Z\n" +
-                "-1883104688\t0\t0\tNaN\t0.6757\t8196181258827495370\t\t\tfalse\t\t\n" +
-                "-2139859771\t0\t-79\t344.729835510254\tNaN\tNaN\tIBJCVFPFBC\t\tfalse\t\t\n" +
-                "NaN\t10225\t0\t-572.296875000000\t0.2967\t-5767634907351262282\tTBWDVSZOIX\t\tfalse\t\t\n" +
-                "NaN\t0\t-19\tNaN\t0.7135\t8969196340878943365\t\t\tfalse\t\t2013-03-05T16:00:00.000Z\n" +
-                "NaN\t0\t-38\t-86.000000000000\tNaN\tNaN\tXKELTCVZXQ\t\tfalse\t\t2013-03-05T17:00:00.000Z\n" +
-                "NaN\t29304\t0\tNaN\tNaN\t-1515294165892907204\t\t\tfalse\t\t2013-03-05T18:00:00.000Z\n" +
-                "NaN\t17701\t0\t0.916345536709\tNaN\tNaN\t\t\tfalse\t\t\n" +
-                "-2139370311\t-32277\t65\tNaN\tNaN\t-7601183786211855388\t\t\ttrue\t\t2013-03-05T20:00:00.000Z\n" +
-                "NaN\t0\t0\tNaN\tNaN\tNaN\t\t\tfalse\t\t2013-03-05T21:00:00.000Z\n" +
-                "1198081577\t0\t0\tNaN\tNaN\t-7481237079546197800\t\t\ttrue\t\t2013-03-05T22:00:00.000Z\n" +
-                "NaN\t-17836\t0\tNaN\t0.5251\t-7316664068900365888\t\t\tfalse\t\t\n" +
-                "NaN\t0\t60\t-1024.000000000000\t0.9287\t1451757238409137883\t\t\tfalse\t\t\n" +
-                "632261185\t14561\t0\t447.342773437500\tNaN\tNaN\t\t\tfalse\t\t2013-03-06T01:00:00.000Z\n" +
-                "NaN\t0\t-96\t0.005665154895\t0.5212\tNaN\tJEQMWTHZNH\t\ttrue\t\t\n" +
-                "NaN\t4882\t0\t-721.570068359375\tNaN\tNaN\t\t\tfalse\t\t2013-03-06T03:00:00.000Z\n" +
-                "NaN\t0\t0\tNaN\tNaN\tNaN\t\t\tfalse\t\t\n" +
-                "NaN\t0\t0\tNaN\tNaN\tNaN\t\t\tfalse\t\t\n" +
-                "1216600919\t23298\t-117\tNaN\tNaN\tNaN\tMNWBTIVJEW\t\ttrue\t\t2013-03-06T06:00:00.000Z\n" +
-                "NaN\t0\t119\tNaN\tNaN\tNaN\t\t\tfalse\t\t\n" +
-                "NaN\t17913\t0\t0.020569519140\t0.5912\tNaN\t\t\tfalse\t\t2013-03-06T08:00:00.000Z\n" +
-                "1610742551\t0\t0\tNaN\tNaN\tNaN\t\t\tfalse\t\t2013-03-06T09:00:00.000Z\n" +
-                "-1205646285\t0\t0\tNaN\t0.9289\t8642403514325899452\t\t\tfalse\t\t2013-03-06T10:00:00.000Z\n" +
-                "NaN\t-23295\t0\tNaN\t0.8926\t-9150462926608062120\tWQLJNZCGCT\t\ttrue\t\t\n" +
-                "NaN\t0\t0\tNaN\t0.6798\t-5864575418630714346\t\t\tfalse\t\t2013-03-06T12:00:00.000Z\n" +
-                "1683275019\t-26804\t0\t4.128064155579\t0.2032\tNaN\t\t\tfalse\t\t2013-03-06T13:00:00.000Z\n" +
-                "NaN\t0\t-94\tNaN\tNaN\t-9051427420978437586\t\t\tfalse\t\t2013-03-06T14:00:00.000Z\n" +
-                "1934973454\t0\t0\tNaN\tNaN\tNaN\t\t\tfalse\t\t\n" +
-                "NaN\t0\t0\tNaN\tNaN\t-5303405449347886958\t\t\tfalse\t\t2013-03-06T16:00:00.000Z\n" +
-                "NaN\t29170\t14\t-953.945312500000\t0.6473\t-6346552295544744665\t\t\ttrue\t\t2013-03-06T17:00:00.000Z\n" +
-                "-1551250112\t0\t0\tNaN\tNaN\t-9153807758920642614\tUJXSVCWGHT\t\tfalse\t\t\n" +
-                "-636263795\t0\t-76\tNaN\t0.5857\tNaN\t\t\ttrue\t\t\n" +
-                "NaN\t-27755\t0\tNaN\t0.7426\t5259909879721818696\t\t\tfalse\t\t\n" +
-                "731479609\t-20511\t0\t28.810546875000\t0.7764\t-8118558905916637434\t\t\tfalse\t\t\n" +
-                "-1334703041\t-1358\t0\t0.000000017793\t0.3070\t-3883507671731232196\t\t\ttrue\t\t2013-03-06T22:00:00.000Z\n" +
-                "NaN\t25020\t-107\tNaN\t0.6154\tNaN\tUYHVBTQZNP\t\ttrue\t\t\n" +
-                "NaN\t0\t58\tNaN\tNaN\t-5516374931389294840\t\t\tfalse\t\t2013-03-07T00:00:00.000Z\n" +
-                "964528173\t0\t0\t0.003956267610\t0.8607\t-3067936391188226389\t\t\tfalse\t\t2013-03-07T01:00:00.000Z\n" +
-                "NaN\t0\t-105\t0.000000338487\tNaN\tNaN\t\t\tfalse\t\t2013-03-07T02:00:00.000Z\n" +
-                "NaN\t0\t0\tNaN\tNaN\t7354668637892666879\t\t\tfalse\t\t\n" +
-                "-448961895\t0\t0\tNaN\tNaN\t-9161200384798064634\tGZKHINLGPK\t\tfalse\t\t\n" +
-                "NaN\t-27897\t40\tNaN\tNaN\t-7520515938192868059\t\t\ttrue\t\t2013-03-07T05:00:00.000Z\n" +
-                "371473906\t0\t0\tNaN\t0.6473\t4656851861563783983\t\t\tfalse\t\t\n" +
-                "-1346903540\t0\t0\tNaN\t0.5894\t-8299437881884939478\tNYWRPCINVX\t\tfalse\t\t2013-03-07T07:00:00.000Z\n" +
-                "-1948757473\t0\t-46\tNaN\tNaN\t-6824321255992266244\t\t\tfalse\t\t\n" +
-                "-268192526\t10310\t0\tNaN\t0.5699\t-6083767479706055886\t\t\ttrue\t\t\n" +
-                "1294560337\t0\t0\t0.000000126063\tNaN\tNaN\t\t\tfalse\t\t2013-03-07T10:00:00.000Z\n" +
-                "NaN\t0\t0\tNaN\t0.5528\t-6393296971707706969\t\t\tfalse\t\t2013-03-07T11:00:00.000Z\n" +
-                "NaN\t0\t0\tNaN\tNaN\t-8345528960002638166\t\t\ttrue\t\t\n" +
-                "1744814812\t455\t0\t0.001713166508\tNaN\tNaN\t\t\tfalse\t\t\n" +
-                "NaN\t0\t-127\t0.015959210694\t0.7250\t8725410536784858046\t\t\tfalse\t\t\n" +
-                "NaN\t0\t16\t939.765625000000\t0.7319\t-7413379514400996037\t\t\ttrue\t\t2013-03-07T15:00:00.000Z\n" +
-                "NaN\t0\t0\tNaN\t0.7553\tNaN\t\t\tfalse\t\t\n" +
-                "1168191792\t21539\t-123\tNaN\tNaN\t-7702162217093176347\t\t\ttrue\t\t2013-03-07T17:00:00.000Z\n" +
-                "NaN\t-21809\t0\tNaN\tNaN\t-3135568653781063174\t\t\tfalse\t\t2013-03-07T18:00:00.000Z\n" +
-                "NaN\t0\t0\tNaN\tNaN\tNaN\t\t\tfalse\t\t2013-03-07T19:00:00.000Z\n" +
-                "2003366662\t0\t0\tNaN\tNaN\t-1621062241930578783\t\t\tfalse\t\t2013-03-07T20:00:00.000Z\n" +
-                "NaN\t4277\t0\tNaN\tNaN\tNaN\tMHDSESFOOY\t\ttrue\t\t2013-03-07T21:00:00.000Z\n" +
-                "1375853278\t0\t0\tNaN\tNaN\tNaN\t\t\tfalse\t\t2013-03-07T22:00:00.000Z\n" +
-                "NaN\t-19723\t0\tNaN\tNaN\tNaN\t\t\tfalse\t\t\n" +
-                "NaN\t0\t-52\tNaN\tNaN\tNaN\t\t\ttrue\t\t\n" +
-                "NaN\t0\t116\tNaN\tNaN\t-4675510353991993979\t\t\ttrue\t\t2013-03-08T01:00:00.000Z\n" +
-                "NaN\t0\t72\tNaN\tNaN\t-1653512736810729151\t\t\tfalse\t\t2013-03-08T02:00:00.000Z\n" +
-                "NaN\t-22994\t0\tNaN\tNaN\tNaN\t\t\ttrue\t\t\n" +
-                "NaN\t0\t0\tNaN\tNaN\tNaN\tOJZOVQGFZU\t\tfalse\t\t\n";
-        testTableCursor(60 * 60000, expected);
+    private void testTableCursor() throws NumericException {
+        testTableCursor(60 * 60000);
     }
 
     @FunctionalInterface
