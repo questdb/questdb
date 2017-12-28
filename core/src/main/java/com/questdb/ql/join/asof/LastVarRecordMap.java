@@ -267,7 +267,7 @@ public class LastVarRecordMap implements LastRecordMap {
                     break;
                 case ColumnType.BOOLEAN:
                 case ColumnType.BYTE:
-                    Unsafe.getUnsafe().putByte(address, record.get(idx));
+                    Unsafe.getUnsafe().putByte(address, record.getByte(idx));
                     break;
                 case ColumnType.SHORT:
                     Unsafe.getUnsafe().putShort(address, record.getShort(idx));

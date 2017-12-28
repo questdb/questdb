@@ -34,7 +34,7 @@ public final class DirectMapValues {
         this.valueOffsets = valueOffsets;
     }
 
-    public byte get(int index) {
+    public byte getByte(int index) {
         return Unsafe.getUnsafe().getByte(address0(index));
     }
 

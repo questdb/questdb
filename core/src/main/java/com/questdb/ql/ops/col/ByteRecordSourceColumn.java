@@ -38,27 +38,27 @@ public class ByteRecordSourceColumn extends AbstractVirtualColumn {
 
     @Override
     public byte get(Record rec) {
-        return rec.get(index);
+        return rec.getByte(index);
     }
 
     @Override
     public double getDouble(Record rec) {
-        return rec.get(index);
+        return rec.getByte(index);
     }
 
     @Override
     public float getFloat(Record rec) {
-        return rec.get(index);
+        return rec.getByte(index);
     }
 
     @Override
     public int getInt(Record rec) {
-        return rec.get(index);
+        return rec.getByte(index);
     }
 
     @Override
     public long getLong(Record rec) {
-        return rec.get(index);
+        return rec.getByte(index);
     }
 
     @Override

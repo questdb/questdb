@@ -43,8 +43,8 @@ class VirtualRecord implements Record {
     }
 
     @Override
-    public byte get(int col) {
-        return col < split ? base.get(col) : getVc(col).get(base);
+    public byte getByte(int col) {
+        return col < split ? base.getByte(col) : getVc(col).get(base);
     }
 
     @Override

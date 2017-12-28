@@ -38,8 +38,8 @@ public class NullableRecord implements Record {
     }
 
     @Override
-    public byte get(int col) {
-        return rec.get(col);
+    public byte getByte(int col) {
+        return rec.getByte(col);
     }
 
     @Override

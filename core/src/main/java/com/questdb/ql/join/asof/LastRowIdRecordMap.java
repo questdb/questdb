@@ -59,7 +59,7 @@ public class LastRowIdRecordMap implements LastRecordMap {
 
     public Record get(Record master) {
         DirectMapValues values = getByMaster(master);
-        if (values == null || values.get(1) == 1) {
+        if (values == null || values.getByte(1) == 1) {
             return null;
         }
         values.putByte(1, (byte) 1);

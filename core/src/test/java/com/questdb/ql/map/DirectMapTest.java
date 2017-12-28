@@ -247,7 +247,7 @@ public class DirectMapTest {
             Assert.assertEquals(v.i, values.getInt(0));
             Assert.assertEquals(v.l, values.getLong(1));
             Assert.assertEquals(v.s, values.getShort(2));
-            Assert.assertEquals(v.bt, values.get(3));
+            Assert.assertEquals(v.bt, values.getByte(3));
             Assert.assertEquals(v.d, values.getDouble(4), 0.000000001);
             Assert.assertEquals(v.f, values.getFloat(5), 0.0000000001f);
 

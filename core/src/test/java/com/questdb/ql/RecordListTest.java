@@ -54,7 +54,7 @@ public class RecordListTest extends AbstractTest {
                         String failedMsg = "Record " + i;
                         Assert.assertEquals(failedMsg, expected.aBool, value.getBool(col++));
                         Assert.assertEquals(failedMsg, expected.aString, value.getFlyweightStr(col++).toString());
-                        Assert.assertEquals(failedMsg, expected.aByte, value.get(col++));
+                        Assert.assertEquals(failedMsg, expected.aByte, value.getByte(col++));
                         Assert.assertEquals(failedMsg, expected.aShort, value.getShort(col++));
                         Assert.assertEquals(failedMsg, expected.anInt, value.getInt(col++));
                         DirectInputStream binCol = value.getBin(col++);

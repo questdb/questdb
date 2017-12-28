@@ -50,7 +50,7 @@ final class RecordUtils {
                 break;
             case ColumnType.BOOLEAN:
             case ColumnType.BYTE:
-                Unsafe.getUnsafe().putByte(address, record.get(column));
+                Unsafe.getUnsafe().putByte(address, record.getByte(column));
                 break;
             case ColumnType.SHORT:
                 Unsafe.getUnsafe().putShort(address, record.getShort(column));

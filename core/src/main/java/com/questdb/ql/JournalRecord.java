@@ -36,7 +36,7 @@ public class JournalRecord implements Record {
     public int partitionIndex = -1;
 
     @Override
-    public byte get(int col) {
+    public byte getByte(int col) {
         return partition.fixCol(col).getByte(rowid);
     }
 

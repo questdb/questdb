@@ -217,7 +217,7 @@ public class ComparatorCompiler {
                     break;
                 case ColumnType.BYTE:
                     fieldType = "B";
-                    getterNameA = "get";
+                    getterNameA = "getByte";
                     comparatorClass = Byte.class;
                     break;
                 case ColumnType.DOUBLE:

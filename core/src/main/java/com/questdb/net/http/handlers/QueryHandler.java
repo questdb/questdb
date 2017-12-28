@@ -211,7 +211,7 @@ public class QueryHandler implements ContextHandler {
                 sink.put(rec.getBool(col));
                 break;
             case ColumnType.BYTE:
-                sink.put(rec.get(col));
+                sink.put(rec.getByte(col));
                 break;
             case ColumnType.DOUBLE:
                 sink.put(rec.getDouble(col), 10);

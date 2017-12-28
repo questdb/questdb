@@ -130,7 +130,7 @@ public class VarRecordHolder extends AbstractVarMemRecord implements RecordHolde
                     break;
                 case ColumnType.BOOLEAN:
                 case ColumnType.BYTE:
-                    Unsafe.getUnsafe().putByte(address, record.get(i));
+                    Unsafe.getUnsafe().putByte(address, record.getByte(i));
                     break;
                 case ColumnType.SHORT:
                     Unsafe.getUnsafe().putShort(address, record.getShort(i));

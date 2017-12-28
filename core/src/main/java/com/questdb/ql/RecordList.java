@@ -181,7 +181,7 @@ public class RecordList implements Closeable, RecordCursor, Mutable {
                     writeAddress += 1;
                     break;
                 case ColumnType.BYTE:
-                    Unsafe.getUnsafe().putByte(writeAddress, record.get(i));
+                    Unsafe.getUnsafe().putByte(writeAddress, record.getByte(i));
                     writeAddress += 1;
                     break;
                 case ColumnType.DOUBLE:

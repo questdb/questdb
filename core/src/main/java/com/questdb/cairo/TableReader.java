@@ -930,7 +930,7 @@ public class TableReader implements Closeable, RecordCursor {
         private long maxRecordIndex = -1;
 
         @Override
-        public byte get(int col) {
+        public byte getByte(int col) {
             long index = getIndex(col);
             if (index < 0) {
                 return 0;

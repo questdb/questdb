@@ -38,7 +38,7 @@ public class NullRecord implements Record {
     }
 
     @Override
-    public byte get(int col) {
+    public byte getByte(int col) {
         return 0;
     }
 

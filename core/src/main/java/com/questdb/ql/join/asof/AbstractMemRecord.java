@@ -29,7 +29,7 @@ import com.questdb.std.Unsafe;
 
 abstract class AbstractMemRecord implements Record {
     @Override
-    public byte get(int col) {
+    public byte getByte(int col) {
         return Unsafe.getUnsafe().getByte(address(col));
     }
 

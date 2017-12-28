@@ -102,7 +102,7 @@ public class GenericInteropTest extends AbstractTest {
                 Assert.assertEquals(1.25, e.getDouble(3), 0.000001);
                 Assert.assertEquals(10000, e.getInt(4));
                 Assert.assertEquals(12000, e.getInt(5));
-                Assert.assertEquals(1, e.get(6));
+                Assert.assertEquals(1, e.getByte(6));
                 TestUtils.assertEquals("OK", e.getFlyweightStr(7));
                 TestUtils.assertEquals("system", e.getFlyweightStr(8));
                 TestUtils.assertEquals("EURUSD:GLOBAL", e.getFlyweightStr(9));
@@ -120,7 +120,7 @@ public class GenericInteropTest extends AbstractTest {
                 Assert.assertEquals(1.26, e.getDouble(3), 0.000001);
                 Assert.assertEquals(11000, e.getInt(4));
                 Assert.assertEquals(13000, e.getInt(5));
-                Assert.assertEquals(2, e.get(6));
+                Assert.assertEquals(2, e.getByte(6));
                 TestUtils.assertEquals("STALE", e.getFlyweightStr(7));
                 TestUtils.assertEquals("system", e.getFlyweightStr(8));
                 TestUtils.assertEquals("EURUSD:GLOBAL", e.getFlyweightStr(9));
@@ -378,7 +378,7 @@ public class GenericInteropTest extends AbstractTest {
                 Assert.assertEquals(0.66, e.getDouble(3), 0.000001);
                 Assert.assertEquals(1000, e.getInt(4));
                 Assert.assertEquals(1100, e.getInt(5));
-                Assert.assertEquals(1, e.get(6));
+                Assert.assertEquals(1, e.getByte(6));
                 TestUtils.assertEquals("OK", e.getFlyweightStr(7));
                 TestUtils.assertEquals("system", e.getFlyweightStr(8));
                 TestUtils.assertEquals("GBPUSD:GLOBAL", e.getFlyweightStr(9));
