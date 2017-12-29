@@ -40,7 +40,7 @@ JNIEXPORT jint JNICALL Java_com_questdb_std_Os_getPid
 
 JNIEXPORT jint JNICALL Java_com_questdb_std_Os_errno
         (JNIEnv *e, jclass cl) {
-    return (jint) TlsGetValue(dwTlsIndexLastError);
+    return (jint) (intptr_t) TlsGetValue(dwTlsIndexLastError);
 }
 
 typedef struct {
