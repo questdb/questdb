@@ -2637,7 +2637,6 @@ public class TableReaderTest extends AbstractCairoTest {
                         }
 
                         writer.removeColumn("sym");
-                        Assert.assertTrue(reader.reload());
                         writer.addColumn("sym", ColumnType.SYMBOL);
                         Assert.assertTrue(reader.reload());
 

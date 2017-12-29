@@ -26,5 +26,7 @@ package com.questdb.cairo;
 import com.questdb.common.SymbolTable;
 
 public interface SymbolMapReader extends SymbolTable {
+    boolean isDeleted();
+
     void updateSymbolCount(int count);
 }

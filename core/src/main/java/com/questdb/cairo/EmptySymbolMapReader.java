@@ -45,6 +45,11 @@ public class EmptySymbolMapReader implements SymbolMapReader {
     }
 
     @Override
+    public boolean isDeleted() {
+        return true;
+    }
+
+    @Override
     public void updateSymbolCount(int count) {
     }
 }
