@@ -258,8 +258,10 @@ JNIEXPORT jboolean JNICALL Java_com_questdb_std_Files_exists
         (JNIEnv *e, jclass cl, jlong fd) {
 
     FILE_STANDARD_INFO info;
-    GetFileInformationByHandleEx((HANDLE) fd, FileStandardInfo, &info, sizeof(FILE_STANDARD_INFO));
-    return (jboolean) !info.DeletePending;
+    if (GetFileInformationByHandleEx((HANDLE) fd, FileStandardInfo, &info, sizeof(FILE_STANDARD_INFO))) {
+        return (jboolean) !info.DeletePending;
+    }
+    return FALSE;
 }
 
 JNIEXPORT jlong JNICALL Java_com_questdb_std_Files_getStdOutFd
