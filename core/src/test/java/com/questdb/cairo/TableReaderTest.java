@@ -2632,6 +2632,10 @@ public class TableReaderTest extends AbstractCairoTest {
 
                         assertBatch8(count, increment, ts, blob, reader);
 
+                        if (configuration.getFilesFacade().isRestrictedFileSystem()) {
+                            reader.closeColumnForRemove("sym");
+                        }
+
                         writer.removeColumn("sym");
                         Assert.assertTrue(reader.reload());
                         writer.addColumn("sym", ColumnType.SYMBOL);
