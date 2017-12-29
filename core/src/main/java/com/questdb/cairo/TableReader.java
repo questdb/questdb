@@ -180,8 +180,7 @@ public class TableReader implements Closeable, RecordCursor {
             // 2. create new instance
             SymbolMapReader tmp;
             if (copyFrom > 0) {
-                tmp = symbolMapReaders.getAndSetQuick(copyFrom - 1, null);
-                tmp = symbolMapReaders.getAndSetQuick(i, tmp);
+                tmp = copyOrRenewSymbolMapReader(symbolMapReaders.getAndSetQuick(copyFrom - 1, null), i);
 
                 int copyTo = Unsafe.getUnsafe().getInt(index + i * 8 + 4);
 
@@ -195,20 +194,13 @@ public class TableReader implements Closeable, RecordCursor {
                     }
                     Unsafe.getUnsafe().putByte(stateAddress + copyTo - 1, (byte) -1);
 
-                    tmp = symbolMapReaders.getAndSetQuick(copyTo - 1, tmp);
+                    tmp = copyOrRenewSymbolMapReader(tmp, copyTo - 1);
                     copyTo = Unsafe.getUnsafe().getInt(index + (copyTo - 1) * 8 + 4);
                 }
                 Misc.free(tmp);
             } else {
                 // new instance
-                RecordColumnMetadata m = metadata.getColumnQuick(i);
-                if (m.getType() == ColumnType.SYMBOL) {
-                    SymbolMapReaderImpl reader = new SymbolMapReaderImpl(configuration, path, m.getName(), 0);
-                    tmp = symbolMapReaders.getAndSetQuick(i, reader);
-                    Misc.free(tmp);
-                } else {
-                    Misc.free(symbolMapReaders.getAndSetQuick(i, null));
-                }
+                Misc.free(symbolMapReaders.getAndSetQuick(i, newSymbolMapReaderInstance(i)));
             }
         }
 
@@ -422,6 +414,15 @@ public class TableReader implements Closeable, RecordCursor {
         }
     }
 
+    private SymbolMapReader copyOrRenewSymbolMapReader(SymbolMapReader reader, int columnIndex) {
+        if (reader != null && reader.isDeleted()) {
+            Misc.free(reader);
+            reader = newSymbolMapReaderInstance(columnIndex);
+        }
+        reader = symbolMapReaders.getAndSetQuick(columnIndex, reader);
+        return reader;
+    }
+
     private void countDefaultPartitions() {
         Path path = pathGenDefault();
         partitionCount = ff.exists(path) ? 1 : 0;
@@ -578,6 +579,15 @@ public class TableReader implements Closeable, RecordCursor {
         // we calculate capacity based on two entries per column
         // for tops we only need one entry
         columnTops.setPos(capacity / 2);
+    }
+
+    private SymbolMapReader newSymbolMapReaderInstance(int columnIndex) {
+        RecordColumnMetadata m = metadata.getColumnQuick(columnIndex);
+        if (m.getType() == ColumnType.SYMBOL) {
+            return new SymbolMapReaderImpl(configuration, path, m.getName(), 0);
+        } else {
+            return null;
+        }
     }
 
     private TableReaderMetadata openMetaFile() {

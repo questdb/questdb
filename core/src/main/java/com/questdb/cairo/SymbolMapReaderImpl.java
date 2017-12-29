@@ -43,10 +43,12 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
     private final ReadOnlyMemory offsetMem;
     private final int maxHash;
     private final ObjList<String> cache;
+    private final FilesFacade ff;
     private int symbolCount;
     private long maxOffset;
 
     public SymbolMapReaderImpl(CairoConfiguration configuration, Path path, CharSequence name, int symbolCount) {
+        this.ff = configuration.getFilesFacade();
         this.symbolCount = symbolCount;
         this.maxOffset = SymbolMapWriter.keyToOffset(symbolCount - 1);
         final int plen = path.length();
@@ -56,13 +58,13 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
             // this constructor does not create index. Index must exist
             // and we use "offset" file to store "header"
             offsetFileName(path.trimTo(plen), name);
-            if (!configuration.getFilesFacade().exists(path)) {
+            if (!ff.exists(path)) {
                 LOG.error().$(path).$(" is not found").$();
                 throw CairoException.instance(0).put("SymbolMap does not exist: ").put(path);
             }
 
             // is there enough length in "offset" file for "header"?
-            long len = configuration.getFilesFacade().length(path);
+            long len = ff.length(path);
             if (len < SymbolMapWriter.HEADER_SIZE) {
                 LOG.error().$(path).$(" is too short [len=").$(len).$(']').$();
                 throw CairoException.instance(0).put("SymbolMap is too short: ").put(path);
@@ -70,7 +72,7 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
 
             // open "offset" memory and make sure we start appending from where
             // we left off. Where we left off is stored externally to symbol map
-            this.offsetMem = new ReadOnlyMemory(configuration.getFilesFacade(), path, mapPageSize);
+            this.offsetMem = new ReadOnlyMemory(ff, path, mapPageSize);
             final int symbolCapacity = offsetMem.getInt(0);
             final boolean useCache = offsetMem.getBool(4);
             this.offsetMem.grow(maxOffset);
@@ -79,7 +81,7 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
             this.indexReader = new BitmapIndexBackwardReader(configuration, path.trimTo(plen), name);
 
             // this is the place where symbol values are stored
-            this.charMem = new ReadOnlyMemory(configuration.getFilesFacade(), charFileName(path.trimTo(plen), name), mapPageSize);
+            this.charMem = new ReadOnlyMemory(ff, charFileName(path.trimTo(plen), name), mapPageSize);
 
             // move append pointer for symbol values in the correct place
             growCharMemToSymbolCount(symbolCount);
@@ -145,6 +147,11 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
             return uncachedValue(key);
         }
         return null;
+    }
+
+    @Override
+    public boolean isDeleted() {
+        return !ff.exists(offsetMem.getFd());
     }
 
     @Override
