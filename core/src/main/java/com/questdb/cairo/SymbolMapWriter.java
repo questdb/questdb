@@ -154,13 +154,6 @@ public class SymbolMapWriter implements Closeable {
         return lookupAndPut(symbol);
     }
 
-    private int lookupPutAndCache(CharSequence symbol) {
-        int result;
-        result = lookupAndPut(symbol);
-        cache.put(symbol.toString(), result);
-        return result;
-    }
-
     public void rollback(int symbolCount) {
         indexWriter.rollbackValues(keyToOffset(symbolCount));
         offsetMem.jumpTo(keyToOffset(symbolCount));
@@ -198,6 +191,13 @@ public class SymbolMapWriter implements Closeable {
             }
         }
         return put0(symbol, hash);
+    }
+
+    private int lookupPutAndCache(CharSequence symbol) {
+        int result;
+        result = lookupAndPut(symbol);
+        cache.put(symbol.toString(), result);
+        return result;
     }
 
     private int put0(CharSequence symbol, int hash) {

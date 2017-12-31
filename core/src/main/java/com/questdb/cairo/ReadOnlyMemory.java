@@ -145,9 +145,7 @@ public class ReadOnlyMemory extends VirtualMemory implements ReadOnlyColumn {
             }
             return cachePageAddress(page, address);
         }
-        CairoException ex = CairoException.instance(ff.errno()).put("Trying to map read-only page outside of file boundary. fd=").put(fd).put(", offset=").put(offset).put(", size=").put(this.size).put(", page=").put(sz);
-        assert false : ex.getMessage();
-        throw ex;
+        throw CairoException.instance(ff.errno()).put("Trying to map read-only page outside of file boundary. fd=").put(fd).put(", offset=").put(offset).put(", size=").put(this.size).put(", page=").put(sz);
     }
 
     private void grow0(long size) {
