@@ -788,8 +788,6 @@ public class TableReader implements Closeable, RecordCursor {
                 }
             }
             partitionRowCounts.setQuick(partitionIndex, rowCount);
-        } else {
-            reloadSymbolMapCounts();
         }
     }
 

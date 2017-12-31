@@ -72,7 +72,7 @@ public class TableWriter implements Closeable {
     private final int fileOperationRetryCount;
     private final CharSequence name;
     private final TableWriterMetadata metadata;
-    private final Runnable MY_OPEN_META = this::openMetaFile;
+    private final FragileCode RECOVER_FROM_META_RENAME_FAILURE = this::recoverFromMetaRenameFailure;
     private final CairoConfiguration configuration;
     int txPartitionCount = 0;
     private long lockFd;
@@ -94,6 +94,10 @@ public class TableWriter implements Closeable {
     private long tempMem8b = Unsafe.malloc(8);
     private int metaSwapIndex;
     private int metaPrevIndex;
+    private final FragileCode RECOVER_FROM_TODO_WRITE_FAILURE = this::recoverFrommTodoWriteFailure;
+    private final FragileCode RECOVER_FROM_SYMBOL_MAP_WRITER_FAILURE = this::recoverFromSymbolMapWriterFailure;
+    private final FragileCode RECOVER_FROM_SWAP_RENAME_FAILURE = this::recoverFromSwapRenameFailure;
+    private final FragileCode RECOVER_FROM_COLUMN_OPEN_FAILURE = this::recoverOpenColumnFailure;
 
     public TableWriter(CairoConfiguration configuration, CharSequence name) {
         LOG.info().$("open '").utf8(name).$('\'').$();
@@ -203,6 +207,10 @@ public class TableWriter implements Closeable {
 
         commit();
 
+        if (type == ColumnType.SYMBOL) {
+            removeSymbolMapFilesLoud(name);
+        }
+
         // create new _meta.swp
         this.metaSwapIndex = addColumnToMeta(name, type);
 
@@ -210,17 +218,21 @@ public class TableWriter implements Closeable {
         metaMem.close();
 
         // rename _meta to _meta.prev
-        renameMetaToMetaPrev();
+        renameMetaToMetaPrev(name);
 
         // after we moved _meta to _meta.prev
         // we have to have _todo to restore _meta should anything go wrong
-        writeRestoreMetaTodo();
+        writeRestoreMetaTodo(name);
 
         // rename _meta.swp to _meta
-        renameSwapMetaToMeta();
+        renameSwapMetaToMeta(name);
 
         if (type == ColumnType.SYMBOL) {
-            createSymbolWriter(name, symbolCapacity, symbolCacheFlag);
+            try {
+                createSymbolMapWriter(name, symbolCapacity, symbolCacheFlag);
+            } catch (CairoException e) {
+                runFragile(RECOVER_FROM_SYMBOL_MAP_WRITER_FAILURE, name, e);
+            }
         }
 
         // add column objects
@@ -238,13 +250,7 @@ public class TableWriter implements Closeable {
             try {
                 openNewColumnFiles(name);
             } catch (CairoException e) {
-                runFragile(() -> {
-                    removeMetaFile();
-                    removeLastColumn();
-                    rename(TableUtils.META_PREV_FILE_NAME, metaPrevIndex, TableUtils.META_FILE_NAME);
-                    openMetaFile();
-                    removeTodoFile();
-                }, e);
+                runFragile(RECOVER_FROM_COLUMN_OPEN_FAILURE, name, e);
             }
         }
 
@@ -401,14 +407,14 @@ public class TableWriter implements Closeable {
         metaMem.close();
 
         // rename _meta to _meta.prev
-        renameMetaToMetaPrev();
+        renameMetaToMetaPrev(name);
 
         // after we moved _meta to _meta.prev
         // we have to have _todo to restore _meta should anything go wrong
-        writeRestoreMetaTodo();
+        writeRestoreMetaTodo(name);
 
         // rename _meta.swp to _meta
-        renameSwapMetaToMeta();
+        renameSwapMetaToMeta(name);
 
         // remove column objects
         removeColumn(index);
@@ -437,7 +443,7 @@ public class TableWriter implements Closeable {
             removeColumnFiles(name);
 
             if (type == ColumnType.SYMBOL) {
-                removeSymbolFiles(name);
+                removeSymbolMapFilesQuiet(name);
             }
 
         } catch (CairoException err) {
@@ -530,7 +536,7 @@ public class TableWriter implements Closeable {
     }
 
     private static void removeOrException(FilesFacade ff, Path path) {
-        if (!ff.remove(path)) {
+        if (ff.exists(path) && !ff.remove(path)) {
             throw CairoException.instance(ff.errno()).put("Cannot remove ").put(path);
         }
     }
@@ -628,14 +634,24 @@ public class TableWriter implements Closeable {
         return -1;
     }
 
-    private static void runFragile(Runnable runnable, CairoException e) {
+    private static void runFragile(FragileCode fragile, CharSequence columnName, CairoException e) {
         try {
-            runnable.run();
+            fragile.run(columnName);
         } catch (CairoException err) {
             LOG.error().$("DOUBLE ERROR: 1st: '").$((Sinkable) e).$('\'').$();
             throw new CairoError(err);
         }
         throw e;
+    }
+
+    private static void removeFileAndOrLog(FilesFacade ff, LPSZ name) {
+        if (ff.exists(name)) {
+            if (ff.remove(name)) {
+                LOG.info().$("removed: ").$(name).$();
+            } else {
+                LOG.error().$("cannot remove: ").utf8(name).$(" [errno=").$(ff.errno()).$(']').$();
+            }
+        }
     }
 
     private int addColumnToMeta(CharSequence name, int type) {
@@ -911,7 +927,7 @@ public class TableWriter implements Closeable {
         }
     }
 
-    private void createSymbolWriter(CharSequence name, int symbolCapacity, boolean symbolCacheFlag) {
+    private void createSymbolMapWriter(CharSequence name, int symbolCapacity, boolean symbolCacheFlag) {
         SymbolMapWriter.createSymbolMapFiles(ff, ddlMem, path, name, symbolCapacity, symbolCacheFlag);
         SymbolMapWriter w = new SymbolMapWriter(configuration, path, name, 0);
         denseSymbolMapWriters.add(w);
@@ -1046,6 +1062,34 @@ public class TableWriter implements Closeable {
         }
     }
 
+    @SuppressWarnings("unused")
+    private void recoverFromMetaRenameFailure(CharSequence columnName) {
+        openMetaFile();
+    }
+
+    private void recoverFromSwapRenameFailure(CharSequence columnName) {
+        recoverFrommTodoWriteFailure(columnName);
+        removeTodoFile();
+    }
+
+    private void recoverFromSymbolMapWriterFailure(CharSequence columnName) {
+        removeSymbolMapFilesQuiet(columnName);
+        removeMetaFile();
+        recoverFromSwapRenameFailure(columnName);
+    }
+
+    @SuppressWarnings("unused")
+    private void recoverFrommTodoWriteFailure(CharSequence columnName) {
+        rename(TableUtils.META_PREV_FILE_NAME, metaPrevIndex, TableUtils.META_FILE_NAME);
+        openMetaFile();
+    }
+
+    private void recoverOpenColumnFailure(CharSequence columnName) {
+        removeMetaFile();
+        removeLastColumn();
+        recoverFromSwapRenameFailure(columnName);
+    }
+
     private void removeColumn(int index) {
         Misc.free(getPrimaryColumn(index));
         Misc.free(getSecondaryColumn(index));
@@ -1063,9 +1107,9 @@ public class TableWriter implements Closeable {
                     path.trimTo(rootLen);
                     path.concat(nativeLPSZ);
                     int plen = path.length();
-                    removeFileAndOrLog(TableUtils.dFile(path, name));
-                    removeFileAndOrLog(TableUtils.iFile(path.trimTo(plen), name));
-                    removeFileAndOrLog(TableUtils.topFile(path.trimTo(plen), name));
+                    removeFileAndOrLog(ff, TableUtils.dFile(path, name));
+                    removeFileAndOrLog(ff, TableUtils.iFile(path.trimTo(plen), name));
+                    removeFileAndOrLog(ff, TableUtils.topFile(path.trimTo(plen), name));
                 }
             });
         } finally {
@@ -1106,16 +1150,6 @@ public class TableWriter implements Closeable {
             return metaSwapIndex;
         } finally {
             ddlMem.close();
-        }
-    }
-
-    private void removeFileAndOrLog(LPSZ name) {
-        if (ff.exists(name)) {
-            if (ff.remove(name)) {
-                LOG.info().$("removed: ").$(path).$();
-            } else {
-                LOG.error().$("cannot remove: ").utf8(name).$(" [errno=").$(ff.errno()).$(']').$();
-            }
         }
     }
 
@@ -1184,12 +1218,23 @@ public class TableWriter implements Closeable {
         }
     }
 
-    private void removeSymbolFiles(CharSequence name) {
+    private void removeSymbolMapFilesLoud(CharSequence name) {
         try {
             removeOrException(ff, SymbolMapWriter.offsetFileName(path.trimTo(rootLen), name));
             removeOrException(ff, SymbolMapWriter.charFileName(path.trimTo(rootLen), name));
             removeOrException(ff, BitmapIndexUtils.keyFileName(path.trimTo(rootLen), name));
             removeOrException(ff, BitmapIndexUtils.valueFileName(path.trimTo(rootLen), name));
+        } finally {
+            path.trimTo(rootLen);
+        }
+    }
+
+    private void removeSymbolMapFilesQuiet(CharSequence name) {
+        try {
+            removeFileAndOrLog(ff, SymbolMapWriter.offsetFileName(path.trimTo(rootLen), name));
+            removeFileAndOrLog(ff, SymbolMapWriter.charFileName(path.trimTo(rootLen), name));
+            removeFileAndOrLog(ff, BitmapIndexUtils.keyFileName(path.trimTo(rootLen), name));
+            removeFileAndOrLog(ff, BitmapIndexUtils.valueFileName(path.trimTo(rootLen), name));
         } finally {
             path.trimTo(rootLen);
         }
@@ -1268,24 +1313,20 @@ public class TableWriter implements Closeable {
         }
     }
 
-    private void renameMetaToMetaPrev() {
+    private void renameMetaToMetaPrev(CharSequence columnName) {
         try {
             this.metaPrevIndex = rename(TableUtils.META_FILE_NAME, TableUtils.META_PREV_FILE_NAME, fileOperationRetryCount);
         } catch (CairoException e) {
-            runFragile(MY_OPEN_META, e);
+            runFragile(RECOVER_FROM_META_RENAME_FAILURE, columnName, e);
         }
     }
 
-    private void renameSwapMetaToMeta() {
+    private void renameSwapMetaToMeta(CharSequence columnName) {
         // rename _meta.swp to _meta
         try {
             rename(TableUtils.META_SWAP_FILE_NAME, metaSwapIndex, TableUtils.META_FILE_NAME);
         } catch (CairoException e) {
-            runFragile(() -> {
-                rename(TableUtils.META_PREV_FILE_NAME, metaPrevIndex, TableUtils.META_FILE_NAME);
-                openMetaFile();
-                removeTodoFile();
-            }, e);
+            runFragile(RECOVER_FROM_SWAP_RENAME_FAILURE, columnName, e);
         }
     }
 
@@ -1432,14 +1473,11 @@ public class TableWriter implements Closeable {
         }
     }
 
-    private void writeRestoreMetaTodo() {
+    private void writeRestoreMetaTodo(CharSequence columnName) {
         try {
             writeTodo(((long) metaPrevIndex << 8) | TableUtils.TODO_RESTORE_META);
         } catch (CairoException e) {
-            runFragile(() -> {
-                rename(TableUtils.META_PREV_FILE_NAME, metaPrevIndex, TableUtils.META_FILE_NAME);
-                openMetaFile();
-            }, e);
+            runFragile(RECOVER_FROM_TODO_WRITE_FAILURE, columnName, e);
         }
     }
 
@@ -1457,6 +1495,11 @@ public class TableWriter implements Closeable {
         } finally {
             path.trimTo(rootLen);
         }
+    }
+
+    @FunctionalInterface
+    private interface FragileCode {
+        void run(CharSequence columnName);
     }
 
     private class OpenPartitionRowFunction implements RowFunction {

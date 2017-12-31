@@ -139,6 +139,17 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAddColumnCannotTouchSymbolMapFile() throws Exception {
+        FilesFacade ff = new FilesFacadeImpl() {
+            @Override
+            public boolean touch(LPSZ path) {
+                return !Chars.endsWith(path, "abc.c") && super.touch(path);
+            }
+        };
+        testAddColumnRecoverableFault(ff);
+    }
+
+    @Test
     public void testAddColumnCannotRemoveMeta() throws Exception {
         class X extends FilesFacadeImpl {
             @Override
@@ -221,6 +232,23 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAddColumnFailToRemoveSymbolMapFiles() throws Exception {
+        // simulate existence of _meta.swp
+        testAddColumnRecoverableFault(new FilesFacadeImpl() {
+
+            @Override
+            public boolean exists(LPSZ path) {
+                return Chars.endsWith(path, "abc.k") || super.exists(path);
+            }
+
+            @Override
+            public boolean remove(LPSZ name) {
+                return !Chars.endsWith(name, "abc.k") && super.remove(name);
+            }
+        });
+    }
+
+    @Test
     public void testAddColumnFileOpenFail() throws Exception {
         // simulate existence of _meta.swp
         testAddColumnRecoverableFault(new FilesFacadeImpl() {
@@ -236,11 +264,10 @@ public class TableWriterTest extends AbstractCairoTest {
 
     @Test
     public void testAddColumnFileOpenFail2() throws Exception {
-        // simulate existence of _meta.swp
         testAddColumnRecoverableFault(new FilesFacadeImpl() {
             @Override
             public long openRW(LPSZ name) {
-                if (Chars.endsWith(name, "abc.i")) {
+                if (Chars.endsWith(name, "abc.k")) {
                     return -1;
                 }
                 return super.openRW(name);
@@ -265,6 +292,19 @@ public class TableWriterTest extends AbstractCairoTest {
             @Override
             public boolean rename(LPSZ from, LPSZ to) {
                 return !(Chars.endsWith(from, TableUtils.META_PREV_FILE_NAME) && --count == 0) && super.rename(from, to);
+            }
+        });
+    }
+
+    @Test
+    public void testAddColumnFileOpenFail4() throws Exception {
+        testAddColumnRecoverableFault(new FilesFacadeImpl() {
+            @Override
+            public long openRW(LPSZ name) {
+                if (Chars.endsWith(name, "abc.d")) {
+                    return -1;
+                }
+                return super.openRW(name);
             }
         });
     }
@@ -1103,6 +1143,19 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCannotOpenSymbolMap() throws Exception {
+        final int N = 100;
+        create(FF, PartitionBy.NONE, N);
+        populateTable0(FF, N);
+        testConstructor(new FilesFacadeImpl() {
+            @Override
+            public boolean exists(LPSZ path) {
+                return !Chars.endsWith(path, "category.o") && super.exists(path);
+            }
+        }, false);
+    }
+
+    @Test
     public void testCannotOpenTodo() throws Exception {
         // trick constructor into thinking "_todo" file exists
         testConstructor(new FilesFacadeImpl() {
@@ -1150,6 +1203,33 @@ public class TableWriterTest extends AbstractCairoTest {
                     return -1;
                 }
                 return super.mmap(fd, len, offset, mode);
+            }
+        }, false);
+    }
+
+    @Test
+    public void testCannotSetAppendPositionOnDataFile() throws Exception {
+        final int N = 10000;
+        create(FF, PartitionBy.NONE, N);
+        populateTable0(FF, N);
+        testConstructor(new FilesFacadeImpl() {
+            long fd;
+
+            @Override
+            public long openRW(LPSZ name) {
+                if (Chars.endsWith(name, "productName.d")) {
+                    return fd = super.openRW(name);
+                }
+                return super.openRW(name);
+            }
+
+            @Override
+            public long read(long fd, long buf, int len, long offset) {
+                if (fd == this.fd) {
+                    this.fd = -1;
+                    return -1;
+                }
+                return super.read(fd, buf, len, offset);
             }
         }, false);
     }
@@ -1718,6 +1798,27 @@ public class TableWriterTest extends AbstractCairoTest {
             @Override
             public boolean remove(LPSZ name) {
                 if (Chars.endsWith(name, "supplier.d")) {
+                    count++;
+                    return false;
+                }
+                return super.remove(name);
+            }
+        });
+    }
+
+    @Test
+    public void testRemoveColumnCannotRemoveFiles2() throws Exception {
+        removeColumn(new TestFilesFacade() {
+            int count = 0;
+
+            @Override
+            public boolean wasCalled() {
+                return count > 0;
+            }
+
+            @Override
+            public boolean remove(LPSZ name) {
+                if (Chars.endsWith(name, "supplier.k")) {
                     count++;
                     return false;
                 }
@@ -2437,7 +2538,7 @@ public class TableWriterTest extends AbstractCairoTest {
                 ts = populateProducts(writer, rnd, ts, 10000, 60000L * 1000L);
                 writer.commit();
                 try {
-                    writer.addColumn("abc", ColumnType.STRING);
+                    writer.addColumn("abc", ColumnType.SYMBOL);
                     Assert.fail();
                 } catch (CairoException ignore) {
                 }
