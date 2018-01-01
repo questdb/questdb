@@ -393,6 +393,40 @@ public class TableReader implements Closeable, RecordCursor {
         return true;
     }
 
+    private static void growColumn(ReadOnlyColumn mem1, ReadOnlyColumn mem2, int type, long rowCount) {
+        long offset;
+        long len;
+        if (rowCount > 0) {
+            // subtract column top
+            switch (type) {
+                case ColumnType.BINARY:
+                    assert mem2 != null;
+                    mem2.grow(rowCount * 8);
+                    offset = mem2.getLong((rowCount - 1) * 8);
+                    // grow data column to value offset + length, so that we can read length
+                    mem1.grow(offset + 8);
+                    len = mem1.getLong(offset);
+                    if (len > 0) {
+                        mem1.grow(offset + len + 8);
+                    }
+                    break;
+                case ColumnType.STRING:
+                    assert mem2 != null;
+                    mem2.grow(rowCount * 8);
+                    offset = mem2.getLong((rowCount - 1) * 8);
+                    mem1.grow(offset + 4);
+                    len = mem1.getInt(offset);
+                    if (len > 0) {
+                        mem1.grow(offset + len * 2 + 4);
+                    }
+                    break;
+                default:
+                    mem1.grow(rowCount * ColumnType.sizeOf(type));
+                    break;
+            }
+        }
+    }
+
     private int calculatePartitionCount() {
         if (partitionMin == Long.MAX_VALUE) {
             return 0;
@@ -770,25 +804,22 @@ public class TableReader implements Closeable, RecordCursor {
      */
     private void reloadPartition(int partitionIndex, long rowCount) {
         int symbolMapIndex = 0;
-        if (partitionRowCounts.getQuick(partitionIndex) > -1) {
-            int columnBase = getColumnBase(partitionIndex);
-            for (int i = 0; i < columnCount; i++) {
-                ReadOnlyColumn col = columns.getQuick(getPrimaryColumnIndex(columnBase, i));
-                assert col != null : "oops, base:" + columnBase + ", i:" + i + ", partition:" + partitionIndex + ", rowCount:" + rowCount + ", partitionSize:" + partitionRowCounts.getQuick(partitionIndex);
-                col.trackFileSize();
-                ReadOnlyColumn mem2 = columns.getQuick(getSecondaryColumnIndex(columnBase, i));
-                if (mem2 != null) {
-                    mem2.trackFileSize();
-                }
+        int columnBase = getColumnBase(partitionIndex);
+        for (int i = 0; i < columnCount; i++) {
+            growColumn(
+                    columns.getQuick(getPrimaryColumnIndex(columnBase, i)),
+                    columns.getQuick(getSecondaryColumnIndex(columnBase, i)),
+                    metadata.getColumnQuick(i).getType(),
+                    rowCount
+            );
 
-                // reload symbol map
-                SymbolMapReader reader = symbolMapReaders.getQuick(i);
-                if (reader != null) {
-                    reader.updateSymbolCount(symbolCountSnapshot.getQuick(symbolMapIndex++));
-                }
+            // reload symbol map
+            SymbolMapReader reader = symbolMapReaders.getQuick(i);
+            if (reader != null) {
+                reader.updateSymbolCount(symbolCountSnapshot.getQuick(symbolMapIndex++));
             }
-            partitionRowCounts.setQuick(partitionIndex, rowCount);
         }
+        partitionRowCounts.setQuick(partitionIndex, rowCount);
     }
 
     private boolean reloadPartitioned() {

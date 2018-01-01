@@ -98,10 +98,4 @@ public class NullColumnTest {
     public void getStrLen() {
         Assert.assertEquals(-1, NullColumn.INSTANCE.getStrLen(1234));
     }
-
-    @Test
-    public void trackFileSize() {
-        NullColumn.INSTANCE.trackFileSize();
-    }
-
 }

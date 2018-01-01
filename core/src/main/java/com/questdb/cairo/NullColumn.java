@@ -95,7 +95,7 @@ public final class NullColumn implements ReadOnlyColumn {
     }
 
     @Override
-    public void trackFileSize() {
+    public void grow(long size) {
     }
 
     @Override
