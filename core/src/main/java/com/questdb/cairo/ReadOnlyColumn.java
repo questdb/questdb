@@ -56,7 +56,7 @@ public interface ReadOnlyColumn extends Closeable {
 
     int getStrLen(long offset);
 
-    void trackFileSize();
+    void grow(long size);
 
     long getFd();
 }

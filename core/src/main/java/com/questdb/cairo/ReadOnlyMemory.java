@@ -56,11 +56,6 @@ public class ReadOnlyMemory extends VirtualMemory implements ReadOnlyColumn {
     }
 
     @Override
-    protected long mapWritePage(int page) {
-        throw new UnsupportedOperationException("Cannot jump() read-only memory. Use grow() instead.");
-    }
-
-    @Override
     protected long getPageAddress(int page) {
         long address = super.getPageAddress(page);
         if (address != 0) {
@@ -78,6 +73,14 @@ public class ReadOnlyMemory extends VirtualMemory implements ReadOnlyColumn {
             return lastPageSize;
         } else {
             return super.getPageSize(page);
+        }
+    }
+
+    @Override
+    public void grow(long size) {
+        if (size > this.size) {
+            final long fileSize = ff.length(fd);
+            grow0(size > fileSize ? size : fileSize);
         }
     }
 
@@ -102,30 +105,6 @@ public class ReadOnlyMemory extends VirtualMemory implements ReadOnlyColumn {
         LOG.info().$("open ").$(name).$(" [fd=").$(fd).$(']').$();
     }
 
-    void grow(long size) {
-        if (size > this.size) {
-            final long fileSize = ff.length(fd);
-            grow0(size > fileSize ? size : fileSize);
-        }
-    }
-
-    @Override
-    public void trackFileSize() {
-        grow0(ff.length(fd));
-    }
-
-    @Override
-    public long getFd() {
-        return fd;
-    }
-
-    private long computePageSize(long memorySize) {
-        if (memorySize < maxPageSize) {
-            return Math.max(ff.getPageSize(), (memorySize / ff.getPageSize()) * ff.getPageSize());
-        }
-        return maxPageSize;
-    }
-
     private long mapPage(int page) {
         long address;
         long offset = pageOffset(page);
@@ -146,6 +125,23 @@ public class ReadOnlyMemory extends VirtualMemory implements ReadOnlyColumn {
             return cachePageAddress(page, address);
         }
         throw CairoException.instance(ff.errno()).put("Trying to map read-only page outside of file boundary. fd=").put(fd).put(", offset=").put(offset).put(", size=").put(this.size).put(", page=").put(sz);
+    }
+
+    @Override
+    protected long mapWritePage(int page) {
+        throw new UnsupportedOperationException("Cannot jump() read-only memory. Use grow() instead.");
+    }
+
+    @Override
+    public long getFd() {
+        return fd;
+    }
+
+    private long computePageSize(long memorySize) {
+        if (memorySize < maxPageSize) {
+            return Math.max(ff.getPageSize(), (memorySize / ff.getPageSize()) * ff.getPageSize());
+        }
+        return maxPageSize;
     }
 
     private void grow0(long size) {
