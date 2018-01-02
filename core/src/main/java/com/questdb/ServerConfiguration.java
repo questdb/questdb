@@ -139,12 +139,15 @@ public class ServerConfiguration {
         }
 
         if ((s = props.getProperty("http.abort.broken.uploads")) != null) {
-            if ("true".equals(s)) {
-                httpAbortBrokenUploads = true;
-            } else if ("false".equals(s)) {
-                httpAbortBrokenUploads = false;
-            } else {
-                throw new IllegalArgumentException("http.abort.broken.uploads");
+            switch (s) {
+                case "true":
+                    httpAbortBrokenUploads = true;
+                    break;
+                case "false":
+                    httpAbortBrokenUploads = false;
+                    break;
+                default:
+                    throw new IllegalArgumentException("http.abort.broken.uploads");
             }
         }
 

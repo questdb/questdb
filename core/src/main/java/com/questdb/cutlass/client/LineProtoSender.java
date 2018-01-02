@@ -63,12 +63,11 @@ public class LineProtoSender extends AbstractCharSink implements Closeable {
         $();
     }
 
-    public LineProtoSender $() {
+    public void $() {
         put('\n');
         lineStart = ptr;
         hasMetric = false;
         noFields = true;
-        return this;
     }
 
     @Override
