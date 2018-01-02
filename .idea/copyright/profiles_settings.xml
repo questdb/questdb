@@ -1,5 +1,9 @@
 <component name="CopyrightManager">
   <settings default="AGPLv3">
+    <module2copyright>
+      <element module="core-java" copyright="AGPLv3" />
+      <element module="examples" copyright="Apache 2.0" />
+    </module2copyright>
     <LanguageOptions name="__TEMPLATE__">
       <option name="separateBefore" value="true" />
       <option name="separateAfter" value="true" />
