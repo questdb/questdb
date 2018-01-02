@@ -24,7 +24,6 @@
 package com.questdb.common;
 
 import com.questdb.std.CharSequenceIntHashMap;
-import com.questdb.std.IntIntHashMap;
 import com.questdb.std.IntObjHashMap;
 import com.questdb.std.ObjIntHashMap;
 import com.questdb.std.str.StringSink;
@@ -46,7 +45,6 @@ public final class ColumnType {
     public static final int TIMESTAMP = 12;
     public static final int PARAMETER = 11;
     private static final ObjIntHashMap<Class> classMap = new ObjIntHashMap<>();
-    private static final IntIntHashMap sizeMap = new IntIntHashMap();
     private static final IntObjHashMap<String> typeNameMap = new IntObjHashMap<>();
     private static final CharSequenceIntHashMap nameTypeMap = new CharSequenceIntHashMap();
     private static final ThreadLocal<StringSink> caseConverterBuffer = ThreadLocal.withInitial(StringSink::new);
@@ -76,8 +74,51 @@ public final class ColumnType {
         return name != null ? name : "unknown";
     }
 
+    public static int pow2SizeOf(int columnType) {
+        switch (columnType) {
+            case ColumnType.BOOLEAN:
+            case ColumnType.BYTE:
+                return 0;
+            case ColumnType.DOUBLE:
+            case ColumnType.LONG:
+            case ColumnType.DATE:
+            case ColumnType.TIMESTAMP:
+                return 3;
+            case ColumnType.FLOAT:
+            case ColumnType.INT:
+            case ColumnType.SYMBOL:
+                return 2;
+            case ColumnType.SHORT:
+                return 1;
+            default:
+                assert false : "Cannot request power of 2 for " + nameOf(columnType);
+                return -1;
+        }
+    }
+
     public static int sizeOf(int columnType) {
-        return sizeMap.get(columnType);
+        switch (columnType) {
+            case ColumnType.BOOLEAN:
+            case ColumnType.BYTE:
+                return 1;
+            case ColumnType.DOUBLE:
+            case ColumnType.LONG:
+            case ColumnType.DATE:
+            case ColumnType.TIMESTAMP:
+                return 8;
+            case ColumnType.FLOAT:
+            case ColumnType.INT:
+            case ColumnType.SYMBOL:
+                return 4;
+            case ColumnType.SHORT:
+                return 2;
+            case ColumnType.PARAMETER:
+            case ColumnType.STRING:
+            case ColumnType.BINARY:
+                return 0;
+            default:
+                return -1;
+        }
     }
 
     static {
@@ -90,20 +131,6 @@ public final class ColumnType {
         classMap.put(short.class, SHORT);
         classMap.put(String.class, STRING);
         classMap.put(ByteBuffer.class, BINARY);
-
-        sizeMap.put(BOOLEAN, 1);
-        sizeMap.put(BYTE, 1);
-        sizeMap.put(DOUBLE, 8);
-        sizeMap.put(FLOAT, 4);
-        sizeMap.put(INT, 4);
-        sizeMap.put(LONG, 8);
-        sizeMap.put(SHORT, 2);
-        sizeMap.put(STRING, 0);
-        sizeMap.put(SYMBOL, 4);
-        sizeMap.put(BINARY, 0);
-        sizeMap.put(DATE, 8);
-        sizeMap.put(PARAMETER, 0);
-        sizeMap.put(TIMESTAMP, 8);
 
         typeNameMap.put(BOOLEAN, "BOOLEAN");
         typeNameMap.put(BYTE, "BYTE");
