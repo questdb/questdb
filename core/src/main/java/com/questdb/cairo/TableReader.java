@@ -435,12 +435,12 @@ public class TableReader implements Closeable, RecordCursor {
         }
     }
 
-    private void copyColumnsTo(ObjList<ReadOnlyColumn> columns, LongList columnTops, int base, int index) {
+    private void copyColumnsTo(ObjList<ReadOnlyColumn> columns, LongList columnTops, int base, int index, long partitionRowCount) {
         if (tempCopyStruct.mem1 != null && !ff.exists(tempCopyStruct.mem1.getFd())) {
             Misc.free(tempCopyStruct.mem1);
             Misc.free(tempCopyStruct.mem2);
             fetchColumnsFrom(columns, columnTops, base, index);
-            createColumnInstanceAt(path, columns, columnTops, index, base);
+            createColumnInstanceAt(path, columns, columnTops, index, base, partitionRowCount);
         } else {
             tempCopyStruct.mem1 = columns.getAndSetQuick(getPrimaryColumnIndex(base, index), tempCopyStruct.mem1);
             tempCopyStruct.mem2 = columns.getAndSetQuick(getSecondaryColumnIndex(base, index), tempCopyStruct.mem2);
@@ -463,23 +463,26 @@ public class TableReader implements Closeable, RecordCursor {
         path.trimTo(rootLen);
     }
 
-    private void createColumnInstanceAt(Path path, ObjList<ReadOnlyColumn> columns, LongList columnTops, int columnIndex, int columnBase) {
+    private void createColumnInstanceAt(Path path, ObjList<ReadOnlyColumn> columns, LongList columnTops, int columnIndex, int columnBase, long partitionRowCount) {
         int plen = path.length();
         try {
             String name = metadata.getColumnName(columnIndex);
             if (ff.exists(TableUtils.dFile(path.trimTo(plen), name))) {
-                // we defer setting rowCount
 
-                columns.setQuick(getPrimaryColumnIndex(columnBase, columnIndex),
-                        new ReadOnlyMemory(ff, path, ff.getMapPageSize()));
+                int type = metadata.getColumnQuick(columnIndex).getType();
+                ReadOnlyColumn mem1 = new ReadOnlyMemory(ff, path, ff.getMapPageSize(), 0);
 
-                switch (metadata.getColumnQuick(columnIndex).getType()) {
+                switch (type) {
                     case ColumnType.BINARY:
                     case ColumnType.STRING:
-                        columns.setQuick(getSecondaryColumnIndex(columnBase, columnIndex),
-                                new ReadOnlyMemory(ff, TableUtils.iFile(path.trimTo(plen), name), ff.getMapPageSize()));
+                        ReadOnlyColumn mem2 = new ReadOnlyMemory(ff, TableUtils.iFile(path.trimTo(plen), name), ff.getMapPageSize(), 0);
+                        columns.setQuick(getPrimaryColumnIndex(columnBase, columnIndex), mem1);
+                        columns.setQuick(getSecondaryColumnIndex(columnBase, columnIndex), mem2);
+                        growColumn(mem1, mem2, type, partitionRowCount);
                         break;
                     default:
+                        columns.setQuick(getPrimaryColumnIndex(columnBase, columnIndex), mem1);
+                        growColumn(mem1, null, type, partitionRowCount);
                         break;
                 }
                 columnTops.setQuick(columnBase / 2 + columnIndex, TableUtils.readColumnTop(ff, path.trimTo(plen), name, plen, tempMem8b));
@@ -506,14 +509,15 @@ public class TableReader implements Closeable, RecordCursor {
 
             try {
                 Path path = partitionPathGenerator.generate(this, partitionIndex);
+                final long partitionRowCount = partitionRowCounts.getQuick(partitionIndex);
                 for (int i = 0; i < columnCount; i++) {
                     final int copyFrom = Unsafe.getUnsafe().getInt(pIndexBase + i * 8) - 1;
                     if (copyFrom > -1) {
                         fetchColumnsFrom(this.columns, this.columnTops, oldBase, copyFrom);
-                        copyColumnsTo(columns, columnTops, base, i);
+                        copyColumnsTo(columns, columnTops, base, i, partitionRowCount);
                     } else {
                         // new instance
-                        createColumnInstanceAt(path, columns, columnTops, i, base);
+                        createColumnInstanceAt(path, columns, columnTops, i, base, partitionRowCount);
                     }
                 }
 
@@ -648,7 +652,7 @@ public class TableReader implements Closeable, RecordCursor {
                 LOG.info().$("open partition ").$(path.$()).$(" [rowCount=").$(partitionSize).$(']').$();
 
                 if (partitionSize > -1) {
-                    openPartitionColumns(path, columnBase);
+                    openPartitionColumns(path, columnBase, partitionSize);
                     partitionRowCounts.setQuick(partitionIndex, partitionSize);
                 }
             } else {
@@ -660,10 +664,10 @@ public class TableReader implements Closeable, RecordCursor {
         }
     }
 
-    private void openPartitionColumns(Path path, int columnBase) {
+    private void openPartitionColumns(Path path, int columnBase, long partitionRowCount) {
         for (int i = 0; i < columnCount; i++) {
             if (columns.getQuick(getPrimaryColumnIndex(columnBase, i)) == null) {
-                createColumnInstanceAt(path, this.columns, this.columnTops, i, columnBase);
+                createColumnInstanceAt(path, this.columns, this.columnTops, i, columnBase, partitionRowCount);
             }
         }
     }
@@ -681,7 +685,7 @@ public class TableReader implements Closeable, RecordCursor {
 
     private ReadOnlyMemory openTxnFile() {
         try {
-            return new ReadOnlyMemory(ff, path.concat(TableUtils.TXN_FILE_NAME).$(), ff.getPageSize());
+            return new ReadOnlyMemory(ff, path.concat(TableUtils.TXN_FILE_NAME).$(), ff.getPageSize(), TableUtils.TX_OFFSET_MAP_WRITER_COUNT + 4);
         } finally {
             path.trimTo(rootLen);
         }
@@ -737,8 +741,11 @@ public class TableReader implements Closeable, RecordCursor {
 
             this.symbolCountSnapshot.clear();
             int symbolMapCount = txMem.getInt(TableUtils.TX_OFFSET_MAP_WRITER_COUNT);
-            for (int i = 0; i < symbolMapCount; i++) {
-                symbolCountSnapshot.add(txMem.getInt(TableUtils.TX_OFFSET_MAP_WRITER_COUNT + 4 + i * 4));
+            if (symbolMapCount > 0) {
+                txMem.grow(TableUtils.TX_OFFSET_MAP_WRITER_COUNT + 4 + symbolMapCount * 4);
+                for (int i = 0; i < symbolMapCount; i++) {
+                    symbolCountSnapshot.add(txMem.getInt(TableUtils.TX_OFFSET_MAP_WRITER_COUNT + 4 + i * 4));
+                }
             }
 
             Unsafe.getUnsafe().loadFence();
@@ -872,6 +879,7 @@ public class TableReader implements Closeable, RecordCursor {
             int base = getColumnBase(partitionIndex);
             try {
                 Path path = partitionPathGenerator.generate(this, partitionIndex);
+                final long partitionRowCount = partitionRowCounts.getQuick(partitionIndex);
 
                 Unsafe.getUnsafe().setMemory(pState, columnCount, (byte) 0);
 
@@ -886,17 +894,17 @@ public class TableReader implements Closeable, RecordCursor {
 
                         if (copyFrom > -1) {
                             fetchColumnsFrom(this.columns, this.columnTops, base, copyFrom);
-                            copyColumnsTo(this.columns, this.columnTops, base, i);
+                            copyColumnsTo(this.columns, this.columnTops, base, i, partitionRowCount);
                             int copyTo = Unsafe.getUnsafe().getInt(pIndexBase + i * 8 + 4) - 1;
                             while (copyTo > -1 && isEntryToBeProcessed(pState, copyTo)) {
-                                copyColumnsTo(this.columns, this.columnTops, base, copyTo);
+                                copyColumnsTo(this.columns, this.columnTops, base, copyTo, partitionRowCount);
                                 copyTo = Unsafe.getUnsafe().getInt(pIndexBase + (copyTo - 1) * 8 + 4);
                             }
                             Misc.free(tempCopyStruct.mem1);
                             Misc.free(tempCopyStruct.mem2);
                         } else {
                             // new instance
-                            createColumnInstanceAt(path, this.columns, this.columnTops, i, base);
+                            createColumnInstanceAt(path, this.columns, this.columnTops, i, base, partitionRowCount);
                         }
                     }
                 }

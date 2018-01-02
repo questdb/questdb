@@ -32,8 +32,7 @@ import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
 
-import static com.questdb.cairo.SymbolMapWriter.charFileName;
-import static com.questdb.cairo.SymbolMapWriter.offsetFileName;
+import static com.questdb.cairo.SymbolMapWriter.*;
 
 public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
     private static final Log LOG = LogFactory.getLog(SymbolMapReaderImpl.class);
@@ -72,7 +71,7 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
 
             // open "offset" memory and make sure we start appending from where
             // we left off. Where we left off is stored externally to symbol map
-            this.offsetMem = new ReadOnlyMemory(ff, path, mapPageSize);
+            this.offsetMem = new ReadOnlyMemory(ff, path, mapPageSize, keyToOffset(symbolCount));
             final int symbolCapacity = offsetMem.getInt(0);
             final boolean useCache = offsetMem.getBool(4);
             this.offsetMem.grow(maxOffset);
@@ -81,7 +80,7 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
             this.indexReader = new BitmapIndexBackwardReader(configuration, path.trimTo(plen), name);
 
             // this is the place where symbol values are stored
-            this.charMem = new ReadOnlyMemory(ff, charFileName(path.trimTo(plen), name), mapPageSize);
+            this.charMem = new ReadOnlyMemory(ff, charFileName(path.trimTo(plen), name), mapPageSize, 0);
 
             // move append pointer for symbol values in the correct place
             growCharMemToSymbolCount(symbolCount);

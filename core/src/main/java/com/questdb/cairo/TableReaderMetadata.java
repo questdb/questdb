@@ -45,7 +45,7 @@ class TableReaderMetadata extends AbstractRecordMetadata implements Closeable {
         this.ff = ff;
         this.path = new Path().of(path).$();
         try {
-            this.metaMem = new ReadOnlyMemory(ff, path, ff.getPageSize());
+            this.metaMem = new ReadOnlyMemory(ff, path, ff.getPageSize(), ff.length(path));
             TableUtils.validate(ff, metaMem, this.columnNameIndexMap);
             this.timestampIndex = metaMem.getInt(TableUtils.META_OFFSET_TIMESTAMP_INDEX);
             this.columnCount = metaMem.getInt(TableUtils.META_OFFSET_COUNT);
@@ -74,7 +74,7 @@ class TableReaderMetadata extends AbstractRecordMetadata implements Closeable {
 
     public void applyTransitionIndex(long pTransitionIndex) {
         // re-open _meta file
-        this.metaMem.of(ff, path, ff.getPageSize());
+        this.metaMem.of(ff, path, ff.getPageSize(), ff.length(path));
 
         this.columnNameIndexMap.clear();
 
@@ -188,7 +188,7 @@ class TableReaderMetadata extends AbstractRecordMetadata implements Closeable {
             transitionMeta = new ReadOnlyMemory();
         }
 
-        transitionMeta.of(ff, path, ff.getPageSize());
+        transitionMeta.of(ff, path, ff.getPageSize(), ff.length(path));
         try (ReadOnlyMemory metaMem = transitionMeta) {
 
             tmpValidationMap.clear();
