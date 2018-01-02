@@ -982,7 +982,7 @@ public class TableWriter implements Closeable {
     private void openMetaFile() {
         path.concat(TableUtils.META_FILE_NAME).$();
         try {
-            metaMem.of(ff, path, ff.getPageSize());
+            metaMem.of(ff, path, ff.getPageSize(), ff.length(path));
         } finally {
             path.trimTo(rootLen);
         }

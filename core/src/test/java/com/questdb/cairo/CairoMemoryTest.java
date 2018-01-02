@@ -119,7 +119,7 @@ public class CairoMemoryTest {
 
             int failureCount = 0;
             try (ReadOnlyMemory mem = new ReadOnlyMemory()) {
-                mem.of(ff, path, ff.getPageSize());
+                mem.of(ff, path, ff.getPageSize(), 8L * N);
                 int i = 0;
                 while (i < N) {
                     try {
@@ -162,12 +162,12 @@ public class CairoMemoryTest {
 
                 // open non-existing
                 try {
-                    mem.of(ff, path, ff.getPageSize());
+                    mem.of(ff, path, ff.getPageSize(), 8L * N);
                     Assert.fail();
                 } catch (CairoException ignore) {
                 }
 
-                mem.of(ff, path, ff.getPageSize());
+                mem.of(ff, path, ff.getPageSize(), 8L * N);
 
                 for (int i = 0; i < N; i++) {
                     Assert.assertEquals(i, mem.getLong(i * 8));
@@ -192,12 +192,12 @@ public class CairoMemoryTest {
 
                 // open non-existing
                 try {
-                    mem.of(FF, null, FF.getPageSize());
+                    mem.of(FF, null, FF.getPageSize(), 8L * N);
                     Assert.fail();
                 } catch (CairoException ignore) {
                 }
 
-                mem.of(FF, path, FF.getPageSize());
+                mem.of(FF, path, FF.getPageSize(), 8L * N);
 
                 for (int i = 0; i < N; i++) {
                     Assert.assertEquals(i, mem.getLong(i * 8));
@@ -283,7 +283,7 @@ public class CairoMemoryTest {
                     }
                     Assert.assertEquals(8L * N, mem.getAppendOffset());
 
-                    try (ReadOnlyMemory ro = new ReadOnlyMemory(FF, path, FF.getPageSize())) {
+                    try (ReadOnlyMemory ro = new ReadOnlyMemory(FF, path, FF.getPageSize(), 8L * N)) {
                         for (int i = 0; i < N; i++) {
                             Assert.assertEquals(i, ro.getLong(i * 8));
                         }
@@ -445,7 +445,7 @@ public class CairoMemoryTest {
                 }
                 Assert.assertEquals(8L * N, mem.getAppendOffset());
             }
-            try (ReadOnlyMemory mem = new ReadOnlyMemory(FF, path, FF.getPageSize())) {
+            try (ReadOnlyMemory mem = new ReadOnlyMemory(FF, path, FF.getPageSize(), 8L * N)) {
                 for (int i = 0; i < N; i++) {
                     Assert.assertEquals(i, mem.getLong(i * 8));
                 }
@@ -510,7 +510,7 @@ public class CairoMemoryTest {
                     mem.jumpTo(800);
                 }
 
-                try (ReadOnlyMemory roMem = new ReadOnlyMemory(FF, path, FF.getPageSize())) {
+                try (ReadOnlyMemory roMem = new ReadOnlyMemory(FF, path, FF.getPageSize(), 800)) {
                     for (int i = 0; i < 50; i++) {
                         Assert.assertEquals(50 - i, roMem.getLong(i * 8));
                     }
