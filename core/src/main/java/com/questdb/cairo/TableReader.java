@@ -471,6 +471,7 @@ public class TableReader implements Closeable, RecordCursor {
 
                 int type = metadata.getColumnQuick(columnIndex).getType();
                 ReadOnlyColumn mem1 = new ReadOnlyMemory(ff, path, ff.getMapPageSize(), 0);
+                long columnTop = TableUtils.readColumnTop(ff, path.trimTo(plen), name, plen, tempMem8b);
 
                 switch (type) {
                     case ColumnType.BINARY:
@@ -478,14 +479,14 @@ public class TableReader implements Closeable, RecordCursor {
                         ReadOnlyColumn mem2 = new ReadOnlyMemory(ff, TableUtils.iFile(path.trimTo(plen), name), ff.getMapPageSize(), 0);
                         columns.setQuick(getPrimaryColumnIndex(columnBase, columnIndex), mem1);
                         columns.setQuick(getSecondaryColumnIndex(columnBase, columnIndex), mem2);
-                        growColumn(mem1, mem2, type, partitionRowCount);
+                        growColumn(mem1, mem2, type, partitionRowCount - columnTop);
                         break;
                     default:
                         columns.setQuick(getPrimaryColumnIndex(columnBase, columnIndex), mem1);
-                        growColumn(mem1, null, type, partitionRowCount);
+                        growColumn(mem1, null, type, partitionRowCount - columnTop);
                         break;
                 }
-                columnTops.setQuick(columnBase / 2 + columnIndex, TableUtils.readColumnTop(ff, path.trimTo(plen), name, plen, tempMem8b));
+                columnTops.setQuick(columnBase / 2 + columnIndex, columnTop);
             } else {
                 columns.setQuick(getPrimaryColumnIndex(columnBase, columnIndex), NullColumn.INSTANCE);
                 columns.setQuick(getSecondaryColumnIndex(columnBase, columnIndex), NullColumn.INSTANCE);
@@ -649,9 +650,9 @@ public class TableReader implements Closeable, RecordCursor {
                     partitionSize = readPartitionSize(ff, path, tempMem8b);
                 }
 
-                LOG.info().$("open partition ").$(path.$()).$(" [rowCount=").$(partitionSize).$(']').$();
+                LOG.info().$("open partition ").$(path.$()).$(" [rowCount=").$(partitionSize).$(", last=").$(last).$(", transientRowCount=").$(transientRowCount).$(']').$();
 
-                if (partitionSize > -1) {
+                if (partitionSize > 0) {
                     openPartitionColumns(path, columnBase, partitionSize);
                     partitionRowCounts.setQuick(partitionIndex, partitionSize);
                 }
@@ -817,7 +818,7 @@ public class TableReader implements Closeable, RecordCursor {
                     columns.getQuick(getPrimaryColumnIndex(columnBase, i)),
                     columns.getQuick(getSecondaryColumnIndex(columnBase, i)),
                     metadata.getColumnQuick(i).getType(),
-                    rowCount
+                    rowCount - this.columnTops.getQuick(columnBase / 2 + i)
             );
 
             // reload symbol map
