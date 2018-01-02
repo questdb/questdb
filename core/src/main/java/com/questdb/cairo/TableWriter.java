@@ -590,7 +590,7 @@ public class TableWriter implements Closeable {
                     mem2.setSize(actualPosition * 8);
                     break;
                 default:
-                    mem1.setSize(actualPosition * ColumnType.sizeOf(type));
+                    mem1.setSize(actualPosition << ColumnType.pow2SizeOf(type));
                     break;
             }
         } else {

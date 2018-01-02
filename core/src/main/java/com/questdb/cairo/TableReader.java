@@ -421,7 +421,7 @@ public class TableReader implements Closeable, RecordCursor {
                     }
                     break;
                 default:
-                    mem1.grow(rowCount * ColumnType.sizeOf(type));
+                    mem1.grow(rowCount << ColumnType.pow2SizeOf(type));
                     break;
             }
         }
