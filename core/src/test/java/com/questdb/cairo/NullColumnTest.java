@@ -98,4 +98,11 @@ public class NullColumnTest {
     public void getStrLen() {
         Assert.assertEquals(-1, NullColumn.INSTANCE.getStrLen(1234));
     }
+
+    @Test
+    public void testGrow() {
+        // this method does nothing. Make sure it doesn corrupt state of singleton and
+        // doesn't throw exception
+        NullColumn.INSTANCE.grow(100000);
+    }
 }

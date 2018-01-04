@@ -37,6 +37,7 @@ public class ReadOnlyMemory extends VirtualMemory implements ReadOnlyColumn {
     private long lastPageSize;
     private int lastPageIndex;
     private long pageSize;
+    private long userSize = 0;
 
     public ReadOnlyMemory(FilesFacade ff, LPSZ name, long pageSize, long size) {
         of(ff, name, pageSize, size);
@@ -53,6 +54,7 @@ public class ReadOnlyMemory extends VirtualMemory implements ReadOnlyColumn {
             LOG.info().$("closed [fd=").$(fd).$(']').$();
             fd = -1;
             this.size = 0;
+            this.userSize = 0;
         }
     }
 
@@ -94,6 +96,10 @@ public class ReadOnlyMemory extends VirtualMemory implements ReadOnlyColumn {
 
     @Override
     public void grow(long size) {
+        if (size > userSize) {
+            userSize = size;
+        }
+
         if (size > this.size) {
             final long fileSize = ff.length(fd);
             grow0(size > fileSize ? size : fileSize);
@@ -173,6 +179,28 @@ public class ReadOnlyMemory extends VirtualMemory implements ReadOnlyColumn {
 
             address = ff.mmap(fd, sz, offset, Files.MAP_RO);
             if (address == -1L) {
+                // There is race condition where file may get truncated by writer between "size"
+                // being set and call to mmap(). Linux and OSX will allow mapping of file beyond
+                // its actual size, but on Windows we get out-of-memory error (errno=8). This
+                // condition is caused by "optimistic" page sizing. See grow() implementation on
+                // how size is set. To summarize - we may try to over-map the file but we will
+                // never read more than actual data in the file - even if data size is smaller
+                // than area we map.
+                //
+                // Ok, when this does happen we will try to adjust "size" down according to file
+                // length and re-map the page. This is safe because page size is always "optimistic".
+
+                if (ff.isRestrictedFileSystem() && ff.errno() == 8) {
+                    this.size = this.userSize;
+                    sz = this.size - offset;
+                    this.lastPageSize = sz;
+                    this.lastPageIndex = page;
+
+                    address = ff.mmap(fd, sz, offset, Files.MAP_RO);
+                    if (address != -1L) {
+                        return cachePageAddress(page, address);
+                    }
+                }
                 throw CairoException.instance(ff.errno()).put("Cannot mmap read-only fd=").put(fd).put(", offset=").put(offset).put(", size=").put(this.size).put(", page=").put(sz);
             }
             return cachePageAddress(page, address);

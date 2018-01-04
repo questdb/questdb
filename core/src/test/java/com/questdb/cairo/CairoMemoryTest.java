@@ -412,6 +412,60 @@ public class CairoMemoryTest {
     }
 
     @Test
+    public void testWindowsTruncateRaceCondition() throws Exception {
+        TestUtils.assertMemoryLeak(new TestUtils.LeakProneCode() {
+            @Override
+            public void run() throws Exception {
+                try (Path path = new Path().of(temp.newFile().getAbsolutePath()).$()) {
+                    try (AppendMemory mem = new AppendMemory(FF, path, FF.getMapPageSize())) {
+                        mem.putLong(1);
+                        mem.putDouble(0.123456);
+
+                        final long size = mem.getAppendOffset();
+
+                        TestFilesFacade ff = new TestFilesFacade() {
+
+                            int errno = 0;
+                            boolean wasCalled = false;
+
+                            @Override
+                            public int errno() {
+                                return errno;
+                            }
+
+                            @Override
+                            public long mmap(long fd, long len, long offset, int mode) {
+                                if (len > size) {
+                                    errno = 8;
+                                    wasCalled = true;
+                                    return -1L;
+                                }
+                                return super.mmap(fd, len, offset, mode);
+                            }
+
+                            @Override
+                            public boolean isRestrictedFileSystem() {
+                                return true;
+                            }
+
+                            @Override
+                            public boolean wasCalled() {
+                                return wasCalled;
+                            }
+                        };
+
+                        try (ReadOnlyMemory roMem = new ReadOnlyMemory(ff, path, ff.getMapPageSize(), size)) {
+                            Assert.assertEquals(1, roMem.getLong(0));
+                            Assert.assertEquals(0.123456, roMem.getDouble(8), 0.000001d);
+                        }
+                        Assert.assertTrue(ff.wasCalled());
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testWriteAndRead() throws Exception {
         long used = Unsafe.getMemUsed();
         try (Path path = new Path().of(temp.newFile().getAbsolutePath()).$()) {
@@ -521,7 +575,6 @@ public class CairoMemoryTest {
                 }
             }
         });
-
     }
 
     @FunctionalInterface
