@@ -33,6 +33,8 @@ import com.questdb.std.str.Path;
 import java.io.Closeable;
 
 public class TableModel implements Closeable {
+    private static final long COLUMN_FLAG_CHACHED = 1L;
+    private static final long COLUMN_FLAG_INDEXED = 2L;
     private final String name;
     private final int partitionBy;
     private final AppendMemory mem = new AppendMemory();
@@ -48,6 +50,19 @@ public class TableModel implements Closeable {
         this.partitionBy = partitionBy;
     }
 
+    public TableModel cached(boolean cached) {
+        int last = columnBits.size() - 1;
+        assert last > 0;
+        assert ((int) columnBits.getQuick(last - 1) == ColumnType.SYMBOL);
+        long bits = columnBits.getQuick(last);
+        if (cached) {
+            columnBits.setQuick(last, bits | COLUMN_FLAG_CHACHED);
+        } else {
+            columnBits.setQuick(last, bits & ~COLUMN_FLAG_CHACHED);
+        }
+        return this;
+    }
+
     @Override
     public void close() {
         Misc.free(mem);
@@ -58,7 +73,7 @@ public class TableModel implements Closeable {
         columnNames.add(Chars.stringOf(name));
         // set default symbol capacity
         columnBits.add((128L << 32) | type);
-        columnBits.add(1L);
+        columnBits.add(COLUMN_FLAG_CHACHED);
         return this;
     }
 
@@ -95,17 +110,27 @@ public class TableModel implements Closeable {
     }
 
     public boolean getSymbolCacheFlag(int index) {
-        long bits = columnBits.getQuick(index * 2 + 1);
-        return (bits & 1L) == 1L;
+        return (columnBits.getQuick(index * 2 + 1) & COLUMN_FLAG_CHACHED) == COLUMN_FLAG_CHACHED;
     }
 
     public int getSymbolCapacity(int index) {
-        long bits = columnBits.getQuick(index * 2);
-        return (int) (bits >> 32);
+        return (int) (columnBits.getQuick(index * 2) >> 32);
     }
 
     public int getTimestampIndex() {
         return timestampIndex;
+    }
+
+    public TableModel indexed(boolean cached) {
+        int last = columnBits.size() - 1;
+        assert last > 0;
+        long bits = columnBits.getQuick(last);
+        if (cached) {
+            columnBits.setQuick(last, bits | COLUMN_FLAG_INDEXED);
+        } else {
+            columnBits.setQuick(last, bits & ~COLUMN_FLAG_INDEXED);
+        }
+        return this;
     }
 
     public TableModel symbolCapacity(int capacity) {

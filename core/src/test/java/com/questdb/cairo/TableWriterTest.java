@@ -139,17 +139,6 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testAddColumnCannotTouchSymbolMapFile() throws Exception {
-        FilesFacade ff = new FilesFacadeImpl() {
-            @Override
-            public boolean touch(LPSZ path) {
-                return !Chars.endsWith(path, "abc.c") && super.touch(path);
-            }
-        };
-        testAddColumnRecoverableFault(ff);
-    }
-
-    @Test
     public void testAddColumnCannotRemoveMeta() throws Exception {
         class X extends FilesFacadeImpl {
             @Override
@@ -186,6 +175,17 @@ public class TableWriterTest extends AbstractCairoTest {
             @Override
             public boolean rename(LPSZ from, LPSZ to) {
                 return (!Chars.contains(to, TableUtils.META_PREV_FILE_NAME) || --count <= 0) && super.rename(from, to);
+            }
+        };
+        testAddColumnRecoverableFault(ff);
+    }
+
+    @Test
+    public void testAddColumnCannotTouchSymbolMapFile() throws Exception {
+        FilesFacade ff = new FilesFacadeImpl() {
+            @Override
+            public boolean touch(LPSZ path) {
+                return !Chars.endsWith(path, "abc.c") && super.touch(path);
             }
         };
         testAddColumnRecoverableFault(ff);
@@ -620,6 +620,11 @@ public class TableWriterTest extends AbstractCairoTest {
                 Assert.assertEquals(N, writer.size());
             }
         });
+    }
+
+    @Test
+    public void testCachedSymbol() {
+        testSymbolCacheFlag(true);
     }
 
     @Test
@@ -2226,6 +2231,11 @@ public class TableWriterTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testUnCachedSymbol() {
+        testSymbolCacheFlag(false);
+    }
+
     private long append10KNoSupplier(long ts, Rnd rnd, TableWriter writer) {
         int productId = writer.getColumnIndex("productId");
         int productName = writer.getColumnIndex("productName");
@@ -2883,6 +2893,42 @@ public class TableWriterTest extends AbstractCairoTest {
             } catch (CairoException ignore) {
             }
         });
+    }
+
+    private void testSymbolCacheFlag(boolean cacheFlag) {
+        try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)
+                .col("a", ColumnType.SYMBOL).cached(cacheFlag)
+                .col("b", ColumnType.STRING)
+                .timestamp()) {
+            CairoTestUtils.create(model);
+        }
+
+        int N = 1000;
+        Rnd rnd = new Rnd();
+        try (TableWriter writer = new TableWriter(configuration, "x")) {
+            Assert.assertEquals(cacheFlag, writer.isSymbolMapWriterCached(0));
+            for (int i = 0; i < N; i++) {
+                TableWriter.Row r = writer.newRow(0);
+                r.putSym(0, rnd.nextChars(5));
+                r.putStr(1, rnd.nextChars(10));
+                r.append();
+            }
+            writer.commit();
+        }
+
+        try (TableReader reader = new TableReader(configuration, "x")) {
+            rnd.reset();
+            int count = 0;
+            Assert.assertEquals(cacheFlag, reader.isColumnCached(0));
+            while (reader.hasNext()) {
+                Record record = reader.next();
+                TestUtils.assertEquals(rnd.nextChars(5), record.getSym(0));
+                TestUtils.assertEquals(rnd.nextChars(10), record.getFlyweightStr(1));
+                count++;
+            }
+
+            Assert.assertEquals(N, count);
+        }
     }
 
     private void testTruncate(CountingFilesFacade ff, boolean retry) throws Exception {

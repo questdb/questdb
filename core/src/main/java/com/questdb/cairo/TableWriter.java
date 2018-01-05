@@ -952,6 +952,10 @@ public class TableWriter implements Closeable {
         }
     }
 
+    boolean isSymbolMapWriterCached(int columnIndex) {
+        return symbolMapWriters.getQuick(columnIndex).isCached();
+    }
+
     private long openAppend(LPSZ name) {
         long fd = ff.openAppend(name);
         if (fd == -1) {
