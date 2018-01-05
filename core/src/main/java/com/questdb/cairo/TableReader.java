@@ -620,6 +620,10 @@ public class TableReader implements Closeable, RecordCursor {
         columnTops.setPos(capacity / 2);
     }
 
+    boolean isColumnCached(int columnIndex) {
+        return ((SymbolMapReaderImpl) symbolMapReaders.getQuick(columnIndex)).isCached();
+    }
+
     private SymbolMapReader newSymbolMapReaderInstance(int columnIndex) {
         RecordColumnMetadata m = metadata.getColumnQuick(columnIndex);
         if (m.getType() == ColumnType.SYMBOL) {

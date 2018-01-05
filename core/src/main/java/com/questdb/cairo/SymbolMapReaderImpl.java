@@ -187,6 +187,10 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
         }
     }
 
+    boolean isCached() {
+        return cache != null;
+    }
+
     private CharSequence uncachedValue(int key) {
         return charMem.getStr(offsetMem.getLong(SymbolMapWriter.keyToOffset(key)));
     }
