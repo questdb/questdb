@@ -179,8 +179,12 @@ public class TableReaderMetadataCorruptionTest extends AbstractCairoTest {
                     mem.putInt(columnCount);
                     mem.putInt(partitionType);
                     mem.putInt(timestampIndex);
+                    mem.jumpTo(TableUtils.META_OFFSET_COLUMN_TYPES);
+
                     for (int i = 0; i < names.length; i++) {
-                        mem.putInt(types[i]);
+                        mem.putByte((byte) types[i]);
+                        mem.putBool(false);
+                        mem.skip(14);
                     }
                     for (int i = 0; i < names.length; i++) {
                         mem.putStr(names[i]);

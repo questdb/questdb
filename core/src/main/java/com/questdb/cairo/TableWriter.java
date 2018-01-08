@@ -664,10 +664,17 @@ public class TableWriter implements Closeable {
             ddlMem.putInt(columnCount + 1);
             ddlMem.putInt(metaMem.getInt(TableUtils.META_OFFSET_PARTITION_BY));
             ddlMem.putInt(metaMem.getInt(TableUtils.META_OFFSET_TIMESTAMP_INDEX));
+            ddlMem.jumpTo(TableUtils.META_OFFSET_COLUMN_TYPES);
             for (int i = 0; i < columnCount; i++) {
-                ddlMem.putInt(TableUtils.getColumnType(metaMem, i));
+                ddlMem.putByte((byte) TableUtils.getColumnType(metaMem, i));
+                ddlMem.putBool(TableUtils.isColumnIndexed(metaMem, i));
+                ddlMem.putInt(0); // index block capacity; this value should be set when index is created
+                ddlMem.skip(10);
             }
-            ddlMem.putInt(type);
+            ddlMem.putByte((byte) type);
+            ddlMem.putBool(false);
+            ddlMem.putInt(0); // index block capacity, see above
+            ddlMem.skip(10);
 
             long nameOffset = TableUtils.getColumnNameOffset(columnCount);
             for (int i = 0; i < columnCount; i++) {
@@ -977,6 +984,25 @@ public class TableWriter implements Closeable {
         path.trimTo(plen);
     }
 
+    private void openColumnIndex(CharSequence columnName, int columnIndex, int indexBlockCapacity, int plen) {
+        try {
+            BitmapIndexUtils.keyFileName(path.trimTo(plen), columnName);
+
+            if (ff.exists(path)) {
+                return;
+            }
+
+            // reuse memory column object to create index and close it at the end
+            try (AppendMemory mem = getPrimaryColumn(columnIndex)) {
+                mem.of(ff, path, ff.getPageSize());
+                BitmapIndexWriter.initKeyMemory(mem, indexBlockCapacity);
+            }
+            ff.touch(BitmapIndexUtils.valueFileName(path.trimTo(plen), columnName));
+        } finally {
+            path.trimTo(plen);
+        }
+    }
+
     private void openFirstPartition(long timestamp) {
         openPartition(timestamp);
         setAppendPosition(transientRowCount);
@@ -1017,7 +1043,13 @@ public class TableWriter implements Closeable {
             assert columnCount > 0;
 
             for (int i = 0; i < columnCount; i++) {
-                CharSequence name = metadata.getColumnQuick(i).getName();
+                RecordColumnMetadata meta = metadata.getColumnQuick(i);
+                CharSequence name = meta.getName();
+
+                if (meta.isIndexed()) {
+                    openColumnIndex(name, i, meta.getBucketCount(), plen);
+                }
+
                 openColumnFiles(name, i, plen);
                 columnTops.extendAndSet(i, TableUtils.readColumnTop(ff, path, name, plen, tempMem8b));
             }
@@ -1135,10 +1167,14 @@ public class TableWriter implements Closeable {
             } else {
                 ddlMem.putInt(timestampIndex);
             }
+            ddlMem.jumpTo(TableUtils.META_OFFSET_COLUMN_TYPES);
 
             for (int i = 0; i < columnCount; i++) {
                 if (i != index) {
-                    ddlMem.putInt(TableUtils.getColumnType(metaMem, i));
+                    ddlMem.putByte((byte) TableUtils.getColumnType(metaMem, i));
+                    ddlMem.putBool(TableUtils.isColumnIndexed(metaMem, i));
+                    ddlMem.putInt(TableUtils.getIndexBlockCapacity(metaMem, i));
+                    ddlMem.skip(10);
                 }
             }
 

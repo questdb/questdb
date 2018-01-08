@@ -56,7 +56,14 @@ class TableReaderMetadata extends AbstractRecordMetadata implements Closeable {
             for (int i = 0; i < columnCount; i++) {
                 CharSequence name = metaMem.getStr(offset);
                 int index = columnNameIndexMap.keyIndex(name);
-                columnMetadata.add(new TableColumnMetadata(columnNameIndexMap.keyAt(index).toString(), TableUtils.getColumnType(metaMem, i)));
+                columnMetadata.add(
+                        new TableColumnMetadata(
+                                columnNameIndexMap.keyAt(index).toString(),
+                                TableUtils.getColumnType(metaMem, i),
+                                TableUtils.isColumnIndexed(metaMem, i),
+                                TableUtils.getIndexBlockCapacity(metaMem, i)
+                        )
+                );
                 offset += ReadOnlyMemory.getStorageLength(name);
             }
         } catch (AssertionError e) {
@@ -269,6 +276,11 @@ class TableReaderMetadata extends AbstractRecordMetadata implements Closeable {
             offset += ReadOnlyMemory.getStorageLength(name);
         }
         assert name != null;
-        return new TableColumnMetadata(name.toString(), TableUtils.getColumnType(metaMem, index));
+        return new TableColumnMetadata(
+                name.toString(),
+                TableUtils.getColumnType(metaMem, index),
+                TableUtils.isColumnIndexed(metaMem, index),
+                TableUtils.getIndexBlockCapacity(metaMem, index)
+        );
     }
 }

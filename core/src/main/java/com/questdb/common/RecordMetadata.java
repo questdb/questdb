@@ -72,6 +72,9 @@ public interface RecordMetadata {
             sink.putQuoted("index").put(':').put(i).put(',');
             sink.putQuoted("name").put(':').putQuoted(m.getName()).put(',');
             sink.putQuoted("type").put(':').putQuoted(ColumnType.nameOf(m.getType()));
+            if (m.isIndexed()) {
+                sink.put(',').putQuoted("indexed").put(":true");
+            }
             sink.put('}');
         }
         sink.put(']');

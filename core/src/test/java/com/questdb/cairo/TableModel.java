@@ -24,10 +24,7 @@
 package com.questdb.cairo;
 
 import com.questdb.common.ColumnType;
-import com.questdb.std.Chars;
-import com.questdb.std.LongList;
-import com.questdb.std.Misc;
-import com.questdb.std.ObjList;
+import com.questdb.std.*;
 import com.questdb.std.str.Path;
 
 import java.io.Closeable;
@@ -93,6 +90,14 @@ public class TableModel implements Closeable {
         return (int) columnBits.getQuick(index * 2);
     }
 
+    public int getIndexBlockCapacity(int index) {
+        return (int) (columnBits.getQuick(index * 2 + 1) >> 32);
+    }
+
+    public boolean getIndexedFlag(int index) {
+        return (columnBits.getQuick(index * 2 + 1) & COLUMN_FLAG_INDEXED) == COLUMN_FLAG_INDEXED;
+    }
+
     public AppendMemory getMem() {
         return mem;
     }
@@ -121,25 +126,26 @@ public class TableModel implements Closeable {
         return timestampIndex;
     }
 
-    public TableModel indexed(boolean cached) {
-        int last = columnBits.size() - 1;
-        assert last > 0;
-        long bits = columnBits.getQuick(last);
-        if (cached) {
-            columnBits.setQuick(last, bits | COLUMN_FLAG_INDEXED);
+    public TableModel indexed(boolean indexFlag, int indexBlockCapacity) {
+        int pos = columnBits.size() - 1;
+        assert pos > 0;
+        long bits = columnBits.getQuick(pos);
+        if (indexFlag) {
+            assert indexBlockCapacity > 1;
+            columnBits.setQuick(pos, bits | ((long) Numbers.ceilPow2(indexBlockCapacity) << 32) | COLUMN_FLAG_INDEXED);
         } else {
-            columnBits.setQuick(last, bits & ~COLUMN_FLAG_INDEXED);
+            columnBits.setQuick(pos, bits & ~COLUMN_FLAG_INDEXED);
         }
         return this;
     }
 
     public TableModel symbolCapacity(int capacity) {
-        int last = columnBits.size() - 2;
-        assert last > -1;
-        long bits = columnBits.getQuick(last);
+        int pos = columnBits.size() - 2;
+        assert pos > -1;
+        long bits = columnBits.getQuick(pos);
         assert ((int) bits == ColumnType.SYMBOL);
         bits = (((long) capacity) << 32) | (int) bits;
-        columnBits.setQuick(last, bits);
+        columnBits.setQuick(pos, bits);
         return this;
     }
 

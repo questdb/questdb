@@ -29,15 +29,19 @@ import com.questdb.common.SymbolTable;
 class TableColumnMetadata implements RecordColumnMetadata {
     private final int type;
     private final String name;
+    private final boolean indexed;
+    private final int indexBlockCapacity;
 
-    public TableColumnMetadata(String name, int type) {
+    public TableColumnMetadata(String name, int type, boolean indexed, int indexBlockCapacity) {
         this.name = name;
         this.type = type;
+        this.indexed = indexed;
+        this.indexBlockCapacity = indexBlockCapacity;
     }
 
     @Override
     public int getBucketCount() {
-        return 0;
+        return indexBlockCapacity;
     }
 
     @Override
@@ -57,6 +61,6 @@ class TableColumnMetadata implements RecordColumnMetadata {
 
     @Override
     public boolean isIndexed() {
-        return false;
+        return indexed;
     }
 }
