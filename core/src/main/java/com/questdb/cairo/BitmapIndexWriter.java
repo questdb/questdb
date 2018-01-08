@@ -34,8 +34,8 @@ import java.io.Closeable;
 
 public class BitmapIndexWriter implements Closeable {
     private static final Log LOG = LogFactory.getLog(BitmapIndexWriter.class);
-    private final ReadWriteMemory keyMem;
-    private final ReadWriteMemory valueMem;
+    private final ReadWriteMemory keyMem = new ReadWriteMemory();
+    private final ReadWriteMemory valueMem = new ReadWriteMemory();
     private final int blockCapacity;
     private final int blockValueCountMod;
     private final Cursor cursor = new Cursor();
@@ -51,7 +51,7 @@ public class BitmapIndexWriter implements Closeable {
 
         try {
             boolean exists = configuration.getFilesFacade().exists(BitmapIndexUtils.keyFileName(path, name));
-            this.keyMem = new ReadWriteMemory(configuration.getFilesFacade(), path, pageSize);
+            this.keyMem.of(configuration.getFilesFacade(), path, pageSize);
             if (!exists) {
                 LOG.error().$(path).$(" not found").$();
                 throw CairoException.instance(0).put("Index does not exist: ").put(path);
@@ -84,7 +84,7 @@ public class BitmapIndexWriter implements Closeable {
             }
 
             this.valueMemSize = this.keyMem.getLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_VALUE_MEM_SIZE);
-            this.valueMem = new ReadWriteMemory(configuration.getFilesFacade(), BitmapIndexUtils.valueFileName(path.trimTo(plen), name), pageSize);
+            this.valueMem.of(configuration.getFilesFacade(), BitmapIndexUtils.valueFileName(path.trimTo(plen), name), pageSize);
 
             if (this.valueMem.getAppendOffset() != this.valueMemSize) {
                 LOG.error().$("incorrect file size [corrupt] of ").$(path).$(" [expected=").$(this.valueMemSize).$(']').$();
@@ -94,6 +94,7 @@ public class BitmapIndexWriter implements Closeable {
             // block value count is always a power of two
             // to calculate remainder we use faster 'x & (count-1)', which is equivalent to (x % count)
             this.blockValueCountMod = this.keyMem.getInt(BitmapIndexUtils.KEY_RESERVED_OFFSET_BLOCK_VALUE_COUNT) - 1;
+            assert blockValueCountMod > 0;
             this.blockCapacity = (this.blockValueCountMod + 1) * 8 + BitmapIndexUtils.VALUE_BLOCK_FILE_RESERVED;
         } catch (CairoException e) {
             this.close();
@@ -179,12 +180,16 @@ public class BitmapIndexWriter implements Closeable {
     @Override
     public void close() {
         if (keyMem != null) {
-            keyMem.jumpTo(keyMemSize());
+            if (keyMem.isOpen()) {
+                keyMem.jumpTo(keyMemSize());
+            }
             Misc.free(keyMem);
         }
 
         if (valueMem != null) {
-            valueMem.jumpTo(valueMemSize);
+            if (valueMem.isOpen()) {
+                valueMem.jumpTo(valueMemSize);
+            }
             Misc.free(valueMem);
         }
     }

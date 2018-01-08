@@ -45,7 +45,7 @@ public class ReadWriteMemory extends VirtualMemory {
     public void close() {
         long size = getAppendOffset();
         super.close();
-        if (fd != -1) {
+        if (isOpen()) {
             try {
                 AppendMemory.bestEffortClose(ff, LOG, fd, true, size, getMapPageSize());
             } finally {
@@ -84,6 +84,10 @@ public class ReadWriteMemory extends VirtualMemory {
 
     public long getFd() {
         return fd;
+    }
+
+    public boolean isOpen() {
+        return fd != -1;
     }
 
     public final void of(FilesFacade ff, LPSZ name, long pageSize) {

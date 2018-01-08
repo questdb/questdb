@@ -29,10 +29,19 @@ import org.junit.Test;
 
 public class TableColumnMetadataTest {
     @Test
-    public void testLackOfIndexSupport() {
-        TableColumnMetadata metadata = new TableColumnMetadata("x", ColumnType.INT);
+    public void testHasIndex() {
+        TableColumnMetadata metadata = new TableColumnMetadata("x", ColumnType.INT, true, 0);
+        Assert.assertNull(metadata.getSymbolTable());
+        Assert.assertEquals(0, metadata.getBucketCount());
+        Assert.assertTrue(metadata.isIndexed());
+    }
+
+    @Test
+    public void testNoIndex() {
+        TableColumnMetadata metadata = new TableColumnMetadata("x", ColumnType.INT, false, 0);
         Assert.assertNull(metadata.getSymbolTable());
         Assert.assertEquals(0, metadata.getBucketCount());
         Assert.assertFalse(metadata.isIndexed());
     }
+
 }

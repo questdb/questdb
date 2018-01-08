@@ -1646,6 +1646,42 @@ public class TableReaderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testIndex() throws Exception {
+        String expected = "{\"columnCount\":3,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\"SYMBOL\",\"indexed\":true},{\"index\":1,\"name\":\"b\",\"type\":\"INT\"},{\"index\":2,\"name\":\"timestamp\",\"type\":\"TIMESTAMP\"}]}";
+
+        TestUtils.assertMemoryLeak(() -> {
+            try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)
+                    .col("a", ColumnType.SYMBOL).indexed(true, 2)
+                    .col("b", ColumnType.INT)
+                    .timestamp()) {
+                CairoTestUtils.create(model);
+            }
+
+            int N = 1000;
+            final Rnd rnd = new Rnd();
+            try (TableWriter writer = new TableWriter(configuration, "x")) {
+                sink.clear();
+                writer.getMetadata().toJson(sink);
+                TestUtils.assertEquals(expected, sink);
+
+                for (int i = 0; i < N; i++) {
+                    TableWriter.Row row = writer.newRow(0);
+                    row.putSym(0, rnd.nextChars(3));
+                    row.putInt(1, rnd.nextInt());
+                    row.append();
+                }
+                writer.commit();
+            }
+
+            try (TableReader reader = new TableReader(configuration, "x")) {
+                sink.clear();
+                reader.getMetadata().toJson(sink);
+                TestUtils.assertEquals(expected, sink);
+            }
+        });
+    }
+
+    @Test
     public void testNullValueRecovery() throws Exception {
         final String expected = "int\tshort\tbyte\tdouble\tfloat\tlong\tstr\tsym\tbool\tbin\tdate\n" +
                 "NaN\t0\t0\tNaN\tNaN\tNaN\t\tabc\ttrue\t\t\n";
@@ -2382,7 +2418,6 @@ public class TableReaderTest extends AbstractCairoTest {
         ts2 = assertPartialCursor(reader, exp, ts2, increment, blob, count, BATCH8_9_ASSERTER);
         assertPartialCursor(reader, exp, ts2, increment, blob, count, BATCH9_ASSERTER);
     }
-
 
     private void assertCursor(TableReader reader, long ts, long increment, long blob, long expectedSize, RecordAssert asserter) {
         Rnd rnd = new Rnd();

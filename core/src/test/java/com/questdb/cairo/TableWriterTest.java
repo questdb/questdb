@@ -2899,6 +2899,7 @@ public class TableWriterTest extends AbstractCairoTest {
         try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)
                 .col("a", ColumnType.SYMBOL).cached(cacheFlag)
                 .col("b", ColumnType.STRING)
+                .col("c", ColumnType.SYMBOL).cached(!cacheFlag)
                 .timestamp()) {
             CairoTestUtils.create(model);
         }
@@ -2907,6 +2908,7 @@ public class TableWriterTest extends AbstractCairoTest {
         Rnd rnd = new Rnd();
         try (TableWriter writer = new TableWriter(configuration, "x")) {
             Assert.assertEquals(cacheFlag, writer.isSymbolMapWriterCached(0));
+            Assert.assertNotEquals(cacheFlag, writer.isSymbolMapWriterCached(2));
             for (int i = 0; i < N; i++) {
                 TableWriter.Row r = writer.newRow(0);
                 r.putSym(0, rnd.nextChars(5));
@@ -2920,6 +2922,7 @@ public class TableWriterTest extends AbstractCairoTest {
             rnd.reset();
             int count = 0;
             Assert.assertEquals(cacheFlag, reader.isColumnCached(0));
+            Assert.assertNotEquals(cacheFlag, reader.isColumnCached(2));
             while (reader.hasNext()) {
                 Record record = reader.next();
                 TestUtils.assertEquals(rnd.nextChars(5), record.getSym(0));
