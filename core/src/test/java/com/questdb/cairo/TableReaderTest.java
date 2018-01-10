@@ -1646,11 +1646,11 @@ public class TableReaderTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testIndex() throws Exception {
+    public void testSymbolIndex() throws Exception {
         String expected = "{\"columnCount\":3,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\"SYMBOL\",\"indexed\":true},{\"index\":1,\"name\":\"b\",\"type\":\"INT\"},{\"index\":2,\"name\":\"timestamp\",\"type\":\"TIMESTAMP\"}]}";
 
         TestUtils.assertMemoryLeak(() -> {
-            try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)
+            try (TableModel model = new TableModel(configuration, "x", PartitionBy.DAY)
                     .col("a", ColumnType.SYMBOL).indexed(true, 2)
                     .col("b", ColumnType.INT)
                     .timestamp()) {
@@ -1658,6 +1658,7 @@ public class TableReaderTest extends AbstractCairoTest {
             }
 
             int N = 1000;
+            long ts = DateFormatUtils.parseDateTime("2018-01-06T10:00:00.000Z");
             final Rnd rnd = new Rnd();
             try (TableWriter writer = new TableWriter(configuration, "x")) {
                 sink.clear();
@@ -1665,12 +1666,12 @@ public class TableReaderTest extends AbstractCairoTest {
                 TestUtils.assertEquals(expected, sink);
 
                 for (int i = 0; i < N; i++) {
-                    TableWriter.Row row = writer.newRow(0);
+                    TableWriter.Row row = writer.newRow(ts + ((long) i) * 2 * 360000000L);
                     row.putSym(0, rnd.nextChars(3));
                     row.putInt(1, rnd.nextInt());
                     row.append();
+                    writer.commit();
                 }
-                writer.commit();
             }
 
             try (TableReader reader = new TableReader(configuration, "x")) {
