@@ -41,6 +41,19 @@ public class BitmapIndexTest extends AbstractCairoTest {
     private Path path;
     private int plen;
 
+    public static void create(CairoConfiguration configuration, Path path, CharSequence name, int valueBlockCapacity) {
+        int plen = path.length();
+        try {
+            FilesFacade ff = configuration.getFilesFacade();
+            try (AppendMemory mem = new AppendMemory(ff, BitmapIndexUtils.keyFileName(path, name), ff.getPageSize())) {
+                BitmapIndexWriter.initKeyMemory(mem, valueBlockCapacity);
+            }
+            ff.touch(BitmapIndexUtils.valueFileName(path.trimTo(plen), name));
+        } finally {
+            path.trimTo(plen);
+        }
+    }
+
     @Before
     public void setUp0() {
         path = new Path().of(configuration.getRoot());
@@ -59,7 +72,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
     public void testAdd() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             LongList list = new LongList();
-            BitmapIndexWriter.create(configuration, path.trimTo(plen), "x", 4);
+            create(configuration, path.trimTo(plen), "x", 4);
             try (BitmapIndexWriter writer = new BitmapIndexWriter(configuration, path, "x")) {
                 writer.add(0, 1000);
                 writer.add(256, 1234);
@@ -86,11 +99,6 @@ public class BitmapIndexTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testConcurrentWriterAndReadHeight() throws Exception {
-        testConcurrentRW(1000000, 100000);
-    }
-
-    @Test
     public void testAdd1MValues() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             Rnd rnd = new Rnd();
@@ -102,7 +110,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
 
             // we need to have a conventional structure, which will unfortunately be memory-inefficient, to
             // assert that index is populated correctly
-            BitmapIndexWriter.create(configuration, path.trimTo(plen), "x", 128);
+            create(configuration, path.trimTo(plen), "x", 128);
             try (BitmapIndexWriter writer = new BitmapIndexWriter(configuration, path, "x")) {
                 for (int i = 0; i < N; i++) {
                     int key = i % maxKeys;
@@ -167,7 +175,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
 
     @Test
     public void testBackwardReaderKeyUpdateFail() {
-        BitmapIndexWriter.create(configuration, path.trimTo(plen), "x", 1024);
+        create(configuration, path.trimTo(plen), "x", 1024);
 
         try (BitmapIndexWriter writer = new BitmapIndexWriter(configuration, path, "x")) {
             writer.add(0, 1000);
@@ -224,21 +232,14 @@ public class BitmapIndexTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testIndexDoesNotExist() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            try {
-                new BitmapIndexWriter(configuration, path, "x");
-                Assert.fail();
-            } catch (CairoException e) {
-                Assert.assertTrue(Chars.contains(e.getMessage(), "does not exist"));
-            }
-        });
+    public void testConcurrentWriterAndReadHeight() throws Exception {
+        testConcurrentRW(1000000, 100000);
     }
 
     @Test
     public void testCursorTimeout() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            BitmapIndexWriter.create(configuration, path.trimTo(plen), "x", 1024);
+            create(configuration, path.trimTo(plen), "x", 1024);
 
             try (BitmapIndexWriter w = new BitmapIndexWriter(configuration, path.trimTo(plen), "x")) {
                 w.add(0, 10);
@@ -275,9 +276,49 @@ public class BitmapIndexTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testIndexDoesNotExist() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try {
+                new BitmapIndexWriter(configuration, path, "x");
+                Assert.fail();
+            } catch (CairoException e) {
+                Assert.assertTrue(Chars.contains(e.getMessage(), "does not exist"));
+            }
+        });
+    }
+
+    @Test
+    public void testIntIndex() throws Exception {
+        final int plen = path.length();
+        final Rnd rnd = new Rnd();
+        int N = 100000000;
+        final int MOD = 1024;
+        TestUtils.assertMemoryLeak(() -> {
+            try (AppendMemory mem = new AppendMemory()) {
+
+                mem.of(configuration.getFilesFacade(), path.concat("x.dat").$(), configuration.getFilesFacade().getMapPageSize());
+
+                for (int i = 0; i < N; i++) {
+                    mem.putInt(rnd.nextPositiveInt() & (MOD - 1));
+                }
+
+                try (SlidingWindowMemory rwin = new SlidingWindowMemory()) {
+                    rwin.of(mem);
+
+                    create(configuration, path.trimTo(plen), "x", N / MOD / 128);
+                    try (BitmapIndexWriter writer = new BitmapIndexWriter()) {
+                        writer.of(configuration, path.trimTo(plen), "x");
+                        BitmapIndexWriter.indexInts(rwin, writer, 0, N);
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testLimitBackwardCursor() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            BitmapIndexWriter.create(configuration, path.trimTo(plen), "x", 128);
+            create(configuration, path.trimTo(plen), "x", 128);
 
             try (BitmapIndexWriter writer = new BitmapIndexWriter(configuration, path.trimTo(plen), "x")) {
                 for (int i = 0; i < 265; i++) {
@@ -305,7 +346,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             Rnd rnd = new Rnd();
 
-            BitmapIndexWriter.create(configuration, path.trimTo(plen), "x", 1024);
+            create(configuration, path.trimTo(plen), "x", 1024);
 
             class CountingFacade extends FilesFacadeImpl {
                 private int count = 0;
@@ -387,7 +428,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
             }
 
             Rnd rnd = new Rnd();
-            BitmapIndexWriter.create(configuration, path.trimTo(plen), "x", 1024);
+            create(configuration, path.trimTo(plen), "x", 1024);
             try (BitmapIndexWriter writer = new BitmapIndexWriter(configuration, path.trimTo(plen), "x")) {
                 for (int i = 0; i < N; i++) {
                     writer.add(rnd.nextPositiveInt() % maxKeys, i);
@@ -590,7 +631,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
             AtomicInteger errors = new AtomicInteger();
 
             // create empty index
-            BitmapIndexWriter.create(configuration, path.trimTo(plen), "x", 1024);
+            create(configuration, path.trimTo(plen), "x", 1024);
 
             new Thread(() -> {
                 try {

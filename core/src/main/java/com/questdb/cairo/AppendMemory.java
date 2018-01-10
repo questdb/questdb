@@ -47,11 +47,21 @@ public class AppendMemory extends VirtualMemory {
         close(true);
     }
 
-    @Override
-    protected long mapWritePage(int page) {
+    public final void setSize(long size) {
+        jumpTo(size);
+    }
+
+    public void truncate() {
+        if (fd == -1) {
+            // are we closed ?
+            return;
+        }
+
         releaseCurrentPage();
-        long address = mapPage(page);
-        return pageAddress = address;
+        if (!ff.truncate(fd, getMapPageSize())) {
+            throw CairoException.instance(ff.errno()).put("Cannot truncate fd=").put(fd).put(" to ").put(getMapPageSize()).put(" bytes");
+        }
+        updateLimits(0, pageAddress = mapPage(0));
     }
 
     public final void close(boolean truncate) {
@@ -67,10 +77,6 @@ public class AppendMemory extends VirtualMemory {
         }
     }
 
-    public final void setSize(long size) {
-        jumpTo(size);
-    }
-
     public long getFd() {
         return fd;
     }
@@ -84,6 +90,16 @@ public class AppendMemory extends VirtualMemory {
             throw CairoException.instance(ff.errno()).put("Cannot open ").put(name);
         }
         LOG.info().$("open ").$(name).$(" [fd=").$(fd).$(']').$();
+    }
+
+    FilesFacade getFilesFacade() {
+        return ff;
+    }
+
+    @Override
+    protected long mapWritePage(int page) {
+        releaseCurrentPage();
+        return pageAddress = mapPage(page);
     }
 
     static void bestEffortClose(FilesFacade ff, Log log, long fd, boolean truncate, long size, long mapPageSize) {
@@ -109,19 +125,6 @@ public class AppendMemory extends VirtualMemory {
         } finally {
             ff.close(fd);
         }
-    }
-
-    public void truncate() {
-        if (fd == -1) {
-            // are we closed ?
-            return;
-        }
-
-        releaseCurrentPage();
-        if (!ff.truncate(fd, getMapPageSize())) {
-            throw CairoException.instance(ff.errno()).put("Cannot truncate fd=").put(fd).put(" to ").put(getMapPageSize()).put(" bytes");
-        }
-        updateLimits(0, pageAddress = mapPage(0));
     }
 
     @Override
