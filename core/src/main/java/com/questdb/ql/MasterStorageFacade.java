@@ -31,8 +31,8 @@ public class MasterStorageFacade implements StorageFacade {
     private RecordMetadata metadata;
 
     @Override
-    public SymbolTable getSymbolTable(int index) {
-        return metadata.getColumnQuick(index).getSymbolTable();
+    public SymbolTable getSymbolTable(int columnIndex) {
+        return metadata.getColumnQuick(columnIndex).getSymbolTable();
     }
 
     public MasterStorageFacade of(RecordMetadata metadata) {
