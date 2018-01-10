@@ -36,8 +36,8 @@ public class SplitRecordStorageFacade implements StorageFacade {
     }
 
     @Override
-    public SymbolTable getSymbolTable(int index) {
-        return index < split ? a.getSymbolTable(index) : b.getSymbolTable(index - split);
+    public SymbolTable getSymbolTable(int columnIndex) {
+        return columnIndex < split ? a.getSymbolTable(columnIndex) : b.getSymbolTable(columnIndex - split);
     }
 
     public void prepare(StorageFacade a, StorageFacade b) {

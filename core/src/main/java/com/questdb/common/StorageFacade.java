@@ -24,5 +24,5 @@
 package com.questdb.common;
 
 public interface StorageFacade {
-    SymbolTable getSymbolTable(int index);
+    SymbolTable getSymbolTable(int columnIndex);
 }

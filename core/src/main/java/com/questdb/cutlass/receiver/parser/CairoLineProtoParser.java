@@ -261,12 +261,20 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
             int count = columnNameType.size() / 2;
             mem.putInt(count + 1);       // number of columns gathered + timestamp
             mem.putInt(PartitionBy.NONE);     // not available on protocol
-            mem.putInt(count);                // timestamp is always last
+            mem.putInt(count);                // timestamp is always last column
+            mem.jumpTo(TableUtils.META_OFFSET_COLUMN_TYPES);
+
             for (int i = 0; i < count; i++) {
                 // type is second value in pair
-                mem.putInt((int) columnNameType.getQuick(i * 2 + 1));
+                mem.putByte((byte) columnNameType.getQuick(i * 2 + 1));
+                mem.putBool(false);
+                mem.putInt(0);
+                mem.skip(10); // reserved
             }
-            mem.putInt(ColumnType.TIMESTAMP);
+            mem.putByte((byte) ColumnType.TIMESTAMP);
+            mem.putBool(false);
+            mem.putInt(0);
+            mem.skip(10); // reserved
 
             for (int i = 0; i < count; i++) {
                 mem.putStr(cache.get(columnNameType.getQuick(i * 2)));

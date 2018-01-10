@@ -39,9 +39,9 @@ public final class TableUtils {
     public static final int TABLE_RESERVED = 2;
     public static final String META_FILE_NAME = "_meta";
     public static final String TXN_FILE_NAME = "_txn";
+    public static final long META_OFFSET_COLUMN_TYPES = 128;
     static final byte TODO_RESTORE_META = 2;
     static final byte TODO_TRUNCATE = 1;
-    static final long META_OFFSET_COLUMN_TYPES = 128;
     static final DateFormat fmtDay;
     static final DateFormat fmtMonth;
     static final DateFormat fmtYear;
