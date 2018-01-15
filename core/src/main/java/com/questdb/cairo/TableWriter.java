@@ -48,6 +48,8 @@ public class TableWriter implements Closeable {
     private static final CharSequenceHashSet IGNORED_FILES = new CharSequenceHashSet();
     private static final Runnable NOOP = () -> {
     };
+    private final static RemoveFileLambda REMOVE_OR_LOG = TableWriter::removeFileAndOrLog;
+    private final static RemoveFileLambda REMOVE_OR_EXCEPTION = TableWriter::removeOrException;
     final ObjList<AppendMemory> columns;
     private final ObjList<SymbolMapWriter> symbolMapWriters;
     private final ObjList<SymbolMapWriter> denseSymbolMapWriters;
@@ -214,6 +216,8 @@ public class TableWriter implements Closeable {
         if (type == ColumnType.SYMBOL) {
             removeSymbolMapFilesLoud(name);
         }
+
+        removeColumnFiles(name, REMOVE_OR_EXCEPTION);
 
         // create new _meta.swp
         this.metaSwapIndex = addColumnToMeta(name, type);
@@ -430,7 +434,7 @@ public class TableWriter implements Closeable {
             removeTodoFile();
 
             // remove column files has to be done after _todo is removed
-            removeColumnFiles(name);
+            removeColumnFiles(name, REMOVE_OR_LOG);
 
             if (type == ColumnType.SYMBOL) {
                 removeSymbolMapFilesQuiet(name);
@@ -525,7 +529,7 @@ public class TableWriter implements Closeable {
         }
     }
 
-    private static void removeOrException(FilesFacade ff, Path path) {
+    private static void removeOrException(FilesFacade ff, LPSZ path) {
         if (ff.exists(path) && !ff.remove(path)) {
             throw CairoException.instance(ff.errno()).put("Cannot remove ").put(path);
         }
@@ -1204,7 +1208,7 @@ public class TableWriter implements Closeable {
         nullers.remove(index);
     }
 
-    private void removeColumnFiles(CharSequence name) {
+    private void removeColumnFiles(CharSequence name, RemoveFileLambda removeLambda) {
         try {
             ff.iterateDir(path.$(), (file, type) -> {
                 nativeLPSZ.of(file);
@@ -1212,9 +1216,9 @@ public class TableWriter implements Closeable {
                     path.trimTo(rootLen);
                     path.concat(nativeLPSZ);
                     int plen = path.length();
-                    removeFileAndOrLog(ff, TableUtils.dFile(path, name));
-                    removeFileAndOrLog(ff, TableUtils.iFile(path.trimTo(plen), name));
-                    removeFileAndOrLog(ff, TableUtils.topFile(path.trimTo(plen), name));
+                    removeLambda.remove(ff, TableUtils.dFile(path, name));
+                    removeLambda.remove(ff, TableUtils.iFile(path.trimTo(plen), name));
+                    removeLambda.remove(ff, TableUtils.topFile(path.trimTo(plen), name));
                 }
             });
         } finally {
@@ -1621,6 +1625,11 @@ public class TableWriter implements Closeable {
         } finally {
             path.trimTo(rootLen);
         }
+    }
+
+    @FunctionalInterface
+    private interface RemoveFileLambda {
+        void remove(FilesFacade ff, LPSZ name);
     }
 
     private interface ColumnIndexer {
