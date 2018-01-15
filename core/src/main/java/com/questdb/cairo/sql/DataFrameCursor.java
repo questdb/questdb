@@ -21,9 +21,16 @@
  *
  ******************************************************************************/
 
-package com.questdb.common;
+package com.questdb.cairo.sql;
 
-@FunctionalInterface
-public interface StorageFacade {
-    SymbolTable getSymbolTable(int columnIndex);
+import com.questdb.common.RecordMetadata;
+import com.questdb.common.StorageFacade;
+import com.questdb.std.ImmutableIterator;
+
+public interface DataFrameCursor extends ImmutableIterator<DataFrame>, StorageFacade {
+    void closeCursor();
+
+    RecordMetadata getMetadata();
+
+    void toTop();
 }

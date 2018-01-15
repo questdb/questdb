@@ -40,7 +40,7 @@ public class IntIntHashMap implements Mutable {
         this(8);
     }
 
-    private IntIntHashMap(int initialCapacity) {
+    public IntIntHashMap(int initialCapacity) {
         this(initialCapacity, 0.5f);
     }
 
@@ -64,66 +64,56 @@ public class IntIntHashMap implements Mutable {
     }
 
     public int get(int key) {
+        return valueAt(keyIndex(key));
+    }
+
+    public int keyIndex(int key) {
         int index = key & mask;
-        if (Unsafe.arrayGet(values, index) == noEntryValue || Unsafe.arrayGet(keys, index) == key) {
-            return Unsafe.arrayGet(values, index);
+        if (Unsafe.arrayGet(values, index) == noEntryValue) {
+            return index;
         }
+
+        if (Unsafe.arrayGet(keys, index) == key) {
+            return -index - 1;
+        }
+
         return probe(key, index);
     }
 
     public void put(int key, int value) {
-        insertKey(key, value);
-        if (free == 0) {
-            rehash();
+        putAt(keyIndex(key), key, value);
+    }
+
+    public void putAt(int index, int key, int value) {
+        if (index < 0) {
+            Unsafe.arrayPut(values, -index - 1, value);
+        } else {
+            Unsafe.arrayPut(keys, index, key);
+            Unsafe.arrayPut(values, index, value);
+            if (--free == 0) {
+                rehash();
+            }
         }
     }
 
-    private void insertKey(int key, int value) {
-        int index = key & mask;
-        if (Unsafe.arrayGet(values, index) == noEntryValue) {
-            Unsafe.arrayPut(keys, index, key);
-            Unsafe.arrayPut(values, index, value);
-            free--;
-            return;
-        }
-
-        if (Unsafe.arrayGet(keys, index) == key) {
-            Unsafe.arrayPut(values, index, value);
-            return;
-        }
-
-        probeInsert(key, index, value);
+    public int valueAt(int index) {
+        return index < 0 ? Unsafe.arrayGet(values, -index - 1) : noEntryValue;
     }
 
     private int probe(int key, int index) {
         do {
             index = (index + 1) & mask;
-            if (Unsafe.arrayGet(values, index) == noEntryValue || Unsafe.arrayGet(keys, index) == key) {
-                return Unsafe.arrayGet(values, index);
-            }
-        } while (true);
-    }
-
-    private void probeInsert(int key, int index, int value) {
-        do {
-            index = (index + 1) & mask;
             if (Unsafe.arrayGet(values, index) == noEntryValue) {
-                Unsafe.arrayPut(keys, index, key);
-                Unsafe.arrayPut(values, index, value);
-                free--;
-                return;
+                return index;
             }
-
             if (key == Unsafe.arrayGet(keys, index)) {
-                Unsafe.arrayPut(values, index, value);
-                return;
+                return -index - 1;
             }
         } while (true);
     }
 
     @SuppressWarnings({"unchecked"})
     private void rehash() {
-
         int newCapacity = values.length << 1;
         mask = newCapacity - 1;
 
@@ -137,7 +127,7 @@ public class IntIntHashMap implements Mutable {
 
         for (int i = oldKeys.length; i-- > 0; ) {
             if (Unsafe.arrayGet(oldValues, i) != noEntryValue) {
-                insertKey(Unsafe.arrayGet(oldKeys, i), Unsafe.arrayGet(oldValues, i));
+                put(Unsafe.arrayGet(oldKeys, i), Unsafe.arrayGet(oldValues, i));
             }
         }
     }

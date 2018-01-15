@@ -171,9 +171,9 @@ public class PerformanceTest extends AbstractTest {
                     t = System.nanoTime();
                 }
 
-                reader.toTop();
-                while (reader.hasNext()) {
-                    Record r = reader.next();
+                RecordCursor cursor = reader.getCursor();
+                while (cursor.hasNext()) {
+                    Record r = cursor.next();
                     r.getDate(0);
                     r.getSym(1);
                     r.getDouble(2);

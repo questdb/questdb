@@ -145,6 +145,7 @@ public class BitmapIndexWriter implements Closeable {
     }
 
     final public void of(CairoConfiguration configuration, Path path, CharSequence name) {
+        close();
         long pageSize = configuration.getFilesFacade().getMapPageSize();
         int plen = path.length();
 
