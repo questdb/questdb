@@ -21,9 +21,16 @@
  *
  ******************************************************************************/
 
-package com.questdb.common;
+package com.questdb.cairo.sql;
 
-@FunctionalInterface
-public interface StorageFacade {
-    SymbolTable getSymbolTable(int columnIndex);
+import com.questdb.cairo.BitmapIndexReader;
+
+public interface DataFrame {
+    BitmapIndexReader getBitmapIndexReader(int columnIndex);
+
+    int getPartitionIndex();
+
+    long getRowHi();
+
+    long getRowLo();
 }

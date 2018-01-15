@@ -279,10 +279,10 @@ public class TableWriter implements Closeable {
     @Override
     public void close() {
         if (isOpen()) {
-            closeColumns(true);
-            closeSymbolMapWriters();
-            closeIndexers();
-            closeTxMem();
+            freeColumns(true);
+            freeSymbolMapWriters();
+            freeIndexers();
+            freeTxMem();
             Misc.free(metaMem);
             Misc.free(columnSizeMem);
             Misc.free(ddlMem);
@@ -449,7 +449,7 @@ public class TableWriter implements Closeable {
 
     public void rollback() {
         if (inTransaction()) {
-            closeColumns(false);
+            freeColumns(false);
             columnSizeMem.jumpTo(0);
             configureAppendPosition();
             purgeUnusedPartitions();
@@ -488,7 +488,7 @@ public class TableWriter implements Closeable {
         }
 
         if (partitionBy != PartitionBy.NONE) {
-            closeColumns(false);
+            freeColumns(false);
             removePartitionDirectories();
             rowFunction = openPartitionFunction;
         }
@@ -715,7 +715,7 @@ public class TableWriter implements Closeable {
         if (transientRowCount == 0) {
             if (partitionBy != PartitionBy.NONE) {
                 // we have to undo creation of partition
-                closeColumns(false);
+                freeColumns(false);
                 if (removeDirOnCancelRow) {
                     try {
                         setStateForTimestamp(maxTimestamp, false);
@@ -736,7 +736,7 @@ public class TableWriter implements Closeable {
                         setAppendPosition(prevTransientRowCount);
                         txPartitionCount--;
                     } catch (CairoException e) {
-                        closeColumns(false);
+                        freeColumns(false);
                         throw e;
                     }
                 } else {
@@ -778,47 +778,6 @@ public class TableWriter implements Closeable {
             }
         }
         refs.fill(0, columnCount, --masterRef);
-    }
-
-    private void closeColumns(boolean truncate) {
-        if (columns != null) {
-            for (int i = 0, n = columns.size(); i < n; i++) {
-                AppendMemory m = columns.getQuick(i);
-                if (m != null) {
-                    m.close(truncate);
-                }
-            }
-        }
-    }
-
-    private void closeIndexers() {
-        if (indexers != null) {
-            for (int i = 0, n = indexers.size(); i < n; i++) {
-                Misc.free(indexers.getQuick(i));
-            }
-            indexers.clear();
-            denseIndexers.clear();
-        }
-    }
-
-    private void closeSymbolMapWriters() {
-        if (denseSymbolMapWriters != null) {
-            for (int i = 0, n = denseSymbolMapWriters.size(); i < n; i++) {
-                Misc.free(denseSymbolMapWriters.getQuick(i));
-            }
-            symbolMapWriters.clear();
-        }
-
-        if (symbolMapWriters != null) {
-            symbolMapWriters.clear();
-        }
-    }
-
-    private void closeTxMem() {
-        if (txMem != null) {
-            txMem.jumpTo(getTxEofOffset());
-            txMem.close();
-        }
     }
 
     private void commitPendingPartitions() {
@@ -993,10 +952,51 @@ public class TableWriter implements Closeable {
         symbolMapWriters.extendAndSet(columnCount, w);
     }
 
+    private void freeColumns(boolean truncate) {
+        if (columns != null) {
+            for (int i = 0, n = columns.size(); i < n; i++) {
+                AppendMemory m = columns.getQuick(i);
+                if (m != null) {
+                    m.close(truncate);
+                }
+            }
+        }
+    }
+
+    private void freeIndexers() {
+        if (indexers != null) {
+            for (int i = 0, n = indexers.size(); i < n; i++) {
+                Misc.free(indexers.getQuick(i));
+            }
+            indexers.clear();
+            denseIndexers.clear();
+        }
+    }
+
+    private void freeSymbolMapWriters() {
+        if (denseSymbolMapWriters != null) {
+            for (int i = 0, n = denseSymbolMapWriters.size(); i < n; i++) {
+                Misc.free(denseSymbolMapWriters.getQuick(i));
+            }
+            symbolMapWriters.clear();
+        }
+
+        if (symbolMapWriters != null) {
+            symbolMapWriters.clear();
+        }
+    }
+
     private void freeTempMem() {
         if (tempMem8b != 0) {
             Unsafe.free(tempMem8b, 8);
             tempMem8b = 0;
+        }
+    }
+
+    private void freeTxMem() {
+        if (txMem != null) {
+            txMem.jumpTo(getTxEofOffset());
+            txMem.close();
         }
     }
 

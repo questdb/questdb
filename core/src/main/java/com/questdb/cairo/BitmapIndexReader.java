@@ -21,9 +21,14 @@
  *
  ******************************************************************************/
 
-package com.questdb.common;
+package com.questdb.cairo;
 
-@FunctionalInterface
-public interface StorageFacade {
-    SymbolTable getSymbolTable(int columnIndex);
+import java.io.Closeable;
+
+public interface BitmapIndexReader extends Closeable {
+    @Override
+    default void close() {
+    }
+
+    BitmapIndexCursor getCursor(int key, long maxValue);
 }

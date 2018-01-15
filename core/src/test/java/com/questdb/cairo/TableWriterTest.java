@@ -23,10 +23,7 @@
 
 package com.questdb.cairo;
 
-import com.questdb.common.ColumnType;
-import com.questdb.common.NumericException;
-import com.questdb.common.PartitionBy;
-import com.questdb.common.Record;
+import com.questdb.common.*;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.std.*;
@@ -2186,8 +2183,9 @@ public class TableWriterTest extends AbstractCairoTest {
         rnd.reset();
         try (TableReader reader = new TableReader(configuration, name)) {
             int col = reader.getMetadata().getColumnIndex("секьюрити");
-            while (reader.hasNext()) {
-                Record r = reader.next();
+            RecordCursor cursor = reader.getCursor();
+            while (cursor.hasNext()) {
+                Record r = cursor.next();
                 TestUtils.assertEquals(rnd.nextChars(5), r.getFlyweightStr(col));
             }
         }
@@ -2923,8 +2921,9 @@ public class TableWriterTest extends AbstractCairoTest {
             int count = 0;
             Assert.assertEquals(cacheFlag, reader.isColumnCached(0));
             Assert.assertNotEquals(cacheFlag, reader.isColumnCached(2));
-            while (reader.hasNext()) {
-                Record record = reader.next();
+            RecordCursor cursor = reader.getCursor();
+            while (cursor.hasNext()) {
+                Record record = cursor.next();
                 TestUtils.assertEquals(rnd.nextChars(5), record.getSym(0));
                 TestUtils.assertEquals(rnd.nextChars(10), record.getFlyweightStr(1));
                 count++;

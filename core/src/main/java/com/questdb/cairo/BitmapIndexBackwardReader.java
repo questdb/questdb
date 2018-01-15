@@ -30,9 +30,7 @@ import com.questdb.std.Unsafe;
 import com.questdb.std.microtime.MicrosecondClock;
 import com.questdb.std.str.Path;
 
-import java.io.Closeable;
-
-public class BitmapIndexBackwardReader implements Closeable {
+public class BitmapIndexBackwardReader implements BitmapIndexReader {
     private final static Log LOG = LogFactory.getLog(BitmapIndexBackwardReader.class);
     private final ReadOnlyMemory keyMem;
     private final ReadOnlyMemory valueMem;
@@ -110,7 +108,7 @@ public class BitmapIndexBackwardReader implements Closeable {
         Misc.free(valueMem);
     }
 
-
+    @Override
     public BitmapIndexCursor getCursor(int key, long maxValue) {
 
         if (key >= keyCount) {
