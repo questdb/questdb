@@ -264,7 +264,7 @@ public class TableReader implements Closeable {
     public BitmapIndexReader getBitmapIndexReader(int columnBase, int columnIndex) {
         int index = bitmapIndexReaderCache.keyIndex(columnBase + columnIndex);
         if (index < 0) {
-            return bitmapIndexReaders.getQuick(bitmapIndexReaderCache.valueAt(-index - 1));
+            return bitmapIndexReaders.getQuick(bitmapIndexReaderCache.valueAt(index));
         }
 
         Path path = partitionPathGenerator.generate(this, getPartitionIndex(columnBase));
