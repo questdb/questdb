@@ -670,6 +670,12 @@ public class TableReader implements Closeable {
         try {
             Path path = partitionPathGenerator.generate(this, partitionIndex);
             if (ff.exists(path)) {
+                if (reloadMethod == FIRST_TIME_PARTITIONED_RELOAD_METHOD) {
+                    reloadMethod = PARTITIONED_RELOAD_METHOD;
+                } else if (reloadMethod == FIRST_TIME_NON_PARTITIONED_RELOAD_METHOD) {
+                    reloadMethod = NON_PARTITIONED_RELOAD_METHOD;
+                }
+
                 path.chopZ();
 
                 final long partitionSize = partitionIndex == partitionCount - 1 ? transientRowCount : readPartitionSize(ff, path, tempMem8b);
@@ -785,6 +791,46 @@ public class TableReader implements Closeable {
             LockSupport.parkNanos(1);
         }
         return true;
+    }
+
+    private void reloadColumnAt(Path path, ObjList<ReadOnlyColumn> columns, LongList columnTops, int columnIndex, int columnBase, long partitionRowCount) {
+        int plen = path.length();
+        try {
+            String name = metadata.getColumnName(columnIndex);
+            ReadOnlyMemory mem1 = (ReadOnlyMemory) columns.getQuick(getPrimaryColumnIndex(columnBase, columnIndex));
+            ReadOnlyMemory mem2 = (ReadOnlyMemory) columns.getQuick(getSecondaryColumnIndex(columnBase, columnIndex));
+            if (ff.exists(TableUtils.dFile(path.trimTo(plen), name))) {
+
+                int type = metadata.getColumnQuick(columnIndex).getType();
+
+//                ReadOnlyColumn mem1 = new ReadOnlyMemory(ff, path, ff.getMapPageSize(), 0);
+                mem1.of(ff, path, ff.getMapPageSize(), 0);
+                long columnTop = TableUtils.readColumnTop(ff, path.trimTo(plen), name, plen, tempMem8b);
+
+                switch (type) {
+                    case ColumnType.BINARY:
+                    case ColumnType.STRING:
+//                        ReadOnlyColumn mem2 = new ReadOnlyMemory(ff, TableUtils.iFile(path.trimTo(plen), name), ff.getMapPageSize(), 0);
+                        mem2.of(ff, TableUtils.iFile(path.trimTo(plen), name), ff.getMapPageSize(), 0);
+                        columns.setQuick(getPrimaryColumnIndex(columnBase, columnIndex), mem1);
+                        columns.setQuick(getSecondaryColumnIndex(columnBase, columnIndex), mem2);
+                        growColumn(mem1, mem2, type, partitionRowCount - columnTop);
+                        break;
+                    default:
+                        columns.setQuick(getPrimaryColumnIndex(columnBase, columnIndex), mem1);
+                        growColumn(mem1, null, type, partitionRowCount - columnTop);
+                        break;
+                }
+                columnTops.setQuick(columnBase / 2 + columnIndex, columnTop);
+            } else {
+                Misc.free(mem1);
+                Misc.free(mem2);
+                columns.setQuick(getPrimaryColumnIndex(columnBase, columnIndex), NullColumn.INSTANCE);
+                columns.setQuick(getSecondaryColumnIndex(columnBase, columnIndex), NullColumn.INSTANCE);
+            }
+        } finally {
+            path.trimTo(plen);
+        }
     }
 
     private boolean reloadInitialNonPartitioned() {
@@ -914,6 +960,12 @@ public class TableReader implements Closeable {
                         final int copyFrom = Unsafe.getUnsafe().getInt(pIndexBase + i * 8) - 1;
 
                         if (copyFrom == i) {
+                            // check if this column has been deleted
+                            ReadOnlyColumn col = columns.getQuick(getPrimaryColumnIndex(base, i));
+                            if (col == null || col instanceof NullColumn || ff.exists(col.getFd())) {
+                                continue;
+                            }
+                            reloadColumnAt(path, columns, columnTops, i, base, partitionRowCount);
                             continue;
                         }
 
@@ -943,7 +995,6 @@ public class TableReader implements Closeable {
         int capacity = getColumnBase(partitionCount);
         columns.setPos(capacity);
         this.partitionRowCounts.seed(partitionCount, -1);
-        this.columnTops = new LongList(capacity / 2);
         this.columnTops.setPos(capacity / 2);
     }
 
