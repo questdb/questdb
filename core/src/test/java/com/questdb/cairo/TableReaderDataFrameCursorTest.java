@@ -35,30 +35,81 @@ import org.junit.Test;
 public class TableReaderDataFrameCursorTest extends AbstractCairoTest {
 
     @Test
-    public void testIndexReadByDay() throws Exception {
-        testIndexRead(PartitionBy.DAY, 1000000 * 60 * 5, 3);
+    public void testRollbackSymbolIndexByDay() throws Exception {
+        testSymbolIndexReadAfterRollback(PartitionBy.DAY, 1000000 * 60 * 5, 3);
     }
 
     @Test
-    public void testIndexReadByMonth() throws Exception {
-        testIndexRead(PartitionBy.MONTH, 1000000 * 60 * 5 * 24L, 2);
+    public void testRollbackSymbolIndexByMonth() throws Exception {
+        testSymbolIndexReadAfterRollback(PartitionBy.MONTH, 1000000 * 60 * 5 * 24L, 2);
     }
 
     @Test
-    public void testIndexReadByNone() throws Exception {
-        testIndexRead(PartitionBy.NONE, 1000000 * 60 * 5, 0);
+    public void testRollbackSymbolIndexByNone() throws Exception {
+        testSymbolIndexReadAfterRollback(PartitionBy.NONE, 1000000 * 60 * 5, 0);
     }
 
     @Test
-    public void testIndexReadByYear() throws Exception {
-        testIndexRead(PartitionBy.YEAR, 1000000 * 60 * 5 * 24L * 10L, 2);
+    public void testRollbackSymbolIndexByYear() throws Exception {
+        testSymbolIndexReadAfterRollback(PartitionBy.YEAR, 1000000 * 60 * 5 * 24L * 10L, 2);
     }
 
-    private void assertIndexValues(TableReaderDataFrameCursor cursor, TableReaderRecord record, long count, int M) {
+    @Test
+    public void testSymbolIndexReadByDay() throws Exception {
+        testSymbolIndexRead(PartitionBy.DAY, 1000000 * 60 * 5, 3);
+    }
+
+    @Test
+    public void testSymbolIndexReadByMonth() throws Exception {
+        testSymbolIndexRead(PartitionBy.MONTH, 1000000 * 60 * 5 * 24L, 2);
+    }
+
+    @Test
+    public void testSymbolIndexReadByNone() throws Exception {
+        testSymbolIndexRead(PartitionBy.NONE, 1000000 * 60 * 5, 0);
+    }
+
+    @Test
+    public void testSymbolIndexReadByYear() throws Exception {
+        testSymbolIndexRead(PartitionBy.YEAR, 1000000 * 60 * 5 * 24L * 10L, 2);
+    }
+
+    private void assertIndexRowsMatchSymbol(TableReaderDataFrameCursor cursor, TableReaderRecord record) {
         // SymbolTable is table at table scope, so it will be the same for every
         // data frame here. Get its instance outside of data frame loop.
         SymbolTable symbolTable = cursor.getSymbolTable(0);
 
+        while (cursor.hasNext()) {
+            DataFrame frame = cursor.next();
+            record.jumpTo(frame.getPartitionIndex(), frame.getRowLo());
+            final long limit = frame.getRowHi();
+
+            // BitmapIndex is always at data frame scope, each table can have more than one.
+            // we have to get BitmapIndexReader instance once for each frame.
+            BitmapIndexReader indexReader = frame.getBitmapIndexReader(0);
+
+            // because out Symbol column 0 is indexed, frame has to have index.
+            Assert.assertNotNull(indexReader);
+
+            int keyCount = indexReader.getKeyCount();
+            for (int i = 0; i < keyCount; i++) {
+                BitmapIndexCursor ic = indexReader.getCursor(i, limit * 4);
+                CharSequence expected = symbolTable.value(i);
+                while (ic.hasNext()) {
+                    long offset = ic.next();
+                    record.jumpTo(frame.getPartitionIndex(), offset / 4);
+                    TestUtils.assertEquals(expected, record.getSym(0));
+                }
+            }
+        }
+    }
+
+    private void assertSymbolFoundInIndex(TableReaderDataFrameCursor cursor, TableReaderRecord record, int M) {
+        // SymbolTable is table at table scope, so it will be the same for every
+        // data frame here. Get its instance outside of data frame loop.
+        SymbolTable symbolTable = cursor.getSymbolTable(0);
+
+        long count = 0;
         while (cursor.hasNext()) {
             DataFrame frame = cursor.next();
             record.jumpTo(frame.getPartitionIndex(), frame.getRowLo());
@@ -96,7 +147,17 @@ public class TableReaderDataFrameCursorTest extends AbstractCairoTest {
         Assert.assertEquals(M, count);
     }
 
-    private void testIndexRead(int partitionBy, long increment, int expectedPartitionMin) throws Exception {
+    private long populateTable(TableWriter writer, String[] symbols, Rnd rnd, long ts, long increment, int M, int N) {
+        long timestamp = ts;
+        for (int i = 0; i < M; i++) {
+            TableWriter.Row row = writer.newRow(timestamp += increment);
+            row.putSym(0, symbols[rnd.nextPositiveInt() % N]);
+            row.append();
+        }
+        return timestamp;
+    }
+
+    private void testSymbolIndexRead(int partitionBy, long increment, int expectedPartitionMin) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             final int N = 100;
             try (TableModel model = new TableModel(configuration, "x", partitionBy).
@@ -117,17 +178,12 @@ public class TableReaderDataFrameCursorTest extends AbstractCairoTest {
             // prepare the data
             long timestamp = 0;
             try (TableWriter writer = new TableWriter(configuration, "x")) {
-                for (int i = 0; i < M; i++) {
-                    TableWriter.Row row = writer.newRow(timestamp += increment);
-                    row.putSym(0, symbols[rnd.nextPositiveInt() % N]);
-                    row.append();
-                }
+                populateTable(writer, symbols, rnd, timestamp, increment, M, N);
                 writer.commit();
             }
 
             // check that each symbol in table exists in index as well
             // and current row is collection of index rows
-            long count = 0;
             try (TableReader reader = new TableReader(configuration, "x")) {
 
                 // TableRecord will help us read the table. We need to position this record using
@@ -140,9 +196,64 @@ public class TableReaderDataFrameCursorTest extends AbstractCairoTest {
                 // partitions, each partition is a frame.
                 TableReaderDataFrameCursor cursor = new TableReaderDataFrameCursor();
                 cursor.of(reader, 0, reader.getPartitionCount());
-                assertIndexValues(cursor, record, count, M);
+                assertSymbolFoundInIndex(cursor, record, M);
                 cursor.toTop();
-                assertIndexValues(cursor, record, count, M);
+                assertSymbolFoundInIndex(cursor, record, M);
+                cursor.toTop();
+                assertIndexRowsMatchSymbol(cursor, record);
+            }
+        });
+    }
+
+    private void testSymbolIndexReadAfterRollback(int partitionBy, long increment, int expectedPartitionMin) throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final int N = 100;
+            try (TableModel model = new TableModel(configuration, "x", partitionBy).
+                    col("a", ColumnType.SYMBOL).indexed(true, N / 4).
+                    timestamp()
+            ) {
+                CairoTestUtils.create(model);
+            }
+
+            final Rnd rnd = new Rnd();
+            final String symbols[] = new String[N];
+            final int M = 1000;
+
+            for (int i = 0; i < N; i++) {
+                symbols[i] = rnd.nextChars(8).toString();
+            }
+
+            // prepare the data, make sure rollback does the job
+            long timestamp = 0;
+
+            try (TableWriter writer = new TableWriter(configuration, "x")) {
+                timestamp = populateTable(writer, symbols, rnd, timestamp, increment, M, N);
+                writer.commit();
+                timestamp = populateTable(writer, symbols, rnd, timestamp, increment, M, N);
+                writer.rollback();
+                populateTable(writer, symbols, rnd, timestamp, increment, M, N);
+                writer.commit();
+            }
+
+            // check that each symbol in table exists in index as well
+            // and current row is collection of index rows
+            try (TableReader reader = new TableReader(configuration, "x")) {
+
+                // TableRecord will help us read the table. We need to position this record using
+                // "recordIndex" and "columnBase".
+                TableReaderRecord record = new TableReaderRecord(reader);
+
+                Assert.assertTrue(reader.getPartitionCount() > expectedPartitionMin);
+
+                // Open data frame cursor. This one will frame table as collection of
+                // partitions, each partition is a frame.
+                TableReaderDataFrameCursor cursor = new TableReaderDataFrameCursor();
+                cursor.of(reader, 0, reader.getPartitionCount());
+                assertSymbolFoundInIndex(cursor, record, M * 2);
+                cursor.toTop();
+                assertSymbolFoundInIndex(cursor, record, M * 2);
+                cursor.toTop();
+                assertIndexRowsMatchSymbol(cursor, record);
             }
         });
     }

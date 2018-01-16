@@ -39,7 +39,7 @@ public class BitmapIndexBackwardReader implements BitmapIndexReader {
     private final int blockCapacity;
     private final long spinLockTimeoutUs;
     private final MicrosecondClock clock;
-    private long keyCount;
+    private int keyCount;
 
     public BitmapIndexBackwardReader(CairoConfiguration configuration, Path path, CharSequence name) {
         final int plen = path.length();
@@ -69,14 +69,14 @@ public class BitmapIndexBackwardReader implements BitmapIndexReader {
             // This is always necessary in case reader is created at the same time as index itself.
 
             int blockValueCountMod;
-            long keyCount;
+            int keyCount;
             long timestamp = clock.getTicks();
             while (true) {
                 long seq = this.keyMem.getLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE);
                 Unsafe.getUnsafe().loadFence();
 
                 blockValueCountMod = this.keyMem.getInt(BitmapIndexUtils.KEY_RESERVED_OFFSET_BLOCK_VALUE_COUNT) - 1;
-                keyCount = this.keyMem.getLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_KEY_COUNT);
+                keyCount = this.keyMem.getInt(BitmapIndexUtils.KEY_RESERVED_OFFSET_KEY_COUNT);
                 Unsafe.getUnsafe().loadFence();
 
                 if (this.keyMem.getLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE_CHECK) == seq) {
@@ -104,6 +104,7 @@ public class BitmapIndexBackwardReader implements BitmapIndexReader {
 
     @Override
     public void close() {
+        BitmapIndexReader.super.close();
         Misc.free(keyMem);
         Misc.free(valueMem);
     }
@@ -123,14 +124,19 @@ public class BitmapIndexBackwardReader implements BitmapIndexReader {
         return BitmapIndexEmptyCursor.INSTANCE;
     }
 
+    @Override
+    public int getKeyCount() {
+        return keyCount;
+    }
+
     private void updateKeyCount() {
-        long keyCount;
+        int keyCount;
         long timestamp = clock.getTicks();
         while (true) {
             long seq = this.keyMem.getLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE);
             Unsafe.getUnsafe().loadFence();
 
-            keyCount = this.keyMem.getLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_KEY_COUNT);
+            keyCount = this.keyMem.getInt(BitmapIndexUtils.KEY_RESERVED_OFFSET_KEY_COUNT);
             Unsafe.getUnsafe().loadFence();
 
             if (this.keyMem.getLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE_CHECK) == seq) {

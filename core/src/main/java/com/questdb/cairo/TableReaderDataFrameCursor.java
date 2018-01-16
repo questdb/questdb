@@ -35,7 +35,6 @@ public class TableReaderDataFrameCursor implements DataFrameCursor {
     private int partitionHi;
     private int partitionIndex;
 
-
     @Override
     public void closeCursor() {
         if (reader != null) {
@@ -61,14 +60,24 @@ public class TableReaderDataFrameCursor implements DataFrameCursor {
 
     @Override
     public boolean hasNext() {
-        return this.partitionIndex < partitionHi;
+        while (this.partitionIndex < partitionHi) {
+            final long hi = reader.openPartition(partitionIndex);
+            if (hi == -1) {
+                // this partition is missing, skip
+                partitionIndex++;
+            } else {
+                frame.partitionIndex = partitionIndex;
+                frame.rowHi = hi;
+                partitionIndex++;
+                return true;
+
+            }
+        }
+        return false;
     }
 
     @Override
     public DataFrame next() {
-        frame.partitionIndex = partitionIndex;
-        frame.rowLo = 0;
-        frame.rowHi = reader.openPartition(partitionIndex++);
         return frame;
     }
 
@@ -80,7 +89,7 @@ public class TableReaderDataFrameCursor implements DataFrameCursor {
     }
 
     private class TableReaderDataFrame implements DataFrame {
-        private long rowLo;
+        final static private long rowLo = 0;
         private long rowHi;
         private int partitionIndex;
 

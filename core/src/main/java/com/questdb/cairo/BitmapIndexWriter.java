@@ -39,7 +39,7 @@ public class BitmapIndexWriter implements Closeable {
     private int blockCapacity;
     private int blockValueCountMod;
     private long valueMemSize;
-    private long keyCount;
+    private int keyCount;
     private long seekValueCount;
     private long seekValueBlockOffset;
     private final BitmapIndexUtils.ValueBlockSeeker SEEKER = this::seek;
@@ -171,7 +171,7 @@ public class BitmapIndexWriter implements Closeable {
             }
 
             // verify key count
-            this.keyCount = this.keyMem.getLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_KEY_COUNT);
+            this.keyCount = this.keyMem.getInt(BitmapIndexUtils.KEY_RESERVED_OFFSET_KEY_COUNT);
             if (keyMemSize < keyMemSize()) {
                 LOG.error().$("key count does not match file length [corrupt] of ").$(path).$(" [keyCount=").$(this.keyCount).$(']').$();
                 throw CairoException.instance(0).put("Key count does not match file length of ").put(path);
@@ -366,7 +366,7 @@ public class BitmapIndexWriter implements Closeable {
         Unsafe.getUnsafe().storeFence();
 
         keyMem.jumpTo(BitmapIndexUtils.KEY_RESERVED_OFFSET_KEY_COUNT);
-        keyMem.putLong(keyCount);
+        keyMem.putInt(keyCount);
         Unsafe.getUnsafe().storeFence();
 
         keyMem.jumpTo(BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE_CHECK);
