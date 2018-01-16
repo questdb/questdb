@@ -149,7 +149,56 @@ public class TableReader implements Closeable {
         }
     }
 
-    public void applyTransitionIndexToSymbolMapReaders(long pTransitionIndex) {
+    /**
+     * Closed column files. Similarly to {@link #closeColumnForRemove(CharSequence)} closed reader column files before
+     * column can be removed. This method takes column index usually resolved from column name by #TableReaderMetadata.
+     * Bounds checking is performed via assertion.
+     *
+     * @param columnIndex column index
+     */
+    public void closeColumnForRemove(int columnIndex) {
+        assert columnIndex > -1 && columnIndex < columnCount;
+        for (int partitionIndex = 0; partitionIndex < partitionCount; partitionIndex++) {
+            final int base = getColumnBase(partitionIndex);
+            // replace columns we force closed with special marker object
+            // when we come to reloading table reader we would be able to
+            // tell that column has to be attempted to be read from disk
+            Misc.free(columns.getAndSetQuick(getPrimaryColumnIndex(base, columnIndex), ForceNullColumn.INSTANCE));
+            Misc.free(columns.getAndSetQuick(getSecondaryColumnIndex(base, columnIndex), ForceNullColumn.INSTANCE));
+        }
+
+        if (metadata.getColumnQuick(columnIndex).getType() == ColumnType.SYMBOL) {
+            // same goes for symbol map reader - replace object with maker instance
+            Misc.free(symbolMapReaders.getAndSetQuick(columnIndex, ForceEmptySymbolMapReader.INSTANCE));
+        }
+    }
+
+    @Override
+    public void close() {
+        if (isOpen()) {
+            freeSymbolMapReaders();
+            freeBitmapIndexCache();
+            Misc.free(path);
+            Misc.free(metadata);
+            Misc.free(txMem);
+            freeColumns();
+            freeTempMem();
+            LOG.info().$("closed '").utf8(name).$('\'').$();
+        }
+    }
+
+    /**
+     * Closes column files. This method should be used before call to TableWriter.removeColumn() on
+     * Windows OS.
+     *
+     * @param columnName name of column to be closed.
+     * @throws NoSuchColumnException when column is not found.
+     */
+    public void closeColumnForRemove(CharSequence columnName) {
+        closeColumnForRemove(metadata.getColumnIndex(columnName));
+    }
+
+    public void reshuffleSymbolMapReaders(long pTransitionIndex) {
         final int columnCount = Unsafe.getUnsafe().getInt(pTransitionIndex + 4);
         final long index = pTransitionIndex + 8;
         final long stateAddress = index + columnCount * 8;
@@ -176,7 +225,7 @@ public class TableReader implements Closeable {
             if (copyFrom == i + 1) {
                 SymbolMapReader reader = symbolMapReaders.getQuick(copyFrom);
                 if (reader != null && reader.isDeleted()) {
-                    newSymbolMapReaderInstance(copyFrom, reader);
+                    symbolMapReaders.setQuick(copyFrom, reloadSymbolMapReader(copyFrom, reader));
                 }
                 continue;
             }
@@ -206,7 +255,7 @@ public class TableReader implements Closeable {
                 Misc.free(tmp);
             } else {
                 // new instance
-                Misc.free(symbolMapReaders.getAndSetQuick(i, newSymbolMapReaderInstance(i, null)));
+                Misc.free(symbolMapReaders.getAndSetQuick(i, reloadSymbolMapReader(i, null)));
             }
         }
 
@@ -220,49 +269,11 @@ public class TableReader implements Closeable {
         }
     }
 
-    @Override
-    public void close() {
-        if (isOpen()) {
-            freeSymbolMapReaders();
-            freeBitmapIndexCache();
-            Misc.free(path);
-            Misc.free(metadata);
-            Misc.free(txMem);
-            freeColumns();
-            freeTempMem();
-            LOG.info().$("closed '").utf8(name).$('\'').$();
+    private SymbolMapReader copyOrRenewSymbolMapReader(SymbolMapReader reader, int columnIndex) {
+        if (reader != null && reader.isDeleted()) {
+            reader = reloadSymbolMapReader(columnIndex, reader);
         }
-    }
-
-    /**
-     * Closes column files. This method should be used before call to TableWriter.removeColumn() on
-     * Windows OS.
-     *
-     * @param columnName name of column to be closed.
-     * @throws NoSuchColumnException when column is not found.
-     */
-    public void closeColumnForRemove(CharSequence columnName) {
-        closeColumnForRemove(metadata.getColumnIndex(columnName));
-    }
-
-    /**
-     * Closed column files. Similarly to {@link #closeColumnForRemove(CharSequence)} closed reader column files before
-     * column can be removed. This method takes column index usually resolved from column name by #TableReaderMetadata.
-     * Bounds checking is performed via assertion.
-     *
-     * @param columnIndex column index
-     */
-    public void closeColumnForRemove(int columnIndex) {
-        assert columnIndex > -1 && columnIndex < columnCount;
-        for (int partitionIndex = 0; partitionIndex < partitionCount; partitionIndex++) {
-            final int base = getColumnBase(partitionIndex);
-            Misc.free(columns.getAndSetQuick(getPrimaryColumnIndex(base, columnIndex), NullColumn.INSTANCE));
-            Misc.free(columns.getAndSetQuick(getSecondaryColumnIndex(base, columnIndex), NullColumn.INSTANCE));
-        }
-
-        if (metadata.getColumnQuick(columnIndex).getType() == ColumnType.SYMBOL) {
-            Misc.free(symbolMapReaders.getAndSetQuick(columnIndex, EmptySymbolMapReader.INSTANCE));
-        }
+        return symbolMapReaders.getAndSetQuick(columnIndex, reader);
     }
 
     public BitmapIndexReader getBitmapIndexReader(int columnBase, int columnIndex) {
@@ -411,12 +422,29 @@ public class TableReader implements Closeable {
         }
     }
 
-    private SymbolMapReader copyOrRenewSymbolMapReader(SymbolMapReader reader, int columnIndex) {
-        if (reader != null && reader.isDeleted()) {
-            reader = newSymbolMapReaderInstance(columnIndex, reader);
+    private void doReloadStruct() {
+        // create transition index, which will help us reuse already open resources
+        long pTransitionIndex = metadata.createTransitionIndex();
+        try {
+            metadata.applyTransitionIndex(pTransitionIndex);
+            final int columnCount = Unsafe.getUnsafe().getInt(pTransitionIndex + 4);
+
+            int columnCountBits = getColumnBits(columnCount);
+            // when a column is added we cannot easily reshuffle columns in-place
+            // the reason is that we'd have to create gaps in columns list between
+            // partitions. It is possible in theory, but this could be an algo for
+            // another day.
+            if (columnCountBits > this.columnCountBits) {
+                createNewColumnList(columnCount, pTransitionIndex, columnCountBits);
+            } else {
+                reshuffleColumns(columnCount, pTransitionIndex);
+            }
+            // rearrange symbol map reader list
+            reshuffleSymbolMapReaders(pTransitionIndex);
+            this.columnCount = columnCount;
+        } finally {
+            TableReaderMetadata.freeTransitionIndex(pTransitionIndex);
         }
-        reader = symbolMapReaders.getAndSetQuick(columnIndex, reader);
-        return reader;
     }
 
     private void countDefaultPartitions() {
@@ -498,28 +526,16 @@ public class TableReader implements Closeable {
         this.columnCountBits = columnBits;
     }
 
-    private void doReloadStruct() {
-        // create transition index, which will help us reuse already open resources
-        long pTransitionIndex = metadata.createTransitionIndex();
-        try {
-            metadata.applyTransitionIndex(pTransitionIndex);
-            final int columnCount = Unsafe.getUnsafe().getInt(pTransitionIndex + 4);
-
-            int columnCountBits = getColumnBits(columnCount);
-            // when a column is added we cannot easily reshuffle columns in-place
-            // the reason is that we'd have to create gaps in columns list between
-            // partitions. It is possible in theory, but this could be an algo for
-            // another day.
-            if (columnCountBits > this.columnCountBits) {
-                createNewColumnList(columnCount, pTransitionIndex, columnCountBits);
-            } else {
-                reshuffleExistingColumnList(columnCount, pTransitionIndex);
+    private SymbolMapReader reloadSymbolMapReader(int columnIndex, SymbolMapReader reader) {
+        RecordColumnMetadata m = metadata.getColumnQuick(columnIndex);
+        if (m.getType() == ColumnType.SYMBOL) {
+            if (reader instanceof SymbolMapReaderImpl) {
+                ((SymbolMapReaderImpl) reader).of(configuration, path, m.getName(), 0);
+                return reader;
             }
-            // rearrange symbol map reader list
-            applyTransitionIndexToSymbolMapReaders(pTransitionIndex);
-            this.columnCount = columnCount;
-        } finally {
-            TableReaderMetadata.freeTransitionIndex(pTransitionIndex);
+            return new SymbolMapReaderImpl(configuration, path, m.getName(), 0);
+        } else {
+            return reader;
         }
     }
 
@@ -644,16 +660,60 @@ public class TableReader implements Closeable {
         return ((SymbolMapReaderImpl) symbolMapReaders.getQuick(columnIndex)).isCached();
     }
 
-    private SymbolMapReader newSymbolMapReaderInstance(int columnIndex, SymbolMapReader reader) {
-        RecordColumnMetadata m = metadata.getColumnQuick(columnIndex);
-        if (m.getType() == ColumnType.SYMBOL) {
-            if (reader instanceof SymbolMapReaderImpl) {
-                ((SymbolMapReaderImpl) reader).of(configuration, path, m.getName(), 0);
-                return reader;
+    private void reshuffleColumns(int columnCount, long pTransitionIndex) {
+
+        final long pIndexBase = pTransitionIndex + 8;
+        final long pState = pIndexBase + columnCount * 8;
+
+        for (int partitionIndex = 0; partitionIndex < partitionCount; partitionIndex++) {
+            int base = getColumnBase(partitionIndex);
+            try {
+                Path path = partitionPathGenerator.generate(this, partitionIndex);
+                final long partitionRowCount = partitionRowCounts.getQuick(partitionIndex);
+
+                Unsafe.getUnsafe().setMemory(pState, columnCount, (byte) 0);
+
+                for (int i = 0; i < columnCount; i++) {
+
+                    if (isEntryToBeProcessed(pState, i)) {
+                        final int copyFrom = Unsafe.getUnsafe().getInt(pIndexBase + i * 8) - 1;
+
+                        if (copyFrom == i) {
+                            // check if this column has been deleted
+                            ReadOnlyColumn col = columns.getQuick(getPrimaryColumnIndex(base, i));
+                            if (col instanceof ReadOnlyMemory && !ff.exists(col.getFd())) {
+                                reloadColumnAt(path, columns, columnTops, i, base, partitionRowCount);
+                            } else if (col instanceof ForceNullColumn) {
+                                columns.setQuick(getPrimaryColumnIndex(base, i), new ReadOnlyMemory());
+                                columns.setQuick(getSecondaryColumnIndex(base, i), new ReadOnlyMemory());
+                                reloadColumnAt(path, columns, columnTops, i, base, partitionRowCount);
+                            }
+                            continue;
+                        }
+
+                        if (copyFrom > -1) {
+                            fetchColumnsFrom(this.columns, this.columnTops, base, copyFrom);
+                            copyColumnsTo(this.columns, this.columnTops, base, i, partitionRowCount);
+                            int copyTo = Unsafe.getUnsafe().getInt(pIndexBase + i * 8 + 4) - 1;
+                            while (copyTo > -1 && isEntryToBeProcessed(pState, copyTo)) {
+                                copyColumnsTo(this.columns, this.columnTops, base, copyTo, partitionRowCount);
+                                copyTo = Unsafe.getUnsafe().getInt(pIndexBase + (copyTo - 1) * 8 + 4);
+                            }
+                            Misc.free(tempCopyStruct.mem1);
+                            Misc.free(tempCopyStruct.mem2);
+                        } else {
+                            // new instance
+                            createColumnInstanceAt(path, this.columns, this.columnTops, i, base, partitionRowCount);
+                        }
+                    }
+                }
+                for (int i = columnCount; i < this.columnCount; i++) {
+                    Misc.free(columns.getQuick(getPrimaryColumnIndex(base, i)));
+                    Misc.free(columns.getQuick(getSecondaryColumnIndex(base, i)));
+                }
+            } finally {
+                path.trimTo(rootLen);
             }
-            return new SymbolMapReaderImpl(configuration, path, m.getName(), 0);
-        } else {
-            return null;
         }
     }
 
@@ -817,12 +877,9 @@ public class TableReader implements Closeable {
                     case ColumnType.BINARY:
                     case ColumnType.STRING:
                         mem2.of(ff, TableUtils.iFile(path.trimTo(plen), name), ff.getMapPageSize(), 0);
-                        columns.setQuick(getPrimaryColumnIndex(columnBase, columnIndex), mem1);
-                        columns.setQuick(getSecondaryColumnIndex(columnBase, columnIndex), mem2);
                         growColumn(mem1, mem2, type, partitionRowCount - columnTop);
                         break;
                     default:
-                        columns.setQuick(getPrimaryColumnIndex(columnBase, columnIndex), mem1);
                         growColumn(mem1, null, type, partitionRowCount - columnTop);
                         break;
                 }
@@ -946,53 +1003,8 @@ public class TableReader implements Closeable {
         }
     }
 
-    private void reshuffleExistingColumnList(int columnCount, long pTransitionIndex) {
-
-        final long pIndexBase = pTransitionIndex + 8;
-        final long pState = pIndexBase + columnCount * 8;
-
-        for (int partitionIndex = 0; partitionIndex < partitionCount; partitionIndex++) {
-            int base = getColumnBase(partitionIndex);
-            try {
-                Path path = partitionPathGenerator.generate(this, partitionIndex);
-                final long partitionRowCount = partitionRowCounts.getQuick(partitionIndex);
-
-                Unsafe.getUnsafe().setMemory(pState, columnCount, (byte) 0);
-
-                for (int i = 0; i < columnCount; i++) {
-
-                    if (isEntryToBeProcessed(pState, i)) {
-                        final int copyFrom = Unsafe.getUnsafe().getInt(pIndexBase + i * 8) - 1;
-
-                        if (copyFrom == i) {
-                            // check if this column has been deleted
-                            ReadOnlyColumn col = columns.getQuick(getPrimaryColumnIndex(base, i));
-                            if (col instanceof ReadOnlyMemory && !ff.exists(col.getFd())) {
-                                reloadColumnAt(path, columns, columnTops, i, base, partitionRowCount);
-                            }
-                            continue;
-                        }
-
-                        if (copyFrom > -1) {
-                            fetchColumnsFrom(this.columns, this.columnTops, base, copyFrom);
-                            copyColumnsTo(this.columns, this.columnTops, base, i, partitionRowCount);
-                            int copyTo = Unsafe.getUnsafe().getInt(pIndexBase + i * 8 + 4) - 1;
-                            while (copyTo > -1 && isEntryToBeProcessed(pState, copyTo)) {
-                                copyColumnsTo(this.columns, this.columnTops, base, copyTo, partitionRowCount);
-                                copyTo = Unsafe.getUnsafe().getInt(pIndexBase + (copyTo - 1) * 8 + 4);
-                            }
-                            Misc.free(tempCopyStruct.mem1);
-                            Misc.free(tempCopyStruct.mem2);
-                        } else {
-                            // new instance
-                            createColumnInstanceAt(path, this.columns, this.columnTops, i, base, partitionRowCount);
-                        }
-                    }
-                }
-            } finally {
-                path.trimTo(rootLen);
-            }
-        }
+    private static class ForceEmptySymbolMapReader extends EmptySymbolMapReader {
+        private static final ForceEmptySymbolMapReader INSTANCE = new ForceEmptySymbolMapReader();
     }
 
     private void updateCapacities() {
@@ -1020,6 +1032,10 @@ public class TableReader implements Closeable {
     @FunctionalInterface
     private interface PartitionPathGenerator {
         Path generate(TableReader reader, int partitionIndex);
+    }
+
+    private static class ForceNullColumn extends NullColumn {
+        private static final ForceNullColumn INSTANCE = new ForceNullColumn();
     }
 
     private static class ColumnCopyStruct {

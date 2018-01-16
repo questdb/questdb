@@ -2292,6 +2292,12 @@ public class TableReaderTest extends AbstractCairoTest {
                     // file delete failures
                     writer.removeColumn("b");
 
+                    if (configuration.getFilesFacade().isRestrictedFileSystem()) {
+                        reader.closeColumnForRemove("b");
+                    }
+
+//                    reader.reload();
+
                     // now when we add new column by same name it must not pick up files we failed to delete previously
                     writer.addColumn("b", ColumnType.SYMBOL);
 
@@ -2307,6 +2313,7 @@ public class TableReaderTest extends AbstractCairoTest {
                     // now assert what reader sees
                     Assert.assertTrue(reader.reload());
                     Assert.assertEquals(N * 2, reader.size());
+
                     rnd.reset();
                     cursor.toTop();
                     counter = 0;
