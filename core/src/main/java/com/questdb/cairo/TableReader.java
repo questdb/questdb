@@ -737,11 +737,6 @@ public class TableReader implements Closeable {
         try {
             Path path = partitionPathGenerator.generate(this, partitionIndex);
             if (ff.exists(path)) {
-                if (reloadMethod == FIRST_TIME_PARTITIONED_RELOAD_METHOD) {
-                    reloadMethod = PARTITIONED_RELOAD_METHOD;
-                } else if (reloadMethod == FIRST_TIME_NON_PARTITIONED_RELOAD_METHOD) {
-                    reloadMethod = NON_PARTITIONED_RELOAD_METHOD;
-                }
 
                 path.chopZ();
 
@@ -752,6 +747,12 @@ public class TableReader implements Closeable {
                 if (partitionSize > 0) {
                     openPartitionColumns(path, getColumnBase(partitionIndex), partitionSize);
                     partitionRowCounts.setQuick(partitionIndex, partitionSize);
+
+                    if (reloadMethod == FIRST_TIME_PARTITIONED_RELOAD_METHOD) {
+                        reloadMethod = PARTITIONED_RELOAD_METHOD;
+                    } else if (reloadMethod == FIRST_TIME_NON_PARTITIONED_RELOAD_METHOD && maxTimestamp != Numbers.LONG_NaN) {
+                        reloadMethod = NON_PARTITIONED_RELOAD_METHOD;
+                    }
                 }
 
                 return partitionSize;
