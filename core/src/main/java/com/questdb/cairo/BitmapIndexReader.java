@@ -31,4 +31,6 @@ public interface BitmapIndexReader extends Closeable {
     }
 
     BitmapIndexCursor getCursor(int key, long maxValue);
+
+    int getKeyCount();
 }

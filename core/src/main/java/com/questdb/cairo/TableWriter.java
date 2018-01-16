@@ -453,10 +453,13 @@ public class TableWriter implements Closeable {
 
     public void rollback() {
         if (inTransaction()) {
+            LOG.info().$("tx rollback [name=").$(name).$(']').$();
             freeColumns(false);
             columnSizeMem.jumpTo(0);
             configureAppendPosition();
+            rollbackIndices();
             purgeUnusedPartitions();
+            LOG.info().$("tx rollback complete [name=").$(name).$(']').$();
         }
     }
 
@@ -1478,6 +1481,12 @@ public class TableWriter implements Closeable {
         removeTodoFile();
     }
 
+    private void rollbackIndices() {
+        for (int i = 0, n = denseIndexers.size(); i < n; i++) {
+            denseIndexers.getQuick(i).rollback(transientRowCount - 1);
+        }
+    }
+
     private void setAppendPosition(final long position) {
         for (int i = 0; i < columnCount; i++) {
             setColumnSize(ff, getPrimaryColumn(i), getSecondaryColumn(i), TableUtils.getColumnType(metaMem, i), position - columnTops.getQuick(i), tempMem8b);
@@ -1636,6 +1645,8 @@ public class TableWriter implements Closeable {
         void index(long loRow, long hiRow);
 
         void of(CairoConfiguration configuration, Path path, CharSequence name, AppendMemory mem1, AppendMemory mem2, long columnTop);
+
+        void rollback(long maxRow);
     }
 
     @FunctionalInterface
@@ -1663,6 +1674,11 @@ public class TableWriter implements Closeable {
             this.columnTop = columnTop;
             this.writer.of(configuration, path, name);
             this.mem.of(mem1);
+        }
+
+        @Override
+        public void rollback(long maxRow) {
+            this.writer.rollbackValues(maxRow * 4);
         }
 
         @Override
