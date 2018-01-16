@@ -172,8 +172,12 @@ public class TableReader implements Closeable {
 
             int copyFrom = Unsafe.getUnsafe().getInt(index + i * 8);
 
-            // don't copy entries to themselves
+            // don't copy entries to themselves, unless symbol map was deleted
             if (copyFrom == i + 1) {
+                SymbolMapReader reader = symbolMapReaders.getQuick(copyFrom);
+                if (reader != null && reader.isDeleted()) {
+                    newSymbolMapReaderInstance(copyFrom, reader);
+                }
                 continue;
             }
 
@@ -202,7 +206,7 @@ public class TableReader implements Closeable {
                 Misc.free(tmp);
             } else {
                 // new instance
-                Misc.free(symbolMapReaders.getAndSetQuick(i, newSymbolMapReaderInstance(i)));
+                Misc.free(symbolMapReaders.getAndSetQuick(i, newSymbolMapReaderInstance(i, null)));
             }
         }
 
@@ -409,8 +413,7 @@ public class TableReader implements Closeable {
 
     private SymbolMapReader copyOrRenewSymbolMapReader(SymbolMapReader reader, int columnIndex) {
         if (reader != null && reader.isDeleted()) {
-            Misc.free(reader);
-            reader = newSymbolMapReaderInstance(columnIndex);
+            reader = newSymbolMapReaderInstance(columnIndex, reader);
         }
         reader = symbolMapReaders.getAndSetQuick(columnIndex, reader);
         return reader;
@@ -641,9 +644,13 @@ public class TableReader implements Closeable {
         return ((SymbolMapReaderImpl) symbolMapReaders.getQuick(columnIndex)).isCached();
     }
 
-    private SymbolMapReader newSymbolMapReaderInstance(int columnIndex) {
+    private SymbolMapReader newSymbolMapReaderInstance(int columnIndex, SymbolMapReader reader) {
         RecordColumnMetadata m = metadata.getColumnQuick(columnIndex);
         if (m.getType() == ColumnType.SYMBOL) {
+            if (reader instanceof SymbolMapReaderImpl) {
+                ((SymbolMapReaderImpl) reader).of(configuration, path, m.getName(), 0);
+                return reader;
+            }
             return new SymbolMapReaderImpl(configuration, path, m.getName(), 0);
         } else {
             return null;
@@ -803,14 +810,12 @@ public class TableReader implements Closeable {
 
                 int type = metadata.getColumnQuick(columnIndex).getType();
 
-//                ReadOnlyColumn mem1 = new ReadOnlyMemory(ff, path, ff.getMapPageSize(), 0);
                 mem1.of(ff, path, ff.getMapPageSize(), 0);
                 long columnTop = TableUtils.readColumnTop(ff, path.trimTo(plen), name, plen, tempMem8b);
 
                 switch (type) {
                     case ColumnType.BINARY:
                     case ColumnType.STRING:
-//                        ReadOnlyColumn mem2 = new ReadOnlyMemory(ff, TableUtils.iFile(path.trimTo(plen), name), ff.getMapPageSize(), 0);
                         mem2.of(ff, TableUtils.iFile(path.trimTo(plen), name), ff.getMapPageSize(), 0);
                         columns.setQuick(getPrimaryColumnIndex(columnBase, columnIndex), mem1);
                         columns.setQuick(getSecondaryColumnIndex(columnBase, columnIndex), mem2);
@@ -962,10 +967,9 @@ public class TableReader implements Closeable {
                         if (copyFrom == i) {
                             // check if this column has been deleted
                             ReadOnlyColumn col = columns.getQuick(getPrimaryColumnIndex(base, i));
-                            if (col == null || col instanceof NullColumn || ff.exists(col.getFd())) {
-                                continue;
+                            if (col instanceof ReadOnlyMemory && !ff.exists(col.getFd())) {
+                                reloadColumnAt(path, columns, columnTops, i, base, partitionRowCount);
                             }
-                            reloadColumnAt(path, columns, columnTops, i, base, partitionRowCount);
                             continue;
                         }
 
