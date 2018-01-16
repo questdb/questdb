@@ -179,7 +179,14 @@ class TableReaderMetadata extends AbstractRecordMetadata implements Closeable {
             if (timestampIndex >= columnCount && timestampRequired) {
                 timestampIndex = -1;
             }
+            // there is assertion further in the code that
+            // new metadata does not suddenly displace non-null object
+            // to make sure all fine and dandy we need to remove
+            // all metadata objects from tail of the list
+            columnMetadata.set(columnCount, this.columnCount, null);
+            // and set metadata list to correct length
             columnMetadata.setPos(columnCount);
+            // we are done
             this.columnCount = columnCount;
         }
     }
