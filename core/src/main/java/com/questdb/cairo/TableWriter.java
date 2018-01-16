@@ -213,11 +213,7 @@ public class TableWriter implements Closeable {
 
         commit();
 
-        if (type == ColumnType.SYMBOL) {
-            removeSymbolMapFilesLoud(name);
-        }
-
-        removeColumnFiles(name, REMOVE_OR_EXCEPTION);
+        removeColumnFiles(name, type, REMOVE_OR_EXCEPTION);
 
         // create new _meta.swp
         this.metaSwapIndex = addColumnToMeta(name, type);
@@ -434,12 +430,7 @@ public class TableWriter implements Closeable {
             removeTodoFile();
 
             // remove column files has to be done after _todo is removed
-            removeColumnFiles(name, REMOVE_OR_LOG);
-
-            if (type == ColumnType.SYMBOL) {
-                removeSymbolMapFilesQuiet(name);
-            }
-
+            removeColumnFiles(name, type, REMOVE_OR_LOG);
         } catch (CairoException err) {
             throw new CairoError(err);
         }
@@ -1211,7 +1202,7 @@ public class TableWriter implements Closeable {
         nullers.remove(index);
     }
 
-    private void removeColumnFiles(CharSequence name, RemoveFileLambda removeLambda) {
+    private void removeColumnFiles(CharSequence columnName, int columnType, RemoveFileLambda removeLambda) {
         try {
             ff.iterateDir(path.$(), (file, type) -> {
                 nativeLPSZ.of(file);
@@ -1219,11 +1210,18 @@ public class TableWriter implements Closeable {
                     path.trimTo(rootLen);
                     path.concat(nativeLPSZ);
                     int plen = path.length();
-                    removeLambda.remove(ff, TableUtils.dFile(path, name));
-                    removeLambda.remove(ff, TableUtils.iFile(path.trimTo(plen), name));
-                    removeLambda.remove(ff, TableUtils.topFile(path.trimTo(plen), name));
+                    removeLambda.remove(ff, TableUtils.dFile(path, columnName));
+                    removeLambda.remove(ff, TableUtils.iFile(path.trimTo(plen), columnName));
+                    removeLambda.remove(ff, TableUtils.topFile(path.trimTo(plen), columnName));
                 }
             });
+
+            if (columnType == ColumnType.SYMBOL) {
+                removeLambda.remove(ff, SymbolMapWriter.offsetFileName(path.trimTo(rootLen), columnName));
+                removeLambda.remove(ff, SymbolMapWriter.charFileName(path.trimTo(rootLen), columnName));
+                removeLambda.remove(ff, BitmapIndexUtils.keyFileName(path.trimTo(rootLen), columnName));
+                removeLambda.remove(ff, BitmapIndexUtils.valueFileName(path.trimTo(rootLen), columnName));
+            }
         } finally {
             path.trimTo(rootLen);
         }
@@ -1329,17 +1327,6 @@ public class TableWriter implements Closeable {
                     }
                 }
             });
-        } finally {
-            path.trimTo(rootLen);
-        }
-    }
-
-    private void removeSymbolMapFilesLoud(CharSequence name) {
-        try {
-            removeOrException(ff, SymbolMapWriter.offsetFileName(path.trimTo(rootLen), name));
-            removeOrException(ff, SymbolMapWriter.charFileName(path.trimTo(rootLen), name));
-            removeOrException(ff, BitmapIndexUtils.keyFileName(path.trimTo(rootLen), name));
-            removeOrException(ff, BitmapIndexUtils.valueFileName(path.trimTo(rootLen), name));
         } finally {
             path.trimTo(rootLen);
         }
