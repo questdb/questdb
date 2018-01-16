@@ -308,7 +308,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
                     create(configuration, path.trimTo(plen), "x", N / MOD / 128);
                     try (BitmapIndexWriter writer = new BitmapIndexWriter()) {
                         writer.of(configuration, path.trimTo(plen), "x");
-                        BitmapIndexWriter.indexInts(rwin, writer, 0, N);
+                        indexInts(rwin, writer, 0, N);
                     }
                 }
             }
@@ -541,6 +541,14 @@ public class BitmapIndexTest extends AbstractCairoTest {
             }
             assertWriterConstructorFail("Key count");
         });
+    }
+
+    private static void indexInts(SlidingWindowMemory srcMem, BitmapIndexWriter writer, long lo, long hi) {
+        srcMem.updateSize();
+        for (long r = lo; r < hi; r++) {
+            final long offset = r * 4;
+            writer.add(srcMem.getInt(offset), offset);
+        }
     }
 
     private void assertBackwardReaderConstructorFail(CharSequence contains) {

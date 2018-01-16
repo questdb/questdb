@@ -2223,7 +2223,7 @@ public class TableReaderTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
 
             // create table with two string columns
-            try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE).col("a", ColumnType.STRING).col("b", ColumnType.STRING)) {
+            try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE).col("a", ColumnType.SYMBOL).col("b", ColumnType.SYMBOL)) {
                 CairoTestUtils.create(model);
             }
 
@@ -2231,11 +2231,20 @@ public class TableReaderTest extends AbstractCairoTest {
             final int N = 1000;
             // make sure we forbid deleting column "b" files
             TestFilesFacade ff = new TestFilesFacade() {
-                int counter = 2;
+                int counter = 5;
 
                 @Override
                 public boolean remove(LPSZ name) {
-                    if (counter > 0 && (Chars.endsWith(name, "b.i") || Chars.endsWith(name, "b.d"))) {
+                    if (counter > 0 && (
+                            (
+                                    Chars.endsWith(name, "b.i") ||
+                                            Chars.endsWith(name, "b.d") ||
+                                            Chars.endsWith(name, "b.o") ||
+                                            Chars.endsWith(name, "b.k") ||
+                                            Chars.endsWith(name, "b.c") ||
+                                            Chars.endsWith(name, "b.v")
+                            )
+                    )) {
                         counter--;
                         return false;
                     }
@@ -2259,8 +2268,8 @@ public class TableReaderTest extends AbstractCairoTest {
             try (TableWriter writer = new TableWriter(configuration, "x")) {
                 for (int i = 0; i < N; i++) {
                     TableWriter.Row row = writer.newRow(0);
-                    row.putStr(0, rnd.nextChars(10));
-                    row.putStr(1, rnd.nextChars(15));
+                    row.putSym(0, rnd.nextChars(10));
+                    row.putSym(1, rnd.nextChars(15));
                     row.append();
                 }
                 writer.commit();
@@ -2272,8 +2281,8 @@ public class TableReaderTest extends AbstractCairoTest {
                     RecordCursor cursor = reader.getCursor();
                     while (cursor.hasNext()) {
                         Record record = cursor.next();
-                        Assert.assertEquals(rnd.nextChars(10), record.getFlyweightStr(0));
-                        Assert.assertEquals(rnd.nextChars(15), record.getFlyweightStr(1));
+                        Assert.assertEquals(rnd.nextChars(10), record.getSym(0));
+                        Assert.assertEquals(rnd.nextChars(15), record.getSym(1));
                         counter++;
                     }
 
@@ -2284,20 +2293,33 @@ public class TableReaderTest extends AbstractCairoTest {
                     writer.removeColumn("b");
 
                     // now when we add new column by same name it must not pick up files we failed to delete previously
-                    writer.addColumn("b", ColumnType.STRING);
+                    writer.addColumn("b", ColumnType.SYMBOL);
+
+                    // SymbolMap must be cleared when we try do add values to new column
+                    for (int i = 0; i < N; i++) {
+                        TableWriter.Row row = writer.newRow(0);
+                        row.putSym(0, rnd.nextChars(10));
+                        row.putSym(1, rnd.nextChars(15));
+                        row.append();
+                    }
+                    writer.commit();
 
                     // now assert what reader sees
                     Assert.assertTrue(reader.reload());
-                    Assert.assertEquals(N, reader.size());
-
+                    Assert.assertEquals(N * 2, reader.size());
                     rnd.reset();
                     cursor.toTop();
+                    counter = 0;
                     while (cursor.hasNext()) {
                         Record record = cursor.next();
-                        Assert.assertEquals(rnd.nextChars(10), record.getFlyweightStr(0));
-                        // roll random generator to make sure it returns same values
-                        rnd.nextChars(15);
-                        Assert.assertNull(record.getFlyweightStr(1));
+                        Assert.assertEquals(rnd.nextChars(10), record.getSym(0));
+                        if (counter < N) {
+                            // roll random generator to make sure it returns same values
+                            rnd.nextChars(15);
+                            Assert.assertNull(record.getSym(1));
+                        } else {
+                            Assert.assertEquals(rnd.nextChars(15), record.getSym(1));
+                        }
                         counter++;
                     }
 

@@ -32,22 +32,56 @@ import com.questdb.std.str.Path;
 
 public class BitmapIndexBackwardReader implements BitmapIndexReader {
     private final static Log LOG = LogFactory.getLog(BitmapIndexBackwardReader.class);
-    private final ReadOnlyMemory keyMem;
-    private final ReadOnlyMemory valueMem;
+    private final ReadOnlyMemory keyMem = new ReadOnlyMemory();
+    private final ReadOnlyMemory valueMem = new ReadOnlyMemory();
     private final Cursor cursor = new Cursor();
-    private final int blockValueCountMod;
-    private final int blockCapacity;
-    private final long spinLockTimeoutUs;
-    private final MicrosecondClock clock;
+    private int blockValueCountMod;
+    private int blockCapacity;
+    private long spinLockTimeoutUs;
+    private MicrosecondClock clock;
     private int keyCount;
 
+    public BitmapIndexBackwardReader() {
+    }
+
     public BitmapIndexBackwardReader(CairoConfiguration configuration, Path path, CharSequence name) {
+        of(configuration, path, name);
+    }
+
+    @Override
+    public void close() {
+        BitmapIndexReader.super.close();
+        Misc.free(keyMem);
+        Misc.free(valueMem);
+    }
+
+    @Override
+    public BitmapIndexCursor getCursor(int key, long maxValue) {
+
+        if (key >= keyCount) {
+            updateKeyCount();
+        }
+
+        if (key < keyCount) {
+            cursor.of(key, maxValue);
+            return cursor;
+        }
+
+        return BitmapIndexEmptyCursor.INSTANCE;
+    }
+
+    @Override
+    public int getKeyCount() {
+        return keyCount;
+    }
+
+    public void of(CairoConfiguration configuration, Path path, CharSequence name) {
         final int plen = path.length();
         final long pageSize = configuration.getFilesFacade().getMapPageSize();
         this.spinLockTimeoutUs = configuration.getSpinLockTimeoutUs();
 
         try {
-            this.keyMem = new ReadOnlyMemory(configuration.getFilesFacade(), BitmapIndexUtils.keyFileName(path, name), pageSize, 0);
+            this.keyMem.of(configuration.getFilesFacade(), BitmapIndexUtils.keyFileName(path, name), pageSize, 0);
             this.keyMem.grow(configuration.getFilesFacade().length(this.keyMem.getFd()));
             this.clock = configuration.getClock();
 
@@ -92,7 +126,7 @@ public class BitmapIndexBackwardReader implements BitmapIndexReader {
             this.blockValueCountMod = blockValueCountMod;
             this.blockCapacity = (blockValueCountMod + 1) * 8 + BitmapIndexUtils.VALUE_BLOCK_FILE_RESERVED;
             this.keyCount = keyCount;
-            this.valueMem = new ReadOnlyMemory(configuration.getFilesFacade(), BitmapIndexUtils.valueFileName(path.trimTo(plen), name), pageSize, 0);
+            this.valueMem.of(configuration.getFilesFacade(), BitmapIndexUtils.valueFileName(path.trimTo(plen), name), pageSize, 0);
             this.valueMem.grow(configuration.getFilesFacade().length(this.valueMem.getFd()));
         } catch (CairoException e) {
             close();
@@ -100,33 +134,6 @@ public class BitmapIndexBackwardReader implements BitmapIndexReader {
         } finally {
             path.trimTo(plen);
         }
-    }
-
-    @Override
-    public void close() {
-        BitmapIndexReader.super.close();
-        Misc.free(keyMem);
-        Misc.free(valueMem);
-    }
-
-    @Override
-    public BitmapIndexCursor getCursor(int key, long maxValue) {
-
-        if (key >= keyCount) {
-            updateKeyCount();
-        }
-
-        if (key < keyCount) {
-            cursor.of(key, maxValue);
-            return cursor;
-        }
-
-        return BitmapIndexEmptyCursor.INSTANCE;
-    }
-
-    @Override
-    public int getKeyCount() {
-        return keyCount;
     }
 
     private void updateKeyCount() {

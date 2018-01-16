@@ -51,14 +51,6 @@ public class BitmapIndexWriter implements Closeable {
     public BitmapIndexWriter() {
     }
 
-    public static void indexInts(SlidingWindowMemory srcMem, BitmapIndexWriter writer, long lo, long hi) {
-        srcMem.updateSize();
-        for (long r = lo; r < hi; r++) {
-            final long offset = r * 4;
-            writer.add(srcMem.getInt(offset), offset);
-        }
-    }
-
     public static void initKeyMemory(VirtualMemory keyMem, int blockValueCount) {
         keyMem.putByte(BitmapIndexUtils.SIGNATURE);
         keyMem.putLong(1); // SEQUENCE
