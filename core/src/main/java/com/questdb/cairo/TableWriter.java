@@ -1193,13 +1193,18 @@ public class TableWriter implements Closeable {
         }
     }
 
-    private void removeColumn(int index) {
-        Misc.free(getPrimaryColumn(index));
-        Misc.free(getSecondaryColumn(index));
-        columns.remove(getSecondaryColumnIndex(index));
-        columns.remove(getPrimaryColumnIndex(index));
-        columnTops.removeIndex(index);
-        nullers.remove(index);
+    private void removeColumn(int columnIndex) {
+        Misc.free(getPrimaryColumn(columnIndex));
+        Misc.free(getSecondaryColumn(columnIndex));
+        columns.remove(getSecondaryColumnIndex(columnIndex));
+        columns.remove(getPrimaryColumnIndex(columnIndex));
+        columnTops.removeIndex(columnIndex);
+        nullers.remove(columnIndex);
+        if (columnIndex < indexers.size()) {
+            Misc.free(indexers.getQuick(columnIndex));
+            indexers.remove(columnIndex);
+            populateDenseIndexerList();
+        }
     }
 
     private void removeColumnFiles(CharSequence columnName, int columnType, RemoveFileLambda removeLambda) {

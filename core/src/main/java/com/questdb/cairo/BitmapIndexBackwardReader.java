@@ -50,9 +50,11 @@ public class BitmapIndexBackwardReader implements BitmapIndexReader {
 
     @Override
     public void close() {
-        BitmapIndexReader.super.close();
-        Misc.free(keyMem);
-        Misc.free(valueMem);
+        if (isOpen()) {
+            BitmapIndexReader.super.close();
+            Misc.free(keyMem);
+            Misc.free(valueMem);
+        }
     }
 
     @Override
@@ -73,6 +75,11 @@ public class BitmapIndexBackwardReader implements BitmapIndexReader {
     @Override
     public int getKeyCount() {
         return keyCount;
+    }
+
+    @Override
+    public boolean isOpen() {
+        return keyMem.getFd() != -1;
     }
 
     public void of(CairoConfiguration configuration, Path path, CharSequence name) {

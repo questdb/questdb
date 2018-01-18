@@ -111,6 +111,11 @@ public class ReadOnlyMemory extends VirtualMemory implements ReadOnlyColumn {
         return fd;
     }
 
+    @Override
+    public boolean isDeleted() {
+        return !ff.exists(fd);
+    }
+
     public void of(FilesFacade ff, LPSZ name, long pageSize, long size) {
         close();
         this.ff = ff;

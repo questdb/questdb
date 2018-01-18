@@ -48,9 +48,11 @@ public class TableReaderDataFrameCursor implements DataFrameCursor {
         return reader.getMetadata();
     }
 
-    @Override
-    public void toTop() {
-        this.partitionIndex = this.partitionLo;
+    public TableReaderDataFrameCursor of(TableReader reader) {
+        this.reader = reader;
+        this.partitionIndex = this.partitionLo = 0;
+        this.partitionHi = reader.getPartitionCount();
+        return this;
     }
 
     @Override
@@ -81,11 +83,11 @@ public class TableReaderDataFrameCursor implements DataFrameCursor {
         return frame;
     }
 
-    public TableReaderDataFrameCursor of(TableReader reader, int partitionLo, int partitionHi) {
-        this.reader = reader;
-        this.partitionIndex = this.partitionLo = partitionLo;
-        this.partitionHi = partitionHi;
-        return this;
+    @Override
+    public void toTop() {
+        this.partitionIndex = this.partitionLo;
+        // todo: cursor must not self-refresh
+        this.partitionHi = reader.getPartitionCount();
     }
 
     private class TableReaderDataFrame implements DataFrame {

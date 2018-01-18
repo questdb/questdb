@@ -102,4 +102,9 @@ public class NullColumn implements ReadOnlyColumn {
     public long getFd() {
         return -1;
     }
+
+    @Override
+    public boolean isDeleted() {
+        return true;
+    }
 }
