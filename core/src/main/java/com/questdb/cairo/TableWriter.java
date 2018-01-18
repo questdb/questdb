@@ -307,7 +307,7 @@ public class TableWriter implements Closeable {
 
         if (inTransaction()) {
 
-            updateIndices();
+            updateIndexes();
 
             txMem.jumpTo(TableUtils.TX_OFFSET_TXN);
             txMem.putLong(++txn);
@@ -448,7 +448,7 @@ public class TableWriter implements Closeable {
             freeColumns(false);
             columnSizeMem.jumpTo(0);
             configureAppendPosition();
-            rollbackIndices();
+            rollbackIndexes();
             purgeUnusedPartitions();
             LOG.info().$("tx rollback complete [name=").$(name).$(']').$();
         }
@@ -1473,7 +1473,7 @@ public class TableWriter implements Closeable {
         removeTodoFile();
     }
 
-    private void rollbackIndices() {
+    private void rollbackIndexes() {
         for (int i = 0, n = denseIndexers.size(); i < n; i++) {
             denseIndexers.getQuick(i).rollback(transientRowCount - 1);
         }
@@ -1557,7 +1557,7 @@ public class TableWriter implements Closeable {
         // Before partition can be switched we need to index records
         // added so far. Index writers will start point to different
         // files after switch.
-        updateIndices();
+        updateIndexes();
 
         // We need to store reference on partition so that archive
         // file can be created in appropriate directory.
@@ -1574,13 +1574,13 @@ public class TableWriter implements Closeable {
         setAppendPosition(0);
     }
 
-    private void updateIndices() {
+    private void updateIndexes() {
         if (indexCount > 0) {
-            updateIndices0();
+            updateIndexes0();
         }
     }
 
-    private void updateIndices0() {
+    private void updateIndexes0() {
         for (int i = 0, n = indexCount; i < n; i++) {
             denseIndexers.getQuick(i).index(txPartitionCount == 1 ? prevTransientRowCount : 0, transientRowCount);
         }
