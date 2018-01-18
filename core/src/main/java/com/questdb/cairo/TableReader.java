@@ -66,6 +66,7 @@ public class TableReader implements Closeable {
     private final IntList symbolCountSnapshot = new IntList();
     private LongList columnTops;
     private ObjList<ReadOnlyColumn> columns;
+    private ObjList<BitmapIndexReader> bitmapIndexes;
     private int columnCount;
     private int columnCountBits;
     private long transientRowCount;
@@ -78,8 +79,6 @@ public class TableReader implements Closeable {
     private long partitionMin;
     private ReloadMethod reloadMethod;
     private long tempMem8b = Unsafe.malloc(8);
-    private IntIntHashMap bitmapIndexReaderCache;
-    private ObjList<BitmapIndexReader> bitmapIndexReaders = new ObjList<>();
 
     public TableReader(CairoConfiguration configuration, CharSequence name) {
         LOG.info().$("open '").utf8(name).$('\'').$();
@@ -138,7 +137,8 @@ public class TableReader implements Closeable {
             int capacity = getColumnBase(partitionCount);
             this.columns = new ObjList<>(capacity);
             this.columns.setPos(capacity);
-            this.bitmapIndexReaderCache = new IntIntHashMap(capacity);
+            this.bitmapIndexes = new ObjList<>(capacity / 2);
+            this.bitmapIndexes.setPos(capacity / 2);
             this.partitionRowCounts = new LongList(partitionCount);
             this.partitionRowCounts.seed(partitionCount, -1);
             this.columnTops = new LongList(capacity / 2);
@@ -199,30 +199,17 @@ public class TableReader implements Closeable {
     }
 
     public BitmapIndexReader getBitmapIndexReader(int columnBase, int columnIndex) {
-        BitmapIndexReader reader;
-        int index = bitmapIndexReaderCache.keyIndex(columnBase + columnIndex);
-        if (index < 0) {
-            reader = bitmapIndexReaders.getQuick(bitmapIndexReaderCache.valueAt(index));
-            if (reader.isOpen()) {
-                return reader;
-            }
-        } else {
-            reader = null;
-        }
-
-        Path path = partitionPathGenerator.generate(this, getPartitionIndex(columnBase));
-        try {
-            if (reader instanceof BitmapIndexBackwardReader) {
-                ((BitmapIndexBackwardReader) reader).of(configuration, path.chopZ(), metadata.getColumnName(columnIndex));
-            } else {
+        BitmapIndexReader reader = bitmapIndexes.getQuick(columnBase / 2 + columnIndex);
+        if (reader == null) {
+            Path path = partitionPathGenerator.generate(this, getPartitionIndex(columnBase));
+            try {
                 reader = new BitmapIndexBackwardReader(configuration, path.chopZ(), metadata.getColumnName(columnIndex));
-                bitmapIndexReaders.add(reader);
-                bitmapIndexReaderCache.putAt(index, columnBase + columnIndex, bitmapIndexReaders.size() - 1);
+            } finally {
+                path.trimTo(rootLen);
             }
-            return reader;
-        } finally {
-            path.trimTo(rootLen);
+            bitmapIndexes.setQuick(columnBase / 2 + columnIndex, reader);
         }
+        return reader;
     }
 
     public RecordCursor getCursor() {
@@ -412,13 +399,14 @@ public class TableReader implements Closeable {
         }
     }
 
-    private void copyColumnsTo(ObjList<ReadOnlyColumn> columns, LongList columnTops, int base, int index, long partitionRowCount) {
+    private void copyColumnsTo(ObjList<ReadOnlyColumn> columns, LongList columnTops, ObjList<BitmapIndexReader> indexReaders, int columnBase, int columnIndex, long partitionRowCount) {
         boolean reload = tempCopyStruct.mem1 instanceof ReadOnlyMemory && tempCopyStruct.mem1.isDeleted();
-        tempCopyStruct.mem1 = columns.getAndSetQuick(getPrimaryColumnIndex(base, index), tempCopyStruct.mem1);
-        tempCopyStruct.mem2 = columns.getAndSetQuick(getSecondaryColumnIndex(base, index), tempCopyStruct.mem2);
-        tempCopyStruct.top = columnTops.getAndSetQuick(base / 2 + index, tempCopyStruct.top);
+        tempCopyStruct.mem1 = columns.getAndSetQuick(getPrimaryColumnIndex(columnBase, columnIndex), tempCopyStruct.mem1);
+        tempCopyStruct.mem2 = columns.getAndSetQuick(getSecondaryColumnIndex(columnBase, columnIndex), tempCopyStruct.mem2);
+        tempCopyStruct.top = columnTops.getAndSetQuick(columnBase / 2 + columnIndex, tempCopyStruct.top);
+        tempCopyStruct.bitmapIndexReader = indexReaders.getAndSetQuick(columnBase / 2 + columnIndex, tempCopyStruct.bitmapIndexReader);
         if (reload) {
-            reloadColumnAt(path, columns, columnTops, index, base, partitionRowCount);
+            reloadColumnAt(path, columns, columnTops, indexReaders, columnBase, columnIndex, partitionRowCount);
         }
     }
 
@@ -435,7 +423,7 @@ public class TableReader implements Closeable {
         path.trimTo(rootLen);
     }
 
-    private void createColumnInstanceAt(Path path, ObjList<ReadOnlyColumn> columns, LongList columnTops, int columnIndex, int columnBase, long partitionRowCount) {
+    private void createColumnInstanceAt(Path path, ObjList<ReadOnlyColumn> columns, LongList columnTops, int columnBase, int columnIndex, long partitionRowCount) {
         int plen = path.length();
         try {
             String name = metadata.getColumnName(columnIndex);
@@ -470,27 +458,28 @@ public class TableReader implements Closeable {
 
     private void createNewColumnList(int columnCount, long pTransitionIndex, int columnBits) {
         int capacity = partitionCount << columnBits;
-        ObjList<ReadOnlyColumn> columns = new ObjList<>(capacity);
-        LongList columnTops = new LongList();
+        final ObjList<ReadOnlyColumn> columns = new ObjList<>(capacity);
+        final LongList columnTops = new LongList(capacity / 2);
+        final ObjList<BitmapIndexReader> indexReaders = new ObjList<>(capacity / 2);
         columns.setPos(capacity);
         columnTops.setPos(capacity / 2);
+        indexReaders.setPos(capacity / 2);
         final long pIndexBase = pTransitionIndex + 8;
 
         for (int partitionIndex = 0; partitionIndex < partitionCount; partitionIndex++) {
             final int base = partitionIndex << columnBits;
             final int oldBase = partitionIndex << columnCountBits;
-
             try {
                 Path path = partitionPathGenerator.generate(this, partitionIndex);
                 final long partitionRowCount = partitionRowCounts.getQuick(partitionIndex);
                 for (int i = 0; i < columnCount; i++) {
                     final int copyFrom = Unsafe.getUnsafe().getInt(pIndexBase + i * 8) - 1;
                     if (copyFrom > -1) {
-                        fetchColumnsFrom(this.columns, this.columnTops, oldBase, copyFrom);
-                        copyColumnsTo(columns, columnTops, base, i, partitionRowCount);
+                        fetchColumnsFrom(this.columns, this.columnTops, this.bitmapIndexes, oldBase, copyFrom);
+                        copyColumnsTo(columns, columnTops, indexReaders, base, i, partitionRowCount);
                     } else {
                         // new instance
-                        createColumnInstanceAt(path, columns, columnTops, i, base, partitionRowCount);
+                        createColumnInstanceAt(path, columns, columnTops, base, i, partitionRowCount);
                     }
                 }
 
@@ -506,6 +495,7 @@ public class TableReader implements Closeable {
         this.columns = columns;
         this.columnTops = columnTops;
         this.columnCountBits = columnBits;
+        this.bitmapIndexes = indexReaders;
     }
 
     private void doReloadStruct() {
@@ -527,7 +517,6 @@ public class TableReader implements Closeable {
             }
             // rearrange symbol map reader list
             reshuffleSymbolMapReaders(pTransitionIndex);
-            freeBitmapIndexCache();
             this.columnCount = columnCount;
         } finally {
             TableReaderMetadata.freeTransitionIndex(pTransitionIndex);
@@ -544,10 +533,11 @@ public class TableReader implements Closeable {
         }
     }
 
-    private void fetchColumnsFrom(ObjList<ReadOnlyColumn> columns, LongList columnTops, int base, int index) {
-        tempCopyStruct.mem1 = columns.getAndSetQuick(getPrimaryColumnIndex(base, index), null);
-        tempCopyStruct.mem2 = columns.getAndSetQuick(getSecondaryColumnIndex(base, index), null);
-        tempCopyStruct.top = columnTops.getQuick(base / 2 + index);
+    private void fetchColumnsFrom(ObjList<ReadOnlyColumn> columns, LongList columnTops, ObjList<BitmapIndexReader> indexReaders, int columnBase, int columnIndex) {
+        tempCopyStruct.mem1 = columns.getAndSetQuick(getPrimaryColumnIndex(columnBase, columnIndex), null);
+        tempCopyStruct.mem2 = columns.getAndSetQuick(getSecondaryColumnIndex(columnBase, columnIndex), null);
+        tempCopyStruct.top = columnTops.getQuick(columnBase / 2 + columnIndex);
+        tempCopyStruct.bitmapIndexReader = indexReaders.getAndSetQuick(columnBase / 2 + columnIndex, null);
     }
 
     private long findPartitionMinimum(DateFormat partitionDirFmt) {
@@ -580,9 +570,9 @@ public class TableReader implements Closeable {
     }
 
     private void freeBitmapIndexCache() {
-        if (bitmapIndexReaderCache != null) {
-            for (int i = 0, n = bitmapIndexReaders.size(); i < n; i++) {
-                bitmapIndexReaders.getQuick(i).close();
+        if (bitmapIndexes != null) {
+            for (int i = 0, n = bitmapIndexes.size(); i < n; i++) {
+                Misc.free(bitmapIndexes.getQuick(i));
             }
         }
     }
@@ -590,10 +580,7 @@ public class TableReader implements Closeable {
     private void freeColumns() {
         if (columns != null) {
             for (int i = 0, n = columns.size(); i < n; i++) {
-                ReadOnlyColumn mem = columns.getQuick(i);
-                if (mem != null) {
-                    mem.close();
-                }
+                Misc.free(columns.getQuick(i));
             }
         }
     }
@@ -644,11 +631,7 @@ public class TableReader implements Closeable {
     private void incrementPartitionCountBy(int delta) {
         partitionRowCounts.seed(partitionCount, delta, -1);
         partitionCount += delta;
-        int capacity = getColumnBase(partitionCount);
-        columns.setPos(capacity);
-        // we calculate capacity based on two entries per column
-        // for tops we only need one entry
-        columnTops.setPos(capacity / 2);
+        updateCapacities();
     }
 
     boolean isColumnCached(int columnIndex) {
@@ -705,7 +688,7 @@ public class TableReader implements Closeable {
     private void openPartitionColumns(Path path, int columnBase, long partitionRowCount) {
         for (int i = 0; i < columnCount; i++) {
             if (columns.getQuick(getPrimaryColumnIndex(columnBase, i)) == null) {
-                createColumnInstanceAt(path, this.columns, this.columnTops, i, columnBase, partitionRowCount);
+                createColumnInstanceAt(path, this.columns, this.columnTops, columnBase, i, partitionRowCount);
             }
         }
     }
@@ -800,12 +783,14 @@ public class TableReader implements Closeable {
         return true;
     }
 
-    private void reloadColumnAt(Path path, ObjList<ReadOnlyColumn> columns, LongList columnTops, int columnIndex, int columnBase, long partitionRowCount) {
+    private void reloadColumnAt(Path path, ObjList<ReadOnlyColumn> columns, LongList columnTops, ObjList<BitmapIndexReader> indexReaders, int columnBase, int columnIndex, long partitionRowCount) {
         int plen = path.length();
         try {
-            String name = metadata.getColumnName(columnIndex);
-            ReadOnlyMemory mem1 = (ReadOnlyMemory) columns.getQuick(getPrimaryColumnIndex(columnBase, columnIndex));
-            ReadOnlyMemory mem2 = (ReadOnlyMemory) columns.getQuick(getSecondaryColumnIndex(columnBase, columnIndex));
+            final RecordColumnMetadata meta = metadata.getColumnQuick(columnIndex);
+            final String name = meta.getName();
+            final ReadOnlyMemory mem1 = (ReadOnlyMemory) columns.getQuick(getPrimaryColumnIndex(columnBase, columnIndex));
+            final ReadOnlyMemory mem2 = (ReadOnlyMemory) columns.getQuick(getSecondaryColumnIndex(columnBase, columnIndex));
+            BitmapIndexReader indexReader = indexReaders.getQuick(columnBase / 2 + columnIndex);
             if (ff.exists(TableUtils.dFile(path.trimTo(plen), name))) {
 
                 int type = metadata.getColumnQuick(columnIndex).getType();
@@ -824,6 +809,13 @@ public class TableReader implements Closeable {
                         break;
                 }
                 columnTops.setQuick(columnBase / 2 + columnIndex, columnTop);
+                if (meta.isIndexed()) {
+                    if (indexReader instanceof BitmapIndexBackwardReader) {
+                        ((BitmapIndexBackwardReader) indexReader).of(configuration, path.trimTo(plen), name);
+                    }
+                } else {
+                    Misc.free(indexReaders.getAndSetQuick(columnBase / 2 + columnIndex, null));
+                }
             } else {
                 Misc.free(mem1);
                 Misc.free(mem2);
@@ -984,28 +976,29 @@ public class TableReader implements Closeable {
                             // 3. Column hasn't been altered and we can skip to next column.
                             ReadOnlyColumn col = columns.getQuick(getPrimaryColumnIndex(base, i));
                             if (col instanceof ReadOnlyMemory && col.isDeleted()) {
-                                reloadColumnAt(path, columns, columnTops, i, base, partitionRowCount);
+                                reloadColumnAt(path, columns, columnTops, bitmapIndexes, base, i, partitionRowCount);
                             } else if (col instanceof ForceNullColumn) {
                                 columns.setQuick(getPrimaryColumnIndex(base, i), new ReadOnlyMemory());
                                 columns.setQuick(getSecondaryColumnIndex(base, i), new ReadOnlyMemory());
-                                reloadColumnAt(path, columns, columnTops, i, base, partitionRowCount);
+                                reloadColumnAt(path, columns, columnTops, bitmapIndexes, base, i, partitionRowCount);
                             }
                             continue;
                         }
 
                         if (copyFrom > -1) {
-                            fetchColumnsFrom(this.columns, this.columnTops, base, copyFrom);
-                            copyColumnsTo(this.columns, this.columnTops, base, i, partitionRowCount);
+                            fetchColumnsFrom(this.columns, this.columnTops, this.bitmapIndexes, base, copyFrom);
+                            copyColumnsTo(this.columns, this.columnTops, this.bitmapIndexes, base, i, partitionRowCount);
                             int copyTo = Unsafe.getUnsafe().getInt(pIndexBase + i * 8 + 4) - 1;
                             while (copyTo > -1 && isEntryToBeProcessed(pState, copyTo)) {
-                                copyColumnsTo(this.columns, this.columnTops, base, copyTo, partitionRowCount);
+                                copyColumnsTo(this.columns, this.columnTops, this.bitmapIndexes, base, copyTo, partitionRowCount);
                                 copyTo = Unsafe.getUnsafe().getInt(pIndexBase + (copyTo - 1) * 8 + 4);
                             }
                             Misc.free(tempCopyStruct.mem1);
                             Misc.free(tempCopyStruct.mem2);
+                            Misc.free(tempCopyStruct.bitmapIndexReader);
                         } else {
                             // new instance
-                            createColumnInstanceAt(path, this.columns, this.columnTops, i, base, partitionRowCount);
+                            createColumnInstanceAt(path, this.columns, this.columnTops, base, i, partitionRowCount);
                         }
                     }
                 }
@@ -1022,6 +1015,7 @@ public class TableReader implements Closeable {
     private void updateCapacities() {
         int capacity = getColumnBase(partitionCount);
         columns.setPos(capacity);
+        bitmapIndexes.setPos(capacity / 2);
         this.partitionRowCounts.seed(partitionCount, -1);
         this.columnTops.setPos(capacity / 2);
     }
@@ -1057,6 +1051,7 @@ public class TableReader implements Closeable {
     private static class ColumnCopyStruct {
         ReadOnlyColumn mem1;
         ReadOnlyColumn mem2;
+        BitmapIndexReader bitmapIndexReader;
         long top;
     }
 
