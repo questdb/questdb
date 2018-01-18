@@ -42,7 +42,6 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
     private final ObjList<String> cache = new ObjList<>();
     private int maxHash;
     private boolean cached;
-    private FilesFacade ff;
     private int symbolCount;
     private long maxOffset;
 
@@ -84,8 +83,13 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
         return symbolCount;
     }
 
+    @Override
+    public boolean isDeleted() {
+        return offsetMem.isDeleted();
+    }
+
     public void of(CairoConfiguration configuration, Path path, CharSequence name, int symbolCount) {
-        this.ff = configuration.getFilesFacade();
+        FilesFacade ff = configuration.getFilesFacade();
         this.symbolCount = symbolCount;
         this.maxOffset = SymbolMapWriter.keyToOffset(symbolCount - 1);
         final int plen = path.length();
@@ -138,11 +142,6 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
         } finally {
             path.trimTo(plen);
         }
-    }
-
-    @Override
-    public boolean isDeleted() {
-        return !ff.exists(offsetMem.getFd());
     }
 
     @Override

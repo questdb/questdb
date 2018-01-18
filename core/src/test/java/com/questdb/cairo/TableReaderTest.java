@@ -2219,7 +2219,124 @@ public class TableReaderTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testUnsuccessfulFileRemoveAndReload() throws Exception {
+    public void testUnsuccessfulFileRemoveAndReloadStr() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+
+            // create table with two string columns
+            try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE).col("a", ColumnType.SYMBOL).col("b", ColumnType.STRING)) {
+                CairoTestUtils.create(model);
+            }
+
+            Rnd rnd = new Rnd();
+            final int N = 1000;
+            // make sure we forbid deleting column "b" files
+            TestFilesFacade ff = new TestFilesFacade() {
+                int counter = 2;
+
+                @Override
+                public boolean remove(LPSZ name) {
+                    if (counter > 0 && (
+                            (
+                                    Chars.endsWith(name, "b.i") ||
+                                            Chars.endsWith(name, "b.d") ||
+                                            Chars.endsWith(name, "b.o") ||
+                                            Chars.endsWith(name, "b.k") ||
+                                            Chars.endsWith(name, "b.c") ||
+                                            Chars.endsWith(name, "b.v")
+                            )
+                    )) {
+                        counter--;
+                        return false;
+                    }
+                    return super.remove(name);
+                }
+
+                @Override
+                public boolean wasCalled() {
+                    return counter < 1;
+                }
+            };
+
+            CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+                @Override
+                public FilesFacade getFilesFacade() {
+                    return ff;
+                }
+            };
+
+            // populate table and delete column
+            try (TableWriter writer = new TableWriter(configuration, "x")) {
+                for (int i = 0; i < N; i++) {
+                    TableWriter.Row row = writer.newRow(0);
+                    row.putSym(0, rnd.nextChars(10));
+                    row.putStr(1, rnd.nextChars(15));
+                    row.append();
+                }
+                writer.commit();
+
+                try (TableReader reader = new TableReader(configuration, "x")) {
+                    long counter = 0;
+
+                    rnd.reset();
+                    RecordCursor cursor = reader.getCursor();
+                    while (cursor.hasNext()) {
+                        Record record = cursor.next();
+                        Assert.assertEquals(rnd.nextChars(10), record.getSym(0));
+                        Assert.assertEquals(rnd.nextChars(15), record.getFlyweightStr(1));
+                        counter++;
+                    }
+
+                    Assert.assertEquals(N, counter);
+
+                    // this should write metadata without column "b" but will ignore
+                    // file delete failures
+                    writer.removeColumn("b");
+
+                    if (configuration.getFilesFacade().isRestrictedFileSystem()) {
+                        reader.closeColumnForRemove("b");
+                    }
+
+                    // now when we add new column by same name it must not pick up files we failed to delete previously
+                    writer.addColumn("b", ColumnType.STRING);
+
+                    for (int i = 0; i < N; i++) {
+                        TableWriter.Row row = writer.newRow(0);
+                        row.putSym(0, rnd.nextChars(10));
+                        row.putStr(1, rnd.nextChars(15));
+                        row.append();
+                    }
+                    writer.commit();
+
+                    // now assert what reader sees
+                    Assert.assertTrue(reader.reload());
+                    Assert.assertEquals(N * 2, reader.size());
+
+                    rnd.reset();
+                    cursor.toTop();
+                    counter = 0;
+                    while (cursor.hasNext()) {
+                        Record record = cursor.next();
+                        Assert.assertEquals(rnd.nextChars(10), record.getSym(0));
+                        if (counter < N) {
+                            // roll random generator to make sure it returns same values
+                            rnd.nextChars(15);
+                            Assert.assertNull(record.getSym(1));
+                        } else {
+                            Assert.assertEquals(rnd.nextChars(15), record.getFlyweightStr(1));
+                        }
+                        counter++;
+                    }
+
+                    Assert.assertEquals(N * 2, counter);
+                }
+            }
+
+            Assert.assertTrue(ff.wasCalled());
+        });
+    }
+
+    @Test
+    public void testUnsuccessfulRemoveAndReloadSym() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
 
             // create table with two string columns
@@ -2266,12 +2383,7 @@ public class TableReaderTest extends AbstractCairoTest {
 
             // populate table and delete column
             try (TableWriter writer = new TableWriter(configuration, "x")) {
-                for (int i = 0; i < N; i++) {
-                    TableWriter.Row row = writer.newRow(0);
-                    row.putSym(0, rnd.nextChars(10));
-                    row.putSym(1, rnd.nextChars(15));
-                    row.append();
-                }
+                appendTwoSymbols(writer, N, rnd);
                 writer.commit();
 
                 try (TableReader reader = new TableReader(configuration, "x")) {
@@ -2302,12 +2414,7 @@ public class TableReaderTest extends AbstractCairoTest {
                     writer.addColumn("b", ColumnType.SYMBOL);
 
                     // SymbolMap must be cleared when we try do add values to new column
-                    for (int i = 0; i < N; i++) {
-                        TableWriter.Row row = writer.newRow(0);
-                        row.putSym(0, rnd.nextChars(10));
-                        row.putSym(1, rnd.nextChars(15));
-                        row.append();
-                    }
+                    appendTwoSymbols(writer, N, rnd);
                     writer.commit();
 
                     // now assert what reader sees
@@ -2331,6 +2438,310 @@ public class TableReaderTest extends AbstractCairoTest {
                     }
 
                     Assert.assertEquals(N * 2, counter);
+                }
+            }
+
+            Assert.assertTrue(ff.wasCalled());
+        });
+    }
+
+    @Test
+    public void testUnsuccessfulRemoveAndReloadSymTwice() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+
+            // create table with two string columns
+            try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE).col("a", ColumnType.SYMBOL).col("b", ColumnType.SYMBOL)) {
+                CairoTestUtils.create(model);
+            }
+
+            Rnd rnd = new Rnd();
+            final int N = 1000;
+            // make sure we forbid deleting column "b" files
+            TestFilesFacade ff = new TestFilesFacade() {
+                int counter = 5;
+
+                @Override
+                public boolean remove(LPSZ name) {
+                    if (counter > 0 && (
+                            (
+                                    Chars.endsWith(name, "b.i") ||
+                                            Chars.endsWith(name, "b.d") ||
+                                            Chars.endsWith(name, "b.o") ||
+                                            Chars.endsWith(name, "b.k") ||
+                                            Chars.endsWith(name, "b.c") ||
+                                            Chars.endsWith(name, "b.v")
+                            )
+                    )) {
+                        counter--;
+                        return false;
+                    }
+                    return super.remove(name);
+                }
+
+                @Override
+                public boolean wasCalled() {
+                    return counter < 1;
+                }
+            };
+
+            CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+                @Override
+                public FilesFacade getFilesFacade() {
+                    return ff;
+                }
+            };
+
+            // populate table and delete column
+            try (TableWriter writer = new TableWriter(configuration, "x")) {
+                appendTwoSymbols(writer, N, rnd);
+                writer.commit();
+
+                try (TableReader reader = new TableReader(configuration, "x")) {
+                    long counter = 0;
+
+                    rnd.reset();
+                    RecordCursor cursor = reader.getCursor();
+                    while (cursor.hasNext()) {
+                        Record record = cursor.next();
+                        Assert.assertEquals(rnd.nextChars(10), record.getSym(0));
+                        Assert.assertEquals(rnd.nextChars(15), record.getSym(1));
+                        counter++;
+                    }
+
+                    Assert.assertEquals(N, counter);
+
+                    // this should write metadata without column "b" but will ignore
+                    // file delete failures
+                    writer.removeColumn("b");
+
+                    reader.reload();
+
+                    // now when we add new column by same name it must not pick up files we failed to delete previously
+                    writer.addColumn("b", ColumnType.SYMBOL);
+
+                    // SymbolMap must be cleared when we try do add values to new column
+                    appendTwoSymbols(writer, N, rnd);
+                    writer.commit();
+
+                    // now assert what reader sees
+                    Assert.assertTrue(reader.reload());
+                    Assert.assertEquals(N * 2, reader.size());
+
+                    rnd.reset();
+                    cursor.toTop();
+                    counter = 0;
+                    while (cursor.hasNext()) {
+                        Record record = cursor.next();
+                        Assert.assertEquals(rnd.nextChars(10), record.getSym(0));
+                        if (counter < N) {
+                            // roll random generator to make sure it returns same values
+                            rnd.nextChars(15);
+                            Assert.assertNull(record.getSym(1));
+                        } else {
+                            Assert.assertEquals(rnd.nextChars(15), record.getSym(1));
+                        }
+                        counter++;
+                    }
+
+                    Assert.assertEquals(N * 2, counter);
+                }
+            }
+
+            Assert.assertTrue(ff.wasCalled());
+        });
+    }
+
+    @Test
+    public void testUnsuccessfulRemoveExplicitColCloseAndReloadSym() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+
+            // create table with two string columns
+            try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE).col("a", ColumnType.SYMBOL).col("b", ColumnType.SYMBOL)) {
+                CairoTestUtils.create(model);
+            }
+
+            Rnd rnd = new Rnd();
+            final int N = 1000;
+            // make sure we forbid deleting column "b" files
+            TestFilesFacade ff = new TestFilesFacade() {
+                int counter = 5;
+
+                @Override
+                public boolean remove(LPSZ name) {
+                    if (counter > 0 && (
+                            (
+                                    Chars.endsWith(name, "b.i") ||
+                                            Chars.endsWith(name, "b.d") ||
+                                            Chars.endsWith(name, "b.o") ||
+                                            Chars.endsWith(name, "b.k") ||
+                                            Chars.endsWith(name, "b.c") ||
+                                            Chars.endsWith(name, "b.v")
+                            )
+                    )) {
+                        counter--;
+                        return false;
+                    }
+                    return super.remove(name);
+                }
+
+                @Override
+                public boolean wasCalled() {
+                    return counter < 1;
+                }
+            };
+
+            CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+                @Override
+                public FilesFacade getFilesFacade() {
+                    return ff;
+                }
+            };
+
+            // populate table and delete column
+            try (TableWriter writer = new TableWriter(configuration, "x")) {
+                appendTwoSymbols(writer, N, rnd);
+                writer.commit();
+
+                try (TableReader reader = new TableReader(configuration, "x")) {
+                    long counter = 0;
+
+                    rnd.reset();
+                    RecordCursor cursor = reader.getCursor();
+                    while (cursor.hasNext()) {
+                        Record record = cursor.next();
+                        Assert.assertEquals(rnd.nextChars(10), record.getSym(0));
+                        Assert.assertEquals(rnd.nextChars(15), record.getSym(1));
+                        counter++;
+                    }
+
+                    Assert.assertEquals(N, counter);
+
+                    // this should write metadata without column "b" but will ignore
+                    // file delete failures
+                    writer.removeColumn("b");
+
+                    reader.closeColumnForRemove("b");
+
+                    // now when we add new column by same name it must not pick up files we failed to delete previously
+                    writer.addColumn("b", ColumnType.SYMBOL);
+
+                    // SymbolMap must be cleared when we try do add values to new column
+                    appendTwoSymbols(writer, N, rnd);
+                    writer.commit();
+
+                    // now assert what reader sees
+                    Assert.assertTrue(reader.reload());
+                    Assert.assertEquals(N * 2, reader.size());
+
+                    rnd.reset();
+                    cursor.toTop();
+                    counter = 0;
+                    while (cursor.hasNext()) {
+                        Record record = cursor.next();
+                        Assert.assertEquals(rnd.nextChars(10), record.getSym(0));
+                        if (counter < N) {
+                            // roll random generator to make sure it returns same values
+                            rnd.nextChars(15);
+                            Assert.assertNull(record.getSym(1));
+                        } else {
+                            Assert.assertEquals(rnd.nextChars(15), record.getSym(1));
+                        }
+                        counter++;
+                    }
+
+                    Assert.assertEquals(N * 2, counter);
+                }
+            }
+
+            Assert.assertTrue(ff.wasCalled());
+        });
+    }
+
+    @Test
+    public void testUnsuccessfulRemoveLastSym() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+
+            // create table with two string columns
+            try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE).col("a", ColumnType.SYMBOL).col("b", ColumnType.SYMBOL)) {
+                CairoTestUtils.create(model);
+            }
+
+            Rnd rnd = new Rnd();
+            final int N = 1000;
+            // make sure we forbid deleting column "b" files
+            TestFilesFacade ff = new TestFilesFacade() {
+                int counter = 5;
+
+                @Override
+                public boolean remove(LPSZ name) {
+                    if (counter > 0 && (
+                            (
+                                    Chars.endsWith(name, "b.i") ||
+                                            Chars.endsWith(name, "b.d") ||
+                                            Chars.endsWith(name, "b.o") ||
+                                            Chars.endsWith(name, "b.k") ||
+                                            Chars.endsWith(name, "b.c") ||
+                                            Chars.endsWith(name, "b.v")
+                            )
+                    )) {
+                        counter--;
+                        return false;
+                    }
+                    return super.remove(name);
+                }
+
+                @Override
+                public boolean wasCalled() {
+                    return counter < 1;
+                }
+            };
+
+            CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+                @Override
+                public FilesFacade getFilesFacade() {
+                    return ff;
+                }
+            };
+
+            // populate table and delete column
+            try (TableWriter writer = new TableWriter(configuration, "x")) {
+                appendTwoSymbols(writer, N, rnd);
+                writer.commit();
+
+                try (TableReader reader = new TableReader(configuration, "x")) {
+                    long counter = 0;
+
+                    rnd.reset();
+                    RecordCursor cursor = reader.getCursor();
+                    while (cursor.hasNext()) {
+                        Record record = cursor.next();
+                        Assert.assertEquals(rnd.nextChars(10), record.getSym(0));
+                        Assert.assertEquals(rnd.nextChars(15), record.getSym(1));
+                        counter++;
+                    }
+
+                    Assert.assertEquals(N, counter);
+
+                    // this should write metadata without column "b" but will ignore
+                    // file delete failures
+                    writer.removeColumn("b");
+
+                    Assert.assertTrue(reader.reload());
+
+                    Assert.assertEquals(N, reader.size());
+
+                    rnd.reset();
+                    cursor.toTop();
+                    counter = 0;
+                    while (cursor.hasNext()) {
+                        Record record = cursor.next();
+                        Assert.assertEquals(rnd.nextChars(10), record.getSym(0));
+                        // roll random generator to make sure it returns same values
+                        rnd.nextChars(15);
+                        counter++;
+                    }
+
+                    Assert.assertEquals(N, counter);
                 }
             }
 
@@ -2381,6 +2792,15 @@ public class TableReaderTest extends AbstractCairoTest {
             path.of(root).concat("w").concat(partitionName).$();
             Assert.assertTrue(configuration.getFilesFacade().exists(path));
             Assert.assertTrue(configuration.getFilesFacade().rmdir(path));
+        }
+    }
+
+    private void appendTwoSymbols(TableWriter writer, int n, Rnd rnd) {
+        for (int i = 0; i < n; i++) {
+            TableWriter.Row row = writer.newRow(0);
+            row.putSym(0, rnd.nextChars(10));
+            row.putSym(1, rnd.nextChars(15));
+            row.append();
         }
     }
 
