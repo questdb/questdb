@@ -90,10 +90,10 @@ public class TableWriterMetadata extends AbstractRecordMetadata {
         return symbolMapCount;
     }
 
-    void addColumn(CharSequence name, int type) {
+    void addColumn(CharSequence name, int type, boolean indexFlag, int indexValueBlockCapacity) {
         String str = name.toString();
         columnNameIndexMap.put(str, columnMetadata.size());
-        columnMetadata.add(new TableColumnMetadata(str, type, false, 0));
+        columnMetadata.add(new TableColumnMetadata(str, type, indexFlag, indexValueBlockCapacity));
         columnCount++;
         if (type == ColumnType.SYMBOL) {
             symbolMapCount++;

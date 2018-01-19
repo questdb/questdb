@@ -35,17 +35,19 @@ public class BitmapIndexBackwardReader implements BitmapIndexReader {
     private final ReadOnlyMemory keyMem = new ReadOnlyMemory();
     private final ReadOnlyMemory valueMem = new ReadOnlyMemory();
     private final Cursor cursor = new Cursor();
+    private final NullCursor nullCursor = new NullCursor();
     private int blockValueCountMod;
     private int blockCapacity;
     private long spinLockTimeoutUs;
     private MicrosecondClock clock;
     private int keyCount;
+    private long unindexedNullCount;
 
     public BitmapIndexBackwardReader() {
     }
 
-    public BitmapIndexBackwardReader(CairoConfiguration configuration, Path path, CharSequence name) {
-        of(configuration, path, name);
+    public BitmapIndexBackwardReader(CairoConfiguration configuration, Path path, CharSequence name, long unindexedNullCount) {
+        of(configuration, path, name, unindexedNullCount);
     }
 
     @Override
@@ -62,6 +64,12 @@ public class BitmapIndexBackwardReader implements BitmapIndexReader {
 
         if (key >= keyCount) {
             updateKeyCount();
+        }
+
+        if (key == 0 && unindexedNullCount > 0) {
+            nullCursor.nullCount = unindexedNullCount + 1;
+            nullCursor.of(key, maxValue);
+            return nullCursor;
         }
 
         if (key < keyCount) {
@@ -82,7 +90,8 @@ public class BitmapIndexBackwardReader implements BitmapIndexReader {
         return keyMem.getFd() != -1;
     }
 
-    public void of(CairoConfiguration configuration, Path path, CharSequence name) {
+    public void of(CairoConfiguration configuration, Path path, CharSequence name, long unindexedNullCount) {
+        this.unindexedNullCount = unindexedNullCount;
         final int plen = path.length();
         final long pageSize = configuration.getFilesFacade().getMapPageSize();
         this.spinLockTimeoutUs = configuration.getSpinLockTimeoutUs();
@@ -170,8 +179,8 @@ public class BitmapIndexBackwardReader implements BitmapIndexReader {
     }
 
     private class Cursor implements BitmapIndexCursor {
+        protected long valueCount;
         private long valueBlockOffset;
-        private long valueCount;
         private final BitmapIndexUtils.ValueBlockSeeker SEEKER = this::seekValue;
 
         @Override
@@ -243,6 +252,24 @@ public class BitmapIndexBackwardReader implements BitmapIndexReader {
         private void seekValue(long count, long offset) {
             this.valueCount = count;
             this.valueBlockOffset = offset;
+        }
+    }
+
+    private class NullCursor extends Cursor {
+        private long nullCount;
+
+        @Override
+        public boolean hasNext() {
+            return valueCount > 0 || nullCount > 0;
+        }
+
+        @Override
+        public long next() {
+            if (valueCount > 0) {
+                return super.next();
+            } else {
+                return --nullCount;
+            }
         }
     }
 }

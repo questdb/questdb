@@ -173,7 +173,7 @@ public class TableWriter implements Closeable {
     }
 
     public void addColumn(CharSequence name, int type) {
-        addColumn(name, type, configuration.getCutlassSymbolCapacity(), configuration.getCutlassSymbolCacheFlag());
+        addColumn(name, type, configuration.getCutlassSymbolCapacity(), configuration.getCutlassSymbolCacheFlag(), false, 0);
     }
 
     /**
@@ -203,7 +203,14 @@ public class TableWriter implements Closeable {
      * @param symbolCacheFlag when set to true, symbol values will be cached on Java heap.
      * @param type            {@link ColumnType}
      */
-    public void addColumn(CharSequence name, int type, int symbolCapacity, boolean symbolCacheFlag) {
+    public void addColumn(
+            CharSequence name,
+            int type,
+            int symbolCapacity,
+            boolean symbolCacheFlag,
+            boolean indexFlag,
+            int indexValueBlockCapacity
+    ) {
 
         if (getColumnIndexQuiet(metaMem, name, columnCount) != -1) {
             throw CairoException.instance(0).put("Duplicate column name: ").put(name);
@@ -216,7 +223,7 @@ public class TableWriter implements Closeable {
         removeColumnFiles(name, type, REMOVE_OR_EXCEPTION);
 
         // create new _meta.swp
-        this.metaSwapIndex = addColumnToMeta(name, type);
+        this.metaSwapIndex = addColumnToMeta(name, type, indexFlag, indexValueBlockCapacity);
 
         // close _meta so we can rename it
         metaMem.close();
@@ -240,7 +247,7 @@ public class TableWriter implements Closeable {
         }
 
         // add column objects
-        configureColumn(type);
+        configureColumn(type, indexFlag);
 
         // increment column count
         columnCount++;
@@ -252,7 +259,7 @@ public class TableWriter implements Closeable {
         // create column files
         if (transientRowCount > 0 || partitionBy == PartitionBy.NONE) {
             try {
-                openNewColumnFiles(name);
+                openNewColumnFiles(name, indexFlag, indexValueBlockCapacity);
             } catch (CairoException e) {
                 runFragile(RECOVER_FROM_COLUMN_OPEN_FAILURE, name, e);
             }
@@ -271,7 +278,7 @@ public class TableWriter implements Closeable {
 
         bumpStructureVersion();
 
-        metadata.addColumn(name, type);
+        metadata.addColumn(name, type, indexFlag, indexValueBlockCapacity);
 
         LOG.info().$("ADDED column '").utf8(name).$('[').$(ColumnType.nameOf(type)).$("]' to ").$(path).$();
     }
@@ -642,7 +649,7 @@ public class TableWriter implements Closeable {
         }
     }
 
-    private int addColumnToMeta(CharSequence name, int type) {
+    private int addColumnToMeta(CharSequence name, int type, boolean indexFlag, int indexValueBlockCapacity) {
         int index;
         try {
             index = TableUtils.openMetaSwapFile(ff, ddlMem, path, rootLen, 30);
@@ -656,12 +663,14 @@ public class TableWriter implements Closeable {
             for (int i = 0; i < columnCount; i++) {
                 ddlMem.putByte((byte) TableUtils.getColumnType(metaMem, i));
                 ddlMem.putBool(TableUtils.isColumnIndexed(metaMem, i));
-                ddlMem.putInt(0); // index block capacity; this value should be set when index is created
+                ddlMem.putInt(TableUtils.getIndexBlockCapacity(metaMem, i));
                 ddlMem.skip(10);
             }
+
+            // add new column metadata to bottom of list
             ddlMem.putByte((byte) type);
-            ddlMem.putBool(false);
-            ddlMem.putInt(0); // index block capacity, see above
+            ddlMem.putBool(indexFlag);
+            ddlMem.putInt(indexValueBlockCapacity);
             ddlMem.skip(10);
 
             long nameOffset = TableUtils.getColumnNameOffset(columnCount);
@@ -827,7 +836,7 @@ public class TableWriter implements Closeable {
         }
     }
 
-    private void configureColumn(int type) {
+    private void configureColumn(int type, boolean indexFlag) {
         final AppendMemory primary = new AppendMemory();
         final AppendMemory secondary;
         switch (type) {
@@ -842,6 +851,10 @@ public class TableWriter implements Closeable {
         columns.add(primary);
         columns.add(secondary);
         configureNuller(type, primary, secondary);
+        if (indexFlag) {
+            indexers.extendAndSet((columns.size() - 1) / 2, new SymbolColumnIndexer());
+            populateDenseIndexerList();
+        }
         refs.add(0);
     }
 
@@ -851,7 +864,7 @@ public class TableWriter implements Closeable {
         for (int i = 0; i < columnCount; i++) {
             RecordColumnMetadata m = metadata.getColumnQuick(i);
             int type = m.getType();
-            configureColumn(type);
+            configureColumn(type, m.isIndexed());
 
             if (type == ColumnType.SYMBOL) {
                 assert nextSymbolCountOffset < TX_OFFSET_MAP_WRITER_COUNT + 4 + 8 * expectedMapWriters;
@@ -924,6 +937,15 @@ public class TableWriter implements Closeable {
         }
     }
 
+    /**
+     * Creates bitmap index files for a column. This method uses primary column instance as temporary tool to
+     * append index data. Therefore it must be called before primary column is initialized.
+     *
+     * @param columnName         column name
+     * @param columnIndex        column index in table writer column list
+     * @param indexBlockCapacity approximate number of values per index key
+     * @param plen               path length. This is used to trim shared path object to.
+     */
     private void createIndexFiles(CharSequence columnName, int columnIndex, int indexBlockCapacity, int plen) {
         try {
             BitmapIndexUtils.keyFileName(path.trimTo(plen), columnName);
@@ -1056,16 +1078,31 @@ public class TableWriter implements Closeable {
         }
     }
 
-    private void openNewColumnFiles(CharSequence name) {
+    private void openNewColumnFiles(CharSequence name, boolean indexFlag, int indexValueBlockCapacity) {
         try {
             // open column files
             setStateForTimestamp(maxTimestamp, false);
             int plen = path.length();
-            openColumnFiles(name, columnCount - 1, plen);
+            final int columnIndex = columnCount - 1;
+
+            // index must be created before column is initialised because
+            // it uses primary column object as temporary tool
+            if (indexFlag) {
+                createIndexFiles(name, columnIndex, indexValueBlockCapacity, plen);
+            }
+
+            openColumnFiles(name, columnIndex, plen);
             if (transientRowCount > 0) {
                 // write .top file
                 writeColumnTop(name);
             }
+
+            if (indexFlag) {
+                ColumnIndexer indexer = indexers.getQuick(columnIndex);
+                assert indexer != null;
+                indexers.getQuick(columnIndex).of(configuration, path.trimTo(plen), name, getPrimaryColumn(columnIndex), getSecondaryColumn(columnIndex), transientRowCount);
+            }
+
         } finally {
             path.trimTo(rootLen);
         }
@@ -1218,6 +1255,8 @@ public class TableWriter implements Closeable {
                     removeLambda.remove(ff, TableUtils.dFile(path, columnName));
                     removeLambda.remove(ff, TableUtils.iFile(path.trimTo(plen), columnName));
                     removeLambda.remove(ff, TableUtils.topFile(path.trimTo(plen), columnName));
+                    removeLambda.remove(ff, BitmapIndexUtils.keyFileName(path.trimTo(plen), columnName));
+                    removeLambda.remove(ff, BitmapIndexUtils.valueFileName(path.trimTo(plen), columnName));
                 }
             });
 
@@ -1654,10 +1693,10 @@ public class TableWriter implements Closeable {
         @Override
         public void index(long loRow, long hiRow) {
             mem.updateSize();
-            long lo = (loRow - columnTop) * 4;
-            final long hi = hiRow * 4;
-            for (; lo < hi; lo += 4) {
-                writer.add(mem.getInt(lo), lo);
+            // while we may have to read column starting with zero offset
+            // index values have to be adjusted to partition-level row id
+            for (long lo = loRow - columnTop; lo < hiRow; lo++) {
+                writer.add(mem.getInt(lo * 4) + 1, lo + columnTop);
             }
         }
 

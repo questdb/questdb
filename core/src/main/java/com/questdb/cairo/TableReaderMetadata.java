@@ -167,8 +167,7 @@ class TableReaderMetadata extends AbstractRecordMetadata implements Closeable {
             } else {
                 // new instance
                 TableColumnMetadata m = newInstance(i, columnCount);
-                tmp = moveMetadata(i, m);
-                assert tmp == null;
+                moveMetadata(i, m);
                 columnNameIndexMap.put(m.getName(), i);
             }
         }
@@ -236,7 +235,9 @@ class TableReaderMetadata extends AbstractRecordMetadata implements Closeable {
                 offset += ReadOnlyMemory.getStorageLength(name);
                 int oldPosition = columnNameIndexMap.get(name);
                 // write primary (immutable) index
-                if (oldPosition > -1 && TableUtils.getColumnType(metaMem, i) == TableUtils.getColumnType(this.metaMem, oldPosition)) {
+                if (oldPosition > -1
+                        && TableUtils.getColumnType(metaMem, i) == TableUtils.getColumnType(this.metaMem, oldPosition)
+                        && TableUtils.isColumnIndexed(metaMem, i) == TableUtils.isColumnIndexed(this.metaMem, oldPosition)) {
                     Unsafe.getUnsafe().putInt(index + i * 8, oldPosition + 1);
                     Unsafe.getUnsafe().putInt(index + oldPosition * 8 + 4, i + 1);
                 } else {
