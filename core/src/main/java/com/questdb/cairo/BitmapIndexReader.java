@@ -30,6 +30,17 @@ public interface BitmapIndexReader extends Closeable {
     default void close() {
     }
 
+    /**
+     * Creates cursor for index values for the given key. Cursor should be treated as mutable
+     * instance. Typical BitmapIndexReader implementation will return same object instance
+     * configured for the required parameters.
+     * <p>
+     * Returned values are capped to given maximum inclusive.
+     *
+     * @param key      index key
+     * @param maxValue inclusive maximum value
+     * @return index value cursor
+     */
     BitmapIndexCursor getCursor(int key, long maxValue);
 
     int getKeyCount();

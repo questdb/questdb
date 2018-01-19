@@ -23,44 +23,37 @@
 
 package com.questdb.cairo;
 
-import com.questdb.common.RecordColumnMetadata;
-import com.questdb.common.SymbolTable;
+public class BitmapIndexNullReader implements BitmapIndexReader {
 
-class TableColumnMetadata implements RecordColumnMetadata {
-    private final int type;
-    private final String name;
-    private final boolean indexed;
-    private final int indexValueBlockCapacity;
+    private final NullCursor cursor = new NullCursor();
 
-    public TableColumnMetadata(String name, int type, boolean indexFlaf, int indexValueBlockCapacity) {
-        this.name = name;
-        this.type = type;
-        this.indexed = indexFlaf;
-        this.indexValueBlockCapacity = indexValueBlockCapacity;
+    @Override
+    public BitmapIndexCursor getCursor(int key, long maxValue) {
+        cursor.value = maxValue;
+        return cursor;
     }
 
     @Override
-    public int getBucketCount() {
-        return indexValueBlockCapacity;
+    public int getKeyCount() {
+        return 1;
     }
 
     @Override
-    public String getName() {
-        return name;
+    public boolean isOpen() {
+        return true;
     }
 
-    @Override
-    public SymbolTable getSymbolTable() {
-        return null;
-    }
+    private class NullCursor implements BitmapIndexCursor {
+        private long value;
 
-    @Override
-    public int getType() {
-        return type;
-    }
+        @Override
+        public boolean hasNext() {
+            return value > -1;
+        }
 
-    @Override
-    public boolean isIndexed() {
-        return indexed;
+        @Override
+        public long next() {
+            return value--;
+        }
     }
 }

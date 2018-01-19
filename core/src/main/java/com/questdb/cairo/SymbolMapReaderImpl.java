@@ -119,7 +119,7 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
             this.offsetMem.grow(maxOffset);
 
             // index writer is used to identify attempts to store duplicate symbol value
-            this.indexReader.of(configuration, path.trimTo(plen), name);
+            this.indexReader.of(configuration, path.trimTo(plen), name, 0);
 
             // this is the place where symbol values are stored
             this.charMem.of(ff, charFileName(path.trimTo(plen), name), mapPageSize, 0);

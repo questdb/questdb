@@ -27,6 +27,7 @@ import com.questdb.cairo.sql.DataFrame;
 import com.questdb.common.ColumnType;
 import com.questdb.common.PartitionBy;
 import com.questdb.common.SymbolTable;
+import com.questdb.std.Chars;
 import com.questdb.std.Rnd;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -94,6 +95,37 @@ public class TableReaderDataFrameCursorTest extends AbstractCairoTest {
         testRemoveMidColumn(PartitionBy.YEAR, 1000000 * 60 * 5 * 24L * 10L, 2);
     }
 
+    //
+
+    @Test
+    public void testReplaceIndexedWithUnindexedByByDay() throws Exception {
+        testReplaceIndexedColWithUnindexed(PartitionBy.DAY, 1000000 * 60 * 5, 3);
+    }
+
+    @Test
+    public void testReplaceIndexedWithUnindexedByByNone() throws Exception {
+        testReplaceIndexedColWithUnindexed(PartitionBy.NONE, 1000000 * 60 * 5, 0);
+    }
+
+    @Test
+    public void testReplaceIndexedWithUnindexedByByYear() throws Exception {
+        testReplaceIndexedColWithUnindexed(PartitionBy.YEAR, 1000000 * 60 * 5 * 24L * 10L, 2);
+    }
+
+    @Test
+    public void testReplaceIndexedWithUnindexedByMonth() throws Exception {
+        testReplaceIndexedColWithUnindexed(PartitionBy.MONTH, 1000000 * 60 * 5 * 24L, 2);
+    }
+
+    ///
+
+    @Test
+    public void testReplaceUnindexedWithIndexedByByDay() throws Exception {
+        testReplaceUnindexedColWithIndexed(PartitionBy.DAY, 1000000 * 60 * 5, 3);
+    }
+
+    ///
+
     @Test
     public void testRollbackSymbolIndexByDay() throws Exception {
         testSymbolIndexReadAfterRollback(PartitionBy.DAY, 1000000 * 60 * 5, 3);
@@ -153,13 +185,25 @@ public class TableReaderDataFrameCursorTest extends AbstractCairoTest {
 
             int keyCount = indexReader.getKeyCount();
             for (int i = 0; i < keyCount; i++) {
-                BitmapIndexCursor ic = indexReader.getCursor(i, limit * 4);
-                CharSequence expected = symbolTable.value(i);
+                BitmapIndexCursor ic = indexReader.getCursor(i, limit - 1);
+                CharSequence expected = symbolTable.value(i - 1);
                 while (ic.hasNext()) {
-                    long offset = ic.next();
-                    record.jumpTo(frame.getPartitionIndex(), offset / 4);
+                    long row = ic.next();
+                    record.jumpTo(frame.getPartitionIndex(), row);
                     TestUtils.assertEquals(expected, record.getSym(columnIndex));
                 }
+            }
+        }
+    }
+
+    private void assertNoIndex(TableReaderDataFrameCursor cursor, int columnIndex) {
+        while (cursor.hasNext()) {
+            DataFrame frame = cursor.next();
+            try {
+                frame.getBitmapIndexReader(columnIndex);
+                Assert.fail();
+            } catch (CairoException e) {
+                Assert.assertTrue(Chars.contains(e.getMessage(), "Not indexed"));
             }
         }
     }
@@ -186,12 +230,13 @@ public class TableReaderDataFrameCursorTest extends AbstractCairoTest {
             while (record.getRecordIndex() < limit) {
                 CharSequence sym = record.getSym(columnIndex);
 
-                // Get index cursor for each symbol in data frame
-                BitmapIndexCursor ic = indexReader.getCursor(symbolTable.getQuick(sym), limit * 4);
-
                 // Assert that index cursor contains offset of current row
                 boolean offsetFound = false;
-                long target = record.getRecordIndex() * 4;
+                long target = record.getRecordIndex();
+
+                // Get index cursor for each symbol in data frame
+                BitmapIndexCursor ic = indexReader.getCursor(symbolTable.getQuick(sym) + 1, limit - 1);
+
                 while (ic.hasNext()) {
                     if (ic.next() == target) {
                         offsetFound = true;
@@ -278,8 +323,7 @@ public class TableReaderDataFrameCursorTest extends AbstractCairoTest {
                     }
                     writer.commit();
 
-                    reader.reload();
-                    cursor.toTop();
+                    cursor.reload();
                     assertSymbolFoundInIndex(cursor, record, 0, M * 2);
                     cursor.toTop();
                     assertSymbolFoundInIndex(cursor, record, 2, M * 2);
@@ -353,8 +397,7 @@ public class TableReaderDataFrameCursorTest extends AbstractCairoTest {
                     }
                     writer.commit();
 
-                    reader.reload();
-                    cursor.toTop();
+                    cursor.reload();
                     assertSymbolFoundInIndex(cursor, record, 1, M * 2);
                     cursor.toTop();
                     assertIndexRowsMatchSymbol(cursor, record, 1);
@@ -424,8 +467,7 @@ public class TableReaderDataFrameCursorTest extends AbstractCairoTest {
                     }
                     writer.commit();
 
-                    reader.reload();
-                    cursor.toTop();
+                    cursor.reload();
                     assertSymbolFoundInIndex(cursor, record, 1, M * 2);
                     cursor.toTop();
                     assertSymbolFoundInIndex(cursor, record, 2, M * 2);
@@ -433,6 +475,150 @@ public class TableReaderDataFrameCursorTest extends AbstractCairoTest {
                     assertIndexRowsMatchSymbol(cursor, record, 1);
                     cursor.toTop();
                     assertIndexRowsMatchSymbol(cursor, record, 2);
+                }
+            }
+        });
+    }
+
+    private void testReplaceIndexedColWithUnindexed(int partitionBy, long increment, int expectedPartitionMin) throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final int M = 1000;
+            final int N = 100;
+
+            // separate two symbol columns with primitive. It will make problems apparent if index does not shift correctly
+            try (TableModel model = new TableModel(configuration, "x", partitionBy).
+                    col("a", ColumnType.STRING).
+                    col("b", ColumnType.SYMBOL).indexed(true, N / 4).
+                    col("i", ColumnType.INT).
+                    timestamp().
+                    col("c", ColumnType.SYMBOL).indexed(true, N / 4)
+            ) {
+                CairoTestUtils.create(model);
+            }
+
+            final Rnd rnd = new Rnd();
+            final String symbols[] = new String[N];
+
+            for (int i = 0; i < N; i++) {
+                symbols[i] = rnd.nextChars(8).toString();
+            }
+
+            // prepare the data
+            long timestamp = 0;
+            try (TableWriter writer = new TableWriter(configuration, "x")) {
+                for (int i = 0; i < M; i++) {
+                    TableWriter.Row row = writer.newRow(timestamp += increment);
+                    row.putStr(0, rnd.nextChars(20));
+                    row.putSym(1, symbols[rnd.nextPositiveInt() % N]);
+                    row.putInt(2, rnd.nextInt());
+                    row.putSym(4, symbols[rnd.nextPositiveInt() % N]);
+                    row.append();
+                }
+                writer.commit();
+
+                try (TableReader reader = new TableReader(configuration, "x")) {
+
+                    final TableReaderDataFrameCursor cursor = new TableReaderDataFrameCursor();
+                    final TableReaderRecord record = new TableReaderRecord(reader);
+
+                    Assert.assertTrue(reader.getPartitionCount() > expectedPartitionMin);
+
+
+                    cursor.of(reader);
+                    assertSymbolFoundInIndex(cursor, record, 1, M);
+                    cursor.toTop();
+                    assertSymbolFoundInIndex(cursor, record, 4, M);
+
+                    writer.removeColumn("c");
+                    writer.addColumn("c", ColumnType.SYMBOL);
+
+                    for (int i = 0; i < M; i++) {
+                        TableWriter.Row row = writer.newRow(timestamp += increment);
+                        row.putStr(0, rnd.nextChars(20));
+                        row.putSym(1, symbols[rnd.nextPositiveInt() % N]);
+                        row.putInt(2, rnd.nextInt());
+                        row.putSym(4, symbols[rnd.nextPositiveInt() % N]);
+                        row.append();
+                    }
+                    writer.commit();
+
+                    Assert.assertTrue(reader.reload());
+                    cursor.reload();
+                    assertSymbolFoundInIndex(cursor, record, 1, M * 2);
+                    cursor.toTop();
+                    assertNoIndex(cursor, 4);
+                }
+            }
+        });
+    }
+
+    private void testReplaceUnindexedColWithIndexed(int partitionBy, long increment, int expectedPartitionMin) throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final int M = 1000;
+            final int N = 100;
+
+            // separate two symbol columns with primitive. It will make problems apparent if index does not shift correctly
+            try (TableModel model = new TableModel(configuration, "x", partitionBy).
+                    col("a", ColumnType.STRING).
+                    col("b", ColumnType.SYMBOL).indexed(true, N / 4).
+                    col("i", ColumnType.INT).
+                    timestamp().
+                    col("c", ColumnType.SYMBOL)
+            ) {
+                CairoTestUtils.create(model);
+            }
+
+            final Rnd rnd = new Rnd();
+            final String symbols[] = new String[N];
+
+            for (int i = 0; i < N; i++) {
+                symbols[i] = rnd.nextChars(8).toString();
+            }
+
+            // prepare the data
+            long timestamp = 0;
+            try (TableWriter writer = new TableWriter(configuration, "x")) {
+                for (int i = 0; i < M; i++) {
+                    TableWriter.Row row = writer.newRow(timestamp += increment);
+                    row.putStr(0, rnd.nextChars(20));
+                    row.putSym(1, symbols[rnd.nextPositiveInt() % N]);
+                    row.putInt(2, rnd.nextInt());
+                    row.putSym(4, symbols[rnd.nextPositiveInt() % N]);
+                    row.append();
+                }
+                writer.commit();
+
+                try (TableReader reader = new TableReader(configuration, "x")) {
+
+                    final TableReaderDataFrameCursor cursor = new TableReaderDataFrameCursor();
+                    final TableReaderRecord record = new TableReaderRecord(reader);
+
+                    Assert.assertTrue(reader.getPartitionCount() > expectedPartitionMin);
+
+
+                    cursor.of(reader);
+                    assertSymbolFoundInIndex(cursor, record, 1, M);
+                    cursor.toTop();
+                    assertNoIndex(cursor, 4);
+
+                    writer.removeColumn("c");
+                    writer.addColumn("c", ColumnType.SYMBOL, N, true, true, 8);
+
+                    for (int i = 0; i < M; i++) {
+                        TableWriter.Row row = writer.newRow(timestamp += increment);
+                        row.putStr(0, rnd.nextChars(20));
+                        row.putSym(1, symbols[rnd.nextPositiveInt() % N]);
+                        row.putInt(2, rnd.nextInt());
+                        row.putSym(4, symbols[rnd.nextPositiveInt() % N]);
+                        row.append();
+                    }
+                    writer.commit();
+
+                    Assert.assertTrue(reader.reload());
+                    cursor.reload();
+                    assertSymbolFoundInIndex(cursor, record, 1, M * 2);
+                    cursor.toTop();
+                    assertSymbolFoundInIndex(cursor, record, 4, M * 2);
                 }
             }
         });

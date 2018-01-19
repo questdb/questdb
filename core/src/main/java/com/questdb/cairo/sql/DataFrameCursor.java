@@ -28,6 +28,9 @@ import com.questdb.common.StorageFacade;
 import com.questdb.std.ImmutableIterator;
 
 public interface DataFrameCursor extends ImmutableIterator<DataFrame>, StorageFacade {
+
+    void reload();
+
     void closeCursor();
 
     RecordMetadata getMetadata();

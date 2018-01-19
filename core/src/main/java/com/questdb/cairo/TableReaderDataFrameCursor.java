@@ -36,26 +36,6 @@ public class TableReaderDataFrameCursor implements DataFrameCursor {
     private int partitionIndex;
 
     @Override
-    public void closeCursor() {
-        if (reader != null) {
-            reader.close();
-            reader = null;
-        }
-    }
-
-    @Override
-    public RecordMetadata getMetadata() {
-        return reader.getMetadata();
-    }
-
-    public TableReaderDataFrameCursor of(TableReader reader) {
-        this.reader = reader;
-        this.partitionIndex = this.partitionLo = 0;
-        this.partitionHi = reader.getPartitionCount();
-        return this;
-    }
-
-    @Override
     public SymbolTable getSymbolTable(int columnIndex) {
         return reader.getSymbolMapReader(columnIndex);
     }
@@ -83,11 +63,36 @@ public class TableReaderDataFrameCursor implements DataFrameCursor {
         return frame;
     }
 
+    public TableReaderDataFrameCursor of(TableReader reader) {
+        this.reader = reader;
+        this.partitionIndex = this.partitionLo = 0;
+        this.partitionHi = reader.getPartitionCount();
+        return this;
+    }
+
+    @Override
+    public void reload() {
+        reader.reload();
+        this.partitionHi = reader.getPartitionCount();
+        toTop();
+    }
+
+    @Override
+    public void closeCursor() {
+        if (reader != null) {
+            reader.close();
+            reader = null;
+        }
+    }
+
+    @Override
+    public RecordMetadata getMetadata() {
+        return reader.getMetadata();
+    }
+
     @Override
     public void toTop() {
         this.partitionIndex = this.partitionLo;
-        // todo: cursor must not self-refresh
-        this.partitionHi = reader.getPartitionCount();
     }
 
     private class TableReaderDataFrame implements DataFrame {

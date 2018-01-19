@@ -32,6 +32,7 @@ import com.questdb.std.microtime.DateLocaleFactory;
 import com.questdb.std.microtime.Dates;
 import com.questdb.std.str.NativeLPSZ;
 import com.questdb.std.str.Path;
+import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
 import java.util.concurrent.locks.LockSupport;
@@ -200,16 +201,7 @@ public class TableReader implements Closeable {
 
     public BitmapIndexReader getBitmapIndexReader(int columnBase, int columnIndex) {
         BitmapIndexReader reader = bitmapIndexes.getQuick(columnBase / 2 + columnIndex);
-        if (reader == null) {
-            Path path = partitionPathGenerator.generate(this, getPartitionIndex(columnBase));
-            try {
-                reader = new BitmapIndexBackwardReader(configuration, path.chopZ(), metadata.getColumnName(columnIndex));
-            } finally {
-                path.trimTo(rootLen);
-            }
-            bitmapIndexes.setQuick(columnBase / 2 + columnIndex, reader);
-        }
-        return reader;
+        return reader == null ? createBitmapIndexReaderAt(columnBase, columnIndex) : reader;
     }
 
     public RecordCursor getCursor() {
@@ -423,37 +415,27 @@ public class TableReader implements Closeable {
         path.trimTo(rootLen);
     }
 
-    private void createColumnInstanceAt(Path path, ObjList<ReadOnlyColumn> columns, LongList columnTops, int columnBase, int columnIndex, long partitionRowCount) {
-        int plen = path.length();
-        try {
-            String name = metadata.getColumnName(columnIndex);
-            if (ff.exists(TableUtils.dFile(path.trimTo(plen), name))) {
-
-                int type = metadata.getColumnQuick(columnIndex).getType();
-                ReadOnlyColumn mem1 = new ReadOnlyMemory(ff, path, ff.getMapPageSize(), 0);
-                long columnTop = TableUtils.readColumnTop(ff, path.trimTo(plen), name, plen, tempMem8b);
-
-                switch (type) {
-                    case ColumnType.BINARY:
-                    case ColumnType.STRING:
-                        ReadOnlyColumn mem2 = new ReadOnlyMemory(ff, TableUtils.iFile(path.trimTo(plen), name), ff.getMapPageSize(), 0);
-                        columns.setQuick(getPrimaryColumnIndex(columnBase, columnIndex), mem1);
-                        columns.setQuick(getSecondaryColumnIndex(columnBase, columnIndex), mem2);
-                        growColumn(mem1, mem2, type, partitionRowCount - columnTop);
-                        break;
-                    default:
-                        columns.setQuick(getPrimaryColumnIndex(columnBase, columnIndex), mem1);
-                        growColumn(mem1, null, type, partitionRowCount - columnTop);
-                        break;
-                }
-                columnTops.setQuick(columnBase / 2 + columnIndex, columnTop);
-            } else {
-                columns.setQuick(getPrimaryColumnIndex(columnBase, columnIndex), NullColumn.INSTANCE);
-                columns.setQuick(getSecondaryColumnIndex(columnBase, columnIndex), NullColumn.INSTANCE);
-            }
-        } finally {
-            path.trimTo(plen);
+    @NotNull
+    private BitmapIndexReader createBitmapIndexReaderAt(int columnBase, int columnIndex) {
+        BitmapIndexReader reader;
+        RecordColumnMetadata meta = metadata.getColumnQuick(columnIndex);
+        if (!meta.isIndexed()) {
+            throw CairoException.instance(0).put("Not indexed: ").put(meta.getName());
         }
+
+        ReadOnlyColumn col = columns.getQuick(getPrimaryColumnIndex(columnBase, columnIndex));
+        if (col instanceof NullColumn) {
+            reader = new BitmapIndexNullReader();
+        } else {
+            Path path = partitionPathGenerator.generate(this, getPartitionIndex(columnBase));
+            try {
+                reader = new BitmapIndexBackwardReader(configuration, path.chopZ(), meta.getName(), getColumnTop(columnBase, columnIndex));
+            } finally {
+                path.trimTo(rootLen);
+            }
+        }
+        bitmapIndexes.setQuick(columnBase / 2 + columnIndex, reader);
+        return reader;
     }
 
     private void createNewColumnList(int columnCount, long pTransitionIndex, int columnBits) {
@@ -479,7 +461,7 @@ public class TableReader implements Closeable {
                         copyColumnsTo(columns, columnTops, indexReaders, base, i, partitionRowCount);
                     } else {
                         // new instance
-                        createColumnInstanceAt(path, columns, columnTops, base, i, partitionRowCount);
+                        reloadColumnAt(path, columns, columnTops, indexReaders, base, i, partitionRowCount);
                     }
                 }
 
@@ -688,7 +670,7 @@ public class TableReader implements Closeable {
     private void openPartitionColumns(Path path, int columnBase, long partitionRowCount) {
         for (int i = 0; i < columnCount; i++) {
             if (columns.getQuick(getPrimaryColumnIndex(columnBase, i)) == null) {
-                createColumnInstanceAt(path, this.columns, this.columnTops, columnBase, i, partitionRowCount);
+                reloadColumnAt(path, this.columns, this.columnTops, this.bitmapIndexes, columnBase, i, partitionRowCount);
             }
         }
     }
@@ -788,39 +770,60 @@ public class TableReader implements Closeable {
         try {
             final RecordColumnMetadata meta = metadata.getColumnQuick(columnIndex);
             final String name = meta.getName();
-            final ReadOnlyMemory mem1 = (ReadOnlyMemory) columns.getQuick(getPrimaryColumnIndex(columnBase, columnIndex));
-            final ReadOnlyMemory mem2 = (ReadOnlyMemory) columns.getQuick(getSecondaryColumnIndex(columnBase, columnIndex));
-            BitmapIndexReader indexReader = indexReaders.getQuick(columnBase / 2 + columnIndex);
+            final int primaryIndex = getPrimaryColumnIndex(columnBase, columnIndex);
+            final int secondaryIndex = getSecondaryColumnIndex(columnBase, columnIndex);
+            final int topIndex = columnBase / 2 + columnIndex;
+
+            ReadOnlyColumn mem1 = columns.getQuick(primaryIndex);
+            ReadOnlyColumn mem2 = columns.getQuick(secondaryIndex);
+
+            BitmapIndexReader indexReader = indexReaders.getQuick(topIndex);
             if (ff.exists(TableUtils.dFile(path.trimTo(plen), name))) {
 
-                int type = metadata.getColumnQuick(columnIndex).getType();
 
-                mem1.of(ff, path, ff.getMapPageSize(), 0);
-                long columnTop = TableUtils.readColumnTop(ff, path.trimTo(plen), name, plen, tempMem8b);
+                if (mem1 instanceof ReadOnlyMemory) {
+                    ((ReadOnlyMemory) mem1).of(ff, path, ff.getMapPageSize(), 0);
+                } else {
+                    mem1 = new ReadOnlyMemory(ff, path, ff.getMapPageSize(), 0);
+                    columns.setQuick(primaryIndex, mem1);
+                }
+
+                final long columnTop = TableUtils.readColumnTop(ff, path.trimTo(plen), name, plen, tempMem8b);
+                final int type = meta.getType();
 
                 switch (type) {
                     case ColumnType.BINARY:
                     case ColumnType.STRING:
-                        mem2.of(ff, TableUtils.iFile(path.trimTo(plen), name), ff.getMapPageSize(), 0);
+                        TableUtils.iFile(path.trimTo(plen), name);
+                        if (mem2 instanceof ReadOnlyMemory) {
+                            ((ReadOnlyMemory) mem2).of(ff, path, ff.getMapPageSize(), 0);
+                        } else {
+                            mem2 = new ReadOnlyMemory(ff, path, ff.getMapPageSize(), 0);
+                            columns.setQuick(secondaryIndex, mem2);
+                        }
                         growColumn(mem1, mem2, type, partitionRowCount - columnTop);
                         break;
                     default:
+                        Misc.free(columns.getAndSetQuick(secondaryIndex, null));
                         growColumn(mem1, null, type, partitionRowCount - columnTop);
                         break;
                 }
-                columnTops.setQuick(columnBase / 2 + columnIndex, columnTop);
+
+                columnTops.setQuick(topIndex, columnTop);
+
                 if (meta.isIndexed()) {
                     if (indexReader instanceof BitmapIndexBackwardReader) {
-                        ((BitmapIndexBackwardReader) indexReader).of(configuration, path.trimTo(plen), name);
+                        ((BitmapIndexBackwardReader) indexReader).of(configuration, path.trimTo(plen), name, columnTop);
                     }
                 } else {
-                    Misc.free(indexReaders.getAndSetQuick(columnBase / 2 + columnIndex, null));
+                    Misc.free(indexReaders.getAndSetQuick(topIndex, null));
                 }
             } else {
-                Misc.free(mem1);
-                Misc.free(mem2);
-                columns.setQuick(getPrimaryColumnIndex(columnBase, columnIndex), NullColumn.INSTANCE);
-                columns.setQuick(getSecondaryColumnIndex(columnBase, columnIndex), NullColumn.INSTANCE);
+                Misc.free(columns.getAndSetQuick(primaryIndex, NullColumn.INSTANCE));
+                Misc.free(columns.getAndSetQuick(secondaryIndex, NullColumn.INSTANCE));
+                // the appropriate index for NUllColumn will be created lazily when requested
+                // these indexes have state and may not be always required
+                Misc.free(indexReaders.getAndSetQuick(topIndex, null));
             }
         } finally {
             path.trimTo(plen);
@@ -975,11 +978,7 @@ public class TableReader implements Closeable {
                             //    instance and the column from disk
                             // 3. Column hasn't been altered and we can skip to next column.
                             ReadOnlyColumn col = columns.getQuick(getPrimaryColumnIndex(base, i));
-                            if (col instanceof ReadOnlyMemory && col.isDeleted()) {
-                                reloadColumnAt(path, columns, columnTops, bitmapIndexes, base, i, partitionRowCount);
-                            } else if (col instanceof ForceNullColumn) {
-                                columns.setQuick(getPrimaryColumnIndex(base, i), new ReadOnlyMemory());
-                                columns.setQuick(getSecondaryColumnIndex(base, i), new ReadOnlyMemory());
+                            if ((col instanceof ReadOnlyMemory && col.isDeleted()) || col instanceof ForceNullColumn) {
                                 reloadColumnAt(path, columns, columnTops, bitmapIndexes, base, i, partitionRowCount);
                             }
                             continue;
@@ -998,7 +997,7 @@ public class TableReader implements Closeable {
                             Misc.free(tempCopyStruct.bitmapIndexReader);
                         } else {
                             // new instance
-                            createColumnInstanceAt(path, this.columns, this.columnTops, base, i, partitionRowCount);
+                            reloadColumnAt(path, columns, columnTops, bitmapIndexes, base, i, partitionRowCount);
                         }
                     }
                 }
