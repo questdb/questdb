@@ -180,6 +180,7 @@ public class TableReader implements Closeable {
             // tell that column has to be attempted to be read from disk
             Misc.free(columns.getAndSetQuick(getPrimaryColumnIndex(base, columnIndex), ForceNullColumn.INSTANCE));
             Misc.free(columns.getAndSetQuick(getSecondaryColumnIndex(base, columnIndex), ForceNullColumn.INSTANCE));
+            Misc.free(bitmapIndexes.getAndSetQuick(base / 2 + columnIndex, null));
         }
 
         if (metadata.getColumnQuick(columnIndex).getType() == ColumnType.SYMBOL) {
@@ -392,8 +393,9 @@ public class TableReader implements Closeable {
     }
 
     private void copyColumnsTo(ObjList<ReadOnlyColumn> columns, LongList columnTops, ObjList<BitmapIndexReader> indexReaders, int columnBase, int columnIndex, long partitionRowCount) {
-        boolean reload = tempCopyStruct.mem1 instanceof ReadOnlyMemory && tempCopyStruct.mem1.isDeleted();
-        tempCopyStruct.mem1 = columns.getAndSetQuick(getPrimaryColumnIndex(columnBase, columnIndex), tempCopyStruct.mem1);
+        ReadOnlyColumn mem1 = tempCopyStruct.mem1;
+        boolean reload = (mem1 instanceof ReadOnlyMemory || mem1 instanceof ForceNullColumn) && mem1.isDeleted();
+        tempCopyStruct.mem1 = columns.getAndSetQuick(getPrimaryColumnIndex(columnBase, columnIndex), mem1);
         tempCopyStruct.mem2 = columns.getAndSetQuick(getSecondaryColumnIndex(columnBase, columnIndex), tempCopyStruct.mem2);
         tempCopyStruct.top = columnTops.getAndSetQuick(columnBase / 2 + columnIndex, tempCopyStruct.top);
         tempCopyStruct.bitmapIndexReader = indexReaders.getAndSetQuick(columnBase / 2 + columnIndex, tempCopyStruct.bitmapIndexReader);
