@@ -40,6 +40,7 @@ public final class TableUtils {
     public static final String META_FILE_NAME = "_meta";
     public static final String TXN_FILE_NAME = "_txn";
     public static final long META_OFFSET_COLUMN_TYPES = 128;
+    public static final int INITIAL_TXN = 0;
     static final byte TODO_RESTORE_META = 2;
     static final byte TODO_TRUNCATE = 1;
     static final DateFormat fmtDay;
@@ -131,7 +132,7 @@ public final class TableUtils {
     public static void resetTxn(VirtualMemory txMem, int symbolMapCount) {
         txMem.jumpTo(TX_OFFSET_TXN);
         // txn to let readers know table is being reset
-        txMem.putLong(0);
+        txMem.putLong(INITIAL_TXN);
         Unsafe.getUnsafe().storeFence();
 
         // transient row count
@@ -155,7 +156,7 @@ public final class TableUtils {
 
         Unsafe.getUnsafe().storeFence();
         // txn check
-        txMem.putLong(0);
+        txMem.putLong(INITIAL_TXN);
         txMem.jumpTo(offset);
     }
 

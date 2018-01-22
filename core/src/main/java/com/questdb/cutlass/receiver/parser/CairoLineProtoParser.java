@@ -229,6 +229,7 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
             entry.writer = pool.get(tableName);
             this.tableName = tableName.getCacheAddress();
             createState(entry);
+            LOG.info().$("cached writer [name=").$(tableName).$(']').$();
         } catch (CairoException ex) {
             LOG.error().$((Sinkable) ex).$();
             switchModeToSkipLine();

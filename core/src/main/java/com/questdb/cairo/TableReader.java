@@ -74,7 +74,7 @@ public class TableReader implements Closeable {
     private long structVersion;
     private long prevStructVersion;
     private long rowCount;
-    private long txn = -1;
+    private long txn = TableUtils.INITIAL_TXN;
     private long maxTimestamp;
     private int partitionCount;
     private long partitionMin;
@@ -647,7 +647,7 @@ public class TableReader implements Closeable {
 
                 final long partitionSize = partitionIndex == partitionCount - 1 ? transientRowCount : readPartitionSize(ff, path, tempMem8b);
 
-                LOG.info().$("open partition ").utf8(path.$()).$(" [rowCount=").$(partitionSize).$(", transientRowCount=").$(transientRowCount).$(", partitionIndex=").$(partitionIndex).$(", partitionCount=").$(partitionCount).$();
+                LOG.info().$("open partition ").utf8(path.$()).$(" [rowCount=").$(partitionSize).$(", transientRowCount=").$(transientRowCount).$(", partitionIndex=").$(partitionIndex).$(", partitionCount=").$(partitionCount).$(']').$();
 
                 if (partitionSize > 0) {
                     openPartitionColumns(path, getColumnBase(partitionIndex), partitionSize);
@@ -731,38 +731,59 @@ public class TableReader implements Closeable {
     }
 
     private boolean readTxn() {
+        int count = 0;
         while (true) {
             long txn = txMem.getLong(TableUtils.TX_OFFSET_TXN);
 
+            // exit if this is the same as we alrwady have
             if (txn == this.txn) {
                 return false;
             }
 
+            // make sure this isn't re-ordered
             Unsafe.getUnsafe().loadFence();
-            long transientRowCount = txMem.getLong(TableUtils.TX_OFFSET_TRANSIENT_ROW_COUNT);
-            long fixedRowCount = txMem.getLong(TableUtils.TX_OFFSET_FIXED_ROW_COUNT);
-            long maxTimestamp = txMem.getLong(TableUtils.TX_OFFSET_MAX_TIMESTAMP);
-            long structVersion = txMem.getLong(TableUtils.TX_OFFSET_STRUCT_VERSION);
 
-            this.symbolCountSnapshot.clear();
-            int symbolMapCount = txMem.getInt(TableUtils.TX_OFFSET_MAP_WRITER_COUNT);
-            if (symbolMapCount > 0) {
-                txMem.grow(TableUtils.TX_OFFSET_MAP_WRITER_COUNT + 4 + symbolMapCount * 4);
-                for (int i = 0; i < symbolMapCount; i++) {
-                    symbolCountSnapshot.add(txMem.getInt(TableUtils.TX_OFFSET_MAP_WRITER_COUNT + 4 + i * 4));
+            // wait until txn check is updated
+            long checkTxn;
+            while ((checkTxn = txMem.getLong(TableUtils.TX_OFFSET_TXN_CHECK)) < txn) {
+                LockSupport.parkNanos(1);
+            }
+
+            if (txn == checkTxn) {
+                // great, we seem to have got stable read, lets do some reading
+                // and check later if it was worth it
+
+                Unsafe.getUnsafe().loadFence();
+                final long transientRowCount = txMem.getLong(TableUtils.TX_OFFSET_TRANSIENT_ROW_COUNT);
+                final long fixedRowCount = txMem.getLong(TableUtils.TX_OFFSET_FIXED_ROW_COUNT);
+                final long maxTimestamp = txMem.getLong(TableUtils.TX_OFFSET_MAX_TIMESTAMP);
+                final long structVersion = txMem.getLong(TableUtils.TX_OFFSET_STRUCT_VERSION);
+
+                this.symbolCountSnapshot.clear();
+                int symbolMapCount = txMem.getInt(TableUtils.TX_OFFSET_MAP_WRITER_COUNT);
+                if (symbolMapCount > 0) {
+                    txMem.grow(TableUtils.TX_OFFSET_MAP_WRITER_COUNT + 4 + symbolMapCount * 4);
+                    for (int i = 0; i < symbolMapCount; i++) {
+                        symbolCountSnapshot.add(txMem.getInt(TableUtils.TX_OFFSET_MAP_WRITER_COUNT + 4 + i * 4));
+                    }
                 }
-            }
 
-            Unsafe.getUnsafe().loadFence();
-            if (txn == txMem.getLong(TableUtils.TX_OFFSET_TXN_CHECK)) {
-                this.txn = txn;
-                this.transientRowCount = transientRowCount;
-                this.rowCount = fixedRowCount + transientRowCount;
-                this.maxTimestamp = maxTimestamp;
-                this.structVersion = structVersion;
-                break;
+                Unsafe.getUnsafe().loadFence();
+                // ok, we have snapshot, check if our snapshot is stable
+                if (txn == txMem.getLong(TableUtils.TX_OFFSET_TXN)) {
+                    // good, very stable, congrats
+                    this.txn = txn;
+                    this.transientRowCount = transientRowCount;
+                    this.rowCount = fixedRowCount + transientRowCount;
+                    this.maxTimestamp = maxTimestamp;
+                    this.structVersion = structVersion;
+                    LOG.info().$("new transaction [txn=").$(txn).$(", transientRowCount=").$(transientRowCount).$(", fixedRowCount=").$(fixedRowCount).$(", maxTimestamp=").$(maxTimestamp).$(", attempts=").$(count).$(']').$();
+                    break;
+                }
+
+                count++;
+                LockSupport.parkNanos(1);
             }
-            LockSupport.parkNanos(1);
         }
         return true;
     }
