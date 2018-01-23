@@ -69,7 +69,7 @@ public class BitmapIndexBackwardReader implements BitmapIndexReader {
         }
 
         if (key == 0 && unindexedNullCount > 0) {
-            nullCursor.nullCount = unindexedNullCount + 1;
+            nullCursor.nullCount = unindexedNullCount;
             nullCursor.of(key, maxValue);
             return nullCursor;
         }
