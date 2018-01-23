@@ -96,4 +96,9 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     public int getCutlassSymbolCapacity() {
         return 64;
     }
+
+    @Override
+    public int getMaxNumberOfSwapFiles() {
+        return 30;
+    }
 }
