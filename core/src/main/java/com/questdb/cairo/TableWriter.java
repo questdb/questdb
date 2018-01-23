@@ -39,8 +39,7 @@ import org.jetbrains.annotations.NotNull;
 import java.io.Closeable;
 import java.util.function.LongConsumer;
 
-import static com.questdb.cairo.TableUtils.TX_OFFSET_MAP_WRITER_COUNT;
-import static com.questdb.cairo.TableUtils.TX_OFFSET_TXN_CHECK;
+import static com.questdb.cairo.TableUtils.*;
 
 public class TableWriter implements Closeable {
 
@@ -76,8 +75,9 @@ public class TableWriter implements Closeable {
     private final int fileOperationRetryCount;
     private final CharSequence name;
     private final TableWriterMetadata metadata;
-    private final FragileCode RECOVER_FROM_META_RENAME_FAILURE = this::recoverFromMetaRenameFailure;
     private final CairoConfiguration configuration;
+    private final CharSequenceIntHashMap validationMap = new CharSequenceIntHashMap();
+    private final FragileCode RECOVER_FROM_META_RENAME_FAILURE = this::recoverFromMetaRenameFailure;
     int txPartitionCount = 0;
     private long lockFd;
     private LongConsumer timestampSetter;
@@ -227,6 +227,9 @@ public class TableWriter implements Closeable {
 
         // close _meta so we can rename it
         metaMem.close();
+
+        // validate new meta
+        validateSwapMeta(name);
 
         // rename _meta to _meta.prev
         renameMetaToMetaPrev(name);
@@ -652,8 +655,7 @@ public class TableWriter implements Closeable {
     private int addColumnToMeta(CharSequence name, int type, boolean indexFlag, int indexValueBlockCapacity) {
         int index;
         try {
-            index = TableUtils.openMetaSwapFile(ff, ddlMem, path, rootLen, 30);
-
+            index = TableUtils.openMetaSwapFile(ff, ddlMem, path, rootLen, configuration.getMaxNumberOfSwapFiles());
             int columnCount = metaMem.getInt(TableUtils.META_OFFSET_COUNT);
 
             ddlMem.putInt(columnCount + 1);
@@ -876,13 +878,7 @@ public class TableWriter implements Closeable {
             }
 
             if (m.isIndexed()) {
-                switch (type) {
-                    case ColumnType.SYMBOL:
-                        indexers.extendAndSet(i, new SymbolColumnIndexer());
-                        break;
-                    default:
-                        throw CairoException.instance(0).put("Unsupported column type for INDEX: ").put(ColumnType.nameOf(type));
-                }
+                indexers.extendAndSet(i, new SymbolColumnIndexer());
             }
 
             populateDenseIndexerList();
@@ -1629,6 +1625,25 @@ public class TableWriter implements Closeable {
         this.prevTimestamp = maxTimestamp;
         this.maxTimestamp = timestamp;
         this.timestampSetter.accept(timestamp);
+    }
+
+    private void validateSwapMeta(CharSequence columnName) {
+        try {
+            try {
+                path.concat(META_SWAP_FILE_NAME);
+                if (metaSwapIndex > 0) {
+                    path.put('.').put(metaSwapIndex);
+                }
+                metaMem.of(ff, path.$(), ff.getPageSize(), ff.length(path));
+                validationMap.clear();
+                TableUtils.validate(ff, metaMem, validationMap);
+            } finally {
+                metaMem.close();
+                path.trimTo(rootLen);
+            }
+        } catch (CairoException e) {
+            runFragile(RECOVER_FROM_META_RENAME_FAILURE, columnName, e);
+        }
     }
 
     private void writeColumnTop(CharSequence name) {

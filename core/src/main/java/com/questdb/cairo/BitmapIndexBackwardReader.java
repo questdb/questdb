@@ -30,6 +30,8 @@ import com.questdb.std.Unsafe;
 import com.questdb.std.microtime.MicrosecondClock;
 import com.questdb.std.str.Path;
 
+import java.util.concurrent.locks.LockSupport;
+
 public class BitmapIndexBackwardReader implements BitmapIndexReader {
     private final static Log LOG = LogFactory.getLog(BitmapIndexBackwardReader.class);
     private final ReadOnlyMemory keyMem = new ReadOnlyMemory();
@@ -114,29 +116,32 @@ public class BitmapIndexBackwardReader implements BitmapIndexReader {
                 throw CairoException.instance(0).put("Unknown format: ").put(path);
             }
 
-            // Read key memory header atomically, in that start and end sequence numbers
-            // must be read orderly and their values must match. If they don't match - we must retry.
-            // This is always necessary in case reader is created at the same time as index itself.
-
+            // Triple check atomic read. We read first and last sequences. If they match - there is a chance at stable
+            // read. Confirm start sequence hasn't changed after values read. If it has changed - retry the whole thing.
             int blockValueCountMod;
             int keyCount;
-            long timestamp = clock.getTicks();
+            final long deadline = clock.getTicks() + spinLockTimeoutUs;
             while (true) {
                 long seq = this.keyMem.getLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE);
-                Unsafe.getUnsafe().loadFence();
 
-                blockValueCountMod = this.keyMem.getInt(BitmapIndexUtils.KEY_RESERVED_OFFSET_BLOCK_VALUE_COUNT) - 1;
-                keyCount = this.keyMem.getInt(BitmapIndexUtils.KEY_RESERVED_OFFSET_KEY_COUNT);
                 Unsafe.getUnsafe().loadFence();
-
                 if (this.keyMem.getLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE_CHECK) == seq) {
-                    break;
+
+                    blockValueCountMod = this.keyMem.getInt(BitmapIndexUtils.KEY_RESERVED_OFFSET_BLOCK_VALUE_COUNT) - 1;
+                    keyCount = this.keyMem.getInt(BitmapIndexUtils.KEY_RESERVED_OFFSET_KEY_COUNT);
+
+                    Unsafe.getUnsafe().loadFence();
+                    if (this.keyMem.getLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE) == seq) {
+                        break;
+                    }
                 }
 
-                if (clock.getTicks() - timestamp > spinLockTimeoutUs) {
+                if (clock.getTicks() > deadline) {
                     LOG.error().$("failed to read index header consistently [corrupt?] [timeout=").$(spinLockTimeoutUs).utf8("μs]").$();
                     throw CairoException.instance(0).put("failed to read index header consistently [corrupt?]");
                 }
+
+                LockSupport.parkNanos(1);
             }
 
             this.blockValueCountMod = blockValueCountMod;
@@ -154,19 +159,22 @@ public class BitmapIndexBackwardReader implements BitmapIndexReader {
 
     private void updateKeyCount() {
         int keyCount;
-        long timestamp = clock.getTicks();
+        final long deadline = clock.getTicks() + spinLockTimeoutUs;
         while (true) {
             long seq = this.keyMem.getLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE);
-            Unsafe.getUnsafe().loadFence();
 
-            keyCount = this.keyMem.getInt(BitmapIndexUtils.KEY_RESERVED_OFFSET_KEY_COUNT);
             Unsafe.getUnsafe().loadFence();
-
             if (this.keyMem.getLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE_CHECK) == seq) {
-                break;
+
+                keyCount = this.keyMem.getInt(BitmapIndexUtils.KEY_RESERVED_OFFSET_KEY_COUNT);
+
+                Unsafe.getUnsafe().loadFence();
+                if (seq == this.keyMem.getLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE)) {
+                    break;
+                }
             }
 
-            if (clock.getTicks() - timestamp > spinLockTimeoutUs) {
+            if (clock.getTicks() > deadline) {
                 this.keyCount = 0;
                 LOG.error().$("failed to consistently update key count [corrupt index?] [timeout=").$(spinLockTimeoutUs).utf8("μs]").$();
                 throw CairoException.instance(0).put("failed to consistently update key count [corrupt index?]");
@@ -222,19 +230,21 @@ public class BitmapIndexBackwardReader implements BitmapIndexReader {
             // should these values do not match.
             long valueCount;
             long valueBlockOffset;
-            long timestamp = clock.getTicks();
+            final long deadline = clock.getTicks() + spinLockTimeoutUs;
             while (true) {
                 valueCount = keyMem.getLong(offset + BitmapIndexUtils.KEY_ENTRY_OFFSET_VALUE_COUNT);
-                Unsafe.getUnsafe().loadFence();
 
-                valueBlockOffset = keyMem.getLong(offset + BitmapIndexUtils.KEY_ENTRY_OFFSET_LAST_VALUE_BLOCK_OFFSET);
                 Unsafe.getUnsafe().loadFence();
-
                 if (keyMem.getLong(offset + BitmapIndexUtils.KEY_ENTRY_OFFSET_COUNT_CHECK) == valueCount) {
-                    break;
+                    valueBlockOffset = keyMem.getLong(offset + BitmapIndexUtils.KEY_ENTRY_OFFSET_LAST_VALUE_BLOCK_OFFSET);
+
+                    Unsafe.getUnsafe().loadFence();
+                    if (keyMem.getLong(offset + BitmapIndexUtils.KEY_ENTRY_OFFSET_VALUE_COUNT) == valueCount) {
+                        break;
+                    }
                 }
 
-                if (clock.getTicks() - timestamp > spinLockTimeoutUs) {
+                if (clock.getTicks() > deadline) {
                     LOG.error().$("cursor failed to read index header consistently [corrupt?] [timeout=").$(spinLockTimeoutUs).utf8("μs, key=").$(key).$(", offset=").$(offset).$(']').$();
                     throw CairoException.instance(0).put("cursor failed to read index header consistently [corrupt?]");
                 }

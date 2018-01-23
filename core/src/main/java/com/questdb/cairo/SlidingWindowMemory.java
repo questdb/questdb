@@ -62,10 +62,6 @@ public class SlidingWindowMemory extends VirtualMemory {
         throw new UnsupportedOperationException("Cannot jump() read-only memory. Use grow() instead.");
     }
 
-    public long getFd() {
-        return fd;
-    }
-
     public void of(AppendMemory parent) {
         close();
         this.ff = parent.getFilesFacade();
@@ -75,10 +71,6 @@ public class SlidingWindowMemory extends VirtualMemory {
         updateSize();
         this.pageIndex = -1;
         LOG.info().$("open [fd=").$(fd).$(", size=").$(this.size).$(']').$();
-    }
-
-    public long size() {
-        return size;
     }
 
     public void updateSize() {

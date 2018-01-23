@@ -182,11 +182,21 @@ public final class TableUtils {
                 }
             }
 
-            // validate column types
+            // validate column types and index attributes
             for (int i = 0; i < columnCount; i++) {
                 int type = getColumnType(metaMem, i);
                 if (ColumnType.sizeOf(type) == -1) {
                     throw validationException(metaMem).put("Invalid column type ").put(type).put(" at [").put(i).put(']');
+                }
+
+                if (isColumnIndexed(metaMem, i)) {
+                    if (type != ColumnType.SYMBOL) {
+                        throw validationException(metaMem).put("Index flag is only supported for SYMBOL").put(" at [").put(i).put(']');
+                    }
+
+                    if (getIndexBlockCapacity(metaMem, i) < 2) {
+                        throw validationException(metaMem).put("Invalid index value block capacity ").put(getIndexBlockCapacity(metaMem, i)).put(" at [").put(i).put(']');
+                    }
                 }
             }
 

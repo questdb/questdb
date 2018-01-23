@@ -732,6 +732,7 @@ public class TableReader implements Closeable {
 
     private boolean readTxn() {
         int count = 0;
+        final long deadline = configuration.getClock().getTicks() + configuration.getSpinLockTimeoutUs();
         while (true) {
             long txn = txMem.getLong(TableUtils.TX_OFFSET_TXN);
 
@@ -743,13 +744,8 @@ public class TableReader implements Closeable {
             // make sure this isn't re-ordered
             Unsafe.getUnsafe().loadFence();
 
-            // wait until txn check is updated
-            long checkTxn;
-            while ((checkTxn = txMem.getLong(TableUtils.TX_OFFSET_TXN_CHECK)) < txn) {
-                LockSupport.parkNanos(1);
-            }
-
-            if (txn == checkTxn) {
+            // do start and end sequences match? if so we have a chance at stable read
+            if (txn == txMem.getLong(TableUtils.TX_OFFSET_TXN_CHECK)) {
                 // great, we seem to have got stable read, lets do some reading
                 // and check later if it was worth it
 
@@ -778,14 +774,18 @@ public class TableReader implements Closeable {
                     this.maxTimestamp = maxTimestamp;
                     this.structVersion = structVersion;
                     LOG.info().$("new transaction [txn=").$(txn).$(", transientRowCount=").$(transientRowCount).$(", fixedRowCount=").$(fixedRowCount).$(", maxTimestamp=").$(maxTimestamp).$(", attempts=").$(count).$(']').$();
-                    break;
+                    return true;
                 }
-
-                count++;
-                LockSupport.parkNanos(1);
+                // This is unlucky, sequences have changed while we were reading transaction data
+                // We must discard and try again
             }
+            count++;
+            if (configuration.getClock().getTicks() > deadline) {
+                LOG.error().$("tx read timeout [timeout=").$(configuration.getSpinLockTimeoutUs()).utf8("μs]").$();
+                throw CairoException.instance(0).put("Transaction read timeout");
+            }
+            LockSupport.parkNanos(1);
         }
-        return true;
     }
 
     private void reloadColumnAt(Path path, ObjList<ReadOnlyColumn> columns, LongList columnTops, ObjList<BitmapIndexReader> indexReaders, int columnBase, int columnIndex, long partitionRowCount) {

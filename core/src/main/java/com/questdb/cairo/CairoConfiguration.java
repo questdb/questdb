@@ -50,4 +50,6 @@ public interface CairoConfiguration {
     boolean getCutlassSymbolCacheFlag();
 
     int getCutlassSymbolCapacity();
+
+    int getMaxNumberOfSwapFiles();
 }

@@ -590,6 +590,48 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAddUnsupportedIndex() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)
+                    .col("a", ColumnType.SYMBOL).cached(true)
+                    .col("b", ColumnType.STRING)
+                    .timestamp()) {
+                CairoTestUtils.create(model);
+            }
+
+            final int N = 1000;
+            try (TableWriter w = new TableWriter(configuration, "x")) {
+                final Rnd rnd = new Rnd();
+                for (int i = 0; i < N; i++) {
+                    TableWriter.Row r = w.newRow(0);
+                    r.putSym(0, rnd.nextChars(3));
+                    r.putStr(1, rnd.nextChars(10));
+                    r.append();
+                }
+                w.commit();
+
+                try {
+                    w.addColumn("c", ColumnType.STRING, 0, false, true, 1024);
+                    Assert.fail();
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getMessage(), "only supported");
+                }
+
+                for (int i = 0; i < N; i++) {
+                    TableWriter.Row r = w.newRow(0);
+                    r.putSym(0, rnd.nextChars(3));
+                    r.putStr(1, rnd.nextChars(10));
+                    r.append();
+                }
+                w.commit();
+
+                // re-add column  with index flag switched off
+                w.addColumn("c", ColumnType.STRING, 0, false, false, 0);
+            }
+        });
+    }
+
+    @Test
     public void testAppendOutOfOrder() throws Exception {
         int N = 10000;
         create(FF, PartitionBy.NONE, N);
@@ -1629,6 +1671,26 @@ public class TableWriterTest extends AbstractCairoTest {
             long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
             ts = testAppendNulls(rnd, FF, ts);
             testAppendNulls(rnd, FF, ts);
+        });
+    }
+
+    @Test
+    public void testOpenUnsupportedIndex() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)
+                    .col("a", ColumnType.SYMBOL).cached(true)
+                    .col("b", ColumnType.STRING)
+                    .col("c", ColumnType.STRING).indexed(true, 1024)
+                    .timestamp()) {
+                CairoTestUtils.create(model);
+            }
+
+            try {
+                new TableWriter(configuration, "x");
+                Assert.fail();
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getMessage(), "only supported");
+            }
         });
     }
 
