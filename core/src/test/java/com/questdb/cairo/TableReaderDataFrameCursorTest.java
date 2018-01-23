@@ -95,7 +95,47 @@ public class TableReaderDataFrameCursorTest extends AbstractCairoTest {
         testRemoveMidColumn(PartitionBy.YEAR, 1000000 * 60 * 5 * 24L * 10L, 2);
     }
 
+    @Test
+    public void testReplaceIndexedWithIndexedByByNone() throws Exception {
+        testReplaceIndexedColWithIndexed(PartitionBy.NONE, 1000000 * 60 * 5, 0, false);
+    }
+
+    @Test
+    public void testReplaceIndexedWithIndexedByByNoneR() throws Exception {
+        testReplaceIndexedColWithIndexed(PartitionBy.NONE, 1000000 * 60 * 5, 0, true);
+    }
+
+    @Test
+    public void testReplaceIndexedWithIndexedByByYear() throws Exception {
+        testReplaceIndexedColWithIndexed(PartitionBy.YEAR, 1000000 * 60 * 5 * 24L * 10L, 2, false);
+    }
+
+    @Test
+    public void testReplaceIndexedWithIndexedByByYearR() throws Exception {
+        testReplaceIndexedColWithIndexed(PartitionBy.YEAR, 1000000 * 60 * 5 * 24L * 10L, 2, true);
+    }
+
     //
+
+    @Test
+    public void testReplaceIndexedWithIndexedByDay() throws Exception {
+        testReplaceIndexedColWithIndexed(PartitionBy.DAY, 1000000 * 60 * 5, 3, false);
+    }
+
+    @Test
+    public void testReplaceIndexedWithIndexedByDayR() throws Exception {
+        testReplaceIndexedColWithIndexed(PartitionBy.DAY, 1000000 * 60 * 5, 3, true);
+    }
+
+    @Test
+    public void testReplaceIndexedWithIndexedByMonth() throws Exception {
+        testReplaceIndexedColWithIndexed(PartitionBy.MONTH, 1000000 * 60 * 5 * 24L, 2, false);
+    }
+
+    @Test
+    public void testReplaceIndexedWithIndexedByMonthR() throws Exception {
+        testReplaceIndexedColWithIndexed(PartitionBy.MONTH, 1000000 * 60 * 5 * 24L, 2, true);
+    }
 
     @Test
     public void testReplaceIndexedWithUnindexedByByDay() throws Exception {
@@ -117,7 +157,7 @@ public class TableReaderDataFrameCursorTest extends AbstractCairoTest {
         testReplaceIndexedColWithUnindexed(PartitionBy.NONE, 1000000 * 60 * 5, 0, true);
     }
 
-    //
+    ///
 
     @Test
     public void testReplaceIndexedWithUnindexedByByYear() throws Exception {
@@ -138,8 +178,6 @@ public class TableReaderDataFrameCursorTest extends AbstractCairoTest {
     public void testReplaceIndexedWithUnindexedByMonthR() throws Exception {
         testReplaceIndexedColWithUnindexed(PartitionBy.MONTH, 1000000 * 60 * 5 * 24L, 2, true);
     }
-
-    ///
 
     @Test
     public void testReplaceUnindexedWithIndexedByDay() throws Exception {
@@ -539,6 +577,82 @@ public class TableReaderDataFrameCursorTest extends AbstractCairoTest {
         });
     }
 
+    private void testReplaceIndexedColWithIndexed(int partitionBy, long increment, int expectedPartitionMin, boolean testRestricted) throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final int M = 1000;
+            final int N = 100;
+
+            // separate two symbol columns with primitive. It will make problems apparent if index does not shift correctly
+            try (TableModel model = new TableModel(configuration, "x", partitionBy).
+                    col("a", ColumnType.STRING).
+                    col("b", ColumnType.SYMBOL).indexed(true, N / 4).
+                    col("i", ColumnType.INT).
+                    timestamp().
+                    col("c", ColumnType.SYMBOL).indexed(true, N / 4)
+            ) {
+                CairoTestUtils.create(model);
+            }
+
+            final Rnd rnd = new Rnd();
+            final String symbols[] = new String[N];
+
+            for (int i = 0; i < N; i++) {
+                symbols[i] = rnd.nextChars(8).toString();
+            }
+
+            // prepare the data
+            long timestamp = 0;
+            try (TableWriter writer = new TableWriter(configuration, "x")) {
+                for (int i = 0; i < M; i++) {
+                    TableWriter.Row row = writer.newRow(timestamp += increment);
+                    row.putStr(0, rnd.nextChars(20));
+                    row.putSym(1, symbols[rnd.nextPositiveInt() % N]);
+                    row.putInt(2, rnd.nextInt());
+                    row.putSym(4, symbols[rnd.nextPositiveInt() % N]);
+                    row.append();
+                }
+                writer.commit();
+
+                try (TableReader reader = new TableReader(configuration, "x")) {
+
+                    final TableReaderDataFrameCursor cursor = new TableReaderDataFrameCursor();
+                    final TableReaderRecord record = new TableReaderRecord(reader);
+
+                    Assert.assertTrue(reader.getPartitionCount() > expectedPartitionMin);
+
+
+                    cursor.of(reader);
+                    assertSymbolFoundInIndex(cursor, record, 1, M);
+                    cursor.toTop();
+                    assertSymbolFoundInIndex(cursor, record, 4, M);
+
+                    if (testRestricted || configuration.getFilesFacade().isRestrictedFileSystem()) {
+                        reader.closeColumnForRemove("c");
+                    }
+
+                    writer.removeColumn("c");
+                    writer.addColumn("c", ColumnType.SYMBOL, N, true, true, 8);
+
+                    for (int i = 0; i < M; i++) {
+                        TableWriter.Row row = writer.newRow(timestamp += increment);
+                        row.putStr(0, rnd.nextChars(20));
+                        row.putSym(1, symbols[rnd.nextPositiveInt() % N]);
+                        row.putInt(2, rnd.nextInt());
+                        row.putSym(4, symbols[rnd.nextPositiveInt() % N]);
+                        row.append();
+                    }
+                    writer.commit();
+
+                    Assert.assertTrue(reader.reload());
+                    cursor.reload();
+                    assertSymbolFoundInIndex(cursor, record, 1, M * 2);
+                    cursor.toTop();
+                    assertSymbolFoundInIndex(cursor, record, 4, M * 2);
+                }
+            }
+        });
+    }
+
     private void testReplaceIndexedColWithUnindexed(int partitionBy, long increment, int expectedPartitionMin, boolean testRestricted) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             final int M = 1000;
@@ -676,7 +790,7 @@ public class TableReaderDataFrameCursorTest extends AbstractCairoTest {
                         row.putStr(0, rnd.nextChars(20));
                         row.putSym(1, symbols[rnd.nextPositiveInt() % N]);
                         row.putInt(2, rnd.nextInt());
-                        row.putSym(4, symbols[rnd.nextPositiveInt() % N]);
+                        row.putSym(4, rnd.nextPositiveInt() % 16 == 0 ? null : symbols[rnd.nextPositiveInt() % N]);
                         row.append();
                     }
                     writer.commit();
@@ -686,6 +800,8 @@ public class TableReaderDataFrameCursorTest extends AbstractCairoTest {
                     assertSymbolFoundInIndex(cursor, record, 1, M * 2);
                     cursor.toTop();
                     assertSymbolFoundInIndex(cursor, record, 4, M * 2);
+                    cursor.toTop();
+                    assertIndexRowsMatchSymbol(cursor, record, 4);
                 }
             }
         });
