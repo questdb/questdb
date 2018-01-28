@@ -21,22 +21,19 @@
  *
  ******************************************************************************/
 
-package com.questdb.ql;
+package com.questdb.cairo.sql;
 
 import com.questdb.common.RecordMetadata;
 import com.questdb.common.StorageFacade;
-import com.questdb.common.SymbolTable;
+import com.questdb.std.ImmutableIterator;
 
-public class MasterStorageFacade implements StorageFacade {
-    private RecordMetadata metadata;
+public interface DataFrameCursor extends ImmutableIterator<DataFrame>, StorageFacade {
 
-    @Override
-    public SymbolTable getSymbolTable(int columnIndex) {
-        return metadata.getColumnQuick(columnIndex).getSymbolTable();
-    }
+    void reload();
 
-    public MasterStorageFacade of(RecordMetadata metadata) {
-        this.metadata = metadata;
-        return this;
-    }
+    void closeCursor();
+
+    RecordMetadata getMetadata();
+
+    void toTop();
 }

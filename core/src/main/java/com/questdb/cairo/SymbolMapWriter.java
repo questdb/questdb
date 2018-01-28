@@ -171,6 +171,10 @@ public class SymbolMapWriter implements Closeable {
         return HEADER_SIZE + key * 8L;
     }
 
+    boolean isCached() {
+        return cache != null;
+    }
+
     private void jumpCharMemToSymbolCount(int symbolCount) {
         if (symbolCount > 0) {
             long lastSymbolOffset = this.offsetMem.getLong(keyToOffset(symbolCount - 1));

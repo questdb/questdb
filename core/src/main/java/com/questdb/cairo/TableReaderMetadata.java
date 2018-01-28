@@ -56,7 +56,14 @@ class TableReaderMetadata extends AbstractRecordMetadata implements Closeable {
             for (int i = 0; i < columnCount; i++) {
                 CharSequence name = metaMem.getStr(offset);
                 int index = columnNameIndexMap.keyIndex(name);
-                columnMetadata.add(new TableColumnMetadata(columnNameIndexMap.keyAt(index).toString(), TableUtils.getColumnType(metaMem, i)));
+                columnMetadata.add(
+                        new TableColumnMetadata(
+                                columnNameIndexMap.keyAt(index).toString(),
+                                TableUtils.getColumnType(metaMem, i),
+                                TableUtils.isColumnIndexed(metaMem, i),
+                                TableUtils.getIndexBlockCapacity(metaMem, i)
+                        )
+                );
                 offset += ReadOnlyMemory.getStorageLength(name);
             }
         } catch (AssertionError e) {
@@ -160,8 +167,7 @@ class TableReaderMetadata extends AbstractRecordMetadata implements Closeable {
             } else {
                 // new instance
                 TableColumnMetadata m = newInstance(i, columnCount);
-                tmp = moveMetadata(i, m);
-                assert tmp == null;
+                moveMetadata(i, m);
                 columnNameIndexMap.put(m.getName(), i);
             }
         }
@@ -172,7 +178,14 @@ class TableReaderMetadata extends AbstractRecordMetadata implements Closeable {
             if (timestampIndex >= columnCount && timestampRequired) {
                 timestampIndex = -1;
             }
+            // there is assertion further in the code that
+            // new metadata does not suddenly displace non-null object
+            // to make sure all fine and dandy we need to remove
+            // all metadata objects from tail of the list
+            columnMetadata.set(columnCount, this.columnCount, null);
+            // and set metadata list to correct length
             columnMetadata.setPos(columnCount);
+            // we are done
             this.columnCount = columnCount;
         }
     }
@@ -222,7 +235,9 @@ class TableReaderMetadata extends AbstractRecordMetadata implements Closeable {
                 offset += ReadOnlyMemory.getStorageLength(name);
                 int oldPosition = columnNameIndexMap.get(name);
                 // write primary (immutable) index
-                if (oldPosition > -1 && TableUtils.getColumnType(metaMem, i) == TableUtils.getColumnType(this.metaMem, oldPosition)) {
+                if (oldPosition > -1
+                        && TableUtils.getColumnType(metaMem, i) == TableUtils.getColumnType(this.metaMem, oldPosition)
+                        && TableUtils.isColumnIndexed(metaMem, i) == TableUtils.isColumnIndexed(this.metaMem, oldPosition)) {
                     Unsafe.getUnsafe().putInt(index + i * 8, oldPosition + 1);
                     Unsafe.getUnsafe().putInt(index + oldPosition * 8 + 4, i + 1);
                 } else {
@@ -269,6 +284,11 @@ class TableReaderMetadata extends AbstractRecordMetadata implements Closeable {
             offset += ReadOnlyMemory.getStorageLength(name);
         }
         assert name != null;
-        return new TableColumnMetadata(name.toString(), TableUtils.getColumnType(metaMem, index));
+        return new TableColumnMetadata(
+                name.toString(),
+                TableUtils.getColumnType(metaMem, index),
+                TableUtils.isColumnIndexed(metaMem, index),
+                TableUtils.getIndexBlockCapacity(metaMem, index)
+        );
     }
 }

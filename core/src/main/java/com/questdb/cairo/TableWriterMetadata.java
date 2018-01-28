@@ -50,7 +50,14 @@ public class TableWriterMetadata extends AbstractRecordMetadata {
             CharSequence name = metaMem.getStr(offset);
             int index = columnNameIndexMap.keyIndex(name);
             int type = TableUtils.getColumnType(metaMem, i);
-            columnMetadata.add(new TableColumnMetadata(columnNameIndexMap.keyAt(index).toString(), type));
+            columnMetadata.add(
+                    new TableColumnMetadata(
+                            columnNameIndexMap.keyAt(index).toString(),
+                            type,
+                            TableUtils.isColumnIndexed(metaMem, i),
+                            TableUtils.getIndexBlockCapacity(metaMem, i)
+                    )
+            );
             if (type == ColumnType.SYMBOL) {
                 symbolMapCount++;
             }
@@ -83,10 +90,10 @@ public class TableWriterMetadata extends AbstractRecordMetadata {
         return symbolMapCount;
     }
 
-    void addColumn(CharSequence name, int type) {
+    void addColumn(CharSequence name, int type, boolean indexFlag, int indexValueBlockCapacity) {
         String str = name.toString();
         columnNameIndexMap.put(str, columnMetadata.size());
-        columnMetadata.add(new TableColumnMetadata(str, type));
+        columnMetadata.add(new TableColumnMetadata(str, type, indexFlag, indexValueBlockCapacity));
         columnCount++;
         if (type == ColumnType.SYMBOL) {
             symbolMapCount++;

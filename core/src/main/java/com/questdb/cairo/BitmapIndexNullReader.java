@@ -21,22 +21,39 @@
  *
  ******************************************************************************/
 
-package com.questdb.ql;
+package com.questdb.cairo;
 
-import com.questdb.common.RecordMetadata;
-import com.questdb.common.StorageFacade;
-import com.questdb.common.SymbolTable;
+public class BitmapIndexNullReader implements BitmapIndexReader {
 
-public class MasterStorageFacade implements StorageFacade {
-    private RecordMetadata metadata;
+    private final NullCursor cursor = new NullCursor();
 
     @Override
-    public SymbolTable getSymbolTable(int columnIndex) {
-        return metadata.getColumnQuick(columnIndex).getSymbolTable();
+    public BitmapIndexCursor getCursor(int key, long maxValue) {
+        cursor.value = maxValue;
+        return cursor;
     }
 
-    public MasterStorageFacade of(RecordMetadata metadata) {
-        this.metadata = metadata;
-        return this;
+    @Override
+    public int getKeyCount() {
+        return 1;
+    }
+
+    @Override
+    public boolean isOpen() {
+        return true;
+    }
+
+    private class NullCursor implements BitmapIndexCursor {
+        private long value;
+
+        @Override
+        public boolean hasNext() {
+            return value > -1;
+        }
+
+        @Override
+        public long next() {
+            return value--;
+        }
     }
 }

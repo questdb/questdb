@@ -44,7 +44,7 @@ public class SymbolMapTest extends AbstractCairoTest {
             }
 
             configuration.getFilesFacade().touch(path.trimTo(plen).concat(name).put(".c").$());
-            BitmapIndexWriter.create(configuration, path.trimTo(plen), name, 4);
+            BitmapIndexTest.create(configuration, path.trimTo(plen), name, 4);
         } finally {
             path.trimTo(plen);
         }

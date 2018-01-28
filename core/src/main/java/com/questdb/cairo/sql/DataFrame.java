@@ -21,22 +21,16 @@
  *
  ******************************************************************************/
 
-package com.questdb.ql;
+package com.questdb.cairo.sql;
 
-import com.questdb.common.RecordMetadata;
-import com.questdb.common.StorageFacade;
-import com.questdb.common.SymbolTable;
+import com.questdb.cairo.BitmapIndexReader;
 
-public class MasterStorageFacade implements StorageFacade {
-    private RecordMetadata metadata;
+public interface DataFrame {
+    BitmapIndexReader getBitmapIndexReader(int columnIndex);
 
-    @Override
-    public SymbolTable getSymbolTable(int columnIndex) {
-        return metadata.getColumnQuick(columnIndex).getSymbolTable();
-    }
+    int getPartitionIndex();
 
-    public MasterStorageFacade of(RecordMetadata metadata) {
-        this.metadata = metadata;
-        return this;
-    }
+    long getRowHi();
+
+    long getRowLo();
 }

@@ -105,4 +105,9 @@ public class NullColumnTest {
         // doesn't throw exception
         NullColumn.INSTANCE.grow(100000);
     }
+
+    @Test
+    public void testDeleted() {
+        Assert.assertTrue(NullColumn.INSTANCE.isDeleted());
+    }
 }

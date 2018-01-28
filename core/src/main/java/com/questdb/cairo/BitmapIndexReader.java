@@ -21,22 +21,29 @@
  *
  ******************************************************************************/
 
-package com.questdb.ql;
+package com.questdb.cairo;
 
-import com.questdb.common.RecordMetadata;
-import com.questdb.common.StorageFacade;
-import com.questdb.common.SymbolTable;
+import java.io.Closeable;
 
-public class MasterStorageFacade implements StorageFacade {
-    private RecordMetadata metadata;
-
+public interface BitmapIndexReader extends Closeable {
     @Override
-    public SymbolTable getSymbolTable(int columnIndex) {
-        return metadata.getColumnQuick(columnIndex).getSymbolTable();
+    default void close() {
     }
 
-    public MasterStorageFacade of(RecordMetadata metadata) {
-        this.metadata = metadata;
-        return this;
-    }
+    /**
+     * Creates cursor for index values for the given key. Cursor should be treated as mutable
+     * instance. Typical BitmapIndexReader implementation will return same object instance
+     * configured for the required parameters.
+     * <p>
+     * Returned values are capped to given maximum inclusive.
+     *
+     * @param key      index key
+     * @param maxValue inclusive maximum value
+     * @return index value cursor
+     */
+    BitmapIndexCursor getCursor(int key, long maxValue);
+
+    int getKeyCount();
+
+    boolean isOpen();
 }

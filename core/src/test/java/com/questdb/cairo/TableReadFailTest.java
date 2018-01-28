@@ -23,11 +23,16 @@
 
 package com.questdb.cairo;
 
+import com.questdb.common.ColumnType;
 import com.questdb.common.PartitionBy;
+import com.questdb.common.Record;
+import com.questdb.common.RecordCursor;
 import com.questdb.std.Chars;
 import com.questdb.std.FilesFacade;
 import com.questdb.std.FilesFacadeImpl;
+import com.questdb.std.Rnd;
 import com.questdb.std.str.LPSZ;
+import com.questdb.std.str.Path;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -56,6 +61,111 @@ public class TableReadFailTest extends AbstractCairoTest {
             }
         };
         assertConstructorFail(ff);
+    }
+
+    @Test
+    public void testReloadTimeout() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)
+                    .col("a", ColumnType.INT)
+                    .col("b", ColumnType.LONG)
+                    .timestamp()) {
+                CairoTestUtils.create(model);
+            }
+
+            try (TableWriter w = new TableWriter(configuration, "x");
+                 Path path = new Path();
+                 TableReader reader = new TableReader(configuration, "x");
+                 ReadWriteMemory mem = new ReadWriteMemory()) {
+
+                // home path at txn file
+                path.of(configuration.getRoot()).concat("x").concat(TableUtils.TXN_FILE_NAME).$();
+
+                final Rnd rnd = new Rnd();
+                final int N = 1000;
+
+                for (int i = 0; i < N; i++) {
+                    TableWriter.Row r = w.newRow(0);
+                    r.putInt(0, rnd.nextInt());
+                    r.putLong(1, rnd.nextLong());
+                    r.append();
+                }
+                w.commit();
+
+
+                Assert.assertTrue(reader.reload());
+
+
+                RecordCursor cursor = reader.getCursor();
+                rnd.reset();
+                int count = 0;
+                while (cursor.hasNext()) {
+                    Record r = cursor.next();
+                    Assert.assertEquals(rnd.nextInt(), r.getInt(0));
+                    Assert.assertEquals(rnd.nextLong(), r.getLong(1));
+                    count++;
+                }
+
+                Assert.assertEquals(N, count);
+
+                mem.of(configuration.getFilesFacade(), path, configuration.getFilesFacade().getPageSize());
+
+                // keep txn file parameters
+                long offset = configuration.getFilesFacade().length(mem.getFd());
+                long txn = mem.getLong(TableUtils.TX_OFFSET_TXN);
+
+                // corrupt the txn file
+                mem.jumpTo(TableUtils.TX_OFFSET_TXN);
+                mem.putLong(123);
+                mem.jumpTo(offset);
+                mem.close();
+
+                // this should time out
+                try {
+                    reader.reload();
+                    Assert.fail();
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getMessage(), "timeout");
+                }
+
+                // restore txn file to its former glory
+
+                mem.of(configuration.getFilesFacade(), path, configuration.getFilesFacade().getPageSize());
+                mem.jumpTo(TableUtils.TX_OFFSET_TXN);
+                mem.putLong(txn);
+                mem.jumpTo(offset);
+                mem.close();
+                mem.close();
+
+                // make sure reload functions correctly
+                Assert.assertFalse(reader.reload());
+
+                // add more data
+                for (int i = 0; i < N; i++) {
+                    TableWriter.Row r = w.newRow(0);
+                    r.putInt(0, rnd.nextInt());
+                    r.putLong(1, rnd.nextLong());
+                    r.append();
+                }
+                w.commit();
+
+                // does positive reload work?
+                Assert.assertTrue(reader.reload());
+
+                // can reader still see correct data?
+                cursor = reader.getCursor();
+                rnd.reset();
+                count = 0;
+                while (cursor.hasNext()) {
+                    Record r = cursor.next();
+                    Assert.assertEquals(rnd.nextInt(), r.getInt(0));
+                    Assert.assertEquals(rnd.nextLong(), r.getLong(1));
+                    count++;
+                }
+
+                Assert.assertEquals(2 * N, count);
+            }
+        });
     }
 
     @Test

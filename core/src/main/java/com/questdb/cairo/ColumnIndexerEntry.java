@@ -21,22 +21,13 @@
  *
  ******************************************************************************/
 
-package com.questdb.ql;
+package com.questdb.cairo;
 
-import com.questdb.common.RecordMetadata;
-import com.questdb.common.StorageFacade;
-import com.questdb.common.SymbolTable;
+import com.questdb.mp.SOCountDownLatch;
 
-public class MasterStorageFacade implements StorageFacade {
-    private RecordMetadata metadata;
-
-    @Override
-    public SymbolTable getSymbolTable(int columnIndex) {
-        return metadata.getColumnQuick(columnIndex).getSymbolTable();
-    }
-
-    public MasterStorageFacade of(RecordMetadata metadata) {
-        this.metadata = metadata;
-        return this;
-    }
+class ColumnIndexerEntry {
+    ColumnIndexer indexer;
+    long lo;
+    long hi;
+    SOCountDownLatch countDownLatch;
 }

@@ -23,6 +23,7 @@
 
 package com.questdb.common;
 
+@FunctionalInterface
 public interface StorageFacade {
-    SymbolTable getSymbolTable(int index);
+    SymbolTable getSymbolTable(int columnIndex);
 }

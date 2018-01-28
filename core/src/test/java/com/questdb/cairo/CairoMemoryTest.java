@@ -412,6 +412,34 @@ public class CairoMemoryTest {
     }
 
     @Test
+    public void testSlidingWindowMemory() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (Path path = new Path()) {
+                path.of(temp.getRoot().getAbsolutePath());
+                final int N = 100000;
+                final Rnd rnd = new Rnd();
+                try (AppendMemory mem = new AppendMemory()) {
+                    mem.of(FF, path.concat("x.dat").$(), FF.getPageSize());
+
+
+                    for (int i = 0; i < N; i++) {
+                        mem.putLong(rnd.nextLong());
+                    }
+
+                    try (SlidingWindowMemory mem2 = new SlidingWindowMemory()) {
+                        mem2.of(mem);
+
+                        rnd.reset();
+                        for (int i = 0; i < N; i++) {
+                            Assert.assertEquals(rnd.nextLong(), mem2.getLong(i * 8));
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testWindowsTruncateRaceCondition() throws Exception {
         TestUtils.assertMemoryLeak(new TestUtils.LeakProneCode() {
             @Override
@@ -434,6 +462,11 @@ public class CairoMemoryTest {
                             }
 
                             @Override
+                            public boolean wasCalled() {
+                                return wasCalled;
+                            }
+
+                            @Override
                             public long mmap(long fd, long len, long offset, int mode) {
                                 if (len > size) {
                                     errno = 8;
@@ -448,10 +481,7 @@ public class CairoMemoryTest {
                                 return true;
                             }
 
-                            @Override
-                            public boolean wasCalled() {
-                                return wasCalled;
-                            }
+
                         };
 
                         try (ReadOnlyMemory roMem = new ReadOnlyMemory(ff, path, ff.getMapPageSize(), size)) {

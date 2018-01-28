@@ -23,44 +23,39 @@
 
 package com.questdb.cairo;
 
-import com.questdb.common.RecordColumnMetadata;
-import com.questdb.common.SymbolTable;
+import com.questdb.mp.Job;
+import com.questdb.mp.RingQueue;
+import com.questdb.mp.SOCountDownLatch;
+import com.questdb.mp.Sequence;
 
-class TableColumnMetadata implements RecordColumnMetadata {
-    private final int type;
-    private final String name;
-    private final boolean indexed;
-    private final int indexValueBlockCapacity;
+class ColumnIndexerJob implements Job {
+    private final RingQueue<ColumnIndexerEntry> queue;
+    private final Sequence sequence;
 
-    public TableColumnMetadata(String name, int type, boolean indexFlaf, int indexValueBlockCapacity) {
-        this.name = name;
-        this.type = type;
-        this.indexed = indexFlaf;
-        this.indexValueBlockCapacity = indexValueBlockCapacity;
+    public ColumnIndexerJob(RingQueue<ColumnIndexerEntry> queue, Sequence sequence) {
+        this.queue = queue;
+        this.sequence = sequence;
     }
 
     @Override
-    public int getBucketCount() {
-        return indexValueBlockCapacity;
-    }
+    public boolean run() {
+        long cursor = sequence.next();
+        if (cursor < 0) {
+            return false;
+        }
 
-    @Override
-    public String getName() {
-        return name;
-    }
+        ColumnIndexerEntry queueItem = queue.get(cursor);
+        // copy values and release queue item
+        final ColumnIndexer indexer = queueItem.indexer;
+        final long lo = queueItem.lo;
+        final long hi = queueItem.hi;
+        final SOCountDownLatch latch = queueItem.countDownLatch;
+        sequence.done(cursor);
+        if (indexer.tryLock()) {
+            TableWriter.indexAndCountDown(indexer, lo, hi, latch);
+            return true;
+        }
 
-    @Override
-    public SymbolTable getSymbolTable() {
-        return null;
-    }
-
-    @Override
-    public int getType() {
-        return type;
-    }
-
-    @Override
-    public boolean isIndexed() {
-        return indexed;
+        return false;
     }
 }

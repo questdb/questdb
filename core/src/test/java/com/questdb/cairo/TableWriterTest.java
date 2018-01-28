@@ -23,10 +23,7 @@
 
 package com.questdb.cairo;
 
-import com.questdb.common.ColumnType;
-import com.questdb.common.NumericException;
-import com.questdb.common.PartitionBy;
-import com.questdb.common.Record;
+import com.questdb.common.*;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.std.*;
@@ -139,17 +136,6 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testAddColumnCannotTouchSymbolMapFile() throws Exception {
-        FilesFacade ff = new FilesFacadeImpl() {
-            @Override
-            public boolean touch(LPSZ path) {
-                return !Chars.endsWith(path, "abc.c") && super.touch(path);
-            }
-        };
-        testAddColumnRecoverableFault(ff);
-    }
-
-    @Test
     public void testAddColumnCannotRemoveMeta() throws Exception {
         class X extends FilesFacadeImpl {
             @Override
@@ -186,6 +172,17 @@ public class TableWriterTest extends AbstractCairoTest {
             @Override
             public boolean rename(LPSZ from, LPSZ to) {
                 return (!Chars.contains(to, TableUtils.META_PREV_FILE_NAME) || --count <= 0) && super.rename(from, to);
+            }
+        };
+        testAddColumnRecoverableFault(ff);
+    }
+
+    @Test
+    public void testAddColumnCannotTouchSymbolMapFile() throws Exception {
+        FilesFacade ff = new FilesFacadeImpl() {
+            @Override
+            public boolean touch(LPSZ path) {
+                return !Chars.endsWith(path, "abc.c") && super.touch(path);
             }
         };
         testAddColumnRecoverableFault(ff);
@@ -593,6 +590,48 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAddUnsupportedIndex() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)
+                    .col("a", ColumnType.SYMBOL).cached(true)
+                    .col("b", ColumnType.STRING)
+                    .timestamp()) {
+                CairoTestUtils.create(model);
+            }
+
+            final int N = 1000;
+            try (TableWriter w = new TableWriter(configuration, "x")) {
+                final Rnd rnd = new Rnd();
+                for (int i = 0; i < N; i++) {
+                    TableWriter.Row r = w.newRow(0);
+                    r.putSym(0, rnd.nextChars(3));
+                    r.putStr(1, rnd.nextChars(10));
+                    r.append();
+                }
+                w.commit();
+
+                try {
+                    w.addColumn("c", ColumnType.STRING, 0, false, true, 1024);
+                    Assert.fail();
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getMessage(), "only supported");
+                }
+
+                for (int i = 0; i < N; i++) {
+                    TableWriter.Row r = w.newRow(0);
+                    r.putSym(0, rnd.nextChars(3));
+                    r.putStr(1, rnd.nextChars(10));
+                    r.append();
+                }
+                w.commit();
+
+                // re-add column  with index flag switched off
+                w.addColumn("c", ColumnType.STRING, 0, false, false, 0);
+            }
+        });
+    }
+
+    @Test
     public void testAppendOutOfOrder() throws Exception {
         int N = 10000;
         create(FF, PartitionBy.NONE, N);
@@ -620,6 +659,11 @@ public class TableWriterTest extends AbstractCairoTest {
                 Assert.assertEquals(N, writer.size());
             }
         });
+    }
+
+    @Test
+    public void testCachedSymbol() {
+        testSymbolCacheFlag(true);
     }
 
     @Test
@@ -1631,6 +1675,26 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testOpenUnsupportedIndex() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)
+                    .col("a", ColumnType.SYMBOL).cached(true)
+                    .col("b", ColumnType.STRING)
+                    .col("c", ColumnType.STRING).indexed(true, 1024)
+                    .timestamp()) {
+                CairoTestUtils.create(model);
+            }
+
+            try {
+                new TableWriter(configuration, "x");
+                Assert.fail();
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getMessage(), "only supported");
+            }
+        });
+    }
+
+    @Test
     public void testOpenWriterMissingTxFile() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             CairoTestUtils.createAllTable(configuration, PartitionBy.NONE);
@@ -2181,8 +2245,9 @@ public class TableWriterTest extends AbstractCairoTest {
         rnd.reset();
         try (TableReader reader = new TableReader(configuration, name)) {
             int col = reader.getMetadata().getColumnIndex("секьюрити");
-            while (reader.hasNext()) {
-                Record r = reader.next();
+            RecordCursor cursor = reader.getCursor();
+            while (cursor.hasNext()) {
+                Record r = cursor.next();
                 TestUtils.assertEquals(rnd.nextChars(5), r.getFlyweightStr(col));
             }
         }
@@ -2224,6 +2289,11 @@ public class TableWriterTest extends AbstractCairoTest {
                 return !Chars.endsWith(path, TableUtils.TXN_FILE_NAME) && super.exists(path);
             }
         });
+    }
+
+    @Test
+    public void testUnCachedSymbol() {
+        testSymbolCacheFlag(false);
     }
 
     private long append10KNoSupplier(long ts, Rnd rnd, TableWriter writer) {
@@ -2883,6 +2953,46 @@ public class TableWriterTest extends AbstractCairoTest {
             } catch (CairoException ignore) {
             }
         });
+    }
+
+    private void testSymbolCacheFlag(boolean cacheFlag) {
+        try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)
+                .col("a", ColumnType.SYMBOL).cached(cacheFlag)
+                .col("b", ColumnType.STRING)
+                .col("c", ColumnType.SYMBOL).cached(!cacheFlag)
+                .timestamp()) {
+            CairoTestUtils.create(model);
+        }
+
+        int N = 1000;
+        Rnd rnd = new Rnd();
+        try (TableWriter writer = new TableWriter(configuration, "x")) {
+            Assert.assertEquals(cacheFlag, writer.isSymbolMapWriterCached(0));
+            Assert.assertNotEquals(cacheFlag, writer.isSymbolMapWriterCached(2));
+            for (int i = 0; i < N; i++) {
+                TableWriter.Row r = writer.newRow(0);
+                r.putSym(0, rnd.nextChars(5));
+                r.putStr(1, rnd.nextChars(10));
+                r.append();
+            }
+            writer.commit();
+        }
+
+        try (TableReader reader = new TableReader(configuration, "x")) {
+            rnd.reset();
+            int count = 0;
+            Assert.assertEquals(cacheFlag, reader.isColumnCached(0));
+            Assert.assertNotEquals(cacheFlag, reader.isColumnCached(2));
+            RecordCursor cursor = reader.getCursor();
+            while (cursor.hasNext()) {
+                Record record = cursor.next();
+                TestUtils.assertEquals(rnd.nextChars(5), record.getSym(0));
+                TestUtils.assertEquals(rnd.nextChars(10), record.getFlyweightStr(1));
+                count++;
+            }
+
+            Assert.assertEquals(N, count);
+        }
     }
 
     private void testTruncate(CountingFilesFacade ff, boolean retry) throws Exception {

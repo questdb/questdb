@@ -38,11 +38,11 @@ public class AnalyticRecordStorageFacade implements StorageFacade {
     }
 
     @Override
-    public SymbolTable getSymbolTable(int index) {
-        if (index < split) {
-            return a.getSymbolTable(index);
+    public SymbolTable getSymbolTable(int columnIndex) {
+        if (columnIndex < split) {
+            return a.getSymbolTable(columnIndex);
         }
-        return functions.get(index - split).getSymbolTable();
+        return functions.get(columnIndex - split).getSymbolTable();
     }
 
     public void prepare(StorageFacade a) {

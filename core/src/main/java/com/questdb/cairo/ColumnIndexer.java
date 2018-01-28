@@ -21,22 +21,20 @@
  *
  ******************************************************************************/
 
-package com.questdb.ql;
+package com.questdb.cairo;
 
-import com.questdb.common.RecordMetadata;
-import com.questdb.common.StorageFacade;
-import com.questdb.common.SymbolTable;
+import com.questdb.std.str.Path;
 
-public class MasterStorageFacade implements StorageFacade {
-    private RecordMetadata metadata;
+interface ColumnIndexer {
+    long getFd();
 
-    @Override
-    public SymbolTable getSymbolTable(int columnIndex) {
-        return metadata.getColumnQuick(columnIndex).getSymbolTable();
-    }
+    void index(long loRow, long hiRow);
 
-    public MasterStorageFacade of(RecordMetadata metadata) {
-        this.metadata = metadata;
-        return this;
-    }
+    void of(CairoConfiguration configuration, Path path, CharSequence name, AppendMemory mem1, AppendMemory mem2, long columnTop);
+
+    void resetLock();
+
+    void rollback(long maxRow);
+
+    boolean tryLock();
 }

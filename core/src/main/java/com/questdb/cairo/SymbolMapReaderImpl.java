@@ -36,78 +36,24 @@ import static com.questdb.cairo.SymbolMapWriter.*;
 
 public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
     private static final Log LOG = LogFactory.getLog(SymbolMapReaderImpl.class);
-
-    private final BitmapIndexBackwardReader indexReader;
-    private final ReadOnlyMemory charMem;
-    private final ReadOnlyMemory offsetMem;
-    private final int maxHash;
-    private final ObjList<String> cache;
-    private final FilesFacade ff;
+    private final BitmapIndexBackwardReader indexReader = new BitmapIndexBackwardReader();
+    private final ReadOnlyMemory charMem = new ReadOnlyMemory();
+    private final ReadOnlyMemory offsetMem = new ReadOnlyMemory();
+    private final ObjList<String> cache = new ObjList<>();
+    private int maxHash;
+    private boolean cached;
     private int symbolCount;
     private long maxOffset;
 
     public SymbolMapReaderImpl(CairoConfiguration configuration, Path path, CharSequence name, int symbolCount) {
-        this.ff = configuration.getFilesFacade();
-        this.symbolCount = symbolCount;
-        this.maxOffset = SymbolMapWriter.keyToOffset(symbolCount - 1);
-        final int plen = path.length();
-        try {
-            final long mapPageSize = configuration.getFilesFacade().getMapPageSize();
-
-            // this constructor does not create index. Index must exist
-            // and we use "offset" file to store "header"
-            offsetFileName(path.trimTo(plen), name);
-            if (!ff.exists(path)) {
-                LOG.error().$(path).$(" is not found").$();
-                throw CairoException.instance(0).put("SymbolMap does not exist: ").put(path);
-            }
-
-            // is there enough length in "offset" file for "header"?
-            long len = ff.length(path);
-            if (len < SymbolMapWriter.HEADER_SIZE) {
-                LOG.error().$(path).$(" is too short [len=").$(len).$(']').$();
-                throw CairoException.instance(0).put("SymbolMap is too short: ").put(path);
-            }
-
-            // open "offset" memory and make sure we start appending from where
-            // we left off. Where we left off is stored externally to symbol map
-            this.offsetMem = new ReadOnlyMemory(ff, path, mapPageSize, keyToOffset(symbolCount));
-            final int symbolCapacity = offsetMem.getInt(0);
-            final boolean useCache = offsetMem.getBool(4);
-            this.offsetMem.grow(maxOffset);
-
-            // index writer is used to identify attempts to store duplicate symbol value
-            this.indexReader = new BitmapIndexBackwardReader(configuration, path.trimTo(plen), name);
-
-            // this is the place where symbol values are stored
-            this.charMem = new ReadOnlyMemory(ff, charFileName(path.trimTo(plen), name), mapPageSize, 0);
-
-            // move append pointer for symbol values in the correct place
-            growCharMemToSymbolCount(symbolCount);
-
-            // we use index hash maximum equals to half of symbol capacity, which
-            // theoretically should require 2 value cells in index per hash
-            // we use 4 cells to compensate for occasionally unlucky hash distribution
-            this.maxHash = Numbers.ceilPow2(symbolCapacity / 2) - 1;
-            if (useCache) {
-                this.cache = new ObjList<>(symbolCapacity);
-                this.cache.setPos(symbolCapacity);
-            } else {
-                this.cache = null;
-            }
-            LOG.info().$("open [name=").$(path.trimTo(plen).concat(name).$()).$(", fd=").$(this.offsetMem.getFd()).$(", capacity=").$(symbolCapacity).$(']').$();
-        } catch (CairoException e) {
-            close();
-            throw e;
-        } finally {
-            path.trimTo(plen);
-        }
+        of(configuration, path, name, symbolCount);
     }
 
     @Override
     public void close() {
         Misc.free(indexReader);
         Misc.free(charMem);
+        this.cache.clear();
         if (this.offsetMem != null) {
             long fd = this.offsetMem.getFd();
             Misc.free(offsetMem);
@@ -138,19 +84,64 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
     }
 
     @Override
-    public CharSequence value(int key) {
-        if (key > -1 && key < symbolCount) {
-            if (cache != null) {
-                return cachedValue(key);
-            }
-            return uncachedValue(key);
-        }
-        return null;
+    public boolean isDeleted() {
+        return offsetMem.isDeleted();
     }
 
-    @Override
-    public boolean isDeleted() {
-        return !ff.exists(offsetMem.getFd());
+    public void of(CairoConfiguration configuration, Path path, CharSequence name, int symbolCount) {
+        FilesFacade ff = configuration.getFilesFacade();
+        this.symbolCount = symbolCount;
+        this.maxOffset = SymbolMapWriter.keyToOffset(symbolCount - 1);
+        final int plen = path.length();
+        try {
+            final long mapPageSize = configuration.getFilesFacade().getMapPageSize();
+
+            // this constructor does not create index. Index must exist
+            // and we use "offset" file to store "header"
+            offsetFileName(path.trimTo(plen), name);
+            if (!ff.exists(path)) {
+                LOG.error().$(path).$(" is not found").$();
+                throw CairoException.instance(0).put("SymbolMap does not exist: ").put(path);
+            }
+
+            // is there enough length in "offset" file for "header"?
+            long len = ff.length(path);
+            if (len < SymbolMapWriter.HEADER_SIZE) {
+                LOG.error().$(path).$(" is too short [len=").$(len).$(']').$();
+                throw CairoException.instance(0).put("SymbolMap is too short: ").put(path);
+            }
+
+            // open "offset" memory and make sure we start appending from where
+            // we left off. Where we left off is stored externally to symbol map
+            this.offsetMem.of(ff, path, mapPageSize, keyToOffset(symbolCount));
+            final int symbolCapacity = offsetMem.getInt(0);
+            this.cached = offsetMem.getBool(4);
+            this.offsetMem.grow(maxOffset);
+
+            // index writer is used to identify attempts to store duplicate symbol value
+            this.indexReader.of(configuration, path.trimTo(plen), name, 0);
+
+            // this is the place where symbol values are stored
+            this.charMem.of(ff, charFileName(path.trimTo(plen), name), mapPageSize, 0);
+
+            // move append pointer for symbol values in the correct place
+            growCharMemToSymbolCount(symbolCount);
+
+            // we use index hash maximum equals to half of symbol capacity, which
+            // theoretically should require 2 value cells in index per hash
+            // we use 4 cells to compensate for occasionally unlucky hash distribution
+            this.maxHash = Numbers.ceilPow2(symbolCapacity / 2) - 1;
+            if (cached) {
+                this.cache.setPos(symbolCapacity);
+            }
+            this.cache.clear();
+            LOG.info().$("open [name=").$(path.trimTo(plen).concat(name).$()).$(", fd=").$(this.offsetMem.getFd()).$(", capacity=").$(symbolCapacity).$(']').$();
+        } catch (CairoException e) {
+            close();
+            throw e;
+        } finally {
+            path.trimTo(plen);
+        }
     }
 
     @Override
@@ -161,6 +152,17 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
             this.offsetMem.grow(maxOffset);
             growCharMemToSymbolCount(symbolCount);
         }
+    }
+
+    @Override
+    public CharSequence value(int key) {
+        if (key > -1 && key < symbolCount) {
+            if (cached) {
+                return cachedValue(key);
+            }
+            return uncachedValue(key);
+        }
+        return null;
     }
 
     private CharSequence cachedValue(int key) {
@@ -185,6 +187,10 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
         } else {
             this.charMem.grow(0);
         }
+    }
+
+    boolean isCached() {
+        return cached;
     }
 
     private CharSequence uncachedValue(int key) {

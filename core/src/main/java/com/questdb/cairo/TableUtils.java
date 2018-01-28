@@ -39,9 +39,10 @@ public final class TableUtils {
     public static final int TABLE_RESERVED = 2;
     public static final String META_FILE_NAME = "_meta";
     public static final String TXN_FILE_NAME = "_txn";
+    public static final long META_OFFSET_COLUMN_TYPES = 128;
+    public static final int INITIAL_TXN = 0;
     static final byte TODO_RESTORE_META = 2;
     static final byte TODO_TRUNCATE = 1;
-    static final long META_OFFSET_COLUMN_TYPES = 12;
     static final DateFormat fmtDay;
     static final DateFormat fmtMonth;
     static final DateFormat fmtYear;
@@ -60,6 +61,7 @@ public final class TableUtils {
     static final long META_OFFSET_COUNT = 0;
     static final long META_OFFSET_PARTITION_BY = 4;
     static final long META_OFFSET_TIMESTAMP_INDEX = 8;
+    private static final int META_COLUMN_DATA_SIZE = 16;
     private final static Log LOG = LogFactory.getLog(TableUtils.class);
 
     public static void create(FilesFacade ff, Path path, AppendMemory memory, CharSequence root, JournalMetadata metadata, int mode) {
@@ -108,7 +110,7 @@ public final class TableUtils {
     }
 
     public static long getColumnNameOffset(int columnCount) {
-        return META_OFFSET_COLUMN_TYPES + columnCount * 4;
+        return META_OFFSET_COLUMN_TYPES + columnCount * META_COLUMN_DATA_SIZE;
     }
 
     public static long lock(FilesFacade ff, Path path) {
@@ -130,7 +132,7 @@ public final class TableUtils {
     public static void resetTxn(VirtualMemory txMem, int symbolMapCount) {
         txMem.jumpTo(TX_OFFSET_TXN);
         // txn to let readers know table is being reset
-        txMem.putLong(0);
+        txMem.putLong(INITIAL_TXN);
         Unsafe.getUnsafe().storeFence();
 
         // transient row count
@@ -154,13 +156,12 @@ public final class TableUtils {
 
         Unsafe.getUnsafe().storeFence();
         // txn check
-        txMem.putLong(0);
+        txMem.putLong(INITIAL_TXN);
         txMem.jumpTo(offset);
     }
 
     public static void validate(FilesFacade ff, ReadOnlyMemory metaMem, CharSequenceIntHashMap nameIndex) {
         try {
-            final int timestampIndex = metaMem.getInt(META_OFFSET_TIMESTAMP_INDEX);
             final int columnCount = metaMem.getInt(META_OFFSET_COUNT);
             long offset = getColumnNameOffset(columnCount);
 
@@ -169,6 +170,7 @@ public final class TableUtils {
                 throw validationException(metaMem).put("Incorrect columnCount: ").put(columnCount);
             }
 
+            final int timestampIndex = metaMem.getInt(META_OFFSET_TIMESTAMP_INDEX);
             if (timestampIndex < -1 || timestampIndex >= columnCount) {
                 throw validationException(metaMem).put("Timestamp index is outside of columnCount");
             }
@@ -180,11 +182,21 @@ public final class TableUtils {
                 }
             }
 
-            // validate column types
+            // validate column types and index attributes
             for (int i = 0; i < columnCount; i++) {
                 int type = getColumnType(metaMem, i);
                 if (ColumnType.sizeOf(type) == -1) {
                     throw validationException(metaMem).put("Invalid column type ").put(type).put(" at [").put(i).put(']');
+                }
+
+                if (isColumnIndexed(metaMem, i)) {
+                    if (type != ColumnType.SYMBOL) {
+                        throw validationException(metaMem).put("Index flag is only supported for SYMBOL").put(" at [").put(i).put(']');
+                    }
+
+                    if (getIndexBlockCapacity(metaMem, i) < 2) {
+                        throw validationException(metaMem).put("Invalid index value block capacity ").put(getIndexBlockCapacity(metaMem, i)).put(" at [").put(i).put(']');
+                    }
                 }
             }
 
@@ -244,7 +256,15 @@ public final class TableUtils {
     }
 
     static int getColumnType(ReadOnlyMemory metaMem, int columnIndex) {
-        return metaMem.getInt(META_OFFSET_COLUMN_TYPES + columnIndex * 4);
+        return metaMem.getByte(META_OFFSET_COLUMN_TYPES + columnIndex * META_COLUMN_DATA_SIZE);
+    }
+
+    static boolean isColumnIndexed(ReadOnlyMemory metaMem, int columnIndex) {
+        return metaMem.getBool(META_OFFSET_COLUMN_TYPES + columnIndex * META_COLUMN_DATA_SIZE + 1);
+    }
+
+    static int getIndexBlockCapacity(ReadOnlyMemory metaMem, int columnIndex) {
+        return metaMem.getInt(META_OFFSET_COLUMN_TYPES + columnIndex * META_COLUMN_DATA_SIZE + 2);
     }
 
     static int openMetaSwapFile(FilesFacade ff, AppendMemory mem, Path path, int rootLen, int retryCount) {

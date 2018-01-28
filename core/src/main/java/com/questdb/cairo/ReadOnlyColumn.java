@@ -59,4 +59,6 @@ public interface ReadOnlyColumn extends Closeable {
     void grow(long size);
 
     long getFd();
+
+    boolean isDeleted();
 }

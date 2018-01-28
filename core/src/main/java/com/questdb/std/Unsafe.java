@@ -119,6 +119,10 @@ public final class Unsafe {
         return UNSAFE.compareAndSwapLong(o, offset, expected, value);
     }
 
+    public static boolean cas(Object o, long offset, int expected, int value) {
+        return UNSAFE.compareAndSwapInt(o, offset, expected, value);
+    }
+
     public static boolean cas(long[] array, int index, long expected, long value) {
         assert index > -1 && index < array.length;
         return Unsafe.cas(array, Unsafe.LONG_OFFSET + (((long) index) << Unsafe.LONG_SCALE), expected, value);

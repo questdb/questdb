@@ -213,6 +213,10 @@ public class ObjList<T> implements Mutable, Sinkable {
         return -1;
     }
 
+    public void set(int from, int to, T value) {
+        Arrays.fill(buffer, from, Math.min(buffer.length, to), value);
+    }
+
     public void setAll(int capacity, T value) {
         ensureCapacity0(capacity);
         pos = capacity;
