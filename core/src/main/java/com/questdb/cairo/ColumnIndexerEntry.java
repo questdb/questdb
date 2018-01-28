@@ -23,37 +23,11 @@
 
 package com.questdb.cairo;
 
-import com.questdb.std.FilesFacade;
-import com.questdb.std.microtime.MicrosecondClock;
+import com.questdb.mp.SOCountDownLatch;
 
-public interface CairoConfiguration {
-    int getFileOperationRetryCount();
-
-    FilesFacade getFilesFacade();
-
-    long getIdleCheckInterval();
-
-    long getInactiveReaderTTL();
-
-    long getInactiveWriterTTL();
-
-    int getMkDirMode();
-
-    int getReaderPoolSegments();
-
-    CharSequence getRoot();
-
-    MicrosecondClock getClock();
-
-    long getSpinLockTimeoutUs();
-
-    boolean getCutlassSymbolCacheFlag();
-
-    int getCutlassSymbolCapacity();
-
-    int getMaxNumberOfSwapFiles();
-
-    int getParallelIndexThreshold();
-
-    boolean isParallelIndexingEnabled();
+class ColumnIndexerEntry {
+    ColumnIndexer indexer;
+    long lo;
+    long hi;
+    SOCountDownLatch countDownLatch;
 }
