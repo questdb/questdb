@@ -101,4 +101,14 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     public int getMaxNumberOfSwapFiles() {
         return 30;
     }
+
+    @Override
+    public int getParallelIndexThreshold() {
+        return 100000;
+    }
+
+    @Override
+    public boolean isParallelIndexingEnabled() {
+        return true;
+    }
 }

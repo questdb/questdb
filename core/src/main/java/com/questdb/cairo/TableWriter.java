@@ -26,6 +26,9 @@ package com.questdb.cairo;
 import com.questdb.common.*;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
+import com.questdb.mp.RingQueue;
+import com.questdb.mp.SOCountDownLatch;
+import com.questdb.mp.Sequence;
 import com.questdb.std.*;
 import com.questdb.std.microtime.DateFormat;
 import com.questdb.std.microtime.DateFormatUtils;
@@ -78,6 +81,9 @@ public class TableWriter implements Closeable {
     private final CairoConfiguration configuration;
     private final CharSequenceIntHashMap validationMap = new CharSequenceIntHashMap();
     private final FragileCode RECOVER_FROM_META_RENAME_FAILURE = this::recoverFromMetaRenameFailure;
+    private final RingQueue<ColumnIndexerEntry> indexQueue;
+    private final Sequence indexPubSequence;
+    private final SOCountDownLatch indexLatch = new SOCountDownLatch();
     int txPartitionCount = 0;
     private long lockFd;
     private LongConsumer timestampSetter;
@@ -103,10 +109,18 @@ public class TableWriter implements Closeable {
     private final FragileCode RECOVER_FROM_SWAP_RENAME_FAILURE = this::recoverFromSwapRenameFailure;
     private final FragileCode RECOVER_FROM_COLUMN_OPEN_FAILURE = this::recoverOpenColumnFailure;
     private int indexCount;
+    private boolean useParallelIndexer;
 
     public TableWriter(CairoConfiguration configuration, CharSequence name) {
+        this(configuration, name, null, null);
+    }
+
+    public TableWriter(CairoConfiguration configuration, CharSequence name, RingQueue<ColumnIndexerEntry> indexQueue, Sequence indexPubSequence) {
         LOG.info().$("open '").utf8(name).$('\'').$();
         this.configuration = configuration;
+        this.indexQueue = indexQueue;
+        this.indexPubSequence = indexPubSequence;
+        this.useParallelIndexer = indexQueue != null && configuration.isParallelIndexingEnabled();
         this.ff = configuration.getFilesFacade();
         this.mkDirMode = configuration.getMkDirMode();
         this.fileOperationRetryCount = configuration.getFileOperationRetryCount();
@@ -652,6 +666,16 @@ public class TableWriter implements Closeable {
         }
     }
 
+    static void indexAndCountDown(ColumnIndexer indexer, long lo, long hi, SOCountDownLatch latch) {
+        try {
+            indexer.index(lo, hi);
+        } catch (CairoException e) {
+            LOG.error().$("index error [fd=").$(indexer.getFd()).$(']').$('{').$((Sinkable) e).$('}').$();
+        } finally {
+            latch.countDown();
+        }
+    }
+
     private int addColumnToMeta(CharSequence name, int type, boolean indexFlag, int indexValueBlockCapacity) {
         int index;
         try {
@@ -1163,6 +1187,7 @@ public class TableWriter implements Closeable {
             }
         }
         indexCount = denseIndexers.size();
+        useParallelIndexer = indexCount > 1 && indexQueue != null && configuration.isParallelIndexingEnabled();
     }
 
     private void purgeUnusedPartitions() {
@@ -1611,13 +1636,81 @@ public class TableWriter implements Closeable {
 
     private void updateIndexes() {
         if (indexCount > 0) {
-            updateIndexes0();
+            final long lo = txPartitionCount == 1 ? prevTransientRowCount : 0;
+            final long hi = transientRowCount;
+            if (useParallelIndexer && hi - lo > configuration.getParallelIndexThreshold()) {
+                updateIndexesParallel(lo, hi);
+            } else {
+                updateIndexesSerially(lo, hi);
+            }
         }
     }
 
-    private void updateIndexes0() {
+    private void updateIndexesParallel(long lo, long hi) {
+
+        indexLatch.setCount(indexCount);
+
+        // we are going to index last column in this thread while other columns are on the queue
+        OUT:
+        for (int i = 0, n = indexCount - 1; i < n; i++) {
+
+            long cursor = indexPubSequence.next();
+            if (cursor == -1) {
+                // queue is full, process index in the current thread
+                indexAndCountDown(denseIndexers.getQuick(i), lo, hi, indexLatch);
+                continue;
+            }
+
+            if (cursor == -2) {
+                // CAS issue, retry
+                do {
+                    cursor = indexPubSequence.next();
+                    if (cursor == -1) {
+                        indexAndCountDown(denseIndexers.getQuick(i), lo, hi, indexLatch);
+                        continue OUT;
+                    }
+
+                    if (cursor > -1) {
+                        break;
+                    }
+                } while (true);
+            }
+
+            ColumnIndexerEntry queueItem = indexQueue.get(cursor);
+            queueItem.indexer = denseIndexers.getQuick(i);
+            queueItem.lo = lo;
+            queueItem.hi = hi;
+            queueItem.countDownLatch = indexLatch;
+            indexPubSequence.done(cursor);
+        }
+
+        // index last column while other columns are brewing on the queue
+        indexAndCountDown(denseIndexers.getQuick(indexCount - 1), lo, hi, indexLatch);
+
+        // At this point we have re-indexed our column and if things are flowing nicely
+        // all other columns should have been done by other threads. Instead of actually
+        // waiting we gracefully check latch count.
+        if (!indexLatch.await(50000)) {
+            // other columns are still in-flight, we must attempt to steal work from other threads
+            for (int i = 0, n = indexCount - 1; i < n; i++) {
+                ColumnIndexer indexer = denseIndexers.getQuick(i);
+                if (indexer.tryLock()) {
+                    indexAndCountDown(indexer, lo, hi, indexLatch);
+                }
+            }
+            // wait for the ones we cannot steal
+            indexLatch.await();
+        }
+
+        // reset lock on completed indexers
+        for (int i = 0; i < indexCount; i++) {
+            denseIndexers.getQuick(i).resetLock();
+        }
+    }
+
+    private void updateIndexesSerially(long lo, long hi) {
         for (int i = 0, n = indexCount; i < n; i++) {
-            denseIndexers.getQuick(i).index(txPartitionCount == 1 ? prevTransientRowCount : 0, transientRowCount);
+            denseIndexers.getQuick(i).index(lo, hi);
         }
     }
 
@@ -1687,51 +1780,9 @@ public class TableWriter implements Closeable {
         void remove(FilesFacade ff, LPSZ name);
     }
 
-    private interface ColumnIndexer {
-        void index(long loRow, long hiRow);
-
-        void of(CairoConfiguration configuration, Path path, CharSequence name, AppendMemory mem1, AppendMemory mem2, long columnTop);
-
-        void rollback(long maxRow);
-    }
-
     @FunctionalInterface
     private interface FragileCode {
         void run(CharSequence columnName);
-    }
-
-    private static class SymbolColumnIndexer implements ColumnIndexer, Closeable {
-        private final BitmapIndexWriter writer = new BitmapIndexWriter();
-        private final SlidingWindowMemory mem = new SlidingWindowMemory();
-        private long columnTop;
-
-        @Override
-        public void index(long loRow, long hiRow) {
-            mem.updateSize();
-            // while we may have to read column starting with zero offset
-            // index values have to be adjusted to partition-level row id
-            for (long lo = loRow - columnTop; lo < hiRow; lo++) {
-                writer.add(mem.getInt(lo * 4) + 1, lo + columnTop);
-            }
-        }
-
-        @Override
-        public void of(CairoConfiguration configuration, Path path, CharSequence name, AppendMemory mem1, AppendMemory mem2, long columnTop) {
-            this.columnTop = columnTop;
-            this.writer.of(configuration, path, name);
-            this.mem.of(mem1);
-        }
-
-        @Override
-        public void rollback(long maxRow) {
-            this.writer.rollbackValues(maxRow * 4);
-        }
-
-        @Override
-        public void close() {
-            Misc.free(writer);
-            Misc.free(mem);
-        }
     }
 
     private class OpenPartitionRowFunction implements RowFunction {

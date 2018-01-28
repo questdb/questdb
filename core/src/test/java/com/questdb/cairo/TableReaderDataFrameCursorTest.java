@@ -27,13 +27,90 @@ import com.questdb.cairo.sql.DataFrame;
 import com.questdb.common.ColumnType;
 import com.questdb.common.PartitionBy;
 import com.questdb.common.SymbolTable;
+import com.questdb.mp.*;
 import com.questdb.std.Chars;
+import com.questdb.std.ObjHashSet;
 import com.questdb.std.Rnd;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.util.concurrent.CountDownLatch;
+
 public class TableReaderDataFrameCursorTest extends AbstractCairoTest {
+
+    @Test
+    public void testParallelIndex() throws InterruptedException {
+        int N = 1000000;
+        int nWorkers = 2;
+        int S = 128;
+        Rnd rnd = new Rnd();
+
+        final String[] symA = new String[S];
+        final String[] symB = new String[S];
+        final String[] symC = new String[S];
+
+        for (int i = 0; i < S; i++) {
+            symA[i] = rnd.nextChars(10).toString();
+            symB[i] = rnd.nextChars(8).toString();
+            symC[i] = rnd.nextChars(10).toString();
+        }
+
+        try (TableModel model = new TableModel(configuration, "ABC", PartitionBy.NONE)
+                .col("a", ColumnType.SYMBOL).indexed(true, N / S)
+                .col("b", ColumnType.SYMBOL).indexed(true, N / S)
+                .col("c", ColumnType.SYMBOL).indexed(true, N / S)
+                .col("d", ColumnType.DOUBLE)
+                .timestamp()) {
+            CairoTestUtils.create(model);
+        }
+
+        CountDownLatch workerHaltLatch = new CountDownLatch(nWorkers);
+        Worker workers[] = new Worker[nWorkers];
+
+        RingQueue<ColumnIndexerEntry> queue = new RingQueue<>(ColumnIndexerEntry::new, 1024);
+        MPSequence pubSeq = new MPSequence(queue.getCapacity());
+        MCSequence subSeq = new MCSequence(queue.getCapacity(), null);
+        pubSeq.then(subSeq).then(pubSeq);
+
+        ObjHashSet<Job> jobs = new ObjHashSet<>();
+        jobs.add(new ColumnIndexerJob(queue, subSeq));
+
+        for (int i = 0; i < nWorkers; i++) {
+            workers[i] = new Worker(jobs, workerHaltLatch);
+            workers[i].start();
+        }
+
+        try (TableWriter writer = new TableWriter(configuration, "ABC", queue, pubSeq)) {
+            for (int i = 0; i < N; i++) {
+                TableWriter.Row r = writer.newRow(0);
+                r.putSym(0, symA[rnd.nextPositiveInt() % S]);
+                r.putSym(1, symB[rnd.nextPositiveInt() % S]);
+                r.putSym(2, symC[rnd.nextPositiveInt() % S]);
+                r.putDouble(3, rnd.nextDouble());
+                r.append();
+            }
+            writer.commit();
+        }
+
+        for (int i = 0; i < nWorkers; i++) {
+            workers[i].halt();
+        }
+
+        workerHaltLatch.await();
+
+        try (TableReader reader = new TableReader(configuration, "ABC")) {
+            TableReaderDataFrameCursor cursor = new TableReaderDataFrameCursor();
+            TableReaderRecord record = new TableReaderRecord(reader);
+
+            cursor.of(reader);
+            assertIndexRowsMatchSymbol(cursor, record, 0);
+            cursor.toTop();
+            assertIndexRowsMatchSymbol(cursor, record, 1);
+            cursor.toTop();
+            assertIndexRowsMatchSymbol(cursor, record, 2);
+        }
+    }
 
     @Test
     public void testRemoveFirstColByDay() throws Exception {
@@ -110,12 +187,12 @@ public class TableReaderDataFrameCursorTest extends AbstractCairoTest {
         testReplaceIndexedColWithIndexed(PartitionBy.YEAR, 1000000 * 60 * 5 * 24L * 10L, 2, false);
     }
 
+    //
+
     @Test
     public void testReplaceIndexedWithIndexedByByYearR() throws Exception {
         testReplaceIndexedColWithIndexed(PartitionBy.YEAR, 1000000 * 60 * 5 * 24L * 10L, 2, true);
     }
-
-    //
 
     @Test
     public void testReplaceIndexedWithIndexedByDay() throws Exception {
@@ -152,12 +229,12 @@ public class TableReaderDataFrameCursorTest extends AbstractCairoTest {
         testReplaceIndexedColWithUnindexed(PartitionBy.NONE, 1000000 * 60 * 5, 0, false);
     }
 
+    ///
+
     @Test
     public void testReplaceIndexedWithUnindexedByByNoneR() throws Exception {
         testReplaceIndexedColWithUnindexed(PartitionBy.NONE, 1000000 * 60 * 5, 0, true);
     }
-
-    ///
 
     @Test
     public void testReplaceIndexedWithUnindexedByByYear() throws Exception {
@@ -194,12 +271,12 @@ public class TableReaderDataFrameCursorTest extends AbstractCairoTest {
         testReplaceUnindexedColWithIndexed(PartitionBy.MONTH, 1000000 * 60 * 5 * 24L, 2, false);
     }
 
+    ///
+
     @Test
     public void testReplaceUnindexedWithIndexedByMonthR() throws Exception {
         testReplaceUnindexedColWithIndexed(PartitionBy.MONTH, 1000000 * 60 * 5 * 24L, 2, true);
     }
-
-    ///
 
     @Test
     public void testReplaceUnindexedWithIndexedByNone() throws Exception {
@@ -216,12 +293,12 @@ public class TableReaderDataFrameCursorTest extends AbstractCairoTest {
         testReplaceUnindexedColWithIndexed(PartitionBy.YEAR, 1000000 * 60 * 5 * 24L * 10L, 2, false);
     }
 
+    ///
+
     @Test
     public void testReplaceUnindexedWithIndexedByYearR() throws Exception {
         testReplaceUnindexedColWithIndexed(PartitionBy.YEAR, 1000000 * 60 * 5 * 24L * 10L, 2, true);
     }
-
-    ///
 
     @Test
     public void testRollbackSymbolIndexByDay() throws Exception {
