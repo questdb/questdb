@@ -44,8 +44,8 @@ public class SelectedColumnsStorageFacade implements StorageFacade {
     }
 
     @Override
-    public SymbolTable getSymbolTable(int index) {
-        return delegate.getSymbolTable(reindex[index]);
+    public SymbolTable getSymbolTable(int columnIndex) {
+        return delegate.getSymbolTable(reindex[columnIndex]);
     }
 
 

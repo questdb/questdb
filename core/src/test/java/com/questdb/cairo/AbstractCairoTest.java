@@ -23,20 +23,41 @@
 
 package com.questdb.cairo;
 
-import com.questdb.parser.sql.AbstractOptimiserTest;
+import com.questdb.common.RecordCursor;
+import com.questdb.common.RecordMetadata;
+import com.questdb.log.Log;
+import com.questdb.log.LogFactory;
+import com.questdb.ql.RecordSourcePrinter;
 import com.questdb.std.Files;
 import com.questdb.std.str.Path;
+import com.questdb.std.str.StringSink;
+import com.questdb.test.tools.TestUtils;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.BeforeClass;
+import org.junit.ClassRule;
+import org.junit.rules.TemporaryFolder;
 
-public class AbstractCairoTest extends AbstractOptimiserTest {
+import java.io.IOException;
+
+public class AbstractCairoTest {
+
+    protected static final StringSink sink = new StringSink();
+    protected static final RecordSourcePrinter printer = new RecordSourcePrinter(sink);
+    private final static Log LOG = LogFactory.getLog(AbstractCairoTest.class);
+    @ClassRule
+    public static TemporaryFolder temp = new TemporaryFolder();
     protected static CharSequence root;
     protected static CairoConfiguration configuration;
 
     @BeforeClass
     public static void setUp() {
-        root = FACTORY_CONTAINER.getConfiguration().getJournalBase().getAbsolutePath();
+        // it is necessary to initialise logger before tests start
+        // logger doesn't relinquish memory until JVM stops
+        // which causes memory leak detector to fail should logger be
+        // created mid-test
+        LOG.info().$("begin").$();
+        root = temp.getRoot().getAbsolutePath();
         configuration = new DefaultCairoConfiguration(root);
     }
 
@@ -55,5 +76,17 @@ public class AbstractCairoTest extends AbstractOptimiserTest {
         try (Path path = new Path().of(root)) {
             Files.rmdir(path.$());
         }
+    }
+
+    protected void assertThat(CharSequence expected, RecordCursor cursor, RecordMetadata metadata, boolean header) throws IOException {
+        sink.clear();
+        printer.print(cursor, header, metadata);
+        TestUtils.assertEquals(expected, sink);
+
+        cursor.toTop();
+
+        sink.clear();
+        printer.print(cursor, header, metadata);
+        TestUtils.assertEquals(expected, sink);
     }
 }

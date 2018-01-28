@@ -506,7 +506,7 @@ public class CairoLineProtoParserTest extends AbstractCairoTest {
 
     private void assertTable(CharSequence expected, CharSequence tableName) throws IOException {
         try (TableReader reader = new TableReader(configuration, tableName)) {
-            assertThat(expected, reader, reader.getMetadata(), true);
+            assertThat(expected, reader.getCursor(), reader.getMetadata(), true);
         }
     }
 

@@ -134,8 +134,8 @@ public class VirtualColumnRecordSource extends AbstractCombinedRecordSource {
     private class VirtualColumnStorageFacade implements StorageFacade {
 
         @Override
-        public SymbolTable getSymbolTable(int index) {
-            return virtualColumns.getQuick(index).getSymbolTable();
+        public SymbolTable getSymbolTable(int columnIndex) {
+            return virtualColumns.getQuick(columnIndex).getSymbolTable();
         }
     }
 }

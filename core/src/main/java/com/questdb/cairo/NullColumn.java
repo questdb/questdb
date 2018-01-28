@@ -26,7 +26,7 @@ package com.questdb.cairo;
 import com.questdb.std.BinarySequence;
 import com.questdb.std.Numbers;
 
-public final class NullColumn implements ReadOnlyColumn {
+public class NullColumn implements ReadOnlyColumn {
 
     public static final NullColumn INSTANCE = new NullColumn();
 
@@ -101,5 +101,10 @@ public final class NullColumn implements ReadOnlyColumn {
     @Override
     public long getFd() {
         return -1;
+    }
+
+    @Override
+    public boolean isDeleted() {
+        return true;
     }
 }

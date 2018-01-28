@@ -24,15 +24,14 @@
 package com.questdb.cairo;
 
 import com.questdb.common.ColumnType;
-import com.questdb.std.Chars;
-import com.questdb.std.LongList;
-import com.questdb.std.Misc;
-import com.questdb.std.ObjList;
+import com.questdb.std.*;
 import com.questdb.std.str.Path;
 
 import java.io.Closeable;
 
 public class TableModel implements Closeable {
+    private static final long COLUMN_FLAG_CHACHED = 1L;
+    private static final long COLUMN_FLAG_INDEXED = 2L;
     private final String name;
     private final int partitionBy;
     private final AppendMemory mem = new AppendMemory();
@@ -48,6 +47,19 @@ public class TableModel implements Closeable {
         this.partitionBy = partitionBy;
     }
 
+    public TableModel cached(boolean cached) {
+        int last = columnBits.size() - 1;
+        assert last > 0;
+        assert ((int) columnBits.getQuick(last - 1) == ColumnType.SYMBOL);
+        long bits = columnBits.getQuick(last);
+        if (cached) {
+            columnBits.setQuick(last, bits | COLUMN_FLAG_CHACHED);
+        } else {
+            columnBits.setQuick(last, bits & ~COLUMN_FLAG_CHACHED);
+        }
+        return this;
+    }
+
     @Override
     public void close() {
         Misc.free(mem);
@@ -58,7 +70,7 @@ public class TableModel implements Closeable {
         columnNames.add(Chars.stringOf(name));
         // set default symbol capacity
         columnBits.add((128L << 32) | type);
-        columnBits.add(1L);
+        columnBits.add(COLUMN_FLAG_CHACHED);
         return this;
     }
 
@@ -78,6 +90,14 @@ public class TableModel implements Closeable {
         return (int) columnBits.getQuick(index * 2);
     }
 
+    public int getIndexBlockCapacity(int index) {
+        return (int) (columnBits.getQuick(index * 2 + 1) >> 32);
+    }
+
+    public boolean getIndexedFlag(int index) {
+        return (columnBits.getQuick(index * 2 + 1) & COLUMN_FLAG_INDEXED) == COLUMN_FLAG_INDEXED;
+    }
+
     public AppendMemory getMem() {
         return mem;
     }
@@ -95,26 +115,37 @@ public class TableModel implements Closeable {
     }
 
     public boolean getSymbolCacheFlag(int index) {
-        long bits = columnBits.getQuick(index * 2 + 1);
-        return (bits & 1L) == 1L;
+        return (columnBits.getQuick(index * 2 + 1) & COLUMN_FLAG_CHACHED) == COLUMN_FLAG_CHACHED;
     }
 
     public int getSymbolCapacity(int index) {
-        long bits = columnBits.getQuick(index * 2);
-        return (int) (bits >> 32);
+        return (int) (columnBits.getQuick(index * 2) >> 32);
     }
 
     public int getTimestampIndex() {
         return timestampIndex;
     }
 
+    public TableModel indexed(boolean indexFlag, int indexBlockCapacity) {
+        int pos = columnBits.size() - 1;
+        assert pos > 0;
+        long bits = columnBits.getQuick(pos);
+        if (indexFlag) {
+            assert indexBlockCapacity > 1;
+            columnBits.setQuick(pos, bits | ((long) Numbers.ceilPow2(indexBlockCapacity) << 32) | COLUMN_FLAG_INDEXED);
+        } else {
+            columnBits.setQuick(pos, bits & ~COLUMN_FLAG_INDEXED);
+        }
+        return this;
+    }
+
     public TableModel symbolCapacity(int capacity) {
-        int last = columnBits.size() - 2;
-        assert last > -1;
-        long bits = columnBits.getQuick(last);
+        int pos = columnBits.size() - 2;
+        assert pos > -1;
+        long bits = columnBits.getQuick(pos);
         assert ((int) bits == ColumnType.SYMBOL);
         bits = (((long) capacity) << 32) | (int) bits;
-        columnBits.setQuick(last, bits);
+        columnBits.setQuick(pos, bits);
         return this;
     }
 

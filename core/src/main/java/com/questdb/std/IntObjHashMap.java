@@ -40,7 +40,7 @@ public class IntObjHashMap<V> implements Mutable {
         this(8);
     }
 
-    private IntObjHashMap(int initialCapacity) {
+    public IntObjHashMap(int initialCapacity) {
         this(initialCapacity, 0.5f);
     }
 
@@ -64,7 +64,7 @@ public class IntObjHashMap<V> implements Mutable {
     }
 
     public V get(int key) {
-        return keyAt(keyIndex(key));
+        return valueAt(keyIndex(key));
     }
 
     public int keyIndex(int key) {
@@ -88,7 +88,19 @@ public class IntObjHashMap<V> implements Mutable {
         return capacity - free;
     }
 
-    private V keyAt(int index) {
+    public void putAt(int index, int key, V value) {
+        if (index < 0) {
+            Unsafe.arrayPut(values, -index - 1, value);
+        } else {
+            Unsafe.arrayPut(keys, index, key);
+            Unsafe.arrayPut(values, index, value);
+            if (--free == 0) {
+                rehash();
+            }
+        }
+    }
+
+    public V valueAt(int index) {
         return index < 0 ? Unsafe.arrayGet(values, -index - 1) : null;
     }
 
@@ -104,26 +116,11 @@ public class IntObjHashMap<V> implements Mutable {
         } while (true);
     }
 
-    private void putAt(int index, int key, V value) {
-        if (index < 0) {
-            Unsafe.arrayPut(values, -index - 1, value);
-        } else {
-            Unsafe.arrayPut(keys, index, key);
-            Unsafe.arrayPut(values, index, value);
-            if (--free == 0) {
-                rehash();
-            }
-        }
-    }
-
     @SuppressWarnings({"unchecked"})
     private void rehash() {
-
         int newCapacity = values.length << 1;
         mask = newCapacity - 1;
-
         free = this.capacity = (int) (newCapacity * loadFactor);
-
         V[] oldValues = values;
         int[] oldKeys = keys;
         this.keys = new int[newCapacity];

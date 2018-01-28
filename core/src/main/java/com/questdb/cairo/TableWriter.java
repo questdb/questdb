@@ -26,6 +26,9 @@ package com.questdb.cairo;
 import com.questdb.common.*;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
+import com.questdb.mp.RingQueue;
+import com.questdb.mp.SOCountDownLatch;
+import com.questdb.mp.Sequence;
 import com.questdb.std.*;
 import com.questdb.std.microtime.DateFormat;
 import com.questdb.std.microtime.DateFormatUtils;
@@ -39,8 +42,7 @@ import org.jetbrains.annotations.NotNull;
 import java.io.Closeable;
 import java.util.function.LongConsumer;
 
-import static com.questdb.cairo.TableUtils.TX_OFFSET_MAP_WRITER_COUNT;
-import static com.questdb.cairo.TableUtils.TX_OFFSET_TXN_CHECK;
+import static com.questdb.cairo.TableUtils.*;
 
 public class TableWriter implements Closeable {
 
@@ -48,9 +50,13 @@ public class TableWriter implements Closeable {
     private static final CharSequenceHashSet IGNORED_FILES = new CharSequenceHashSet();
     private static final Runnable NOOP = () -> {
     };
+    private final static RemoveFileLambda REMOVE_OR_LOG = TableWriter::removeFileAndOrLog;
+    private final static RemoveFileLambda REMOVE_OR_EXCEPTION = TableWriter::removeOrException;
     final ObjList<AppendMemory> columns;
     private final ObjList<SymbolMapWriter> symbolMapWriters;
     private final ObjList<SymbolMapWriter> denseSymbolMapWriters;
+    private final ObjList<ColumnIndexer> indexers;
+    private final ObjList<ColumnIndexer> denseIndexers = new ObjList<>();
     private final Path path;
     private final Path other;
     private final LongList refs = new LongList();
@@ -72,8 +78,12 @@ public class TableWriter implements Closeable {
     private final int fileOperationRetryCount;
     private final CharSequence name;
     private final TableWriterMetadata metadata;
-    private final FragileCode RECOVER_FROM_META_RENAME_FAILURE = this::recoverFromMetaRenameFailure;
     private final CairoConfiguration configuration;
+    private final CharSequenceIntHashMap validationMap = new CharSequenceIntHashMap();
+    private final FragileCode RECOVER_FROM_META_RENAME_FAILURE = this::recoverFromMetaRenameFailure;
+    private final RingQueue<ColumnIndexerEntry> indexQueue;
+    private final Sequence indexPubSequence;
+    private final SOCountDownLatch indexLatch = new SOCountDownLatch();
     int txPartitionCount = 0;
     private long lockFd;
     private LongConsumer timestampSetter;
@@ -98,10 +108,19 @@ public class TableWriter implements Closeable {
     private final FragileCode RECOVER_FROM_SYMBOL_MAP_WRITER_FAILURE = this::recoverFromSymbolMapWriterFailure;
     private final FragileCode RECOVER_FROM_SWAP_RENAME_FAILURE = this::recoverFromSwapRenameFailure;
     private final FragileCode RECOVER_FROM_COLUMN_OPEN_FAILURE = this::recoverOpenColumnFailure;
+    private int indexCount;
+    private boolean useParallelIndexer;
 
     public TableWriter(CairoConfiguration configuration, CharSequence name) {
+        this(configuration, name, null, null);
+    }
+
+    public TableWriter(CairoConfiguration configuration, CharSequence name, RingQueue<ColumnIndexerEntry> indexQueue, Sequence indexPubSequence) {
         LOG.info().$("open '").utf8(name).$('\'').$();
         this.configuration = configuration;
+        this.indexQueue = indexQueue;
+        this.indexPubSequence = indexPubSequence;
+        this.useParallelIndexer = indexQueue != null && configuration.isParallelIndexingEnabled();
         this.ff = configuration.getFilesFacade();
         this.mkDirMode = configuration.getMkDirMode();
         this.fileOperationRetryCount = configuration.getFileOperationRetryCount();
@@ -151,6 +170,7 @@ public class TableWriter implements Closeable {
             this.refs.extendAndSet(columnCount, 0);
             this.columns = new ObjList<>(columnCount * 2);
             this.symbolMapWriters = new ObjList<>(columnCount);
+            this.indexers = new ObjList<>(columnCount);
             this.denseSymbolMapWriters = new ObjList<>(metadata.getSymbolMapCount());
             this.nullers = new ObjList<>(columnCount);
             this.columnTops = new LongList(columnCount);
@@ -167,7 +187,7 @@ public class TableWriter implements Closeable {
     }
 
     public void addColumn(CharSequence name, int type) {
-        addColumn(name, type, configuration.getCutlassSymbolCapacity(), configuration.getCutlassSymbolCacheFlag());
+        addColumn(name, type, configuration.getCutlassSymbolCapacity(), configuration.getCutlassSymbolCacheFlag(), false, 0);
     }
 
     /**
@@ -197,7 +217,14 @@ public class TableWriter implements Closeable {
      * @param symbolCacheFlag when set to true, symbol values will be cached on Java heap.
      * @param type            {@link ColumnType}
      */
-    public void addColumn(CharSequence name, int type, int symbolCapacity, boolean symbolCacheFlag) {
+    public void addColumn(
+            CharSequence name,
+            int type,
+            int symbolCapacity,
+            boolean symbolCacheFlag,
+            boolean indexFlag,
+            int indexValueBlockCapacity
+    ) {
 
         if (getColumnIndexQuiet(metaMem, name, columnCount) != -1) {
             throw CairoException.instance(0).put("Duplicate column name: ").put(name);
@@ -207,15 +234,16 @@ public class TableWriter implements Closeable {
 
         commit();
 
-        if (type == ColumnType.SYMBOL) {
-            removeSymbolMapFilesLoud(name);
-        }
+        removeColumnFiles(name, type, REMOVE_OR_EXCEPTION);
 
         // create new _meta.swp
-        this.metaSwapIndex = addColumnToMeta(name, type);
+        this.metaSwapIndex = addColumnToMeta(name, type, indexFlag, indexValueBlockCapacity);
 
         // close _meta so we can rename it
         metaMem.close();
+
+        // validate new meta
+        validateSwapMeta(name);
 
         // rename _meta to _meta.prev
         renameMetaToMetaPrev(name);
@@ -236,7 +264,7 @@ public class TableWriter implements Closeable {
         }
 
         // add column objects
-        configureColumn(type);
+        configureColumn(type, indexFlag);
 
         // increment column count
         columnCount++;
@@ -248,7 +276,7 @@ public class TableWriter implements Closeable {
         // create column files
         if (transientRowCount > 0 || partitionBy == PartitionBy.NONE) {
             try {
-                openNewColumnFiles(name);
+                openNewColumnFiles(name, indexFlag, indexValueBlockCapacity);
             } catch (CairoException e) {
                 runFragile(RECOVER_FROM_COLUMN_OPEN_FAILURE, name, e);
             }
@@ -267,7 +295,7 @@ public class TableWriter implements Closeable {
 
         bumpStructureVersion();
 
-        metadata.addColumn(name, type);
+        metadata.addColumn(name, type, indexFlag, indexValueBlockCapacity);
 
         LOG.info().$("ADDED column '").utf8(name).$('[').$(ColumnType.nameOf(type)).$("]' to ").$(path).$();
     }
@@ -275,34 +303,17 @@ public class TableWriter implements Closeable {
     @Override
     public void close() {
         if (isOpen()) {
-            closeColumns(true);
-            if (denseSymbolMapWriters != null) {
-                for (int i = 0, n = denseSymbolMapWriters.size(); i < n; i++) {
-                    Misc.free(denseSymbolMapWriters.getQuick(i));
-                }
-                symbolMapWriters.clear();
-            }
-
-            if (symbolMapWriters != null) {
-                symbolMapWriters.clear();
-            }
-
-            if (txMem != null) {
-                txMem.jumpTo(getTxEofOffset());
-                txMem.close();
-            }
+            freeColumns(true);
+            freeSymbolMapWriters();
+            freeIndexers();
+            freeTxMem();
             Misc.free(metaMem);
             Misc.free(columnSizeMem);
             Misc.free(ddlMem);
             Misc.free(path);
             Misc.free(other);
-            if (lockFd != -1L) {
-                ff.close(lockFd);
-            }
-            if (tempMem8b != 0) {
-                Unsafe.free(tempMem8b, 8);
-                tempMem8b = 0;
-            }
+            releaseLock();
+            freeTempMem();
             LOG.info().$("closed '").utf8(name).$('\'').$();
         }
     }
@@ -319,6 +330,9 @@ public class TableWriter implements Closeable {
         }
 
         if (inTransaction()) {
+
+            updateIndexes();
+
             txMem.jumpTo(TableUtils.TX_OFFSET_TXN);
             txMem.putLong(++txn);
             Unsafe.getUnsafe().storeFence();
@@ -440,12 +454,7 @@ public class TableWriter implements Closeable {
             removeTodoFile();
 
             // remove column files has to be done after _todo is removed
-            removeColumnFiles(name);
-
-            if (type == ColumnType.SYMBOL) {
-                removeSymbolMapFilesQuiet(name);
-            }
-
+            removeColumnFiles(name, type, REMOVE_OR_LOG);
         } catch (CairoException err) {
             throw new CairoError(err);
         }
@@ -459,10 +468,13 @@ public class TableWriter implements Closeable {
 
     public void rollback() {
         if (inTransaction()) {
-            closeColumns(false);
+            LOG.info().$("tx rollback [name=").$(name).$(']').$();
+            freeColumns(false);
             columnSizeMem.jumpTo(0);
             configureAppendPosition();
+            rollbackIndexes();
             purgeUnusedPartitions();
+            LOG.info().$("tx rollback complete [name=").$(name).$(']').$();
         }
     }
 
@@ -498,7 +510,7 @@ public class TableWriter implements Closeable {
         }
 
         if (partitionBy != PartitionBy.NONE) {
-            closeColumns(false);
+            freeColumns(false);
             removePartitionDirectories();
             rowFunction = openPartitionFunction;
         }
@@ -535,7 +547,7 @@ public class TableWriter implements Closeable {
         }
     }
 
-    private static void removeOrException(FilesFacade ff, Path path) {
+    private static void removeOrException(FilesFacade ff, LPSZ path) {
         if (ff.exists(path) && !ff.remove(path)) {
             throw CairoException.instance(ff.errno()).put("Cannot remove ").put(path);
         }
@@ -654,20 +666,38 @@ public class TableWriter implements Closeable {
         }
     }
 
-    private int addColumnToMeta(CharSequence name, int type) {
+    static void indexAndCountDown(ColumnIndexer indexer, long lo, long hi, SOCountDownLatch latch) {
+        try {
+            indexer.index(lo, hi);
+        } catch (CairoException e) {
+            LOG.error().$("index error [fd=").$(indexer.getFd()).$(']').$('{').$((Sinkable) e).$('}').$();
+        } finally {
+            latch.countDown();
+        }
+    }
+
+    private int addColumnToMeta(CharSequence name, int type, boolean indexFlag, int indexValueBlockCapacity) {
         int index;
         try {
-            index = TableUtils.openMetaSwapFile(ff, ddlMem, path, rootLen, 30);
-
+            index = TableUtils.openMetaSwapFile(ff, ddlMem, path, rootLen, configuration.getMaxNumberOfSwapFiles());
             int columnCount = metaMem.getInt(TableUtils.META_OFFSET_COUNT);
 
             ddlMem.putInt(columnCount + 1);
             ddlMem.putInt(metaMem.getInt(TableUtils.META_OFFSET_PARTITION_BY));
             ddlMem.putInt(metaMem.getInt(TableUtils.META_OFFSET_TIMESTAMP_INDEX));
+            ddlMem.jumpTo(TableUtils.META_OFFSET_COLUMN_TYPES);
             for (int i = 0; i < columnCount; i++) {
-                ddlMem.putInt(TableUtils.getColumnType(metaMem, i));
+                ddlMem.putByte((byte) TableUtils.getColumnType(metaMem, i));
+                ddlMem.putBool(TableUtils.isColumnIndexed(metaMem, i));
+                ddlMem.putInt(TableUtils.getIndexBlockCapacity(metaMem, i));
+                ddlMem.skip(10);
             }
-            ddlMem.putInt(type);
+
+            // add new column metadata to bottom of list
+            ddlMem.putByte((byte) type);
+            ddlMem.putBool(indexFlag);
+            ddlMem.putInt(indexValueBlockCapacity);
+            ddlMem.skip(10);
 
             long nameOffset = TableUtils.getColumnNameOffset(columnCount);
             for (int i = 0; i < columnCount; i++) {
@@ -718,7 +748,7 @@ public class TableWriter implements Closeable {
         if (transientRowCount == 0) {
             if (partitionBy != PartitionBy.NONE) {
                 // we have to undo creation of partition
-                closeColumns(false);
+                freeColumns(false);
                 if (removeDirOnCancelRow) {
                     try {
                         setStateForTimestamp(maxTimestamp, false);
@@ -739,7 +769,7 @@ public class TableWriter implements Closeable {
                         setAppendPosition(prevTransientRowCount);
                         txPartitionCount--;
                     } catch (CairoException e) {
-                        closeColumns(false);
+                        freeColumns(false);
                         throw e;
                     }
                 } else {
@@ -781,17 +811,6 @@ public class TableWriter implements Closeable {
             }
         }
         refs.fill(0, columnCount, --masterRef);
-    }
-
-    private void closeColumns(boolean truncate) {
-        if (columns != null) {
-            for (int i = 0, n = columns.size(); i < n; i++) {
-                AppendMemory m = columns.getQuick(i);
-                if (m != null) {
-                    m.close(truncate);
-                }
-            }
-        }
     }
 
     private void commitPendingPartitions() {
@@ -843,7 +862,7 @@ public class TableWriter implements Closeable {
         }
     }
 
-    private void configureColumn(int type) {
+    private void configureColumn(int type, boolean indexFlag) {
         final AppendMemory primary = new AppendMemory();
         final AppendMemory secondary;
         switch (type) {
@@ -858,6 +877,10 @@ public class TableWriter implements Closeable {
         columns.add(primary);
         columns.add(secondary);
         configureNuller(type, primary, secondary);
+        if (indexFlag) {
+            indexers.extendAndSet((columns.size() - 1) / 2, new SymbolColumnIndexer());
+            populateDenseIndexerList();
+        }
         refs.add(0);
     }
 
@@ -867,7 +890,8 @@ public class TableWriter implements Closeable {
         for (int i = 0; i < columnCount; i++) {
             RecordColumnMetadata m = metadata.getColumnQuick(i);
             int type = m.getType();
-            configureColumn(type);
+            configureColumn(type, m.isIndexed());
+
             if (type == ColumnType.SYMBOL) {
                 assert nextSymbolCountOffset < TX_OFFSET_MAP_WRITER_COUNT + 4 + 8 * expectedMapWriters;
                 // keep symbol map writers list sparse for ease of access
@@ -876,6 +900,12 @@ public class TableWriter implements Closeable {
                 denseSymbolMapWriters.add(symbolMapWriter);
                 nextSymbolCountOffset += 8;
             }
+
+            if (m.isIndexed()) {
+                indexers.extendAndSet(i, new SymbolColumnIndexer());
+            }
+
+            populateDenseIndexerList();
         }
     }
 
@@ -927,11 +957,87 @@ public class TableWriter implements Closeable {
         }
     }
 
+    /**
+     * Creates bitmap index files for a column. This method uses primary column instance as temporary tool to
+     * append index data. Therefore it must be called before primary column is initialized.
+     *
+     * @param columnName         column name
+     * @param columnIndex        column index in table writer column list
+     * @param indexBlockCapacity approximate number of values per index key
+     * @param plen               path length. This is used to trim shared path object to.
+     */
+    private void createIndexFiles(CharSequence columnName, int columnIndex, int indexBlockCapacity, int plen) {
+        try {
+            BitmapIndexUtils.keyFileName(path.trimTo(plen), columnName);
+
+            if (ff.exists(path)) {
+                return;
+            }
+
+            // reuse memory column object to create index and close it at the end
+            try (AppendMemory mem = getPrimaryColumn(columnIndex)) {
+                mem.of(ff, path, ff.getPageSize());
+                BitmapIndexWriter.initKeyMemory(mem, indexBlockCapacity);
+            }
+            ff.touch(BitmapIndexUtils.valueFileName(path.trimTo(plen), columnName));
+        } finally {
+            path.trimTo(plen);
+        }
+    }
+
     private void createSymbolMapWriter(CharSequence name, int symbolCapacity, boolean symbolCacheFlag) {
         SymbolMapWriter.createSymbolMapFiles(ff, ddlMem, path, name, symbolCapacity, symbolCacheFlag);
         SymbolMapWriter w = new SymbolMapWriter(configuration, path, name, 0);
         denseSymbolMapWriters.add(w);
         symbolMapWriters.extendAndSet(columnCount, w);
+    }
+
+    private void freeColumns(boolean truncate) {
+        if (columns != null) {
+            for (int i = 0, n = columns.size(); i < n; i++) {
+                AppendMemory m = columns.getQuick(i);
+                if (m != null) {
+                    m.close(truncate);
+                }
+            }
+        }
+    }
+
+    private void freeIndexers() {
+        if (indexers != null) {
+            for (int i = 0, n = indexers.size(); i < n; i++) {
+                Misc.free(indexers.getQuick(i));
+            }
+            indexers.clear();
+            denseIndexers.clear();
+        }
+    }
+
+    private void freeSymbolMapWriters() {
+        if (denseSymbolMapWriters != null) {
+            for (int i = 0, n = denseSymbolMapWriters.size(); i < n; i++) {
+                Misc.free(denseSymbolMapWriters.getQuick(i));
+            }
+            symbolMapWriters.clear();
+        }
+
+        if (symbolMapWriters != null) {
+            symbolMapWriters.clear();
+        }
+    }
+
+    private void freeTempMem() {
+        if (tempMem8b != 0) {
+            Unsafe.free(tempMem8b, 8);
+            tempMem8b = 0;
+        }
+    }
+
+    private void freeTxMem() {
+        if (txMem != null) {
+            txMem.jumpTo(getTxEofOffset());
+            txMem.close();
+        }
     }
 
     private AppendMemory getPrimaryColumn(int column) {
@@ -950,6 +1056,10 @@ public class TableWriter implements Closeable {
         } else {
             return ff.length(txMem.getFd());
         }
+    }
+
+    boolean isSymbolMapWriterCached(int columnIndex) {
+        return symbolMapWriters.getQuick(columnIndex).isCached();
     }
 
     private long openAppend(LPSZ name) {
@@ -988,16 +1098,31 @@ public class TableWriter implements Closeable {
         }
     }
 
-    private void openNewColumnFiles(CharSequence name) {
+    private void openNewColumnFiles(CharSequence name, boolean indexFlag, int indexValueBlockCapacity) {
         try {
             // open column files
             setStateForTimestamp(maxTimestamp, false);
             int plen = path.length();
-            openColumnFiles(name, columnCount - 1, plen);
+            final int columnIndex = columnCount - 1;
+
+            // index must be created before column is initialised because
+            // it uses primary column object as temporary tool
+            if (indexFlag) {
+                createIndexFiles(name, columnIndex, indexValueBlockCapacity, plen);
+            }
+
+            openColumnFiles(name, columnIndex, plen);
             if (transientRowCount > 0) {
                 // write .top file
                 writeColumnTop(name);
             }
+
+            if (indexFlag) {
+                ColumnIndexer indexer = indexers.getQuick(columnIndex);
+                assert indexer != null;
+                indexers.getQuick(columnIndex).of(configuration, path.trimTo(plen), name, getPrimaryColumn(columnIndex), getSecondaryColumn(columnIndex), transientRowCount);
+            }
+
         } finally {
             path.trimTo(rootLen);
         }
@@ -1013,9 +1138,27 @@ public class TableWriter implements Closeable {
             assert columnCount > 0;
 
             for (int i = 0; i < columnCount; i++) {
-                CharSequence name = metadata.getColumnQuick(i).getName();
+                final RecordColumnMetadata meta = metadata.getColumnQuick(i);
+                final CharSequence name = meta.getName();
+                final boolean indexed = meta.isIndexed();
+                final long columnTop;
+
+                // prepare index writer if column requires indexing
+                if (indexed) {
+                    // we have to create files before columns are open
+                    // because we are reusing AppendMemory object from columns list
+                    createIndexFiles(name, i, meta.getBucketCount(), plen);
+                }
+
                 openColumnFiles(name, i, plen);
-                columnTops.extendAndSet(i, TableUtils.readColumnTop(ff, path, name, plen, tempMem8b));
+                columnTop = TableUtils.readColumnTop(ff, path, name, plen, tempMem8b);
+                columnTops.extendAndSet(i, columnTop);
+
+                if (indexed) {
+                    ColumnIndexer indexer = indexers.getQuick(i);
+                    assert indexer != null;
+                    indexer.of(configuration, path, name, getPrimaryColumn(i), getSecondaryColumn(i), columnTop);
+                }
             }
             LOG.info().$("switched partition to '").$(path).$('\'').$();
         } finally {
@@ -1033,6 +1176,18 @@ public class TableWriter implements Closeable {
         } finally {
             path.trimTo(rootLen);
         }
+    }
+
+    private void populateDenseIndexerList() {
+        denseIndexers.clear();
+        for (int i = 0, n = indexers.size(); i < n; i++) {
+            ColumnIndexer indexer = indexers.getQuick(i);
+            if (indexer != null) {
+                denseIndexers.add(indexer);
+            }
+        }
+        indexCount = denseIndexers.size();
+        useParallelIndexer = indexCount > 1 && indexQueue != null && configuration.isParallelIndexingEnabled();
     }
 
     private void purgeUnusedPartitions() {
@@ -1090,16 +1245,27 @@ public class TableWriter implements Closeable {
         recoverFromSwapRenameFailure(columnName);
     }
 
-    private void removeColumn(int index) {
-        Misc.free(getPrimaryColumn(index));
-        Misc.free(getSecondaryColumn(index));
-        columns.remove(getSecondaryColumnIndex(index));
-        columns.remove(getPrimaryColumnIndex(index));
-        columnTops.removeIndex(index);
-        nullers.remove(index);
+    private void releaseLock() {
+        if (lockFd != -1L) {
+            ff.close(lockFd);
+        }
     }
 
-    private void removeColumnFiles(CharSequence name) {
+    private void removeColumn(int columnIndex) {
+        Misc.free(getPrimaryColumn(columnIndex));
+        Misc.free(getSecondaryColumn(columnIndex));
+        columns.remove(getSecondaryColumnIndex(columnIndex));
+        columns.remove(getPrimaryColumnIndex(columnIndex));
+        columnTops.removeIndex(columnIndex);
+        nullers.remove(columnIndex);
+        if (columnIndex < indexers.size()) {
+            Misc.free(indexers.getQuick(columnIndex));
+            indexers.remove(columnIndex);
+            populateDenseIndexerList();
+        }
+    }
+
+    private void removeColumnFiles(CharSequence columnName, int columnType, RemoveFileLambda removeLambda) {
         try {
             ff.iterateDir(path.$(), (file, type) -> {
                 nativeLPSZ.of(file);
@@ -1107,11 +1273,20 @@ public class TableWriter implements Closeable {
                     path.trimTo(rootLen);
                     path.concat(nativeLPSZ);
                     int plen = path.length();
-                    removeFileAndOrLog(ff, TableUtils.dFile(path, name));
-                    removeFileAndOrLog(ff, TableUtils.iFile(path.trimTo(plen), name));
-                    removeFileAndOrLog(ff, TableUtils.topFile(path.trimTo(plen), name));
+                    removeLambda.remove(ff, TableUtils.dFile(path, columnName));
+                    removeLambda.remove(ff, TableUtils.iFile(path.trimTo(plen), columnName));
+                    removeLambda.remove(ff, TableUtils.topFile(path.trimTo(plen), columnName));
+                    removeLambda.remove(ff, BitmapIndexUtils.keyFileName(path.trimTo(plen), columnName));
+                    removeLambda.remove(ff, BitmapIndexUtils.valueFileName(path.trimTo(plen), columnName));
                 }
             });
+
+            if (columnType == ColumnType.SYMBOL) {
+                removeLambda.remove(ff, SymbolMapWriter.offsetFileName(path.trimTo(rootLen), columnName));
+                removeLambda.remove(ff, SymbolMapWriter.charFileName(path.trimTo(rootLen), columnName));
+                removeLambda.remove(ff, BitmapIndexUtils.keyFileName(path.trimTo(rootLen), columnName));
+                removeLambda.remove(ff, BitmapIndexUtils.valueFileName(path.trimTo(rootLen), columnName));
+            }
         } finally {
             path.trimTo(rootLen);
         }
@@ -1131,10 +1306,14 @@ public class TableWriter implements Closeable {
             } else {
                 ddlMem.putInt(timestampIndex);
             }
+            ddlMem.jumpTo(TableUtils.META_OFFSET_COLUMN_TYPES);
 
             for (int i = 0; i < columnCount; i++) {
                 if (i != index) {
-                    ddlMem.putInt(TableUtils.getColumnType(metaMem, i));
+                    ddlMem.putByte((byte) TableUtils.getColumnType(metaMem, i));
+                    ddlMem.putBool(TableUtils.isColumnIndexed(metaMem, i));
+                    ddlMem.putInt(TableUtils.getIndexBlockCapacity(metaMem, i));
+                    ddlMem.skip(10);
                 }
             }
 
@@ -1213,17 +1392,6 @@ public class TableWriter implements Closeable {
                     }
                 }
             });
-        } finally {
-            path.trimTo(rootLen);
-        }
-    }
-
-    private void removeSymbolMapFilesLoud(CharSequence name) {
-        try {
-            removeOrException(ff, SymbolMapWriter.offsetFileName(path.trimTo(rootLen), name));
-            removeOrException(ff, SymbolMapWriter.charFileName(path.trimTo(rootLen), name));
-            removeOrException(ff, BitmapIndexUtils.keyFileName(path.trimTo(rootLen), name));
-            removeOrException(ff, BitmapIndexUtils.valueFileName(path.trimTo(rootLen), name));
         } finally {
             path.trimTo(rootLen);
         }
@@ -1365,6 +1533,12 @@ public class TableWriter implements Closeable {
         removeTodoFile();
     }
 
+    private void rollbackIndexes() {
+        for (int i = 0, n = denseIndexers.size(); i < n; i++) {
+            denseIndexers.getQuick(i).rollback(transientRowCount - 1);
+        }
+    }
+
     private void setAppendPosition(final long position) {
         for (int i = 0; i < columnCount; i++) {
             setColumnSize(ff, getPrimaryColumn(i), getSecondaryColumn(i), TableUtils.getColumnType(metaMem, i), position - columnTops.getQuick(i), tempMem8b);
@@ -1440,9 +1614,14 @@ public class TableWriter implements Closeable {
     }
 
     private void switchPartition(long timestamp) {
-        // we need to store reference on partition so that archive
-        // file can be created in appropriate directory
-        // for simplicity use partitionLo, which can be
+        // Before partition can be switched we need to index records
+        // added so far. Index writers will start point to different
+        // files after switch.
+        updateIndexes();
+
+        // We need to store reference on partition so that archive
+        // file can be created in appropriate directory.
+        // For simplicity use partitionLo, which can be
         // translated to directory name when needed
         if (txPartitionCount++ > 0) {
             columnSizeMem.putLong(transientRowCount);
@@ -1455,10 +1634,109 @@ public class TableWriter implements Closeable {
         setAppendPosition(0);
     }
 
+    private void updateIndexes() {
+        if (indexCount > 0) {
+            final long lo = txPartitionCount == 1 ? prevTransientRowCount : 0;
+            final long hi = transientRowCount;
+            if (useParallelIndexer && hi - lo > configuration.getParallelIndexThreshold()) {
+                updateIndexesParallel(lo, hi);
+            } else {
+                updateIndexesSerially(lo, hi);
+            }
+        }
+    }
+
+    private void updateIndexesParallel(long lo, long hi) {
+
+        indexLatch.setCount(indexCount);
+
+        // we are going to index last column in this thread while other columns are on the queue
+        OUT:
+        for (int i = 0, n = indexCount - 1; i < n; i++) {
+
+            long cursor = indexPubSequence.next();
+            if (cursor == -1) {
+                // queue is full, process index in the current thread
+                indexAndCountDown(denseIndexers.getQuick(i), lo, hi, indexLatch);
+                continue;
+            }
+
+            if (cursor == -2) {
+                // CAS issue, retry
+                do {
+                    cursor = indexPubSequence.next();
+                    if (cursor == -1) {
+                        indexAndCountDown(denseIndexers.getQuick(i), lo, hi, indexLatch);
+                        continue OUT;
+                    }
+
+                    if (cursor > -1) {
+                        break;
+                    }
+                } while (true);
+            }
+
+            ColumnIndexerEntry queueItem = indexQueue.get(cursor);
+            queueItem.indexer = denseIndexers.getQuick(i);
+            queueItem.lo = lo;
+            queueItem.hi = hi;
+            queueItem.countDownLatch = indexLatch;
+            indexPubSequence.done(cursor);
+        }
+
+        // index last column while other columns are brewing on the queue
+        indexAndCountDown(denseIndexers.getQuick(indexCount - 1), lo, hi, indexLatch);
+
+        // At this point we have re-indexed our column and if things are flowing nicely
+        // all other columns should have been done by other threads. Instead of actually
+        // waiting we gracefully check latch count.
+        if (!indexLatch.await(50000)) {
+            // other columns are still in-flight, we must attempt to steal work from other threads
+            for (int i = 0, n = indexCount - 1; i < n; i++) {
+                ColumnIndexer indexer = denseIndexers.getQuick(i);
+                if (indexer.tryLock()) {
+                    indexAndCountDown(indexer, lo, hi, indexLatch);
+                }
+            }
+            // wait for the ones we cannot steal
+            indexLatch.await();
+        }
+
+        // reset lock on completed indexers
+        for (int i = 0; i < indexCount; i++) {
+            denseIndexers.getQuick(i).resetLock();
+        }
+    }
+
+    private void updateIndexesSerially(long lo, long hi) {
+        for (int i = 0, n = indexCount; i < n; i++) {
+            denseIndexers.getQuick(i).index(lo, hi);
+        }
+    }
+
     private void updateMaxTimestamp(long timestamp) {
         this.prevTimestamp = maxTimestamp;
         this.maxTimestamp = timestamp;
         this.timestampSetter.accept(timestamp);
+    }
+
+    private void validateSwapMeta(CharSequence columnName) {
+        try {
+            try {
+                path.concat(META_SWAP_FILE_NAME);
+                if (metaSwapIndex > 0) {
+                    path.put('.').put(metaSwapIndex);
+                }
+                metaMem.of(ff, path.$(), ff.getPageSize(), ff.length(path));
+                validationMap.clear();
+                TableUtils.validate(ff, metaMem, validationMap);
+            } finally {
+                metaMem.close();
+                path.trimTo(rootLen);
+            }
+        } catch (CairoException e) {
+            runFragile(RECOVER_FROM_META_RENAME_FAILURE, columnName, e);
+        }
     }
 
     private void writeColumnTop(CharSequence name) {
@@ -1495,6 +1773,11 @@ public class TableWriter implements Closeable {
         } finally {
             path.trimTo(rootLen);
         }
+    }
+
+    @FunctionalInterface
+    private interface RemoveFileLambda {
+        void remove(FilesFacade ff, LPSZ name);
     }
 
     @FunctionalInterface

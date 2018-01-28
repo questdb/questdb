@@ -39,8 +39,8 @@ public class DirectMapStorageFacade implements StorageFacade {
     }
 
     @Override
-    public SymbolTable getSymbolTable(int index) {
-        return delegate.getSymbolTable(keyIndices.getQuick(index - split));
+    public SymbolTable getSymbolTable(int columnIndex) {
+        return delegate.getSymbolTable(keyIndices.getQuick(columnIndex - split));
     }
 
     public void prepare(RecordCursor cursor) {

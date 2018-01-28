@@ -53,9 +53,13 @@ public class CairoTestUtils {
             mem.putInt(count);
             mem.putInt(model.getPartitionBy());
             mem.putInt(model.getTimestampIndex());
-            for (int i = 0; i < count; i++) {
-                mem.putInt(model.getColumnType(i));
+            mem.jumpTo(TableUtils.META_OFFSET_COLUMN_TYPES);
 
+            for (int i = 0; i < count; i++) {
+                mem.putByte((byte) model.getColumnType(i));
+                mem.putBool(model.getIndexedFlag(i));
+                mem.putInt(model.getIndexBlockCapacity(i));
+                mem.skip(10); // reserved
             }
             for (int i = 0; i < count; i++) {
                 mem.putStr(model.getColumnName(i));
