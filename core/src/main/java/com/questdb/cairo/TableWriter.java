@@ -1690,7 +1690,7 @@ public class TableWriter implements Closeable {
         // At this point we have re-indexed our column and if things are flowing nicely
         // all other columns should have been done by other threads. Instead of actually
         // waiting we gracefully check latch count.
-        if (!indexLatch.await(50000)) {
+        if (!indexLatch.await(configuration.getWorkStealTimeoutNanos())) {
             // other columns are still in-flight, we must attempt to steal work from other threads
             for (int i = 0, n = indexCount - 1; i < n; i++) {
                 ColumnIndexer indexer = denseIndexers.getQuick(i);

@@ -39,77 +39,238 @@ import java.util.concurrent.CountDownLatch;
 
 public class TableReaderDataFrameCursorTest extends AbstractCairoTest {
 
-    @Test
-    public void testParallelIndex() throws InterruptedException {
-        int N = 1000000;
-        int nWorkers = 2;
-        int S = 128;
-        Rnd rnd = new Rnd();
+    private static final int WORK_STEALING_DONT_TEST = 0;
+    private static final int WORK_STEALING_NO_PICKUP = 1;
+    private static final int WORK_STEALING_BUSY_QUEUE = 2;
+    private static final int WORK_STEALING_HIGH_CONTENTION = 3;
+    private static final int WORK_STEALING_CAS_FLAP = 4;
 
-        final String[] symA = new String[S];
-        final String[] symB = new String[S];
-        final String[] symC = new String[S];
+    public void testParallelIndex(int partitionBy, long increment, int expectedPartitionMin, int testWorkStealing) throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            int N = 1000000;
+            int nWorkers = 2;
+            int S = 128;
+            Rnd rnd = new Rnd();
 
-        for (int i = 0; i < S; i++) {
-            symA[i] = rnd.nextChars(10).toString();
-            symB[i] = rnd.nextChars(8).toString();
-            symC[i] = rnd.nextChars(10).toString();
-        }
+            final String[] symA = new String[S];
+            final String[] symB = new String[S];
+            final String[] symC = new String[S];
 
-        try (TableModel model = new TableModel(configuration, "ABC", PartitionBy.NONE)
-                .col("a", ColumnType.SYMBOL).indexed(true, N / S)
-                .col("b", ColumnType.SYMBOL).indexed(true, N / S)
-                .col("c", ColumnType.SYMBOL).indexed(true, N / S)
-                .col("d", ColumnType.DOUBLE)
-                .timestamp()) {
-            CairoTestUtils.create(model);
-        }
-
-        CountDownLatch workerHaltLatch = new CountDownLatch(nWorkers);
-        Worker workers[] = new Worker[nWorkers];
-
-        RingQueue<ColumnIndexerEntry> queue = new RingQueue<>(ColumnIndexerEntry::new, 1024);
-        MPSequence pubSeq = new MPSequence(queue.getCapacity());
-        MCSequence subSeq = new MCSequence(queue.getCapacity(), null);
-        pubSeq.then(subSeq).then(pubSeq);
-
-        ObjHashSet<Job> jobs = new ObjHashSet<>();
-        jobs.add(new ColumnIndexerJob(queue, subSeq));
-
-        for (int i = 0; i < nWorkers; i++) {
-            workers[i] = new Worker(jobs, workerHaltLatch);
-            workers[i].start();
-        }
-
-        try (TableWriter writer = new TableWriter(configuration, "ABC", queue, pubSeq)) {
-            for (int i = 0; i < N; i++) {
-                TableWriter.Row r = writer.newRow(0);
-                r.putSym(0, symA[rnd.nextPositiveInt() % S]);
-                r.putSym(1, symB[rnd.nextPositiveInt() % S]);
-                r.putSym(2, symC[rnd.nextPositiveInt() % S]);
-                r.putDouble(3, rnd.nextDouble());
-                r.append();
+            for (int i = 0; i < S; i++) {
+                symA[i] = rnd.nextChars(10).toString();
+                symB[i] = rnd.nextChars(8).toString();
+                symC[i] = rnd.nextChars(10).toString();
             }
-            writer.commit();
-        }
 
-        for (int i = 0; i < nWorkers; i++) {
-            workers[i].halt();
-        }
+            try (TableModel model = new TableModel(configuration, "ABC", partitionBy)
+                    .col("a", ColumnType.SYMBOL).indexed(true, N / S)
+                    .col("b", ColumnType.SYMBOL).indexed(true, N / S)
+                    .col("c", ColumnType.SYMBOL).indexed(true, N / S)
+                    .col("d", ColumnType.DOUBLE)
+                    .timestamp()) {
+                CairoTestUtils.create(model);
+            }
 
-        workerHaltLatch.await();
+            CountDownLatch workerHaltLatch = new CountDownLatch(nWorkers);
+            Worker workers[] = null;
 
-        try (TableReader reader = new TableReader(configuration, "ABC")) {
-            TableReaderDataFrameCursor cursor = new TableReaderDataFrameCursor();
-            TableReaderRecord record = new TableReaderRecord(reader);
+            RingQueue<ColumnIndexerEntry> queue = new RingQueue<>(ColumnIndexerEntry::new, 1024);
 
-            cursor.of(reader);
-            assertIndexRowsMatchSymbol(cursor, record, 0);
-            cursor.toTop();
-            assertIndexRowsMatchSymbol(cursor, record, 1);
-            cursor.toTop();
-            assertIndexRowsMatchSymbol(cursor, record, 2);
-        }
+            MPSequence pubSeq;
+            MCSequence subSeq;
+            ObjHashSet<Job> jobs = new ObjHashSet<>();
+
+            switch (testWorkStealing) {
+                case WORK_STEALING_BUSY_QUEUE:
+                    pubSeq = new MPSequence(queue.getCapacity()) {
+                        @Override
+                        public long next() {
+                            return -1;
+                        }
+                    };
+                    break;
+                case WORK_STEALING_HIGH_CONTENTION:
+                    pubSeq = new MPSequence(queue.getCapacity()) {
+                        private boolean flap = false;
+
+                        @Override
+                        public long next() {
+                            boolean flap = this.flap;
+                            this.flap = !this.flap;
+                            return flap ? -1 : -2;
+                        }
+                    };
+                    break;
+                case WORK_STEALING_DONT_TEST:
+                    pubSeq = new MPSequence(queue.getCapacity());
+                    subSeq = new MCSequence(queue.getCapacity(), null);
+                    pubSeq.then(subSeq).then(pubSeq);
+                    jobs.add(new ColumnIndexerJob(queue, subSeq));
+
+                    workers = new Worker[nWorkers];
+                    for (int i = 0; i < nWorkers; i++) {
+                        workers[i] = new Worker(jobs, workerHaltLatch);
+                        workers[i].start();
+                    }
+                    break;
+                case WORK_STEALING_CAS_FLAP:
+                    pubSeq = new MPSequence(queue.getCapacity()) {
+                        private boolean flap = true;
+
+                        @Override
+                        public long next() {
+                            boolean flap = this.flap;
+                            this.flap = !this.flap;
+                            return flap ? -2 : super.next();
+                        }
+                    };
+                    subSeq = new MCSequence(queue.getCapacity(), null);
+                    pubSeq.then(subSeq).then(pubSeq);
+                    jobs.add(new ColumnIndexerJob(queue, subSeq));
+
+                    workers = new Worker[nWorkers];
+                    for (int i = 0; i < nWorkers; i++) {
+                        workers[i] = new Worker(jobs, workerHaltLatch);
+                        workers[i].start();
+                    }
+                    break;
+                case WORK_STEALING_NO_PICKUP:
+                    pubSeq = new MPSequence(queue.getCapacity());
+                    break;
+                default:
+                    throw new RuntimeException("Unsupported test");
+            }
+
+            CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+                @Override
+                public int getParallelIndexThreshold() {
+                    return 1;
+                }
+            };
+
+            long timestamp = 0;
+            try (TableWriter writer = new TableWriter(configuration, "ABC", queue, pubSeq)) {
+                for (int i = 0; i < N; i++) {
+                    TableWriter.Row r = writer.newRow(timestamp += increment);
+                    r.putSym(0, symA[rnd.nextPositiveInt() % S]);
+                    r.putSym(1, symB[rnd.nextPositiveInt() % S]);
+                    r.putSym(2, symC[rnd.nextPositiveInt() % S]);
+                    r.putDouble(3, rnd.nextDouble());
+                    r.append();
+                }
+                writer.commit();
+            }
+
+            if (workers != null) {
+                for (int i = 0; i < nWorkers; i++) {
+                    workers[i].halt();
+                }
+
+                workerHaltLatch.await();
+            }
+
+            try (TableReader reader = new TableReader(configuration, "ABC")) {
+
+                Assert.assertTrue(reader.getPartitionCount() > expectedPartitionMin);
+
+                TableReaderDataFrameCursor cursor = new TableReaderDataFrameCursor();
+                TableReaderRecord record = new TableReaderRecord(reader);
+
+                cursor.of(reader);
+                assertIndexRowsMatchSymbol(cursor, record, 0);
+                cursor.toTop();
+                assertIndexRowsMatchSymbol(cursor, record, 1);
+                cursor.toTop();
+                assertIndexRowsMatchSymbol(cursor, record, 2);
+            }
+
+        });
+    }
+
+    @Test
+    public void testParallelIndexByDay() throws Exception {
+        testParallelIndex(PartitionBy.DAY, 1000000, 5, WORK_STEALING_DONT_TEST);
+    }
+
+    @Test
+    public void testParallelIndexByDayBusy() throws Exception {
+        testParallelIndex(PartitionBy.DAY, 1000000, 5, WORK_STEALING_BUSY_QUEUE);
+    }
+
+    @Test
+    public void testParallelIndexByDayCasFlap() throws Exception {
+        testParallelIndex(PartitionBy.DAY, 1000000, 5, WORK_STEALING_CAS_FLAP);
+    }
+
+    @Test
+    public void testParallelIndexByDayContention() throws Exception {
+        testParallelIndex(PartitionBy.DAY, 1000000, 5, WORK_STEALING_HIGH_CONTENTION);
+    }
+
+    @Test
+    public void testParallelIndexByDayNoPickup() throws Exception {
+        testParallelIndex(PartitionBy.DAY, 1000000, 5, WORK_STEALING_NO_PICKUP);
+    }
+
+    @Test
+    public void testParallelIndexByMonth() throws Exception {
+        testParallelIndex(PartitionBy.MONTH, 1000000 * 10, 3, WORK_STEALING_DONT_TEST);
+    }
+
+    @Test
+    public void testParallelIndexByMonthBusy() throws Exception {
+        testParallelIndex(PartitionBy.MONTH, 1000000 * 10, 3, WORK_STEALING_BUSY_QUEUE);
+    }
+
+    @Test
+    public void testParallelIndexByMonthContention() throws Exception {
+        testParallelIndex(PartitionBy.MONTH, 1000000 * 10, 3, WORK_STEALING_HIGH_CONTENTION);
+    }
+
+
+    @Test
+    public void testParallelIndexByMonthNoPickup() throws Exception {
+        testParallelIndex(PartitionBy.MONTH, 1000000 * 10, 3, WORK_STEALING_NO_PICKUP);
+    }
+
+    @Test
+    public void testParallelIndexByNone() throws Exception {
+        testParallelIndex(PartitionBy.NONE, 0, 0, WORK_STEALING_DONT_TEST);
+    }
+
+    @Test
+    public void testParallelIndexByNoneBusy() throws Exception {
+        testParallelIndex(PartitionBy.NONE, 0, 0, WORK_STEALING_BUSY_QUEUE);
+    }
+
+    @Test
+    public void testParallelIndexByNoneContention() throws Exception {
+        testParallelIndex(PartitionBy.NONE, 0, 0, WORK_STEALING_HIGH_CONTENTION);
+    }
+
+    @Test
+    public void testParallelIndexByNoneNoPickup() throws Exception {
+        testParallelIndex(PartitionBy.NONE, 0, 0, WORK_STEALING_NO_PICKUP);
+    }
+
+    @Test
+    public void testParallelIndexByYear() throws Exception {
+        testParallelIndex(PartitionBy.YEAR, 1000000 * 10 * 12, 3, WORK_STEALING_DONT_TEST);
+    }
+
+    @Test
+    public void testParallelIndexByYearBusy() throws Exception {
+        testParallelIndex(PartitionBy.YEAR, 1000000 * 10 * 12, 3, WORK_STEALING_BUSY_QUEUE);
+    }
+
+    @Test
+    public void testParallelIndexByYearContention() throws Exception {
+        testParallelIndex(PartitionBy.YEAR, 1000000 * 10 * 12, 3, WORK_STEALING_HIGH_CONTENTION);
+    }
+
+    @Test
+    public void testParallelIndexByYearNoPickup() throws Exception {
+        testParallelIndex(PartitionBy.YEAR, 1000000 * 10 * 12, 3, WORK_STEALING_NO_PICKUP);
     }
 
     @Test

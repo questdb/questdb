@@ -38,6 +38,21 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public MicrosecondClock getClock() {
+        return MicrosecondClockImpl.INSTANCE;
+    }
+
+    @Override
+    public boolean getCutlassSymbolCacheFlag() {
+        return true;
+    }
+
+    @Override
+    public int getCutlassSymbolCapacity() {
+        return 64;
+    }
+
+    @Override
     public int getFileOperationRetryCount() {
         return 30;
     }
@@ -63,8 +78,18 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getMaxNumberOfSwapFiles() {
+        return 30;
+    }
+
+    @Override
     public int getMkDirMode() {
         return 509;
+    }
+
+    @Override
+    public int getParallelIndexThreshold() {
+        return 100000;
     }
 
     @Override
@@ -78,33 +103,13 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public MicrosecondClock getClock() {
-        return MicrosecondClockImpl.INSTANCE;
-    }
-
-    @Override
     public long getSpinLockTimeoutUs() {
         return 1000000;
     }
 
     @Override
-    public boolean getCutlassSymbolCacheFlag() {
-        return true;
-    }
-
-    @Override
-    public int getCutlassSymbolCapacity() {
-        return 64;
-    }
-
-    @Override
-    public int getMaxNumberOfSwapFiles() {
-        return 30;
-    }
-
-    @Override
-    public int getParallelIndexThreshold() {
-        return 100000;
+    public long getWorkStealTimeoutNanos() {
+        return 10000;
     }
 
     @Override

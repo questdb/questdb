@@ -27,6 +27,12 @@ import com.questdb.std.FilesFacade;
 import com.questdb.std.microtime.MicrosecondClock;
 
 public interface CairoConfiguration {
+    MicrosecondClock getClock();
+
+    boolean getCutlassSymbolCacheFlag();
+
+    int getCutlassSymbolCapacity();
+
     int getFileOperationRetryCount();
 
     FilesFacade getFilesFacade();
@@ -37,23 +43,19 @@ public interface CairoConfiguration {
 
     long getInactiveWriterTTL();
 
+    int getMaxNumberOfSwapFiles();
+
     int getMkDirMode();
+
+    int getParallelIndexThreshold();
 
     int getReaderPoolSegments();
 
     CharSequence getRoot();
 
-    MicrosecondClock getClock();
-
     long getSpinLockTimeoutUs();
 
-    boolean getCutlassSymbolCacheFlag();
-
-    int getCutlassSymbolCapacity();
-
-    int getMaxNumberOfSwapFiles();
-
-    int getParallelIndexThreshold();
+    long getWorkStealTimeoutNanos();
 
     boolean isParallelIndexingEnabled();
 }

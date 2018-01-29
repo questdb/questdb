@@ -50,7 +50,7 @@ public class SOCountDownLatch {
 
         while (true) {
             long deadline = System.nanoTime() + nanos;
-            LockSupport.park(nanos);
+            LockSupport.parkNanos(nanos);
 
             if (System.nanoTime() < deadline) {
                 // this could be spurious wakeup, ignore is count is non-zero
