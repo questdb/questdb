@@ -27,4 +27,8 @@ public class CairoError extends Error {
     public CairoError(Throwable cause) {
         super(cause);
     }
+
+    public CairoError(String message) {
+        super(message);
+    }
 }

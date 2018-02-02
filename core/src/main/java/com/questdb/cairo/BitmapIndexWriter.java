@@ -38,7 +38,7 @@ public class BitmapIndexWriter implements Closeable {
     private final Cursor cursor = new Cursor();
     private int blockCapacity;
     private int blockValueCountMod;
-    private long valueMemSize;
+    private long valueMemSize = -1;
     private int keyCount = -1;
     private long seekValueCount;
     private long seekValueBlockOffset;
@@ -121,7 +121,7 @@ public class BitmapIndexWriter implements Closeable {
         }
 
         if (valueMem != null) {
-            if (valueMem.isOpen()) {
+            if (valueMem.isOpen() && valueMemSize > -1) {
                 valueMem.jumpTo(valueMemSize);
             }
             Misc.free(valueMem);
@@ -175,8 +175,8 @@ public class BitmapIndexWriter implements Closeable {
                 throw CairoException.instance(0).put("Sequence mismatch on ").put(path);
             }
 
-            this.valueMemSize = this.keyMem.getLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_VALUE_MEM_SIZE);
             this.valueMem.of(configuration.getFilesFacade(), BitmapIndexUtils.valueFileName(path.trimTo(plen), name), pageSize);
+            this.valueMemSize = this.keyMem.getLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_VALUE_MEM_SIZE);
 
             if (this.valueMem.getAppendOffset() < this.valueMemSize) {
                 LOG.error().$("incorrect file size [corrupt] of ").$(path).$(" [expected=").$(this.valueMemSize).$(']').$();

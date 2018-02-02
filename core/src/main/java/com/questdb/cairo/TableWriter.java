@@ -110,6 +110,8 @@ public class TableWriter implements Closeable {
     private final FragileCode RECOVER_FROM_COLUMN_OPEN_FAILURE = this::recoverOpenColumnFailure;
     private int indexCount;
     private boolean useParallelIndexer;
+    private boolean performRecovery;
+    private boolean distressed = false;
 
     public TableWriter(CairoConfiguration configuration, CharSequence name) {
         this(configuration, name, null, null);
@@ -130,6 +132,8 @@ public class TableWriter implements Closeable {
         this.rootLen = path.length();
         try {
             try {
+                TableUtils.lockName(path);
+                performRecovery = ff.exists(path);
                 this.lockFd = TableUtils.lock(ff, path);
             } finally {
                 path.trimTo(rootLen);
@@ -181,7 +185,7 @@ public class TableWriter implements Closeable {
             purgeUnusedPartitions();
         } catch (CairoException e) {
             LOG.error().$("cannot open '").$(path).$("' and this is why: {").$((Sinkable) e).$('}').$();
-            close();
+            doClose(false);
             throw e;
         }
     }
@@ -225,6 +229,8 @@ public class TableWriter implements Closeable {
             boolean indexFlag,
             int indexValueBlockCapacity
     ) {
+
+        checkDistressed();
 
         if (getColumnIndexQuiet(metaMem, name, columnCount) != -1) {
             throw CairoException.instance(0).put("Duplicate column name: ").put(name);
@@ -290,7 +296,7 @@ public class TableWriter implements Closeable {
             removeTodoFile();
 
         } catch (CairoException err) {
-            throw new CairoError(err);
+            throwDistressException(err);
         }
 
         bumpStructureVersion();
@@ -303,18 +309,7 @@ public class TableWriter implements Closeable {
     @Override
     public void close() {
         if (isOpen()) {
-            freeColumns(true);
-            freeSymbolMapWriters();
-            freeIndexers();
-            freeTxMem();
-            Misc.free(metaMem);
-            Misc.free(columnSizeMem);
-            Misc.free(ddlMem);
-            Misc.free(path);
-            Misc.free(other);
-            releaseLock();
-            freeTempMem();
-            LOG.info().$("closed '").utf8(name).$('\'').$();
+            doClose(true);
         }
     }
 
@@ -325,6 +320,9 @@ public class TableWriter implements Closeable {
      * <p>This method will cancel pending rows by calling {@link #cancelRow()}. Data in partially appended row will be lost.</p>
      */
     public void commit() {
+
+        checkDistressed();
+
         if ((masterRef & 1) != 0) {
             cancelRow();
         }
@@ -401,6 +399,9 @@ public class TableWriter implements Closeable {
     }
 
     public void removeColumn(CharSequence name) {
+
+        checkDistressed();
+
         final int index = getColumnIndex(name);
         final int type = metadata.getColumnQuick(index).getType();
 
@@ -456,7 +457,7 @@ public class TableWriter implements Closeable {
             // remove column files has to be done after _todo is removed
             removeColumnFiles(name, type, REMOVE_OR_LOG);
         } catch (CairoException err) {
-            throw new CairoError(err);
+            throwDistressException(err);
         }
 
         bumpStructureVersion();
@@ -467,6 +468,7 @@ public class TableWriter implements Closeable {
     }
 
     public void rollback() {
+        checkDistressed();
         if (inTransaction()) {
             LOG.info().$("tx rollback [name=").$(name).$(']').$();
             freeColumns(false);
@@ -528,7 +530,7 @@ public class TableWriter implements Closeable {
         try {
             removeTodoFile();
         } catch (CairoException err) {
-            throw new CairoError(err);
+            throwDistressException(err);
         }
     }
 
@@ -561,20 +563,9 @@ public class TableWriter implements Closeable {
         return getPrimaryColumnIndex(index) + 1;
     }
 
-    private static boolean setMemSizeAndCalcOversize(FilesFacade ff, AppendMemory mem, long size, boolean calcOversize) {
-        if (calcOversize) {
-            long actual = ff.length(mem.getFd());
-            mem.setSize(size);
-            return size < actual;
-        }
-        mem.setSize(size);
-        return true;
-    }
-
-    private static boolean setColumnSize(FilesFacade ff, AppendMemory mem1, AppendMemory mem2, int type, long actualPosition, long buf, boolean calcOversize) {
+    private static void setColumnSize(FilesFacade ff, AppendMemory mem1, AppendMemory mem2, int type, long actualPosition, long buf) {
         long offset;
         long len;
-        boolean oversized;
         if (actualPosition > 0) {
             // subtract column top
             switch (type) {
@@ -588,9 +579,9 @@ public class TableWriter implements Closeable {
                         throw CairoException.instance(ff.errno()).put("Cannot read length, fd=").put(mem1.getFd()).put(", offset=").put(offset);
                     }
                     len = Unsafe.getUnsafe().getLong(buf);
-                    oversized = setMemSizeAndCalcOversize(ff, mem1, len == -1 ? offset + 8 : offset + len + 8, calcOversize);
-                    oversized = setMemSizeAndCalcOversize(ff, mem2, actualPosition * 8, calcOversize && !oversized);
-                    return oversized;
+                    mem1.setSize(len == -1 ? offset + 8 : offset + len + 8);
+                    mem2.setSize(actualPosition * 8);
+                    break;
                 case ColumnType.STRING:
                     assert mem2 != null;
                     if (ff.read(mem2.getFd(), buf, 8, (actualPosition - 1) * 8) != 8) {
@@ -601,18 +592,18 @@ public class TableWriter implements Closeable {
                         throw CairoException.instance(ff.errno()).put("Cannot read length, fd=").put(mem1.getFd()).put(", offset=").put(offset);
                     }
                     len = Unsafe.getUnsafe().getInt(buf);
-                    oversized = setMemSizeAndCalcOversize(ff, mem1, len == -1 ? offset + 4 : offset + len * 2 + 4, calcOversize);
-                    oversized = setMemSizeAndCalcOversize(ff, mem2, actualPosition * 8, calcOversize && !oversized);
-                    return oversized;
+                    mem1.setSize(len == -1 ? offset + 4 : offset + len * 2 + 4);
+                    mem2.setSize(actualPosition * 8);
+                    break;
                 default:
-                    return setMemSizeAndCalcOversize(ff, mem1, actualPosition << ColumnType.pow2SizeOf(type), calcOversize);
+                    mem1.setSize(actualPosition << ColumnType.pow2SizeOf(type));
+                    break;
             }
         } else {
-            oversized = setMemSizeAndCalcOversize(ff, mem1, 0, calcOversize);
+            mem1.setSize((long) 0);
             if (mem2 != null) {
-                oversized = setMemSizeAndCalcOversize(ff, mem2, 0, calcOversize && !oversized);
+                mem2.setSize((long) 0);
             }
-            return oversized;
         }
     }
 
@@ -647,16 +638,6 @@ public class TableWriter implements Closeable {
             nameOffset += VirtualMemory.getStorageLength(col);
         }
         return -1;
-    }
-
-    private static void runFragile(FragileCode fragile, CharSequence columnName, CairoException e) {
-        try {
-            fragile.run(columnName);
-        } catch (CairoException err) {
-            LOG.error().$("DOUBLE ERROR: 1st: '").$((Sinkable) e).$('\'').$();
-            throw new CairoError(err);
-        }
-        throw e;
     }
 
     private static void removeFileAndOrLog(FilesFacade ff, LPSZ name) {
@@ -814,6 +795,12 @@ public class TableWriter implements Closeable {
             }
         }
         refs.fill(0, columnCount, --masterRef);
+    }
+
+    private void checkDistressed() {
+        if (distressed) {
+            throw new CairoError("Table '" + name.toString() + "' is distressed");
+        }
     }
 
     private void commitPendingPartitions() {
@@ -1002,6 +989,32 @@ public class TableWriter implements Closeable {
         symbolMapWriters.extendAndSet(columnCount, w);
     }
 
+    private void doClose(boolean truncate) {
+        boolean tx = inTransaction();
+        freeColumns(truncate);
+        freeSymbolMapWriters();
+        freeIndexers();
+        freeTxMem();
+        Misc.free(metaMem);
+        Misc.free(columnSizeMem);
+        Misc.free(ddlMem);
+        Misc.free(other);
+        try {
+            // todo: test what happens if lock file cannot be removed
+            releaseLock(!truncate | tx | performRecovery | distressed);
+        } finally {
+            Misc.free(path);
+            freeTempMem();
+            LOG.info().$("closed '").utf8(name).$('\'').$();
+        }
+    }
+
+    private void doPerformRecovery() {
+        rollbackIndexes();
+        rollbackSymbolTables();
+        performRecovery = false;
+    }
+
     private void freeColumns(boolean truncate) {
         if (columns != null) {
             for (int i = 0, n = columns.size(); i < n; i++) {
@@ -1096,6 +1109,9 @@ public class TableWriter implements Closeable {
     private void openFirstPartition(long timestamp) {
         openPartition(timestamp);
         setAppendPosition(transientRowCount);
+        if (performRecovery) {
+            doPerformRecovery();
+        }
         txPartitionCount = 1;
     }
 
@@ -1257,9 +1273,19 @@ public class TableWriter implements Closeable {
         recoverFromSwapRenameFailure(columnName);
     }
 
-    private void releaseLock() {
+    private void releaseLock(boolean distressed) {
         if (lockFd != -1L) {
             ff.close(lockFd);
+            if (distressed) {
+                return;
+            }
+
+            try {
+                TableUtils.lockName(path);
+                removeOrException(ff, path);
+            } finally {
+                path.trimTo(rootLen);
+            }
         }
     }
 
@@ -1546,28 +1572,38 @@ public class TableWriter implements Closeable {
     }
 
     private void rollbackIndexes() {
+        final long maxRow = transientRowCount - 1;
         for (int i = 0, n = denseIndexers.size(); i < n; i++) {
-            denseIndexers.getQuick(i).rollback(transientRowCount - 1);
+            ColumnIndexer indexer = denseIndexers.getQuick(i);
+            LOG.info().$("recovering index [fd=").$(indexer.getFd()).$(']').$();
+            indexer.rollback(maxRow);
         }
     }
 
+    private void rollbackSymbolTables() {
+        int expectedMapWriters = txMem.getInt(TX_OFFSET_MAP_WRITER_COUNT);
+        long nextSymbolCountOffset = TX_OFFSET_MAP_WRITER_COUNT + 4;
+        for (int i = 0; i < expectedMapWriters; i++) {
+            assert nextSymbolCountOffset < TX_OFFSET_MAP_WRITER_COUNT + 4 + 8 * expectedMapWriters;
+            denseSymbolMapWriters.getQuick(i).rollback(txMem.getInt(nextSymbolCountOffset));
+            nextSymbolCountOffset += 4;
+        }
+    }
+
+    private void runFragile(FragileCode fragile, CharSequence columnName, CairoException e) {
+        try {
+            fragile.run(columnName);
+        } catch (CairoException err) {
+            LOG.error().$("DOUBLE ERROR: 1st: '").$((Sinkable) e).$('\'').$();
+            throwDistressException(err);
+        }
+        throw e;
+    }
+
     private void setAppendPosition(final long position) {
-        int n = denseIndexers.size();
-        boolean calcOversize = n > 0;
         for (int i = 0; i < columnCount; i++) {
             // stop calculating oversize as soon as we find first over-sized column
-            calcOversize = !setColumnSize(ff, getPrimaryColumn(i), getSecondaryColumn(i), TableUtils.getColumnType(metaMem, i), position - columnTops.getQuick(i), tempMem8b, calcOversize);
-        }
-
-        // We don't calculate over-size also when we haven't got any indexes.
-        // Check if there are indexes and calcOversize is FALSE - this means we have an over-sized column.
-        // Confusing - i know.
-        if (!calcOversize && n > 0) {
-            for (int i = 0; i < n; i++) {
-                ColumnIndexer indexer = denseIndexers.getQuick(i);
-                LOG.info().$("recovering index [fd=").$(indexer.getFd()).$(']').$();
-                indexer.rollback(transientRowCount - 1);
-            }
+            setColumnSize(ff, getPrimaryColumn(i), getSecondaryColumn(i), TableUtils.getColumnType(metaMem, i), position - columnTops.getQuick(i), tempMem8b);
         }
     }
 
@@ -1660,6 +1696,11 @@ public class TableWriter implements Closeable {
         setAppendPosition(0);
     }
 
+    private void throwDistressException(Throwable cause) {
+        this.distressed = true;
+        throw new CairoError(cause);
+    }
+
     private void updateIndexes() {
         if (indexCount > 0) {
             final long lo = txPartitionCount == 1 ? prevTransientRowCount : 0;
@@ -1741,7 +1782,7 @@ public class TableWriter implements Closeable {
             } catch (CairoException e) {
                 // this is pretty severe, we hit some sort of a limit
                 LOG.error().$("index error {").$((Sinkable) e).$('}').$();
-                throw new CairoError(e);
+                throwDistressException(e);
             }
         }
     }

@@ -114,7 +114,7 @@ public final class TableUtils {
     }
 
     public static long lock(FilesFacade ff, Path path) {
-        long fd = ff.openRW(path.put(".lock").$());
+        long fd = ff.openRW(path);
         if (fd == -1) {
             LOG.error().$("cannot open '").$(path).$("' to lock [errno=").$(ff.errno()).$(']').$();
             return -1L;
@@ -127,6 +127,10 @@ public final class TableUtils {
         }
 
         return fd;
+    }
+
+    public static void lockName(Path path) {
+        path.put(".lock").$();
     }
 
     public static void resetTxn(VirtualMemory txMem, int symbolMapCount) {

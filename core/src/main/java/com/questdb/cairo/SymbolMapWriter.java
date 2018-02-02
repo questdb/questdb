@@ -67,8 +67,7 @@ public class SymbolMapWriter implements Closeable {
             this.offsetMem = new ReadWriteMemory(ff, path, mapPageSize);
             final int symbolCapacity = offsetMem.getInt(0);
             final boolean useCache = offsetMem.getBool(4);
-            long jumpTarget = keyToOffset(symbolCount);
-            this.offsetMem.jumpTo(jumpTarget);
+            this.offsetMem.jumpTo(keyToOffset(symbolCount));
 
             // index writer is used to identify attempts to store duplicate symbol value
             this.indexWriter = new BitmapIndexWriter(configuration, path.trimTo(plen), name);
@@ -90,12 +89,6 @@ public class SymbolMapWriter implements Closeable {
                 this.cache = null;
             }
             LOG.info().$("open [name=").$(path.trimTo(plen).concat(name).$()).$(", fd=").$(this.offsetMem.getFd()).$(", cache=").$(cache != null).$(", capacity=").$(symbolCapacity).$(']').$();
-
-            if (jumpTarget < len) {
-                // over-sized file? It is possible that symbol writer instance was abandoned.
-                // We need to make sure index is within bounds of current symbol count
-                rollback(symbolCount);
-            }
         } catch (CairoException e) {
             close();
             throw e;

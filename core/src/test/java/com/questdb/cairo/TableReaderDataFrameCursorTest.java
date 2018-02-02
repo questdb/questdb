@@ -513,6 +513,28 @@ public class TableReaderDataFrameCursorTest extends AbstractCairoTest {
         testSymbolIndexRead(PartitionBy.YEAR, 1000000 * 60 * 5 * 24L * 10L, 2);
     }
 
+    private void assertData(TableReaderDataFrameCursor cursor, TableReaderRecord record, Rnd rnd, SymbolGroup sg, long expecteRowCount) {
+        // SymbolTable is table at table scope, so it will be the same for every
+        // data frame here. Get its instance outside of data frame loop.
+
+        long rowCount = 0;
+        while (cursor.hasNext()) {
+            DataFrame frame = cursor.next();
+            record.jumpTo(frame.getPartitionIndex(), frame.getRowLo());
+            final long limit = frame.getRowHi();
+            while (record.getRecordIndex() < limit) {
+                TestUtils.assertEquals(sg.symA[rnd.nextPositiveInt() % sg.S], record.getSym(0));
+                TestUtils.assertEquals(sg.symB[rnd.nextPositiveInt() % sg.S], record.getSym(1));
+                TestUtils.assertEquals(sg.symC[rnd.nextPositiveInt() % sg.S], record.getSym(2));
+                Assert.assertEquals(rnd.nextDouble(), record.getDouble(3), 0.0000001d);
+                record.incrementRecordIndex();
+                rowCount++;
+            }
+        }
+
+        Assert.assertEquals(expecteRowCount, rowCount);
+    }
+
     private void assertIndexRowsMatchSymbol(TableReaderDataFrameCursor cursor, TableReaderRecord record, int columnIndex, long expecteRowCount) {
         // SymbolTable is table at table scope, so it will be the same for every
         // data frame here. Get its instance outside of data frame loop.
@@ -617,6 +639,7 @@ public class TableReaderDataFrameCursorTest extends AbstractCairoTest {
             int N = 10000;
             int S = 512;
             Rnd rnd = new Rnd();
+            Rnd eRnd = new Rnd();
 
             FilesFacade ff = new FilesFacadeImpl() {
                 private long fd = -1;
@@ -658,6 +681,10 @@ public class TableReaderDataFrameCursorTest extends AbstractCairoTest {
 
             SymbolGroup sg = new SymbolGroup(rnd, S, N, partitionBy);
 
+            // align pseudo-random generators
+            // we have to do this because asserting code will not be re-populating symbol group
+            eRnd.syncWith(rnd);
+
             long timestamp = 0;
             if (!empty) {
                 timestamp = sg.appendABC(AbstractCairoTest.configuration, rnd, N, timestamp, increment);
@@ -678,6 +705,33 @@ public class TableReaderDataFrameCursorTest extends AbstractCairoTest {
                 } catch (CairoError ignored) {
                 }
                 // writer must be closed, we must not interact with writer anymore
+
+                // test that we cannot commit
+                try {
+                    writer.commit();
+                    Assert.fail();
+                } catch (CairoError e) {
+                    TestUtils.assertContains(e.getMessage(), "distressed");
+                }
+
+                // test that we cannot rollback
+                try {
+                    writer.rollback();
+                    Assert.fail();
+                } catch (CairoError e) {
+                    TestUtils.assertContains(e.getMessage(), "distressed");
+                }
+            }
+
+
+            // open another writer that would fail recovery
+            // ft table is empty constructor should only attempt to recover non-partitioned ones
+            if (empty && partitionBy == PartitionBy.NONE) {
+                try {
+                    new TableWriter(configuration, "ABC");
+                    Assert.fail();
+                } catch (CairoException ignore) {
+                }
             }
 
             // lets see what we can read after this catastrophe
@@ -697,6 +751,8 @@ public class TableReaderDataFrameCursorTest extends AbstractCairoTest {
                 assertIndexRowsMatchSymbol(cursor, record, 1, empty ? 0 : N);
                 cursor.toTop();
                 assertIndexRowsMatchSymbol(cursor, record, 2, empty ? 0 : N);
+                cursor.toTop();
+                assertData(cursor, record, eRnd, sg, empty ? 0 : N);
 
                 // we should be able to append more rows to new writer instance once the
                 // original problem is resolved, e.g. system can mmap again

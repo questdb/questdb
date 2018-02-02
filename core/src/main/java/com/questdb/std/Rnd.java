@@ -119,6 +119,11 @@ public class Rnd {
         reset(0xdeadbeef, 0xdee4c0ed);
     }
 
+    public void syncWith(Rnd other) {
+        this.s0 = other.s0;
+        this.s1 = other.s1;
+    }
+
     private long nextLong(int bits) {
         return nextLong() >>> (64 - bits);
     }

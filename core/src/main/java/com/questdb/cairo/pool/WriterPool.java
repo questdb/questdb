@@ -352,7 +352,8 @@ public class WriterPool extends AbstractPool implements ResourcePool<TableWriter
     }
 
     private boolean lockAndNotify(long thread, Entry e, CharSequence tableName) {
-        e.lockFd = TableUtils.lock(ff, path.of(root).concat(tableName));
+        TableUtils.lockName(path.of(root).concat(tableName));
+        e.lockFd = TableUtils.lock(ff, path);
         if (e.lockFd == -1L) {
             LOG.error().$("cannot lock '").$(tableName).$("' [thread=").$(thread).$(']').$();
             e.owner = UNALLOCATED;
