@@ -29,7 +29,7 @@ import com.questdb.std.ImmutableIterator;
 
 public interface DataFrameCursor extends ImmutableIterator<DataFrame>, StorageFacade {
 
-    void reload();
+    boolean reload();
 
     void closeCursor();
 

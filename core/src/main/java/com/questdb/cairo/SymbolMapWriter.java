@@ -44,18 +44,19 @@ public class SymbolMapWriter implements Closeable {
     public SymbolMapWriter(CairoConfiguration configuration, Path path, CharSequence name, int symbolCount) {
         final int plen = path.length();
         try {
-            final long mapPageSize = configuration.getFilesFacade().getMapPageSize();
+            final FilesFacade ff = configuration.getFilesFacade();
+            final long mapPageSize = ff.getMapPageSize();
 
             // this constructor does not create index. Index must exist
             // and we use "offset" file to store "header"
             offsetFileName(path.trimTo(plen), name);
-            if (!configuration.getFilesFacade().exists(path)) {
+            if (!ff.exists(path)) {
                 LOG.error().$(path).$(" is not found").$();
                 throw CairoException.instance(0).put("SymbolMap does not exist: ").put(path);
             }
 
             // is there enough length in "offset" file for "header"?
-            long len = configuration.getFilesFacade().length(path);
+            long len = ff.length(path);
             if (len < HEADER_SIZE) {
                 LOG.error().$(path).$(" is too short [len=").$(len).$(']').$();
                 throw CairoException.instance(0).put("SymbolMap is too short: ").put(path);
@@ -63,16 +64,17 @@ public class SymbolMapWriter implements Closeable {
 
             // open "offset" memory and make sure we start appending from where
             // we left off. Where we left off is stored externally to symbol map
-            this.offsetMem = new ReadWriteMemory(configuration.getFilesFacade(), path, mapPageSize);
+            this.offsetMem = new ReadWriteMemory(ff, path, mapPageSize);
             final int symbolCapacity = offsetMem.getInt(0);
             final boolean useCache = offsetMem.getBool(4);
-            this.offsetMem.jumpTo(keyToOffset(symbolCount));
+            long jumpTarget = keyToOffset(symbolCount);
+            this.offsetMem.jumpTo(jumpTarget);
 
             // index writer is used to identify attempts to store duplicate symbol value
             this.indexWriter = new BitmapIndexWriter(configuration, path.trimTo(plen), name);
 
             // this is the place where symbol values are stored
-            this.charMem = new ReadWriteMemory(configuration.getFilesFacade(), charFileName(path.trimTo(plen), name), mapPageSize);
+            this.charMem = new ReadWriteMemory(ff, charFileName(path.trimTo(plen), name), mapPageSize);
 
             // move append pointer for symbol values in the correct place
             jumpCharMemToSymbolCount(symbolCount);
@@ -88,6 +90,12 @@ public class SymbolMapWriter implements Closeable {
                 this.cache = null;
             }
             LOG.info().$("open [name=").$(path.trimTo(plen).concat(name).$()).$(", fd=").$(this.offsetMem.getFd()).$(", cache=").$(cache != null).$(", capacity=").$(symbolCapacity).$(']').$();
+
+            if (jumpTarget < len) {
+                // over-sized file? It is possible that symbol writer instance was abandoned.
+                // We need to make sure index is within bounds of current symbol count
+                rollback(symbolCount);
+            }
         } catch (CairoException e) {
             close();
             throw e;

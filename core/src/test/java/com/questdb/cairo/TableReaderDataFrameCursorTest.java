@@ -28,11 +28,11 @@ import com.questdb.common.ColumnType;
 import com.questdb.common.PartitionBy;
 import com.questdb.common.SymbolTable;
 import com.questdb.mp.*;
-import com.questdb.std.Chars;
-import com.questdb.std.ObjHashSet;
-import com.questdb.std.Rnd;
+import com.questdb.std.*;
+import com.questdb.std.str.LPSZ;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Ignore;
 import org.junit.Test;
 
 import java.util.concurrent.CountDownLatch;
@@ -45,146 +45,159 @@ public class TableReaderDataFrameCursorTest extends AbstractCairoTest {
     private static final int WORK_STEALING_HIGH_CONTENTION = 3;
     private static final int WORK_STEALING_CAS_FLAP = 4;
 
-    public void testParallelIndex(int partitionBy, long increment, int expectedPartitionMin, int testWorkStealing) throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            int N = 1000000;
-            int nWorkers = 2;
-            int S = 128;
-            Rnd rnd = new Rnd();
+    @Test
+    @Ignore
+    // todo: test key write failure
+    // to test this scenario we need large number of keys to overwhelm single memory buffer
+    // which is at odds when testing value failure.
+    public void testIndexFailAatRuntimeByDay1k() throws Exception {
+        testIndexFailureAtRuntime(PartitionBy.DAY, 10L, false, "1970-01-01" + Files.SEPARATOR + "a.k");
+    }
 
-            final String[] symA = new String[S];
-            final String[] symB = new String[S];
-            final String[] symC = new String[S];
+    @Test
+    public void testIndexFailAatRuntimeByDay1v() throws Exception {
+        testIndexFailureAtRuntime(PartitionBy.DAY, 10000000L, false, "1970-01-02" + Files.SEPARATOR + "a.v");
+    }
 
-            for (int i = 0; i < S; i++) {
-                symA[i] = rnd.nextChars(10).toString();
-                symB[i] = rnd.nextChars(8).toString();
-                symC[i] = rnd.nextChars(10).toString();
-            }
+    @Test
+    public void testIndexFailAatRuntimeByDay2v() throws Exception {
+        testIndexFailureAtRuntime(PartitionBy.DAY, 10000000L, false, "1970-01-02" + Files.SEPARATOR + "b.v");
+    }
 
-            try (TableModel model = new TableModel(configuration, "ABC", partitionBy)
-                    .col("a", ColumnType.SYMBOL).indexed(true, N / S)
-                    .col("b", ColumnType.SYMBOL).indexed(true, N / S)
-                    .col("c", ColumnType.SYMBOL).indexed(true, N / S)
-                    .col("d", ColumnType.DOUBLE)
-                    .timestamp()) {
-                CairoTestUtils.create(model);
-            }
+    @Test
+    public void testIndexFailAatRuntimeByDay3v() throws Exception {
+        testIndexFailureAtRuntime(PartitionBy.DAY, 10000000L, false, "1970-01-02" + Files.SEPARATOR + "c.v");
+    }
 
-            CountDownLatch workerHaltLatch = new CountDownLatch(nWorkers);
-            Worker workers[] = null;
+    @Test
+    public void testIndexFailAatRuntimeByMonth1v() throws Exception {
+        testIndexFailureAtRuntime(PartitionBy.MONTH, 10000000L * 32, false, "1970-02" + Files.SEPARATOR + "a.v");
+    }
 
-            RingQueue<ColumnIndexerEntry> queue = new RingQueue<>(ColumnIndexerEntry::new, 1024);
+    @Test
+    public void testIndexFailAatRuntimeByMonth2v() throws Exception {
+        testIndexFailureAtRuntime(PartitionBy.MONTH, 10000000L * 30, false, "1970-02" + Files.SEPARATOR + "b.v");
+    }
 
-            MPSequence pubSeq;
-            MCSequence subSeq;
-            ObjHashSet<Job> jobs = new ObjHashSet<>();
+    @Test
+    public void testIndexFailAatRuntimeByMonth3v() throws Exception {
+        testIndexFailureAtRuntime(PartitionBy.MONTH, 10000000L * 30, false, "1970-02" + Files.SEPARATOR + "c.v");
+    }
 
-            switch (testWorkStealing) {
-                case WORK_STEALING_BUSY_QUEUE:
-                    pubSeq = new MPSequence(queue.getCapacity()) {
-                        @Override
-                        public long next() {
-                            return -1;
-                        }
-                    };
-                    break;
-                case WORK_STEALING_HIGH_CONTENTION:
-                    pubSeq = new MPSequence(queue.getCapacity()) {
-                        private boolean flap = false;
+    @Test
+    public void testIndexFailAatRuntimeByNone1v() throws Exception {
+        testIndexFailureAtRuntime(PartitionBy.NONE, 10L, false, TableUtils.DEFAULT_PARTITION_NAME + Files.SEPARATOR + "a.v");
+    }
 
-                        @Override
-                        public long next() {
-                            boolean flap = this.flap;
-                            this.flap = !this.flap;
-                            return flap ? -1 : -2;
-                        }
-                    };
-                    break;
-                case WORK_STEALING_DONT_TEST:
-                    pubSeq = new MPSequence(queue.getCapacity());
-                    subSeq = new MCSequence(queue.getCapacity(), null);
-                    pubSeq.then(subSeq).then(pubSeq);
-                    jobs.add(new ColumnIndexerJob(queue, subSeq));
+    @Test
+    public void testIndexFailAatRuntimeByNone2v() throws Exception {
+        testIndexFailureAtRuntime(PartitionBy.NONE, 10L, false, TableUtils.DEFAULT_PARTITION_NAME + Files.SEPARATOR + "b.v");
+    }
 
-                    workers = new Worker[nWorkers];
-                    for (int i = 0; i < nWorkers; i++) {
-                        workers[i] = new Worker(jobs, workerHaltLatch);
-                        workers[i].start();
-                    }
-                    break;
-                case WORK_STEALING_CAS_FLAP:
-                    pubSeq = new MPSequence(queue.getCapacity()) {
-                        private boolean flap = true;
+    @Test
+    public void testIndexFailAatRuntimeByNone3v() throws Exception {
+        testIndexFailureAtRuntime(PartitionBy.NONE, 10L, false, TableUtils.DEFAULT_PARTITION_NAME + Files.SEPARATOR + "c.v");
+    }
 
-                        @Override
-                        public long next() {
-                            boolean flap = this.flap;
-                            this.flap = !this.flap;
-                            return flap ? -2 : super.next();
-                        }
-                    };
-                    subSeq = new MCSequence(queue.getCapacity(), null);
-                    pubSeq.then(subSeq).then(pubSeq);
-                    jobs.add(new ColumnIndexerJob(queue, subSeq));
+    @Test
+    public void testIndexFailAatRuntimeByNoneEmpty1v() throws Exception {
+        testIndexFailureAtRuntime(PartitionBy.NONE, 10L, true, TableUtils.DEFAULT_PARTITION_NAME + Files.SEPARATOR + "a.v");
+    }
 
-                    workers = new Worker[nWorkers];
-                    for (int i = 0; i < nWorkers; i++) {
-                        workers[i] = new Worker(jobs, workerHaltLatch);
-                        workers[i].start();
-                    }
-                    break;
-                case WORK_STEALING_NO_PICKUP:
-                    pubSeq = new MPSequence(queue.getCapacity());
-                    break;
-                default:
-                    throw new RuntimeException("Unsupported test");
-            }
+    @Test
+    public void testIndexFailAatRuntimeByNoneEmpty2v() throws Exception {
+        testIndexFailureAtRuntime(PartitionBy.NONE, 10L, true, TableUtils.DEFAULT_PARTITION_NAME + Files.SEPARATOR + "b.v");
+    }
 
-            CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
-                @Override
-                public int getParallelIndexThreshold() {
-                    return 1;
-                }
-            };
+    @Test
+    public void testIndexFailAatRuntimeByNoneEmpty3v() throws Exception {
+        testIndexFailureAtRuntime(PartitionBy.NONE, 10L, true, TableUtils.DEFAULT_PARTITION_NAME + Files.SEPARATOR + "c.v");
+    }
 
-            long timestamp = 0;
-            try (TableWriter writer = new TableWriter(configuration, "ABC", queue, pubSeq)) {
-                for (int i = 0; i < N; i++) {
-                    TableWriter.Row r = writer.newRow(timestamp += increment);
-                    r.putSym(0, symA[rnd.nextPositiveInt() % S]);
-                    r.putSym(1, symB[rnd.nextPositiveInt() % S]);
-                    r.putSym(2, symC[rnd.nextPositiveInt() % S]);
-                    r.putDouble(3, rnd.nextDouble());
-                    r.append();
-                }
-                writer.commit();
-            }
+    @Test
+    public void testIndexFailAatRuntimeByYear1v() throws Exception {
+        testIndexFailureAtRuntime(PartitionBy.YEAR, 10000000L * 30 * 12, false, "1972" + Files.SEPARATOR + "a.v");
+    }
 
-            if (workers != null) {
-                for (int i = 0; i < nWorkers; i++) {
-                    workers[i].halt();
-                }
+    @Test
+    public void testIndexFailAatRuntimeByYear2v() throws Exception {
+        testIndexFailureAtRuntime(PartitionBy.YEAR, 10000000L * 30 * 12, false, "1972" + Files.SEPARATOR + "b.v");
+    }
 
-                workerHaltLatch.await();
-            }
+    @Test
+    public void testIndexFailAatRuntimeByYear3v() throws Exception {
+        testIndexFailureAtRuntime(PartitionBy.YEAR, 10000000L * 30 * 12, false, "1972" + Files.SEPARATOR + "c.v");
+    }
 
-            try (TableReader reader = new TableReader(configuration, "ABC")) {
+    @Test
+    public void testIndexFailAatRuntimeByYearEmpty1v() throws Exception {
+        testIndexFailureAtRuntime(PartitionBy.YEAR, 10000000L * 30 * 12, true, "1970" + Files.SEPARATOR + "a.v");
+    }
 
-                Assert.assertTrue(reader.getPartitionCount() > expectedPartitionMin);
+    @Test
+    public void testIndexFailAatRuntimeByYearEmpty2v() throws Exception {
+        testIndexFailureAtRuntime(PartitionBy.YEAR, 10000000L * 30 * 12, true, "1970" + Files.SEPARATOR + "b.v");
+    }
 
-                TableReaderDataFrameCursor cursor = new TableReaderDataFrameCursor();
-                TableReaderRecord record = new TableReaderRecord(reader);
+    @Test
+    public void testIndexFailAatRuntimeByYearEmpty3v() throws Exception {
+        testIndexFailureAtRuntime(PartitionBy.YEAR, 10000000L * 30 * 12, true, "1970" + Files.SEPARATOR + "c.v");
+    }
 
-                cursor.of(reader);
-                assertIndexRowsMatchSymbol(cursor, record, 0);
-                cursor.toTop();
-                assertIndexRowsMatchSymbol(cursor, record, 1);
-                cursor.toTop();
-                assertIndexRowsMatchSymbol(cursor, record, 2);
-            }
+    @Test
+    public void testIndexFailInConstructorByDay1k() throws Exception {
+        testIndexFailureInConstructor(PartitionBy.DAY, 1000000L, false, "1970-01-01" + Files.SEPARATOR + "a.k");
+    }
 
-        });
+    @Test
+    public void testIndexFailInConstructorByDay1v() throws Exception {
+        testIndexFailureInConstructor(PartitionBy.DAY, 1000000L, false, "1970-01-01" + Files.SEPARATOR + "a.v");
+    }
+
+    @Test
+    public void testIndexFailInConstructorByDay2k() throws Exception {
+        testIndexFailureInConstructor(PartitionBy.DAY, 1000000L, false, "1970-01-01" + Files.SEPARATOR + "b.k");
+    }
+
+    @Test
+    public void testIndexFailInConstructorByDay2v() throws Exception {
+        testIndexFailureInConstructor(PartitionBy.DAY, 1000000L, false, "1970-01-01" + Files.SEPARATOR + "b.v");
+    }
+
+
+    @Test
+    public void testIndexFailInConstructorByNoneEmpty1k() throws Exception {
+        testIndexFailureInConstructor(PartitionBy.NONE, 1000L, true, TableUtils.DEFAULT_PARTITION_NAME + Files.SEPARATOR + "a.k");
+    }
+
+    @Test
+    public void testIndexFailInConstructorByNoneEmpty1v() throws Exception {
+        testIndexFailureInConstructor(PartitionBy.NONE, 1000L, true, TableUtils.DEFAULT_PARTITION_NAME + Files.SEPARATOR + "a.v");
+    }
+
+    @Test
+    public void testIndexFailInConstructorByNoneEmpty2k() throws Exception {
+        testIndexFailureInConstructor(PartitionBy.NONE, 1000L, true, TableUtils.DEFAULT_PARTITION_NAME + Files.SEPARATOR + "b.k");
+    }
+
+    @Test
+    public void testIndexFailInConstructorByNoneEmpty2v() throws Exception {
+        testIndexFailureInConstructor(PartitionBy.NONE, 1000L, true, TableUtils.DEFAULT_PARTITION_NAME + Files.SEPARATOR + "b.v");
+    }
+
+    @Test
+    public void testIndexFailInConstructorByNoneEmpty3k() throws Exception {
+        testIndexFailureInConstructor(PartitionBy.NONE, 1000L, true, TableUtils.DEFAULT_PARTITION_NAME + Files.SEPARATOR + "c.k");
+    }
+
+    @Test
+    public void testIndexFailInConstructorByNoneEmpty3v() throws Exception {
+        testIndexFailureInConstructor(PartitionBy.NONE, 1000L, true, TableUtils.DEFAULT_PARTITION_NAME + Files.SEPARATOR + "c.v");
+    }
+
+    @Test
+    public void testIndexFailInConstructorByNoneFull() throws Exception {
+        testIndexFailureInConstructor(PartitionBy.NONE, 1000L, false, TableUtils.DEFAULT_PARTITION_NAME + Files.SEPARATOR + "a.v");
     }
 
     @Test
@@ -226,7 +239,6 @@ public class TableReaderDataFrameCursorTest extends AbstractCairoTest {
     public void testParallelIndexByMonthContention() throws Exception {
         testParallelIndex(PartitionBy.MONTH, 1000000 * 10, 3, WORK_STEALING_HIGH_CONTENTION);
     }
-
 
     @Test
     public void testParallelIndexByMonthNoPickup() throws Exception {
@@ -348,12 +360,12 @@ public class TableReaderDataFrameCursorTest extends AbstractCairoTest {
         testReplaceIndexedColWithIndexed(PartitionBy.YEAR, 1000000 * 60 * 5 * 24L * 10L, 2, false);
     }
 
-    //
-
     @Test
     public void testReplaceIndexedWithIndexedByByYearR() throws Exception {
         testReplaceIndexedColWithIndexed(PartitionBy.YEAR, 1000000 * 60 * 5 * 24L * 10L, 2, true);
     }
+
+    //
 
     @Test
     public void testReplaceIndexedWithIndexedByDay() throws Exception {
@@ -390,12 +402,12 @@ public class TableReaderDataFrameCursorTest extends AbstractCairoTest {
         testReplaceIndexedColWithUnindexed(PartitionBy.NONE, 1000000 * 60 * 5, 0, false);
     }
 
-    ///
-
     @Test
     public void testReplaceIndexedWithUnindexedByByNoneR() throws Exception {
         testReplaceIndexedColWithUnindexed(PartitionBy.NONE, 1000000 * 60 * 5, 0, true);
     }
+
+    ///
 
     @Test
     public void testReplaceIndexedWithUnindexedByByYear() throws Exception {
@@ -432,12 +444,12 @@ public class TableReaderDataFrameCursorTest extends AbstractCairoTest {
         testReplaceUnindexedColWithIndexed(PartitionBy.MONTH, 1000000 * 60 * 5 * 24L, 2, false);
     }
 
-    ///
-
     @Test
     public void testReplaceUnindexedWithIndexedByMonthR() throws Exception {
         testReplaceUnindexedColWithIndexed(PartitionBy.MONTH, 1000000 * 60 * 5 * 24L, 2, true);
     }
+
+    ///
 
     @Test
     public void testReplaceUnindexedWithIndexedByNone() throws Exception {
@@ -454,12 +466,12 @@ public class TableReaderDataFrameCursorTest extends AbstractCairoTest {
         testReplaceUnindexedColWithIndexed(PartitionBy.YEAR, 1000000 * 60 * 5 * 24L * 10L, 2, false);
     }
 
-    ///
-
     @Test
     public void testReplaceUnindexedWithIndexedByYearR() throws Exception {
         testReplaceUnindexedColWithIndexed(PartitionBy.YEAR, 1000000 * 60 * 5 * 24L * 10L, 2, true);
     }
+
+    ///
 
     @Test
     public void testRollbackSymbolIndexByDay() throws Exception {
@@ -501,11 +513,12 @@ public class TableReaderDataFrameCursorTest extends AbstractCairoTest {
         testSymbolIndexRead(PartitionBy.YEAR, 1000000 * 60 * 5 * 24L * 10L, 2);
     }
 
-    private void assertIndexRowsMatchSymbol(TableReaderDataFrameCursor cursor, TableReaderRecord record, int columnIndex) {
+    private void assertIndexRowsMatchSymbol(TableReaderDataFrameCursor cursor, TableReaderRecord record, int columnIndex, long expecteRowCount) {
         // SymbolTable is table at table scope, so it will be the same for every
         // data frame here. Get its instance outside of data frame loop.
         SymbolTable symbolTable = cursor.getSymbolTable(columnIndex);
 
+        long rowCount = 0;
         while (cursor.hasNext()) {
             DataFrame frame = cursor.next();
             record.jumpTo(frame.getPartitionIndex(), frame.getRowLo());
@@ -526,9 +539,11 @@ public class TableReaderDataFrameCursorTest extends AbstractCairoTest {
                     long row = ic.next();
                     record.jumpTo(frame.getPartitionIndex(), row);
                     TestUtils.assertEquals(expected, record.getSym(columnIndex));
+                    rowCount++;
                 }
             }
         }
+        Assert.assertEquals(expecteRowCount, rowCount);
     }
 
     private void assertNoIndex(TableReaderDataFrameCursor cursor) {
@@ -597,6 +612,295 @@ public class TableReaderDataFrameCursorTest extends AbstractCairoTest {
         return timestamp;
     }
 
+    private void testIndexFailureAtRuntime(int partitionBy, long increment, boolean empty, String fileUnderAttack) throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            int N = 10000;
+            int S = 512;
+            Rnd rnd = new Rnd();
+
+            FilesFacade ff = new FilesFacadeImpl() {
+                private long fd = -1;
+                private int mapCount = 0;
+
+                @Override
+                public long getMapPageSize() {
+                    return 65535;
+                }
+
+                @Override
+                public long mmap(long fd, long len, long offset, int mode) {
+                    // mess with the target FD
+                    if (fd == this.fd) {
+                        if (mapCount == 1) {
+                            return -1;
+                        }
+                        mapCount++;
+                    }
+                    return super.mmap(fd, len, offset, mode);
+                }
+
+                @Override
+                public long openRW(LPSZ name) {
+                    // remember FD of the file we are targeting
+                    if (Chars.endsWith(name, fileUnderAttack)) {
+                        return fd = super.openRW(name);
+                    }
+                    return super.openRW(name);
+                }
+            };
+
+            CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+                @Override
+                public FilesFacade getFilesFacade() {
+                    return ff;
+                }
+            };
+
+            SymbolGroup sg = new SymbolGroup(rnd, S, N, partitionBy);
+
+            long timestamp = 0;
+            if (!empty) {
+                timestamp = sg.appendABC(AbstractCairoTest.configuration, rnd, N, timestamp, increment);
+            }
+            try (TableWriter writer = new TableWriter(configuration, "ABC")) {
+                // first batch without problems
+                try {
+                    for (int i = 0; i < (long) N; i++) {
+                        TableWriter.Row r = writer.newRow(timestamp += increment);
+                        r.putSym(0, sg.symA[rnd.nextPositiveInt() % sg.S]);
+                        r.putSym(1, sg.symB[rnd.nextPositiveInt() % sg.S]);
+                        r.putSym(2, sg.symC[rnd.nextPositiveInt() % sg.S]);
+                        r.putDouble(3, rnd.nextDouble());
+                        r.append();
+                    }
+                    writer.commit();
+                    Assert.fail();
+                } catch (CairoError ignored) {
+                }
+                // writer must be closed, we must not interact with writer anymore
+            }
+
+            // lets see what we can read after this catastrophe
+            try (TableReader reader = new TableReader(AbstractCairoTest.configuration, "ABC")) {
+                TableReaderDataFrameCursor cursor = new TableReaderDataFrameCursor();
+                TableReaderRecord record = new TableReaderRecord(reader);
+
+                cursor.of(reader);
+                assertSymbolFoundInIndex(cursor, record, 0, empty ? 0 : N);
+                cursor.toTop();
+                assertSymbolFoundInIndex(cursor, record, 1, empty ? 0 : N);
+                cursor.toTop();
+                assertSymbolFoundInIndex(cursor, record, 2, empty ? 0 : N);
+                cursor.toTop();
+                assertIndexRowsMatchSymbol(cursor, record, 0, empty ? 0 : N);
+                cursor.toTop();
+                assertIndexRowsMatchSymbol(cursor, record, 1, empty ? 0 : N);
+                cursor.toTop();
+                assertIndexRowsMatchSymbol(cursor, record, 2, empty ? 0 : N);
+
+                // we should be able to append more rows to new writer instance once the
+                // original problem is resolved, e.g. system can mmap again
+
+                sg.appendABC(AbstractCairoTest.configuration, rnd, N, timestamp, increment);
+
+                Assert.assertTrue(cursor.reload());
+                assertSymbolFoundInIndex(cursor, record, 0, empty ? N : N * 2);
+                cursor.toTop();
+                assertSymbolFoundInIndex(cursor, record, 1, empty ? N : N * 2);
+                cursor.toTop();
+                assertSymbolFoundInIndex(cursor, record, 2, empty ? N : N * 2);
+                cursor.toTop();
+                assertIndexRowsMatchSymbol(cursor, record, 0, empty ? N : N * 2);
+                cursor.toTop();
+                assertIndexRowsMatchSymbol(cursor, record, 1, empty ? N : N * 2);
+                cursor.toTop();
+                assertIndexRowsMatchSymbol(cursor, record, 2, empty ? N : N * 2);
+            }
+        });
+    }
+
+    private void testIndexFailureInConstructor(int partitionBy, long increment, boolean empty, String fileUnderAttack) throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            int N = 10000;
+            int S = 512;
+            Rnd rnd = new Rnd();
+
+            FilesFacade ff = new FilesFacadeImpl() {
+                private long fd = -1;
+
+                @Override
+                public long getMapPageSize() {
+                    return 65535;
+                }
+
+                @Override
+                public long mmap(long fd, long len, long offset, int mode) {
+                    // mess with the target FD
+                    if (fd == this.fd) {
+                        return -1;
+                    }
+                    return super.mmap(fd, len, offset, mode);
+                }
+
+                @Override
+                public long openRW(LPSZ name) {
+                    // remember FD of the file we are targeting
+                    if (Chars.endsWith(name, fileUnderAttack)) {
+                        return fd = super.openRW(name);
+                    }
+                    return super.openRW(name);
+                }
+            };
+
+            CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+                @Override
+                public FilesFacade getFilesFacade() {
+                    return ff;
+                }
+            };
+
+            SymbolGroup sg = new SymbolGroup(rnd, S, N, partitionBy);
+
+            long timestamp = 0;
+            if (!empty) {
+                timestamp = sg.appendABC(AbstractCairoTest.configuration, rnd, N, timestamp, increment);
+            }
+
+            try {
+                new TableWriter(configuration, "ABC");
+                Assert.fail();
+            } catch (CairoException ignore) {
+            }
+
+            sg.appendABC(AbstractCairoTest.configuration, rnd, N, timestamp, increment);
+        });
+    }
+
+    private void testParallelIndex(int partitionBy, long increment, int expectedPartitionMin, int testWorkStealing) throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            int N = 1000000;
+            int nWorkers = 2;
+            int S = 128;
+            Rnd rnd = new Rnd();
+
+            SymbolGroup sg = new SymbolGroup(rnd, S, N, partitionBy);
+
+            CountDownLatch workerHaltLatch = new CountDownLatch(nWorkers);
+            Worker workers[] = null;
+
+            RingQueue<ColumnIndexerEntry> queue = new RingQueue<>(ColumnIndexerEntry::new, 1024);
+
+            MPSequence pubSeq;
+            MCSequence subSeq;
+            ObjHashSet<Job> jobs = new ObjHashSet<>();
+
+            switch (testWorkStealing) {
+                case WORK_STEALING_BUSY_QUEUE:
+                    pubSeq = new MPSequence(queue.getCapacity()) {
+                        @Override
+                        public long next() {
+                            return -1;
+                        }
+                    };
+                    break;
+                case WORK_STEALING_HIGH_CONTENTION:
+                    pubSeq = new MPSequence(queue.getCapacity()) {
+                        private boolean flap = false;
+
+                        @Override
+                        public long next() {
+                            boolean flap = this.flap;
+                            this.flap = !this.flap;
+                            return flap ? -1 : -2;
+                        }
+                    };
+                    break;
+                case WORK_STEALING_DONT_TEST:
+                    pubSeq = new MPSequence(queue.getCapacity());
+                    subSeq = new MCSequence(queue.getCapacity(), null);
+                    pubSeq.then(subSeq).then(pubSeq);
+                    jobs.add(new ColumnIndexerJob(queue, subSeq));
+
+                    workers = new Worker[nWorkers];
+                    for (int i = 0; i < nWorkers; i++) {
+                        workers[i] = new Worker(jobs, workerHaltLatch);
+                        workers[i].start();
+                    }
+                    break;
+                case WORK_STEALING_CAS_FLAP:
+                    pubSeq = new MPSequence(queue.getCapacity()) {
+                        private boolean flap = true;
+
+                        @Override
+                        public long next() {
+                            boolean flap = this.flap;
+                            this.flap = !this.flap;
+                            return flap ? -2 : super.next();
+                        }
+                    };
+                    subSeq = new MCSequence(queue.getCapacity(), null);
+                    pubSeq.then(subSeq).then(pubSeq);
+                    jobs.add(new ColumnIndexerJob(queue, subSeq));
+
+                    workers = new Worker[nWorkers];
+                    for (int i = 0; i < nWorkers; i++) {
+                        workers[i] = new Worker(jobs, workerHaltLatch);
+                        workers[i].start();
+                    }
+                    break;
+                case WORK_STEALING_NO_PICKUP:
+                    pubSeq = new MPSequence(queue.getCapacity());
+                    break;
+                default:
+                    throw new RuntimeException("Unsupported test");
+            }
+
+            CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+                @Override
+                public int getParallelIndexThreshold() {
+                    return 1;
+                }
+            };
+
+            long timestamp = 0;
+            try (TableWriter writer = new TableWriter(configuration, "ABC", queue, pubSeq)) {
+                for (int i = 0; i < N; i++) {
+                    TableWriter.Row r = writer.newRow(timestamp += increment);
+                    r.putSym(0, sg.symA[rnd.nextPositiveInt() % S]);
+                    r.putSym(1, sg.symB[rnd.nextPositiveInt() % S]);
+                    r.putSym(2, sg.symC[rnd.nextPositiveInt() % S]);
+                    r.putDouble(3, rnd.nextDouble());
+                    r.append();
+                }
+                writer.commit();
+            }
+
+            if (workers != null) {
+                for (int i = 0; i < nWorkers; i++) {
+                    workers[i].halt();
+                }
+
+                workerHaltLatch.await();
+            }
+
+            try (TableReader reader = new TableReader(configuration, "ABC")) {
+
+                Assert.assertTrue(reader.getPartitionCount() > expectedPartitionMin);
+
+                TableReaderDataFrameCursor cursor = new TableReaderDataFrameCursor();
+                TableReaderRecord record = new TableReaderRecord(reader);
+
+                cursor.of(reader);
+                assertIndexRowsMatchSymbol(cursor, record, 0, N);
+                cursor.toTop();
+                assertIndexRowsMatchSymbol(cursor, record, 1, N);
+                cursor.toTop();
+                assertIndexRowsMatchSymbol(cursor, record, 2, N);
+            }
+
+        });
+    }
+
     private void testRemoveFirstColumn(int partitionBy, long increment, int expectedPartitionMin) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             final int N = 100;
@@ -663,9 +967,9 @@ public class TableReaderDataFrameCursorTest extends AbstractCairoTest {
                     cursor.toTop();
                     assertSymbolFoundInIndex(cursor, record, 2, M * 2);
                     cursor.toTop();
-                    assertIndexRowsMatchSymbol(cursor, record, 0);
+                    assertIndexRowsMatchSymbol(cursor, record, 0, M * 2);
                     cursor.toTop();
-                    assertIndexRowsMatchSymbol(cursor, record, 2);
+                    assertIndexRowsMatchSymbol(cursor, record, 2, M * 2);
                 }
             }
         });
@@ -735,7 +1039,7 @@ public class TableReaderDataFrameCursorTest extends AbstractCairoTest {
                     cursor.reload();
                     assertSymbolFoundInIndex(cursor, record, 1, M * 2);
                     cursor.toTop();
-                    assertIndexRowsMatchSymbol(cursor, record, 1);
+                    assertIndexRowsMatchSymbol(cursor, record, 1, M * 2);
                 }
             }
         });
@@ -807,9 +1111,9 @@ public class TableReaderDataFrameCursorTest extends AbstractCairoTest {
                     cursor.toTop();
                     assertSymbolFoundInIndex(cursor, record, 2, M * 2);
                     cursor.toTop();
-                    assertIndexRowsMatchSymbol(cursor, record, 1);
+                    assertIndexRowsMatchSymbol(cursor, record, 1, M * 2);
                     cursor.toTop();
-                    assertIndexRowsMatchSymbol(cursor, record, 2);
+                    assertIndexRowsMatchSymbol(cursor, record, 2, M * 2);
                 }
             }
         });
@@ -1039,7 +1343,7 @@ public class TableReaderDataFrameCursorTest extends AbstractCairoTest {
                     cursor.toTop();
                     assertSymbolFoundInIndex(cursor, record, 4, M * 2);
                     cursor.toTop();
-                    assertIndexRowsMatchSymbol(cursor, record, 4);
+                    assertIndexRowsMatchSymbol(cursor, record, 4, M * 2);
                 }
             }
         });
@@ -1088,7 +1392,7 @@ public class TableReaderDataFrameCursorTest extends AbstractCairoTest {
                 cursor.toTop();
                 assertSymbolFoundInIndex(cursor, record, 0, M);
                 cursor.toTop();
-                assertIndexRowsMatchSymbol(cursor, record, 0);
+                assertIndexRowsMatchSymbol(cursor, record, 0, M);
             }
         });
     }
@@ -1141,8 +1445,54 @@ public class TableReaderDataFrameCursorTest extends AbstractCairoTest {
                 cursor.toTop();
                 assertSymbolFoundInIndex(cursor, record, 0, M * 2);
                 cursor.toTop();
-                assertIndexRowsMatchSymbol(cursor, record, 0);
+                assertIndexRowsMatchSymbol(cursor, record, 0, M * 2);
             }
         });
+    }
+
+    private static class SymbolGroup {
+
+        final String[] symA;
+        final String[] symB;
+        final String[] symC;
+        final int S;
+
+        public SymbolGroup(Rnd rnd, int S, int N, int partitionBy) {
+            this.S = S;
+            symA = new String[S];
+            symB = new String[S];
+            symC = new String[S];
+
+            for (int i = 0; i < S; i++) {
+                symA[i] = rnd.nextChars(10).toString();
+                symB[i] = rnd.nextChars(8).toString();
+                symC[i] = rnd.nextChars(10).toString();
+            }
+
+            try (TableModel model = new TableModel(configuration, "ABC", partitionBy)
+                    .col("a", ColumnType.SYMBOL).indexed(true, N / S)
+                    .col("b", ColumnType.SYMBOL).indexed(true, N / S)
+                    .col("c", ColumnType.SYMBOL).indexed(true, N / S)
+                    .col("d", ColumnType.DOUBLE)
+                    .timestamp()) {
+                CairoTestUtils.create(model);
+            }
+        }
+
+        long appendABC(CairoConfiguration configuration, Rnd rnd, long N, long timestamp, long increment) {
+            try (TableWriter writer = new TableWriter(configuration, "ABC")) {
+                // first batch without problems
+                for (int i = 0; i < N; i++) {
+                    TableWriter.Row r = writer.newRow(timestamp += increment);
+                    r.putSym(0, symA[rnd.nextPositiveInt() % S]);
+                    r.putSym(1, symB[rnd.nextPositiveInt() % S]);
+                    r.putSym(2, symC[rnd.nextPositiveInt() % S]);
+                    r.putDouble(3, rnd.nextDouble());
+                    r.append();
+                }
+                writer.commit();
+            }
+            return timestamp;
+        }
     }
 }
