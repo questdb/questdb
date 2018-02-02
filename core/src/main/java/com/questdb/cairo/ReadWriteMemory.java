@@ -107,6 +107,7 @@ public class ReadWriteMemory extends VirtualMemory {
             jumpTo(size);
         } catch (CairoException e) {
             ff.close(fd);
+            fd = -1;
             throw e;
         }
     }

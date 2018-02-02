@@ -73,7 +73,7 @@ class SymbolColumnIndexer implements ColumnIndexer, Closeable {
 
     @Override
     public void rollback(long maxRow) {
-        this.writer.rollbackValues(maxRow * 4);
+        this.writer.rollbackValues(maxRow);
     }
 
     @Override

@@ -71,10 +71,11 @@ public class TableReaderDataFrameCursor implements DataFrameCursor {
     }
 
     @Override
-    public void reload() {
-        reader.reload();
+    public boolean reload() {
+        boolean moreData = reader.reload();
         this.partitionHi = reader.getPartitionCount();
         toTop();
+        return moreData;
     }
 
     @Override

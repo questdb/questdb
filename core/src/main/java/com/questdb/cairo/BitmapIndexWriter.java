@@ -39,7 +39,7 @@ public class BitmapIndexWriter implements Closeable {
     private int blockCapacity;
     private int blockValueCountMod;
     private long valueMemSize;
-    private int keyCount;
+    private int keyCount = -1;
     private long seekValueCount;
     private long seekValueBlockOffset;
     private final BitmapIndexUtils.ValueBlockSeeker SEEKER = this::seek;
@@ -114,7 +114,7 @@ public class BitmapIndexWriter implements Closeable {
     @Override
     public void close() {
         if (keyMem != null) {
-            if (keyMem.isOpen()) {
+            if (keyMem.isOpen() && keyCount > -1) {
                 keyMem.jumpTo(keyMemSize());
             }
             Misc.free(keyMem);
@@ -153,7 +153,7 @@ public class BitmapIndexWriter implements Closeable {
             // check if key file header is present
             if (keyMemSize < BitmapIndexUtils.KEY_FILE_RESERVED) {
                 LOG.error().$("file too short [corrupt] ").$(path).$();
-                throw CairoException.instance(0).put("Index file too short: ").put(path);
+                throw CairoException.instance(0).put("Index file too short (w): ").put(path);
             }
 
             // verify header signature
@@ -178,7 +178,7 @@ public class BitmapIndexWriter implements Closeable {
             this.valueMemSize = this.keyMem.getLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_VALUE_MEM_SIZE);
             this.valueMem.of(configuration.getFilesFacade(), BitmapIndexUtils.valueFileName(path.trimTo(plen), name), pageSize);
 
-            if (this.valueMem.getAppendOffset() != this.valueMemSize) {
+            if (this.valueMem.getAppendOffset() < this.valueMemSize) {
                 LOG.error().$("incorrect file size [corrupt] of ").$(path).$(" [expected=").$(this.valueMemSize).$(']').$();
                 throw CairoException.instance(0).put("Incorrect file size of ").put(path);
             }
@@ -285,10 +285,11 @@ public class BitmapIndexWriter implements Closeable {
         valueMem.jumpTo(newValueBlockOffset);
         valueMem.putLong(value);
 
-        valueMemSize += blockCapacity;
-
         // reserve memory for value block
-        valueMem.jumpTo(valueMemSize);
+        valueMem.jumpTo(valueMemSize + blockCapacity);
+
+        // make sure we change value memory size after jump was successful
+        valueMemSize += blockCapacity;
 
         // must update value mem size in key memory header
         // so that index can be opened correctly next time it loads
@@ -414,6 +415,7 @@ public class BitmapIndexWriter implements Closeable {
             assert key > -1 : "key must be positive integer: " + key;
             long offset = BitmapIndexUtils.getKeyEntryOffset(key);
             this.valueCount = keyMem.getLong(offset + BitmapIndexUtils.KEY_ENTRY_OFFSET_VALUE_COUNT);
+            assert valueCount > -1;
             this.valueBlockOffset = keyMem.getLong(offset + BitmapIndexUtils.KEY_ENTRY_OFFSET_LAST_VALUE_BLOCK_OFFSET);
         }
     }

@@ -84,11 +84,13 @@ public final class BitmapIndexUtils {
                 break;
             } while (true);
 
-            // do we need to search this block?
-            long hi = valueMem.getLong(valueBlockOffset + (cellCount - 1) * 8);
-            if (maxValue < hi) {
-                // yes, we do
-                valueCount -= cellCount - searchValueBlock(valueBlockOffset, maxValue, cellCount, valueMem);
+            if (valueCount > 0) {
+                // do we need to search this block?
+                long hi = valueMem.getLong(valueBlockOffset + (cellCount - 1) * 8);
+                if (maxValue < hi) {
+                    // yes, we do
+                    valueCount -= cellCount - searchValueBlock(valueBlockOffset, maxValue, cellCount, valueMem);
+                }
             }
         }
         seeker.seek(valueCount, valueBlockOffset);

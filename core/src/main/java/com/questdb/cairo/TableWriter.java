@@ -561,9 +561,20 @@ public class TableWriter implements Closeable {
         return getPrimaryColumnIndex(index) + 1;
     }
 
-    private static void setColumnSize(FilesFacade ff, AppendMemory mem1, AppendMemory mem2, int type, long actualPosition, long buf) {
+    private static boolean setMemSizeAndCalcOversize(FilesFacade ff, AppendMemory mem, long size, boolean calcOversize) {
+        if (calcOversize) {
+            long actual = ff.length(mem.getFd());
+            mem.setSize(size);
+            return size < actual;
+        }
+        mem.setSize(size);
+        return true;
+    }
+
+    private static boolean setColumnSize(FilesFacade ff, AppendMemory mem1, AppendMemory mem2, int type, long actualPosition, long buf, boolean calcOversize) {
         long offset;
         long len;
+        boolean oversized;
         if (actualPosition > 0) {
             // subtract column top
             switch (type) {
@@ -577,13 +588,9 @@ public class TableWriter implements Closeable {
                         throw CairoException.instance(ff.errno()).put("Cannot read length, fd=").put(mem1.getFd()).put(", offset=").put(offset);
                     }
                     len = Unsafe.getUnsafe().getLong(buf);
-                    if (len == -1) {
-                        mem1.setSize(offset + 8);
-                    } else {
-                        mem1.setSize(offset + len + 8);
-                    }
-                    mem2.setSize(actualPosition * 8);
-                    break;
+                    oversized = setMemSizeAndCalcOversize(ff, mem1, len == -1 ? offset + 8 : offset + len + 8, calcOversize);
+                    oversized = setMemSizeAndCalcOversize(ff, mem2, actualPosition * 8, calcOversize && !oversized);
+                    return oversized;
                 case ColumnType.STRING:
                     assert mem2 != null;
                     if (ff.read(mem2.getFd(), buf, 8, (actualPosition - 1) * 8) != 8) {
@@ -594,22 +601,18 @@ public class TableWriter implements Closeable {
                         throw CairoException.instance(ff.errno()).put("Cannot read length, fd=").put(mem1.getFd()).put(", offset=").put(offset);
                     }
                     len = Unsafe.getUnsafe().getInt(buf);
-                    if (len == -1) {
-                        mem1.setSize(offset + 4);
-                    } else {
-                        mem1.setSize(offset + len * 2 + 4);
-                    }
-                    mem2.setSize(actualPosition * 8);
-                    break;
+                    oversized = setMemSizeAndCalcOversize(ff, mem1, len == -1 ? offset + 4 : offset + len * 2 + 4, calcOversize);
+                    oversized = setMemSizeAndCalcOversize(ff, mem2, actualPosition * 8, calcOversize && !oversized);
+                    return oversized;
                 default:
-                    mem1.setSize(actualPosition << ColumnType.pow2SizeOf(type));
-                    break;
+                    return setMemSizeAndCalcOversize(ff, mem1, actualPosition << ColumnType.pow2SizeOf(type), calcOversize);
             }
         } else {
-            mem1.setSize(0);
+            oversized = setMemSizeAndCalcOversize(ff, mem1, 0, calcOversize);
             if (mem2 != null) {
-                mem2.setSize(0);
+                oversized = setMemSizeAndCalcOversize(ff, mem2, 0, calcOversize && !oversized);
             }
+            return oversized;
         }
     }
 
@@ -898,15 +901,14 @@ public class TableWriter implements Closeable {
                 SymbolMapWriter symbolMapWriter = new SymbolMapWriter(configuration, path.trimTo(rootLen), m.getName(), txMem.getInt(nextSymbolCountOffset));
                 symbolMapWriters.extendAndSet(i, symbolMapWriter);
                 denseSymbolMapWriters.add(symbolMapWriter);
-                nextSymbolCountOffset += 8;
+                nextSymbolCountOffset += 4;
             }
 
             if (m.isIndexed()) {
                 indexers.extendAndSet(i, new SymbolColumnIndexer());
             }
-
-            populateDenseIndexerList();
         }
+        populateDenseIndexerList();
     }
 
     private void configureNuller(int type, AppendMemory mem1, AppendMemory mem2) {
@@ -978,6 +980,14 @@ public class TableWriter implements Closeable {
             try (AppendMemory mem = getPrimaryColumn(columnIndex)) {
                 mem.of(ff, path, ff.getPageSize());
                 BitmapIndexWriter.initKeyMemory(mem, indexBlockCapacity);
+            } catch (CairoException e) {
+                // looks like we could not create key file properly
+                // lets not leave half baked file sitting around
+                LOG.error().$("failed to create index [name=").utf8(path).$(']').$();
+                if (!ff.remove(path)) {
+                    LOG.error().$("failed to remove '").utf8(path).$("'. Please remove MANUALLY.").$();
+                }
+                throw e;
             }
             ff.touch(BitmapIndexUtils.valueFileName(path.trimTo(plen), columnName));
         } finally {
@@ -1191,9 +1201,11 @@ public class TableWriter implements Closeable {
     }
 
     private void purgeUnusedPartitions() {
-        if (partitionBy != PartitionBy.NONE && maxTimestamp != Numbers.LONG_NaN) {
+        if (partitionBy != PartitionBy.NONE) {
+            // when maxTimestamp is set remove
             removePartitionDirsNewerThan(maxTimestamp);
         }
+
     }
 
     private long readTodoTaskCode() {
@@ -1540,8 +1552,22 @@ public class TableWriter implements Closeable {
     }
 
     private void setAppendPosition(final long position) {
+        int n = denseIndexers.size();
+        boolean calcOversize = n > 0;
         for (int i = 0; i < columnCount; i++) {
-            setColumnSize(ff, getPrimaryColumn(i), getSecondaryColumn(i), TableUtils.getColumnType(metaMem, i), position - columnTops.getQuick(i), tempMem8b);
+            // stop calculating oversize as soon as we find first over-sized column
+            calcOversize = !setColumnSize(ff, getPrimaryColumn(i), getSecondaryColumn(i), TableUtils.getColumnType(metaMem, i), position - columnTops.getQuick(i), tempMem8b, calcOversize);
+        }
+
+        // We don't calculate over-size also when we haven't got any indexes.
+        // Check if there are indexes and calcOversize is FALSE - this means we have an over-sized column.
+        // Confusing - i know.
+        if (!calcOversize && n > 0) {
+            for (int i = 0; i < n; i++) {
+                ColumnIndexer indexer = denseIndexers.getQuick(i);
+                LOG.info().$("recovering index [fd=").$(indexer.getFd()).$(']').$();
+                indexer.rollback(transientRowCount - 1);
+            }
         }
     }
 
@@ -1710,7 +1736,13 @@ public class TableWriter implements Closeable {
 
     private void updateIndexesSerially(long lo, long hi) {
         for (int i = 0, n = indexCount; i < n; i++) {
-            denseIndexers.getQuick(i).index(lo, hi);
+            try {
+                denseIndexers.getQuick(i).index(lo, hi);
+            } catch (CairoException e) {
+                // this is pretty severe, we hit some sort of a limit
+                LOG.error().$("index error {").$((Sinkable) e).$('}').$();
+                throw new CairoError(e);
+            }
         }
     }
 
