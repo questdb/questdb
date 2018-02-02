@@ -62,8 +62,13 @@ class SymbolColumnIndexer implements ColumnIndexer, Closeable {
     @Override
     public void of(CairoConfiguration configuration, Path path, CharSequence name, AppendMemory mem1, AppendMemory mem2, long columnTop) {
         this.columnTop = columnTop;
-        this.writer.of(configuration, path, name);
-        this.mem.of(mem1);
+        try {
+            this.writer.of(configuration, path, name);
+            this.mem.of(mem1);
+        } catch (CairoException e) {
+            this.close();
+            throw e;
+        }
     }
 
     @Override
