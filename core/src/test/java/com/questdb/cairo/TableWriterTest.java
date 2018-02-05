@@ -2138,6 +2138,23 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSkipOverSpuriousDir() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            create(FF, PartitionBy.DAY, 10);
+
+            try (Path path = new Path()) {
+                // create random directory
+                path.of(configuration.getRoot()).concat(PRODUCT).concat("somethingortheother").put(Files.SEPARATOR).$();
+                Assert.assertTrue(0 == configuration.getFilesFacade().mkdirs(path, configuration.getMkDirMode()));
+
+                new TableWriter(configuration, PRODUCT).close();
+
+                Assert.assertFalse(configuration.getFilesFacade().exists(path));
+            }
+        });
+    }
+
+    @Test
     public void testTableDoesNotExist() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try {

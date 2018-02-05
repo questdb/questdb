@@ -1069,6 +1069,12 @@ public class TableReaderDataFrameCursorTest extends AbstractCairoTest {
                     }
                     return super.openRW(name);
                 }
+
+                @Override
+                public boolean remove(LPSZ name) {
+                    // fail to remove file for good measure
+                    return !Chars.endsWith(name, fileUnderAttack) && super.remove(name);
+                }
             };
 
             CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
