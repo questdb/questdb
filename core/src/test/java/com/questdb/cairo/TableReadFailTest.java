@@ -73,24 +73,27 @@ public class TableReadFailTest extends AbstractCairoTest {
                 CairoTestUtils.create(model);
             }
 
-            try (TableWriter w = new TableWriter(configuration, "x");
-                 Path path = new Path();
+            try (Path path = new Path();
                  TableReader reader = new TableReader(configuration, "x");
                  ReadWriteMemory mem = new ReadWriteMemory()) {
-
-                // home path at txn file
-                path.of(configuration.getRoot()).concat("x").concat(TableUtils.TXN_FILE_NAME).$();
 
                 final Rnd rnd = new Rnd();
                 final int N = 1000;
 
-                for (int i = 0; i < N; i++) {
-                    TableWriter.Row r = w.newRow(0);
-                    r.putInt(0, rnd.nextInt());
-                    r.putLong(1, rnd.nextLong());
-                    r.append();
+                // home path at txn file
+                path.of(configuration.getRoot()).concat("x").concat(TableUtils.TXN_FILE_NAME).$();
+
+                try (TableWriter w = new TableWriter(configuration, "x")) {
+
+
+                    for (int i = 0; i < N; i++) {
+                        TableWriter.Row r = w.newRow(0);
+                        r.putInt(0, rnd.nextInt());
+                        r.putLong(1, rnd.nextLong());
+                        r.append();
+                    }
+                    w.commit();
                 }
-                w.commit();
 
 
                 Assert.assertTrue(reader.reload());
@@ -140,14 +143,16 @@ public class TableReadFailTest extends AbstractCairoTest {
                 // make sure reload functions correctly
                 Assert.assertFalse(reader.reload());
 
-                // add more data
-                for (int i = 0; i < N; i++) {
-                    TableWriter.Row r = w.newRow(0);
-                    r.putInt(0, rnd.nextInt());
-                    r.putLong(1, rnd.nextLong());
-                    r.append();
+                try (TableWriter w = new TableWriter(configuration, "x")) {
+                    // add more data
+                    for (int i = 0; i < N; i++) {
+                        TableWriter.Row r = w.newRow(0);
+                        r.putInt(0, rnd.nextInt());
+                        r.putLong(1, rnd.nextLong());
+                        r.append();
+                    }
+                    w.commit();
                 }
-                w.commit();
 
                 // does positive reload work?
                 Assert.assertTrue(reader.reload());

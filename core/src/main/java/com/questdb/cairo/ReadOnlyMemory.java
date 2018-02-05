@@ -206,7 +206,8 @@ public class ReadOnlyMemory extends VirtualMemory implements ReadOnlyColumn {
         // length and re-map the page. This is safe because page size is always "optimistic".
 
         if (ff.isRestrictedFileSystem() && ff.errno() == 8) {
-            this.size = this.userSize;
+            // re-read file size in case it has been truncated while we are reading it.
+            this.size = Math.min(userSize, ff.length(fd));
             sz = this.size - offset;
             this.lastPageSize = sz;
             this.lastPageIndex = page;
