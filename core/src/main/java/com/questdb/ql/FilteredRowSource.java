@@ -23,6 +23,7 @@
 
 package com.questdb.ql;
 
+import com.questdb.common.RowCursor;
 import com.questdb.common.StorageFacade;
 import com.questdb.ql.ops.VirtualColumn;
 import com.questdb.std.str.CharSink;

@@ -21,10 +21,39 @@
  *
  ******************************************************************************/
 
-package com.questdb.ql;
+package com.questdb.cairo;
 
-public interface RowCursor {
-    boolean hasNext();
+import com.questdb.std.Rnd;
+import org.junit.Assert;
+import org.junit.Test;
 
-    long next();
+public class BitmapIndexNullReaderTest {
+
+    private static final BitmapIndexNullReader reader = new BitmapIndexNullReader();
+
+    @Test
+    public void testAlwaysOpen() {
+        Assert.assertTrue(reader.isOpen());
+    }
+
+    @Test
+    public void testCursor() {
+        final Rnd rnd = new Rnd();
+        for (int i = 0; i < 10; i++) {
+            int n = rnd.nextPositiveInt() % 1024;
+            int m = n;
+            BitmapIndexCursor cursor = reader.getCursor(0, n);
+            while (cursor.hasNext()) {
+                Assert.assertEquals(m--, cursor.next());
+            }
+
+            Assert.assertEquals(-1, m);
+        }
+    }
+
+    @Test
+    public void testKeyCount() {
+        // has to be always 1
+        Assert.assertEquals(1, reader.getKeyCount());
+    }
 }

@@ -24,8 +24,12 @@
 package com.questdb.ql.latest;
 
 import com.questdb.common.JournalRuntimeException;
+import com.questdb.common.RowCursor;
 import com.questdb.common.StorageFacade;
-import com.questdb.ql.*;
+import com.questdb.ql.CancellationHandler;
+import com.questdb.ql.JournalRecord;
+import com.questdb.ql.PartitionSlice;
+import com.questdb.ql.RowSource;
 import com.questdb.ql.ops.VirtualColumn;
 import com.questdb.std.IntHashSet;
 import com.questdb.std.LongList;
