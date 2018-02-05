@@ -75,9 +75,9 @@ public class TableReader implements Closeable {
     private long prevStructVersion;
     private long rowCount;
     private long txn = TableUtils.INITIAL_TXN;
-    private long maxTimestamp;
+    private long maxTimestamp = Numbers.LONG_NaN;
     private int partitionCount;
-    private long partitionMin;
+    private long partitionMin = Long.MAX_VALUE;
     private ReloadMethod reloadMethod;
     private long tempMem8b = Unsafe.malloc(8);
 
@@ -412,9 +412,13 @@ public class TableReader implements Closeable {
     }
 
     private void countDefaultPartitions() {
-        Path path = pathGenDefault();
-        partitionCount = ff.exists(path) ? 1 : 0;
-        path.trimTo(rootLen);
+        if (maxTimestamp == Numbers.LONG_NaN) {
+            partitionCount = 0;
+        } else {
+            Path path = pathGenDefault();
+            partitionCount = ff.exists(path) ? 1 : 0;
+            path.trimTo(rootLen);
+        }
     }
 
     @NotNull
@@ -535,7 +539,7 @@ public class TableReader implements Closeable {
                         if (type == Files.DT_DIR || type == Files.DT_LNK) {
                             try {
                                 long time = partitionDirFmt.parse(nativeLPSZ.of(ff.findName(p)), DateLocaleFactory.INSTANCE.getDefaultDateLocale());
-                                if (time < partitionMin) {
+                                if (time < partitionMin && time <= maxTimestamp) {
                                     partitionMin = time;
                                 }
                             } catch (NumericException ignore) {

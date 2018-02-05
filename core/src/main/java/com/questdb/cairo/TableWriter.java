@@ -1408,17 +1408,18 @@ public class TableWriter implements Closeable {
                 path.concat(pName).$();
                 nativeLPSZ.of(pName);
                 if (!IGNORED_FILES.contains(nativeLPSZ)) {
-                    try {
-                        long dirTimestamp = partitionDirFmt.parse(nativeLPSZ, DateLocaleFactory.INSTANCE.getDefaultDateLocale());
-                        if (dirTimestamp <= timestamp) {
-                            return;
-                        }
-                    } catch (NumericException ignore) {
-                        // not a date?
-                        // ignore exception and remove directory
-                    }
-
                     if (type == Files.DT_DIR) {
+
+                        try {
+                            long dirTimestamp = partitionDirFmt.parse(nativeLPSZ, DateLocaleFactory.INSTANCE.getDefaultDateLocale());
+                            if (dirTimestamp <= timestamp) {
+                                return;
+                            }
+                        } catch (NumericException ignore) {
+                            // not a date?
+                            // ignore exception and remove directory
+                        }
+
                         if (ff.rmdir(path)) {
                             LOG.info().$("removing partition dir: ").$(path).$();
                         } else {
