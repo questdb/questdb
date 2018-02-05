@@ -45,7 +45,6 @@ public class TableReaderDataFrameCursor implements DataFrameCursor {
         while (this.partitionIndex < partitionHi) {
             final long hi = reader.openPartition(partitionIndex);
             if (hi < 1) {
-                // todo: test skip on empty partition
                 // this partition is missing, skip
                 partitionIndex++;
             } else {

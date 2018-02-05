@@ -32,9 +32,13 @@ interface ColumnIndexer {
 
     void of(CairoConfiguration configuration, Path path, CharSequence name, AppendMemory mem1, AppendMemory mem2, long columnTop);
 
-    void resetLock();
-
     void rollback(long maxRow);
 
-    boolean tryLock();
+    void distress();
+
+    long getSequence();
+
+    boolean isDistressed();
+
+    boolean tryLock(long expectedSequence);
 }
