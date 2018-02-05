@@ -1000,7 +1000,6 @@ public class TableWriter implements Closeable {
         Misc.free(ddlMem);
         Misc.free(other);
         try {
-            // todo: test what happens if lock file cannot be removed
             releaseLock(!truncate | tx | performRecovery | distressed);
         } finally {
             Misc.free(path);
@@ -1218,10 +1217,8 @@ public class TableWriter implements Closeable {
 
     private void purgeUnusedPartitions() {
         if (partitionBy != PartitionBy.NONE) {
-            // when maxTimestamp is set remove
             removePartitionDirsNewerThan(maxTimestamp);
         }
-
     }
 
     private long readTodoTaskCode() {

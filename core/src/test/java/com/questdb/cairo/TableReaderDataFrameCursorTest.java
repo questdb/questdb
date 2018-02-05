@@ -45,6 +45,30 @@ public class TableReaderDataFrameCursorTest extends AbstractCairoTest {
     private static final int WORK_STEALING_HIGH_CONTENTION = 3;
     private static final int WORK_STEALING_CAS_FLAP = 4;
 
+    // todo: test failure to init key file for index
+    // todo: test parallel index error propagation
+    // todo: test indexes in rollback scenario
+
+    @Test
+    public void testFailToRemoveDistressFileByDay() throws Exception {
+        testFailToRemoveDistressFile(PartitionBy.DAY, 10000000L);
+    }
+
+    @Test
+    public void testFailToRemoveDistressFileByMonth() throws Exception {
+        testFailToRemoveDistressFile(PartitionBy.MONTH, 10000000L * 32);
+    }
+
+    @Test
+    public void testFailToRemoveDistressFileByNone() throws Exception {
+        testFailToRemoveDistressFile(PartitionBy.NONE, 10L);
+    }
+
+    @Test
+    public void testFailToRemoveDistressFileByYear() throws Exception {
+        testFailToRemoveDistressFile(PartitionBy.YEAR, 10000000L * 32 * 12);
+    }
+
     @Test
     @Ignore
     // todo: test key write failure
@@ -632,6 +656,89 @@ public class TableReaderDataFrameCursorTest extends AbstractCairoTest {
             row.append();
         }
         return timestamp;
+    }
+
+    private void testFailToRemoveDistressFile(int partitionBy, long increment) throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            int N = 10000;
+            int S = 512;
+            Rnd rnd = new Rnd();
+            Rnd eRnd = new Rnd();
+
+            TestFilesFacade ff = new TestFilesFacade() {
+                boolean invoked = false;
+
+                @Override
+                public boolean remove(LPSZ name) {
+                    if (Chars.endsWith(name, ".lock")) {
+                        invoked = true;
+                        return false;
+                    }
+                    return super.remove(name);
+                }
+
+                @Override
+                public boolean wasCalled() {
+                    return invoked;
+                }
+
+
+            };
+
+            CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+                @Override
+                public FilesFacade getFilesFacade() {
+                    return ff;
+                }
+            };
+
+            SymbolGroup sg = new SymbolGroup(rnd, S, N, partitionBy);
+
+            // align pseudo-random generators
+            // we have to do this because asserting code will not be re-populating symbol group
+            eRnd.syncWith(rnd);
+
+            long timestamp = 0;
+            try (TableWriter writer = new TableWriter(configuration, "ABC")) {
+                for (int i = 0; i < (long) N; i++) {
+                    TableWriter.Row r = writer.newRow(timestamp += increment);
+                    r.putSym(0, sg.symA[rnd.nextPositiveInt() % sg.S]);
+                    r.putSym(1, sg.symB[rnd.nextPositiveInt() % sg.S]);
+                    r.putSym(2, sg.symC[rnd.nextPositiveInt() % sg.S]);
+                    r.putDouble(3, rnd.nextDouble());
+                    r.append();
+                }
+                writer.commit();
+                // closing should fail
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getMessage(), "remove");
+            }
+
+            new TableWriter(AbstractCairoTest.configuration, "ABC").close();
+
+            Assert.assertTrue(ff.wasCalled());
+
+            // lets see what we can read after this catastrophe
+            try (TableReader reader = new TableReader(AbstractCairoTest.configuration, "ABC")) {
+                TableReaderDataFrameCursor cursor = new TableReaderDataFrameCursor();
+                TableReaderRecord record = new TableReaderRecord(reader);
+
+                cursor.of(reader);
+                assertSymbolFoundInIndex(cursor, record, 0, N);
+                cursor.toTop();
+                assertSymbolFoundInIndex(cursor, record, 1, N);
+                cursor.toTop();
+                assertSymbolFoundInIndex(cursor, record, 2, N);
+                cursor.toTop();
+                assertIndexRowsMatchSymbol(cursor, record, 0, N);
+                cursor.toTop();
+                assertIndexRowsMatchSymbol(cursor, record, 1, N);
+                cursor.toTop();
+                assertIndexRowsMatchSymbol(cursor, record, 2, N);
+                cursor.toTop();
+                assertData(cursor, record, eRnd, sg, N);
+            }
+        });
     }
 
     private void testIndexFailureAtRuntime(int partitionBy, long increment, boolean empty, String fileUnderAttack) throws Exception {
@@ -1551,4 +1658,5 @@ public class TableReaderDataFrameCursorTest extends AbstractCairoTest {
             return timestamp;
         }
     }
+
 }
