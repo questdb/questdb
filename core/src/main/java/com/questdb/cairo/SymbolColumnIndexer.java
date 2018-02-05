@@ -31,12 +31,13 @@ import java.io.Closeable;
 
 class SymbolColumnIndexer implements ColumnIndexer, Closeable {
 
-    private static final long LOCKED_OFFSET;
+    private static final long SEQUENCE_OFFSET;
     private final BitmapIndexWriter writer = new BitmapIndexWriter();
     private final SlidingWindowMemory mem = new SlidingWindowMemory();
     private long columnTop;
     @SuppressWarnings({"unused", "FieldCanBeLocal"})
-    private volatile int locked = 0;
+    private volatile long sequence = 0L;
+    private volatile boolean distressed = false;
 
     @Override
     public void close() {
@@ -72,21 +73,31 @@ class SymbolColumnIndexer implements ColumnIndexer, Closeable {
     }
 
     @Override
-    public void resetLock() {
-        locked = 0;
-    }
-
-    @Override
     public void rollback(long maxRow) {
         this.writer.rollbackValues(maxRow);
     }
 
     @Override
-    public boolean tryLock() {
-        return Unsafe.cas(this, LOCKED_OFFSET, 0, 1);
+    public void distress() {
+        distressed = true;
+    }
+
+    @Override
+    public long getSequence() {
+        return sequence;
+    }
+
+    @Override
+    public boolean isDistressed() {
+        return distressed;
+    }
+
+    @Override
+    public boolean tryLock(long expectedSequence) {
+        return Unsafe.cas(this, SEQUENCE_OFFSET, expectedSequence, expectedSequence + 1);
     }
 
     static {
-        LOCKED_OFFSET = Unsafe.getFieldOffset(SymbolColumnIndexer.class, "locked");
+        SEQUENCE_OFFSET = Unsafe.getFieldOffset(SymbolColumnIndexer.class, "sequence");
     }
 }

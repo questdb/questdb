@@ -84,6 +84,7 @@ public class TableWriter implements Closeable {
     private final RingQueue<ColumnIndexerEntry> indexQueue;
     private final Sequence indexPubSequence;
     private final SOCountDownLatch indexLatch = new SOCountDownLatch();
+    private final LongList indexSequences = new LongList();
     int txPartitionCount = 0;
     private long lockFd;
     private LongConsumer timestampSetter;
@@ -654,6 +655,7 @@ public class TableWriter implements Closeable {
         try {
             indexer.index(lo, hi);
         } catch (CairoException e) {
+            indexer.distress();
             LOG.error().$("index error [fd=").$(indexer.getFd()).$(']').$('{').$((Sinkable) e).$('}').$();
         } finally {
             latch.countDown();
@@ -972,6 +974,7 @@ public class TableWriter implements Closeable {
                 // lets not leave half baked file sitting around
                 LOG.error().$("failed to create index [name=").utf8(path).$(']').$();
                 if (!ff.remove(path)) {
+                    //todo: not hit by test
                     LOG.error().$("failed to remove '").utf8(path).$("'. Please remove MANUALLY.").$();
                 }
                 throw e;
@@ -1409,7 +1412,6 @@ public class TableWriter implements Closeable {
                 nativeLPSZ.of(pName);
                 if (!IGNORED_FILES.contains(nativeLPSZ)) {
                     if (type == Files.DT_DIR) {
-
                         try {
                             long dirTimestamp = partitionDirFmt.parse(nativeLPSZ, DateLocaleFactory.INSTANCE.getDefaultDateLocale());
                             if (dirTimestamp <= timestamp) {
@@ -1419,7 +1421,6 @@ public class TableWriter implements Closeable {
                             // not a date?
                             // ignore exception and remove directory
                         }
-
                         if (ff.rmdir(path)) {
                             LOG.info().$("removing partition dir: ").$(path).$();
                         } else {
@@ -1713,11 +1714,13 @@ public class TableWriter implements Closeable {
 
     private void updateIndexesParallel(long lo, long hi) {
 
+        indexSequences.clear();
         indexLatch.setCount(indexCount);
+        final int nParallelIndexes = indexCount - 1;
 
         // we are going to index last column in this thread while other columns are on the queue
         OUT:
-        for (int i = 0, n = indexCount - 1; i < n; i++) {
+        for (int i = 0; i < nParallelIndexes; i++) {
 
             long cursor = indexPubSequence.next();
             if (cursor == -1) {
@@ -1741,11 +1744,15 @@ public class TableWriter implements Closeable {
                 } while (true);
             }
 
-            ColumnIndexerEntry queueItem = indexQueue.get(cursor);
-            queueItem.indexer = denseIndexers.getQuick(i);
+            final ColumnIndexerEntry queueItem = indexQueue.get(cursor);
+            final ColumnIndexer indexer = denseIndexers.getQuick(i);
+            final long sequence = indexer.getSequence();
+            queueItem.indexer = indexer;
             queueItem.lo = lo;
             queueItem.hi = hi;
             queueItem.countDownLatch = indexLatch;
+            queueItem.sequence = sequence;
+            indexSequences.add(sequence);
             indexPubSequence.done(cursor);
         }
 
@@ -1757,9 +1764,9 @@ public class TableWriter implements Closeable {
         // waiting we gracefully check latch count.
         if (!indexLatch.await(configuration.getWorkStealTimeoutNanos())) {
             // other columns are still in-flight, we must attempt to steal work from other threads
-            for (int i = 0, n = indexCount - 1; i < n; i++) {
+            for (int i = 0; i < nParallelIndexes; i++) {
                 ColumnIndexer indexer = denseIndexers.getQuick(i);
-                if (indexer.tryLock()) {
+                if (indexer.tryLock(indexSequences.getQuick(i))) {
                     indexAndCountDown(indexer, lo, hi, indexLatch);
                 }
             }
@@ -1768,8 +1775,14 @@ public class TableWriter implements Closeable {
         }
 
         // reset lock on completed indexers
+        boolean distressed = false;
         for (int i = 0; i < indexCount; i++) {
-            denseIndexers.getQuick(i).resetLock();
+            ColumnIndexer indexer = denseIndexers.getQuick(i);
+            distressed = distressed | indexer.isDistressed();
+        }
+
+        if (distressed) {
+            throwDistressException(null);
         }
     }
 

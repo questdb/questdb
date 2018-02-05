@@ -49,13 +49,13 @@ class ColumnIndexerJob implements Job {
         final ColumnIndexer indexer = queueItem.indexer;
         final long lo = queueItem.lo;
         final long hi = queueItem.hi;
+        final long indexSequence = queueItem.sequence;
         final SOCountDownLatch latch = queueItem.countDownLatch;
         sequence.done(cursor);
-        if (indexer.tryLock()) {
+        if (indexer.tryLock(indexSequence)) {
             TableWriter.indexAndCountDown(indexer, lo, hi, latch);
             return true;
         }
-
         return false;
     }
 }

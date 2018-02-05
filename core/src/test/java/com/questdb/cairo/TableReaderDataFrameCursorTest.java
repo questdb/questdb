@@ -29,6 +29,7 @@ import com.questdb.common.PartitionBy;
 import com.questdb.common.SymbolTable;
 import com.questdb.mp.*;
 import com.questdb.std.*;
+import com.questdb.std.microtime.DateFormatUtils;
 import com.questdb.std.str.LPSZ;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -46,8 +47,49 @@ public class TableReaderDataFrameCursorTest extends AbstractCairoTest {
     private static final int WORK_STEALING_CAS_FLAP = 4;
 
     // todo: test failure to init key file for index
-    // todo: test parallel index error propagation
-    // todo: test indexes in rollback scenario
+
+    @Test
+    public void patestRemoveFirstColByDay() throws Exception {
+        testRemoveFirstColumn(PartitionBy.DAY, 1000000 * 60 * 5, 3);
+    }
+
+    @Test
+    public void testEmptyPartitionSkip() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE).
+                    col("a", ColumnType.INT).
+                    col("b", ColumnType.INT).
+                    timestamp()
+            ) {
+                CairoTestUtils.create(model);
+            }
+
+            long timestamp;
+            final Rnd rnd = new Rnd();
+            try (TableWriter writer = new TableWriter(configuration, "x")) {
+                timestamp = DateFormatUtils.parseDateTime("1970-01-03T08:00:00.000Z");
+
+                TableWriter.Row row = writer.newRow(timestamp);
+                row.putInt(0, rnd.nextInt());
+                row.putInt(1, rnd.nextInt());
+
+                // create partition on disk but not commit neither transaction nor row
+
+                try (TableReader reader = new TableReader(configuration, "x")) {
+                    TableReaderDataFrameCursor cursor = new TableReaderDataFrameCursor();
+
+                    int frameCount = 0;
+                    cursor.of(reader);
+                    while (cursor.hasNext()) {
+                        cursor.next();
+                        frameCount++;
+                    }
+
+                    Assert.assertEquals(0, frameCount);
+                }
+            }
+        });
+    }
 
     @Test
     public void testFailToRemoveDistressFileByDay() throws Exception {
@@ -74,97 +116,97 @@ public class TableReaderDataFrameCursorTest extends AbstractCairoTest {
     // todo: test key write failure
     // to test this scenario we need large number of keys to overwhelm single memory buffer
     // which is at odds when testing value failure.
-    public void testIndexFailAatRuntimeByDay1k() throws Exception {
+    public void testIndexFailAtRuntimeByDay1k() throws Exception {
         testIndexFailureAtRuntime(PartitionBy.DAY, 10L, false, "1970-01-01" + Files.SEPARATOR + "a.k", 1);
     }
 
     @Test
-    public void testIndexFailAatRuntimeByDay1v() throws Exception {
+    public void testIndexFailAtRuntimeByDay1v() throws Exception {
         testIndexFailureAtRuntime(PartitionBy.DAY, 10000000L, false, "1970-01-02" + Files.SEPARATOR + "a.v", 2);
     }
 
     @Test
-    public void testIndexFailAatRuntimeByDay2v() throws Exception {
+    public void testIndexFailAtRuntimeByDay2v() throws Exception {
         testIndexFailureAtRuntime(PartitionBy.DAY, 10000000L, false, "1970-01-02" + Files.SEPARATOR + "b.v", 2);
     }
 
     @Test
-    public void testIndexFailAatRuntimeByDay3v() throws Exception {
+    public void testIndexFailAtRuntimeByDay3v() throws Exception {
         testIndexFailureAtRuntime(PartitionBy.DAY, 10000000L, false, "1970-01-02" + Files.SEPARATOR + "c.v", 2);
     }
 
     @Test
-    public void testIndexFailAatRuntimeByMonth1v() throws Exception {
+    public void testIndexFailAtRuntimeByMonth1v() throws Exception {
         testIndexFailureAtRuntime(PartitionBy.MONTH, 10000000L * 32, false, "1970-02" + Files.SEPARATOR + "a.v", 2);
     }
 
     @Test
-    public void testIndexFailAatRuntimeByMonth2v() throws Exception {
+    public void testIndexFailAtRuntimeByMonth2v() throws Exception {
         testIndexFailureAtRuntime(PartitionBy.MONTH, 10000000L * 30, false, "1970-02" + Files.SEPARATOR + "b.v", 2);
     }
 
     @Test
-    public void testIndexFailAatRuntimeByMonth3v() throws Exception {
+    public void testIndexFailAtRuntimeByMonth3v() throws Exception {
         testIndexFailureAtRuntime(PartitionBy.MONTH, 10000000L * 30, false, "1970-02" + Files.SEPARATOR + "c.v", 2);
     }
 
     @Test
-    public void testIndexFailAatRuntimeByNone1v() throws Exception {
+    public void testIndexFailAtRuntimeByNone1v() throws Exception {
         testIndexFailureAtRuntime(PartitionBy.NONE, 10L, false, TableUtils.DEFAULT_PARTITION_NAME + Files.SEPARATOR + "a.v", 1);
     }
 
     @Test
-    public void testIndexFailAatRuntimeByNone2v() throws Exception {
+    public void testIndexFailAtRuntimeByNone2v() throws Exception {
         testIndexFailureAtRuntime(PartitionBy.NONE, 10L, false, TableUtils.DEFAULT_PARTITION_NAME + Files.SEPARATOR + "b.v", 1);
     }
 
     @Test
-    public void testIndexFailAatRuntimeByNone3v() throws Exception {
+    public void testIndexFailAtRuntimeByNone3v() throws Exception {
         testIndexFailureAtRuntime(PartitionBy.NONE, 10L, false, TableUtils.DEFAULT_PARTITION_NAME + Files.SEPARATOR + "c.v", 1);
     }
 
     @Test
-    public void testIndexFailAatRuntimeByNoneEmpty1v() throws Exception {
+    public void testIndexFailAtRuntimeByNoneEmpty1v() throws Exception {
         testIndexFailureAtRuntime(PartitionBy.NONE, 10L, true, TableUtils.DEFAULT_PARTITION_NAME + Files.SEPARATOR + "a.v", 0);
     }
 
     @Test
-    public void testIndexFailAatRuntimeByNoneEmpty2v() throws Exception {
+    public void testIndexFailAtRuntimeByNoneEmpty2v() throws Exception {
         testIndexFailureAtRuntime(PartitionBy.NONE, 10L, true, TableUtils.DEFAULT_PARTITION_NAME + Files.SEPARATOR + "b.v", 0);
     }
 
     @Test
-    public void testIndexFailAatRuntimeByNoneEmpty3v() throws Exception {
+    public void testIndexFailAtRuntimeByNoneEmpty3v() throws Exception {
         testIndexFailureAtRuntime(PartitionBy.NONE, 10L, true, TableUtils.DEFAULT_PARTITION_NAME + Files.SEPARATOR + "c.v", 0);
     }
 
     @Test
-    public void testIndexFailAatRuntimeByYear1v() throws Exception {
+    public void testIndexFailAtRuntimeByYear1v() throws Exception {
         testIndexFailureAtRuntime(PartitionBy.YEAR, 10000000L * 30 * 12, false, "1972" + Files.SEPARATOR + "a.v", 2);
     }
 
     @Test
-    public void testIndexFailAatRuntimeByYear2v() throws Exception {
+    public void testIndexFailAtRuntimeByYear2v() throws Exception {
         testIndexFailureAtRuntime(PartitionBy.YEAR, 10000000L * 30 * 12, false, "1972" + Files.SEPARATOR + "b.v", 2);
     }
 
     @Test
-    public void testIndexFailAatRuntimeByYear3v() throws Exception {
+    public void testIndexFailAtRuntimeByYear3v() throws Exception {
         testIndexFailureAtRuntime(PartitionBy.YEAR, 10000000L * 30 * 12, false, "1972" + Files.SEPARATOR + "c.v", 2);
     }
 
     @Test
-    public void testIndexFailAatRuntimeByYearEmpty1v() throws Exception {
+    public void testIndexFailAtRuntimeByYearEmpty1v() throws Exception {
         testIndexFailureAtRuntime(PartitionBy.YEAR, 10000000L * 30 * 12, true, "1970" + Files.SEPARATOR + "a.v", 0);
     }
 
     @Test
-    public void testIndexFailAatRuntimeByYearEmpty2v() throws Exception {
+    public void testIndexFailAtRuntimeByYearEmpty2v() throws Exception {
         testIndexFailureAtRuntime(PartitionBy.YEAR, 10000000L * 30 * 12, true, "1970" + Files.SEPARATOR + "b.v", 0);
     }
 
     @Test
-    public void testIndexFailAatRuntimeByYearEmpty3v() throws Exception {
+    public void testIndexFailAtRuntimeByYearEmpty3v() throws Exception {
         testIndexFailureAtRuntime(PartitionBy.YEAR, 10000000L * 30 * 12, true, "1970" + Files.SEPARATOR + "c.v", 0);
     }
 
@@ -187,7 +229,6 @@ public class TableReaderDataFrameCursorTest extends AbstractCairoTest {
     public void testIndexFailInConstructorByDay2v() throws Exception {
         testIndexFailureInConstructor(PartitionBy.DAY, 1000000L, false, "1970-01-01" + Files.SEPARATOR + "b.v");
     }
-
 
     @Test
     public void testIndexFailInConstructorByNoneEmpty1k() throws Exception {
@@ -310,8 +351,123 @@ public class TableReaderDataFrameCursorTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testRemoveFirstColByDay() throws Exception {
-        testRemoveFirstColumn(PartitionBy.DAY, 1000000 * 60 * 5, 3);
+    public void testParallelIndexFailAtRuntimeByDay1v() throws Exception {
+        testParallelIndexFailureAtRuntime(PartitionBy.DAY, 10000000L, false, "1970-01-02" + Files.SEPARATOR + "a.v", 2);
+    }
+
+    @Test
+    public void testParallelIndexFailAtRuntimeByDay2v() throws Exception {
+        testParallelIndexFailureAtRuntime(PartitionBy.DAY, 10000000L, false, "1970-01-02" + Files.SEPARATOR + "b.v", 2);
+    }
+
+    @Test
+    public void testParallelIndexFailAtRuntimeByDay3v() throws Exception {
+        testParallelIndexFailureAtRuntime(PartitionBy.DAY, 10000000L, false, "1970-01-02" + Files.SEPARATOR + "c.v", 2);
+    }
+
+    @Test
+    public void testParallelIndexFailAtRuntimeByDayEmpty1v() throws Exception {
+        testParallelIndexFailureAtRuntime(PartitionBy.DAY, 10000000L, true, "1970-01-02" + Files.SEPARATOR + "a.v", 0);
+    }
+
+    @Test
+    public void testParallelIndexFailAtRuntimeByDayEmpty2v() throws Exception {
+        testParallelIndexFailureAtRuntime(PartitionBy.DAY, 10000000L, true, "1970-01-02" + Files.SEPARATOR + "b.v", 0);
+    }
+
+    @Test
+    public void testParallelIndexFailAtRuntimeByDayEmpty3v() throws Exception {
+        testParallelIndexFailureAtRuntime(PartitionBy.DAY, 10000000L, true, "1970-01-02" + Files.SEPARATOR + "c.v", 0);
+    }
+
+    @Test
+    public void testParallelIndexFailAtRuntimeByMonth1v() throws Exception {
+        testParallelIndexFailureAtRuntime(PartitionBy.MONTH, 10000000L * 32, false, "1970-02" + Files.SEPARATOR + "a.v", 2);
+    }
+
+    @Test
+    public void testParallelIndexFailAtRuntimeByMonth2v() throws Exception {
+        testParallelIndexFailureAtRuntime(PartitionBy.MONTH, 10000000L * 30, false, "1970-02" + Files.SEPARATOR + "b.v", 2);
+    }
+
+    @Test
+    public void testParallelIndexFailAtRuntimeByMonth3v() throws Exception {
+        testParallelIndexFailureAtRuntime(PartitionBy.MONTH, 10000000L * 30, false, "1970-02" + Files.SEPARATOR + "c.v", 2);
+    }
+
+    @Test
+    public void testParallelIndexFailAtRuntimeByMonthEmpty1v() throws Exception {
+        testParallelIndexFailureAtRuntime(PartitionBy.MONTH, 10000000L * 32, true, "1970-02" + Files.SEPARATOR + "a.v", 0);
+    }
+
+    @Test
+    public void testParallelIndexFailAtRuntimeByMonthEmpty2v() throws Exception {
+        testParallelIndexFailureAtRuntime(PartitionBy.MONTH, 10000000L * 30, true, "1970-02" + Files.SEPARATOR + "b.v", 0);
+    }
+
+    @Test
+    public void testParallelIndexFailAtRuntimeByMonthEmpty3v() throws Exception {
+        testParallelIndexFailureAtRuntime(PartitionBy.MONTH, 10000000L * 30, true, "1970-02" + Files.SEPARATOR + "c.v", 0);
+    }
+
+    @Test
+    public void testParallelIndexFailAtRuntimeByNone1v() throws Exception {
+        testParallelIndexFailureAtRuntime(PartitionBy.NONE, 10L, false, TableUtils.DEFAULT_PARTITION_NAME + Files.SEPARATOR + "a.v", 1);
+    }
+
+    @Test
+    public void testParallelIndexFailAtRuntimeByNone2v() throws Exception {
+        testParallelIndexFailureAtRuntime(PartitionBy.NONE, 10L, false, TableUtils.DEFAULT_PARTITION_NAME + Files.SEPARATOR + "b.v", 1);
+    }
+
+    @Test
+    public void testParallelIndexFailAtRuntimeByNone3v() throws Exception {
+        testParallelIndexFailureAtRuntime(PartitionBy.NONE, 10L, false, TableUtils.DEFAULT_PARTITION_NAME + Files.SEPARATOR + "c.v", 1);
+    }
+
+    @Test
+    public void testParallelIndexFailAtRuntimeByNoneEmpty1v() throws Exception {
+        testParallelIndexFailureAtRuntime(PartitionBy.NONE, 10L, true, TableUtils.DEFAULT_PARTITION_NAME + Files.SEPARATOR + "a.v", 0);
+    }
+
+    @Test
+    public void testParallelIndexFailAtRuntimeByNoneEmpty2v() throws Exception {
+        testParallelIndexFailureAtRuntime(PartitionBy.NONE, 10L, true, TableUtils.DEFAULT_PARTITION_NAME + Files.SEPARATOR + "b.v", 0);
+    }
+
+    @Test
+    public void testParallelIndexFailAtRuntimeByNoneEmpty3v() throws Exception {
+        testParallelIndexFailureAtRuntime(PartitionBy.NONE, 10L, true, TableUtils.DEFAULT_PARTITION_NAME + Files.SEPARATOR + "c.v", 0);
+    }
+
+    @Test
+    public void testParallelIndexFailAtRuntimeByYear1v() throws Exception {
+        testParallelIndexFailureAtRuntime(PartitionBy.YEAR, 10000000L * 30 * 12, false, "1972" + Files.SEPARATOR + "a.v", 2);
+    }
+
+    @Test
+    public void testParallelIndexFailAtRuntimeByYear2v() throws Exception {
+        testParallelIndexFailureAtRuntime(PartitionBy.YEAR, 10000000L * 30 * 12, false, "1972" + Files.SEPARATOR + "b.v", 2);
+    }
+
+    @Test
+    public void testParallelIndexFailAtRuntimeByYear3v() throws Exception {
+        testParallelIndexFailureAtRuntime(PartitionBy.YEAR, 10000000L * 30 * 12, false, "1972" + Files.SEPARATOR + "c.v", 2);
+    }
+
+    @Test
+    public void testParallelIndexFailAtRuntimeByYearEmpty1v() throws Exception {
+        testParallelIndexFailureAtRuntime(PartitionBy.YEAR, 10000000L * 30 * 12, true, "1970" + Files.SEPARATOR + "a.v", 0);
+    }
+
+    @Test
+    public void testParallelIndexFailAtRuntimeByYearEmpty2v() throws Exception {
+        testParallelIndexFailureAtRuntime(PartitionBy.YEAR, 10000000L * 30 * 12, true, "1970" + Files.SEPARATOR + "b.v", 0);
+    }
+
+    @Test
+    public void testParallelIndexFailAtRuntimeByYearEmpty3v() throws Exception {
+        testParallelIndexFailureAtRuntime(PartitionBy.YEAR, 10000000L * 30 * 12, true, "1970" + Files.SEPARATOR + "c.v", 0);
     }
 
     @Test
@@ -384,12 +540,12 @@ public class TableReaderDataFrameCursorTest extends AbstractCairoTest {
         testReplaceIndexedColWithIndexed(PartitionBy.YEAR, 1000000 * 60 * 5 * 24L * 10L, 2, false);
     }
 
+    //
+
     @Test
     public void testReplaceIndexedWithIndexedByByYearR() throws Exception {
         testReplaceIndexedColWithIndexed(PartitionBy.YEAR, 1000000 * 60 * 5 * 24L * 10L, 2, true);
     }
-
-    //
 
     @Test
     public void testReplaceIndexedWithIndexedByDay() throws Exception {
@@ -426,12 +582,12 @@ public class TableReaderDataFrameCursorTest extends AbstractCairoTest {
         testReplaceIndexedColWithUnindexed(PartitionBy.NONE, 1000000 * 60 * 5, 0, false);
     }
 
+    ///
+
     @Test
     public void testReplaceIndexedWithUnindexedByByNoneR() throws Exception {
         testReplaceIndexedColWithUnindexed(PartitionBy.NONE, 1000000 * 60 * 5, 0, true);
     }
-
-    ///
 
     @Test
     public void testReplaceIndexedWithUnindexedByByYear() throws Exception {
@@ -473,8 +629,6 @@ public class TableReaderDataFrameCursorTest extends AbstractCairoTest {
         testReplaceUnindexedColWithIndexed(PartitionBy.MONTH, 1000000 * 60 * 5 * 24L, 2, true);
     }
 
-    ///
-
     @Test
     public void testReplaceUnindexedWithIndexedByNone() throws Exception {
         testReplaceUnindexedColWithIndexed(PartitionBy.NONE, 1000000 * 60 * 5, 0, false);
@@ -490,12 +644,12 @@ public class TableReaderDataFrameCursorTest extends AbstractCairoTest {
         testReplaceUnindexedColWithIndexed(PartitionBy.YEAR, 1000000 * 60 * 5 * 24L * 10L, 2, false);
     }
 
+    ///
+
     @Test
     public void testReplaceUnindexedWithIndexedByYearR() throws Exception {
         testReplaceUnindexedColWithIndexed(PartitionBy.YEAR, 1000000 * 60 * 5 * 24L * 10L, 2, true);
     }
-
-    ///
 
     @Test
     public void testRollbackSymbolIndexByDay() throws Exception {
@@ -669,17 +823,17 @@ public class TableReaderDataFrameCursorTest extends AbstractCairoTest {
                 boolean invoked = false;
 
                 @Override
+                public boolean wasCalled() {
+                    return invoked;
+                }
+
+                @Override
                 public boolean remove(LPSZ name) {
                     if (Chars.endsWith(name, ".lock")) {
                         invoked = true;
                         return false;
                     }
                     return super.remove(name);
-                }
-
-                @Override
-                public boolean wasCalled() {
-                    return invoked;
                 }
 
 
@@ -1063,6 +1217,180 @@ public class TableReaderDataFrameCursorTest extends AbstractCairoTest {
                 assertIndexRowsMatchSymbol(cursor, record, 2, N);
             }
 
+        });
+    }
+
+    private void testParallelIndexFailureAtRuntime(int partitionBy, long increment, boolean empty, String fileUnderAttack, int expectedPartitionCount) throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            int N = 10000;
+            int S = 512;
+            Rnd rnd = new Rnd();
+            Rnd eRnd = new Rnd();
+
+            FilesFacade ff = new FilesFacadeImpl() {
+                private long fd = -1;
+                private int mapCount = 0;
+
+                @Override
+                public long getMapPageSize() {
+                    return 65535;
+                }
+
+                @Override
+                public long mmap(long fd, long len, long offset, int mode) {
+                    // mess with the target FD
+                    if (fd == this.fd) {
+                        if (mapCount == 1) {
+                            return -1;
+                        }
+                        mapCount++;
+                    }
+                    return super.mmap(fd, len, offset, mode);
+                }
+
+                @Override
+                public long openRW(LPSZ name) {
+                    // remember FD of the file we are targeting
+                    if (Chars.endsWith(name, fileUnderAttack)) {
+                        return fd = super.openRW(name);
+                    }
+                    return super.openRW(name);
+                }
+            };
+
+            CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+                @Override
+                public FilesFacade getFilesFacade() {
+                    return ff;
+                }
+
+                @Override
+                public int getParallelIndexThreshold() {
+                    return 1;
+                }
+            };
+
+            SymbolGroup sg = new SymbolGroup(rnd, S, N, partitionBy);
+
+            // align pseudo-random generators
+            // we have to do this because asserting code will not be re-populating symbol group
+            eRnd.syncWith(rnd);
+
+            long timestamp = 0;
+            if (!empty) {
+                timestamp = sg.appendABC(AbstractCairoTest.configuration, rnd, N, timestamp, increment);
+            }
+
+            int nWorkers = 2;
+            CountDownLatch workerHaltLatch = new CountDownLatch(nWorkers);
+            Worker workers[];
+
+            RingQueue<ColumnIndexerEntry> queue = new RingQueue<>(ColumnIndexerEntry::new, 1024);
+
+            MPSequence pubSeq;
+            MCSequence subSeq;
+            ObjHashSet<Job> jobs = new ObjHashSet<>();
+
+            pubSeq = new MPSequence(queue.getCapacity());
+            subSeq = new MCSequence(queue.getCapacity(), null);
+            pubSeq.then(subSeq).then(pubSeq);
+            jobs.add(new ColumnIndexerJob(queue, subSeq));
+
+            workers = new Worker[nWorkers];
+            for (int i = 0; i < nWorkers; i++) {
+                workers[i] = new Worker(jobs, workerHaltLatch);
+                workers[i].start();
+            }
+
+            try (TableWriter writer = new TableWriter(configuration, "ABC", queue, pubSeq)) {
+                try {
+                    for (int i = 0; i < (long) N; i++) {
+                        TableWriter.Row r = writer.newRow(timestamp += increment);
+                        r.putSym(0, sg.symA[rnd.nextPositiveInt() % sg.S]);
+                        r.putSym(1, sg.symB[rnd.nextPositiveInt() % sg.S]);
+                        r.putSym(2, sg.symC[rnd.nextPositiveInt() % sg.S]);
+                        r.putDouble(3, rnd.nextDouble());
+                        r.append();
+                    }
+                    writer.commit();
+                    Assert.fail();
+                } catch (CairoError ignored) {
+                }
+                // writer must be closed, we must not interact with writer anymore
+
+                // test that we cannot commit
+                try {
+                    writer.commit();
+                    Assert.fail();
+                } catch (CairoError e) {
+                    TestUtils.assertContains(e.getMessage(), "distressed");
+                }
+
+                // test that we cannot rollback
+                try {
+                    writer.rollback();
+                    Assert.fail();
+                } catch (CairoError e) {
+                    TestUtils.assertContains(e.getMessage(), "distressed");
+                }
+            }
+
+            // open another writer that would fail recovery
+            // constructor must attempt to recover non-partitioned empty table
+            if (empty && partitionBy == PartitionBy.NONE) {
+                try {
+                    new TableWriter(configuration, "ABC");
+                    Assert.fail();
+                } catch (CairoException ignore) {
+                }
+            }
+
+            for (int i = 0; i < nWorkers; i++) {
+                workers[i].halt();
+            }
+
+            workerHaltLatch.await();
+
+            // lets see what we can read after this catastrophe
+            try (TableReader reader = new TableReader(AbstractCairoTest.configuration, "ABC")) {
+                TableReaderDataFrameCursor cursor = new TableReaderDataFrameCursor();
+                TableReaderRecord record = new TableReaderRecord(reader);
+
+                Assert.assertEquals(expectedPartitionCount, reader.getPartitionCount());
+
+                cursor.of(reader);
+                assertSymbolFoundInIndex(cursor, record, 0, empty ? 0 : N);
+                cursor.toTop();
+                assertSymbolFoundInIndex(cursor, record, 1, empty ? 0 : N);
+                cursor.toTop();
+                assertSymbolFoundInIndex(cursor, record, 2, empty ? 0 : N);
+                cursor.toTop();
+                assertIndexRowsMatchSymbol(cursor, record, 0, empty ? 0 : N);
+                cursor.toTop();
+                assertIndexRowsMatchSymbol(cursor, record, 1, empty ? 0 : N);
+                cursor.toTop();
+                assertIndexRowsMatchSymbol(cursor, record, 2, empty ? 0 : N);
+                cursor.toTop();
+                assertData(cursor, record, eRnd, sg, empty ? 0 : N);
+
+                // we should be able to append more rows to new writer instance once the
+                // original problem is resolved, e.g. system can mmap again
+
+                sg.appendABC(AbstractCairoTest.configuration, rnd, N, timestamp, increment);
+
+                Assert.assertTrue(cursor.reload());
+                assertSymbolFoundInIndex(cursor, record, 0, empty ? N : N * 2);
+                cursor.toTop();
+                assertSymbolFoundInIndex(cursor, record, 1, empty ? N : N * 2);
+                cursor.toTop();
+                assertSymbolFoundInIndex(cursor, record, 2, empty ? N : N * 2);
+                cursor.toTop();
+                assertIndexRowsMatchSymbol(cursor, record, 0, empty ? N : N * 2);
+                cursor.toTop();
+                assertIndexRowsMatchSymbol(cursor, record, 1, empty ? N : N * 2);
+                cursor.toTop();
+                assertIndexRowsMatchSymbol(cursor, record, 2, empty ? N : N * 2);
+            }
         });
     }
 

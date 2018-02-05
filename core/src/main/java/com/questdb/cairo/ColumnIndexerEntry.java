@@ -30,4 +30,5 @@ class ColumnIndexerEntry {
     long lo;
     long hi;
     SOCountDownLatch countDownLatch;
+    long sequence;
 }
