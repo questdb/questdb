@@ -24,6 +24,7 @@
 package com.questdb.ql;
 
 import com.questdb.common.JournalRuntimeException;
+import com.questdb.common.RowCursor;
 import com.questdb.common.StorageFacade;
 import com.questdb.std.ex.JournalException;
 import com.questdb.std.str.CharSink;

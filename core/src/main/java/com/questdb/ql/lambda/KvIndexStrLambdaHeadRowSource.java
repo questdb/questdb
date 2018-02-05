@@ -23,10 +23,7 @@
 
 package com.questdb.ql.lambda;
 
-import com.questdb.common.JournalRuntimeException;
-import com.questdb.common.Record;
-import com.questdb.common.RecordCursor;
-import com.questdb.common.StorageFacade;
+import com.questdb.common.*;
 import com.questdb.ql.*;
 import com.questdb.ql.ops.VirtualColumn;
 import com.questdb.std.*;

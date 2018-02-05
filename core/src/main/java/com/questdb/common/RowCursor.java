@@ -21,21 +21,10 @@
  *
  ******************************************************************************/
 
-package com.questdb.ql;
+package com.questdb.common;
 
-import com.questdb.common.RowCursor;
-import com.questdb.common.StorageFacade;
-import com.questdb.std.Sinkable;
-import com.questdb.store.factory.ReaderFactory;
-import com.questdb.store.factory.configuration.JournalMetadata;
+public interface RowCursor {
+    boolean hasNext();
 
-public interface RowSource extends Sinkable {
-
-    void configure(JournalMetadata metadata);
-
-    void prepare(ReaderFactory factory, StorageFacade storageFacade, CancellationHandler cancellationHandler);
-
-    RowCursor prepareCursor(PartitionSlice slice);
-
-    void toTop();
+    long next();
 }

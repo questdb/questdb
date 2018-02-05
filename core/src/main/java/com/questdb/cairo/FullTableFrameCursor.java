@@ -28,7 +28,7 @@ import com.questdb.cairo.sql.DataFrameCursor;
 import com.questdb.common.RecordMetadata;
 import com.questdb.common.SymbolTable;
 
-public class TableReaderDataFrameCursor implements DataFrameCursor {
+public class FullTableFrameCursor implements DataFrameCursor {
     private final TableReaderDataFrame frame = new TableReaderDataFrame();
     private TableReader reader;
     private int partitionLo;
@@ -63,7 +63,7 @@ public class TableReaderDataFrameCursor implements DataFrameCursor {
         return frame;
     }
 
-    public TableReaderDataFrameCursor of(TableReader reader) {
+    public FullTableFrameCursor of(TableReader reader) {
         this.reader = reader;
         this.partitionIndex = this.partitionLo = 0;
         this.partitionHi = reader.getPartitionCount();
