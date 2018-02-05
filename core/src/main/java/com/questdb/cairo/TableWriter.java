@@ -957,11 +957,11 @@ public class TableWriter implements Closeable {
      * @param indexBlockCapacity approximate number of values per index key
      * @param plen               path length. This is used to trim shared path object to.
      */
-    private void createIndexFiles(CharSequence columnName, int columnIndex, int indexBlockCapacity, int plen) {
+    private void createIndexFiles(CharSequence columnName, int columnIndex, int indexBlockCapacity, int plen, boolean force) {
         try {
             BitmapIndexUtils.keyFileName(path.trimTo(plen), columnName);
 
-            if (ff.exists(path)) {
+            if (!force && ff.exists(path)) {
                 return;
             }
 
@@ -1136,7 +1136,7 @@ public class TableWriter implements Closeable {
             // index must be created before column is initialised because
             // it uses primary column object as temporary tool
             if (indexFlag) {
-                createIndexFiles(name, columnIndex, indexValueBlockCapacity, plen);
+                createIndexFiles(name, columnIndex, indexValueBlockCapacity, plen, true);
             }
 
             openColumnFiles(name, columnIndex, plen);
@@ -1175,7 +1175,7 @@ public class TableWriter implements Closeable {
                 if (indexed) {
                     // we have to create files before columns are open
                     // because we are reusing AppendMemory object from columns list
-                    createIndexFiles(name, i, meta.getBucketCount(), plen);
+                    createIndexFiles(name, i, meta.getBucketCount(), plen, transientRowCount < 1);
                 }
 
                 openColumnFiles(name, i, plen);
