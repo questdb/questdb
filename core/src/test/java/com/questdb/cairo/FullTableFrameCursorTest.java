@@ -24,6 +24,7 @@
 package com.questdb.cairo;
 
 import com.questdb.cairo.sql.DataFrame;
+import com.questdb.cairo.sql.DataFrameCursor;
 import com.questdb.common.ColumnType;
 import com.questdb.common.PartitionBy;
 import com.questdb.common.RecordMetadata;
@@ -72,6 +73,44 @@ public class FullTableFrameCursorTest extends AbstractCairoTest {
             Assert.assertFalse(reader.isOpen());
             cursor.closeCursor();
             Assert.assertFalse(reader.isOpen());
+        });
+    }
+
+    @Test
+    public void testEmptyPartitionSkip() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE).
+                    col("a", ColumnType.INT).
+                    col("b", ColumnType.INT).
+                    timestamp()
+            ) {
+                CairoTestUtils.create(model);
+            }
+
+            long timestamp;
+            final Rnd rnd = new Rnd();
+            try (TableWriter writer = new TableWriter(configuration, "x")) {
+                timestamp = DateFormatUtils.parseDateTime("1970-01-03T08:00:00.000Z");
+
+                TableWriter.Row row = writer.newRow(timestamp);
+                row.putInt(0, rnd.nextInt());
+                row.putInt(1, rnd.nextInt());
+
+                // create partition on disk but not commit neither transaction nor row
+
+                try (TableReader reader = new TableReader(configuration, "x")) {
+                    FullTableFrameCursor cursor = new FullTableFrameCursor();
+
+                    int frameCount = 0;
+                    cursor.of(reader);
+                    while (cursor.hasNext()) {
+                        cursor.next();
+                        frameCount++;
+                    }
+
+                    Assert.assertEquals(0, frameCount);
+                }
+            }
         });
     }
 
@@ -332,44 +371,6 @@ public class FullTableFrameCursorTest extends AbstractCairoTest {
     @Test
     public void testParallelIndexByYearNoPickup() throws Exception {
         testParallelIndex(PartitionBy.YEAR, 1000000 * 10 * 12, 3, WORK_STEALING_NO_PICKUP);
-    }
-
-    @Test
-    public void testEmptyPartitionSkip() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE).
-                    col("a", ColumnType.INT).
-                    col("b", ColumnType.INT).
-                    timestamp()
-            ) {
-                CairoTestUtils.create(model);
-            }
-
-            long timestamp;
-            final Rnd rnd = new Rnd();
-            try (TableWriter writer = new TableWriter(configuration, "x")) {
-                timestamp = DateFormatUtils.parseDateTime("1970-01-03T08:00:00.000Z");
-
-                TableWriter.Row row = writer.newRow(timestamp);
-                row.putInt(0, rnd.nextInt());
-                row.putInt(1, rnd.nextInt());
-
-                // create partition on disk but not commit neither transaction nor row
-
-                try (TableReader reader = new TableReader(configuration, "x")) {
-                    FullTableFrameCursor cursor = new FullTableFrameCursor();
-
-                    int frameCount = 0;
-                    cursor.of(reader);
-                    while (cursor.hasNext()) {
-                        cursor.next();
-                        frameCount++;
-                    }
-
-                    Assert.assertEquals(0, frameCount);
-                }
-            }
-        });
     }
 
     @Test
@@ -713,29 +714,7 @@ public class FullTableFrameCursorTest extends AbstractCairoTest {
         testSymbolIndexRead(PartitionBy.YEAR, 1000000 * 60 * 5 * 24L * 10L, 2);
     }
 
-    private void assertData(FullTableFrameCursor cursor, TableReaderRecord record, Rnd rnd, SymbolGroup sg, long expecteRowCount) {
-        // SymbolTable is table at table scope, so it will be the same for every
-        // data frame here. Get its instance outside of data frame loop.
-
-        long rowCount = 0;
-        while (cursor.hasNext()) {
-            DataFrame frame = cursor.next();
-            record.jumpTo(frame.getPartitionIndex(), frame.getRowLo());
-            final long limit = frame.getRowHi();
-            while (record.getRecordIndex() < limit) {
-                TestUtils.assertEquals(sg.symA[rnd.nextPositiveInt() % sg.S], record.getSym(0));
-                TestUtils.assertEquals(sg.symB[rnd.nextPositiveInt() % sg.S], record.getSym(1));
-                TestUtils.assertEquals(sg.symC[rnd.nextPositiveInt() % sg.S], record.getSym(2));
-                Assert.assertEquals(rnd.nextDouble(), record.getDouble(3), 0.0000001d);
-                record.incrementRecordIndex();
-                rowCount++;
-            }
-        }
-
-        Assert.assertEquals(expecteRowCount, rowCount);
-    }
-
-    private void assertIndexRowsMatchSymbol(FullTableFrameCursor cursor, TableReaderRecord record, int columnIndex, long expecteRowCount) {
+    static void assertIndexRowsMatchSymbol(DataFrameCursor cursor, TableReaderRecord record, int columnIndex, long expecteRowCount) {
         // SymbolTable is table at table scope, so it will be the same for every
         // data frame here. Get its instance outside of data frame loop.
         SymbolTable symbolTable = cursor.getSymbolTable(columnIndex);
@@ -765,6 +744,28 @@ public class FullTableFrameCursorTest extends AbstractCairoTest {
                 }
             }
         }
+        Assert.assertEquals(expecteRowCount, rowCount);
+    }
+
+    private void assertData(FullTableFrameCursor cursor, TableReaderRecord record, Rnd rnd, SymbolGroup sg, long expecteRowCount) {
+        // SymbolTable is table at table scope, so it will be the same for every
+        // data frame here. Get its instance outside of data frame loop.
+
+        long rowCount = 0;
+        while (cursor.hasNext()) {
+            DataFrame frame = cursor.next();
+            record.jumpTo(frame.getPartitionIndex(), frame.getRowLo());
+            final long limit = frame.getRowHi();
+            while (record.getRecordIndex() < limit) {
+                TestUtils.assertEquals(sg.symA[rnd.nextPositiveInt() % sg.S], record.getSym(0));
+                TestUtils.assertEquals(sg.symB[rnd.nextPositiveInt() % sg.S], record.getSym(1));
+                TestUtils.assertEquals(sg.symC[rnd.nextPositiveInt() % sg.S], record.getSym(2));
+                Assert.assertEquals(rnd.nextDouble(), record.getDouble(3), 0.0000001d);
+                record.incrementRecordIndex();
+                rowCount++;
+            }
+        }
+
         Assert.assertEquals(expecteRowCount, rowCount);
     }
 

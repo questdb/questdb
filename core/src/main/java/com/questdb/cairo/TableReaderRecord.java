@@ -189,7 +189,7 @@ public class TableReaderRecord implements Record {
 
     private long getIndex(int col) {
         assert col > -1 && col < reader.getColumnCount() : "Column index out of bounds: " + col + " >= " + reader.getColumnCount();
-        long top = reader.getColumnTop(columnBase, col);
+        final long top = reader.getColumnTop(columnBase, col);
         return top > 0L ? recordIndex - top : recordIndex;
     }
 }

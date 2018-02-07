@@ -29,7 +29,7 @@ import com.questdb.common.RecordMetadata;
 import com.questdb.common.SymbolTable;
 
 public class FullTableFrameCursor implements DataFrameCursor {
-    private final TableReaderDataFrame frame = new TableReaderDataFrame();
+    private final FullTableDataFrame frame = new FullTableDataFrame();
     private TableReader reader;
     private int partitionLo;
     private int partitionHi;
@@ -96,7 +96,7 @@ public class FullTableFrameCursor implements DataFrameCursor {
         this.partitionIndex = this.partitionLo;
     }
 
-    private class TableReaderDataFrame implements DataFrame {
+    private class FullTableDataFrame implements DataFrame {
         final static private long rowLo = 0;
         private long rowHi;
         private int partitionIndex;

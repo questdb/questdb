@@ -109,7 +109,7 @@ public class LongList implements Mutable {
             if (midVal < v)
                 low = mid + 1;
             else if (midVal > v)
-                high = mid - 1;
+                high = mid;
             else
                 return mid;
         }
