@@ -200,6 +200,10 @@ public class TableReader implements Closeable {
         closeColumnForRemove(metadata.getColumnIndex(columnName));
     }
 
+    public long floorToPartitionTimestamp(long timestamp) {
+        return timestampFloorMethod.floor(timestamp);
+    }
+
     public BitmapIndexReader getBitmapIndexReader(int columnBase, int columnIndex) {
         BitmapIndexReader reader = bitmapIndexes.getQuick(columnBase / 2 + columnIndex);
         return reader == null ? createBitmapIndexReaderAt(columnBase, columnIndex) : reader;
@@ -208,6 +212,10 @@ public class TableReader implements Closeable {
     public RecordCursor getCursor() {
         recordCursor.toTop();
         return recordCursor;
+    }
+
+    public long getMaxTimestamp() {
+        return maxTimestamp;
     }
 
     public RecordMetadata getMetadata() {
@@ -220,6 +228,18 @@ public class TableReader implements Closeable {
 
     public int getPartitionCount() {
         return partitionCount;
+    }
+
+    public int getPartitionCountBetweenTimestamps(long partitionTimestamp1, long partitionTimestamp2) {
+        return (int) intervalLengthMethod.calculate(partitionTimestamp1, partitionTimestamp2);
+    }
+
+    public long getPartitionMin() {
+        return partitionMin;
+    }
+
+    public int getPartitionedBy() {
+        return metadata.getPartitionBy();
     }
 
     public boolean isOpen() {
@@ -388,7 +408,7 @@ public class TableReader implements Closeable {
         if (partitionMin == Long.MAX_VALUE) {
             return 0;
         } else {
-            return maxTimestamp == Numbers.LONG_NaN ? 1 : (int) (intervalLengthMethod.calculate(partitionMin, timestampFloorMethod.floor(maxTimestamp)) + 1);
+            return maxTimestamp == Numbers.LONG_NaN ? 1 : getPartitionCountBetweenTimestamps(partitionMin, floorToPartitionTimestamp(maxTimestamp)) + 1;
         }
     }
 
@@ -926,23 +946,30 @@ public class TableReader implements Closeable {
 
     private boolean reloadPartitioned() {
         assert timestampFloorMethod != null;
-        long currentPartitionTimestamp = timestampFloorMethod.floor(maxTimestamp);
+        long currentPartitionTimestamp = floorToPartitionTimestamp(maxTimestamp);
         boolean b = readTxn();
         if (b) {
             reloadStruct();
             assert intervalLengthMethod != null;
-            int delta = (int) intervalLengthMethod.calculate(currentPartitionTimestamp, timestampFloorMethod.floor(maxTimestamp));
+            //  calculate timestamp delta between before and after reload.
+            int delta = getPartitionCountBetweenTimestamps(currentPartitionTimestamp, floorToPartitionTimestamp(maxTimestamp));
             int partitionIndex = partitionCount - 1;
-            if (delta > 0) {
-                incrementPartitionCountBy(delta);
-                Path path = partitionPathGenerator.generate(this, partitionIndex);
-                try {
-                    reloadPartition(partitionIndex, readPartitionSize(ff, path.chopZ(), tempMem8b));
-                } finally {
-                    path.trimTo(rootLen);
+            // do we have something to reload?
+            if (getPartitionRowCount(partitionIndex) > -1) {
+                if (delta > 0) {
+                    incrementPartitionCountBy(delta);
+                    Path path = partitionPathGenerator.generate(this, partitionIndex);
+                    try {
+                        reloadPartition(partitionIndex, readPartitionSize(ff, path.chopZ(), tempMem8b));
+                    } finally {
+                        path.trimTo(rootLen);
+                    }
+                } else {
+                    reloadPartition(partitionIndex, transientRowCount);
                 }
-            } else {
-                reloadPartition(partitionIndex, transientRowCount);
+            } else if (delta > 0) {
+                // although we have nothing to reload we still have to bump partition count
+                incrementPartitionCountBy(delta);
             }
             return true;
         }
