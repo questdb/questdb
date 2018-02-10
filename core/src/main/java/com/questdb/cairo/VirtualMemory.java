@@ -155,7 +155,7 @@ public class VirtualMemory implements Closeable {
 
     public final CharSequence getStr(long offset) {
         final int len = getInt(offset);
-        if (len == -1) {
+        if (len == TableUtils.NULL_LEN) {
             return null;
         }
         return csview.of(offset + STRING_LENGTH_BYTES, len);
@@ -163,7 +163,7 @@ public class VirtualMemory implements Closeable {
 
     public final CharSequence getStr2(long offset) {
         final int len = getInt(offset);
-        if (len == -1) {
+        if (len == TableUtils.NULL_LEN) {
             return null;
         }
         return csview2.of(offset + STRING_LENGTH_BYTES, len);
@@ -207,7 +207,7 @@ public class VirtualMemory implements Closeable {
     public final long putBin(BinarySequence value) {
         final long offset = getAppendOffset();
         if (value == null) {
-            putLong(-1);
+            putLong(TableUtils.NULL_LEN);
         } else {
             final long len = value.length();
             putLong(len);
@@ -224,7 +224,7 @@ public class VirtualMemory implements Closeable {
 
     public final long putBin(long from, long len) {
         final long offset = getAppendOffset();
-        putLong(len > 0 ? len : -1);
+        putLong(len > 0 ? len : TableUtils.NULL_LEN);
         if (len < 1) {
             return offset;
         }
@@ -288,13 +288,13 @@ public class VirtualMemory implements Closeable {
 
     public final long putNullBin() {
         final long offset = getAppendOffset();
-        putLong(-1);
+        putLong(TableUtils.NULL_LEN);
         return offset;
     }
 
     public final long putNullStr() {
         final long offset = getAppendOffset();
-        putInt(-1);
+        putInt(TableUtils.NULL_LEN);
         return offset;
     }
 
@@ -614,7 +614,7 @@ public class VirtualMemory implements Closeable {
         final long offset = getAppendOffset();
 
         if (buf == null) {
-            putLong(-1);
+            putLong(TableUtils.NULL_LEN);
             return offset;
         }
 

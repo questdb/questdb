@@ -66,7 +66,7 @@ class TableReaderMetadata extends AbstractRecordMetadata implements Closeable {
                 );
                 offset += ReadOnlyMemory.getStorageLength(name);
             }
-        } catch (AssertionError e) {
+        } catch (CairoException e) {
             close();
             throw e;
         }

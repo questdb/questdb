@@ -144,7 +144,7 @@ public class TableReader implements Closeable {
             this.partitionRowCounts.seed(partitionCount, -1);
             this.columnTops = new LongList(capacity / 2);
             this.columnTops.setPos(capacity / 2);
-        } catch (AssertionError e) {
+        } catch (CairoException e) {
             close();
             throw e;
         }
