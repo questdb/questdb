@@ -573,7 +573,7 @@ public class VirtualMemoryTest {
 
                     if (sequence1 == null) {
                         Assert.assertNull(sequence2);
-                        Assert.assertEquals(-1L, mem2.getBinLen(o));
+                        Assert.assertEquals(TableUtils.NULL_LEN, mem2.getBinLen(o));
                         o += 8;
                     } else {
                         Assert.assertNotNull(sequence2);

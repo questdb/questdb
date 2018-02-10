@@ -28,7 +28,7 @@ import com.questdb.std.ThreadLocal;
 import com.questdb.std.str.CharSink;
 import com.questdb.std.str.StringSink;
 
-public class CairoException extends AssertionError implements Sinkable {
+public class CairoException extends RuntimeException implements Sinkable {
     private static final ThreadLocal<CairoException> tlException = new ThreadLocal<>(CairoException::new);
     private final StringSink message = new StringSink();
     private int errno;

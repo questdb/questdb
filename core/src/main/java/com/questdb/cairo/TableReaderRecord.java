@@ -60,7 +60,7 @@ public class TableReaderRecord implements Record {
     public long getBinLen(int col) {
         long index = getIndex(col);
         if (index < 0) {
-            return -1;
+            return TableUtils.NULL_LEN;
         }
         return colA(col).getBinLen(colB(col).getLong(index * 8));
     }
@@ -152,7 +152,7 @@ public class TableReaderRecord implements Record {
     public int getStrLen(int col) {
         long index = getIndex(col);
         if (index < 0) {
-            return -1;
+            return TableUtils.NULL_LEN;
         }
         return colA(col).getStrLen(colB(col).getLong(index * 8));
     }

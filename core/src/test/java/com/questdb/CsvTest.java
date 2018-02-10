@@ -190,7 +190,7 @@ public class CsvTest {
         );
 
         Assert.assertEquals(expected.size(), meta.size());
-        TestUtils.assertEquals(expected.iterator(), meta.iterator());
+        GriffinParserTestUtils.assertEquals(expected.iterator(), meta.iterator());
 
     }
 */

@@ -221,7 +221,7 @@ public class RecordChain implements Closeable, RecordCursor, Mutable {
 
     private void putNull(long offset) {
         mem.jumpTo(rowToDataOffset(recordOffset));
-        mem.putLong(-1);
+        mem.putLong(TableUtils.NULL_LEN);
         recordOffset += 8;
         mem.jumpTo(offset);
     }
@@ -291,7 +291,7 @@ public class RecordChain implements Closeable, RecordCursor, Mutable {
         @Override
         public long getBinLen(int col) {
             long offset = varWidthColumnOffset(col);
-            return offset == -1 ? 0 : mem.getLong(offset);
+            return offset == -1 ? TableUtils.NULL_LEN : mem.getLong(offset);
         }
 
         @Override
@@ -350,7 +350,7 @@ public class RecordChain implements Closeable, RecordCursor, Mutable {
         public int getStrLen(int col) {
             long offset = varWidthColumnOffset(col);
             if (offset == -1) {
-                return 0;
+                return TableUtils.NULL_LEN;
             }
             return mem.getInt(offset);
         }
