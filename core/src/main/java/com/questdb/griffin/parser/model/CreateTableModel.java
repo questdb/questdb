@@ -24,52 +24,78 @@
 package com.questdb.griffin.parser.model;
 
 import com.questdb.griffin.common.ExprNode;
-import com.questdb.std.CharSequenceObjHashMap;
-import com.questdb.std.Mutable;
-import com.questdb.std.ObjList;
-import com.questdb.std.ObjectFactory;
-import com.questdb.store.factory.configuration.JournalStructure;
+import com.questdb.std.*;
 
-public class CreateJournalModel implements Mutable, ParsedModel {
-    public static final ObjectFactory<CreateJournalModel> FACTORY = CreateJournalModel::new;
-    private final ObjList<ColumnIndexModel> columnIndexModels = new ObjList<>();
+public class CreateTableModel implements Mutable, ParsedModel {
+    public static final ObjectFactory<CreateTableModel> FACTORY = CreateTableModel::new;
+    private static final long COLUMN_FLAG_CHACHED = 1L;
+    private static final long COLUMN_FLAG_INDEXED = 2L;
     private final CharSequenceObjHashMap<ColumnCastModel> columnCastModels = new CharSequenceObjHashMap<>();
+    private final LongList columnBits = new LongList();
+    private final ObjList<CharSequence> columnNames = new ObjList<>();
+    private final CharSequenceIntHashMap columnNameIndexMap = new CharSequenceIntHashMap();
     private ExprNode name;
     private QueryModel queryModel;
     private ExprNode timestamp;
     private ExprNode partitionBy;
     private ExprNode recordHint;
-    private JournalStructure struct;
 
-    private CreateJournalModel() {
+    private CreateTableModel() {
+    }
+
+    public boolean addColumn(CharSequence name, int type) {
+        if (columnNameIndexMap.put(name, columnNames.size())) {
+            columnNames.add(Chars.stringOf(name));
+            // set default symbol capacity
+            columnBits.add((128L << 32) | type);
+            columnBits.add(COLUMN_FLAG_CHACHED);
+            return true;
+        }
+        return false;
     }
 
     public boolean addColumnCastModel(ColumnCastModel model) {
         return columnCastModels.put(model.getName().token, model);
     }
 
-    public void addColumnIndexModel(ColumnIndexModel model) {
-        columnIndexModels.add(model);
-    }
-
     @Override
     public void clear() {
-        columnIndexModels.clear();
         columnCastModels.clear();
         queryModel = null;
         timestamp = null;
         partitionBy = null;
         recordHint = null;
-        struct = null;
         name = null;
+        columnBits.clear();
+        columnNames.clear();
     }
 
     public CharSequenceObjHashMap<ColumnCastModel> getColumnCastModels() {
         return columnCastModels;
     }
 
-    public ObjList<ColumnIndexModel> getColumnIndexModels() {
-        return columnIndexModels;
+    public int getColumnCount() {
+        return columnNames.size();
+    }
+
+    public int getColumnIndex(CharSequence columnName) {
+        return columnNameIndexMap.get(columnName);
+    }
+
+    public CharSequence getColumnName(int index) {
+        return columnNames.getQuick(index);
+    }
+
+    public int getColumnType(int index) {
+        return (int) columnBits.getQuick(index * 2);
+    }
+
+    public int getIndexBlockCapacity(int index) {
+        return (int) (columnBits.getQuick(index * 2 + 1) >> 32);
+    }
+
+    public boolean getIndexedFlag(int index) {
+        return (columnBits.getQuick(index * 2 + 1) & COLUMN_FLAG_INDEXED) == COLUMN_FLAG_INDEXED;
     }
 
     @Override
@@ -109,19 +135,30 @@ public class CreateJournalModel implements Mutable, ParsedModel {
         this.recordHint = recordHint;
     }
 
-    public JournalStructure getStruct() {
-        return struct;
-    }
-
-    public void setStruct(JournalStructure struct) {
-        this.struct = struct;
-    }
-
     public ExprNode getTimestamp() {
         return timestamp;
     }
 
     public void setTimestamp(ExprNode timestamp) {
         this.timestamp = timestamp;
+    }
+
+    public void setIndexFlags(boolean indexFlag, int indexBlockCapacity) {
+        setIndexFlags0(columnBits.size() - 1, indexFlag, indexBlockCapacity);
+    }
+
+    public void setIndexFlags(int columnIndex, boolean indexFlag, int indexBlockCapacity) {
+        setIndexFlags0(columnIndex * 2 + 1, indexFlag, indexBlockCapacity);
+    }
+
+    private void setIndexFlags0(int columnIndex, boolean indexFlag, int indexBlockCapacity) {
+        assert columnIndex > 0;
+        long bits = columnBits.getQuick(columnIndex);
+        if (indexFlag) {
+            assert indexBlockCapacity > 1;
+            columnBits.setQuick(columnIndex, bits | ((long) Numbers.ceilPow2(indexBlockCapacity) << 32) | COLUMN_FLAG_INDEXED);
+        } else {
+            columnBits.setQuick(columnIndex, bits & ~COLUMN_FLAG_INDEXED);
+        }
     }
 }
