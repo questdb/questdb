@@ -32,15 +32,13 @@ import com.questdb.griffin.parser.model.AliasTranslator;
 import com.questdb.griffin.parser.model.IntrinsicModel;
 import com.questdb.griffin.parser.model.IntrinsicValue;
 import com.questdb.std.*;
-import com.questdb.std.str.FlyweightCharSequence;
-import com.questdb.std.time.DateFormatUtils;
+import com.questdb.std.microtime.DateFormatUtils;
 
 import java.util.ArrayDeque;
 
 final class QueryFilterAnalyser {
 
     private final ArrayDeque<ExprNode> stack = new ArrayDeque<>();
-    private final FlyweightCharSequence quoteEraser = new FlyweightCharSequence();
     private final ObjList<ExprNode> keyNodes = new ObjList<>();
     private final ObjList<ExprNode> keyExclNodes = new ObjList<>();
     private final ObjectPool<IntrinsicModel> models = new ObjectPool<>(IntrinsicModel.FACTORY, 8);
@@ -70,8 +68,7 @@ final class QueryFilterAnalyser {
 
         if (a.type == ExprNode.LITERAL && b.type == ExprNode.CONSTANT) {
             if (isTimestamp(a)) {
-                CharSequence seq = quoteEraser.ofQuoted(b.token);
-                model.intersectIntervals(seq, 0, seq.length(), b.position);
+                model.intersectIntervals(b.token, 1, b.token.length() - 1, b.position);
                 node.intrinsicValue = IntrinsicValue.TRUE;
                 return true;
             } else {
@@ -162,11 +159,11 @@ final class QueryFilterAnalyser {
             }
 
             try {
-                model.intersectIntervals(DateFormatUtils.tryParse(quoteEraser.ofQuoted(node.rhs.token)) + increment, Long.MAX_VALUE);
+                model.intersectIntervals(DateFormatUtils.tryParse(node.rhs.token, 1, node.rhs.token.length() - 1) + increment, Long.MAX_VALUE);
                 node.intrinsicValue = IntrinsicValue.TRUE;
                 return true;
             } catch (NumericException e) {
-                throw ParserException.$(node.rhs.position, "Not a date");
+                throw ParserException.invalidDate(node.rhs.position);
             }
         }
 
@@ -177,10 +174,10 @@ final class QueryFilterAnalyser {
             }
 
             try {
-                model.intersectIntervals(Long.MIN_VALUE, DateFormatUtils.tryParse(quoteEraser.ofQuoted(node.lhs.token)) - increment);
+                model.intersectIntervals(Long.MIN_VALUE, DateFormatUtils.tryParse(node.lhs.token, 1, node.lhs.token.length() - 1) - increment);
                 return true;
             } catch (NumericException e) {
-                throw ParserException.$(node.lhs.position, "Not a date");
+                throw ParserException.invalidDate(node.lhs.position);
             }
         }
         return false;
@@ -229,15 +226,15 @@ final class QueryFilterAnalyser {
             long hiMillis;
 
             try {
-                loMillis = DateFormatUtils.tryParse(quoteEraser.ofQuoted(lo.token));
+                loMillis = DateFormatUtils.tryParse(lo.token, 1, lo.token.length() - 1);
             } catch (NumericException ignore) {
-                throw ParserException.$(lo.position, "Unknown date format");
+                throw ParserException.invalidDate(lo.position);
             }
 
             try {
-                hiMillis = DateFormatUtils.tryParse(quoteEraser.ofQuoted(hi.token));
+                hiMillis = DateFormatUtils.tryParse(hi.token, 1, hi.token.length() - 1);
             } catch (NumericException ignore) {
-                throw ParserException.$(hi.position, "Unknown date format");
+                throw ParserException.invalidDate(hi.position);
             }
 
             model.intersectIntervals(loMillis, hiMillis);
@@ -262,11 +259,9 @@ final class QueryFilterAnalyser {
             if (model.keyColumn != null
                     && (!model.keyColumn.equals(col))
                     && colMeta.getBucketCount() <= meta.getColumn(model.keyColumn).getBucketCount()) {
-                // todo: no test hit
                 return false;
             }
 
-            // todo: this is going to fail if "in" args are functions
             if ((col.equals(model.keyColumn) && model.keyValuesIsLambda) || node.paramCount > 2) {
                 throw ParserException.$(node.position, "Multiple lambda expressions not supported");
             }
@@ -310,12 +305,12 @@ final class QueryFilterAnalyser {
                     return false;
                 }
 
-                long hi = DateFormatUtils.tryParse(quoteEraser.ofQuoted(node.rhs.token)) - inc;
+                long hi = DateFormatUtils.tryParse(node.rhs.token, 1, node.rhs.token.length() - 1) - inc;
                 model.intersectIntervals(Long.MIN_VALUE, hi);
                 node.intrinsicValue = IntrinsicValue.TRUE;
                 return true;
             } catch (NumericException e) {
-                throw ParserException.$(node.rhs.position, "Not a date");
+                throw ParserException.invalidDate(node.rhs.position);
             }
         }
 
@@ -325,12 +320,12 @@ final class QueryFilterAnalyser {
                     return false;
                 }
 
-                long lo = DateFormatUtils.tryParse(quoteEraser.ofQuoted(node.lhs.token)) + inc;
+                long lo = DateFormatUtils.tryParse(node.lhs.token, 1, node.lhs.token.length() - 1) + inc;
                 model.intersectIntervals(lo, Long.MAX_VALUE);
                 node.intrinsicValue = IntrinsicValue.TRUE;
                 return true;
             } catch (NumericException e) {
-                throw ParserException.$(node.lhs.position, "Not a date");
+                throw ParserException.invalidDate(node.lhs.position);
             }
         }
         return false;
@@ -421,12 +416,11 @@ final class QueryFilterAnalyser {
 
         if (a.type == ExprNode.LITERAL && b.type == ExprNode.CONSTANT) {
             if (isTimestamp(a)) {
-                CharSequence seq = quoteEraser.ofQuoted(b.token);
-                model.subtractIntervals(seq, 0, seq.length(), b.position);
+                model.subtractIntervals(b.token, 1, b.token.length() - 1, b.position);
                 node.intrinsicValue = IntrinsicValue.TRUE;
                 return true;
             } else {
-                String column = translator.translateAlias(a.token).toString();
+                CharSequence column = translator.translateAlias(a.token);
                 int index = m.getColumnIndexQuiet(column);
                 if (index == -1) {
                     throw ParserException.invalidColumn(a.position, a.token);
@@ -441,7 +435,7 @@ final class QueryFilterAnalyser {
                         if (meta.isIndexed()) {
 
                             // check if we are limited by preferred column
-                            if (preferredKeyColumn != null && !preferredKeyColumn.equals(column)) {
+                            if (preferredKeyColumn != null && !Chars.equals(preferredKeyColumn, column)) {
                                 return false;
                             }
 
@@ -509,15 +503,15 @@ final class QueryFilterAnalyser {
             long hiMillis;
 
             try {
-                loMillis = DateFormatUtils.tryParse(quoteEraser.ofQuoted(lo.token));
+                loMillis = DateFormatUtils.tryParse(lo.token, 1, lo.token.length() - 1);
             } catch (NumericException ignore) {
-                throw ParserException.$(lo.position, "Unknown date format");
+                throw ParserException.invalidDate(lo.position);
             }
 
             try {
-                hiMillis = DateFormatUtils.tryParse(quoteEraser.ofQuoted(hi.token));
+                hiMillis = DateFormatUtils.tryParse(hi.token, 1, hi.token.length() - 1);
             } catch (NumericException ignore) {
-                throw ParserException.$(hi.position, "Unknown date format");
+                throw ParserException.invalidDate(hi.position);
             }
 
             model.subtractIntervals(loMillis, hiMillis);
@@ -621,8 +615,7 @@ final class QueryFilterAnalyser {
     }
 
     IntrinsicModel extract(AliasTranslator translator, ExprNode node, RecordMetadata m, String preferredKeyColumn, int timestampIndex) throws ParserException {
-        this.stack.clear();
-        this.keyNodes.clear();
+        reset();
         this.timestamp = timestampIndex < 0 ? null : m.getColumnName(timestampIndex);
         this.preferredKeyColumn = preferredKeyColumn;
 
@@ -706,5 +699,7 @@ final class QueryFilterAnalyser {
 
     void reset() {
         this.models.clear();
+        this.stack.clear();
+        this.keyNodes.clear();
     }
 }

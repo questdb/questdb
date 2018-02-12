@@ -26,7 +26,7 @@ package com.questdb.griffin.engine.columns;
 import com.questdb.common.ColumnType;
 import com.questdb.common.Record;
 import com.questdb.common.StorageFacade;
-import com.questdb.griffin.common.AbstractVirtualColumn;
+import com.questdb.griffin.compiler.AbstractVirtualColumn;
 
 public class LongRecordSourceColumn extends AbstractVirtualColumn {
     private final int index;

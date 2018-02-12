@@ -25,9 +25,7 @@ package com.questdb.parser.sql;
 
 import com.questdb.ex.ParserException;
 import com.questdb.std.LongList;
-import com.questdb.std.ObjList;
 import com.questdb.std.time.DateFormatUtils;
-import com.questdb.std.time.Interval;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -119,16 +117,6 @@ public class IntervalCompilerTest {
     }
 
     @Test
-    public void testMergeIntervals() throws Exception {
-        ObjList<Interval> a = new ObjList<>();
-        ObjList<Interval> b = new ObjList<>();
-        a.add(new Interval(DateFormatUtils.parseDateTime("2016-03-10T10:00:00.000Z"), DateFormatUtils.parseDateTime("2016-03-10T12:00:00.000Z")));
-        a.add(new Interval(DateFormatUtils.parseDateTime("2016-03-10T14:00:00.000Z"), DateFormatUtils.parseDateTime("2016-03-10T16:00:00.000Z")));
-        b.add(new Interval(DateFormatUtils.parseDateTime("2016-03-10T11:00:00.000Z"), DateFormatUtils.parseDateTime("2016-03-10T15:00:00.000Z")));
-        Assert.assertEquals("[Interval{lo=2016-03-10T10:00:00.000Z, hi=2016-03-10T16:00:00.000Z}]", IntervalCompiler.union(a, b).toString());
-    }
-
-    @Test
     public void testParseLongInterval22() throws Exception {
         assertShortInterval("[Interval{lo=2015-03-12T10:00:00.000Z, hi=2015-03-12T10:05:00.999Z},Interval{lo=2015-03-12T10:30:00.000Z, hi=2015-03-12T10:35:00.999Z},Interval{lo=2015-03-12T11:00:00.000Z, hi=2015-03-12T11:05:00.999Z},Interval{lo=2015-03-12T11:30:00.000Z, hi=2015-03-12T11:35:00.999Z},Interval{lo=2015-03-12T12:00:00.000Z, hi=2015-03-12T12:05:00.999Z},Interval{lo=2015-03-12T12:30:00.000Z, hi=2015-03-12T12:35:00.999Z},Interval{lo=2015-03-12T13:00:00.000Z, hi=2015-03-12T13:05:00.999Z},Interval{lo=2015-03-12T13:30:00.000Z, hi=2015-03-12T13:35:00.999Z},Interval{lo=2015-03-12T14:00:00.000Z, hi=2015-03-12T14:05:00.999Z},Interval{lo=2015-03-12T14:30:00.000Z, hi=2015-03-12T14:35:00.999Z}]",
                 "2015-03-12T10:00:00;5m;30m;10");
@@ -136,7 +124,7 @@ public class IntervalCompilerTest {
 
     @Test
     public void testParseLongInterval32() throws Exception {
-        assertShortInterval("[Interval{lo=2016-03-21T00:00:00.000Z, hi=2019-03-21T23:59:59.999Z},Interval{lo=2016-09-21T00:00:00.000Z, hi=2019-09-21T23:59:59.999Z},Interval{lo=2017-03-21T00:00:00.000Z, hi=2020-03-21T23:59:59.999Z},Interval{lo=2017-09-21T00:00:00.000Z, hi=2020-09-21T23:59:59.999Z},Interval{lo=2018-03-21T00:00:00.000Z, hi=2021-03-21T23:59:59.999Z}]", "2016-03-21;3y;6M;5");
+        assertShortInterval("[Interval{lo=2016-03-21T00:00:00.000Z, hi=2021-03-21T23:59:59.999Z}]", "2016-03-21;3y;6M;5");
     }
 
     @Test
@@ -312,43 +300,6 @@ public class IntervalCompilerTest {
 
         IntervalCompiler.subtract(a, b, out);
         Assert.assertEquals("[]", IntervalCompiler.asIntervalStr(out));
-    }
-
-    @Test
-    public void testUnionContain() throws Exception {
-        ObjList<Interval> a = new ObjList<>();
-        ObjList<Interval> b = new ObjList<>();
-        a.add(new Interval(DateFormatUtils.parseDateTime("2016-03-10T10:00:00.000Z"), DateFormatUtils.parseDateTime("2016-03-10T12:00:00.000Z")));
-        b.add(new Interval(DateFormatUtils.parseDateTime("2016-03-10T09:00:00.000Z"), DateFormatUtils.parseDateTime("2016-03-10T13:30:00.000Z")));
-        Assert.assertEquals("[Interval{lo=2016-03-10T09:00:00.000Z, hi=2016-03-10T13:30:00.000Z}]", IntervalCompiler.union(a, b).toString());
-    }
-
-    @Test
-    public void testUnionContiguous() throws Exception {
-        ObjList<Interval> a = new ObjList<>();
-        ObjList<Interval> b = new ObjList<>();
-        a.add(new Interval(DateFormatUtils.parseDateTime("2016-03-10T10:00:00.000Z"), DateFormatUtils.parseDateTime("2016-03-10T12:59:59.999Z")));
-        b.add(new Interval(DateFormatUtils.parseDateTime("2016-03-10T13:00:00.000Z"), DateFormatUtils.parseDateTime("2016-03-10T14:00:00.000Z")));
-        Assert.assertEquals("[Interval{lo=2016-03-10T10:00:00.000Z, hi=2016-03-10T14:00:00.000Z}]", IntervalCompiler.union(a, b).toString());
-    }
-
-    @Test
-    public void testUnionNonOverlapping() throws Exception {
-        ObjList<Interval> a = new ObjList<>();
-        ObjList<Interval> b = new ObjList<>();
-        a.add(new Interval(DateFormatUtils.parseDateTime("2016-03-10T10:00:00.000Z"), DateFormatUtils.parseDateTime("2016-03-10T12:00:00.000Z")));
-        b.add(new Interval(DateFormatUtils.parseDateTime("2016-03-10T13:00:00.000Z"), DateFormatUtils.parseDateTime("2016-03-10T15:00:00.000Z")));
-        Assert.assertEquals("[Interval{lo=2016-03-10T10:00:00.000Z, hi=2016-03-10T12:00:00.000Z},Interval{lo=2016-03-10T13:00:00.000Z, hi=2016-03-10T15:00:00.000Z}]", IntervalCompiler.union(a, b).toString());
-        Assert.assertEquals("[Interval{lo=2016-03-10T10:00:00.000Z, hi=2016-03-10T12:00:00.000Z},Interval{lo=2016-03-10T13:00:00.000Z, hi=2016-03-10T15:00:00.000Z}]", IntervalCompiler.union(b, a).toString());
-    }
-
-    @Test
-    public void testUnionSame() throws Exception {
-        ObjList<Interval> a = new ObjList<>();
-        ObjList<Interval> b = new ObjList<>();
-        a.add(new Interval(DateFormatUtils.parseDateTime("2016-03-10T10:00:00.000Z"), DateFormatUtils.parseDateTime("2016-03-10T12:00:00.000Z")));
-        b.add(new Interval(DateFormatUtils.parseDateTime("2016-03-10T10:00:00.000Z"), DateFormatUtils.parseDateTime("2016-03-10T12:00:00.000Z")));
-        Assert.assertEquals("[Interval{lo=2016-03-10T10:00:00.000Z, hi=2016-03-10T12:00:00.000Z}]", IntervalCompiler.union(a, b).toString());
     }
 
     private static void assertShortInterval(String expected, String interval) throws ParserException {

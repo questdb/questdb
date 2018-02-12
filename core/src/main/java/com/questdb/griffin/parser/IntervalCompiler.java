@@ -26,10 +26,8 @@ package com.questdb.griffin.parser;
 import com.questdb.common.NumericException;
 import com.questdb.std.LongList;
 import com.questdb.std.Numbers;
-import com.questdb.std.ObjList;
-import com.questdb.std.time.DateFormatUtils;
-import com.questdb.std.time.Dates;
-import com.questdb.std.time.Interval;
+import com.questdb.std.microtime.DateFormatUtils;
+import com.questdb.std.microtime.Dates;
 
 public class IntervalCompiler {
 
@@ -128,7 +126,7 @@ public class IntervalCompiler {
             case -1:
                 // no semicolons, just date part, which can be interval in itself
                 try {
-                    DateFormatUtils.parseInterval(seq, lo, lim, out);
+                    parseInterval(seq, lo, lim, out);
                     break;
                 } catch (NumericException ignore) {
                     // this must be a date then?
@@ -154,7 +152,7 @@ public class IntervalCompiler {
                 }
                 int count;
                 try {
-                    count = Numbers.parseInt(seq, pos[2] + 1, seq.length());
+                    count = Numbers.parseInt(seq, pos[2] + 1, lim);
                 } catch (NumericException e) {
                     throw ParserException.$(position, "Count not a number");
                 }
@@ -169,16 +167,16 @@ public class IntervalCompiler {
                         addMonthInterval(period, count, out);
                         break;
                     case 'h':
-                        addMillisInterval(period * Dates.HOUR_MILLIS, count, out);
+                        addMillisInterval(period * Dates.HOUR_MICROS, count, out);
                         break;
                     case 'm':
-                        addMillisInterval(period * Dates.MINUTE_MILLIS, count, out);
+                        addMillisInterval(period * Dates.MINUTE_MICROS, count, out);
                         break;
                     case 's':
-                        addMillisInterval(period * Dates.SECOND_MILLIS, count, out);
+                        addMillisInterval(period * Dates.SECOND_MICROS, count, out);
                         break;
                     case 'd':
-                        addMillisInterval(period * Dates.DAY_MILLIS, count, out);
+                        addMillisInterval(period * Dates.DAY_MICROS, count, out);
                         break;
                     default:
                         throw ParserException.$(position, "Unknown period: " + type + " at " + (p - 1));
@@ -256,84 +254,122 @@ public class IntervalCompiler {
         }
     }
 
-    /**
-     * Creates a union (set operation) of two lists of intervals. Both lists are
-     * expected to be ordered chronologically.
-     *
-     * @param a list of intervals
-     * @param b list of intervals
-     * @return union of intervals
-     */
-    public static ObjList<Interval> union(ObjList<Interval> a, ObjList<Interval> b) {
-        ObjList<Interval> out = new ObjList<>();
-
-        int indexA = 0;
-        int indexB = 0;
-        final int sizeA = a.size();
-        final int sizeB = b.size();
-        Interval intervalA = null;
-        Interval intervalB = null;
-
-        while (true) {
-            if (intervalA == null && indexA < sizeA) {
-                intervalA = a.getQuick(indexA++);
-            }
-
-            if (intervalB == null && indexB < sizeB) {
-                intervalB = b.getQuick(indexB++);
-            }
-
-
-            if (intervalA == null && intervalB != null) {
-                append(out, intervalB);
-                intervalB = null;
-                continue;
-            }
-
-            if (intervalA != null && intervalB == null) {
-                append(out, intervalA);
-                intervalA = null;
-                continue;
-            }
-
-            if (intervalA == null) {
-                break;
-            }
-
-            // a fully above b
-            if (intervalA.getHi() < intervalB.getLo()) {
-                append(out, intervalA);
-                intervalA = null;
-            } else if (intervalA.getLo() > intervalB.getHi()) {
-                // a fully below b
-                append(out, intervalB);
-                intervalB = null;
-            } else {
-
-                Interval next = new Interval(
-                        Math.min(intervalA.getLo(), intervalB.getLo()),
-                        Math.max(intervalA.getHi(), intervalB.getHi())
-                );
-
-                if (intervalA.getHi() < intervalB.getHi()) {
-                    // b hanging lower than a
-                    intervalB = next;
-                    intervalA = null;
-                } else {
-                    // otherwise a lower than b
-                    intervalA = next;
-                    intervalB = null;
-                }
-            }
+    private static void parseInterval(CharSequence seq, final int pos, int lim, LongList out) throws NumericException {
+        if (lim - pos < 4) {
+            throw NumericException.INSTANCE;
         }
-        return out;
+        int p = pos;
+        int year = Numbers.parseInt(seq, p, p += 4);
+        boolean l = Dates.isLeapYear(year);
+        if (checkLen(p, lim)) {
+            checkChar(seq, p++, lim, '-');
+            int month = Numbers.parseInt(seq, p, p += 2);
+            checkRange(month, 1, 12);
+            if (checkLen(p, lim)) {
+                checkChar(seq, p++, lim, '-');
+                int day = Numbers.parseInt(seq, p, p += 2);
+                checkRange(day, 1, Dates.getDaysPerMonth(month, l));
+                if (checkLen(p, lim)) {
+                    checkChar(seq, p++, lim, 'T');
+                    int hour = Numbers.parseInt(seq, p, p += 2);
+                    checkRange(hour, 0, 23);
+                    if (checkLen(p, lim)) {
+                        checkChar(seq, p++, lim, ':');
+                        int min = Numbers.parseInt(seq, p, p += 2);
+                        checkRange(min, 0, 59);
+                        if (checkLen(p, lim)) {
+                            checkChar(seq, p++, lim, ':');
+                            int sec = Numbers.parseInt(seq, p, p += 2);
+                            checkRange(sec, 0, 59);
+                            if (p < lim) {
+                                throw NumericException.INSTANCE;
+                            } else {
+                                // seconds
+                                out.add(Dates.yearMicros(year, l)
+                                        + Dates.monthOfYearMicros(month, l)
+                                        + (day - 1) * Dates.DAY_MICROS
+                                        + hour * Dates.HOUR_MICROS
+                                        + min * Dates.MINUTE_MICROS
+                                        + sec * Dates.SECOND_MICROS);
+                                out.add(Dates.yearMicros(year, l)
+                                        + Dates.monthOfYearMicros(month, l)
+                                        + (day - 1) * Dates.DAY_MICROS
+                                        + hour * Dates.HOUR_MICROS
+                                        + min * Dates.MINUTE_MICROS
+                                        + sec * Dates.SECOND_MICROS
+                                        + 999999);
+                            }
+                        } else {
+                            // minute
+                            out.add(Dates.yearMicros(year, l)
+                                    + Dates.monthOfYearMicros(month, l)
+                                    + (day - 1) * Dates.DAY_MICROS
+                                    + hour * Dates.HOUR_MICROS
+                                    + min * Dates.MINUTE_MICROS);
+                            out.add(Dates.yearMicros(year, l)
+                                    + Dates.monthOfYearMicros(month, l)
+                                    + (day - 1) * Dates.DAY_MICROS
+                                    + hour * Dates.HOUR_MICROS
+                                    + min * Dates.MINUTE_MICROS
+                                    + 59 * Dates.SECOND_MICROS
+                                    + 999999);
+                        }
+                    } else {
+                        // year + month + day + hour
+                        out.add(Dates.yearMicros(year, l)
+                                + Dates.monthOfYearMicros(month, l)
+                                + (day - 1) * Dates.DAY_MICROS
+                                + hour * Dates.HOUR_MICROS);
+                        out.add(Dates.yearMicros(year, l)
+                                + Dates.monthOfYearMicros(month, l)
+                                + (day - 1) * Dates.DAY_MICROS
+                                + hour * Dates.HOUR_MICROS
+                                + 59 * Dates.MINUTE_MICROS
+                                + 59 * Dates.SECOND_MICROS
+                                + 999999);
+                    }
+                } else {
+                    // year + month + day
+                    out.add(Dates.yearMicros(year, l)
+                            + Dates.monthOfYearMicros(month, l)
+                            + (day - 1) * Dates.DAY_MICROS);
+                    out.add(Dates.yearMicros(year, l)
+                            + Dates.monthOfYearMicros(month, l)
+                            + +(day - 1) * Dates.DAY_MICROS
+                            + 23 * Dates.HOUR_MICROS
+                            + 59 * Dates.MINUTE_MICROS
+                            + 59 * Dates.SECOND_MICROS
+                            + 999999);
+                }
+            } else {
+                // year + month
+                out.add(Dates.yearMicros(year, l) + Dates.monthOfYearMicros(month, l));
+                out.add(Dates.yearMicros(year, l)
+                        + Dates.monthOfYearMicros(month, l)
+                        + (Dates.getDaysPerMonth(month, l) - 1) * Dates.DAY_MICROS
+                        + 23 * Dates.HOUR_MICROS
+                        + 59 * Dates.MINUTE_MICROS
+                        + 59 * Dates.SECOND_MICROS
+                        + 999999);
+            }
+        } else {
+            // year
+            out.add(Dates.yearMicros(year, l) + Dates.monthOfYearMicros(1, l));
+            out.add(Dates.yearMicros(year, l)
+                    + Dates.monthOfYearMicros(12, l)
+                    + (Dates.getDaysPerMonth(12, l) - 1) * Dates.DAY_MICROS
+                    + 23 * Dates.HOUR_MICROS
+                    + 59 * Dates.MINUTE_MICROS
+                    + 59 * Dates.SECOND_MICROS
+                    + 999999);
+        }
     }
 
     private static void append(LongList list, long lo, long hi) {
         int n = list.size();
         if (n > 0) {
             long prevHi = list.getQuick(n - 1) + 1;
-            if (prevHi == lo) {
+            if (prevHi >= lo) {
                 list.setQuick(n - 1, hi);
                 return;
             }
@@ -341,19 +377,6 @@ public class IntervalCompiler {
 
         list.add(lo);
         list.add(hi);
-    }
-
-    private static void append(ObjList<Interval> list, Interval interval) {
-        int n = list.size();
-        if (n > 0) {
-            Interval prev = list.getQuick(n - 1);
-            if (prev.getHi() + 1 == interval.getLo()) {
-                list.setQuick(n - 1, new Interval(prev.getLo(), interval.getHi()));
-                return;
-            }
-        }
-
-        list.add(interval);
     }
 
     private static void parseRange(CharSequence seq, int lo, int p, int lim, int position, LongList out) throws ParserException {
@@ -365,7 +388,7 @@ public class IntervalCompiler {
             throw ParserException.$(position, "Range not a number");
         }
         try {
-            DateFormatUtils.parseInterval(seq, lo, p, out);
+            parseInterval(seq, lo, p, out);
             int n = out.size();
             out.setQuick(n - 1, Dates.addPeriod(out.getQuick(n - 1), type, period));
             return;
@@ -376,7 +399,7 @@ public class IntervalCompiler {
             long loMillis = DateFormatUtils.tryParse(seq, lo, p);
             append(out, loMillis, Dates.addPeriod(loMillis, type, period));
         } catch (NumericException e) {
-            throw ParserException.$(position, "Neither interval nor date");
+            throw ParserException.invalidDate(position);
         }
     }
 
@@ -413,6 +436,29 @@ public class IntervalCompiler {
             lo = Dates.addYear(lo, period);
             hi = Dates.addYear(hi, period);
             append(out, lo, hi);
+        }
+    }
+
+    private static boolean checkLen(int p, int lim) throws NumericException {
+        if (lim - p > 2) {
+            return true;
+        }
+        if (lim <= p) {
+            return false;
+        }
+
+        throw NumericException.INSTANCE;
+    }
+
+    private static void checkChar(CharSequence s, int p, int lim, char c) throws NumericException {
+        if (p >= lim || s.charAt(p) != c) {
+            throw NumericException.INSTANCE;
+        }
+    }
+
+    private static void checkRange(int x, int min, int max) throws NumericException {
+        if (x < min || x > max) {
+            throw NumericException.INSTANCE;
         }
     }
 }

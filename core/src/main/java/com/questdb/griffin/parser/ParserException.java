@@ -45,6 +45,10 @@ public class ParserException extends Exception implements Sinkable {
         return position(position).put("Invalid column: ").put(column);
     }
 
+    public static ParserException invalidDate(int position) {
+        return position(position).put("Invalid date");
+    }
+
     public static ParserException position(int position) {
         ParserException ex = tlException.get();
         ex.message.clear();

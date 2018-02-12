@@ -25,27 +25,29 @@ package com.questdb.griffin.parser;
 
 import com.questdb.griffin.common.ExprNode;
 import com.questdb.std.LongList;
-import com.questdb.std.time.Dates;
+import com.questdb.std.microtime.DateFormatUtils;
+import com.questdb.std.str.StringSink;
 
 public class GriffinParserTestUtils {
+    private static final StringSink sink = new StringSink();
 
-    public static String intervalToString(LongList intervals) {
-        StringBuilder b = new StringBuilder();
-        b.append('[');
+    public static CharSequence intervalToString(LongList intervals) {
+        sink.clear();
+        sink.put('[');
         for (int i = 0, n = intervals.size(); i < n; i += 2) {
             if (i > 0) {
-                b.append(',');
+                sink.put(',');
             }
-            b.append("Interval{");
-            b.append("lo=");
-            b.append(Dates.toString(intervals.getQuick(i)));
-            b.append(", ");
-            b.append("hi=");
-            b.append(Dates.toString(intervals.getQuick(i + 1)));
-            b.append('}');
+            sink.put('{');
+            sink.put("lo=");
+            DateFormatUtils.appendDateTimeUSec(sink, intervals.getQuick(i));
+            sink.put(", ");
+            sink.put("hi=");
+            DateFormatUtils.appendDateTimeUSec(sink, intervals.getQuick(i + 1));
+            sink.put('}');
         }
-        b.append(']');
-        return b.toString();
+        sink.put(']');
+        return sink;
     }
 
     public static String toRpn(ExprNode node) {
