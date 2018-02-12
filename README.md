@@ -38,7 +38,7 @@ Multi-platform archive can be downloaded from our web site https://www.questdb.o
 </dependency>
 ```
 
-On MacOS run (via homebrew):
+On MacOS run (via [Homebrew](https://brew.sh/)):
 ```
 brew install questdb
 ```
