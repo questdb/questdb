@@ -27,10 +27,8 @@ import com.questdb.common.NumericException;
 import com.questdb.ex.ParserException;
 import com.questdb.std.LongList;
 import com.questdb.std.Numbers;
-import com.questdb.std.ObjList;
 import com.questdb.std.time.DateFormatUtils;
 import com.questdb.std.time.Dates;
-import com.questdb.std.time.Interval;
 
 public class IntervalCompiler {
 
@@ -257,84 +255,12 @@ public class IntervalCompiler {
         }
     }
 
-    /**
-     * Creates a union (set operation) of two lists of intervals. Both lists are
-     * expected to be ordered chronologically.
-     *
-     * @param a list of intervals
-     * @param b list of intervals
-     * @return union of intervals
-     */
-    public static ObjList<Interval> union(ObjList<Interval> a, ObjList<Interval> b) {
-        ObjList<Interval> out = new ObjList<>();
-
-        int indexA = 0;
-        int indexB = 0;
-        final int sizeA = a.size();
-        final int sizeB = b.size();
-        Interval intervalA = null;
-        Interval intervalB = null;
-
-        while (true) {
-            if (intervalA == null && indexA < sizeA) {
-                intervalA = a.getQuick(indexA++);
-            }
-
-            if (intervalB == null && indexB < sizeB) {
-                intervalB = b.getQuick(indexB++);
-            }
-
-
-            if (intervalA == null && intervalB != null) {
-                append(out, intervalB);
-                intervalB = null;
-                continue;
-            }
-
-            if (intervalA != null && intervalB == null) {
-                append(out, intervalA);
-                intervalA = null;
-                continue;
-            }
-
-            if (intervalA == null) {
-                break;
-            }
-
-            // a fully above b
-            if (intervalA.getHi() < intervalB.getLo()) {
-                append(out, intervalA);
-                intervalA = null;
-            } else if (intervalA.getLo() > intervalB.getHi()) {
-                // a fully below b
-                append(out, intervalB);
-                intervalB = null;
-            } else {
-
-                Interval next = new Interval(
-                        Math.min(intervalA.getLo(), intervalB.getLo()),
-                        Math.max(intervalA.getHi(), intervalB.getHi())
-                );
-
-                if (intervalA.getHi() < intervalB.getHi()) {
-                    // b hanging lower than a
-                    intervalB = next;
-                    intervalA = null;
-                } else {
-                    // otherwise a lower than b
-                    intervalA = next;
-                    intervalB = null;
-                }
-            }
-        }
-        return out;
-    }
-
     private static void append(LongList list, long lo, long hi) {
         int n = list.size();
         if (n > 0) {
             long prevHi = list.getQuick(n - 1) + 1;
-            if (prevHi == lo) {
+//            assert prevHi < lo;
+            if (prevHi >= lo) {
                 list.setQuick(n - 1, hi);
                 return;
             }
@@ -342,19 +268,6 @@ public class IntervalCompiler {
 
         list.add(lo);
         list.add(hi);
-    }
-
-    private static void append(ObjList<Interval> list, Interval interval) {
-        int n = list.size();
-        if (n > 0) {
-            Interval prev = list.getQuick(n - 1);
-            if (prev.getHi() + 1 == interval.getLo()) {
-                list.setQuick(n - 1, new Interval(prev.getLo(), interval.getHi()));
-                return;
-            }
-        }
-
-        list.add(interval);
     }
 
     private static void parseRange(CharSequence seq, int lo, int p, int lim, int position, LongList out) throws ParserException {

@@ -28,7 +28,6 @@ import com.questdb.common.Record;
 import com.questdb.common.StorageFacade;
 import com.questdb.ex.UndefinedParameterException;
 import com.questdb.ex.WrongParameterTypeException;
-import com.questdb.griffin.common.AbstractVirtualColumn;
 import com.questdb.griffin.common.ExprNode;
 import com.questdb.griffin.common.VirtualColumn;
 import com.questdb.std.CharSequenceObjHashMap;

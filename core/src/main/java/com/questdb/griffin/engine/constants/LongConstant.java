@@ -26,7 +26,7 @@ package com.questdb.griffin.engine.constants;
 import com.questdb.common.ColumnType;
 import com.questdb.common.Record;
 import com.questdb.common.StorageFacade;
-import com.questdb.griffin.common.AbstractVirtualColumn;
+import com.questdb.griffin.compiler.AbstractVirtualColumn;
 
 public class LongConstant extends AbstractVirtualColumn {
     private final long value;

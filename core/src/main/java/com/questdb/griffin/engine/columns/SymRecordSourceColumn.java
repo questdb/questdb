@@ -27,7 +27,7 @@ import com.questdb.common.ColumnType;
 import com.questdb.common.Record;
 import com.questdb.common.StorageFacade;
 import com.questdb.common.SymbolTable;
-import com.questdb.griffin.common.AbstractVirtualColumn;
+import com.questdb.griffin.compiler.AbstractVirtualColumn;
 
 public class SymRecordSourceColumn extends AbstractVirtualColumn {
     private final int index;

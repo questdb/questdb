@@ -160,7 +160,6 @@ public class IntrinsicModel implements Mutable {
         IntervalCompiler.invert(temp);
         if (this.intervals == null) {
             intervals = temp;
-//            IntervalCompiler.subtract(INFINITE_INTERVAL, temp, dest);
         } else {
             final LongList dest = shuffleDest();
             dest.clear();
