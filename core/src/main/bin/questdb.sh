@@ -45,7 +45,7 @@ function export_pid {
 function export_java {
 
     if [ "$JAVA_HOME" = "" -a -e /usr/libexec/java_home ]; then
-        JAVA_HOME=$(/usr/libexec/java_home -v 1.8+)
+        JAVA_HOME=$(/usr/libexec/java_home -v 1.8)
     fi
 
     # check that JAVA_HOME is defined
