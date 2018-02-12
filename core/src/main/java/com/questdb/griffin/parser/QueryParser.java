@@ -29,8 +29,6 @@ import com.questdb.griffin.common.ExprNode;
 import com.questdb.griffin.parser.model.*;
 import com.questdb.std.*;
 import com.questdb.std.str.CharSink;
-import com.questdb.store.factory.configuration.GenericIndexedBuilder;
-import com.questdb.store.factory.configuration.JournalStructure;
 
 public final class QueryParser {
 
@@ -44,8 +42,7 @@ public final class QueryParser {
     private final ObjectPool<QueryModel> queryModelPool = new ObjectPool<>(QueryModel.FACTORY, 8);
     private final ObjectPool<QueryColumn> queryColumnPool = new ObjectPool<>(QueryColumn.FACTORY, 64);
     private final ObjectPool<AnalyticColumn> analyticColumnPool = new ObjectPool<>(AnalyticColumn.FACTORY, 8);
-    private final ObjectPool<CreateJournalModel> createJournalModelPool = new ObjectPool<>(CreateJournalModel.FACTORY, 4);
-    private final ObjectPool<ColumnIndexModel> columnIndexModelPool = new ObjectPool<>(ColumnIndexModel.FACTORY, 8);
+    private final ObjectPool<CreateTableModel> createJournalModelPool = new ObjectPool<>(CreateTableModel.FACTORY, 4);
     private final ObjectPool<ColumnCastModel> columnCastModelPool = new ObjectPool<>(ColumnCastModel.FACTORY, 8);
     private final ObjectPool<RenameJournalModel> renameJournalModelPool = new ObjectPool<>(RenameJournalModel.FACTORY, 8);
     private final ObjectPool<WithClauseModel> withClauseModelPool = new ObjectPool<>(WithClauseModel.FACTORY, 16);
@@ -69,7 +66,6 @@ public final class QueryParser {
         exprNodePool.clear();
         analyticColumnPool.clear();
         createJournalModelPool.clear();
-        columnIndexModelPool.clear();
         columnCastModelPool.clear();
         renameJournalModelPool.clear();
         withClauseModelPool.clear();
@@ -98,10 +94,14 @@ public final class QueryParser {
         return node;
     }
 
-    private void expectTok(CharSequence tok, CharSequence expected) throws ParserException {
+    private void expectTok(CharSequence tok, int position, CharSequence expected) throws ParserException {
         if (tok == null || !Chars.equals(tok, expected)) {
-            throw ParserException.position(lexer.position()).put('\'').put(expected).put("' expected");
+            throw ParserException.position(position).put('\'').put(expected).put("' expected");
         }
+    }
+
+    private void expectTok(CharSequence expected) throws ParserException {
+        expectTok(tok(), lexer.position(), expected);
     }
 
     private void expectTok(char expected) throws ParserException {
@@ -186,34 +186,37 @@ public final class QueryParser {
         return tok;
     }
 
-    private ParsedModel parseCreateJournal() throws ParserException {
+    private ParsedModel parseCreateStatement() throws ParserException {
+        CharSequence tok = tok();
+        if (Chars.equals(tok, "table")) {
+            return parseCreateTable();
+        }
+
+        throw err("table expected");
+    }
+
+    private ParsedModel parseCreateTable() throws ParserException {
+        final CreateTableModel model = createJournalModelPool.next();
+
         ExprNode name = exprNodePool.next();
         name.token = Chars.stripQuotes(tok().toString());
         name.position = lexer.position();
         name.type = ExprNode.LITERAL;
+        model.setName(name);
 
         CharSequence tok = tok();
 
-        final JournalStructure struct;
-        final QueryModel queryModel;
         if (Chars.equals(tok, '(')) {
-            queryModel = null;
-            struct = new JournalStructure(name.token);
             lexer.unparse();
-            parseJournalFields(struct);
+            parseTableFields(model);
         } else if (Chars.equals(tok, "as")) {
             expectTok('(');
-            queryModel = parseQuery(true);
-            struct = null;
+            model.setQueryModel(parseQuery(true));
             expectTok(')');
         } else {
             throw ParserException.position(lexer.position()).put("Unexpected token");
         }
 
-        CreateJournalModel model = createJournalModelPool.next();
-        model.setStruct(struct);
-        model.setQueryModel(queryModel);
-        model.setName(name);
 
         tok = lexer.optionTok();
         while (tok != null && Chars.equals(tok, ',')) {
@@ -224,30 +227,38 @@ public final class QueryParser {
             if (Chars.equals(tok, "index")) {
                 expectTok('(');
 
-                ColumnIndexModel columnIndexModel = columnIndexModelPool.next();
-                columnIndexModel.setName(expectLiteral());
+                pos = lexer.position();
+                ExprNode columnName = expectLiteral();
+                final int columnIndex = model.getColumnIndex(columnName.token);
+                if (columnIndex == -1) {
+                    throw ParserException.invalidColumn(pos, columnName.token);
+                }
 
                 pos = lexer.position();
                 tok = tok();
-                if (Chars.equals(tok, "buckets")) {
+                if (Chars.equals(tok, "block")) {
+
+                    expectTok("size");
+
                     try {
-                        columnIndexModel.setBuckets(Numbers.ceilPow2(Numbers.parseInt(tok())) - 1);
+                        model.setIndexFlags(columnIndex, true, Numbers.ceilPow2(Numbers.parseInt(tok())) - 1);
                     } catch (NumericException e) {
                         throw ParserException.$(pos, "Int constant expected");
                     }
                     pos = lexer.position();
                     tok = tok();
+                } else {
+                    model.setIndexFlags(columnIndex, true, 1024); //todo: usue configuration dude
                 }
                 expectTok(tok, pos, ')');
 
-                model.addColumnIndexModel(columnIndexModel);
                 tok = lexer.optionTok();
             } else if (Chars.equals(tok, "cast")) {
                 expectTok('(');
                 ColumnCastModel columnCastModel = columnCastModelPool.next();
 
                 columnCastModel.setName(expectLiteral());
-                expectTok(tok(), "as");
+                expectTok("as");
 
                 ExprNode node = expectLiteral();
                 int type = ColumnType.columnTypeOf(node.token);
@@ -310,33 +321,25 @@ public final class QueryParser {
         return model;
     }
 
-    private ParsedModel parseCreateStatement() throws ParserException {
-        CharSequence tok = tok();
-        if (Chars.equals(tok, "table")) {
-            return parseCreateJournal();
-        }
-
-        throw err("table expected");
-    }
-
-    private CharSequence parseIndexDefinition(GenericIndexedBuilder builder) throws ParserException {
+    private CharSequence parseIndexDefinition(CreateTableModel model) throws ParserException {
         CharSequence tok = tok();
 
         if (isFieldTerm(tok)) {
             return tok;
         }
 
-        expectTok(tok, "index");
-        builder.index();
+        expectTok(tok, lexer.position(), "index");
 
         if (isFieldTerm(tok = tok())) {
+            model.setIndexFlags(true, 1024); //todo: externalise config
             return tok;
         }
 
-        expectTok(tok, "buckets");
+        expectTok(tok, lexer.position(), "block");
+        expectTok("size");
 
         try {
-            builder.buckets(Numbers.parseInt(tok()));
+            model.setIndexFlags(true, Numbers.parseInt(tok()));
         } catch (NumericException e) {
             throw err("bad int");
         }
@@ -365,7 +368,7 @@ public final class QueryParser {
         joinModel.setJoinType(joinType);
 
         if (!Chars.equals(tok, "join")) {
-            expectTok(tok(), "join");
+            expectTok("join");
         }
 
         tok = tok();
@@ -402,7 +405,7 @@ public final class QueryParser {
                 // intentional fall through
             case QueryModel.JOIN_INNER:
             case QueryModel.JOIN_OUTER:
-                expectTok(tok, "on");
+                expectTok(tok, lexer.position(), "on");
                 astBuilder.reset();
                 exprParser.parseExpr(lexer, astBuilder);
                 ExprNode expr;
@@ -436,75 +439,14 @@ public final class QueryParser {
         return joinModel;
     }
 
-    private void parseJournalFields(JournalStructure struct) throws ParserException {
-        if (!Chars.equals(tok(), '(')) {
-            throw err("( expected");
-        }
-
-        while (true) {
-            String name = notTermTok().toString();
-            CharSequence tok = null;
-
-            switch (ColumnType.columnTypeOf(notTermTok())) {
-                case ColumnType.BYTE:
-                    struct.$byte(name);
-                    break;
-                case ColumnType.INT:
-                    tok = parseIndexDefinition(struct.$int(name));
-                    break;
-                case ColumnType.DOUBLE:
-                    struct.$double(name);
-                    break;
-                case ColumnType.BOOLEAN:
-                    struct.$bool(name);
-                    break;
-                case ColumnType.FLOAT:
-                    struct.$float(name);
-                    break;
-                case ColumnType.LONG:
-                    tok = parseIndexDefinition(struct.$long(name));
-                    break;
-                case ColumnType.SHORT:
-                    struct.$short(name);
-                    break;
-                case ColumnType.STRING:
-                    tok = parseIndexDefinition(struct.$str(name));
-                    break;
-                case ColumnType.SYMBOL:
-                    tok = parseIndexDefinition(struct.$sym(name));
-                    break;
-                case ColumnType.BINARY:
-                    struct.$bin(name);
-                    break;
-                case ColumnType.DATE:
-                    struct.$date(name);
-                    break;
-                default:
-                    throw err("Unsupported type");
-            }
-
-            if (tok == null) {
-                tok = tok();
-            }
-
-            if (Chars.equals(tok, ')')) {
-                break;
-            }
-
-            if (!Chars.equals(tok, ',')) {
-                throw err(", or ) expected");
-            }
-        }
-    }
-
     private void parseLatestBy(QueryModel model) throws ParserException {
-        expectTok(tok(), "by");
+        expectTok("by");
         model.setLatestBy(expr());
     }
 
     private ExprNode parsePartitionBy(CharSequence tok) throws ParserException {
         if (Chars.equalsNc("partition", tok)) {
-            expectTok(tok(), "by");
+            expectTok("by");
             return expectLiteral();
         }
         return null;
@@ -601,7 +543,7 @@ public final class QueryParser {
         // expect [group by]
 
         if (tok != null && Chars.equals(tok, "sample")) {
-            expectTok(tok(), "by");
+            expectTok("by");
             model.setSampleBy(expectLiteral());
             tok = lexer.optionTok();
         }
@@ -609,7 +551,7 @@ public final class QueryParser {
         // expect [order by]
 
         if (tok != null && Chars.equals(tok, "order")) {
-            expectTok(tok(), "by");
+            expectTok("by");
             do {
                 tok = tok();
 
@@ -669,7 +611,7 @@ public final class QueryParser {
 
     private ExprNode parseRecordHint(CharSequence tok) throws ParserException {
         if (Chars.equalsNc("record", tok)) {
-            expectTok(tok(), "hint");
+            expectTok("hint");
             ExprNode hint = expectExpr();
             if (hint.type != ExprNode.CONSTANT) {
                 throw ParserException.$(hint.position, "Constant expected");
@@ -680,14 +622,14 @@ public final class QueryParser {
     }
 
     private ParsedModel parseRenameStatement() throws ParserException {
-        expectTok(tok(), "table");
+        expectTok("table");
         RenameJournalModel model = renameJournalModelPool.next();
         ExprNode e = expectExpr();
         if (e.type != ExprNode.LITERAL && e.type != ExprNode.CONSTANT) {
             throw ParserException.$(e.position, "literal or constant expected");
         }
         model.setFrom(e);
-        expectTok(tok(), "to");
+        expectTok("to");
 
         e = expectExpr();
         if (e.type != ExprNode.LITERAL && e.type != ExprNode.CONSTANT) {
@@ -726,7 +668,7 @@ public final class QueryParser {
                 tok = tok();
 
                 if (Chars.equals(tok, "partition")) {
-                    expectTok(tok(), "by");
+                    expectTok("by");
 
                     ObjList<ExprNode> partitionBy = col.getPartitionBy();
 
@@ -737,7 +679,7 @@ public final class QueryParser {
                 }
 
                 if (Chars.equals(tok, "order")) {
-                    expectTok(tok(), "by");
+                    expectTok("by");
 
                     do {
                         ExprNode e = expectLiteral();
@@ -776,6 +718,47 @@ public final class QueryParser {
         }
     }
 
+    private void parseTableFields(CreateTableModel model) throws ParserException {
+        if (!Chars.equals(tok(), '(')) {
+            throw err("( expected");
+        }
+
+        while (true) {
+            final int position = lexer.position();
+            final String name = notTermTok().toString();
+            final int type = ColumnType.columnTypeOf(notTermTok());
+
+            if (!model.addColumn(name, type)) {
+                throw ParserException.$(position, "Duplicate column");
+            }
+
+            CharSequence tok;
+            switch (type) {
+                case ColumnType.INT:
+                case ColumnType.LONG:
+                case ColumnType.STRING:
+                case ColumnType.SYMBOL:
+                    tok = parseIndexDefinition(model);
+                    break;
+                default:
+                    tok = null;
+                    break;
+            }
+
+            if (tok == null) {
+                tok = tok();
+            }
+
+            if (Chars.equals(tok, ')')) {
+                break;
+            }
+
+            if (!Chars.equals(tok, ',')) {
+                throw err(", or ) expected");
+            }
+        }
+    }
+
     private ExprNode parseTimestamp(CharSequence tok) throws ParserException {
         if (Chars.equalsNc("timestamp", tok)) {
             expectTok('(');
@@ -804,7 +787,7 @@ public final class QueryParser {
                 throw ParserException.$(name.position, "duplicate name");
             }
 
-            expectTok(tok(), "as");
+            expectTok("as");
             expectTok('(');
             int lo, hi;
             lo = lexer.position();

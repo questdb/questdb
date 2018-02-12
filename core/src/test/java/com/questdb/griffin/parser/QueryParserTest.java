@@ -23,13 +23,18 @@
 
 package com.questdb.griffin.parser;
 
+import com.questdb.common.ColumnType;
 import com.questdb.griffin.common.ExprNode;
 import com.questdb.griffin.parser.model.AnalyticColumn;
+import com.questdb.griffin.parser.model.CreateTableModel;
+import com.questdb.griffin.parser.model.ParsedModel;
 import com.questdb.griffin.parser.model.QueryModel;
 import com.questdb.test.tools.AbstractTest;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
+
+import java.util.HashSet;
 
 import static com.questdb.griffin.parser.GriffinParserTestUtils.toRpn;
 
@@ -90,6 +95,131 @@ public class QueryParserTest extends AbstractTest {
         Assert.assertEquals(QueryModel.ORDER_DIRECTION_ASCENDING, col.getOrderByDirection().get(1));
         Assert.assertEquals("y", col.getOrderBy().get(2).token);
         Assert.assertEquals(QueryModel.ORDER_DIRECTION_ASCENDING, col.getOrderByDirection().get(2));
+    }
+
+    @Test
+    public void testCreateTable() throws ParserException {
+        final String sql = "create table x (" +
+                "a INT, " +
+                "b BYTE, " +
+                "c SHORT, " +
+                "d LONG, " +
+                "e FLOAT, " +
+                "f DOUBLE, " +
+                "g DATE, " +
+                "h BINARY, " +
+                "t TIMESTAMP, " +
+                "x SYMBOL, " +
+                "z STRING, " +
+                "y BOOLEAN) " +
+                "timestamp(t) " +
+                "partition by MONTH " +
+                "record hint 100";
+
+        String expectedNames[] = {"a", "b", "c", "d", "e", "f", "g", "h", "t", "x", "z", "y"};
+        int expectedTypes[] = {
+                ColumnType.INT,
+                ColumnType.BYTE,
+                ColumnType.SHORT,
+                ColumnType.LONG,
+                ColumnType.FLOAT,
+                ColumnType.DOUBLE,
+                ColumnType.DATE,
+                ColumnType.BINARY,
+                ColumnType.TIMESTAMP,
+                ColumnType.SYMBOL,
+                ColumnType.STRING,
+                ColumnType.BOOLEAN
+        };
+
+        String expectedIndexColumns[] = {};
+        int expectedBlockSizes[] = {};
+
+        assertTableModel(sql, expectedNames, expectedTypes, expectedIndexColumns, expectedBlockSizes, 8, "MONTH");
+    }
+
+    @Test
+    public void testCreateTableInPlaceIndex() throws ParserException {
+        final String sql = "create table x (" +
+                "a INT, " +
+                "b BYTE, " +
+                "c SHORT, " +
+                "d LONG index, " + // <-- index here
+                "e FLOAT, " +
+                "f DOUBLE, " +
+                "g DATE, " +
+                "h BINARY, " +
+                "t TIMESTAMP, " +
+                "x SYMBOL index, " + // <-- index here
+                "z STRING, " +
+                "y BOOLEAN) " +
+                "timestamp(t) " +
+                "partition by YEAR " +
+                "record hint 100";
+
+        String expectedNames[] = {"a", "b", "c", "d", "e", "f", "g", "h", "t", "x", "z", "y"};
+        int expectedTypes[] = {
+                ColumnType.INT,
+                ColumnType.BYTE,
+                ColumnType.SHORT,
+                ColumnType.LONG,
+                ColumnType.FLOAT,
+                ColumnType.DOUBLE,
+                ColumnType.DATE,
+                ColumnType.BINARY,
+                ColumnType.TIMESTAMP,
+                ColumnType.SYMBOL,
+                ColumnType.STRING,
+                ColumnType.BOOLEAN
+        };
+
+        String expectedIndexColumns[] = {"d", "x"};
+        int expectedBlockSizes[] = {1024, 1024};
+        assertTableModel(sql, expectedNames, expectedTypes, expectedIndexColumns, expectedBlockSizes, 8, "YEAR");
+    }
+
+    @Test
+    public void testCreateTableInPlaceIndexAndBlockSize() throws ParserException {
+        final String sql = "create table x (" +
+                "a INT index block size 16, " +
+                "b BYTE, " +
+                "c SHORT, " +
+                "t TIMESTAMP, " +
+                "d LONG, " +
+                "e FLOAT, " +
+                "f DOUBLE, " +
+                "g DATE, " +
+                "h BINARY, " +
+                "x SYMBOL index block size 128, " +
+                "z STRING, " +
+                "y BOOLEAN) " +
+                "timestamp(t) " +
+                "partition by MONTH " +
+                "record hint 100";
+
+        String expectedNames[] = {"a", "b", "c", "t", "d", "e", "f", "g", "h", "x", "z", "y"};
+        int expectedTypes[] = {
+                ColumnType.INT,
+                ColumnType.BYTE,
+                ColumnType.SHORT,
+                ColumnType.TIMESTAMP,
+                ColumnType.LONG,
+                ColumnType.FLOAT,
+                ColumnType.DOUBLE,
+                ColumnType.DATE,
+                ColumnType.BINARY,
+                ColumnType.SYMBOL,
+                ColumnType.STRING,
+                ColumnType.BOOLEAN
+        };
+        String expectedIndexColumns[] = {"a", "x"};
+        int expectedBlockSizes[] = {16, 128};
+        assertTableModel(sql, expectedNames, expectedTypes, expectedIndexColumns, expectedBlockSizes, 3, "MONTH");
+    }
+
+    @Test
+    public void testCreateTableMissingDef() {
+        assertSyntaxError("create table xyx", 13, "Unexpected");
     }
 
     @Test
@@ -163,6 +293,57 @@ public class QueryParserTest extends AbstractTest {
     }
 
     @Test
+    public void testCreateTableMissingName() {
+        assertSyntaxError("create table ", 12, "Unexpected");
+    }
+
+    @Test
+    public void testCreateTableWithIndex() throws ParserException {
+
+        final String sql = "create table x (" +
+                "a INT index block size 16, " +
+                "b BYTE, " +
+                "c SHORT, " +
+                "d LONG, " +
+                "e FLOAT, " +
+                "f DOUBLE, " +
+                "g DATE, " +
+                "h BINARY, " +
+                "t TIMESTAMP, " +
+                "x SYMBOL, " +
+                "z STRING, " +
+                "y BOOLEAN)" +
+                ", index(x) " +
+                "timestamp(t) " +
+                "partition by MONTH " +
+                "record hint 100";
+
+        String expectedNames[] = {"a", "b", "c", "d", "e", "f", "g", "h", "t", "x", "z", "y"};
+        int expectedTypes[] = {
+                ColumnType.INT,
+                ColumnType.BYTE,
+                ColumnType.SHORT,
+                ColumnType.LONG,
+                ColumnType.FLOAT,
+                ColumnType.DOUBLE,
+                ColumnType.DATE,
+                ColumnType.BINARY,
+                ColumnType.TIMESTAMP,
+                ColumnType.SYMBOL,
+                ColumnType.STRING,
+                ColumnType.BOOLEAN
+        };
+        String expectedIndexColumns[] = {"a", "x"};
+        int expectedBlockSizes[] = {16, 1024};
+        assertTableModel(sql, expectedNames, expectedTypes, expectedIndexColumns, expectedBlockSizes, 8, "MONTH");
+    }
+
+    @Test
+    public void testCreateUnsupported() {
+        assertSyntaxError("create object x", 7, "table");
+    }
+
+    @Test
     public void testExtraComma2OrderByInAnalyticFunction() {
         try {
             parser.parse("select a,b, f(c) my over (partition by b order by ts,) from xyz");
@@ -174,12 +355,7 @@ public class QueryParserTest extends AbstractTest {
 
     @Test
     public void testExtraCommaOrderByInAnalyticFunction() {
-        try {
-            parser.parse("select a,b, f(c) my over (partition by b order by ,ts) from xyz");
-            Assert.fail();
-        } catch (ParserException e) {
-            Assert.assertEquals(50, e.getPosition());
-        }
+        assertSyntaxError("select a,b, f(c) my over (partition by b order by ,ts) from xyz", 50, "literal");
     }
 
     @Test
@@ -734,5 +910,55 @@ public class QueryParserTest extends AbstractTest {
         Assert.assertEquals("ohoh", statement.getColumns().get(1).getAlias());
         // where
         Assert.assertEquals("axyinb10=and", toRpn(statement.getWhereClause()));
+    }
+
+    private void assertSyntaxError(String query, int position, String contains) {
+        try {
+            parser.parse(query);
+            Assert.fail("Exception expected");
+        } catch (ParserException e) {
+            Assert.assertEquals(position, e.getPosition());
+            TestUtils.assertContains(e.getMessage(), contains);
+        }
+    }
+
+    private void assertTableModel(
+            String sql,
+            String[] expectedNames,
+            int[] expectedTypes,
+            String[] columnsWithIndexes,
+            int[] expectedBlockSizes,
+            int expectedTimestampIndex,
+            String expectedPartitionBy) throws ParserException {
+
+        ParsedModel model = parser.parse(sql);
+        Assert.assertTrue(model instanceof CreateTableModel);
+
+        final CreateTableModel m = (CreateTableModel) model;
+
+        Assert.assertEquals(expectedPartitionBy, m.getPartitionBy().token);
+        Assert.assertEquals(expectedNames.length, m.getColumnCount());
+
+        // check indexes
+        HashSet<String> indexed = new HashSet<>();
+        for (int i = 0, n = columnsWithIndexes.length; i < n; i++) {
+            int index = m.getColumnIndex(columnsWithIndexes[i]);
+
+            Assert.assertNotEquals(-1, index);
+            Assert.assertTrue(m.getIndexedFlag(index));
+            Assert.assertEquals(expectedBlockSizes[i], m.getIndexBlockCapacity(index));
+            indexed.add(columnsWithIndexes[i]);
+        }
+
+        for (int i = 0, n = m.getColumnCount(); i < n; i++) {
+            Assert.assertEquals(expectedNames[i], m.getColumnName(i));
+            Assert.assertEquals(expectedTypes[i], m.getColumnType(i));
+            // assert that non-indexed columns are correctly reflected in model
+            if (!indexed.contains(expectedNames[i])) {
+                Assert.assertFalse(m.getIndexedFlag(i));
+                Assert.assertEquals(0, m.getIndexBlockCapacity(i));
+            }
+        }
+        Assert.assertEquals(expectedTimestampIndex, m.getColumnIndex(m.getTimestamp().token));
     }
 }
