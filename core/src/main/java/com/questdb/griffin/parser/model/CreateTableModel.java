@@ -68,6 +68,7 @@ public class CreateTableModel implements Mutable, ParsedModel {
         name = null;
         columnBits.clear();
         columnNames.clear();
+        columnNameIndexMap.clear();
     }
 
     public CharSequenceObjHashMap<ColumnCastModel> getColumnCastModels() {
@@ -143,20 +144,20 @@ public class CreateTableModel implements Mutable, ParsedModel {
         this.timestamp = timestamp;
     }
 
-    public void setIndexFlags(boolean indexFlag, int indexBlockCapacity) {
-        setIndexFlags0(columnBits.size() - 1, indexFlag, indexBlockCapacity);
+    public void setIndexFlags(boolean indexFlag, int indexValueBlockSize) {
+        setIndexFlags0(columnBits.size() - 1, indexFlag, indexValueBlockSize);
     }
 
-    public void setIndexFlags(int columnIndex, boolean indexFlag, int indexBlockCapacity) {
-        setIndexFlags0(columnIndex * 2 + 1, indexFlag, indexBlockCapacity);
+    public void setIndexFlags(int columnIndex, boolean indexFlag, int indexValueBlockSize) {
+        setIndexFlags0(columnIndex * 2 + 1, indexFlag, indexValueBlockSize);
     }
 
-    private void setIndexFlags0(int columnIndex, boolean indexFlag, int indexBlockCapacity) {
+    private void setIndexFlags0(int columnIndex, boolean indexFlag, int indexValueBlockSize) {
         assert columnIndex > 0;
         long bits = columnBits.getQuick(columnIndex);
         if (indexFlag) {
-            assert indexBlockCapacity > 1;
-            columnBits.setQuick(columnIndex, bits | ((long) Numbers.ceilPow2(indexBlockCapacity) << 32) | COLUMN_FLAG_INDEXED);
+            assert indexValueBlockSize > 1;
+            columnBits.setQuick(columnIndex, bits | ((long) Numbers.ceilPow2(indexValueBlockSize) << 32) | COLUMN_FLAG_INDEXED);
         } else {
             columnBits.setQuick(columnIndex, bits & ~COLUMN_FLAG_INDEXED);
         }

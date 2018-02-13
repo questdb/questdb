@@ -23,13 +23,13 @@
 
 package com.questdb.griffin.parser;
 
+import com.questdb.cairo.AbstractCairoTest;
 import com.questdb.common.ColumnType;
 import com.questdb.griffin.common.ExprNode;
 import com.questdb.griffin.parser.model.AnalyticColumn;
 import com.questdb.griffin.parser.model.CreateTableModel;
 import com.questdb.griffin.parser.model.ParsedModel;
 import com.questdb.griffin.parser.model.QueryModel;
-import com.questdb.test.tools.AbstractTest;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -38,8 +38,8 @@ import java.util.HashSet;
 
 import static com.questdb.griffin.parser.GriffinParserTestUtils.toRpn;
 
-public class QueryParserTest extends AbstractTest {
-    private final QueryParser parser = new QueryParser();
+public class QueryParserTest extends AbstractCairoTest {
+    private final static QueryParser parser = new QueryParser(configuration);
 
     @Test
     public void testAliasWithSpace() throws Exception {
@@ -174,7 +174,7 @@ public class QueryParserTest extends AbstractTest {
         };
 
         String expectedIndexColumns[] = {"d", "x"};
-        int expectedBlockSizes[] = {1024, 1024};
+        int expectedBlockSizes[] = {configuration.getIndexValueBlockSize(), configuration.getIndexValueBlockSize()};
         assertTableModel(sql, expectedNames, expectedTypes, expectedIndexColumns, expectedBlockSizes, 8, "YEAR");
     }
 
@@ -220,6 +220,57 @@ public class QueryParserTest extends AbstractTest {
     @Test
     public void testCreateTableMissingDef() {
         assertSyntaxError("create table xyx", 13, "Unexpected");
+    }
+
+    @Test
+    public void testCreateTableMissingName() {
+        assertSyntaxError("create table ", 12, "Unexpected");
+    }
+
+    @Test
+    public void testCreateTableWithIndex() throws ParserException {
+
+        final String sql = "create table x (" +
+                "a INT index block size 16, " +
+                "b BYTE, " +
+                "c SHORT, " +
+                "d LONG, " +
+                "e FLOAT, " +
+                "f DOUBLE, " +
+                "g DATE, " +
+                "h BINARY, " +
+                "t TIMESTAMP, " +
+                "x SYMBOL, " +
+                "z STRING, " +
+                "y BOOLEAN)" +
+                ", index(x) " +
+                "timestamp(t) " +
+                "partition by MONTH " +
+                "record hint 100";
+
+        String expectedNames[] = {"a", "b", "c", "d", "e", "f", "g", "h", "t", "x", "z", "y"};
+        int expectedTypes[] = {
+                ColumnType.INT,
+                ColumnType.BYTE,
+                ColumnType.SHORT,
+                ColumnType.LONG,
+                ColumnType.FLOAT,
+                ColumnType.DOUBLE,
+                ColumnType.DATE,
+                ColumnType.BINARY,
+                ColumnType.TIMESTAMP,
+                ColumnType.SYMBOL,
+                ColumnType.STRING,
+                ColumnType.BOOLEAN
+        };
+        String expectedIndexColumns[] = {"a", "x"};
+        int expectedBlockSizes[] = {16, configuration.getIndexValueBlockSize()};
+        assertTableModel(sql, expectedNames, expectedTypes, expectedIndexColumns, expectedBlockSizes, 8, "MONTH");
+    }
+
+    @Test
+    public void testCreateUnsupported() {
+        assertSyntaxError("create object x", 7, "table");
     }
 
     @Test
@@ -290,57 +341,6 @@ public class QueryParserTest extends AbstractTest {
             Assert.assertEquals(27, e.getPosition());
             TestUtils.assertContains(e.getMessage(), "end of input");
         }
-    }
-
-    @Test
-    public void testCreateTableMissingName() {
-        assertSyntaxError("create table ", 12, "Unexpected");
-    }
-
-    @Test
-    public void testCreateTableWithIndex() throws ParserException {
-
-        final String sql = "create table x (" +
-                "a INT index block size 16, " +
-                "b BYTE, " +
-                "c SHORT, " +
-                "d LONG, " +
-                "e FLOAT, " +
-                "f DOUBLE, " +
-                "g DATE, " +
-                "h BINARY, " +
-                "t TIMESTAMP, " +
-                "x SYMBOL, " +
-                "z STRING, " +
-                "y BOOLEAN)" +
-                ", index(x) " +
-                "timestamp(t) " +
-                "partition by MONTH " +
-                "record hint 100";
-
-        String expectedNames[] = {"a", "b", "c", "d", "e", "f", "g", "h", "t", "x", "z", "y"};
-        int expectedTypes[] = {
-                ColumnType.INT,
-                ColumnType.BYTE,
-                ColumnType.SHORT,
-                ColumnType.LONG,
-                ColumnType.FLOAT,
-                ColumnType.DOUBLE,
-                ColumnType.DATE,
-                ColumnType.BINARY,
-                ColumnType.TIMESTAMP,
-                ColumnType.SYMBOL,
-                ColumnType.STRING,
-                ColumnType.BOOLEAN
-        };
-        String expectedIndexColumns[] = {"a", "x"};
-        int expectedBlockSizes[] = {16, 1024};
-        assertTableModel(sql, expectedNames, expectedTypes, expectedIndexColumns, expectedBlockSizes, 8, "MONTH");
-    }
-
-    @Test
-    public void testCreateUnsupported() {
-        assertSyntaxError("create object x", 7, "table");
     }
 
     @Test

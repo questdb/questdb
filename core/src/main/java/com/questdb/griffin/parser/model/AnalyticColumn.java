@@ -47,6 +47,7 @@ public final class AnalyticColumn extends QueryColumn {
         super.clear();
         partitionBy.clear();
         orderBy.clear();
+        orderByDirection.clear();
     }
 
     @Override
