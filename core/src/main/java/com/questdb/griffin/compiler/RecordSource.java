@@ -21,47 +21,35 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.parser;
+package com.questdb.griffin.compiler;
 
-import com.questdb.griffin.common.ExprNode;
+import com.questdb.cairo.Engine;
+import com.questdb.common.RecordCursor;
+import com.questdb.common.RecordFactory;
+import com.questdb.common.RecordMetadata;
+import com.questdb.ql.CancellationHandler;
+import com.questdb.ql.NoOpCancellationHandler;
+import com.questdb.std.CharSequenceObjHashMap;
+import com.questdb.std.Sinkable;
 
-import java.util.ArrayDeque;
-import java.util.Deque;
+import java.io.Closeable;
 
-public final class ExprAstBuilder implements ExprListener {
-
-    private final Deque<ExprNode> stack = new ArrayDeque<>();
+public interface RecordSource extends Sinkable, Closeable, RecordFactory {
 
     @Override
-    public void onNode(ExprNode node) {
-        switch (node.paramCount) {
-            case 0:
-                break;
-            case 1:
-                node.rhs = stack.poll();
-                break;
-            case 2:
-                node.rhs = stack.poll();
-                node.lhs = stack.poll();
-                break;
-            default:
-                for (int i = 0; i < node.paramCount; i++) {
-                    node.args.add(stack.poll());
-                }
-                break;
-        }
-        stack.push(node);
+    void close();
+
+    RecordMetadata getMetadata();
+
+    Parameter getParam(CharSequence name);
+
+    default RecordCursor prepareCursor(Engine storageEngine) {
+        return prepareCursor(storageEngine, NoOpCancellationHandler.INSTANCE);
     }
 
-    public ExprNode poll() {
-        return stack.poll();
-    }
+    RecordCursor prepareCursor(Engine storageEngine, CancellationHandler cancellationHandler);
 
-    public void reset() {
-        stack.clear();
-    }
+    void setParameterMap(CharSequenceObjHashMap<Parameter> map);
 
-    public int size() {
-        return stack.size();
-    }
+    boolean supportsRowIdAccess();
 }

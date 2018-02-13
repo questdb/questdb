@@ -21,7 +21,7 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.parser;
+package com.questdb.griffin.compiler;
 
 import com.questdb.cairo.AbstractCairoTest;
 import com.questdb.cairo.CairoTestUtils;
@@ -32,6 +32,7 @@ import com.questdb.common.PartitionBy;
 import com.questdb.common.RecordMetadata;
 import com.questdb.griffin.common.ExprNode;
 import com.questdb.griffin.common.PostOrderTreeTraversalAlgo;
+import com.questdb.griffin.parser.*;
 import com.questdb.griffin.parser.model.IntrinsicModel;
 import com.questdb.griffin.parser.model.IntrinsicValue;
 import com.questdb.std.Lexer;
