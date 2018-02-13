@@ -21,13 +21,14 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.parser;
+package com.questdb.griffin.compiler;
 
 import com.questdb.common.ColumnType;
 import com.questdb.common.NumericException;
 import com.questdb.common.RecordColumnMetadata;
 import com.questdb.common.RecordMetadata;
 import com.questdb.griffin.common.ExprNode;
+import com.questdb.griffin.parser.ParserException;
 import com.questdb.griffin.parser.model.AliasTranslator;
 import com.questdb.griffin.parser.model.IntrinsicModel;
 import com.questdb.griffin.parser.model.IntrinsicValue;
