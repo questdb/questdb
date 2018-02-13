@@ -43,6 +43,8 @@ public interface CairoConfiguration {
 
     long getInactiveWriterTTL();
 
+    int getIndexValueBlockSize();
+
     int getMaxNumberOfSwapFiles();
 
     int getMkDirMode();

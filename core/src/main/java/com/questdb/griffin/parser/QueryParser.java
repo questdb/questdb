@@ -23,6 +23,7 @@
 
 package com.questdb.griffin.parser;
 
+import com.questdb.cairo.CairoConfiguration;
 import com.questdb.common.ColumnType;
 import com.questdb.common.NumericException;
 import com.questdb.griffin.common.ExprNode;
@@ -48,9 +49,11 @@ public final class QueryParser {
     private final ObjectPool<WithClauseModel> withClauseModelPool = new ObjectPool<>(WithClauseModel.FACTORY, 16);
     private final Lexer secondaryLexer = new Lexer();
     private final ExprParser exprParser = new ExprParser(exprNodePool);
+    private final CairoConfiguration configuration;
     private Lexer lexer = new Lexer();
 
-    public QueryParser() {
+    public QueryParser(CairoConfiguration configuration) {
+        this.configuration = configuration;
         ExprParser.configureLexer(lexer);
         ExprParser.configureLexer(secondaryLexer);
     }
@@ -248,7 +251,7 @@ public final class QueryParser {
                     pos = lexer.position();
                     tok = tok();
                 } else {
-                    model.setIndexFlags(columnIndex, true, 1024); //todo: usue configuration dude
+                    model.setIndexFlags(columnIndex, true, configuration.getIndexValueBlockSize());
                 }
                 expectTok(tok, pos, ')');
 
@@ -331,7 +334,7 @@ public final class QueryParser {
         expectTok(tok, lexer.position(), "index");
 
         if (isFieldTerm(tok = tok())) {
-            model.setIndexFlags(true, 1024); //todo: externalise config
+            model.setIndexFlags(true, configuration.getIndexValueBlockSize());
             return tok;
         }
 

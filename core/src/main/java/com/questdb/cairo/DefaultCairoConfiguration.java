@@ -78,6 +78,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getIndexValueBlockSize() {
+        return 256;
+    }
+
+    @Override
     public int getMaxNumberOfSwapFiles() {
         return 30;
     }
