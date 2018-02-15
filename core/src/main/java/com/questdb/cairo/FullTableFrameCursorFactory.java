@@ -21,22 +21,24 @@
  *
  ******************************************************************************/
 
-package com.questdb.cairo.sql;
+package com.questdb.cairo;
 
-import com.questdb.common.RecordMetadata;
-import com.questdb.common.StorageFacade;
-import com.questdb.std.ImmutableIterator;
+import com.questdb.cairo.sql.CairoEngine;
+import com.questdb.cairo.sql.DataFrameCursor;
+import com.questdb.cairo.sql.DataFrameCursorFactory;
 
-import java.io.Closeable;
+public class FullTableFrameCursorFactory implements DataFrameCursorFactory {
+    private final FullTableFrameCursor cursor = new FullTableFrameCursor();
+    private final CairoEngine engine;
+    private final String tableName;
 
-public interface DataFrameCursor extends ImmutableIterator<DataFrame>, StorageFacade, Closeable {
-
-    boolean reload();
+    public FullTableFrameCursorFactory(CairoEngine engine, String tableName) {
+        this.engine = engine;
+        this.tableName = tableName;
+    }
 
     @Override
-    void close();
-
-    RecordMetadata getMetadata();
-
-    void toTop();
+    public DataFrameCursor getCursor() {
+        return cursor.of(engine.getReader(tableName));
+    }
 }

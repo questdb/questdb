@@ -50,11 +50,6 @@ public class FullTableFrameCursorTest extends AbstractCairoTest {
     private static final int WORK_STEALING_CAS_FLAP = 4;
 
     @Test
-    public void patestRemoveFirstColByDay() throws Exception {
-        testRemoveFirstColumn(PartitionBy.DAY, 1000000 * 60 * 5, 3);
-    }
-
-    @Test
     public void testClose() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
 
@@ -69,9 +64,9 @@ public class FullTableFrameCursorTest extends AbstractCairoTest {
             TableReader reader = new TableReader(configuration, "x");
             FullTableFrameCursor cursor = new FullTableFrameCursor();
             cursor.of(reader);
-            cursor.closeCursor();
+            cursor.close();
             Assert.assertFalse(reader.isOpen());
-            cursor.closeCursor();
+            cursor.close();
             Assert.assertFalse(reader.isOpen());
         });
     }
@@ -494,6 +489,11 @@ public class FullTableFrameCursorTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRemoveFirstColByDay() throws Exception {
+        testRemoveFirstColumn(PartitionBy.DAY, 1000000 * 60 * 5, 3);
+    }
+
+    @Test
     public void testRemoveFirstColByMonth() throws Exception {
         testRemoveFirstColumn(PartitionBy.MONTH, 1000000 * 60 * 5 * 24L, 2);
     }
@@ -906,9 +906,11 @@ public class FullTableFrameCursorTest extends AbstractCairoTest {
             // lets see what we can read after this catastrophe
             try (TableReader reader = new TableReader(AbstractCairoTest.configuration, "ABC")) {
                 FullTableFrameCursor cursor = new FullTableFrameCursor();
-                TableReaderRecord record = new TableReaderRecord(reader);
+                TableReaderRecord record = new TableReaderRecord();
 
                 cursor.of(reader);
+                record.of(reader);
+
                 assertSymbolFoundInIndex(cursor, record, 0, N);
                 cursor.toTop();
                 assertSymbolFoundInIndex(cursor, record, 1, N);
@@ -1029,11 +1031,13 @@ public class FullTableFrameCursorTest extends AbstractCairoTest {
             // lets see what we can read after this catastrophe
             try (TableReader reader = new TableReader(AbstractCairoTest.configuration, "ABC")) {
                 FullTableFrameCursor cursor = new FullTableFrameCursor();
-                TableReaderRecord record = new TableReaderRecord(reader);
+                TableReaderRecord record = new TableReaderRecord();
 
                 Assert.assertEquals(expectedPartitionCount, reader.getPartitionCount());
 
                 cursor.of(reader);
+                record.of(reader);
+
                 assertSymbolFoundInIndex(cursor, record, 0, empty ? 0 : N);
                 cursor.toTop();
                 assertSymbolFoundInIndex(cursor, record, 1, empty ? 0 : N);
@@ -1244,9 +1248,11 @@ public class FullTableFrameCursorTest extends AbstractCairoTest {
                 Assert.assertTrue(reader.getPartitionCount() > expectedPartitionMin);
 
                 FullTableFrameCursor cursor = new FullTableFrameCursor();
-                TableReaderRecord record = new TableReaderRecord(reader);
+                TableReaderRecord record = new TableReaderRecord();
 
                 cursor.of(reader);
+                record.of(reader);
+
                 assertIndexRowsMatchSymbol(cursor, record, 0, N);
                 cursor.toTop();
                 assertIndexRowsMatchSymbol(cursor, record, 1, N);
@@ -1391,11 +1397,13 @@ public class FullTableFrameCursorTest extends AbstractCairoTest {
             // lets see what we can read after this catastrophe
             try (TableReader reader = new TableReader(AbstractCairoTest.configuration, "ABC")) {
                 FullTableFrameCursor cursor = new FullTableFrameCursor();
-                TableReaderRecord record = new TableReaderRecord(reader);
+                TableReaderRecord record = new TableReaderRecord();
 
                 Assert.assertEquals(expectedPartitionCount, reader.getPartitionCount());
 
                 cursor.of(reader);
+                record.of(reader);
+
                 assertSymbolFoundInIndex(cursor, record, 0, empty ? 0 : N);
                 cursor.toTop();
                 assertSymbolFoundInIndex(cursor, record, 1, empty ? 0 : N);
@@ -1468,7 +1476,7 @@ public class FullTableFrameCursorTest extends AbstractCairoTest {
                 writer.commit();
 
                 try (TableReader reader = new TableReader(configuration, "x")) {
-                    TableReaderRecord record = new TableReaderRecord(reader);
+                    TableReaderRecord record = new TableReaderRecord();
 
                     Assert.assertTrue(reader.getPartitionCount() > expectedPartitionMin);
 
@@ -1476,6 +1484,8 @@ public class FullTableFrameCursorTest extends AbstractCairoTest {
 
                     // assert baseline
                     cursor.of(reader);
+                    record.of(reader);
+
                     assertSymbolFoundInIndex(cursor, record, 1, M);
                     cursor.toTop();
                     assertSymbolFoundInIndex(cursor, record, 3, M);
@@ -1542,14 +1552,15 @@ public class FullTableFrameCursorTest extends AbstractCairoTest {
                 writer.commit();
 
                 try (TableReader reader = new TableReader(configuration, "x")) {
-                    TableReaderRecord record = new TableReaderRecord(reader);
+                    FullTableFrameCursor cursor = new FullTableFrameCursor();
+                    TableReaderRecord record = new TableReaderRecord();
 
                     Assert.assertTrue(reader.getPartitionCount() > expectedPartitionMin);
 
-                    FullTableFrameCursor cursor = new FullTableFrameCursor();
-
                     // assert baseline
                     cursor.of(reader);
+                    record.of(reader);
+
                     assertSymbolFoundInIndex(cursor, record, 1, M);
                     cursor.toTop();
                     assertSymbolFoundInIndex(cursor, record, 3, M);
@@ -1612,14 +1623,16 @@ public class FullTableFrameCursorTest extends AbstractCairoTest {
                 writer.commit();
 
                 try (TableReader reader = new TableReader(configuration, "x")) {
-                    TableReaderRecord record = new TableReaderRecord(reader);
+                    FullTableFrameCursor cursor = new FullTableFrameCursor();
+                    TableReaderRecord record = new TableReaderRecord();
 
                     Assert.assertTrue(reader.getPartitionCount() > expectedPartitionMin);
 
-                    FullTableFrameCursor cursor = new FullTableFrameCursor();
 
                     // assert baseline
                     cursor.of(reader);
+                    record.of(reader);
+
                     assertSymbolFoundInIndex(cursor, record, 1, M);
                     cursor.toTop();
                     assertSymbolFoundInIndex(cursor, record, 3, M);
@@ -1689,12 +1702,14 @@ public class FullTableFrameCursorTest extends AbstractCairoTest {
                 try (TableReader reader = new TableReader(configuration, "x")) {
 
                     final FullTableFrameCursor cursor = new FullTableFrameCursor();
-                    final TableReaderRecord record = new TableReaderRecord(reader);
+                    final TableReaderRecord record = new TableReaderRecord();
 
                     Assert.assertTrue(reader.getPartitionCount() > expectedPartitionMin);
 
 
                     cursor.of(reader);
+                    record.of(reader);
+
                     assertSymbolFoundInIndex(cursor, record, 1, M);
                     cursor.toTop();
                     assertSymbolFoundInIndex(cursor, record, 4, M);
@@ -1765,12 +1780,14 @@ public class FullTableFrameCursorTest extends AbstractCairoTest {
                 try (TableReader reader = new TableReader(configuration, "x")) {
 
                     final FullTableFrameCursor cursor = new FullTableFrameCursor();
-                    final TableReaderRecord record = new TableReaderRecord(reader);
+                    final TableReaderRecord record = new TableReaderRecord();
 
                     Assert.assertTrue(reader.getPartitionCount() > expectedPartitionMin);
 
 
                     cursor.of(reader);
+                    record.of(reader);
+
                     assertSymbolFoundInIndex(cursor, record, 1, M);
                     cursor.toTop();
                     assertSymbolFoundInIndex(cursor, record, 4, M);
@@ -1841,12 +1858,14 @@ public class FullTableFrameCursorTest extends AbstractCairoTest {
                 try (TableReader reader = new TableReader(configuration, "x")) {
 
                     final FullTableFrameCursor cursor = new FullTableFrameCursor();
-                    final TableReaderRecord record = new TableReaderRecord(reader);
+                    final TableReaderRecord record = new TableReaderRecord();
 
                     Assert.assertTrue(reader.getPartitionCount() > expectedPartitionMin);
 
 
                     cursor.of(reader);
+                    record.of(reader);
+
                     assertSymbolFoundInIndex(cursor, record, 1, M);
                     cursor.toTop();
                     assertNoIndex(cursor);
@@ -1909,16 +1928,18 @@ public class FullTableFrameCursorTest extends AbstractCairoTest {
             // and current row is collection of index rows
             try (TableReader reader = new TableReader(configuration, "x")) {
 
-                // TableRecord will help us read the table. We need to position this record using
-                // "recordIndex" and "columnBase".
-                TableReaderRecord record = new TableReaderRecord(reader);
-
-                Assert.assertTrue(reader.getPartitionCount() > expectedPartitionMin);
-
                 // Open data frame cursor. This one will frame table as collection of
                 // partitions, each partition is a frame.
                 FullTableFrameCursor cursor = new FullTableFrameCursor();
+                // TableRecord will help us read the table. We need to position this record using
+                // "recordIndex" and "columnBase".
+                TableReaderRecord record = new TableReaderRecord();
+
+                Assert.assertTrue(reader.getPartitionCount() > expectedPartitionMin);
+
                 cursor.of(reader);
+                record.of(reader);
+
                 assertSymbolFoundInIndex(cursor, record, 0, M);
                 cursor.toTop();
                 assertSymbolFoundInIndex(cursor, record, 0, M);
@@ -1962,16 +1983,18 @@ public class FullTableFrameCursorTest extends AbstractCairoTest {
             // and current row is collection of index rows
             try (TableReader reader = new TableReader(configuration, "x")) {
 
-                // TableRecord will help us read the table. We need to position this record using
-                // "recordIndex" and "columnBase".
-                TableReaderRecord record = new TableReaderRecord(reader);
-
-                Assert.assertTrue(reader.getPartitionCount() > expectedPartitionMin);
-
                 // Open data frame cursor. This one will frame table as collection of
                 // partitions, each partition is a frame.
                 FullTableFrameCursor cursor = new FullTableFrameCursor();
+                // TableRecord will help us read the table. We need to position this record using
+                // "recordIndex" and "columnBase".
+                TableReaderRecord record = new TableReaderRecord();
+
+                Assert.assertTrue(reader.getPartitionCount() > expectedPartitionMin);
+
                 cursor.of(reader);
+                record.of(reader);
+
                 assertSymbolFoundInIndex(cursor, record, 0, M * 2);
                 cursor.toTop();
                 assertSymbolFoundInIndex(cursor, record, 0, M * 2);

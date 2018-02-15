@@ -57,7 +57,7 @@ public class TableReader implements Closeable {
     private final TableReaderMetadata metadata;
     private final LongList partitionRowCounts;
     private final PartitionPathGenerator partitionPathGenerator;
-    private final TableReaderRecordCursor recordCursor = new TableReaderRecordCursor(this);
+    private final TableReaderRecordCursor recordCursor = new TableReaderRecordCursor();
     private final DateFormat dateFormat;
     private final TimestampFloorMethod timestampFloorMethod;
     private final IntervalLengthMethod intervalLengthMethod;
@@ -144,6 +144,7 @@ public class TableReader implements Closeable {
             this.partitionRowCounts.seed(partitionCount, -1);
             this.columnTops = new LongList(capacity / 2);
             this.columnTops.setPos(capacity / 2);
+            this.recordCursor.of(this);
         } catch (CairoException e) {
             close();
             throw e;

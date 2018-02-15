@@ -21,22 +21,26 @@
  *
  ******************************************************************************/
 
-package com.questdb.cairo.sql;
+package com.questdb.cairo;
 
-import com.questdb.common.RecordMetadata;
-import com.questdb.common.StorageFacade;
-import com.questdb.std.ImmutableIterator;
+import com.questdb.cairo.sql.CairoEngine;
+import com.questdb.cairo.sql.RecordCursorFactory;
+import com.questdb.common.RecordCursor;
 
-import java.io.Closeable;
+public class TableReaderRecordCursorFactory implements RecordCursorFactory {
+    private final TableReaderRecordCursor cursor = new TableReaderRecordCursor();
+    private final CairoEngine engine;
+    private final String tableName;
 
-public interface DataFrameCursor extends ImmutableIterator<DataFrame>, StorageFacade, Closeable {
 
-    boolean reload();
+    public TableReaderRecordCursorFactory(CairoEngine engine, String tableName) {
+        this.engine = engine;
+        this.tableName = tableName;
+    }
 
     @Override
-    void close();
-
-    RecordMetadata getMetadata();
-
-    void toTop();
+    public RecordCursor getCursor() {
+        cursor.of(engine.getReader(tableName));
+        return cursor;
+    }
 }
