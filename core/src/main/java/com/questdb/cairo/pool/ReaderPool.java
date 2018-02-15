@@ -240,6 +240,17 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
         LOG.info().$("closed").$();
     }
 
+    private void closeReader(long thread, Entry entry, int index, short ev, int reason) {
+        R r = Unsafe.arrayGet(entry.readers, index);
+        if (r != null) {
+            r.goodby();
+            r.close();
+            LOG.info().$("closed '").$(r.getTableName()).$("' [at=").$(entry.index).$(':').$(index).$(", reason=").$(PoolConstants.closeReasonText(reason)).$(']').$();
+            notifyListener(thread, r.getTableName(), ev, entry.index, index);
+            Unsafe.arrayPut(entry.readers, index, null);
+        }
+    }
+
     @Override
     protected boolean releaseAll(long deadline) {
         long thread = Thread.currentThread().getId();
@@ -265,7 +276,7 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
                         if (deadline == Long.MAX_VALUE) {
                             R r = Unsafe.arrayGet(e.readers, i);
                             if (r != null) {
-                                LOG.info().$("shutting down. '").$(r.getName()).$("' is left behind").$();
+                                LOG.info().$("shutting down. '").$(r.getTableName()).$("' is left behind").$();
                             }
                         }
                     }
@@ -276,17 +287,6 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
         return removed;
     }
 
-    private void closeReader(long thread, Entry entry, int index, short ev, int reason) {
-        R r = Unsafe.arrayGet(entry.readers, index);
-        if (r != null) {
-            r.goodby();
-            r.close();
-            LOG.info().$("closed '").$(r.getName()).$("' [at=").$(entry.index).$(':').$(index).$(", reason=").$(PoolConstants.closeReasonText(reason)).$(']').$();
-            notifyListener(thread, r.getName(), ev, entry.index, index);
-            Unsafe.arrayPut(entry.readers, index, null);
-        }
-    }
-
     private void notifyListener(long thread, CharSequence name, short event, int segment, int position) {
         PoolListener listener = getPoolListener();
         if (listener != null) {
@@ -295,7 +295,7 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
     }
 
     private boolean returnToPool(R reader) {
-        CharSequence name = reader.getName();
+        CharSequence name = reader.getTableName();
 
         long thread = Thread.currentThread().getId();
 

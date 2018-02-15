@@ -180,16 +180,17 @@ public final class Chars {
         return true;
     }
 
-    public static boolean equalsIgnoreCase(CharSequence l, int llo, int lhi, CharSequence r, int rlo, int rhi) {
-        int lp = llo;
-        int rp = rlo;
-        while (lp < lhi && rp < rhi) {
-            if (Character.toLowerCase(l.charAt(lp++)) != r.charAt(rp++)) {
-                return false;
-            }
+    public static int hashCode(CharSequence value, int lo, int hi) {
 
+        if (hi == lo) {
+            return 0;
         }
-        return lp == lhi && rp == rhi;
+
+        int h = 0;
+        for (int p = lo; p < hi; p++) {
+            h = 31 * h + value.charAt(p);
+        }
+        return h;
     }
 
     public static boolean equalsNc(CharSequence l, CharSequence r) {
@@ -211,6 +212,18 @@ public final class Chars {
             h = 31 * h + value.charAt(p);
         }
         return h;
+    }
+
+    public static boolean noMatch(CharSequence l, int llo, int lhi, CharSequence r, int rlo, int rhi) {
+        int lp = llo;
+        int rp = rlo;
+        while (lp < lhi && rp < rhi) {
+            if (Character.toLowerCase(l.charAt(lp++)) != r.charAt(rp++)) {
+                return true;
+            }
+
+        }
+        return lp != lhi || rp != rhi;
     }
 
     public static int hashCode(DirectBytes value) {
@@ -346,9 +359,9 @@ public final class Chars {
         }
     }
 
-    public static CharSequence stringOf(CharSequence charSequence) {
+    public static String stringOf(CharSequence charSequence) {
         if (charSequence instanceof String) {
-            return charSequence;
+            return (String) charSequence;
         }
 
         if (charSequence == null) {

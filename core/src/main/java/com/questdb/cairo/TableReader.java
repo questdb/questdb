@@ -61,7 +61,7 @@ public class TableReader implements Closeable {
     private final DateFormat dateFormat;
     private final TimestampFloorMethod timestampFloorMethod;
     private final IntervalLengthMethod intervalLengthMethod;
-    private final CharSequence name;
+    private final String tableName;
     private final ObjList<SymbolMapReader> symbolMapReaders = new ObjList<>();
     private final CairoConfiguration configuration;
     private final IntList symbolCountSnapshot = new IntList();
@@ -81,12 +81,12 @@ public class TableReader implements Closeable {
     private ReloadMethod reloadMethod;
     private long tempMem8b = Unsafe.malloc(8);
 
-    public TableReader(CairoConfiguration configuration, CharSequence name) {
-        LOG.info().$("open '").utf8(name).$('\'').$();
+    public TableReader(CairoConfiguration configuration, CharSequence tableName) {
+        LOG.info().$("open '").utf8(tableName).$('\'').$();
         this.configuration = configuration;
         this.ff = configuration.getFilesFacade();
-        this.name = Chars.stringOf(name);
-        this.path = new Path().of(configuration.getRoot()).concat(name);
+        this.tableName = Chars.stringOf(tableName);
+        this.path = new Path().of(configuration.getRoot()).concat(tableName);
         this.rootLen = path.length();
         try {
             failOnPendingTodo();
@@ -160,7 +160,7 @@ public class TableReader implements Closeable {
             Misc.free(txMem);
             freeColumns();
             freeTempMem();
-            LOG.info().$("closed '").utf8(name).$('\'').$();
+            LOG.info().$("closed '").utf8(tableName).$('\'').$();
         }
     }
 
@@ -222,8 +222,8 @@ public class TableReader implements Closeable {
         return metadata;
     }
 
-    public CharSequence getName() {
-        return name;
+    public CharSequence getTableName() {
+        return tableName;
     }
 
     public int getPartitionCount() {
@@ -648,7 +648,7 @@ public class TableReader implements Closeable {
 
     private TableReaderMetadata openMetaFile() {
         try {
-            return new TableReaderMetadata(ff, path.concat(TableUtils.META_FILE_NAME).$());
+            return new TableReaderMetadata(ff, tableName, path.concat(TableUtils.META_FILE_NAME).$());
         } finally {
             path.trimTo(rootLen);
         }
