@@ -74,8 +74,21 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
         expected.put("sym", 7);
         expected.put("bool", 8);
 
+        expected.put("all.int", 0);
+        expected.put("all.byte", 2);
+        expected.put("all.bin", 9);
+        expected.put("all.short", 1);
+        expected.put("all.float", 4);
+        expected.put("all.long", 5);
+        expected.put("all.xyz", -1);
+        expected.put("all.str", 6);
+        expected.put("all.double", 3);
+        expected.put("all.sym", 7);
+
+        expected.put("zall.sym", -1);
+
         try (Path path = new Path().of(root).concat("all").concat(TableUtils.META_FILE_NAME).$();
-             TableReaderMetadata metadata = new TableReaderMetadata(FilesFacadeImpl.INSTANCE, path)) {
+             TableReaderMetadata metadata = new TableReaderMetadata(FilesFacadeImpl.INSTANCE, "all", path)) {
             for (ObjIntHashMap.Entry<String> e : expected) {
                 Assert.assertEquals(e.value, metadata.getColumnIndexQuiet(e.key));
             }
@@ -253,7 +266,7 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
     private void assertThat(String expected, ColumnManipulator manipulator, int columnCount) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (Path path = new Path().of(root).concat("all")) {
-                try (TableReaderMetadata metadata = new TableReaderMetadata(FilesFacadeImpl.INSTANCE, path.concat(TableUtils.META_FILE_NAME).$())) {
+                try (TableReaderMetadata metadata = new TableReaderMetadata(FilesFacadeImpl.INSTANCE, "all", path.concat(TableUtils.META_FILE_NAME).$())) {
 
                     try (TableWriter writer = new TableWriter(configuration, "all")) {
                         manipulator.restructure(writer);

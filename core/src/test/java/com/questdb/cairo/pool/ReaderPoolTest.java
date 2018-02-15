@@ -277,7 +277,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
                                 RecordCursor cursor = reader.getCursor();
                                 sink.clear();
                                 printer.print(cursor, true, reader.getMetadata());
-                                TestUtils.assertEquals(expectedRowMap.get(reader.getName()), sink);
+                                TestUtils.assertEquals(expectedRowMap.get(reader.getTableName()), sink);
 
                                 Thread.yield();
 

@@ -98,6 +98,20 @@ public class CharSequenceIntHashMap implements Mutable {
         return probe(key, index);
     }
 
+    public int keyIndex(CharSequence key, int lo, int hi) {
+        int index = Chars.hashCode(key, lo, hi) & mask;
+
+        if (Unsafe.arrayGet(keys, index) == noEntryKey) {
+            return index;
+        }
+
+        CharSequence cs = Unsafe.arrayGet(keys, index);
+        if (Chars.equals(key, lo, hi, cs, 0, cs.length())) {
+            return -index - 1;
+        }
+        return probe(key, lo, hi, index);
+    }
+
     public boolean put(CharSequence key, int value) {
         return putAt(keyIndex(key), key, value);
     }
@@ -146,6 +160,19 @@ public class CharSequenceIntHashMap implements Mutable {
                 return index;
             }
             if (Chars.equals(key, Unsafe.arrayGet(keys, index))) {
+                return -index - 1;
+            }
+        } while (true);
+    }
+
+    private int probe(CharSequence key, int lo, int hi, int index) {
+        do {
+            index = (index + 1) & mask;
+            if (Unsafe.arrayGet(keys, index) == noEntryKey) {
+                return index;
+            }
+            CharSequence cs = Unsafe.arrayGet(keys, index);
+            if (Chars.equals(key, lo, hi, cs, 0, cs.length())) {
                 return -index - 1;
             }
         } while (true);
