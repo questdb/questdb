@@ -32,7 +32,6 @@ import com.questdb.std.LongList;
 
 public class IntervalFrameCursor implements DataFrameCursor {
     private final LongList intervals;
-    private final RecordMetadata metadata;
     private final int timestampIndex;
     private final IntervalDataFrame dataFrame = new IntervalDataFrame();
     private TableReader reader;
@@ -55,10 +54,9 @@ public class IntervalFrameCursor implements DataFrameCursor {
      * @param intervals pairs of microsecond interval values, as in "low" and "high" inclusive of
      *                  edges.
      */
-    public IntervalFrameCursor(RecordMetadata metadata, LongList intervals) {
-        this.metadata = metadata;
+    public IntervalFrameCursor(LongList intervals, int timestampIndex) {
         this.intervals = intervals;
-        this.timestampIndex = metadata.getTimestampIndex();
+        this.timestampIndex = timestampIndex;
     }
 
     @Override
@@ -160,7 +158,7 @@ public class IntervalFrameCursor implements DataFrameCursor {
     }
 
     @Override
-    public void closeCursor() {
+    public void close() {
         if (reader != null) {
             reader.close();
             reader = null;
@@ -169,7 +167,7 @@ public class IntervalFrameCursor implements DataFrameCursor {
 
     @Override
     public RecordMetadata getMetadata() {
-        return metadata;
+        return reader.getMetadata();
     }
 
     @Override

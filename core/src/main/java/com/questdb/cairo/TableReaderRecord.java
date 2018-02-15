@@ -34,7 +34,7 @@ public class TableReaderRecord implements Record {
     private long recordIndex = 0;
     private TableReader reader;
 
-    public TableReaderRecord(TableReader reader) {
+    void of(TableReader reader) {
         this.reader = reader;
     }
 

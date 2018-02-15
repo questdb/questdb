@@ -23,20 +23,8 @@
 
 package com.questdb.cairo.sql;
 
-import com.questdb.common.RecordMetadata;
-import com.questdb.common.StorageFacade;
-import com.questdb.std.ImmutableIterator;
+import com.questdb.common.RecordCursor;
 
-import java.io.Closeable;
-
-public interface DataFrameCursor extends ImmutableIterator<DataFrame>, StorageFacade, Closeable {
-
-    boolean reload();
-
-    @Override
-    void close();
-
-    RecordMetadata getMetadata();
-
-    void toTop();
+public interface RecordCursorFactory {
+    RecordCursor getCursor();
 }

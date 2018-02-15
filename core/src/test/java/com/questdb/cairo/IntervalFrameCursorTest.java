@@ -168,11 +168,11 @@ public class IntervalFrameCursorTest extends AbstractCairoTest {
             }
 
             TableReader reader = new TableReader(configuration, "x");
-            IntervalFrameCursor cursor = new IntervalFrameCursor(reader.getMetadata(), intervals);
+            IntervalFrameCursor cursor = new IntervalFrameCursor(intervals, reader.getMetadata().getTimestampIndex());
             cursor.of(reader);
-            cursor.closeCursor();
+            cursor.close();
             Assert.assertFalse(reader.isOpen());
-            cursor.closeCursor();
+            cursor.close();
             Assert.assertFalse(reader.isOpen());
         });
     }
@@ -343,11 +343,13 @@ public class IntervalFrameCursorTest extends AbstractCairoTest {
             long timestamp = DateFormatUtils.parseDateTime("1980-01-01T00:00:00.000Z");
 
             try (TableReader reader = new TableReader(configuration, "x")) {
-                final TableReaderRecord record = new TableReaderRecord(reader);
-                IntervalFrameCursor cursor = new IntervalFrameCursor(reader.getMetadata(), intervals);
+                final TableReaderRecord record = new TableReaderRecord();
+                IntervalFrameCursor cursor = new IntervalFrameCursor(intervals, reader.getMetadata().getTimestampIndex());
 
                 // assert that there is nothing to start with
                 cursor.of(reader);
+                record.of(reader);
+
                 assertEquals("", record, cursor);
 
                 try (TableWriter writer = new TableWriter(configuration, "x")) {
@@ -569,9 +571,11 @@ public class IntervalFrameCursorTest extends AbstractCairoTest {
             }
 
             try (TableReader reader = new TableReader(configuration, "x")) {
-                final TableReaderRecord record = new TableReaderRecord(reader);
-                IntervalFrameCursor cursor = new IntervalFrameCursor(reader.getMetadata(), intervals);
+                final TableReaderRecord record = new TableReaderRecord();
+                IntervalFrameCursor cursor = new IntervalFrameCursor(intervals, reader.getMetadata().getTimestampIndex());
                 cursor.of(reader);
+                record.of(reader);
+
                 assertEquals(expected, record, cursor);
 
                 if (expected.length() > 0) {

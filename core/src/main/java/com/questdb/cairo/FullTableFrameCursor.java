@@ -79,7 +79,7 @@ public class FullTableFrameCursor implements DataFrameCursor {
     }
 
     @Override
-    public void closeCursor() {
+    public void close() {
         if (reader != null) {
             reader.close();
             reader = null;

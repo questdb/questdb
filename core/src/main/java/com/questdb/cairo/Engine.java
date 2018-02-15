@@ -26,6 +26,7 @@ package com.questdb.cairo;
 import com.questdb.cairo.pool.PoolListener;
 import com.questdb.cairo.pool.ReaderPool;
 import com.questdb.cairo.pool.WriterPool;
+import com.questdb.cairo.sql.CairoEngine;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.mp.Job;
@@ -38,7 +39,7 @@ import com.questdb.std.str.Path;
 
 import java.io.Closeable;
 
-public class Engine implements Closeable {
+public class Engine implements Closeable, CairoEngine {
     private static final Log LOG = LogFactory.getLog(Engine.class);
 
     private final WriterPool writerPool;
@@ -54,7 +55,6 @@ public class Engine implements Closeable {
         this.readerPool = new ReaderPool(configuration);
         this.writerMaintenanceJob = new WriterMaintenanceJob(configuration);
     }
-
 
     @Override
     public void close() {
@@ -89,6 +89,7 @@ public class Engine implements Closeable {
         this.readerPool.setPoolListner(poolListener);
     }
 
+    @Override
     public TableReader getReader(CharSequence tableName) {
         return readerPool.get(tableName);
     }
