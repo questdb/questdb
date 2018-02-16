@@ -3012,9 +3012,6 @@ public class TableReaderTest extends AbstractCairoTest {
             cursor.recordAt(rec, rows.getQuick(i));
             asserter.assertRecord(rec, rnd, timestamp += increment, blob);
         }
-
-        // courtesy call to no-op method
-        cursor.releaseCursor();
     }
 
     private long assertPartialCursor(RecordCursor cursor, Rnd rnd, long ts, long increment, long blob, long expectedSize, RecordAssert asserter) {

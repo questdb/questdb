@@ -21,19 +21,42 @@
  *
  ******************************************************************************/
 
-package com.questdb.cairo;
+package com.questdb.griffin.engine.table;
 
-public class BitmapIndexEmptyCursor implements BitmapIndexCursor {
+import com.questdb.common.RowCursor;
+import com.questdb.std.IntLongPriorityQueue;
+import com.questdb.std.Unsafe;
 
-    static final BitmapIndexCursor INSTANCE = new BitmapIndexEmptyCursor();
+class HeapRowCursor implements RowCursor {
+    private final IntLongPriorityQueue heap;
+    private RowCursor[] cursors;
+    private int nCursors;
+
+    public HeapRowCursor(int nCursors) {
+        this.heap = new IntLongPriorityQueue(nCursors);
+        this.nCursors = nCursors;
+    }
 
     @Override
     public boolean hasNext() {
-        return false;
+        return heap.hasNext();
     }
 
     @Override
     public long next() {
-        return 0;
+        int idx = heap.popIndex();
+        return Unsafe.arrayGet(cursors, idx).hasNext() ? heap.popAndReplace(idx, Unsafe.arrayGet(cursors, idx).next()) : heap.popValue();
+    }
+
+    public void of(RowCursor[] cursors) {
+        assert nCursors == cursors.length;
+        this.cursors = cursors;
+        this.heap.clear();
+        for (int i = 0; i < nCursors; i++) {
+            RowCursor cursor = Unsafe.arrayGet(cursors, i);
+            if (cursor.hasNext()) {
+                heap.add(i, cursor.next());
+            }
+        }
     }
 }

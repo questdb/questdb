@@ -23,6 +23,8 @@
 
 package com.questdb.cairo;
 
+import com.questdb.common.RowCursor;
+
 import java.io.Closeable;
 
 public interface BitmapIndexReader extends Closeable {
@@ -41,7 +43,7 @@ public interface BitmapIndexReader extends Closeable {
      * @param maxValue inclusive maximum value
      * @return index value cursor
      */
-    BitmapIndexCursor getCursor(int key, long maxValue);
+    RowCursor getCursor(int key, long maxValue);
 
     int getKeyCount();
 

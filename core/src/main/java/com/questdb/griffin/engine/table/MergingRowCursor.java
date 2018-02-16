@@ -21,10 +21,48 @@
  *
  ******************************************************************************/
 
-package com.questdb.cairo;
+package com.questdb.griffin.engine.table;
 
-public interface BitmapIndexCursor {
-    boolean hasNext();
+import com.questdb.common.RowCursor;
 
-    long next();
+class MergingRowCursor implements RowCursor {
+
+    private RowCursor lhc;
+    private RowCursor rhc;
+    private long nxtl;
+    private long nxtr;
+
+    @Override
+    public boolean hasNext() {
+        return nxtl > -1 || lhc.hasNext() || nxtr > -1 || rhc.hasNext();
+    }
+
+    @Override
+    public long next() {
+        long result;
+
+        if (nxtl == -1 && lhc.hasNext()) {
+            nxtl = lhc.next();
+        }
+
+        if (nxtr == -1 && rhc.hasNext()) {
+            nxtr = rhc.next();
+        }
+
+        if (nxtr == -1 || (nxtl > -1 && nxtl < nxtr)) {
+            result = nxtl;
+            nxtl = -1;
+        } else {
+            result = nxtr;
+            nxtr = -1;
+        }
+
+        return result;
+    }
+
+    public void of(RowCursor lhc, RowCursor rhc) {
+        this.lhc = lhc;
+        this.rhc = rhc;
+        nxtl = nxtr = -1;
+    }
 }

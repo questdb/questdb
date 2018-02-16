@@ -25,6 +25,8 @@ package com.questdb.cairo.sql;
 
 import com.questdb.cairo.TableReader;
 
-public interface CairoEngine {
+import java.io.Closeable;
+
+public interface CairoEngine extends Closeable {
     TableReader getReader(CharSequence tableName);
 }

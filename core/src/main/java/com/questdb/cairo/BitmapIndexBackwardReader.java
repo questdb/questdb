@@ -23,6 +23,7 @@
 
 package com.questdb.cairo;
 
+import com.questdb.common.RowCursor;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.std.Misc;
@@ -62,7 +63,7 @@ public class BitmapIndexBackwardReader implements BitmapIndexReader {
     }
 
     @Override
-    public BitmapIndexCursor getCursor(int key, long maxValue) {
+    public RowCursor getCursor(int key, long maxValue) {
 
         if (key >= keyCount) {
             updateKeyCount();
@@ -79,7 +80,7 @@ public class BitmapIndexBackwardReader implements BitmapIndexReader {
             return cursor;
         }
 
-        return BitmapIndexEmptyCursor.INSTANCE;
+        return EmptyRowCursor.INSTANCE;
     }
 
     @Override
@@ -186,7 +187,7 @@ public class BitmapIndexBackwardReader implements BitmapIndexReader {
         }
     }
 
-    private class Cursor implements BitmapIndexCursor {
+    private class Cursor implements RowCursor {
         protected long valueCount;
         private long valueBlockOffset;
         private final BitmapIndexUtils.ValueBlockSeeker SEEKER = this::seekValue;

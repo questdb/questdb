@@ -21,22 +21,21 @@
  *
  ******************************************************************************/
 
-package com.questdb.cairo.sql;
+package com.questdb.cairo;
 
-import com.questdb.cairo.TableReader;
-import com.questdb.common.StorageFacade;
-import com.questdb.std.ImmutableIterator;
+import com.questdb.common.RowCursor;
 
-import java.io.Closeable;
+public class EmptyRowCursor implements RowCursor {
 
-public interface DataFrameCursor extends ImmutableIterator<DataFrame>, StorageFacade, Closeable {
-
-    boolean reload();
+    static final RowCursor INSTANCE = new EmptyRowCursor();
 
     @Override
-    void close(); // we don't throw IOException
+    public boolean hasNext() {
+        return false;
+    }
 
-    TableReader getReader();
-
-    void toTop();
+    @Override
+    public long next() {
+        return 0;
+    }
 }

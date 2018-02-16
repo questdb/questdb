@@ -21,22 +21,25 @@
  *
  ******************************************************************************/
 
-package com.questdb.cairo.sql;
+package com.questdb.griffin.engine.table;
 
-import com.questdb.cairo.TableReader;
-import com.questdb.common.StorageFacade;
-import com.questdb.std.ImmutableIterator;
+import com.questdb.cairo.sql.DataFrame;
+import com.questdb.cairo.sql.RowCursorFactory;
+import com.questdb.common.RowCursor;
 
-import java.io.Closeable;
+public class MergingRowCursorFactory implements RowCursorFactory {
+    private final RowCursorFactory lhs;
+    private final RowCursorFactory rhs;
+    private final MergingRowCursor cursor = new MergingRowCursor();
 
-public interface DataFrameCursor extends ImmutableIterator<DataFrame>, StorageFacade, Closeable {
-
-    boolean reload();
+    public MergingRowCursorFactory(RowCursorFactory lhs, RowCursorFactory rhs) {
+        this.lhs = lhs;
+        this.rhs = rhs;
+    }
 
     @Override
-    void close(); // we don't throw IOException
-
-    TableReader getReader();
-
-    void toTop();
+    public RowCursor getCursor(DataFrame dataFrame) {
+        cursor.of(lhs.getCursor(dataFrame), rhs.getCursor(dataFrame));
+        return cursor;
+    }
 }

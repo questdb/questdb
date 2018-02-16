@@ -21,22 +21,27 @@
  *
  ******************************************************************************/
 
-package com.questdb.cairo.sql;
+package com.questdb.griffin.engine.table;
 
 import com.questdb.cairo.TableReader;
-import com.questdb.common.StorageFacade;
-import com.questdb.std.ImmutableIterator;
+import com.questdb.cairo.sql.CairoEngine;
+import com.questdb.cairo.sql.DataFrame;
+import com.questdb.cairo.sql.RowCursorFactory;
+import com.questdb.common.RowCursor;
 
-import java.io.Closeable;
+public class SymbolIndexRowCursorFactory implements RowCursorFactory {
+    private final int columnIndex;
+    private final int symbolKey;
 
-public interface DataFrameCursor extends ImmutableIterator<DataFrame>, StorageFacade, Closeable {
-
-    boolean reload();
+    public SymbolIndexRowCursorFactory(CairoEngine engine, CharSequence tableName, CharSequence columnName, CharSequence value) {
+        try (TableReader reader = engine.getReader(tableName)) {
+            this.columnIndex = reader.getMetadata().getColumnIndex(columnName);
+            this.symbolKey = reader.getSymbolMapReader(this.columnIndex).getQuick(value) + 1;
+        }
+    }
 
     @Override
-    void close(); // we don't throw IOException
-
-    TableReader getReader();
-
-    void toTop();
+    public RowCursor getCursor(DataFrame dataFrame) {
+        return dataFrame.getBitmapIndexReader(columnIndex).getCursor(symbolKey, dataFrame.getRowHi() - 1);
+    }
 }
