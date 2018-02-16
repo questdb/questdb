@@ -633,7 +633,7 @@ public class TableReader implements Closeable {
         return partitionRowCounts.getQuick(partitionIndex);
     }
 
-    SymbolMapReader getSymbolMapReader(int columnIndex) {
+    public SymbolMapReader getSymbolMapReader(int columnIndex) {
         return symbolMapReaders.getQuick(columnIndex);
     }
 

@@ -21,22 +21,26 @@
  *
  ******************************************************************************/
 
-package com.questdb.cairo.sql;
+package com.questdb.griffin.engine.table;
 
-import com.questdb.cairo.TableReader;
-import com.questdb.common.StorageFacade;
-import com.questdb.std.ImmutableIterator;
+import com.questdb.cairo.sql.DataFrameCursorFactory;
+import com.questdb.cairo.sql.RecordCursorFactory;
+import com.questdb.cairo.sql.RowCursorFactory;
+import com.questdb.common.RecordCursor;
 
-import java.io.Closeable;
+public class FilteredTableRecordCursorFactory implements RecordCursorFactory {
+    private final DataFrameCursorFactory dataFrameCursorFactory;
+    private final FilteredTableRecordCursor cursor;
 
-public interface DataFrameCursor extends ImmutableIterator<DataFrame>, StorageFacade, Closeable {
-
-    boolean reload();
+    public FilteredTableRecordCursorFactory(DataFrameCursorFactory dataFrameCursorFactory, RowCursorFactory rowCursorFactory) {
+        this.dataFrameCursorFactory = dataFrameCursorFactory;
+        this.cursor = new FilteredTableRecordCursor(rowCursorFactory);
+    }
 
     @Override
-    void close(); // we don't throw IOException
+    public RecordCursor getCursor() {
+        cursor.of(dataFrameCursorFactory.getCursor());
+        return cursor;
+    }
 
-    TableReader getReader();
-
-    void toTop();
 }

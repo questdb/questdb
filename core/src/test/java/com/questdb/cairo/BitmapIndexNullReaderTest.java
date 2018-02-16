@@ -23,6 +23,7 @@
 
 package com.questdb.cairo;
 
+import com.questdb.common.RowCursor;
 import com.questdb.std.Rnd;
 import org.junit.Assert;
 import org.junit.Test;
@@ -42,7 +43,7 @@ public class BitmapIndexNullReaderTest {
         for (int i = 0; i < 10; i++) {
             int n = rnd.nextPositiveInt() % 1024;
             int m = n;
-            BitmapIndexCursor cursor = reader.getCursor(0, n);
+            RowCursor cursor = reader.getCursor(0, n);
             while (cursor.hasNext()) {
                 Assert.assertEquals(m--, cursor.next());
             }

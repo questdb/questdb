@@ -23,6 +23,7 @@
 
 package com.questdb.cairo;
 
+import com.questdb.common.RowCursor;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.std.Misc;
@@ -128,12 +129,12 @@ public class BitmapIndexWriter implements Closeable {
         }
     }
 
-    public BitmapIndexCursor getCursor(int key) {
+    public RowCursor getCursor(int key) {
         if (key < keyCount) {
             cursor.of(key);
             return cursor;
         }
-        return BitmapIndexEmptyCursor.INSTANCE;
+        return EmptyRowCursor.INSTANCE;
     }
 
     final public void of(CairoConfiguration configuration, Path path, CharSequence name) {
@@ -379,7 +380,7 @@ public class BitmapIndexWriter implements Closeable {
         keyMem.putLong(seq);
     }
 
-    private class Cursor implements BitmapIndexCursor {
+    private class Cursor implements RowCursor {
         private long valueBlockOffset;
         private long valueCount;
 

@@ -23,20 +23,8 @@
 
 package com.questdb.cairo.sql;
 
-import com.questdb.cairo.TableReader;
-import com.questdb.common.StorageFacade;
-import com.questdb.std.ImmutableIterator;
+import com.questdb.common.RowCursor;
 
-import java.io.Closeable;
-
-public interface DataFrameCursor extends ImmutableIterator<DataFrame>, StorageFacade, Closeable {
-
-    boolean reload();
-
-    @Override
-    void close(); // we don't throw IOException
-
-    TableReader getReader();
-
-    void toTop();
+public interface RowCursorFactory {
+    RowCursor getCursor(DataFrame dataFrame);
 }

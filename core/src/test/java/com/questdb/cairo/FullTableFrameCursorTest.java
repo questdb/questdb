@@ -25,10 +25,7 @@ package com.questdb.cairo;
 
 import com.questdb.cairo.sql.DataFrame;
 import com.questdb.cairo.sql.DataFrameCursor;
-import com.questdb.common.ColumnType;
-import com.questdb.common.PartitionBy;
-import com.questdb.common.RecordMetadata;
-import com.questdb.common.SymbolTable;
+import com.questdb.common.*;
 import com.questdb.mp.*;
 import com.questdb.std.*;
 import com.questdb.std.microtime.DateFormatUtils;
@@ -734,11 +731,10 @@ public class FullTableFrameCursorTest extends AbstractCairoTest {
 
             int keyCount = indexReader.getKeyCount();
             for (int i = 0; i < keyCount; i++) {
-                BitmapIndexCursor ic = indexReader.getCursor(i, limit - 1);
+                RowCursor ic = indexReader.getCursor(i, limit - 1);
                 CharSequence expected = symbolTable.value(i - 1);
                 while (ic.hasNext()) {
-                    long row = ic.next();
-                    record.jumpTo(frame.getPartitionIndex(), row);
+                    record.setRecordIndex(ic.next());
                     TestUtils.assertEquals(expected, record.getSym(columnIndex));
                     rowCount++;
                 }
@@ -756,12 +752,13 @@ public class FullTableFrameCursorTest extends AbstractCairoTest {
             DataFrame frame = cursor.next();
             record.jumpTo(frame.getPartitionIndex(), frame.getRowLo());
             final long limit = frame.getRowHi();
-            while (record.getRecordIndex() < limit) {
+            long recordIndex;
+            while ((recordIndex = record.getRecordIndex()) < limit) {
                 TestUtils.assertEquals(sg.symA[rnd.nextPositiveInt() % sg.S], record.getSym(0));
                 TestUtils.assertEquals(sg.symB[rnd.nextPositiveInt() % sg.S], record.getSym(1));
                 TestUtils.assertEquals(sg.symC[rnd.nextPositiveInt() % sg.S], record.getSym(2));
                 Assert.assertEquals(rnd.nextDouble(), record.getDouble(3), 0.0000001d);
-                record.incrementRecordIndex();
+                record.setRecordIndex(recordIndex + 1);
                 rowCount++;
             }
         }
@@ -808,7 +805,8 @@ public class FullTableFrameCursorTest extends AbstractCairoTest {
             Assert.assertNotNull(indexReader);
 
             // Iterate data frame and advance record by incrementing "recordIndex"
-            while (record.getRecordIndex() < limit) {
+            long recordIndex;
+            while ((recordIndex = record.getRecordIndex()) < limit) {
                 CharSequence sym = record.getSym(columnIndex);
 
                 // Assert that index cursor contains offset of current row
@@ -816,7 +814,7 @@ public class FullTableFrameCursorTest extends AbstractCairoTest {
                 long target = record.getRecordIndex();
 
                 // Get index cursor for each symbol in data frame
-                BitmapIndexCursor ic = indexReader.getCursor(symbolTable.getQuick(sym) + 1, limit - 1);
+                RowCursor ic = indexReader.getCursor(symbolTable.getQuick(sym) + 1, limit - 1);
 
                 while (ic.hasNext()) {
                     if (ic.next() == target) {
@@ -825,7 +823,7 @@ public class FullTableFrameCursorTest extends AbstractCairoTest {
                     }
                 }
                 Assert.assertTrue(offsetFound);
-                record.incrementRecordIndex();
+                record.setRecordIndex(recordIndex + 1);
                 count++;
             }
         }
@@ -1417,7 +1415,7 @@ public class FullTableFrameCursorTest extends AbstractCairoTest {
                 assertIndexRowsMatchSymbol(cursor, record, 2, empty ? 0 : N);
                 cursor.toTop();
                 assertData(cursor, record, eRnd, sg, empty ? 0 : N);
-                assertMetadataEquals(reader.getMetadata(), cursor.getMetadata());
+                assertMetadataEquals(reader.getMetadata(), cursor.getReader().getMetadata());
 
                 // we should be able to append more rows to new writer instance once the
                 // original problem is resolved, e.g. system can mmap again

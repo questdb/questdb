@@ -21,22 +21,31 @@
  *
  ******************************************************************************/
 
-package com.questdb.cairo.sql;
+package com.questdb.griffin.engine.table;
 
-import com.questdb.cairo.TableReader;
-import com.questdb.common.StorageFacade;
-import com.questdb.std.ImmutableIterator;
+import com.questdb.cairo.sql.DataFrame;
+import com.questdb.cairo.sql.RowCursorFactory;
+import com.questdb.common.RowCursor;
+import com.questdb.std.Unsafe;
 
-import java.io.Closeable;
+public class HeapRowCursorFactory implements RowCursorFactory {
+    private final RowCursorFactory[] cursorFactories;
+    private final RowCursor[] cursors;
+    private final HeapRowCursor cursor;
 
-public interface DataFrameCursor extends ImmutableIterator<DataFrame>, StorageFacade, Closeable {
-
-    boolean reload();
+    public HeapRowCursorFactory(RowCursorFactory[] cursorFactories) {
+        this.cursorFactories = cursorFactories;
+        int n = cursorFactories.length;
+        this.cursors = new RowCursor[n];
+        this.cursor = new HeapRowCursor(n);
+    }
 
     @Override
-    void close(); // we don't throw IOException
-
-    TableReader getReader();
-
-    void toTop();
+    public RowCursor getCursor(DataFrame dataFrame) {
+        for (int i = 0, n = cursorFactories.length; i < n; i++) {
+            Unsafe.arrayPut(cursors, i, Unsafe.arrayGet(cursorFactories, i).getCursor(dataFrame));
+        }
+        cursor.of(cursors);
+        return cursor;
+    }
 }

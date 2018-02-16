@@ -34,10 +34,6 @@ public class TableReaderRecord implements Record {
     private long recordIndex = 0;
     private TableReader reader;
 
-    void of(TableReader reader) {
-        this.reader = reader;
-    }
-
     @Override
     public byte getByte(int col) {
         long index = getIndex(col);
@@ -170,12 +166,20 @@ public class TableReaderRecord implements Record {
         return recordIndex;
     }
 
+    public void of(TableReader reader) {
+        this.reader = reader;
+    }
+
     public void incrementRecordIndex() {
         recordIndex++;
     }
 
     public void jumpTo(int parititonIndex, long recordIndex) {
         this.columnBase = reader.getColumnBase(parititonIndex);
+        this.recordIndex = recordIndex;
+    }
+
+    public void setRecordIndex(long recordIndex) {
         this.recordIndex = recordIndex;
     }
 

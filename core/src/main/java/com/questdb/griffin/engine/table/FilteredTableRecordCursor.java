@@ -21,20 +21,27 @@
  *
  ******************************************************************************/
 
-package com.questdb.cairo;
+package com.questdb.griffin.engine.table;
 
+import com.questdb.cairo.TableReaderRecord;
+import com.questdb.cairo.sql.DataFrame;
+import com.questdb.cairo.sql.DataFrameCursor;
+import com.questdb.cairo.sql.RowCursorFactory;
 import com.questdb.common.Record;
 import com.questdb.common.RecordCursor;
+import com.questdb.common.RowCursor;
 import com.questdb.common.StorageFacade;
 import com.questdb.std.Rows;
 
-public class TableReaderRecordCursor implements RecordCursor {
-
+class FilteredTableRecordCursor implements RecordCursor {
     private final TableReaderRecord record = new TableReaderRecord();
-    private TableReader reader;
-    private int partitionIndex = 0;
-    private int partitionCount;
-    private long maxRecordIndex = -1;
+    private final RowCursorFactory rowCursorFactory;
+    private DataFrameCursor dataFrameCursor;
+    private RowCursor rowCursor;
+
+    public FilteredTableRecordCursor(RowCursorFactory rowCursorFactory) {
+        this.rowCursorFactory = rowCursorFactory;
+    }
 
     @Override
     public Record getRecord() {
@@ -44,7 +51,7 @@ public class TableReaderRecordCursor implements RecordCursor {
     @Override
     public Record newRecord() {
         TableReaderRecord record = new TableReaderRecord();
-        record.of(reader);
+        record.of(dataFrameCursor.getReader());
         return record;
     }
 
@@ -60,46 +67,46 @@ public class TableReaderRecordCursor implements RecordCursor {
     }
 
     @Override
-    public void recordAt(Record record, long rowId) {
-        ((TableReaderRecord) record).jumpTo(Rows.toPartitionIndex(rowId), Rows.toLocalRowID(rowId));
+    public void recordAt(Record record, long atRowId) {
+        ((TableReaderRecord) record).jumpTo(Rows.toPartitionIndex(atRowId), Rows.toLocalRowID(atRowId));
     }
 
     @Override
     public void releaseCursor() {
-        reader.close();
+        dataFrameCursor.close();
     }
 
     @Override
     public void toTop() {
-        partitionIndex = 0;
-        partitionCount = reader.getPartitionCount();
-        record.jumpTo(0, -1);
-        maxRecordIndex = -1;
+        dataFrameCursor.toTop();
     }
 
     @Override
     public boolean hasNext() {
-        return record.getRecordIndex() < maxRecordIndex || switchPartition();
+        if (rowCursor != null && rowCursor.hasNext()) {
+            record.setRecordIndex(rowCursor.next());
+            return true;
+        }
+        return nextFrame();
     }
 
     @Override
     public Record next() {
-        record.incrementRecordIndex();
         return record;
     }
 
-    void of(TableReader reader) {
-        this.reader = reader;
-        this.record.of(reader);
+    public void of(DataFrameCursor dataFrameCursor) {
+        this.dataFrameCursor = dataFrameCursor;
+        this.record.of(dataFrameCursor.getReader());
         toTop();
     }
 
-    private boolean switchPartition() {
-        while (partitionIndex < partitionCount) {
-            final long partitionSize = reader.openPartition(partitionIndex++);
-            if (partitionSize > 0) {
-                maxRecordIndex = partitionSize - 1;
-                record.jumpTo(partitionIndex - 1, -1);
+    private boolean nextFrame() {
+        while (dataFrameCursor.hasNext()) {
+            DataFrame dataFrame = dataFrameCursor.next();
+            rowCursor = rowCursorFactory.getCursor(dataFrame);
+            if (rowCursor.hasNext()) {
+                record.jumpTo(dataFrame.getPartitionIndex(), rowCursor.next());
                 return true;
             }
         }

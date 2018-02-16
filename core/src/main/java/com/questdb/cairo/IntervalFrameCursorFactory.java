@@ -33,10 +33,12 @@ public class IntervalFrameCursorFactory implements DataFrameCursorFactory {
     private final String tableName;
     private final IntervalFrameCursor cursor;
 
-    public IntervalFrameCursorFactory(CairoEngine engine, String tableName, LongList intervals, int timestampIndex) {
+    public IntervalFrameCursorFactory(CairoEngine engine, String tableName, LongList intervals) {
         this.engine = engine;
         this.tableName = tableName;
-        this.cursor = new IntervalFrameCursor(intervals, timestampIndex);
+        try (TableReader reader = engine.getReader(tableName)) {
+            this.cursor = new IntervalFrameCursor(intervals, reader.getMetadata().getTimestampIndex());
+        }
     }
 
     @Override
