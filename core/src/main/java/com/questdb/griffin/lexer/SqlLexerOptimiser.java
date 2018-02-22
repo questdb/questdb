@@ -21,14 +21,14 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.parser;
+package com.questdb.griffin.lexer;
 
 import com.questdb.cairo.CairoConfiguration;
 import com.questdb.cairo.sql.CairoEngine;
 import com.questdb.common.ColumnType;
 import com.questdb.common.NumericException;
 import com.questdb.griffin.common.ExprNode;
-import com.questdb.griffin.parser.model.*;
+import com.questdb.griffin.lexer.model.*;
 import com.questdb.ql.ops.FunctionFactories;
 import com.questdb.std.*;
 import com.questdb.std.str.CharSink;
@@ -36,7 +36,7 @@ import com.questdb.std.str.FlyweightCharSequence;
 
 import java.util.ArrayDeque;
 
-public final class QueryParser {
+public final class SqlLexerOptimiser {
 
     public static final int MAX_ORDER_BY_COLUMNS = 1560;
     private static final CharSequenceHashSet tableAliasStop = new CharSequenceHashSet();
@@ -89,7 +89,7 @@ public final class QueryParser {
     private Lexer lexer = new Lexer();
     private ObjList<JoinContext> emittedJoinClauses;
 
-    public QueryParser(CairoEngine engine, CairoConfiguration configuration) {
+    public SqlLexerOptimiser(CairoEngine engine, CairoConfiguration configuration) {
         this.engine = engine;
         this.configuration = configuration;
 
@@ -111,7 +111,7 @@ public final class QueryParser {
         }
 
         lexer.unparse();
-        return optimise(parseQuery(false));
+        return optimise(parseDml(false));
     }
 
     private static void assertNotNull(ExprNode node, int position, String message) throws ParserException {
@@ -672,7 +672,7 @@ public final class QueryParser {
         Lexer tmp = this.lexer;
         this.lexer = secondaryLexer;
         try {
-            return parseQuery(true);
+            return parseDml(true);
         } finally {
             lexer = tmp;
         }
@@ -1202,7 +1202,7 @@ public final class QueryParser {
             parseTableFields(model);
         } else if (Chars.equals(tok, "as")) {
             expectTok('(');
-            model.setQueryModel(parseQuery(true));
+            model.setQueryModel(parseDml(true));
             expectTok(')');
         } else {
             throw ParserException.position(lexer.position()).put("Unexpected token");
@@ -1338,6 +1338,44 @@ public final class QueryParser {
         return null;
     }
 
+    private QueryModel parseDml(boolean subQuery) throws ParserException {
+
+        CharSequence tok;
+        QueryModel model = queryModelPool.next();
+
+        tok = tok();
+
+        if (Chars.equals(tok, "with")) {
+            parseWithClauses(model);
+            tok = tok();
+        }
+
+        // [select]
+        if (Chars.equals(tok, "select")) {
+            parseSelectColumns(model);
+            QueryModel nestedModel = queryModelPool.next();
+            parseRemainingQuery(nestedModel, subQuery);
+            model.setNestedModel(nestedModel);
+            return model;
+        } else {
+            lexer.unparse();
+            return parseRemainingQuery(model, subQuery);
+        }
+    }
+
+    private void parseLatestBy(QueryModel model) throws ParserException {
+        expectTok("by");
+        model.setLatestBy(expr());
+    }
+
+    private ExprNode parsePartitionBy(CharSequence tok) throws ParserException {
+        if (Chars.equalsNc("partition", tok)) {
+            expectTok("by");
+            return expectLiteral();
+        }
+        return null;
+    }
+
     private QueryModel parseJoin(CharSequence tok, int joinType, QueryModel parent) throws ParserException {
         QueryModel joinModel = queryModelPool.next();
         joinModel.setJoinType(joinType);
@@ -1349,7 +1387,7 @@ public final class QueryParser {
         tok = tok();
 
         if (Chars.equals(tok, '(')) {
-            joinModel.setNestedModel(parseQuery(true));
+            joinModel.setNestedModel(parseDml(true));
             expectTok(')');
         } else {
             lexer.unparse();
@@ -1414,44 +1452,6 @@ public final class QueryParser {
         return joinModel;
     }
 
-    private void parseLatestBy(QueryModel model) throws ParserException {
-        expectTok("by");
-        model.setLatestBy(expr());
-    }
-
-    private ExprNode parsePartitionBy(CharSequence tok) throws ParserException {
-        if (Chars.equalsNc("partition", tok)) {
-            expectTok("by");
-            return expectLiteral();
-        }
-        return null;
-    }
-
-    private QueryModel parseQuery(boolean subQuery) throws ParserException {
-
-        CharSequence tok;
-        QueryModel model = queryModelPool.next();
-
-        tok = tok();
-
-        if (Chars.equals(tok, "with")) {
-            parseWithClauses(model);
-            tok = tok();
-        }
-
-        // [select]
-        if (Chars.equals(tok, "select")) {
-            parseSelectColumns(model);
-            QueryModel nestedModel = queryModelPool.next();
-            parseRemainingQuery(nestedModel, subQuery);
-            model.setNestedModel(nestedModel);
-            return model;
-        } else {
-            lexer.unparse();
-            return parseRemainingQuery(model, subQuery);
-        }
-    }
-
     private ExprNode parseRecordHint(CharSequence tok) throws ParserException {
         if (Chars.equalsNc("record", tok)) {
             expectTok("hint");
@@ -1469,7 +1469,7 @@ public final class QueryParser {
         // expect "(" in case of sub-query
 
         if (Chars.equals(tok, '(')) {
-            model.setNestedModel(parseQuery(true));
+            model.setNestedModel(parseDml(true));
 
             // expect closing bracket
             expectTok(')');
@@ -1743,9 +1743,9 @@ public final class QueryParser {
         }
     }
 
-    private void parseTableName(QueryModel target, QueryModel parent) throws ParserException {
+    private void parseTableName(QueryModel target, QueryModel model) throws ParserException {
         ExprNode tableName = literal();
-        WithClauseModel withClause = tableName != null ? parent.getWithClause(tableName.token) : null;
+        WithClauseModel withClause = tableName != null ? model.getWithClause(tableName.token) : null;
         if (withClause != null) {
             target.setNestedModel(getOrParseQueryModelFromWithClause(withClause));
         } else {
@@ -1775,7 +1775,7 @@ public final class QueryParser {
             expectTok('(');
             int lo, hi;
             lo = lexer.position();
-            QueryModel m = parseQuery(true);
+            QueryModel m = parseDml(true);
             hi = lexer.position();
             WithClauseModel wcm = withClauseModelPool.next();
             wcm.of(lo + 1, hi, m);

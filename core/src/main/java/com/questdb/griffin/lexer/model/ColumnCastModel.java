@@ -21,49 +21,51 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.parser.model;
+package com.questdb.griffin.lexer.model;
 
 import com.questdb.griffin.common.ExprNode;
-import com.questdb.std.IntList;
-import com.questdb.std.ObjList;
+import com.questdb.std.Mutable;
 import com.questdb.std.ObjectFactory;
 
-public final class AnalyticColumn extends QueryColumn {
-    public final static ObjectFactory<AnalyticColumn> FACTORY = AnalyticColumn::new;
-    private final ObjList<ExprNode> partitionBy = new ObjList<>(2);
-    private final ObjList<ExprNode> orderBy = new ObjList<>(2);
-    private final IntList orderByDirection = new IntList(2);
+public class ColumnCastModel implements Mutable {
+    public static final ObjectFactory<ColumnCastModel> FACTORY = ColumnCastModel::new;
 
-    private AnalyticColumn() {
-    }
-
-    public void addOrderBy(ExprNode node, int direction) {
-        orderBy.add(node);
-        orderByDirection.add(direction);
-    }
+    private ExprNode name;
+    private int columnType;
+    private int columnTypePos;
+    private int count;
 
     @Override
     public void clear() {
-        super.clear();
-        partitionBy.clear();
-        orderBy.clear();
-        orderByDirection.clear();
+        count = 0;
     }
 
-    @Override
-    public AnalyticColumn of(String alias, int aliasPosition, ExprNode ast) {
-        return (AnalyticColumn) super.of(alias, aliasPosition, ast);
+    public int getColumnType() {
+        return columnType;
     }
 
-    public ObjList<ExprNode> getOrderBy() {
-        return orderBy;
+    public int getColumnTypePos() {
+        return columnTypePos;
     }
 
-    public IntList getOrderByDirection() {
-        return orderByDirection;
+    public int getCount() {
+        return count;
     }
 
-    public ObjList<ExprNode> getPartitionBy() {
-        return partitionBy;
+    public void setCount(int count) {
+        this.count = count;
+    }
+
+    public ExprNode getName() {
+        return name;
+    }
+
+    public void setName(ExprNode name) {
+        this.name = name;
+    }
+
+    public void setType(int columnType, int columnTypePos) {
+        this.columnType = columnType;
+        this.columnTypePos = columnTypePos;
     }
 }

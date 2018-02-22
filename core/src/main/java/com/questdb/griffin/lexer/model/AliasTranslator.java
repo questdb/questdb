@@ -21,41 +21,8 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.parser.model;
+package com.questdb.griffin.lexer.model;
 
-import com.questdb.griffin.common.ExprNode;
-import com.questdb.std.Mutable;
-import com.questdb.std.ObjectFactory;
-
-public class RenameTableModel implements Mutable, ParsedModel {
-    public static final ObjectFactory<RenameTableModel> FACTORY = RenameTableModel::new;
-
-    private ExprNode from;
-    private ExprNode to;
-
-    @Override
-    public void clear() {
-        from = to = null;
-    }
-
-    public ExprNode getFrom() {
-        return from;
-    }
-
-    public void setFrom(ExprNode from) {
-        this.from = from;
-    }
-
-    @Override
-    public int getModelType() {
-        return ParsedModel.RENAME_JOURNAL;
-    }
-
-    public ExprNode getTo() {
-        return to;
-    }
-
-    public void setTo(ExprNode to) {
-        this.to = to;
-    }
+public interface AliasTranslator {
+    CharSequence translateAlias(CharSequence column);
 }

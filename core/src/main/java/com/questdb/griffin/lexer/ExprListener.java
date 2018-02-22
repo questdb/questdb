@@ -21,51 +21,10 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.parser.model;
+package com.questdb.griffin.lexer;
 
 import com.questdb.griffin.common.ExprNode;
-import com.questdb.std.Mutable;
-import com.questdb.std.ObjectFactory;
 
-public class ColumnCastModel implements Mutable {
-    public static final ObjectFactory<ColumnCastModel> FACTORY = ColumnCastModel::new;
-
-    private ExprNode name;
-    private int columnType;
-    private int columnTypePos;
-    private int count;
-
-    @Override
-    public void clear() {
-        count = 0;
-    }
-
-    public int getColumnType() {
-        return columnType;
-    }
-
-    public int getColumnTypePos() {
-        return columnTypePos;
-    }
-
-    public int getCount() {
-        return count;
-    }
-
-    public void setCount(int count) {
-        this.count = count;
-    }
-
-    public ExprNode getName() {
-        return name;
-    }
-
-    public void setName(ExprNode name) {
-        this.name = name;
-    }
-
-    public void setType(int columnType, int columnTypePos) {
-        this.columnType = columnType;
-        this.columnTypePos = columnTypePos;
-    }
+public interface ExprListener {
+    void onNode(ExprNode node);
 }

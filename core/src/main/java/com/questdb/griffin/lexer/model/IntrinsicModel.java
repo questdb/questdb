@@ -21,11 +21,11 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.parser.model;
+package com.questdb.griffin.lexer.model;
 
 import com.questdb.griffin.common.ExprNode;
-import com.questdb.griffin.parser.IntervalCompiler;
-import com.questdb.griffin.parser.ParserException;
+import com.questdb.griffin.lexer.IntervalCompiler;
+import com.questdb.griffin.lexer.ParserException;
 import com.questdb.std.*;
 
 public class IntrinsicModel implements Mutable {

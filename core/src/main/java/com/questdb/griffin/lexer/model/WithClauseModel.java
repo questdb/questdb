@@ -21,47 +21,44 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.parser;
+package com.questdb.griffin.lexer.model;
 
-import com.questdb.griffin.common.ExprNode;
+import com.questdb.std.Mutable;
+import com.questdb.std.ObjectFactory;
 
-import java.util.ArrayDeque;
-import java.util.Deque;
+public class WithClauseModel implements Mutable {
 
-public final class ExprAstBuilder implements ExprListener {
+    public static final ObjectFactory<WithClauseModel> FACTORY = WithClauseModel::new;
+    private int lo;
+    private int hi;
+    private QueryModel model;
 
-    private final Deque<ExprNode> stack = new ArrayDeque<>();
+    private WithClauseModel() {
+    }
 
     @Override
-    public void onNode(ExprNode node) {
-        switch (node.paramCount) {
-            case 0:
-                break;
-            case 1:
-                node.rhs = stack.poll();
-                break;
-            case 2:
-                node.rhs = stack.poll();
-                node.lhs = stack.poll();
-                break;
-            default:
-                for (int i = 0; i < node.paramCount; i++) {
-                    node.args.add(stack.poll());
-                }
-                break;
-        }
-        stack.push(node);
+    public void clear() {
+        this.lo = this.hi = 0;
+        this.model = null;
     }
 
-    public ExprNode poll() {
-        return stack.poll();
+    public int getHi() {
+        return hi;
     }
 
-    public void reset() {
-        stack.clear();
+    public int getLo() {
+        return lo;
     }
 
-    public int size() {
-        return stack.size();
+    public void of(int lo, int hi, QueryModel model) {
+        this.lo = lo;
+        this.hi = hi;
+        this.model = model;
+    }
+
+    public QueryModel popModel() {
+        QueryModel m = this.model;
+        this.model = null;
+        return m;
     }
 }

@@ -28,10 +28,10 @@ import com.questdb.common.NumericException;
 import com.questdb.common.RecordColumnMetadata;
 import com.questdb.common.RecordMetadata;
 import com.questdb.griffin.common.ExprNode;
-import com.questdb.griffin.parser.ParserException;
-import com.questdb.griffin.parser.model.AliasTranslator;
-import com.questdb.griffin.parser.model.IntrinsicModel;
-import com.questdb.griffin.parser.model.IntrinsicValue;
+import com.questdb.griffin.lexer.ParserException;
+import com.questdb.griffin.lexer.model.AliasTranslator;
+import com.questdb.griffin.lexer.model.IntrinsicModel;
+import com.questdb.griffin.lexer.model.IntrinsicValue;
 import com.questdb.std.*;
 import com.questdb.std.microtime.DateFormatUtils;
 

@@ -21,7 +21,7 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.parser.model;
+package com.questdb.griffin.lexer.model;
 
 import com.questdb.griffin.common.ExprNode;
 import com.questdb.std.Mutable;

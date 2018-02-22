@@ -21,7 +21,7 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.parser;
+package com.questdb.griffin.lexer;
 
 import com.questdb.cairo.AbstractCairoTest;
 import com.questdb.cairo.CairoTestUtils;
@@ -30,9 +30,9 @@ import com.questdb.cairo.TableModel;
 import com.questdb.cairo.sql.CairoEngine;
 import com.questdb.common.ColumnType;
 import com.questdb.common.PartitionBy;
-import com.questdb.griffin.parser.model.CreateTableModel;
-import com.questdb.griffin.parser.model.ParsedModel;
-import com.questdb.griffin.parser.model.QueryModel;
+import com.questdb.griffin.lexer.model.CreateTableModel;
+import com.questdb.griffin.lexer.model.ParsedModel;
+import com.questdb.griffin.lexer.model.QueryModel;
 import com.questdb.std.Files;
 import com.questdb.std.str.Path;
 import com.questdb.test.tools.TestUtils;
@@ -43,9 +43,9 @@ import org.junit.Test;
 import java.io.IOException;
 import java.util.HashSet;
 
-public class QueryParserTest extends AbstractCairoTest {
+public class SqlLexerOptimiserTest extends AbstractCairoTest {
     private final static CairoEngine engine = new Engine(configuration);
-    private final static QueryParser parser = new QueryParser(engine, configuration);
+    private final static SqlLexerOptimiser parser = new SqlLexerOptimiser(engine, configuration);
 
     @AfterClass
     public static void tearDown() throws IOException {
@@ -620,21 +620,21 @@ public class QueryParserTest extends AbstractCairoTest {
 
         StringBuilder b = new StringBuilder();
         b.append("x order by ");
-        for (int i = 0; i < QueryParser.MAX_ORDER_BY_COLUMNS - 1; i++) {
+        for (int i = 0; i < SqlLexerOptimiser.MAX_ORDER_BY_COLUMNS - 1; i++) {
             if (i > 0) {
                 b.append(',');
             }
             b.append('f').append(i);
         }
         QueryModel st = (QueryModel) parser.parse(b);
-        Assert.assertEquals(QueryParser.MAX_ORDER_BY_COLUMNS - 1, st.getOrderBy().size());
+        Assert.assertEquals(SqlLexerOptimiser.MAX_ORDER_BY_COLUMNS - 1, st.getOrderBy().size());
     }
 
     @Test
     public void testTooManyColumnsInOrderBy() {
         StringBuilder b = new StringBuilder();
         b.append("x order by ");
-        for (int i = 0; i < QueryParser.MAX_ORDER_BY_COLUMNS; i++) {
+        for (int i = 0; i < SqlLexerOptimiser.MAX_ORDER_BY_COLUMNS; i++) {
             if (i > 0) {
                 b.append(',');
             }

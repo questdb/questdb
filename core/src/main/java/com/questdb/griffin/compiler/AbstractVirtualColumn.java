@@ -28,7 +28,7 @@ import com.questdb.common.ColumnType;
 import com.questdb.common.Record;
 import com.questdb.common.SymbolTable;
 import com.questdb.griffin.common.VirtualColumn;
-import com.questdb.griffin.parser.ParserException;
+import com.questdb.griffin.lexer.ParserException;
 import com.questdb.std.DirectInputStream;
 import com.questdb.std.str.CharSink;
 
