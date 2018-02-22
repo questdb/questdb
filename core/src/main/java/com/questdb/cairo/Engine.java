@@ -94,8 +94,14 @@ public class Engine implements Closeable, CairoEngine {
         return readerPool.get(tableName);
     }
 
+    @Override
     public int getStatus(CharSequence tableName) {
         return TableUtils.exists(configuration.getFilesFacade(), path, configuration.getRoot(), tableName);
+    }
+
+    @Override
+    public boolean releaseAllReaders() {
+        return readerPool.releaseAll();
     }
 
     public TableWriter getWriter(CharSequence tableName) {

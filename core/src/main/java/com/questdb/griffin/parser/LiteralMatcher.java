@@ -21,11 +21,9 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.compiler;
+package com.questdb.griffin.parser;
 
 import com.questdb.griffin.common.ExprNode;
-import com.questdb.griffin.common.PostOrderTreeTraversalAlgo;
-import com.questdb.griffin.parser.ParserException;
 import com.questdb.std.CharSequenceIntHashMap;
 import com.questdb.std.Chars;
 import com.questdb.store.factory.configuration.ColumnName;

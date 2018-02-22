@@ -255,6 +255,7 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
     protected boolean releaseAll(long deadline) {
         long thread = Thread.currentThread().getId();
         boolean removed = false;
+        int casFailures = 0;
         int closeReason = deadline < Long.MAX_VALUE ? PoolConstants.CR_IDLE : PoolConstants.CR_POOL_CLOSE;
 
         for (Map.Entry<CharSequence, Entry> me : entries.entrySet()) {
@@ -271,6 +272,8 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
                                 closeReader(thread, e, i, PoolListener.EV_EXPIRE, closeReason);
                             }
                             Unsafe.arrayPutOrdered(e.allocations, i, UNALLOCATED);
+                        } else {
+                            casFailures++;
                         }
                     } else {
                         if (deadline == Long.MAX_VALUE) {
@@ -284,7 +287,14 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
                 e = e.next;
             } while (e != null);
         }
-        return removed;
+
+        // when we are timing out entries the result is "true" if there was any work done
+        // when we closing pool, the result is true when pool is empty
+        if (closeReason == PoolConstants.CR_IDLE) {
+            return removed;
+        } else {
+            return casFailures == 0;
+        }
     }
 
     private void notifyListener(long thread, CharSequence name, short event, int segment, int position) {
@@ -328,11 +338,11 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
         final long[] allocations = new long[ENTRY_SIZE];
         final long[] releaseTimes = new long[ENTRY_SIZE];
         final R[] readers = new R[ENTRY_SIZE];
+        final int index;
         volatile long lockOwner = -1L;
         @SuppressWarnings("unused")
         long nextStatus = 0;
         volatile Entry next;
-        final int index;
 
         public Entry(int index, long currentMicros) {
             this.index = index;

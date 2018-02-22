@@ -21,35 +21,41 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.compiler;
+package com.questdb.griffin.parser.model;
 
-import com.questdb.cairo.Engine;
-import com.questdb.common.RecordCursor;
-import com.questdb.common.RecordFactory;
-import com.questdb.common.RecordMetadata;
-import com.questdb.ql.CancellationHandler;
-import com.questdb.ql.NoOpCancellationHandler;
-import com.questdb.std.CharSequenceObjHashMap;
-import com.questdb.std.Sinkable;
+import com.questdb.griffin.common.ExprNode;
+import com.questdb.std.Mutable;
+import com.questdb.std.ObjectFactory;
 
-import java.io.Closeable;
+public class RenameTableModel implements Mutable, ParsedModel {
+    public static final ObjectFactory<RenameTableModel> FACTORY = RenameTableModel::new;
 
-public interface RecordSource extends Sinkable, Closeable, RecordFactory {
+    private ExprNode from;
+    private ExprNode to;
 
     @Override
-    void close();
-
-    RecordMetadata getMetadata();
-
-    Parameter getParam(CharSequence name);
-
-    default RecordCursor prepareCursor(Engine storageEngine) {
-        return prepareCursor(storageEngine, NoOpCancellationHandler.INSTANCE);
+    public void clear() {
+        from = to = null;
     }
 
-    RecordCursor prepareCursor(Engine storageEngine, CancellationHandler cancellationHandler);
+    public ExprNode getFrom() {
+        return from;
+    }
 
-    void setParameterMap(CharSequenceObjHashMap<Parameter> map);
+    public void setFrom(ExprNode from) {
+        this.from = from;
+    }
 
-    boolean supportsRowIdAccess();
+    @Override
+    public int getModelType() {
+        return ParsedModel.RENAME_JOURNAL;
+    }
+
+    public ExprNode getTo() {
+        return to;
+    }
+
+    public void setTo(ExprNode to) {
+        this.to = to;
+    }
 }

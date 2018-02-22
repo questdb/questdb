@@ -116,6 +116,16 @@ public class CharSequenceIntHashMap implements Mutable {
         return putAt(keyIndex(key), key, value);
     }
 
+    public void putAll(CharSequenceIntHashMap other) {
+        CharSequence[] otherKeys = other.keys;
+        int[] otherValues = other.values;
+        for (int i = 0, n = otherKeys.length; i < n; i++) {
+            if (Unsafe.arrayGet(otherKeys, i) != noEntryKey) {
+                put(Unsafe.arrayGet(otherKeys, i), Unsafe.arrayGet(otherValues, i));
+            }
+        }
+    }
+
     public boolean putAt(int index, CharSequence key, int value) {
         if (index < 0) {
             Unsafe.arrayPut(values, -index - 1, value);
