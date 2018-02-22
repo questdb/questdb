@@ -81,16 +81,17 @@ public class ExprNode implements Mutable, Sinkable {
                 sink.put(token);
                 break;
             case 1:
+                sink.put(token);
+                sink.put('(');
+                rhs.toSink(sink);
+                sink.put(')');
+                break;
             case 2:
-                if (lhs != null) {
-                    lhs.toSink(sink);
-                }
+                lhs.toSink(sink);
                 sink.put(' ');
                 sink.put(token);
                 sink.put(' ');
-                if (rhs != null) {
-                    rhs.toSink(sink);
-                }
+                rhs.toSink(sink);
                 break;
             default:
                 sink.put(token);
@@ -104,20 +105,6 @@ public class ExprNode implements Mutable, Sinkable {
                 sink.put(')');
                 break;
         }
-    }
-
-    @Override
-    public String toString() {
-        return "ExprNode{" +
-                "token='" + token + '\'' +
-                ", precedence=" + precedence +
-                ", lhs=" + lhs +
-                ", rhs=" + rhs +
-                ", type=" + type +
-                ", paramCount=" + paramCount +
-                ", args=" + args +
-                ", position=" + position +
-                '}';
     }
 
     private static final class ExprNodeFactory implements ObjectFactory<ExprNode> {

@@ -24,77 +24,52 @@
 package com.questdb.griffin.parser;
 
 import com.questdb.cairo.AbstractCairoTest;
+import com.questdb.cairo.CairoTestUtils;
+import com.questdb.cairo.Engine;
+import com.questdb.cairo.TableModel;
+import com.questdb.cairo.sql.CairoEngine;
 import com.questdb.common.ColumnType;
-import com.questdb.griffin.common.ExprNode;
-import com.questdb.griffin.parser.model.AnalyticColumn;
+import com.questdb.common.PartitionBy;
 import com.questdb.griffin.parser.model.CreateTableModel;
 import com.questdb.griffin.parser.model.ParsedModel;
 import com.questdb.griffin.parser.model.QueryModel;
+import com.questdb.std.Files;
+import com.questdb.std.str.Path;
 import com.questdb.test.tools.TestUtils;
+import org.junit.AfterClass;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.io.IOException;
 import java.util.HashSet;
 
-import static com.questdb.griffin.parser.GriffinParserTestUtils.toRpn;
-
 public class QueryParserTest extends AbstractCairoTest {
-    private final static QueryParser parser = new QueryParser(configuration);
+    private final static CairoEngine engine = new Engine(configuration);
+    private final static QueryParser parser = new QueryParser(engine, configuration);
+
+    @AfterClass
+    public static void tearDown() throws IOException {
+        engine.close();
+    }
 
     @Test
     public void testAliasWithSpace() throws Exception {
-        QueryModel statement = (QueryModel) parser.parse("x 'b a' where x > 1");
-        Assert.assertEquals("b a", statement.getAlias().token);
+        assertModel("x 'b a' where x > 1",
+                "x 'b a' where x > 1",
+                modelOf("x").col("x", ColumnType.INT));
     }
 
     @Test
-    public void testAliasWithSpace2() throws Exception {
-        QueryModel statement = (QueryModel) parser.parse("(x where a > 1) 'b a' where x > 1");
-        Assert.assertEquals("b a", statement.getAlias().token);
-    }
-
-    @Test
-    public void testAliasWithSpacex() {
-        try {
-            parser.parse("from x 'a b' where x > 1");
-        } catch (ParserException e) {
-            Assert.assertEquals(7, e.getPosition());
-        }
-    }
-
-    @Test
-    public void testAliasedAnalyticColumn() throws Exception {
-        QueryModel statement = (QueryModel) parser.parse("select a,b, f(c) my over (partition by b order by ts) from xyz");
-        Assert.assertEquals(3, statement.getColumns().size());
-
-        AnalyticColumn col = (AnalyticColumn) statement.getColumns().get(2);
-        Assert.assertEquals("my", col.getAlias());
-        Assert.assertEquals(ExprNode.FUNCTION, col.getAst().type);
-        Assert.assertEquals(1, col.getPartitionBy().size());
-        Assert.assertEquals("b", col.getPartitionBy().get(0).token);
-
-        Assert.assertEquals(1, col.getOrderBy().size());
-        Assert.assertEquals("ts", col.getOrderBy().get(0).token);
+    public void testAliasWithSpaceX() {
+        assertSyntaxError("from x 'a b' where x > 1", 7, "Unexpected");
     }
 
     @Test
     public void testAnalyticOrderDirection() throws Exception {
-        QueryModel statement = (QueryModel) parser.parse("select a,b, f(c) my over (partition by b order by ts desc, x asc, y) from xyz");
-        Assert.assertEquals(3, statement.getColumns().size());
-
-        AnalyticColumn col = (AnalyticColumn) statement.getColumns().get(2);
-        Assert.assertEquals("my", col.getAlias());
-        Assert.assertEquals(ExprNode.FUNCTION, col.getAst().type);
-        Assert.assertEquals(1, col.getPartitionBy().size());
-        Assert.assertEquals("b", col.getPartitionBy().get(0).token);
-
-        Assert.assertEquals(3, col.getOrderBy().size());
-        Assert.assertEquals("ts", col.getOrderBy().get(0).token);
-        Assert.assertEquals(QueryModel.ORDER_DIRECTION_DESCENDING, col.getOrderByDirection().get(0));
-        Assert.assertEquals("x", col.getOrderBy().get(1).token);
-        Assert.assertEquals(QueryModel.ORDER_DIRECTION_ASCENDING, col.getOrderByDirection().get(1));
-        Assert.assertEquals("y", col.getOrderBy().get(2).token);
-        Assert.assertEquals(QueryModel.ORDER_DIRECTION_ASCENDING, col.getOrderByDirection().get(2));
+        assertModel(
+                "select a, b, f(c) my over (partition by b order by ts desc, x, y) from (xyz)",
+                "select a,b, f(c) my over (partition by b order by ts desc, x asc, y) from xyz",
+                modelOf("xyz").col("x", ColumnType.INT));
     }
 
     @Test
@@ -286,71 +261,50 @@ public class QueryParserTest extends AbstractCairoTest {
 
     @Test
     public void testCrossJoin2() throws Exception {
-        QueryModel statement = (QueryModel) parser.parse("select x from a a cross join b z");
-        Assert.assertNotNull(statement);
-        Assert.assertEquals("a", statement.getAlias().token);
-        Assert.assertEquals(2, statement.getJoinModels().size());
-        Assert.assertEquals(QueryModel.JOIN_CROSS, statement.getJoinModels().getQuick(1).getJoinType());
-        Assert.assertNull(statement.getJoinModels().getQuick(1).getJoinCriteria());
+        assertModel(
+                "select x from (a a cross join b z)",
+                "select x from a a cross join b z",
+                modelOf("a").col("x", ColumnType.INT),
+                modelOf("b").col("x", ColumnType.INT));
     }
 
     @Test
     public void testCrossJoin3() throws Exception {
-        QueryModel statement = (QueryModel) parser.parse("select x from a a " +
-                "cross join b z " +
-                "join c on a.x = c.x");
-        Assert.assertNotNull(statement);
-        Assert.assertEquals("a", statement.getAlias().token);
-        Assert.assertEquals(3, statement.getJoinModels().size());
-        Assert.assertEquals(QueryModel.JOIN_CROSS, statement.getJoinModels().getQuick(1).getJoinType());
-        Assert.assertNull(statement.getJoinModels().getQuick(1).getJoinCriteria());
-        Assert.assertEquals(QueryModel.JOIN_INNER, statement.getJoinModels().getQuick(2).getJoinType());
-        Assert.assertNotNull(statement.getJoinModels().getQuick(2).getJoinCriteria());
+        assertModel(
+                "select x from (a a join c on a.x = c.x cross join b z)",
+                "select x from a a " +
+                        "cross join b z " +
+                        "join c on a.x = c.x",
+                modelOf("a").col("x", ColumnType.INT),
+                modelOf("b").col("x", ColumnType.INT),
+                modelOf("c").col("x", ColumnType.INT)
+        );
     }
 
     @Test
     public void testCrossJoinNoAlias() throws Exception {
-        QueryModel statement = (QueryModel) parser.parse("select x from a a " +
-                "cross join b " +
-                "join c on a.x = c.x");
-        Assert.assertNotNull(statement);
-        Assert.assertEquals("a", statement.getAlias().token);
-        Assert.assertEquals(3, statement.getJoinModels().size());
-        Assert.assertEquals(QueryModel.JOIN_CROSS, statement.getJoinModels().getQuick(1).getJoinType());
-        Assert.assertNull(statement.getJoinModels().getQuick(1).getJoinCriteria());
-        Assert.assertEquals(QueryModel.JOIN_INNER, statement.getJoinModels().getQuick(2).getJoinType());
-        Assert.assertNotNull(statement.getJoinModels().getQuick(2).getJoinCriteria());
+        assertModel("select x from (a a join c on a.x = c.x cross join b)",
+                "select x from a a " +
+                        "cross join b " +
+                        "join c on a.x = c.x",
+                modelOf("a").col("x", ColumnType.INT),
+                modelOf("b").col("x", ColumnType.INT),
+                modelOf("c").col("x", ColumnType.INT));
+    }
+
+    @Test
+    public void testDisallowDotInColumnAlias() {
+        assertSyntaxError("select x x.y, y from tab order by x", 9, "not allowed");
     }
 
     @Test
     public void testEmptyGroupBy() {
-        try {
-            parser.parse("select x, y from tab sample by");
-            Assert.fail("Expected exception");
-        } catch (ParserException e) {
-            Assert.assertEquals(28, e.getPosition());
-        }
+        assertSyntaxError("select x, y from tab sample by", 28, "end of input");
     }
 
     @Test
     public void testEmptyOrderBy() {
-        try {
-            parser.parse("select x, y from tab order by");
-            Assert.fail("Expected exception");
-        } catch (ParserException e) {
-            Assert.assertEquals(27, e.getPosition());
-            TestUtils.assertContains(e.getMessage(), "end of input");
-        }
-    }
-
-    @Test
-    public void testExtraComma2OrderByInAnalyticFunction() {
-        try {
-            parser.parse("select a,b, f(c) my over (partition by b order by ts,) from xyz");
-            Assert.fail();
-        } catch (ParserException e) {
-            Assert.assertEquals(53, e.getPosition());
-        }
+        assertSyntaxError("select x, y from tab order by", 27, "end of input");
     }
 
     @Test
@@ -359,183 +313,99 @@ public class QueryParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testExtraComma2OrderByInAnalyticFunction() {
+        assertSyntaxError("select a,b, f(c) my over (partition by b order by ts,) from xyz", 53, "literal expected");
+    }
+
+    @Test
     public void testExtraCommaPartitionByInAnalyticFunction() {
-        try {
-            parser.parse("select a,b, f(c) my over (partition by b, order by ts) from xyz");
-            Assert.fail();
-        } catch (ParserException e) {
-            Assert.assertEquals(48, e.getPosition());
-        }
+        assertSyntaxError("select a,b, f(c) my over (partition by b, order by ts) from xyz", 48, ") expected");
     }
 
     @Test
     public void testInnerJoin() throws Exception {
-        QueryModel statement = (QueryModel) parser.parse("select x from a a inner join b on b.x = a.x");
-        Assert.assertNotNull(statement);
-        Assert.assertEquals("a", statement.getAlias().token);
-        Assert.assertEquals(2, statement.getJoinModels().size());
-        Assert.assertEquals(QueryModel.JOIN_INNER, statement.getJoinModels().getQuick(1).getJoinType());
-        Assert.assertEquals("b.xa.x=", toRpn(statement.getJoinModels().getQuick(1).getJoinCriteria()));
+        assertModel(
+                "select x from (a a join b on b.x = a.x)",
+                "select x from a a inner join b on b.x = a.x",
+                modelOf("a").col("x", ColumnType.INT),
+                modelOf("b").col("x", ColumnType.INT)
+        );
     }
 
     @Test
     public void testInvalidGroupBy1() {
-        try {
-            parser.parse("select x, y from tab sample by x,");
-            Assert.fail("Expected exception");
-        } catch (ParserException e) {
-            Assert.assertEquals(32, e.getPosition());
-            TestUtils.assertContains(e.getMessage(), "Unexpected");
-        }
+        assertSyntaxError("select x, y from tab sample by x,", 32, "Unexpected");
     }
 
     @Test
     public void testInvalidGroupBy2() {
-        try {
-            parser.parse("select x, y from (tab sample by x,)");
-            Assert.fail("Expected exception");
-        } catch (ParserException e) {
-            Assert.assertEquals(33, e.getPosition());
-        }
+        assertSyntaxError("select x, y from (tab sample by x,)", 33, "')' expected");
     }
 
     @Test
     public void testInvalidGroupBy3() {
-        try {
-            parser.parse("select x, y from tab sample by x, order by y");
-            Assert.fail("Expected exception");
-        } catch (ParserException e) {
-            Assert.assertEquals(32, e.getPosition());
-        }
+        assertSyntaxError("select x, y from tab sample by x, order by y", 32, "Unexpected token: ,");
     }
 
     @Test
     public void testInvalidInnerJoin1() {
-        try {
-            parser.parse("select x from a a inner join b z");
-            Assert.fail("Exception expected");
-        } catch (ParserException e) {
-            Assert.assertEquals(31, e.getPosition());
-            TestUtils.assertContains(e.getMessage(), "'on'");
-        }
+        assertSyntaxError("select x from a a inner join b z", 31, "'on'");
     }
 
     @Test
     public void testInvalidInnerJoin2() {
-        try {
-            parser.parse("select x from a a inner join b z on");
-            Assert.fail("Exception expected");
-        } catch (ParserException e) {
-            Assert.assertEquals(33, e.getPosition());
-            TestUtils.assertContains(e.getMessage(), "Expression");
-        }
+        assertSyntaxError("select x from a a inner join b z on", 33, "Expression");
     }
 
     @Test
     public void testInvalidOrderBy1() {
-        try {
-            parser.parse("select x, y from tab order by x,");
-            Assert.fail("Expected exception");
-        } catch (ParserException e) {
-            Assert.assertEquals(31, e.getPosition());
-            TestUtils.assertContains(e.getMessage(), "end of input");
-        }
+        assertSyntaxError("select x, y from tab order by x,", 31, "end of input");
     }
 
     @Test
     public void testInvalidOrderBy2() {
-        try {
-            parser.parse("select x, y from (tab order by x,)");
-            Assert.fail("Expected exception");
-        } catch (ParserException e) {
-            Assert.assertEquals(33, e.getPosition());
-            TestUtils.assertContains(e.getMessage(), "Expression expected");
-        }
+        assertSyntaxError("select x, y from (tab order by x,)", 33, "Expression expected");
     }
 
     @Test
     public void testInvalidOuterJoin1() {
-        try {
-            parser.parse("select x from a a outer join b z");
-            Assert.fail("Exception expected");
-        } catch (ParserException e) {
-            Assert.assertEquals(31, e.getPosition());
-            TestUtils.assertContains(e.getMessage(), "'on'");
-        }
+        assertSyntaxError("select x from a a outer join b z", 31, "'on'");
     }
 
     @Test
     public void testInvalidOuterJoin2() {
-        try {
-            parser.parse("select x from a a outer join b z on");
-            Assert.fail("Exception expected");
-        } catch (ParserException e) {
-            Assert.assertEquals(33, e.getPosition());
-            TestUtils.assertContains(e.getMessage(), "Expression");
-        }
+        assertSyntaxError("select x from a a outer join b z on", 33, "Expression");
     }
 
     @Test
     public void testInvalidSubQuery() {
-        try {
-            parser.parse("select x,y from (tab where x = 100) latest by x");
-            Assert.fail("Exception expected");
-        } catch (ParserException e) {
-            Assert.assertEquals(36, e.getPosition());
-            TestUtils.assertContains(e.getMessage(), "latest");
-        }
-
+        assertSyntaxError("select x,y from (tab where x = 100) latest by x", 36, "latest");
     }
 
     @Test
     public void testJoin1() throws Exception {
-        QueryModel statement = (QueryModel) parser.parse("select x, y from (select x from tab t2 latest by x where x > 100) t1 " +
-                "join tab2 xx2 on tab2.x = t1.x " +
-                "join tab3 on xx2.x > tab3.b " +
-                "join (select x,y from tab4 latest by z where a > b) x4 on x4.x = t1.y " +
-                "where y > 0");
-
-        Assert.assertEquals("t1", statement.getAlias().token);
-        Assert.assertEquals(4, statement.getJoinModels().size());
-        Assert.assertNotNull(statement.getNestedModel());
-        Assert.assertNull(statement.getJournalName());
-        Assert.assertEquals("y0>", toRpn(statement.getWhereClause()));
-        Assert.assertEquals("tab", toRpn(statement.getNestedModel().getJournalName()));
-        Assert.assertEquals("t2", statement.getNestedModel().getAlias().token);
-        Assert.assertEquals(1, statement.getNestedModel().getJoinModels().size());
-
-        Assert.assertEquals("xx2", statement.getJoinModels().getQuick(1).getAlias().token);
-        Assert.assertNull(statement.getJoinModels().getQuick(2).getAlias());
-        Assert.assertEquals("x4", statement.getJoinModels().getQuick(3).getAlias().token);
-        Assert.assertNotNull(statement.getJoinModels().getQuick(3).getNestedModel());
-
-        Assert.assertEquals("tab2", toRpn(statement.getJoinModels().getQuick(1).getJournalName()));
-        Assert.assertEquals("tab3", toRpn(statement.getJoinModels().getQuick(2).getJournalName()));
-        Assert.assertNull(statement.getJoinModels().getQuick(3).getJournalName());
-
-        Assert.assertEquals("tab2.xt1.x=", toRpn(statement.getJoinModels().getQuick(1).getJoinCriteria()));
-        Assert.assertEquals("xx2.xtab3.b>", toRpn(statement.getJoinModels().getQuick(2).getJoinCriteria()));
-        Assert.assertEquals("x4.xt1.y=", toRpn(statement.getJoinModels().getQuick(3).getJoinCriteria()));
-
-        Assert.assertEquals("ab>", toRpn(statement.getJoinModels().getQuick(3).getNestedModel().getWhereClause()));
-        Assert.assertEquals("z", toRpn(statement.getJoinModels().getQuick(3).getNestedModel().getLatestBy()));
+        assertModel(
+                "select x, y from ((select x from (tab t2 latest by x where x > 100)) t1 join tab2 xx2 on xx2.x = t1.x join (select x, y from (tab4 latest by z where a > b and y > 0)) x4 on x4.x = t1.x cross join tab3 on xx2.x > tab3.b)",
+                "select x, y from (select x from tab t2 latest by x where x > 100) t1 " +
+                        "join tab2 xx2 on xx2.x = t1.x " +
+                        "join tab3 on xx2.x > tab3.b " +
+                        "join (select x,y from tab4 latest by z where a > b) x4 on x4.x = t1.x " +
+                        "where y > 0",
+                modelOf("tab").col("x", ColumnType.INT),
+                modelOf("tab2").col("x", ColumnType.INT),
+                modelOf("tab3").col("b", ColumnType.INT),
+                modelOf("tab4").col("x", ColumnType.INT).col("y", ColumnType.INT).col("z", ColumnType.INT).col("a", ColumnType.INT));
     }
 
     @Test
     public void testJoin2() throws Exception {
-        QueryModel statement = (QueryModel) parser.parse("select x from ((tab join tab2 on tab.x=tab2.x) join tab3 on tab3.x = tab2.x)");
-        Assert.assertNotNull(statement);
-        Assert.assertEquals(1, statement.getJoinModels().size());
-        Assert.assertNotNull(statement.getNestedModel());
-        Assert.assertEquals(2, statement.getNestedModel().getJoinModels().size());
-        Assert.assertEquals("tab3", toRpn(statement.getNestedModel().getJoinModels().getQuick(1).getJournalName()));
-        Assert.assertEquals("tab3.xtab2.x=", toRpn(statement.getNestedModel().getJoinModels().getQuick(1).getJoinCriteria()));
-        Assert.assertEquals(0, statement.getNestedModel().getColumns().size());
-        Assert.assertNotNull(statement.getNestedModel().getNestedModel());
-        Assert.assertEquals("tab", toRpn(statement.getNestedModel().getNestedModel().getJournalName()));
-        Assert.assertEquals(2, statement.getNestedModel().getNestedModel().getJoinModels().size());
-        Assert.assertEquals("tab2", toRpn(statement.getNestedModel().getNestedModel().getJoinModels().getQuick(1).getJournalName()));
-        Assert.assertEquals("tab.xtab2.x=", toRpn(statement.getNestedModel().getNestedModel().getJoinModels().getQuick(1).getJoinCriteria()));
+        assertModel(
+                "select x from (((select tab2.x x from (tab join tab2 on tab.x = tab2.x)) t join tab3 on tab3.x = t.x))",
+                "select x from ((select tab2.x from tab join tab2 on tab.x=tab2.x) t join tab3 on tab3.x = t.x)",
+                modelOf("tab").col("x", ColumnType.INT),
+                modelOf("tab2").col("x", ColumnType.INT),
+                modelOf("tab3").col("x", ColumnType.INT)
+        );
     }
 
     @Test
@@ -568,247 +438,186 @@ public class QueryParserTest extends AbstractCairoTest {
 
     @Test
     public void testMixedFieldsSubQuery() throws Exception {
-        QueryModel statement = (QueryModel) parser.parse("select x, y from (select z from tab t2 latest by x where x > 100) t1 " +
-                "where y > 0");
-        Assert.assertNotNull(statement);
-        Assert.assertNotNull(statement.getNestedModel());
-        Assert.assertNull(statement.getJournalName());
-        Assert.assertEquals("t1", statement.getAlias().token);
-
-        Assert.assertEquals("tab", toRpn(statement.getNestedModel().getJournalName()));
-        Assert.assertEquals("t2", statement.getNestedModel().getAlias().token);
-        Assert.assertEquals("x100>", toRpn(statement.getNestedModel().getWhereClause()));
-        Assert.assertEquals("x", toRpn(statement.getNestedModel().getLatestBy()));
-        Assert.assertEquals(2, statement.getColumns().size());
-        Assert.assertEquals("x", statement.getColumns().get(0).getAst().token);
-        Assert.assertEquals("y", statement.getColumns().get(1).getAst().token);
-        Assert.assertEquals(1, statement.getNestedModel().getColumns().size());
-        Assert.assertEquals("z", statement.getNestedModel().getColumns().get(0).getAst().token);
+        assertModel(
+                "select x, y from ((select z from (tab t2 latest by x where x > 100)) t1 where y > 0)",
+                "select x, y from (select z from tab t2 latest by x where x > 100) t1 where y > 0",
+                modelOf("tab").col("x", ColumnType.INT));
     }
 
     @Test
     public void testMostRecentWhereClause() throws Exception {
-        QueryModel statement = (QueryModel) parser.parse("select a+b*c x, sum(z)+25 ohoh from zyzy latest by x where a in (x,y) and b = 10");
-
-        // journal name
-        Assert.assertEquals("zyzy", statement.getJournalName().token);
-        // columns
-        Assert.assertEquals(2, statement.getColumns().size());
-        Assert.assertEquals("x", statement.getColumns().get(0).getAlias());
-        Assert.assertEquals("ohoh", statement.getColumns().get(1).getAlias());
-        // where
-        Assert.assertEquals("axyinb10=and", toRpn(statement.getWhereClause()));
-        // latest by
-        Assert.assertEquals("x", toRpn(statement.getLatestBy()));
+        assertModel(
+                "select a + b * c x, sum(z) + 25 ohoh from (zyzy latest by x where in(y,x,a) and b = 10)",
+                "select a+b*c x, sum(z)+25 ohoh from zyzy latest by x where a in (x,y) and b = 10",
+                modelOf("zyzy").col("a", ColumnType.INT).col("x", ColumnType.INT)
+        );
     }
 
     @Test
     public void testMultipleExpressions() throws Exception {
-        QueryModel statement = (QueryModel) parser.parse("select a+b*c x, sum(z)+25 ohoh from zyzy");
-        Assert.assertNotNull(statement);
-        Assert.assertEquals("zyzy", statement.getJournalName().token);
-        Assert.assertEquals(2, statement.getColumns().size());
-        Assert.assertEquals("x", statement.getColumns().get(0).getAlias());
-        Assert.assertEquals("ohoh", statement.getColumns().get(1).getAlias());
+        assertModel(
+                "select a + b * c x, sum(z) + 25 ohoh from (zyzy)",
+                "select a+b*c x, sum(z)+25 ohoh from zyzy",
+                modelOf("zyzy").col("a", ColumnType.INT)
+        );
     }
 
     @Test
     public void testOneAnalyticColumn() throws Exception {
-        QueryModel statement = (QueryModel) parser.parse("select a,b, f(c) over (partition by b order by ts) from xyz");
-        Assert.assertEquals(3, statement.getColumns().size());
-
-        AnalyticColumn col = (AnalyticColumn) statement.getColumns().get(2);
-
-        Assert.assertEquals(ExprNode.FUNCTION, col.getAst().type);
-        Assert.assertEquals(1, col.getPartitionBy().size());
-        Assert.assertEquals("b", col.getPartitionBy().get(0).token);
-
-        Assert.assertEquals(1, col.getOrderBy().size());
-        Assert.assertEquals("ts", col.getOrderBy().get(0).token);
+        assertModel(
+                "select a, b, f(c) over (partition by b order by ts) from (xyz)",
+                "select a,b, f(c) over (partition by b order by ts) from xyz",
+                modelOf("xyz")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.INT)
+                        .col("c", ColumnType.INT)
+        );
     }
 
     @Test
     public void testOptionalSelect() throws Exception {
-        QueryModel statement = (QueryModel) parser.parse("tab t2 latest by x where x > 100");
-        Assert.assertNotNull(statement);
-        Assert.assertEquals("tab", toRpn(statement.getJournalName()));
-        Assert.assertEquals("t2", statement.getAlias().token);
-        Assert.assertEquals("x100>", toRpn(statement.getWhereClause()));
-        Assert.assertEquals(0, statement.getColumns().size());
-        Assert.assertEquals("x", toRpn(statement.getLatestBy()));
+        assertModel(
+                "tab t2 latest by x where x > 100",
+                "tab t2 latest by x where x > 100",
+                modelOf("tab").col("x", ColumnType.INT));
     }
 
     @Test
     public void testOrderBy1() throws Exception {
-        QueryModel statement = (QueryModel) parser.parse("select x,y from tab order by x,y,z");
-        Assert.assertNotNull(statement);
-        Assert.assertEquals(3, statement.getOrderBy().size());
-        Assert.assertEquals("x", toRpn(statement.getOrderBy().getQuick(0)));
-        Assert.assertEquals("y", toRpn(statement.getOrderBy().getQuick(1)));
-        Assert.assertEquals("z", toRpn(statement.getOrderBy().getQuick(2)));
+        assertModel(
+                "select x, y from (tab order by x, y, z)",
+                "select x,y from tab order by x,y,z",
+                modelOf("tab").col("x", ColumnType.INT)
+        );
+
     }
 
     @Test
     public void testOrderByExpression() {
-        try {
-            parser.parse("select x, y from tab order by x+y");
-            Assert.fail("Expected exception");
-        } catch (ParserException e) {
-            Assert.assertEquals(31, e.getPosition());
-        }
+        assertSyntaxError("select x, y from tab order by x+y", 31, "Unexpected");
     }
 
     @Test
     public void testOuterJoin() throws Exception {
-        QueryModel statement = (QueryModel) parser.parse("select x from a a outer join b on b.x = a.x");
-        Assert.assertNotNull(statement);
-        Assert.assertEquals("a", statement.getAlias().token);
-        Assert.assertEquals(2, statement.getJoinModels().size());
-        Assert.assertEquals(QueryModel.JOIN_OUTER, statement.getJoinModels().getQuick(1).getJoinType());
-        Assert.assertEquals("b.xa.x=", toRpn(statement.getJoinModels().getQuick(1).getJoinCriteria()));
+        assertModel(
+                "select x from (a a outer join b on b.x = a.x)",
+                "select x from a a outer join b on b.x = a.x",
+                modelOf("a").col("x", ColumnType.INT),
+                modelOf("b").col("x", ColumnType.INT)
+        );
     }
 
     @Test
     public void testSampleBy1() throws Exception {
-        QueryModel statement = (QueryModel) parser.parse("select x,y from tab sample by 2m");
-        Assert.assertNotNull(statement);
-        Assert.assertEquals("2m", statement.getSampleBy().token);
+        assertModel(
+                "select x, y from (tab sample by 2m)",
+                "select x,y from tab sample by 2m",
+                modelOf("tab").col("x", ColumnType.INT).col("y", ColumnType.INT)
+        );
     }
 
     @Test
     public void testSelectPlainColumns() throws Exception {
-        QueryModel statement = (QueryModel) parser.parse("select a,b,c from t");
-
-        Assert.assertNotNull(statement);
-        Assert.assertEquals("t", statement.getJournalName().token);
-        Assert.assertEquals(3, statement.getColumns().size());
-        for (int i = 0; i < 3; i++) {
-            Assert.assertEquals(ExprNode.LITERAL, statement.getColumns().get(i).getAst().type);
-        }
+        assertModel(
+                "select a, b, c from (t)",
+                "select a,b,c from t",
+                modelOf("t").col("a", ColumnType.INT).col("b", ColumnType.INT).col("c", ColumnType.INT)
+        );
     }
 
     @Test
     public void testSelectSingleExpression() throws Exception {
-        QueryModel statement = (QueryModel) parser.parse("select a+b*c x from t");
-        Assert.assertNotNull(statement);
-        Assert.assertEquals(1, statement.getColumns().size());
-        Assert.assertEquals("x", statement.getColumns().get(0).getAlias());
-        Assert.assertEquals("+", statement.getColumns().get(0).getAst().token);
-        Assert.assertEquals("t", statement.getJournalName().token);
+        assertModel(
+                "select a + b * c x from (t)",
+                "select a+b*c x from t",
+                modelOf("t").col("a", ColumnType.INT).col("b", ColumnType.INT).col("c", ColumnType.INT));
     }
 
     @Test
-    public void testSimpleSubquery() throws Exception {
-        QueryModel statement = (QueryModel) parser.parse("(x) where x > 1");
-        Assert.assertNotNull(statement.getNestedModel());
-        Assert.assertEquals("x", statement.getNestedModel().getJournalName().token);
+    public void testSimpleSubQuery() throws Exception {
+        assertModel("(x where y > 1)", "(x) where y > 1", modelOf("x").col("y", ColumnType.INT));
     }
 
     @Test
     public void testSingleJournalLimit() throws Exception {
-        QueryModel statement = (QueryModel) parser.parse("select x x, y y from tab where x > z limit 100");
-        // journal name
-        Assert.assertEquals("tab", statement.getJournalName().token);
-        // columns
-        Assert.assertEquals(2, statement.getColumns().size());
-        Assert.assertEquals("x", statement.getColumns().get(0).getAlias());
-        Assert.assertEquals("y", statement.getColumns().get(1).getAlias());
-        // where
-        Assert.assertEquals("xz>", toRpn(statement.getWhereClause()));
-        // limit
-        Assert.assertEquals("100", toRpn(statement.getLimitLo()));
+        assertModel(
+                "select x x, y y from (tab where x > z limit 100)",
+                "select x x, y y from tab where x > z limit 100",
+                modelOf("tab").col("x", ColumnType.INT).col("y", ColumnType.INT)
+        );
     }
 
     @Test
     public void testSingleJournalLimitLoHi() throws Exception {
-        QueryModel statement = (QueryModel) parser.parse("select x x, y y from tab where x > z limit 100,200");
-        // journal name
-        Assert.assertEquals("tab", statement.getJournalName().token);
-        // columns
-        Assert.assertEquals(2, statement.getColumns().size());
-        Assert.assertEquals("x", statement.getColumns().get(0).getAlias());
-        Assert.assertEquals("y", statement.getColumns().get(1).getAlias());
-        // where
-        Assert.assertEquals("xz>", toRpn(statement.getWhereClause()));
-        // limit
-        Assert.assertEquals("100", toRpn(statement.getLimitLo()));
-        Assert.assertEquals("200", toRpn(statement.getLimitHi()));
+        assertModel(
+                "select x x, y y from (tab where x > z limit 100,200)",
+                "select x x, y y from tab where x > z limit 100,200",
+                modelOf("tab").col("x", ColumnType.INT).col("y", ColumnType.INT)
+        );
     }
 
     @Test
     public void testSingleJournalLimitLoHiExtraToken() {
-        try {
-            parser.parse("select x x, y y from tab where x > z limit 100,200 b");
-        } catch (ParserException e) {
-            Assert.assertEquals(51, e.getPosition());
-        }
+        assertSyntaxError("select x x, y y from tab where x > z limit 100,200 b", 51, "Unexpected");
     }
 
     @Test
     public void testSingleJournalNoWhereLimit() throws Exception {
-        QueryModel statement = (QueryModel) parser.parse("select x x, y y from tab limit 100");
-        // journal name
-        Assert.assertEquals("tab", statement.getJournalName().token);
-        // columns
-        Assert.assertEquals(2, statement.getColumns().size());
-        Assert.assertEquals("x", statement.getColumns().get(0).getAlias());
-        Assert.assertEquals("y", statement.getColumns().get(1).getAlias());
-        // limit
-        Assert.assertEquals("100", toRpn(statement.getLimitLo()));
+        assertModel(
+                "select x x, y y from (tab limit 100)",
+                "select x x, y y from tab limit 100",
+                modelOf("tab").col("x", ColumnType.INT).col("y", ColumnType.INT));
     }
 
     @Test
     public void testSubQuery() throws Exception {
-        QueryModel statement = (QueryModel) parser.parse("select x, y from (select x from tab t2 latest by x where x > 100) t1 " +
-                "where y > 0");
-        Assert.assertNotNull(statement);
-        Assert.assertNotNull(statement.getNestedModel());
-        Assert.assertNull(statement.getJournalName());
-        Assert.assertEquals("t1", statement.getAlias().token);
+        assertModel(
+                "select x, y from ((select x from (tab t2 latest by x where x > 100)) t1 where y > 0)",
+                "select x, y from (select x from tab t2 latest by x where x > 100) t1 where y > 0",
+                modelOf("tab").col("x", ColumnType.INT)
+        );
 
-        Assert.assertEquals("tab", toRpn(statement.getNestedModel().getJournalName()));
-        Assert.assertEquals("t2", statement.getNestedModel().getAlias().token);
-        Assert.assertEquals("x100>", toRpn(statement.getNestedModel().getWhereClause()));
-        Assert.assertEquals("x", toRpn(statement.getNestedModel().getLatestBy()));
+    }
+
+    @Test
+    public void testSubQueryAliasWithSpace() throws Exception {
+        assertModel(
+                "(x where a > 1 and x > 1) 'b a'",
+                "(x where a > 1) 'b a' where x > 1",
+                modelOf("x").col("x", ColumnType.INT));
     }
 
     @Test
     public void testSubqueryLimitLoHi() throws Exception {
-        QueryModel statement = (QueryModel) parser.parse("(select x x, y y from tab where x > z limit 100,200) where x = y limit 150");
-        // journal name
-        Assert.assertEquals("tab", statement.getNestedModel().getJournalName().token);
-        // columns
-        Assert.assertEquals(2, statement.getNestedModel().getColumns().size());
-        Assert.assertEquals("x", statement.getNestedModel().getColumns().get(0).getAlias());
-        Assert.assertEquals("y", statement.getNestedModel().getColumns().get(1).getAlias());
-        // where
-        Assert.assertEquals("xz>", toRpn(statement.getNestedModel().getWhereClause()));
-        // limit
-        Assert.assertEquals("100", toRpn(statement.getNestedModel().getLimitLo()));
-        Assert.assertEquals("200", toRpn(statement.getNestedModel().getLimitHi()));
-
-        Assert.assertEquals("150", toRpn(statement.getLimitLo()));
-        Assert.assertNull(statement.getLimitHi());
+        assertModel(
+                "(select x x, y y from (tab where x > z and x = y limit 100,200)) limit 150",
+                "(select x x, y y from tab where x > z limit 100,200) where x = y limit 150",
+                modelOf("tab").col("x", ColumnType.INT).col("y", ColumnType.INT)
+        );
     }
 
     @Test
     public void testTimestampOnJournal() throws Exception {
-        QueryModel statement = (QueryModel) parser.parse("select x from a b timestamp(x) where x > y");
-        Assert.assertEquals("x", statement.getTimestamp().token);
-        Assert.assertEquals("b", statement.getAlias().token);
-        Assert.assertNotNull(statement.getWhereClause());
+        assertModel(
+                "select x from (a b timestamp (x) where x > y)",
+                "select x from a b timestamp(x) where x > y",
+                modelOf("a").col("x", ColumnType.TIMESTAMP));
     }
 
     @Test
-    public void testTimestampOnSubquery() throws Exception {
-        QueryModel statement = (QueryModel) parser.parse("select x from (a b) timestamp(x) where x > y");
-        Assert.assertEquals("x", statement.getTimestamp().token);
-        Assert.assertNotNull(statement.getNestedModel());
-        Assert.assertNotNull(statement.getWhereClause());
+    public void testTimestampOnSubQuery() throws Exception {
+        assertModel("select x from ((a b where x > y) timestamp (x))",
+                "select x from (a b) timestamp(x) where x > y",
+                modelOf("a").col("x", ColumnType.INT).col("y", ColumnType.INT));
     }
 
     @Test
     public void testTooManyColumnsEdgeInOrderBy() throws Exception {
+        try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)) {
+            model.col("f0", ColumnType.INT);
+            CairoTestUtils.create(model);
+        }
+
         StringBuilder b = new StringBuilder();
         b.append("x order by ");
         for (int i = 0; i < QueryParser.MAX_ORDER_BY_COLUMNS - 1; i++) {
@@ -840,76 +649,58 @@ public class QueryParserTest extends AbstractCairoTest {
 
     @Test
     public void testTwoAnalyticColumns() throws Exception {
-        QueryModel statement = (QueryModel) parser.parse("select a,b, f(c) my over (partition by b order by ts), d(c) over() from xyz");
-        Assert.assertEquals(4, statement.getColumns().size());
-
-        AnalyticColumn col = (AnalyticColumn) statement.getColumns().get(2);
-        Assert.assertEquals("my", col.getAlias());
-        Assert.assertEquals(ExprNode.FUNCTION, col.getAst().type);
-        Assert.assertEquals(1, col.getPartitionBy().size());
-        Assert.assertEquals("b", col.getPartitionBy().get(0).token);
-        Assert.assertEquals(1, col.getOrderBy().size());
-        Assert.assertEquals("ts", col.getOrderBy().get(0).token);
-
-        col = (AnalyticColumn) statement.getColumns().get(3);
-        Assert.assertEquals("d", col.getAst().token);
-        Assert.assertNull(col.getAlias());
-        Assert.assertEquals(0, col.getPartitionBy().size());
-        Assert.assertEquals(0, col.getOrderBy().size());
+        assertModel(
+                "select a, b, f(c) my over (partition by b order by ts), d(c) over () from (xyz)",
+                "select a,b, f(c) my over (partition by b order by ts), d(c) over() from xyz",
+                modelOf("xyz").col("c", ColumnType.INT)
+        );
     }
 
     @Test
     public void testUnbalancedBracketInSubQuery() {
-        try {
-            parser.parse("select x from (tab where x > 10 t1");
-            Assert.fail("Exception expected");
-        } catch (ParserException e) {
-            Assert.assertEquals(32, e.getPosition());
-            TestUtils.assertContains(e.getMessage(), "expected");
-        }
+        assertSyntaxError("select x from (tab where x > 10 t1", 32, "expected");
     }
 
     @Test
     public void testUnderTerminatedOver() {
-        try {
-            parser.parse("select a,b, f(c) my over (partition by b order by ts from xyz");
-            Assert.fail();
-        } catch (ParserException e) {
-            Assert.assertEquals(53, e.getPosition());
-        }
+        assertSyntaxError("select a,b, f(c) my over (partition by b order by ts from xyz", 53, "expected");
     }
 
     @Test
     public void testUnderTerminatedOver2() {
-        try {
-            parser.parse("select a,b, f(c) my over (partition by b order by ts");
-            Assert.fail();
-        } catch (ParserException e) {
-            Assert.assertEquals(50, e.getPosition());
-        }
+        assertSyntaxError("select a,b, f(c) my over (partition by b order by ts", 50, "Unexpected");
     }
 
     @Test
     public void testUnexpectedTokenInAnalyticFunction() {
-        try {
-            parser.parse("select a,b, f(c) my over (by b order by ts) from xyz");
-            Assert.fail();
-        } catch (ParserException e) {
-            Assert.assertEquals(26, e.getPosition());
-        }
+        assertSyntaxError("select a,b, f(c) my over (by b order by ts) from xyz", 26, "expected");
     }
 
     @Test
     public void testWhereClause() throws Exception {
-        QueryModel statement = (QueryModel) parser.parse("select a+b*c x, sum(z)+25 ohoh from zyzy where a in (x,y) and b = 10");
-        // journal name
-        Assert.assertEquals("zyzy", statement.getJournalName().token);
-        // columns
-        Assert.assertEquals(2, statement.getColumns().size());
-        Assert.assertEquals("x", statement.getColumns().get(0).getAlias());
-        Assert.assertEquals("ohoh", statement.getColumns().get(1).getAlias());
-        // where
-        Assert.assertEquals("axyinb10=and", toRpn(statement.getWhereClause()));
+        assertModel(
+                "select a + b * c x, sum(z) + 25 ohoh from (zyzy where in(y,x,a) and b = 10)",
+                "select a+b*c x, sum(z)+25 ohoh from zyzy where a in (x,y) and b = 10",
+                modelOf("zyzy").col("a", ColumnType.INT).col("b", ColumnType.INT));
+    }
+
+    private void assertModel(String expected, String query, TableModel... tableModels) throws ParserException {
+        try {
+            for (int i = 0, n = tableModels.length; i < n; i++) {
+                CairoTestUtils.create(tableModels[i]);
+            }
+            sink.clear();
+            ((QueryModel) parser.parse(query)).toSink(sink);
+            TestUtils.assertEquals(expected, sink);
+        } finally {
+            Assert.assertTrue(engine.releaseAllReaders());
+            for (int i = 0, n = tableModels.length; i < n; i++) {
+                TableModel tableModel = tableModels[i];
+                Path path = tableModel.getPath().of(tableModel.getCairoCfg().getRoot()).concat(tableModel.getName()).put(Files.SEPARATOR).$();
+                Assert.assertTrue(configuration.getFilesFacade().rmdir(path));
+                tableModel.close();
+            }
+        }
     }
 
     private void assertSyntaxError(String query, int position, String contains) {
@@ -960,5 +751,9 @@ public class QueryParserTest extends AbstractCairoTest {
             }
         }
         Assert.assertEquals(expectedTimestampIndex, m.getColumnIndex(m.getTimestamp().token));
+    }
+
+    private TableModel modelOf(String tableName) {
+        return new TableModel(configuration, tableName, PartitionBy.NONE);
     }
 }

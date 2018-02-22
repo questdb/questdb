@@ -29,4 +29,8 @@ import java.io.Closeable;
 
 public interface CairoEngine extends Closeable {
     TableReader getReader(CharSequence tableName);
+
+    int getStatus(CharSequence tableName);
+
+    boolean releaseAllReaders();
 }
