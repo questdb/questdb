@@ -21,7 +21,7 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.parser;
+package com.questdb.griffin.lexer;
 
 import com.questdb.std.CharSequenceObjHashMap;
 import com.questdb.std.ObjList;

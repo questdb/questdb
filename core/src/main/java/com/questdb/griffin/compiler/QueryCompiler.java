@@ -26,16 +26,16 @@ package com.questdb.griffin.compiler;
 import com.questdb.cairo.CairoConfiguration;
 import com.questdb.cairo.sql.CairoEngine;
 import com.questdb.cairo.sql.RecordCursorFactory;
-import com.questdb.griffin.parser.ParserException;
-import com.questdb.griffin.parser.QueryParser;
-import com.questdb.griffin.parser.model.ParsedModel;
-import com.questdb.griffin.parser.model.QueryModel;
+import com.questdb.griffin.lexer.ParserException;
+import com.questdb.griffin.lexer.SqlLexerOptimiser;
+import com.questdb.griffin.lexer.model.ParsedModel;
+import com.questdb.griffin.lexer.model.QueryModel;
 
 public class QueryCompiler {
-    private final QueryParser queryParser;
+    private final SqlLexerOptimiser queryParser;
 
     public QueryCompiler(CairoEngine engine, CairoConfiguration configuration) {
-        this.queryParser = new QueryParser(engine, configuration);
+        this.queryParser = new SqlLexerOptimiser(engine, configuration);
     }
 
     public RecordCursorFactory compileQuery(CharSequence query) throws ParserException {

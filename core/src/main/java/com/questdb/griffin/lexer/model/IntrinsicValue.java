@@ -21,24 +21,13 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.parser;
+package com.questdb.griffin.lexer.model;
 
-import com.questdb.griffin.common.ExprNode;
-import com.questdb.std.str.StringSink;
+public final class IntrinsicValue {
+    public static final int UNDEFINED = 0;
+    public static final int TRUE = 1;
+    public static final int FALSE = 2;
 
-public class RpnBuilder implements ExprListener {
-    private final StringSink sink = new StringSink();
-
-    @Override
-    public void onNode(ExprNode node) {
-        sink.put(node.token);
-    }
-
-    public void reset() {
-        sink.clear();
-    }
-
-    public final CharSequence rpn() {
-        return sink;
+    private IntrinsicValue() {
     }
 }

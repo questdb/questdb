@@ -21,7 +21,7 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.parser.model;
+package com.questdb.griffin.lexer.model;
 
 import com.questdb.cairo.CairoException;
 import com.questdb.cairo.TableReader;
@@ -32,7 +32,7 @@ import com.questdb.common.RecordMetadata;
 import com.questdb.griffin.common.ExprNode;
 import com.questdb.griffin.common.VirtualColumn;
 import com.questdb.griffin.compiler.Parameter;
-import com.questdb.griffin.parser.ParserException;
+import com.questdb.griffin.lexer.ParserException;
 import com.questdb.ql.RecordSource;
 import com.questdb.std.*;
 import com.questdb.std.str.CharSink;

@@ -23,7 +23,7 @@
 
 package com.questdb.griffin.common;
 
-import com.questdb.griffin.parser.ParserException;
+import com.questdb.griffin.lexer.ParserException;
 import com.questdb.std.IntStack;
 
 import java.util.ArrayDeque;

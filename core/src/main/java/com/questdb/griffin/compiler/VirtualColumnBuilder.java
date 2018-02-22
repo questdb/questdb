@@ -33,8 +33,8 @@ import com.questdb.griffin.engine.FunctionFactories;
 import com.questdb.griffin.engine.Signature;
 import com.questdb.griffin.engine.columns.*;
 import com.questdb.griffin.engine.constants.*;
-import com.questdb.griffin.parser.ParserException;
-import com.questdb.griffin.parser.model.QueryModel;
+import com.questdb.griffin.lexer.ParserException;
+import com.questdb.griffin.lexer.model.QueryModel;
 import com.questdb.std.*;
 
 import java.util.ArrayDeque;

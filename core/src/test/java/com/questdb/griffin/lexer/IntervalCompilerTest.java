@@ -21,7 +21,7 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.parser;
+package com.questdb.griffin.lexer;
 
 import com.questdb.std.LongList;
 import com.questdb.std.microtime.DateFormatUtils;
@@ -30,7 +30,7 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
-import static com.questdb.griffin.parser.GriffinParserTestUtils.intervalToString;
+import static com.questdb.griffin.lexer.GriffinParserTestUtils.intervalToString;
 
 public class IntervalCompilerTest {
 

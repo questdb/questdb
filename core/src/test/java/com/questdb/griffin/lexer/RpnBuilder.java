@@ -21,44 +21,24 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.parser.model;
+package com.questdb.griffin.lexer;
 
-import com.questdb.std.Mutable;
-import com.questdb.std.ObjectFactory;
+import com.questdb.griffin.common.ExprNode;
+import com.questdb.std.str.StringSink;
 
-public class WithClauseModel implements Mutable {
-
-    public static final ObjectFactory<WithClauseModel> FACTORY = WithClauseModel::new;
-    private int lo;
-    private int hi;
-    private QueryModel model;
-
-    private WithClauseModel() {
-    }
+public class RpnBuilder implements ExprListener {
+    private final StringSink sink = new StringSink();
 
     @Override
-    public void clear() {
-        this.lo = this.hi = 0;
-        this.model = null;
+    public void onNode(ExprNode node) {
+        sink.put(node.token);
     }
 
-    public int getHi() {
-        return hi;
+    public void reset() {
+        sink.clear();
     }
 
-    public int getLo() {
-        return lo;
-    }
-
-    public void of(int lo, int hi, QueryModel model) {
-        this.lo = lo;
-        this.hi = hi;
-        this.model = model;
-    }
-
-    public QueryModel popModel() {
-        QueryModel m = this.model;
-        this.model = null;
-        return m;
+    public final CharSequence rpn() {
+        return sink;
     }
 }

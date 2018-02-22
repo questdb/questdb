@@ -21,7 +21,7 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.parser;
+package com.questdb.griffin.lexer;
 
 import com.questdb.std.Sinkable;
 import com.questdb.std.ThreadLocal;

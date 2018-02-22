@@ -32,15 +32,15 @@ import com.questdb.common.PartitionBy;
 import com.questdb.common.RecordMetadata;
 import com.questdb.griffin.common.ExprNode;
 import com.questdb.griffin.common.PostOrderTreeTraversalAlgo;
-import com.questdb.griffin.parser.*;
-import com.questdb.griffin.parser.model.IntrinsicModel;
-import com.questdb.griffin.parser.model.IntrinsicValue;
+import com.questdb.griffin.lexer.*;
+import com.questdb.griffin.lexer.model.IntrinsicModel;
+import com.questdb.griffin.lexer.model.IntrinsicValue;
 import com.questdb.std.Lexer;
 import com.questdb.std.ObjectPool;
 import com.questdb.test.tools.TestUtils;
 import org.junit.*;
 
-import static com.questdb.griffin.parser.GriffinParserTestUtils.intervalToString;
+import static com.questdb.griffin.lexer.GriffinParserTestUtils.intervalToString;
 
 public class QueryFilterAnalyserTest extends AbstractCairoTest {
 

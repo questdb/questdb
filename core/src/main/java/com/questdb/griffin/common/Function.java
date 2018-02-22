@@ -24,7 +24,7 @@
 package com.questdb.griffin.common;
 
 
-import com.questdb.griffin.parser.ParserException;
+import com.questdb.griffin.lexer.ParserException;
 
 public interface Function extends VirtualColumn {
     void setArg(int pos, VirtualColumn arg) throws ParserException;

@@ -23,7 +23,7 @@
 
 package com.questdb.griffin.common;
 
-import com.questdb.griffin.parser.model.IntrinsicValue;
+import com.questdb.griffin.lexer.model.IntrinsicValue;
 import com.questdb.std.Mutable;
 import com.questdb.std.ObjList;
 import com.questdb.std.ObjectFactory;

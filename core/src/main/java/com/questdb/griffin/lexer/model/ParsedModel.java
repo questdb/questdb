@@ -21,8 +21,12 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.parser.model;
+package com.questdb.griffin.lexer.model;
 
-public interface AliasTranslator {
-    CharSequence translateAlias(CharSequence column);
+public interface ParsedModel {
+    int QUERY = 1;
+    int CREATE_JOURNAL = 2;
+    int RENAME_JOURNAL = 3;
+
+    int getModelType();
 }
