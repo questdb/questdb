@@ -95,7 +95,7 @@ class VirtualColumnBuilder implements PostOrderTreeTraversalAlgo.Visitor {
     }
 
     VirtualColumn createVirtualColumn(QueryModel model, ExprNode node, RecordMetadata metadata) throws ParserException {
-        this.columnNameHistogram = model.getColumnNameHistogram();
+        this.columnNameHistogram = model.getColumnNameTypeMap();
         this.parameterMap = model.getParameterMap();
         this.model = model;
         this.metadata = metadata;

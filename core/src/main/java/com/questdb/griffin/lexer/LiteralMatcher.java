@@ -39,16 +39,12 @@ class LiteralMatcher implements PostOrderTreeTraversalAlgo.Visitor {
     }
 
     @Override
-    public void visit(ExprNode node) throws ParserException {
+    public void visit(ExprNode node) {
         if (node.type == ExprNode.LITERAL && match) {
             int f = names.get(node.token);
 
-            if (f == 0) {
+            if (f == ExprNode.LITERAL) {
                 return;
-            }
-
-            if (f > 0) {
-                throw ParserException.ambiguousColumn(node.position);
             }
 
             if (alias == null) {
@@ -63,12 +59,11 @@ class LiteralMatcher implements PostOrderTreeTraversalAlgo.Visitor {
                 return;
             }
 
-            if (Chars.equals(columnName.alias(), alias) && (f = names.get(columnName.name())) > -1) {
-                if (f > 0) {
-                    throw ParserException.ambiguousColumn(node.position);
+            if (Chars.equals(columnName.alias(), alias) && (f = names.get(columnName.name())) != -1) {
+                if (f == ExprNode.LITERAL) {
+                    node.token = columnName.name().toString();
+                    return;
                 }
-                node.token = columnName.name().toString();
-                return;
             }
             match = false;
         }

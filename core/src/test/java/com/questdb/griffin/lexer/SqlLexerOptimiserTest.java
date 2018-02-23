@@ -38,6 +38,7 @@ import com.questdb.std.str.Path;
 import com.questdb.test.tools.TestUtils;
 import org.junit.AfterClass;
 import org.junit.Assert;
+import org.junit.Ignore;
 import org.junit.Test;
 
 import java.io.IOException;
@@ -53,6 +54,15 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     }
 
     @Test
+    @Ignore
+    public void testAliasInWhereClause() throws ParserException {
+        assertModel(
+                "",
+                "select x a from tab where b > 10",
+                modelOf("tab").col("x", ColumnType.INT));
+    }
+
+    @Test
     public void testAliasWithSpace() throws Exception {
         assertModel("x 'b a' where x > 1",
                 "x 'b a' where x > 1",
@@ -65,11 +75,84 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAmbiguousColumn() {
+        assertSyntaxError("orders join customers on customerId = customerId", 25, "Ambiguous",
+                modelOf("orders").col("customerId", ColumnType.INT),
+                modelOf("customers").col("customerId", ColumnType.INT)
+        );
+    }
+
+    @Test
     public void testAnalyticOrderDirection() throws Exception {
         assertModel(
-                "select a, b, f(c) my over (partition by b order by ts desc, x, y) from (xyz)",
+                "select-choose a, b, my from (select-analytic a, b, f(c) my over (partition by b order by ts desc, x, y) from (xyz))",
                 "select a,b, f(c) my over (partition by b order by ts desc, x asc, y) from xyz",
-                modelOf("xyz").col("x", ColumnType.INT));
+                modelOf("xyz").col("x", ColumnType.INT).col("a", ColumnType.INT).col("b", ColumnType.INT));
+    }
+
+    @Test
+    public void testAsOfJoinOrder() throws Exception {
+        assertModel(
+                "customers c asof join employees e on e.employeeId = c.customerId join orders o on o.customerId = c.customerId",
+                "customers c" +
+                        " asof join employees e on c.customerId = e.employeeId" +
+                        " join orders o on c.customerId = o.customerId",
+                modelOf("customers").col("customerId", ColumnType.SYMBOL),
+                modelOf("employees").col("employeeId", ColumnType.STRING),
+                modelOf("orders").col("customerId", ColumnType.SYMBOL));
+    }
+
+    @Test
+    public void testAsOfJoinSubQuery() throws Exception {
+        assertModel(
+                "customers c" +
+                        " asof join (select-choose '1' blah, lastName, employeeId, timestamp" +
+                        " from (employees order by lastName) where lastName = 'x') e on e.employeeId = c.customerId post-join-where e.blah = 'y'" +
+                        " join orders o on o.customerId = c.customerId",
+                "customers c" +
+                        " asof join (select '1' blah, lastName, employeeId, timestamp from employees order by lastName) e on c.customerId = e.employeeId" +
+                        " join orders o on c.customerId = o.customerId where e.lastName = 'x' and e.blah = 'y'",
+                modelOf("customers").col("customerId", ColumnType.SYMBOL),
+                modelOf("employees").col("employeeId", ColumnType.STRING),
+                modelOf("orders").col("customerId", ColumnType.SYMBOL)
+        );
+    }
+
+    @Test
+    public void testAsOfJoinSubQuerySimpleAlias() throws Exception {
+        assertModel(
+                "customers c asof join (select-choose '1' blah, lastName, employeeId customerId, timestamp from (employees order by lastName)) a on a.customerId = c.customerId",
+                "customers c" +
+                        " asof join (select '1' blah, lastName, employeeId customerId, timestamp from employees order by lastName) a on (customerId)",
+                modelOf("customers").col("customerId", ColumnType.SYMBOL),
+                modelOf("employees").col("employeeId", ColumnType.STRING)
+        );
+    }
+
+    @Test
+    public void testAsOfJoinSubQuerySimpleNoAlias() throws Exception {
+        assertModel(
+                "customers c asof join (select-choose '1' blah, lastName, employeeId customerId, timestamp from (employees order by lastName)) _xQdbA0 on _xQdbA0.customerId = c.customerId",
+                "customers c" +
+                        " asof join (select '1' blah, lastName, employeeId customerId, timestamp from employees order by lastName) on (customerId)",
+                modelOf("customers").col("customerId", ColumnType.SYMBOL),
+                modelOf("employees").col("employeeId", ColumnType.STRING)
+        );
+    }
+
+    @Test
+    public void testCount() throws Exception {
+        assertModel(
+                "select-choose c.customerId customerId, col0" +
+                        " from (select-group-by c.customerId, count() col0" +
+                        " from (customers c" +
+                        " outer join orders o on o.customerId = c.customerId post-join-where o.customerId = NaN))",
+                "select c.customerId, count() from customers c" +
+                        " outer join orders o on c.customerId = o.customerId " +
+                        " where o.customerId = NaN",
+                modelOf("customers").col("customerId", ColumnType.INT).col("customerName", ColumnType.STRING),
+                modelOf("orders").col("customerId", ColumnType.INT).col("product", ColumnType.STRING)
+        );
     }
 
     @Test
@@ -250,20 +333,14 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testCrossJoin() {
-        try {
-            parser.parse("select x from a a cross join b on b.x = a.x");
-            Assert.fail("Exception expected");
-        } catch (ParserException e) {
-            Assert.assertEquals(31, e.getPosition());
-            TestUtils.assertContains(e.getMessage(), "cannot");
-        }
+        assertSyntaxError("select x from a a cross join b on b.x = a.x", 31, "cannot");
     }
 
     @Test
     public void testCrossJoin2() throws Exception {
         assertModel(
-                "select x from (a a cross join b z)",
-                "select x from a a cross join b z",
+                "select-choose a.x x from (a a cross join b z)",
+                "select a.x from a a cross join b z",
                 modelOf("a").col("x", ColumnType.INT),
                 modelOf("b").col("x", ColumnType.INT));
     }
@@ -271,8 +348,8 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     @Test
     public void testCrossJoin3() throws Exception {
         assertModel(
-                "select x from (a a join c on a.x = c.x cross join b z)",
-                "select x from a a " +
+                "select-choose a.x x from (a a join c on c.x = a.x cross join b z)",
+                "select a.x from a a " +
                         "cross join b z " +
                         "join c on a.x = c.x",
                 modelOf("a").col("x", ColumnType.INT),
@@ -283,8 +360,8 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testCrossJoinNoAlias() throws Exception {
-        assertModel("select x from (a a join c on a.x = c.x cross join b)",
-                "select x from a a " +
+        assertModel("select-choose a.x x from (a a join c on c.x = a.x cross join b)",
+                "select a.x from a a " +
                         "cross join b " +
                         "join c on a.x = c.x",
                 modelOf("a").col("x", ColumnType.INT),
@@ -298,6 +375,25 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDuplicateAlias() {
+        assertSyntaxError("customers a" +
+                        " cross join orders a", 30, "Duplicate",
+                modelOf("customers").col("customerId", ColumnType.INT).col("customerName", ColumnType.STRING),
+                modelOf("orders").col("customerId", ColumnType.INT).col("product", ColumnType.STRING)
+        );
+    }
+
+    @Test
+    public void testDuplicateJournals() throws Exception {
+        assertModel(
+                "customers cross join customers",
+                "customers cross join customers",
+                modelOf("customers").col("customerId", ColumnType.INT).col("customerName", ColumnType.STRING),
+                modelOf("orders").col("customerId", ColumnType.INT).col("product", ColumnType.STRING)
+        );
+    }
+
+    @Test
     public void testEmptyGroupBy() {
         assertSyntaxError("select x, y from tab sample by", 28, "end of input");
     }
@@ -308,8 +404,27 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testExtraCommaOrderByInAnalyticFunction() {
-        assertSyntaxError("select a,b, f(c) my over (partition by b order by ,ts) from xyz", 50, "literal");
+    public void testEqualsConstantTransitivityLhs() throws Exception {
+        assertModel(
+                "customers c outer join (orders o where o.customerId = 100) on o.customerId = c.customerId where 100 = c.customerId",
+                "customers c" +
+                        " outer join orders o on c.customerId = o.customerId" +
+                        " where 100 = c.customerId",
+                modelOf("customers").col("customerId", ColumnType.INT),
+                modelOf("orders").col("customerId", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testEqualsConstantTransitivityRhs() throws Exception {
+        assertModel(
+                "customers c outer join (orders o where o.customerId = 100) on o.customerId = c.customerId where c.customerId = 100",
+                "customers c" +
+                        " outer join orders o on c.customerId = o.customerId" +
+                        " where c.customerId = 100",
+                modelOf("customers").col("customerId", ColumnType.INT),
+                modelOf("orders").col("customerId", ColumnType.INT)
+        );
     }
 
     @Test
@@ -318,17 +433,130 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testExtraCommaOrderByInAnalyticFunction() {
+        assertSyntaxError("select a,b, f(c) my over (partition by b order by ,ts) from xyz", 50, "literal");
+    }
+
+    @Test
     public void testExtraCommaPartitionByInAnalyticFunction() {
         assertSyntaxError("select a,b, f(c) my over (partition by b, order by ts) from xyz", 48, ") expected");
     }
 
     @Test
+    public void testFilterOnSubquery() throws Exception {
+        assertModel(
+                "(" +
+                        "select-choose customerId, customerName, count from" +
+                        " (select-group-by customerId, customerName, count() count from" +
+                        " (customers where customerId > 400 and customerId < 1200))" +
+                        " where count > 1) c" +
+                        " outer join orders o on o.customerId = c.customerId post-join-where o.orderId = NaN" +
+                        " order by c.customerId",
+                "(select customerId, customerName, count() count from customers) c" +
+                        " outer join orders o on c.customerId = o.customerId " +
+                        " where o.orderId = NaN and c.customerId > 400 and c.customerId < 1200 and count > 1 order by c.customerId",
+                modelOf("customers").col("customerId", ColumnType.INT).col("customerName", ColumnType.STRING),
+                modelOf("orders").col("orderId", ColumnType.INT).col("customerId", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testGenericPreFilterPlacement() throws Exception {
+        assertModel(
+                "select-choose customerName, orderId, productId" +
+                        " from (" +
+                        "customers" +
+                        " join (orders where product = 'X') on orders.customerId = customers.customerId where customerName ~ 'WTBHZVPVZZ')",
+                "select customerName, orderId, productId " +
+                        "from customers join orders on customers.customerId = orders.customerId where customerName ~ 'WTBHZVPVZZ' and product = 'X'",
+                modelOf("customers").col("customerId", ColumnType.INT).col("customerName", ColumnType.STRING),
+                modelOf("orders").col("customerId", ColumnType.INT).col("product", ColumnType.STRING).col("orderId", ColumnType.INT).col("productId", ColumnType.INT)
+        );
+    }
+
+    @Test
     public void testInnerJoin() throws Exception {
         assertModel(
-                "select x from (a a join b on b.x = a.x)",
-                "select x from a a inner join b on b.x = a.x",
+                "select-choose a.x x from (a a join b on b.x = a.x)",
+                "select a.x from a a inner join b on b.x = a.x",
                 modelOf("a").col("x", ColumnType.INT),
                 modelOf("b").col("x", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testInnerJoin2() throws Exception {
+        assertModel(
+                "customers join orders on orders.customerId = customers.customerId where customerName ~ 'WTBHZVPVZZ'",
+                "customers join orders on customers.customerId = orders.customerId where customerName ~ 'WTBHZVPVZZ'",
+                modelOf("customers").col("customerId", ColumnType.INT).col("customerName", ColumnType.STRING),
+                modelOf("orders").col("customerId", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testInnerJoinEqualsConstant() throws Exception {
+        assertModel(
+                "customers join (orders where productName = 'WTBHZVPVZZ') on orders.customerId = customers.customerId",
+                "customers join orders on customers.customerId = orders.customerId where productName = 'WTBHZVPVZZ'",
+                modelOf("customers").col("customerId", ColumnType.INT),
+                modelOf("orders").col("customerId", ColumnType.INT).col("productName", ColumnType.STRING));
+    }
+
+    @Test
+    public void testInnerJoinEqualsConstantLhs() throws Exception {
+        assertModel(
+                "customers join (orders where 'WTBHZVPVZZ' = productName) on orders.customerId = customers.customerId",
+                "customers join orders on customers.customerId = orders.customerId where 'WTBHZVPVZZ' = productName",
+                modelOf("customers").col("customerId", ColumnType.INT),
+                modelOf("orders").col("customerId", ColumnType.INT).col("productName", ColumnType.STRING));
+    }
+
+    @Test
+    public void testInnerJoinSubQuery() throws Exception {
+        assertModel(
+                "select-choose customerName, productName, orderId" +
+                        " from (" +
+                        "(select-choose customerName, orderId, productId, productName from (" +
+                        "customers" +
+                        " join (orders where productName ~ 'WTBHZVPVZZ') on orders.customerId = customers.customerId)" +
+                        ") x" +
+                        " join products p on p.productId = x.productId)",
+                "select customerName, productName, orderId from (" +
+                        "select customerName, orderId, productId, productName " +
+                        "from customers join orders on customers.customerId = orders.customerId where productName ~ 'WTBHZVPVZZ'" +
+                        ") x" +
+                        " join products p on p.productId = x.productId",
+                modelOf("customers").col("customerId", ColumnType.INT).col("customerName", ColumnType.STRING),
+                modelOf("orders").col("customerId", ColumnType.INT).col("productName", ColumnType.STRING).col("productId", ColumnType.INT).col("orderId", ColumnType.INT),
+                modelOf("products").col("productId", ColumnType.INT)
+        );
+
+        assertModel(
+                "select-choose customerName, productName, orderId from (customers join (orders o where productName ~ 'WTBHZVPVZZ') on o.customerId = customers.customerId join products p on p.productId = o.productId)",
+                "select customerName, productName, orderId " +
+                        " from customers join orders o on customers.customerId = o.customerId " +
+                        " join products p on p.productId = o.productId" +
+                        " where productName ~ 'WTBHZVPVZZ'",
+                modelOf("customers").col("customerId", ColumnType.INT).col("customerName", ColumnType.STRING),
+                modelOf("orders").col("customerId", ColumnType.INT).col("productName", ColumnType.STRING).col("productId", ColumnType.INT).col("orderId", ColumnType.INT),
+                modelOf("products").col("productId", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testInvalidAlias() {
+        assertSyntaxError("orders join customers on orders.customerId = c.customerId", 45, "alias",
+                modelOf("customers").col("customerId", ColumnType.INT),
+                modelOf("orders").col("customerId", ColumnType.INT).col("productName", ColumnType.STRING).col("productId", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testInvalidColumn() {
+        assertSyntaxError("orders join customers on customerIdx = customerId", 25, "Invalid column",
+                modelOf("customers").col("customerId", ColumnType.INT),
+                modelOf("orders").col("customerId", ColumnType.INT).col("productName", ColumnType.STRING).col("productId", ColumnType.INT)
         );
     }
 
@@ -378,15 +606,59 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInvalidSelectColumn() {
+        assertSyntaxError("select c.customerId, orderIdx, o.productId from " +
+                        "customers c " +
+                        "join (" +
+                        "orders latest by customerId where customerId in (`customers where customerName ~ 'PJFSREKEUNMKWOF'`)" +
+                        ") o on c.customerId = o.customerId", 21, "Invalid column",
+                modelOf("customers").col("customerName", ColumnType.STRING).col("customerId", ColumnType.INT),
+                modelOf("orders").col("orderId", ColumnType.INT).col("customerId", ColumnType.INT)
+        );
+
+        assertSyntaxError("select c.customerId, orderId, o.productId2 from " +
+                        "customers c " +
+                        "join (" +
+                        "orders latest by customerId where customerId in (`customers where customerName ~ 'PJFSREKEUNMKWOF'`)" +
+                        ") o on c.customerId = o.customerId", 30, "Invalid column",
+                modelOf("customers").col("customerName", ColumnType.STRING).col("customerId", ColumnType.INT),
+                modelOf("orders").col("orderId", ColumnType.INT).col("customerId", ColumnType.INT)
+        );
+
+        assertSyntaxError("select c.customerId, orderId, o2.productId from " +
+                        "customers c " +
+                        "join (" +
+                        "orders latest by customerId where customerId in (`customers where customerName ~ 'PJFSREKEUNMKWOF'`)" +
+                        ") o on c.customerId = o.customerId", 30, "Invalid table name",
+                modelOf("customers").col("customerName", ColumnType.STRING).col("customerId", ColumnType.INT),
+                modelOf("orders").col("orderId", ColumnType.INT).col("customerId", ColumnType.INT)
+        );
+    }
+
+    @Test
     public void testInvalidSubQuery() {
         assertSyntaxError("select x,y from (tab where x = 100) latest by x", 36, "latest");
     }
 
     @Test
+    public void testInvalidTableName() {
+        assertSyntaxError("orders join customer on customerId = customerId", 12, "does not exist",
+                modelOf("orders").col("customerId", ColumnType.INT));
+    }
+
+    @Test
     public void testJoin1() throws Exception {
         assertModel(
-                "select x, y from ((select x from (tab t2 latest by x where x > 100)) t1 join tab2 xx2 on xx2.x = t1.x join (select x, y from (tab4 latest by z where a > b and y > 0)) x4 on x4.x = t1.x cross join tab3 on xx2.x > tab3.b)",
-                "select x, y from (select x from tab t2 latest by x where x > 100) t1 " +
+                "select-choose t1.x x, y from " +
+                        "(" +
+                        "(select-choose x from " +
+                        "(" +
+                        "tab t2 latest by x where x > 100)) t1 " +
+                        "join tab2 xx2 on xx2.x = t1.x " +
+                        "join (select-choose x, y from (tab4 latest by z where a > b and y > 0)) x4 on x4.x = t1.x " +
+                        "cross join tab3 post-join-where xx2.x > tab3.b" +
+                        ")",
+                "select t1.x, y from (select x from tab t2 latest by x where x > 100) t1 " +
                         "join tab2 xx2 on xx2.x = t1.x " +
                         "join tab3 on xx2.x > tab3.b " +
                         "join (select x,y from tab4 latest by z where a > b) x4 on x4.x = t1.x " +
@@ -400,11 +672,137 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     @Test
     public void testJoin2() throws Exception {
         assertModel(
-                "select x from (((select tab2.x x from (tab join tab2 on tab.x = tab2.x)) t join tab3 on tab3.x = t.x))",
+                "select-choose x from (((select-choose tab2.x x from (tab join tab2 on tab2.x = tab.x)) t join tab3 on tab3.x = t.x))",
                 "select x from ((select tab2.x from tab join tab2 on tab.x=tab2.x) t join tab3 on tab3.x = t.x)",
                 modelOf("tab").col("x", ColumnType.INT),
                 modelOf("tab2").col("x", ColumnType.INT),
                 modelOf("tab3").col("x", ColumnType.INT)
+        );
+    }
+
+    @Test
+    @Ignore
+    public void testJoinColumnAlias() throws Exception {
+//        assertThat("162\tNaN\t1\n" +
+//                        "209\tNaN\t1\n" +
+//                        "233\tNaN\t1\n" +
+//                        "381\tNaN\t1\n" +
+//                        "396\tNaN\t1\n" +
+//                        "410\tNaN\t1\n" +
+//                        "805\tNaN\t1\n" +
+//                        "810\tNaN\t1\n" +
+//                        "1162\tNaN\t1\n" +
+//                        "1344\tNaN\t1\n",
+//                "select c.customerId, o.customerId kk, count() from customers c" +
+//                        " outer join orders o on c.customerId = o.customerId " +
+//                        " where kk = NaN limit 10");
+
+        // todo: join analysis trips over "kk" because this column had been pulled up a level by query rewrite code
+        assertModel(
+                "",
+                "select c.customerId, o.customerId kk, count() from customers c" +
+                        " outer join orders o on c.customerId = o.customerId " +
+                        " where kk = NaN limit 10",
+                modelOf("customers").col("customerId", ColumnType.INT),
+                modelOf("orders").col("customerId", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testJoinCycle() throws Exception {
+        assertModel(
+                "orders" +
+                        " join customers on customers.customerId = orders.customerId" +
+                        " join (orderDetails d where d.orderId = d.productId) on d.productId = orders.orderId" +
+                        " join suppliers on suppliers.supplier = orders.orderId" +
+                        " join products on products.productId = orders.orderId and products.supplier = suppliers.supplier",
+                "orders" +
+                        " join customers on orders.customerId = customers.customerId" +
+                        " join orderDetails d on d.orderId = orders.orderId and orders.orderId = products.productId" +
+                        " join suppliers on products.supplier = suppliers.supplier" +
+                        " join products on d.productId = products.productId and orders.orderId = products.productId" +
+                        " where orders.orderId = suppliers.supplier",
+                modelOf("orders").col("customerId", ColumnType.INT).col("orderId", ColumnType.INT),
+                modelOf("customers").col("customerId", ColumnType.INT),
+                modelOf("orderDetails").col("orderId", ColumnType.INT).col("productId", ColumnType.INT),
+                modelOf("products").col("productId", ColumnType.INT).col("supplier", ColumnType.SYMBOL),
+                modelOf("suppliers").col("supplier", ColumnType.SYMBOL)
+
+        );
+    }
+
+    @Test
+    public void testJoinGroupBy() throws Exception {
+        assertModel("select-choose country, col0" +
+                        " from" +
+                        " (select-group-by country, avg(quantity) col0" +
+                        " from (orders o" +
+                        " join (customers c where country ~ '^Z') on c.customerId = o.customerId" +
+                        " join orderDetails d on d.orderId = o.orderId))",
+                "select country, avg(quantity) from orders o " +
+                        "join customers c on c.customerId = o.customerId " +
+                        "join orderDetails d on o.orderId = d.orderId" +
+                        " where country ~ '^Z'",
+                modelOf("orders").col("customerId", ColumnType.INT).col("orderId", ColumnType.INT),
+                modelOf("customers").col("customerId", ColumnType.INT).col("country", ColumnType.SYMBOL),
+                modelOf("orderDetails").col("orderId", ColumnType.INT).col("quantity", ColumnType.DOUBLE)
+        );
+    }
+
+    @Test
+    public void testJoinGroupByFilter() throws Exception {
+        assertModel(
+                "(select-choose country, avg" +
+                        " from (select-group-by country, avg(quantity) avg" +
+                        " from (orders o" +
+                        " join (customers c where country ~ '^Z') on c.customerId = o.customerId" +
+                        " join orderDetails d on d.orderId = o.orderId)) where avg > 2)",
+                "(select country, avg(quantity) avg from orders o " +
+                        "join customers c on c.customerId = o.customerId " +
+                        "join orderDetails d on o.orderId = d.orderId" +
+                        " where country ~ '^Z') where avg > 2",
+                modelOf("orders").col("customerId", ColumnType.INT).col("orderId", ColumnType.INT),
+                modelOf("customers").col("customerId", ColumnType.INT).col("country", ColumnType.SYMBOL),
+                modelOf("orderDetails").col("orderId", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testJoinImpliedCrosses() throws Exception {
+        assertModel(
+                "orders cross join products join suppliers on suppliers.supplier = products.supplier cross join customers cross join orderDetails d",
+                "orders" +
+                        " join customers on 1=1" +
+                        " join orderDetails d on 2=2" +
+                        " join products on 3=3" +
+                        " join suppliers on products.supplier = suppliers.supplier",
+                modelOf("orders").col("customerId", ColumnType.INT).col("orderId", ColumnType.INT),
+                modelOf("customers").col("customerId", ColumnType.INT),
+                modelOf("orderDetails").col("orderId", ColumnType.INT).col("productId", ColumnType.INT),
+                modelOf("products").col("productId", ColumnType.INT).col("supplier", ColumnType.SYMBOL),
+                modelOf("suppliers").col("supplier", ColumnType.SYMBOL)
+        );
+    }
+
+    @Test
+    public void testJoinMultipleFields() throws Exception {
+        assertModel(
+                "orders" +
+                        " join customers on customers.customerId = orders.customerId" +
+                        " join (orderDetails d where d.productId = d.orderId) on d.productId = customers.customerId and d.orderId = orders.orderId" +
+                        " join products on products.productId = d.productId" +
+                        " join suppliers on suppliers.supplier = products.supplier",
+                "orders" +
+                        " join customers on orders.customerId = customers.customerId" +
+                        " join orderDetails d on d.orderId = orders.orderId and d.productId = customers.customerId" +
+                        " join products on d.productId = products.productId" +
+                        " join suppliers on products.supplier = suppliers.supplier" +
+                        " where d.productId = d.orderId",
+                modelOf("orders").col("customerId", ColumnType.INT).col("orderId", ColumnType.INT),
+                modelOf("customers").col("customerId", ColumnType.INT),
+                modelOf("orderDetails").col("orderId", ColumnType.INT).col("productId", ColumnType.INT),
+                modelOf("products").col("productId", ColumnType.INT).col("supplier", ColumnType.SYMBOL),
+                modelOf("suppliers").col("supplier", ColumnType.SYMBOL)
         );
     }
 
@@ -439,15 +837,15 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     @Test
     public void testMixedFieldsSubQuery() throws Exception {
         assertModel(
-                "select x, y from ((select z from (tab t2 latest by x where x > 100)) t1 where y > 0)",
-                "select x, y from (select z from tab t2 latest by x where x > 100) t1 where y > 0",
-                modelOf("tab").col("x", ColumnType.INT));
+                "select-choose x, y from ((select-choose x, y from (select-virtual z + x y from (tab t2 latest by x where x > 100)) where y > 0) t1)",
+                "select x, y from (select x,z + x y from tab t2 latest by x where x > 100) t1 where y > 0",
+                modelOf("tab").col("x", ColumnType.INT).col("z", ColumnType.INT));
     }
 
     @Test
     public void testMostRecentWhereClause() throws Exception {
         assertModel(
-                "select a + b * c x, sum(z) + 25 ohoh from (zyzy latest by x where in(y,x,a) and b = 10)",
+                "select-choose x, ohoh from (select-virtual x, col0 + 25 ohoh from (select-group-by x, sum(z) col0 from (select-virtual a + b * c x from (zyzy latest by x where in(y,x,a) and b = 10))))",
                 "select a+b*c x, sum(z)+25 ohoh from zyzy latest by x where a in (x,y) and b = 10",
                 modelOf("zyzy").col("a", ColumnType.INT).col("x", ColumnType.INT)
         );
@@ -456,7 +854,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     @Test
     public void testMultipleExpressions() throws Exception {
         assertModel(
-                "select a + b * c x, sum(z) + 25 ohoh from (zyzy)",
+                "select-choose x, ohoh from (select-virtual x, col0 + 25 ohoh from (select-group-by x, sum(z) col0 from (select-virtual a + b * c x from (zyzy))))",
                 "select a+b*c x, sum(z)+25 ohoh from zyzy",
                 modelOf("zyzy").col("a", ColumnType.INT)
         );
@@ -465,7 +863,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     @Test
     public void testOneAnalyticColumn() throws Exception {
         assertModel(
-                "select a, b, f(c) over (partition by b order by ts) from (xyz)",
+                "select-choose a, b, col0 from (select-analytic a, b, f(c) col0 over (partition by b order by ts) from (xyz))",
                 "select a,b, f(c) over (partition by b order by ts) from xyz",
                 modelOf("xyz")
                         .col("a", ColumnType.INT)
@@ -485,9 +883,9 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     @Test
     public void testOrderBy1() throws Exception {
         assertModel(
-                "select x, y from (tab order by x, y, z)",
+                "select-choose x, y from (tab order by x, y, z)",
                 "select x,y from tab order by x,y,z",
-                modelOf("tab").col("x", ColumnType.INT)
+                modelOf("tab").col("x", ColumnType.INT).col("y", ColumnType.INT)
         );
 
     }
@@ -500,18 +898,25 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     @Test
     public void testOuterJoin() throws Exception {
         assertModel(
-                "select x from (a a outer join b on b.x = a.x)",
-                "select x from a a outer join b on b.x = a.x",
+                "select-choose a.x x from (a a outer join b on b.x = a.x)",
+                "select a.x from a a outer join b on b.x = a.x",
                 modelOf("a").col("x", ColumnType.INT),
                 modelOf("b").col("x", ColumnType.INT)
         );
     }
 
     @Test
-    public void testSampleBy1() throws Exception {
+    public void testSampleBy() throws Exception {
         assertModel(
-                "select x, y from (tab sample by 2m)",
-                "select x,y from tab sample by 2m",
+                "select-choose x, col0 from (select-group-by x, avg(y) col0 from (tab) sample by 2m)",
+                "select x,avg(y) from tab sample by 2m",
+                modelOf("tab").col("x", ColumnType.INT).col("y", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testSampleByNoAggregate() {
+        assertSyntaxError("select x,y from tab sample by 2m", 30, "at least one",
                 modelOf("tab").col("x", ColumnType.INT).col("y", ColumnType.INT)
         );
     }
@@ -519,7 +924,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     @Test
     public void testSelectPlainColumns() throws Exception {
         assertModel(
-                "select a, b, c from (t)",
+                "select-choose a, b, c from (t)",
                 "select a,b,c from t",
                 modelOf("t").col("a", ColumnType.INT).col("b", ColumnType.INT).col("c", ColumnType.INT)
         );
@@ -528,20 +933,24 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     @Test
     public void testSelectSingleExpression() throws Exception {
         assertModel(
-                "select a + b * c x from (t)",
+                "select-choose x from (select-virtual a + b * c x from (t))",
                 "select a+b*c x from t",
                 modelOf("t").col("a", ColumnType.INT).col("b", ColumnType.INT).col("c", ColumnType.INT));
     }
 
     @Test
     public void testSimpleSubQuery() throws Exception {
-        assertModel("(x where y > 1)", "(x) where y > 1", modelOf("x").col("y", ColumnType.INT));
+        assertModel(
+                "(x where y > 1)",
+                "(x) where y > 1",
+                modelOf("x").col("y", ColumnType.INT)
+        );
     }
 
     @Test
     public void testSingleJournalLimit() throws Exception {
         assertModel(
-                "select x x, y y from (tab where x > z limit 100)",
+                "select-choose x, y from (tab where x > z limit 100)",
                 "select x x, y y from tab where x > z limit 100",
                 modelOf("tab").col("x", ColumnType.INT).col("y", ColumnType.INT)
         );
@@ -550,7 +959,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     @Test
     public void testSingleJournalLimitLoHi() throws Exception {
         assertModel(
-                "select x x, y y from (tab where x > z limit 100,200)",
+                "select-choose x, y from (tab where x > z limit 100,200)",
                 "select x x, y y from tab where x > z limit 100,200",
                 modelOf("tab").col("x", ColumnType.INT).col("y", ColumnType.INT)
         );
@@ -564,7 +973,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     @Test
     public void testSingleJournalNoWhereLimit() throws Exception {
         assertModel(
-                "select x x, y y from (tab limit 100)",
+                "select-choose x, y from (tab limit 100)",
                 "select x x, y y from tab limit 100",
                 modelOf("tab").col("x", ColumnType.INT).col("y", ColumnType.INT));
     }
@@ -572,11 +981,10 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     @Test
     public void testSubQuery() throws Exception {
         assertModel(
-                "select x, y from ((select x from (tab t2 latest by x where x > 100)) t1 where y > 0)",
-                "select x, y from (select x from tab t2 latest by x where x > 100) t1 where y > 0",
-                modelOf("tab").col("x", ColumnType.INT)
+                "select-choose x, y from ((select-choose x, y from (tab t2 latest by x where x > 100 and y > 0)) t1)",
+                "select x, y from (select x, y from tab t2 latest by x where x > 100) t1 where y > 0",
+                modelOf("tab").col("x", ColumnType.INT).col("y", ColumnType.INT)
         );
-
     }
 
     @Test
@@ -590,25 +998,25 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     @Test
     public void testSubqueryLimitLoHi() throws Exception {
         assertModel(
-                "(select x x, y y from (tab where x > z and x = y limit 100,200)) limit 150",
+                "(select-choose x, y from (tab where x > z and x = y limit 100,200)) limit 150",
                 "(select x x, y y from tab where x > z limit 100,200) where x = y limit 150",
                 modelOf("tab").col("x", ColumnType.INT).col("y", ColumnType.INT)
         );
     }
 
     @Test
-    public void testTimestampOnJournal() throws Exception {
-        assertModel(
-                "select x from (a b timestamp (x) where x > y)",
-                "select x from a b timestamp(x) where x > y",
-                modelOf("a").col("x", ColumnType.TIMESTAMP));
+    public void testTimestampOnSubQuery() throws Exception {
+        assertModel("select-choose x from ((a b where x > y) timestamp (x))",
+                "select x from (a b) timestamp(x) where x > y",
+                modelOf("a").col("x", ColumnType.INT).col("y", ColumnType.INT));
     }
 
     @Test
-    public void testTimestampOnSubQuery() throws Exception {
-        assertModel("select x from ((a b where x > y) timestamp (x))",
-                "select x from (a b) timestamp(x) where x > y",
-                modelOf("a").col("x", ColumnType.INT).col("y", ColumnType.INT));
+    public void testTimestampOnTable() throws Exception {
+        assertModel(
+                "select-choose x from (a b timestamp (x) where x > y)",
+                "select x from a b timestamp(x) where x > y",
+                modelOf("a").col("x", ColumnType.TIMESTAMP));
     }
 
     @Test
@@ -650,9 +1058,9 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     @Test
     public void testTwoAnalyticColumns() throws Exception {
         assertModel(
-                "select a, b, f(c) my over (partition by b order by ts), d(c) over () from (xyz)",
+                "select-choose a, b, my, col0 from (select-analytic a, b, f(c) my over (partition by b order by ts), d(c) col0 over () from (xyz))",
                 "select a,b, f(c) my over (partition by b order by ts), d(c) over() from xyz",
-                modelOf("xyz").col("c", ColumnType.INT)
+                modelOf("xyz").col("c", ColumnType.INT).col("b", ColumnType.INT).col("a", ColumnType.INT)
         );
     }
 
@@ -679,7 +1087,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     @Test
     public void testWhereClause() throws Exception {
         assertModel(
-                "select a + b * c x, sum(z) + 25 ohoh from (zyzy where in(y,x,a) and b = 10)",
+                "select-choose x, ohoh from (select-virtual x, col0 + 25 ohoh from (select-group-by x, sum(z) col0 from (select-virtual a + b * c x from (zyzy where in(y,x,a) and b = 10))))",
                 "select a+b*c x, sum(z)+25 ohoh from zyzy where a in (x,y) and b = 10",
                 modelOf("zyzy").col("a", ColumnType.INT).col("b", ColumnType.INT));
     }
@@ -703,13 +1111,24 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
         }
     }
 
-    private void assertSyntaxError(String query, int position, String contains) {
+    private void assertSyntaxError(String query, int position, String contains, TableModel... tableModels) {
         try {
+            for (int i = 0, n = tableModels.length; i < n; i++) {
+                CairoTestUtils.create(tableModels[i]);
+            }
             parser.parse(query);
             Assert.fail("Exception expected");
         } catch (ParserException e) {
             Assert.assertEquals(position, e.getPosition());
             TestUtils.assertContains(e.getMessage(), contains);
+        } finally {
+            Assert.assertTrue(engine.releaseAllReaders());
+            for (int i = 0, n = tableModels.length; i < n; i++) {
+                TableModel tableModel = tableModels[i];
+                Path path = tableModel.getPath().of(tableModel.getCairoCfg().getRoot()).concat(tableModel.getName()).put(Files.SEPARATOR).$();
+                Assert.assertTrue(configuration.getFilesFacade().rmdir(path));
+                tableModel.close();
+            }
         }
     }
 
