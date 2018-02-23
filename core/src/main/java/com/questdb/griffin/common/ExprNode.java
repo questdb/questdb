@@ -79,6 +79,9 @@ public class ExprNode implements Mutable, Sinkable {
         switch (paramCount) {
             case 0:
                 sink.put(token);
+                if (type == FUNCTION) {
+                    sink.put("()");
+                }
                 break;
             case 1:
                 sink.put(token);

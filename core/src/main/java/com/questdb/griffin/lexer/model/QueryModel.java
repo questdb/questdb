@@ -30,13 +30,10 @@ import com.questdb.cairo.sql.CairoEngine;
 import com.questdb.common.JournalRuntimeException;
 import com.questdb.common.RecordMetadata;
 import com.questdb.griffin.common.ExprNode;
-import com.questdb.griffin.common.VirtualColumn;
 import com.questdb.griffin.compiler.Parameter;
 import com.questdb.griffin.lexer.ParserException;
-import com.questdb.ql.RecordSource;
 import com.questdb.std.*;
 import com.questdb.std.str.CharSink;
-import com.questdb.std.str.StringSink;
 
 import java.util.ArrayDeque;
 
@@ -50,6 +47,11 @@ public class QueryModel implements Mutable, ParsedModel, AliasTranslator, Sinkab
     public static final int JOIN_CROSS = 3;
     public static final int JOIN_ASOF = 4;
     public static final String SUB_QUERY_ALIAS_PREFIX = "_xQdbA";
+    public static final int SELECT_MODEL_NONE = 0;
+    public static final int SELECT_MODEL_CHOOSE = 1;
+    public static final int SELECT_MODEL_VIRTUAL = 2;
+    public static final int SELECT_MODEL_ANALYTIC = 3;
+    public static final int SELECT_MODEL_GROUP_BY = 4;
     private final ObjList<QueryColumn> columns = new ObjList<>();
     private final CharSequenceObjHashMap<QueryColumn> aliasToColumnMap = new CharSequenceObjHashMap<>();
     private final ObjList<QueryModel> joinModels = new ObjList<>();
@@ -58,13 +60,12 @@ public class QueryModel implements Mutable, ParsedModel, AliasTranslator, Sinkab
     private final IntHashSet dependencies = new IntHashSet();
     private final IntList orderedJoinModels1 = new IntList();
     private final IntList orderedJoinModels2 = new IntList();
-    private final StringSink planSink = new StringSink();
     private final CharSequenceIntHashMap aliasIndexes = new CharSequenceIntHashMap();
     // collect frequency of column names from each join model
     // and check if any of columns with frequency > 0 are selected
     // column name frequency of 1 corresponds to map value 0
     // column name frequency of 0 corresponds to map value -1
-    private final CharSequenceIntHashMap columnNameHistogram = new CharSequenceIntHashMap();
+    private final CharSequenceIntHashMap columnNameTypeMap = new CharSequenceIntHashMap();
     // list of "and" concatenated expressions
     private final ObjList<ExprNode> parsedWhere = new ObjList<>();
     private final IntHashSet parsedWhereConsts = new IntHashSet();
@@ -81,15 +82,13 @@ public class QueryModel implements Mutable, ParsedModel, AliasTranslator, Sinkab
     private ExprNode latestBy;
     private ExprNode timestamp;
     private ExprNode sampleBy;
-    private RecordSource recordSource;
     private JoinContext context;
     private ExprNode joinCriteria;
     private int joinType;
     private IntList orderedJoinModels = orderedJoinModels2;
     private ExprNode limitLo;
     private ExprNode limitHi;
-    private VirtualColumn limitLoVc;
-    private VirtualColumn limitHiVc;
+    private int selectModelType = SELECT_MODEL_NONE;
 
     private QueryModel() {
         joinModels.add(this);
@@ -158,7 +157,6 @@ public class QueryModel implements Mutable, ParsedModel, AliasTranslator, Sinkab
         tableName = null;
         alias = null;
         latestBy = null;
-        recordSource = null;
         joinCriteria = null;
         joinType = JOIN_INNER;
         orderedJoinModels1.clear();
@@ -170,74 +168,13 @@ public class QueryModel implements Mutable, ParsedModel, AliasTranslator, Sinkab
         orderedJoinModels = orderedJoinModels2;
         limitHi = null;
         limitLo = null;
-        limitHiVc = null;
-        limitLoVc = null;
-        columnNameHistogram.clear();
+        columnNameTypeMap.clear();
         parameterMap.clear();
         timestamp = null;
         exprNodeStack.clear();
         joinColumns.clear();
         withClauses.clear();
-    }
-
-    public void createColumnNameHistogram(CairoEngine engine) throws ParserException {
-        columnNameHistogram.clear();
-
-        // We cannot have selected columns and multiple join models at the same time
-        // when this is the case in SQL expression join models have to be segregated from
-        // selected columns into nested model. This way both join result and selected
-        // columns can have their own column histograms.
-
-        ObjList<QueryModel> jm = getJoinModels();
-        int n = getColumns().size();
-        assert (jm.size() <= 1 || n <= 0);
-
-        if (n > 0) {
-            assert getNestedModel() != null;
-
-            for (int i = 0; i < n; i++) {
-                QueryColumn qc = getColumns().getQuick(i);
-                switch (qc.getAst().type) {
-                    case ExprNode.LITERAL:
-                        String name = qc.getName();
-                        int dot = name.indexOf('.');
-                        if (dot != -1) {
-                            qc.of(name.substring(dot + 1), qc.getAliasPosition(), qc.getAst());
-                        }
-                        // name is the alias if it exists, deliberately not using local variable
-                        columnNameHistogram.increment(qc.getName());
-                        break;
-                    default:
-                        break;
-                }
-            }
-
-            // also also build histogram for nested model
-            getNestedModel().createColumnNameHistogram(engine);
-
-        } else {
-            // we have plain tables and possibly joins
-            // deal with _this_ model first, it will always be the first element in join model list
-            if (getTableName() != null) {
-                RecordMetadata m = getTableMetadata(engine);
-                for (int i = 0, k = m.getColumnCount(); i < k; i++) {
-                    columnNameHistogram.increment(m.getColumnName(i));
-                }
-            } else {
-                assert getNestedModel() != null;
-                getNestedModel().createColumnNameHistogram(engine);
-                // copy columns of nested model onto parent one
-                // we must treat sub-query just like we do a table
-                CharSequenceIntHashMap nameHistogram = getColumnNameHistogram();
-                nameHistogram.clear();
-                nameHistogram.putAll(getNestedModel().getColumnNameHistogram());
-            }
-
-            n = jm.size();
-            for (int i = 1; i < n; i++) {
-                jm.getQuick(i).createColumnNameHistogram(engine);
-            }
-        }
+        selectModelType = SELECT_MODEL_NONE;
     }
 
     public ExprNode getAlias() {
@@ -252,8 +189,8 @@ public class QueryModel implements Mutable, ParsedModel, AliasTranslator, Sinkab
         return aliasIndexes.get(alias);
     }
 
-    public CharSequenceIntHashMap getColumnNameHistogram() {
-        return columnNameHistogram;
+    public CharSequenceIntHashMap getColumnNameTypeMap() {
+        return columnNameTypeMap;
     }
 
     public ObjList<QueryColumn> getColumns() {
@@ -308,16 +245,8 @@ public class QueryModel implements Mutable, ParsedModel, AliasTranslator, Sinkab
         return limitHi;
     }
 
-    public VirtualColumn getLimitHiVc() {
-        return limitHiVc;
-    }
-
     public ExprNode getLimitLo() {
         return limitLo;
-    }
-
-    public VirtualColumn getLimitLoVc() {
-        return limitLoVc;
     }
 
     @Override
@@ -380,20 +309,20 @@ public class QueryModel implements Mutable, ParsedModel, AliasTranslator, Sinkab
         this.postJoinWhereClause = postJoinWhereClause;
     }
 
-    public RecordSource getRecordSource() {
-        return recordSource;
-    }
-
-    public void setRecordSource(RecordSource recordSource) {
-        this.recordSource = recordSource;
-    }
-
     public ExprNode getSampleBy() {
         return sampleBy;
     }
 
     public void setSampleBy(ExprNode sampleBy) {
         this.sampleBy = sampleBy;
+    }
+
+    public int getSelectModelType() {
+        return selectModelType;
+    }
+
+    public void setSelectModelType(int selectModelType) {
+        this.selectModelType = selectModelType;
     }
 
     public RecordMetadata getTableMetadata(CairoEngine engine) throws ParserException {
@@ -496,12 +425,6 @@ public class QueryModel implements Mutable, ParsedModel, AliasTranslator, Sinkab
         return getParsedWhere();
     }
 
-    public CharSequence plan() {
-        planSink.clear();
-        plan(planSink, 0);
-        return planSink;
-    }
-
     public void removeDependency(int index) {
         dependencies.remove(index);
     }
@@ -511,15 +434,10 @@ public class QueryModel implements Mutable, ParsedModel, AliasTranslator, Sinkab
         this.limitHi = hi;
     }
 
-    public void setLimitVc(VirtualColumn lo, VirtualColumn hi) {
-        this.limitLoVc = lo;
-        this.limitHiVc = hi;
-    }
-
     @Override
     public void toSink(CharSink sink) {
         if (columns.size() > 0) {
-            sink.put("select ");
+            sink.put(getSelectModelTypeText()).put(' ');
             for (int i = 0, n = columns.size(); i < n; i++) {
                 if (i > 0) {
                     sink.put(", ");
@@ -527,8 +445,9 @@ public class QueryModel implements Mutable, ParsedModel, AliasTranslator, Sinkab
                 QueryColumn column = columns.getQuick(i);
                 String name = column.getName();
                 String alias = column.getAlias();
+                ExprNode ast = column.getAst();
                 if (column instanceof AnalyticColumn || name == null) {
-                    column.getAst().toSink(sink);
+                    ast.toSink(sink);
 
                     if (alias != null) {
                         aliasToSink(alias, sink);
@@ -568,13 +487,9 @@ public class QueryModel implements Mutable, ParsedModel, AliasTranslator, Sinkab
                         sink.put(')');
                     }
                 } else {
-                    if (column.getAst() != null) {
-                        column.getAst().toSink(sink);
-                    } else {
-                        sink.put(name);
-                    }
-
-                    if (alias != null) {
+                    ast.toSink(sink);
+                    // do not repeat alias when it is the same as AST token, provided AST is a literal
+                    if (alias != null && (ast.type != ExprNode.LITERAL || !ast.token.equals(alias))) {
                         aliasToSink(alias, sink);
                     }
                 }
@@ -627,11 +542,31 @@ public class QueryModel implements Mutable, ParsedModel, AliasTranslator, Sinkab
                         sink.put(" join ");
                 }
 
-                model.toSink(sink);
+                if (model.getWhereClause() != null) {
+                    sink.put('(');
+                    model.toSink(sink);
+                    sink.put(')');
+                } else {
+                    model.toSink(sink);
+                }
 
-                if (model.getJoinCriteria() != null) {
+                JoinContext jc = model.getContext();
+                if (jc != null && jc.aIndexes.size() > 0) {
+                    // join clause
                     sink.put(" on ");
-                    model.getJoinCriteria().toSink(sink);
+                    for (int k = 0, z = jc.aIndexes.size(); k < z; k++) {
+                        if (k > 0) {
+                            sink.put(" and ");
+                        }
+                        jc.aNodes.getQuick(k).toSink(sink);
+                        sink.put(" = ");
+                        jc.bNodes.getQuick(k).toSink(sink);
+                    }
+                }
+
+                if (model.getPostJoinWhereClause() != null) {
+                    sink.put(" post-join-where ");
+                    model.getPostJoinWhereClause().toSink(sink);
                 }
             }
         }
@@ -689,9 +624,6 @@ public class QueryModel implements Mutable, ParsedModel, AliasTranslator, Sinkab
     }
 
     private static void aliasToSink(CharSequence alias, CharSink sink) {
-        if (Chars.startsWith(alias, SUB_QUERY_ALIAS_PREFIX)) {
-            return;
-        }
         sink.put(' ');
         boolean quote = Chars.indexOf(alias, ' ') != -1;
         if (quote) {
@@ -701,107 +633,19 @@ public class QueryModel implements Mutable, ParsedModel, AliasTranslator, Sinkab
         }
     }
 
-    private void plan(StringSink sink, int pad) {
-        ObjList<QueryModel> joinModels = getJoinModels();
-        if (joinModels.size() > 1) {
-            IntList ordered = getOrderedJoinModels();
-            for (int i = 0, n = ordered.size(); i < n; i++) {
-                final int index = ordered.getQuick(i);
-                final QueryModel m = joinModels.getQuick(index);
-                final JoinContext jc = m.getContext();
-
-                sink.put(' ', pad).put('+').put(' ').put(index);
-
-                // join type
-                sink.put('[').put(' ');
-                switch (m.getJoinType()) {
-                    case JOIN_CROSS:
-                        sink.put("cross");
-                        break;
-                    case JOIN_INNER:
-                        sink.put("inner");
-                        break;
-                    case JOIN_OUTER:
-                        sink.put("outer");
-                        break;
-                    case JOIN_ASOF:
-                        sink.put("asof");
-                        break;
-                    default:
-                        sink.put("unknown");
-                        break;
-                }
-                sink.put(' ').put(']').put(' ');
-
-                // journal name/alias
-                if (m.getAlias() != null) {
-                    sink.put(m.getAlias().token);
-                } else if (m.getTableName() != null) {
-                    sink.put(m.getTableName().token);
-                } else {
-                    sink.put('{').put('\n');
-                    m.getNestedModel().plan(sink, pad + 2);
-                    sink.put('}');
-                }
-
-                // pre-filter
-                ExprNode filter = getJoinModels().getQuick(index).getWhereClause();
-                if (filter != null) {
-                    sink.put(" (filter: ");
-                    filter.toSink(sink);
-                    sink.put(')');
-                }
-
-                // join clause
-                if (jc != null && jc.aIndexes.size() > 0) {
-                    sink.put(" ON ");
-                    for (int k = 0, z = jc.aIndexes.size(); k < z; k++) {
-                        if (k > 0) {
-                            sink.put(" and ");
-                        }
-                        jc.aNodes.getQuick(k).toSink(sink);
-                        sink.put(" = ");
-                        jc.bNodes.getQuick(k).toSink(sink);
-                    }
-                }
-
-                // post-filter
-                filter = m.getPostJoinWhereClause();
-                if (filter != null) {
-                    sink.put(" (post-filter: ");
-                    filter.toSink(sink);
-                    sink.put(')');
-                }
-                sink.put('\n');
-            }
-        } else {
-            sink.put(' ', pad);
-            // journal name/alias
-            if (getAlias() != null) {
-                sink.put(getAlias().token);
-            } else if (getTableName() != null) {
-                sink.put(getTableName().token);
-            } else {
-                getNestedModel().plan(sink, pad + 2);
-            }
-
-            // pre-filter
-            ExprNode filter = getWhereClause();
-            if (filter != null) {
-                sink.put(" (filter: ");
-                filter.toSink(sink);
-                sink.put(')');
-            }
-
-            ExprNode latestBy = getLatestBy();
-            if (latestBy != null) {
-                sink.put(" (latest by: ");
-                latestBy.toSink(sink);
-                sink.put(')');
-            }
-
+    private String getSelectModelTypeText() {
+        switch (selectModelType) {
+            case SELECT_MODEL_CHOOSE:
+                return "select-choose";
+            case SELECT_MODEL_VIRTUAL:
+                return "select-virtual";
+            case SELECT_MODEL_ANALYTIC:
+                return "select-analytic";
+            case SELECT_MODEL_GROUP_BY:
+                return "select-group-by";
+            default:
+                return "select";
         }
-        sink.put('\n');
     }
 
     private static final class QueryModelFactory implements ObjectFactory<QueryModel> {
