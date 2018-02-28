@@ -38,7 +38,6 @@ import com.questdb.std.str.Path;
 import com.questdb.test.tools.TestUtils;
 import org.junit.AfterClass;
 import org.junit.Assert;
-import org.junit.Ignore;
 import org.junit.Test;
 
 import java.io.IOException;
@@ -54,7 +53,6 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     }
 
     @Test
-    @Ignore
     public void testAliasInWhereClause() throws ParserException {
         assertModel(
                 "",
@@ -143,8 +141,8 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     @Test
     public void testCount() throws Exception {
         assertModel(
-                "select-choose c.customerId customerId, col0" +
-                        " from (select-group-by c.customerId, count() col0" +
+                "select-choose c.customerId customerId, count" +
+                        " from (select-group-by c.customerId, count() count" +
                         " from (customers c" +
                         " outer join orders o on o.customerId = c.customerId post-join-where o.customerId = NaN))",
                 "select c.customerId, count() from customers c" +
@@ -681,7 +679,6 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     }
 
     @Test
-    @Ignore
     public void testJoinColumnAlias() throws Exception {
 //        assertThat("162\tNaN\t1\n" +
 //                        "209\tNaN\t1\n" +
@@ -700,8 +697,8 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
         // todo: join analysis trips over "kk" because this column had been pulled up a level by query rewrite code
         assertModel(
                 "",
-                "select c.customerId, o.customerId kk, count() from customers c" +
-                        " outer join orders o on c.customerId = o.customerId " +
+                "(select c.customerId, o.customerId kk, count() from customers c" +
+                        " outer join orders o on c.customerId = o.customerId) " +
                         " where kk = NaN limit 10",
                 modelOf("customers").col("customerId", ColumnType.INT),
                 modelOf("orders").col("customerId", ColumnType.INT)
@@ -733,9 +730,9 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testJoinGroupBy() throws Exception {
-        assertModel("select-choose country, col0" +
+        assertModel("select-choose country, avg" +
                         " from" +
-                        " (select-group-by country, avg(quantity) col0" +
+                        " (select-group-by country, avg(quantity) avg" +
                         " from (orders o" +
                         " join (customers c where country ~ '^Z') on c.customerId = o.customerId" +
                         " join orderDetails d on d.orderId = o.orderId))",
@@ -863,7 +860,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     @Test
     public void testOneAnalyticColumn() throws Exception {
         assertModel(
-                "select-choose a, b, col0 from (select-analytic a, b, f(c) col0 over (partition by b order by ts) from (xyz))",
+                "select-choose a, b, f from (select-analytic a, b, f(c) f over (partition by b order by ts) from (xyz))",
                 "select a,b, f(c) over (partition by b order by ts) from xyz",
                 modelOf("xyz")
                         .col("a", ColumnType.INT)
@@ -908,7 +905,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     @Test
     public void testSampleBy() throws Exception {
         assertModel(
-                "select-choose x, col0 from (select-group-by x, avg(y) col0 from (tab) sample by 2m)",
+                "select-choose x, avg from (select-group-by x, avg(y) avg from (tab) sample by 2m)",
                 "select x,avg(y) from tab sample by 2m",
                 modelOf("tab").col("x", ColumnType.INT).col("y", ColumnType.INT)
         );
@@ -1058,7 +1055,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     @Test
     public void testTwoAnalyticColumns() throws Exception {
         assertModel(
-                "select-choose a, b, my, col0 from (select-analytic a, b, f(c) my over (partition by b order by ts), d(c) col0 over () from (xyz))",
+                "select-choose a, b, my, d from (select-analytic a, b, f(c) my over (partition by b order by ts), d(c) d over () from (xyz))",
                 "select a,b, f(c) my over (partition by b order by ts), d(c) over() from xyz",
                 modelOf("xyz").col("c", ColumnType.INT).col("b", ColumnType.INT).col("a", ColumnType.INT)
         );
@@ -1087,8 +1084,8 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     @Test
     public void testWhereClause() throws Exception {
         assertModel(
-                "select-choose x, ohoh from (select-virtual x, col0 + 25 ohoh from (select-group-by x, sum(z) col0 from (select-virtual a + b * c x from (zyzy where in(y,x,a) and b = 10))))",
-                "select a+b*c x, sum(z)+25 ohoh from zyzy where a in (x,y) and b = 10",
+                "select-choose x, ohoh from (select-virtual x, col0 + 25 ohoh from (select-group-by x, sum(z) col0 from (select-virtual a + b * c x from (zyzy where in(10,0,a) and b = 10))))",
+                "select a+b*c x, sum(z)+25 ohoh from zyzy where a in (0,10) and b = 10",
                 modelOf("zyzy").col("a", ColumnType.INT).col("b", ColumnType.INT));
     }
 

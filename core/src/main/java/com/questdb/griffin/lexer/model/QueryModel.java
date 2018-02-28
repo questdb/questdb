@@ -53,7 +53,7 @@ public class QueryModel implements Mutable, ParsedModel, AliasTranslator, Sinkab
     public static final int SELECT_MODEL_ANALYTIC = 3;
     public static final int SELECT_MODEL_GROUP_BY = 4;
     private final ObjList<QueryColumn> columns = new ObjList<>();
-    private final CharSequenceObjHashMap<QueryColumn> aliasToColumnMap = new CharSequenceObjHashMap<>();
+    private final CharSequenceObjHashMap<CharSequence> aliasToColumnMap = new CharSequenceObjHashMap<>();
     private final ObjList<QueryModel> joinModels = new ObjList<>();
     private final ObjList<ExprNode> orderBy = new ObjList<>();
     private final IntList orderByDirection = new IntList();
@@ -108,13 +108,20 @@ public class QueryModel implements Mutable, ParsedModel, AliasTranslator, Sinkab
 
     public void addColumn(QueryColumn column) {
         columns.add(column);
-        if (column.getAlias() != null) {
-            aliasToColumnMap.put(column.getAlias(), column);
-        }
+        final String alias = column.getAlias();
+        final ExprNode ast = column.getAst();
+        assert alias != null;
+        aliasToColumnMap.put(alias, ast.token);
+        columnNameTypeMap.put(alias, ast.type);
     }
 
     public void addDependency(int index) {
         dependencies.add(index);
+    }
+
+    public void addField(String name) {
+        columnNameTypeMap.put(name, ExprNode.LITERAL);
+        aliasToColumnMap.put(name, name);
     }
 
     public void addJoinColumn(ExprNode node) {
@@ -607,20 +614,8 @@ public class QueryModel implements Mutable, ParsedModel, AliasTranslator, Sinkab
     }
 
     @Override
-    public String toString() {
-        return alias != null ? alias.token : (tableName != null ? tableName.token : '{' + nestedModel.toString() + '}');
-    }
-
-    @Override
     public CharSequence translateAlias(CharSequence column) {
-        QueryColumn referent = aliasToColumnMap.get(column);
-        if (referent != null
-                && !(referent instanceof AnalyticColumn)
-                && referent.getAst().type == ExprNode.LITERAL) {
-            return referent.getAst().token;
-        } else {
-            return column;
-        }
+        return aliasToColumnMap.get(column);
     }
 
     private static void aliasToSink(CharSequence alias, CharSink sink) {
