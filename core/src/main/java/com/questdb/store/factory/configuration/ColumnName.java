@@ -29,6 +29,7 @@ import com.questdb.std.str.AbstractCharSequence;
 import com.questdb.std.str.FlyweightCharSequence;
 import org.jetbrains.annotations.NotNull;
 
+//todo: this is massively redundant
 public class ColumnName extends AbstractCharSequence {
     private static final ThreadLocal<ColumnName> SINGLETON = new ThreadLocal<>(ColumnName::new);
     private final FlyweightCharSequence alias = new FlyweightCharSequence();

@@ -54,6 +54,7 @@ public class QueryModel implements Mutable, ParsedModel, AliasTranslator, Sinkab
     public static final int SELECT_MODEL_GROUP_BY = 4;
     private final ObjList<QueryColumn> columns = new ObjList<>();
     private final CharSequenceObjHashMap<CharSequence> aliasToColumnMap = new CharSequenceObjHashMap<>();
+    private final CharSequenceObjHashMap<String> columnToAliasMap = new CharSequenceObjHashMap<>();
     private final ObjList<QueryModel> joinModels = new ObjList<>();
     private final ObjList<ExprNode> orderBy = new ObjList<>();
     private final IntList orderByDirection = new IntList();
@@ -112,6 +113,7 @@ public class QueryModel implements Mutable, ParsedModel, AliasTranslator, Sinkab
         final ExprNode ast = column.getAst();
         assert alias != null;
         aliasToColumnMap.put(alias, ast.token);
+        columnToAliasMap.put(ast.token, alias);
         columnNameTypeMap.put(alias, ast.type);
     }
 
@@ -182,6 +184,7 @@ public class QueryModel implements Mutable, ParsedModel, AliasTranslator, Sinkab
         joinColumns.clear();
         withClauses.clear();
         selectModelType = SELECT_MODEL_NONE;
+        columnToAliasMap.clear();
     }
 
     public ExprNode getAlias() {
@@ -198,6 +201,10 @@ public class QueryModel implements Mutable, ParsedModel, AliasTranslator, Sinkab
 
     public CharSequenceIntHashMap getColumnNameTypeMap() {
         return columnNameTypeMap;
+    }
+
+    public CharSequenceObjHashMap<String> getColumnToAliasMap() {
+        return columnToAliasMap;
     }
 
     public ObjList<QueryColumn> getColumns() {

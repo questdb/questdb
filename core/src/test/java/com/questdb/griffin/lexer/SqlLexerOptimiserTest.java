@@ -55,7 +55,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     @Test
     public void testAliasInWhereClause() throws ParserException {
         assertModel(
-                "",
+                "select-choose x a from (tab where b > 10)",
                 "select x a from tab where b > 10",
                 modelOf("tab").col("x", ColumnType.INT));
     }
@@ -83,7 +83,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     @Test
     public void testAnalyticOrderDirection() throws Exception {
         assertModel(
-                "select-choose a, b, my from (select-analytic a, b, f(c) my over (partition by b order by ts desc, x, y) from (xyz))",
+                "select-analytic a, b, f(c) my over (partition by b order by ts desc, x, y) from (xyz)",
                 "select a,b, f(c) my over (partition by b order by ts desc, x asc, y) from xyz",
                 modelOf("xyz").col("x", ColumnType.INT).col("a", ColumnType.INT).col("b", ColumnType.INT));
     }
@@ -141,10 +141,11 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     @Test
     public void testCount() throws Exception {
         assertModel(
-                "select-choose c.customerId customerId, count" +
-                        " from (select-group-by c.customerId, count() count" +
-                        " from (customers c" +
-                        " outer join orders o on o.customerId = c.customerId post-join-where o.customerId = NaN))",
+                "select-group-by" +
+                        " customerId," +
+                        " count() count " +
+                        "from" +
+                        " (select-choose c.customerId customerId from (customers c outer join orders o on o.customerId = c.customerId post-join-where o.customerId = NaN))",
                 "select c.customerId, count() from customers c" +
                         " outer join orders o on c.customerId = o.customerId " +
                         " where o.customerId = NaN",
@@ -442,6 +443,9 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testFilterOnSubquery() throws Exception {
+        // todo: there are two problems with this
+        // 1. order by has table reference, which forces order parser deal with non-uniform column namespace
+        // 2. there is no select-choose clause, which will leave creating of column aliases to parser (there could be columns with duplicate names because of the join)
         assertModel(
                 "(" +
                         "select-choose customerId, customerName, count from" +
@@ -605,6 +609,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testInvalidSelectColumn() {
+        // todo: invalid reference to column should produce exception
         assertSyntaxError("select c.customerId, orderIdx, o.productId from " +
                         "customers c " +
                         "join (" +
@@ -694,7 +699,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 //                        " outer join orders o on c.customerId = o.customerId " +
 //                        " where kk = NaN limit 10");
 
-        // todo: join analysis trips over "kk" because this column had been pulled up a level by query rewrite code
+        // todo: column alias reference from where clause should be disallowed
         assertModel(
                 "",
                 "(select c.customerId, o.customerId kk, count() from customers c" +
@@ -730,12 +735,10 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testJoinGroupBy() throws Exception {
-        assertModel("select-choose country, avg" +
-                        " from" +
-                        " (select-group-by country, avg(quantity) avg" +
-                        " from (orders o" +
-                        " join (customers c where country ~ '^Z') on c.customerId = o.customerId" +
-                        " join orderDetails d on d.orderId = o.orderId))",
+        assertModel("select-group-by" +
+                        " country," +
+                        " avg(quantity) avg " +
+                        "from (orders o join (customers c where country ~ '^Z') on c.customerId = o.customerId join orderDetails d on d.orderId = o.orderId)",
                 "select country, avg(quantity) from orders o " +
                         "join customers c on c.customerId = o.customerId " +
                         "join orderDetails d on o.orderId = d.orderId" +
@@ -749,11 +752,14 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     @Test
     public void testJoinGroupByFilter() throws Exception {
         assertModel(
-                "(select-choose country, avg" +
-                        " from (select-group-by country, avg(quantity) avg" +
-                        " from (orders o" +
+                "(select-group-by" +
+                        " country," +
+                        " avg(quantity) avg " +
+                        "from" +
+                        " (orders o" +
                         " join (customers c where country ~ '^Z') on c.customerId = o.customerId" +
-                        " join orderDetails d on d.orderId = o.orderId)) where avg > 2)",
+                        " join orderDetails d on d.orderId = o.orderId)) " +
+                        "where avg > 2",
                 "(select country, avg(quantity) avg from orders o " +
                         "join customers c on c.customerId = o.customerId " +
                         "join orderDetails d on o.orderId = d.orderId" +
@@ -833,6 +839,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testMixedFieldsSubQuery() throws Exception {
+        // todo: "where" predicate is incorrectly pulled inside of sub-query
         assertModel(
                 "select-choose x, y from ((select-choose x, y from (select-virtual z + x y from (tab t2 latest by x where x > 100)) where y > 0) t1)",
                 "select x, y from (select x,z + x y from tab t2 latest by x where x > 100) t1 where y > 0",
@@ -841,6 +848,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testMostRecentWhereClause() throws Exception {
+        // todo: this is an odd one. "z" is not selected in the inner query and where clause references non-existing columns
         assertModel(
                 "select-choose x, ohoh from (select-virtual x, col0 + 25 ohoh from (select-group-by x, sum(z) col0 from (select-virtual a + b * c x from (zyzy latest by x where in(y,x,a) and b = 10))))",
                 "select a+b*c x, sum(z)+25 ohoh from zyzy latest by x where a in (x,y) and b = 10",
@@ -850,6 +858,8 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testMultipleExpressions() throws Exception {
+        // todo: "z" column is not selected in the inner "select-virtual" clause
+        // on this subject lexer has to validate that fields are actually present
         assertModel(
                 "select-choose x, ohoh from (select-virtual x, col0 + 25 ohoh from (select-group-by x, sum(z) col0 from (select-virtual a + b * c x from (zyzy))))",
                 "select a+b*c x, sum(z)+25 ohoh from zyzy",
@@ -860,7 +870,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     @Test
     public void testOneAnalyticColumn() throws Exception {
         assertModel(
-                "select-choose a, b, f from (select-analytic a, b, f(c) f over (partition by b order by ts) from (xyz))",
+                "select-analytic a, b, f(c) f over (partition by b order by ts) from (xyz)",
                 "select a,b, f(c) over (partition by b order by ts) from xyz",
                 modelOf("xyz")
                         .col("a", ColumnType.INT)
@@ -905,7 +915,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     @Test
     public void testSampleBy() throws Exception {
         assertModel(
-                "select-choose x, avg from (select-group-by x, avg(y) avg from (tab) sample by 2m)",
+                "select-group-by x, avg(y) avg from (tab) sample by 2m",
                 "select x,avg(y) from tab sample by 2m",
                 modelOf("tab").col("x", ColumnType.INT).col("y", ColumnType.INT)
         );
@@ -913,6 +923,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testSampleByNoAggregate() {
+        // todo: expect exception when there is aggregation function
         assertSyntaxError("select x,y from tab sample by 2m", 30, "at least one",
                 modelOf("tab").col("x", ColumnType.INT).col("y", ColumnType.INT)
         );
@@ -930,7 +941,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     @Test
     public void testSelectSingleExpression() throws Exception {
         assertModel(
-                "select-choose x from (select-virtual a + b * c x from (t))",
+                "select-virtual a + b * c x from (t)",
                 "select a+b*c x from t",
                 modelOf("t").col("a", ColumnType.INT).col("b", ColumnType.INT).col("c", ColumnType.INT));
     }
@@ -1055,7 +1066,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     @Test
     public void testTwoAnalyticColumns() throws Exception {
         assertModel(
-                "select-choose a, b, my, d from (select-analytic a, b, f(c) my over (partition by b order by ts), d(c) d over () from (xyz))",
+                "select-analytic a, b, f(c) my over (partition by b order by ts), d(c) d over () from (xyz)",
                 "select a,b, f(c) my over (partition by b order by ts), d(c) over() from xyz",
                 modelOf("xyz").col("c", ColumnType.INT).col("b", ColumnType.INT).col("a", ColumnType.INT)
         );
@@ -1083,6 +1094,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testWhereClause() throws Exception {
+        // todo: the inner select-virtual has to export "z" column
         assertModel(
                 "select-choose x, ohoh from (select-virtual x, col0 + 25 ohoh from (select-group-by x, sum(z) col0 from (select-virtual a + b * c x from (zyzy where in(10,0,a) and b = 10))))",
                 "select a+b*c x, sum(z)+25 ohoh from zyzy where a in (0,10) and b = 10",

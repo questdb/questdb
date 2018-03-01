@@ -23,7 +23,10 @@
 
 package com.questdb;
 
-import com.questdb.log.*;
+import com.questdb.log.LogFactory;
+import com.questdb.log.LogFileWriter;
+import com.questdb.log.LogLevel;
+import com.questdb.log.LogWriterConfig;
 import com.questdb.mp.Job;
 import com.questdb.net.http.HttpServer;
 import com.questdb.net.http.SimpleUrlMatcher;
@@ -201,16 +204,19 @@ class BootstrapMain {
 
     private static void configureLoggers(final ServerConfiguration configuration) {
 
-        LogWriterFactory factory = (ring, seq, level) -> {
+        LogFactory.INSTANCE.add(new LogWriterConfig("access", LogLevel.LOG_LEVEL_ALL, (ring, seq, level) -> {
             LogFileWriter w = new LogFileWriter(ring, seq, level);
             w.setLocation(configuration.getAccessLog().getAbsolutePath());
             return w;
-        };
+        }));
 
-        LogFactory.INSTANCE.add(new LogWriterConfig("access", LogLevel.LOG_LEVEL_ALL, factory));
         LogFactory.INSTANCE.add(new LogWriterConfig(
                 System.getProperty(LogFactory.DEBUG_TRIGGER) != null ? LogLevel.LOG_LEVEL_ALL : LogLevel.LOG_LEVEL_ERROR | LogLevel.LOG_LEVEL_INFO,
-                factory));
+                (ring, seq, level) -> {
+                    LogFileWriter w = new LogFileWriter(ring, seq, level);
+                    w.setLocation(configuration.getErrorLog().getAbsolutePath());
+                    return w;
+                }));
         LogFactory.INSTANCE.bind();
     }
 

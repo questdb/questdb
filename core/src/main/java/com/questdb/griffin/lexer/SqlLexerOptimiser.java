@@ -90,13 +90,6 @@ public final class SqlLexerOptimiser {
     private final IntList nullCounts = new IntList();
     private final IntPriorityQueue orderingStack = new IntPriorityQueue();
     private final StringSink columnNameAssembly = new StringSink();
-    //    private final CharSequenceHashSet selectedColumnAliases = new CharSequenceHashSet();
-    //    private final ObjList<QueryColumn> _selectedColumns = new ObjList<>();
-    private final ObjHashSet<String> groupKeyColumns = new ObjHashSet<>();
-    //    private final ObjList<QueryColumn> _aggregators = new ObjList<>();
-//    private final ObjList<QueryColumn> outerVirtualColumns = new ObjList<>();
-//    private final ObjList<QueryColumn> innerVirtualColumn = new ObjList<>();
-//    private final ObjList<AnalyticColumn> analyticColumns = new ObjList<>();
     private Lexer lexer = new Lexer();
     private ObjList<JoinContext> emittedJoinClauses;
 
@@ -207,15 +200,6 @@ public final class SqlLexerOptimiser {
             jm.setContext(context);
         } else {
             jm.setContext(mergeContexts(parent, other, context));
-        }
-    }
-
-    private void addKeyColumns(QueryModel root) {
-        for (int i = 0, n = groupKeyColumns.size(); i < n; i++) {
-            QueryColumn col = queryColumnPool.next();
-            String alias = groupKeyColumns.get(i);
-            col.of(alias, 0, exprNodePool.next().of(ExprNode.LITERAL, alias, 0, 0));
-            root.addColumn(col);
         }
     }
 
@@ -1059,14 +1043,6 @@ public final class SqlLexerOptimiser {
         }
 
         return result;
-    }
-
-    @NotNull
-    private QueryModel nextModel(QueryModel root, int selectModelType) {
-        QueryModel model = queryModelPool.next();
-        model.setNestedModel(root);
-        model.setSelectModelType(selectModelType);
-        return model;
     }
 
     private CharSequence notTermTok() throws ParserException {
@@ -2116,16 +2092,15 @@ public final class SqlLexerOptimiser {
 
     private ExprNode replaceLiteral(@Transient ExprNode node, QueryModel model) {
         if (node != null && node.type == ExprNode.LITERAL) {
-            QueryColumn column = queryColumnPool.next().of(
-                    createColumnAlias(
-                            node.token,
-                            model.getColumnNameTypeMap()
-                    ),
-                    node.position,
-                    node
-            );
-            model.addColumn(column);
-            return exprNodePool.next().of(ExprNode.LITERAL, column.getAlias(), 0, node.position);
+            final CharSequenceObjHashMap<String> map = model.getColumnToAliasMap();
+            int index = map.keyIndex(node.token);
+            if (index > -1) {
+                // this is the first time we see this column and must create alias
+                String alias = createColumnAlias(node.token, model.getColumnNameTypeMap());
+                model.addColumn(queryColumnPool.next().of(alias, node.position, node));
+                return exprNodePool.next().of(ExprNode.LITERAL, alias, 0, node.position);
+            }
+            return exprNodePool.next().of(ExprNode.LITERAL, map.valueAt(index), 0, node.position);
         }
         return node;
     }
@@ -2193,64 +2168,9 @@ public final class SqlLexerOptimiser {
         return model.getColumns().size() > 0 ? rewriteSelectClause0(model) : model;
     }
 
-        /*
-        // now create nested models to relect layers we have detected so far
-        QueryModel root = nestedModel;
-
-        // if virtual columns are present, create record source to calculate them
-        if (translatingModel.getColumns().size() > 0) {
-            translatingModel.setNestedModel(root);
-            root = translatingModel;
-        }
-
-        // if aggregators present, wrap record source into group-by source
-        if (groupByModel.getColumns().size() > 0) {
-            groupByModel.setNestedModel(root);
-            root = groupByModel;
-            addKeyColumns(root);
-            if (model.getSampleBy() != null) {
-                root.setSampleBy(model.getSampleBy());
-            }
-        } else {
-            // ok, when we have no aggregation functions we must also have no "sample by"
-            if (model.getSampleBy() != null) {
-                throw ParserException.$(model.getSampleBy().position, "at least one aggregation expression is expected");
-            }
-        }
-
-        if (outerModel.getColumns().size() > 0) {
-            outerModel.setNestedModel(root);
-            root = outerModel;
-            addKeyColumns(root);
-        }
-
-        if (analyticModel.getColumns().size() > 0) {
-            analyticModel.setNestedModel(root);
-            root = analyticModel;
-            addKeyColumns(root);
-        }
-
-        if (chooseModel.getColumns().size() > 0 && root != nestedModel) {
-            chooseModel.setNestedModel(root);
-            return chooseModel;
-//            return nextModelOf(root, QueryModel.SELECT_MODEL_CHOOSE, selectedColumns, false);
-        }
-
-        return model;
-
-        */
-
     @NotNull
     private QueryModel rewriteSelectClause0(QueryModel model) throws ParserException {
         assert model.getNestedModel() != null;
-
-//        this.outerVirtualColumns.clear();
-//        this.innerVirtualColumn.clear();
-//        this.aggregators.clear();
-//        this.selectedColumns.clear();
-//        this.selectedColumnAliases.clear();
-        this.groupKeyColumns.clear();
-//        this.analyticColumns.clear();
 
         QueryModel groupByModel = queryModelPool.next();
         groupByModel.setSelectModelType(QueryModel.SELECT_MODEL_GROUP_BY);
@@ -2261,21 +2181,14 @@ public final class SqlLexerOptimiser {
         innerModel.setSelectModelType(QueryModel.SELECT_MODEL_VIRTUAL);
         QueryModel analyticModel = queryModelPool.next();
         analyticModel.setSelectModelType(QueryModel.SELECT_MODEL_ANALYTIC);
-
-        // these columns resolve table prefixes, to simplify matters
-        // we should always have this layer to provide uniform column names
-        // further down the pipeline.
-//        ObjList<QueryColumn> innerColumns = new ObjList<>();
-//        CharSequenceIntHashMap innerTypeNameMap = new CharSequenceIntHashMap();
         QueryModel translatingModel = queryModelPool.next();
         translatingModel.setSelectModelType(QueryModel.SELECT_MODEL_CHOOSE);
-        ObjList<QueryColumn> translatedColumnRefs = new ObjList<>();
-        ObjList<QueryColumn> innerColumnRefs = new ObjList<>();
-        ObjList<QueryColumn> groupByColumnRefs = new ObjList<>();
-
+        boolean useInnerModel = false;
+        boolean useAnalyticModel = false;
+        boolean useGroupByModel = false;
+        boolean useOuterModel = false;
 
         ObjList<QueryColumn> columns = model.getColumns();
-
 
         // create virtual columns from select list
         for (int i = 0, k = columns.size(); i < k; i++) {
@@ -2302,14 +2215,16 @@ public final class SqlLexerOptimiser {
 
                 translatingModel.addColumn(column);
 
-                // create column that references inner alias we just created
-                translatedColumnRefs.add(queryColumnPool.next().of(
+                QueryColumn translatedColumn = queryColumnPool.next().of(
                         column.getAlias(),
                         0,
                         // flatten the node
-                        exprNodePool.next().of(ExprNode.LITERAL, column.getAlias(), 0, 0)
-                ));
-
+                        exprNodePool.next().of(ExprNode.LITERAL, column.getAlias(), 0, 0));
+                // create column that references inner alias we just created
+                innerModel.addColumn(translatedColumn);
+                groupByModel.addColumn(translatedColumn);
+                analyticModel.addColumn(translatedColumn);
+                outerModel.addColumn(translatedColumn);
             } else {
                 // Non-literal column
                 // Strip AST of any literal references and replace with consistent names in
@@ -2322,19 +2237,20 @@ public final class SqlLexerOptimiser {
                 if (qc.getAst().type == ExprNode.FUNCTION) {
                     if (analytic) {
                         analyticModel.addColumn(qc);
+                        useAnalyticModel = true;
                         continue;
                     } else if (FunctionFactories.isAggregate(qc.getAst().token)) {
                         groupByModel.addColumn(qc);
                         // group-by column references might be needed when we have
                         // outer model supporting arithmetic such as:
                         // select sum(a)+sum(b) ....
-                        groupByColumnRefs.add(queryColumnPool.next().of(
+                        QueryColumn groupByColumn = queryColumnPool.next().of(
                                 qc.getAlias(),
                                 0,
                                 // flatten node down to alias
-                                exprNodePool.next().of(ExprNode.LITERAL, qc.getAlias(), 0, 0)
-                        ));
-
+                                exprNodePool.next().of(ExprNode.LITERAL, qc.getAlias(), 0, 0));
+                        outerModel.addColumn(groupByColumn);
+                        useGroupByModel = true;
                         continue;
                     }
                 }
@@ -2346,33 +2262,38 @@ public final class SqlLexerOptimiser {
                 emitAggregates(qc.getAst(), groupByModel);
                 if (beforeSplit < groupByModel.getColumns().size()) {
                     outerModel.addColumn(qc);
+                    useGroupByModel = true;
+                    useOuterModel = true;
                 } else {
                     // there were no aggregation functions emitted therefore
                     // this is just a function that goes into virtual model
                     innerModel.addColumn(qc);
+                    useInnerModel = true;
 
                     // we also create column that references this inner layer from outer layer,
                     // for example when we have:
                     // select a, b+c ...
                     // it should translate to:
                     // select a, x from (select a, b+c x from (select a,b,c ...))
-                    innerColumnRefs.add(queryColumnPool.next().of(
+                    QueryColumn innerColumn = queryColumnPool.next().of(
                             qc.getAlias(),
                             0,
                             exprNodePool.next().of(ExprNode.LITERAL, qc.getAlias(), 0, 0)
-                    ));
-
+                    );
+                    groupByModel.addColumn(innerColumn);
+                    analyticModel.addColumn(innerColumn);
+                    outerModel.addColumn(innerColumn);
                 }
             }
         }
         // fail if we have both analytic and group-by models
-        if (analyticModel.getColumns().size() != 0 && groupByModel.getColumns().size() != 0) {
+        if (useAnalyticModel && useGroupByModel) {
             throw ParserException.$(0, "Analytic function is not allowed in context of aggregation. Use sub-query.");
         }
 
         // check if translating model is redundant, e.g.
-        // neither chooses between tables nor renames columns
-        boolean translationIsRedundant = innerModel.getColumns().size() > 0 || groupByModel.getColumns().size() > 0 || analyticModel.getColumns().size() > 0;
+        // that it neither chooses between tables nor renames columns
+        boolean translationIsRedundant = useInnerModel || useGroupByModel || useAnalyticModel;
         if (translationIsRedundant) {
             for (int i = 0, n = translatingModel.getColumns().size(); i < n; i++) {
                 QueryColumn column = translatingModel.getColumns().getQuick(i);
@@ -2391,117 +2312,24 @@ public final class SqlLexerOptimiser {
             translatingModel.setNestedModel(model.getNestedModel());
         }
 
-        if (innerModel.getColumns().size() > 0) {
+        if (useInnerModel) {
             innerModel.setNestedModel(root);
             root = innerModel;
-
-            // add all explicit translated column references to inner layer
-            for (int j = 0, n = translatedColumnRefs.size(); j < n; j++) {
-                innerModel.addColumn(translatedColumnRefs.getQuick(j));
-            }
         }
 
-        if (analyticModel.getColumns().size() > 0) {
+        if (useAnalyticModel) {
             analyticModel.setNestedModel(root);
             root = analyticModel;
-
-            // add all explicit translated column references to analytic layer
-            for (int j = 0, n = translatedColumnRefs.size(); j < n; j++) {
-                analyticModel.addColumn(translatedColumnRefs.getQuick(j));
-            }
-
-            // and also add inner layer aliases to analytic layer
-            for (int j = 0, n = innerColumnRefs.size(); j < n; j++) {
-                analyticModel.addColumn(innerColumnRefs.getQuick(j));
-            }
-
-        } else if (groupByModel.getColumns().size() > 0) {
+        } else if (useGroupByModel) {
             groupByModel.setNestedModel(root);
             root = groupByModel;
-
-            // group-by model also needs to inherit translated & inner columns
-            for (int j = 0, n = translatedColumnRefs.size(); j < n; j++) {
-                groupByModel.addColumn(translatedColumnRefs.getQuick(j));
-            }
-
-            for (int j = 0, n = innerColumnRefs.size(); j < n; j++) {
-                groupByModel.addColumn(innerColumnRefs.getQuick(j));
-            }
-
-            if (outerModel.getColumns().size() > 0) {
+            if (useOuterModel) {
                 outerModel.setNestedModel(root);
                 root = outerModel;
-
-                // and outer model needs to inherit all three
-                for (int j = 0, n = translatedColumnRefs.size(); j < n; j++) {
-                    outerModel.addColumn(translatedColumnRefs.getQuick(j));
-                }
-
-                for (int j = 0, n = innerColumnRefs.size(); j < n; j++) {
-                    outerModel.addColumn(innerColumnRefs.getQuick(j));
-                }
-
-                for (int j = 0, n = groupByColumnRefs.size(); j < n; j++) {
-                    outerModel.addColumn(groupByColumnRefs.getQuick(j));
-                }
             }
         }
 
         return root;
-
-
-            /*
-            // beyond this point column will be virtualized and separated into new model
-            // therefore we must create a new query column referencing alias of this departing one
-            // qc is non-literal, which makes it one of the following:
-            // - arithmetic expression/function call
-            // - aggregation function
-            // - analytic function
-
-            QueryColumn sc = queryColumnPool.next();
-            ExprNode literal = exprNodePool.next().of(
-                    ExprNode.LITERAL,
-                    qc.getAlias(),
-                    Integer.MIN_VALUE,
-                    qc.getAst().position);
-
-            chooseModel.addColumn(sc.of(literal.token, literal.position, literal));
-
-            // this is straight up aggregator function, separate and move on
-            if (!analytic && qc.getAst().type == ExprNode.FUNCTION && FunctionFactories.isAggregate(qc.getAst().token)) {
-                groupByModel.addColumn(qc);
-                continue;
-            }
-
-            // deal with arithmetic expression which may or may not contain aggregator function
-            if (qc.getAst().type == ExprNode.OPERATION || qc.getAst().type == ExprNode.FUNCTION) {
-                int beforeSplit = groupByModel.getColumns().size();
-                emitAggregates(qc.getAst(), groupByModel);
-                if (beforeSplit < groupByModel.getColumns().size()) {
-                    outerModel.addColumn(qc);
-                    continue;
-                }
-            }
-
-            if (analytic) {
-                if (qc.getAst().type != ExprNode.FUNCTION) {
-                    throw ParserException.$(qc.getAst().position, "Analytic function expected");
-                }
-
-                if (groupByModel.getColumns().size() > 0) {
-                    throw ParserException.$(qc.getAst().position, "Analytic function is not allowed in context of aggregation. Use sub-query.");
-                }
-
-                analyticModel.addColumn(qc);
-//                analyticColumns.add((AnalyticColumn) qc);
-            } else {
-                // this is either a constant or non-aggregate expression
-                // either case is a virtual column
-//                innerVirtualColumn.add(qc);
-                translatingModel.addColumn(qc);
-                groupKeyColumns.add(qc.getAlias());
-            }
-            */
     }
 
     /**
