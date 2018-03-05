@@ -72,6 +72,7 @@ final class PostOrderTreeTraversalAlgo {
         }
     }
 
+    @FunctionalInterface
     public interface Visitor {
         void visit(ExprNode node) throws ParserException;
     }

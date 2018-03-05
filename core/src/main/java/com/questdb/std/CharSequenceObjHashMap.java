@@ -31,7 +31,7 @@ import java.util.Comparator;
 
 public class CharSequenceObjHashMap<V> implements Mutable {
     private static final int MIN_INITIAL_CAPACITY = 16;
-    private static final CharSequence noEntryValue = NullCharSequence.INSTANCE;
+    private static final CharSequence noEntryKey = NullCharSequence.INSTANCE;
     private final double loadFactor;
     private final ObjList<CharSequence> list;
     private CharSequence[] keys;
@@ -62,7 +62,7 @@ public class CharSequenceObjHashMap<V> implements Mutable {
     }
 
     public final void clear() {
-        Arrays.fill(keys, noEntryValue);
+        Arrays.fill(keys, noEntryKey);
         free = this.capacity;
         list.clear();
     }
@@ -74,7 +74,7 @@ public class CharSequenceObjHashMap<V> implements Mutable {
     public int keyIndex(CharSequence key) {
         int index = Chars.hashCode(key) & mask;
 
-        if (Unsafe.arrayGet(keys, index) == noEntryValue) {
+        if (Unsafe.arrayGet(keys, index) == noEntryKey) {
             return index;
         }
 
@@ -85,6 +85,20 @@ public class CharSequenceObjHashMap<V> implements Mutable {
         return probe(key, index);
     }
 
+    public int keyIndex(CharSequence key, int lo, int hi) {
+        int index = Chars.hashCode(key, lo, hi) & mask;
+
+        if (Unsafe.arrayGet(keys, index) == noEntryKey) {
+            return index;
+        }
+
+        CharSequence cs = Unsafe.arrayGet(keys, index);
+        if (Chars.equals(key, lo, hi, cs, 0, cs.length())) {
+            return -index - 1;
+        }
+        return probe(key, lo, hi, index);
+    }
+
     public ObjList<CharSequence> keys() {
         return list;
     }
@@ -93,10 +107,18 @@ public class CharSequenceObjHashMap<V> implements Mutable {
         return putAt(keyIndex(key), key, value);
     }
 
+    public boolean putAt(int index, CharSequence key, V value) {
+        if (putAt0(index, key, value)) {
+            list.add(key);
+            return true;
+        }
+        return false;
+    }
+
     public void remove(CharSequence key) {
         int index = keyIndex(key);
         if (index < 0) {
-            Unsafe.arrayPut(keys, -index - 1, noEntryValue);
+            Unsafe.arrayPut(keys, -index - 1, noEntryKey);
             Unsafe.arrayPut(values, -index - 1, null);
             list.remove(key);
             free++;
@@ -111,32 +133,37 @@ public class CharSequenceObjHashMap<V> implements Mutable {
         list.sort(comparator);
     }
 
-    public boolean putAt(int index, CharSequence key, V value) {
-        if (putAt0(index, key, value)) {
-            list.add(key);
-            return true;
-        }
-        return false;
+    public V valueAt(int index) {
+        return index < 0 ? Unsafe.arrayGet(values, -index - 1) : null;
     }
 
     public V valueQuick(int index) {
         return get(list.getQuick(index));
     }
 
+    private int probe(CharSequence key, int lo, int hi, int index) {
+        do {
+            index = (index + 1) & mask;
+            if (Unsafe.arrayGet(keys, index) == noEntryKey) {
+                return index;
+            }
+            CharSequence cs = Unsafe.arrayGet(keys, index);
+            if (Chars.equals(key, lo, hi, cs, 0, cs.length())) {
+                return -index - 1;
+            }
+        } while (true);
+    }
+
     private int probe(CharSequence key, int index) {
         do {
             index = (index + 1) & mask;
-            if (Unsafe.arrayGet(keys, index) == noEntryValue) {
+            if (Unsafe.arrayGet(keys, index) == noEntryKey) {
                 return index;
             }
             if (Chars.equals(key, Unsafe.arrayGet(keys, index))) {
                 return -index - 1;
             }
         } while (true);
-    }
-
-    public V valueAt(int index) {
-        return index < 0 ? Unsafe.arrayGet(values, -index - 1) : null;
     }
 
     private boolean putAt0(int index, CharSequence key, V value) {
@@ -162,10 +189,10 @@ public class CharSequenceObjHashMap<V> implements Mutable {
         CharSequence[] oldKeys = keys;
         this.keys = new CharSequence[newCapacity];
         this.values = (V[]) new Object[newCapacity];
-        Arrays.fill(keys, noEntryValue);
+        Arrays.fill(keys, noEntryKey);
 
         for (int i = oldKeys.length; i-- > 0; ) {
-            if (Unsafe.arrayGet(oldKeys, i) != noEntryValue) {
+            if (Unsafe.arrayGet(oldKeys, i) != noEntryKey) {
                 putAt0(keyIndex(Unsafe.arrayGet(oldKeys, i)), Unsafe.arrayGet(oldKeys, i), Unsafe.arrayGet(oldValues, i));
             }
         }
