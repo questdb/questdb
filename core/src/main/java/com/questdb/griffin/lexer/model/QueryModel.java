@@ -195,8 +195,16 @@ public class QueryModel implements Mutable, ParsedModel, AliasTranslator, Sinkab
         this.alias = alias;
     }
 
-    public int getAliasIndex(CharSequence alias) {
-        return aliasIndexes.get(alias);
+    public int getAliasIndex(CharSequence column, int start, int end) {
+        int index = aliasIndexes.keyIndex(column, start, end);
+        if (index < 0) {
+            return aliasIndexes.valueAt(index);
+        }
+        return -1;
+    }
+
+    public CharSequenceObjHashMap<CharSequence> getAliasToColumnMap() {
+        return aliasToColumnMap;
     }
 
     public CharSequenceIntHashMap getColumnNameTypeMap() {
@@ -560,6 +568,9 @@ public class QueryModel implements Mutable, ParsedModel, AliasTranslator, Sinkab
                     sink.put('(');
                     model.toSink(sink);
                     sink.put(')');
+                    if (model.getAlias() != null) {
+                        aliasToSink(model.getAlias().token, sink);
+                    }
                 } else {
                     model.toSink(sink);
                 }
