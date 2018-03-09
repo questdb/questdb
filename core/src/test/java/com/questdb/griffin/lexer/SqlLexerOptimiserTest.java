@@ -77,7 +77,14 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
         assertModel(
                 "select-analytic a, b, f(c) my over (partition by b order by ts desc, x, y) from (xyz)",
                 "select a,b, f(c) my over (partition by b order by ts desc, x asc, y) from xyz",
-                modelOf("xyz").col("x", ColumnType.INT).col("a", ColumnType.INT).col("b", ColumnType.INT));
+                modelOf("xyz")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.INT)
+                        .col("c", ColumnType.INT)
+                        .col("x", ColumnType.INT)
+                        .col("y", ColumnType.INT)
+                        .col("z", ColumnType.INT)
+        );
     }
 
     @Test
@@ -110,39 +117,59 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
         // which means "where" clause for "e" table has to be explicitly as post-join-where
         assertModel(
                 "customers c" +
-                        " asof join (select-choose '1' blah, lastName, employeeId, timestamp from (employees order by lastName)) e " +
-                        "on e.employeeId = c.customerId " +
-                        "post-join-where e.lastName = 'x' and e.blah = 'y'" +
-                        " join orders o " +
-                        "on o.customerId = c.customerId",
+                        " asof join" +
+                        " (select-virtual '1' blah, lastName, employeeId, timestamp" +
+                        " from (employees) order by lastName) e on e.employeeId = c.customerId" +
+                        " post-join-where e.lastName = 'x' and e.blah = 'y'" +
+                        " join orders o on o.customerId = c.customerId",
                 "customers c" +
                         " asof join (select '1' blah, lastName, employeeId, timestamp from employees order by lastName) e on c.customerId = e.employeeId" +
                         " join orders o on c.customerId = o.customerId where e.lastName = 'x' and e.blah = 'y'",
-                modelOf("customers").col("customerId", ColumnType.SYMBOL),
-                modelOf("employees").col("employeeId", ColumnType.STRING).col("lastName", ColumnType.STRING),
-                modelOf("orders").col("customerId", ColumnType.SYMBOL)
+                modelOf("customers")
+                        .col("customerId", ColumnType.SYMBOL),
+                modelOf("employees")
+                        .col("employeeId", ColumnType.STRING)
+                        .col("lastName", ColumnType.STRING)
+                        .col("timestamp", ColumnType.TIMESTAMP),
+                modelOf("orders")
+                        .col("customerId", ColumnType.SYMBOL)
         );
     }
 
     @Test
     public void testAsOfJoinSubQuerySimpleAlias() throws Exception {
         assertModel(
-                "customers c asof join (select-choose '1' blah, lastName, employeeId customerId, timestamp from (employees order by lastName)) a on a.customerId = c.customerId",
+                "customers c" +
+                        " asof join" +
+                        " (select-virtual '1' blah, lastName, customerId, timestamp" +
+                        " from (select-choose lastName, employeeId customerId, timestamp" +
+                        " from (employees)) order by lastName) a on a.customerId = c.customerId",
                 "customers c" +
                         " asof join (select '1' blah, lastName, employeeId customerId, timestamp from employees order by lastName) a on (customerId)",
-                modelOf("customers").col("customerId", ColumnType.SYMBOL),
-                modelOf("employees").col("employeeId", ColumnType.STRING)
+                modelOf("customers")
+                        .col("customerId", ColumnType.SYMBOL),
+                modelOf("employees")
+                        .col("employeeId", ColumnType.STRING)
+                        .col("lastName", ColumnType.STRING)
+                        .col("timestamp", ColumnType.TIMESTAMP)
         );
     }
 
     @Test
     public void testAsOfJoinSubQuerySimpleNoAlias() throws Exception {
         assertModel(
-                "customers c asof join (select-choose '1' blah, lastName, employeeId customerId, timestamp from (employees order by lastName)) _xQdbA0 on _xQdbA0.customerId = c.customerId",
+                "customers c" +
+                        " asof join" +
+                        " (select-virtual '1' blah, lastName, customerId, timestamp" +
+                        " from (select-choose lastName, employeeId customerId, timestamp" +
+                        " from (employees)) order by lastName) _xQdbA0 on _xQdbA0.customerId = c.customerId",
                 "customers c" +
                         " asof join (select '1' blah, lastName, employeeId customerId, timestamp from employees order by lastName) on (customerId)",
                 modelOf("customers").col("customerId", ColumnType.SYMBOL),
-                modelOf("employees").col("employeeId", ColumnType.STRING)
+                modelOf("employees")
+                        .col("employeeId", ColumnType.STRING)
+                        .col("lastName", ColumnType.STRING)
+                        .col("timestamp", ColumnType.TIMESTAMP)
         );
     }
 
@@ -382,6 +409,17 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDisallowedColumnAliases() throws ParserException {
+        assertModel(
+                "select-virtual x + z column, x - z column1, x * z column2, x / z column3, x % z column4, x ^ z column5 from (tab1)",
+                "select x+z, x-z, x*z, x/z, x%z, x^z from tab1",
+                modelOf("tab1")
+                        .col("x", ColumnType.INT)
+                        .col("z", ColumnType.INT)
+        );
+    }
+
+    @Test
     public void testDuplicateAlias() {
         assertSyntaxError("customers a" +
                         " cross join orders a", 30, "Duplicate",
@@ -450,7 +488,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testFilterOnSubquery() throws Exception {
+    public void testFilterOnSubQuery() throws Exception {
         // todo: missing compulsory select-choose after joins that dereferences ambiguous colums
         assertModel(
                 "(select-group-by" +
@@ -570,6 +608,15 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInvalidColumnInExpression() {
+        assertSyntaxError(
+                "select a + b x from tab",
+                11,
+                "Invalid column",
+                modelOf("tab").col("a", ColumnType.INT));
+    }
+
+    @Test
     public void testInvalidGroupBy1() {
         assertSyntaxError("select x, y from tab sample by x,", 32, "Unexpected");
     }
@@ -616,7 +663,6 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testInvalidSelectColumn() {
-        // todo: invalid reference to column should produce exception
         assertSyntaxError("select c.customerId, orderIdx, o.productId from " +
                         "customers c " +
                         "join (" +
@@ -757,7 +803,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
                         "join customers c on c.customerId = o.customerId " +
                         "join orderDetails d on o.orderId = d.orderId" +
                         " where country ~ '^Z') where avg > 2",
-                modelOf("orders").col("customerId", ColumnType.INT).col("orderId", ColumnType.INT),
+                modelOf("orders").col("customerId", ColumnType.INT).col("orderId", ColumnType.INT).col("quantity", ColumnType.DOUBLE),
                 modelOf("customers").col("customerId", ColumnType.INT).col("country", ColumnType.SYMBOL),
                 modelOf("orderDetails").col("orderId", ColumnType.INT)
         );
@@ -867,17 +913,22 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
                         .col("c", ColumnType.INT)
                         .col("x", ColumnType.INT)
                         .col("y", ColumnType.INT)
+                        .col("z", ColumnType.INT)
         );
     }
 
     @Test
     public void testMultipleExpressions() throws Exception {
-        // todo: "z" column is not selected in the inner "select-virtual" clause
-        // on this subject lexer has to validate that fields are actually present
         assertModel(
                 "select-virtual x, sum + 25 ohoh from (select-group-by x, sum(z) sum from (select-virtual a + b * c x, z from (zyzy)))",
                 "select a+b*c x, sum(z)+25 ohoh from zyzy",
-                modelOf("zyzy").col("a", ColumnType.INT)
+                modelOf("zyzy")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.INT)
+                        .col("c", ColumnType.INT)
+                        .col("x", ColumnType.INT)
+                        .col("y", ColumnType.INT)
+                        .col("z", ColumnType.INT)
         );
     }
 
@@ -904,9 +955,12 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     @Test
     public void testOrderBy1() throws Exception {
         assertModel(
-                "select-choose x, y from (tab order by x, y, z)",
+                "select-choose x, y from (select-choose x, y, z from (tab) order by x, y, z)",
                 "select x,y from tab order by x,y,z",
-                modelOf("tab").col("x", ColumnType.INT).col("y", ColumnType.INT)
+                modelOf("tab")
+                        .col("x", ColumnType.INT)
+                        .col("y", ColumnType.INT)
+                        .col("z", ColumnType.INT)
         );
 
     }
@@ -914,6 +968,194 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     @Test
     public void testOrderByExpression() {
         assertSyntaxError("select x, y from tab order by x+y", 31, "Unexpected");
+    }
+
+    @Test
+    public void testOrderByGroupByCol() throws ParserException {
+        assertModel(
+                "select-group-by a, sum(b) b from (tab) order by b",
+                "select a, sum(b) b from tab order by b",
+                modelOf("tab").col("a", ColumnType.INT).col("b", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testOrderByGroupByColPrefixed() throws ParserException {
+        assertModel(
+                "select-group-by a, sum(b) b from (tab)",
+                "select a, sum(b) b from tab order by tab.b, a",
+                modelOf("tab").col("a", ColumnType.INT).col("b", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testOrderByGroupByColPrefixed2() throws ParserException {
+        assertModel(
+                "select-group-by a, sum(b) b from (tab) order by a",
+                "select a, sum(b) b from tab order by a, tab.b",
+                modelOf("tab").col("a", ColumnType.INT).col("b", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testOrderByGroupByColPrefixed3() throws ParserException {
+        assertModel(
+                "select-group-by a, sum(b) b from (tab) order by a",
+                "select a, sum(b) b from tab order by tab.a, tab.b",
+                modelOf("tab").col("a", ColumnType.INT).col("b", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testOrderByOnAliasedColumn() throws ParserException {
+        assertModel(
+                "select-choose y from (select-choose y, tab.x x from (tab) order by x)",
+                "select y from tab order by tab.x",
+                modelOf("tab")
+                        .col("x", ColumnType.DOUBLE)
+                        .col("y", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testOrderByOnExpression() throws ParserException {
+        assertModel(
+                "select-virtual y + x z from (tab) order by z",
+                "select y+x z from tab order by z",
+                modelOf("tab")
+                        .col("x", ColumnType.DOUBLE)
+                        .col("y", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testOrderByOnJoinSubQuery() throws ParserException {
+        assertModel(
+                "select-choose x, y from (select-choose a.x x, b.y y, b.s s from ((select-choose x from (tab1 where x = 'Z')) a join (tab2 where s ~ 'K') b on b.z = a.z) order by s)",
+                "select a.x, b.y from (select x from tab1 where x = 'Z' order by x) a join (tab2 where s ~ 'K') b on a.z=b.z order by b.s",
+                modelOf("tab1")
+                        .col("x", ColumnType.INT)
+                        .col("z", ColumnType.INT),
+                modelOf("tab2")
+                        .col("x", ColumnType.INT)
+                        .col("y", ColumnType.INT)
+                        .col("z", ColumnType.INT)
+                        .col("s", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testOrderByOnJoinSubQuery2() throws ParserException {
+        assertModel(
+                "select-choose a.x x, b.y y from ((select-choose x from (select-choose x, z from (tab1 where x = 'Z') order by z)) a join (tab2 where s ~ 'K') b on b.z = a.z)",
+                "select a.x, b.y from (select x from tab1 where x = 'Z' order by z) a join (tab2 where s ~ 'K') b on a.z=b.z",
+                modelOf("tab1")
+                        .col("x", ColumnType.INT)
+                        .col("z", ColumnType.INT),
+                modelOf("tab2")
+                        .col("x", ColumnType.INT)
+                        .col("y", ColumnType.INT)
+                        .col("z", ColumnType.INT)
+                        .col("s", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testOrderByOnJoinSubQuery3() throws ParserException {
+        assertModel(
+                "select-choose a.x x, b.y y from ((select-choose x from (select-choose x, z from (tab1 where x = 'Z') order by z)) a asof join (select-choose y, z from (select-choose y, z, s from (tab2 where s ~ 'K') order by s)) b on b.z = a.x)",
+                "select a.x, b.y from (select x from tab1 where x = 'Z' order by z) a asof join (select y,z from tab2 where s ~ 'K' order by s) b where a.x = b.z",
+                modelOf("tab1")
+                        .col("x", ColumnType.INT)
+                        .col("z", ColumnType.INT),
+                modelOf("tab2")
+                        .col("x", ColumnType.INT)
+                        .col("y", ColumnType.INT)
+                        .col("z", ColumnType.INT)
+                        .col("s", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testOrderByOnJoinTableReference() throws ParserException {
+        assertModel(
+                "select-choose x, y from (select-choose a.x x, b.y y, b.s s from (tab1 a join tab2 b on b.z = a.z) order by s)",
+                "select a.x, b.y from tab1 a join tab2 b on a.z = b.z order by b.s",
+                modelOf("tab1")
+                        .col("x", ColumnType.INT)
+                        .col("z", ColumnType.INT),
+                modelOf("tab2")
+                        .col("x", ColumnType.INT)
+                        .col("y", ColumnType.INT)
+                        .col("z", ColumnType.INT)
+                        .col("s", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testOrderByOnNonSelectedColumn() throws ParserException {
+        assertModel(
+                "select-choose y from (select-choose y, x from (tab) order by x)",
+                "select y from tab order by x",
+                modelOf("tab")
+                        .col("x", ColumnType.DOUBLE)
+                        .col("y", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testOrderByOnNonSelectedColumn2() throws ParserException {
+        assertModel(
+                "select-choose column from (select-virtual 2 * y + x column, x from (select-choose 2 * y + x column, x from (tab)) order by x)",
+                "select 2*y+x from tab order by x",
+                modelOf("tab")
+                        .col("x", ColumnType.DOUBLE)
+                        .col("y", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testOrderByOnNonSelectedColumn3() throws ParserException {
+        assertModel(
+                "select-choose" +
+                        " column," +
+                        " column1" +
+                        " from (" +
+                        "select-virtual" +
+                        " 2 * y + x column," +
+                        " 3 / x column1, x" +
+                        " from (" +
+                        "select-choose" +
+                        " 2 * y + x column," +
+                        " 3 / x column1," +
+                        " x from (tab)) order by x)",
+                "select 2*y+x, 3/x from tab order by x",
+                modelOf("tab")
+                        .col("x", ColumnType.DOUBLE)
+                        .col("y", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testOrderByOnOuterResult() throws ParserException {
+        assertModel(
+                "select-virtual x, sum1 + sum z from (select-group-by x, sum(3 / x) sum, sum(2 * y + x) sum1 from (tab)) order by z",
+                "select x, sum(2*y+x) + sum(3/x) z from tab order by z, tab.y desc",
+                modelOf("tab")
+                        .col("x", ColumnType.DOUBLE)
+                        .col("y", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testOrderByOnSelectedAlias() throws ParserException {
+        assertModel(
+                "select-choose y z from (tab) order by z",
+                "select y z from tab order by z",
+                modelOf("tab")
+                        .col("x", ColumnType.DOUBLE)
+                        .col("y", ColumnType.INT)
+        );
     }
 
     @Test
@@ -937,7 +1179,6 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testSampleByNoAggregate() {
-        // todo: expect exception when there is aggregation function
         assertSyntaxError("select x,y from tab sample by 2m", 30, "at least one",
                 modelOf("tab").col("x", ColumnType.INT).col("y", ColumnType.INT)
         );
@@ -1051,7 +1292,9 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     @Test
     public void testTooManyColumnsEdgeInOrderBy() throws Exception {
         try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)) {
-            model.col("f0", ColumnType.INT);
+            for (int i = 0; i < SqlLexerOptimiser.MAX_ORDER_BY_COLUMNS - 1; i++) {
+                model.col("f" + i, ColumnType.INT);
+            }
             CairoTestUtils.create(model);
         }
 
@@ -1115,11 +1358,17 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testWhereClause() throws Exception {
-        // todo: the inner select-virtual has to export "z" column
         assertModel(
                 "select-virtual x, sum + 25 ohoh from (select-group-by x, sum(z) sum from (select-virtual a + b * c x, z from (zyzy where in(10,0,a) and b = 10)))",
                 "select a+b*c x, sum(z)+25 ohoh from zyzy where a in (0,10) and b = 10",
-                modelOf("zyzy").col("a", ColumnType.INT).col("b", ColumnType.INT));
+                modelOf("zyzy")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.INT)
+                        .col("c", ColumnType.INT)
+                        .col("x", ColumnType.INT)
+                        .col("y", ColumnType.INT)
+                        .col("z", ColumnType.INT)
+        );
     }
 
     private void assertModel(String expected, String query, TableModel... tableModels) throws ParserException {

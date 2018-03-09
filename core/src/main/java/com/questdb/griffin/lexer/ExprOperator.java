@@ -35,6 +35,7 @@ final class ExprOperator {
         add(new ExprOperator("^", 2, false, BINARY));
         add(new ExprOperator("*", 3, true, BINARY));
         add(new ExprOperator("/", 3, true, BINARY));
+        add(new ExprOperator("%", 3, true, BINARY));
         add(new ExprOperator("+", 4, true, BINARY));
         add(new ExprOperator("-", 4, true, BINARY));
         add(new ExprOperator("<", 6, true, BINARY));
