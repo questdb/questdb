@@ -92,6 +92,7 @@ public final class SqlLexerOptimiser {
     private final StringSink columnNameAssembly = new StringSink();
     private Lexer lexer = new Lexer();
     private ObjList<JoinContext> emittedJoinClauses;
+    private int defaultAliasCount = 0;
 
     public SqlLexerOptimiser(CairoEngine engine, CairoConfiguration configuration) {
         this.engine = engine;
@@ -466,8 +467,8 @@ public final class SqlLexerOptimiser {
     }
 
     private void collectJoinModelAliases0(QueryModel model) throws ParserException {
-        final ObjList<QueryModel> joinModels = model.getJoinModels();
-        for (int i = 0, n = joinModels.size(); i < n; i++) {
+        final ObjList<QueryModel> models = model.getJoinModels();
+        for (int i = 0, n = models.size(); i < n; i++) {
             QueryModel joinModel = model.getJoinModels().getQuick(i);
 
             if (joinModel.getAlias() != null) {
@@ -563,6 +564,18 @@ public final class SqlLexerOptimiser {
                     jc.slaveIndex = i;
                 }
             }
+        }
+    }
+
+    private String createJoinAlias(QueryModel jm) {
+        if (jm.getAlias() != null) {
+            return jm.getAlias().token;
+        } else if (jm.getTableName() != null) {
+            return jm.getTableName().token;
+        } else {
+            ExprNode alias = makeJoinAlias(defaultAliasCount++);
+            jm.setAlias(alias);
+            return alias.token;
         }
     }
 
@@ -2205,53 +2218,42 @@ public final class SqlLexerOptimiser {
     }
 
     private void resolveJoinColumns(QueryModel model) {
+        this.defaultAliasCount = 0;
         ObjList<QueryModel> joinModels = model.getJoinModels();
-        if (joinModels.size() < 2) {
-            return;
-        }
+        final int size = joinModels.size();
+        if (size > 1) {
+            final String modelAlias = createJoinAlias(model);
 
-        String modelAlias;
-        int defaultAliasCount = 0;
+            for (int i = 1; i < size; i++) {
+                final QueryModel jm = joinModels.getQuick(i);
+                final ObjList<ExprNode> jc = jm.getJoinColumns();
+                final int joinColumnsSize = jc.size();
 
-        if (model.getAlias() != null) {
-            modelAlias = model.getAlias().token;
-        } else if (model.getTableName() != null) {
-            modelAlias = model.getTableName().token;
-        } else {
-            ExprNode alias = makeJoinAlias(defaultAliasCount++);
-            model.setAlias(alias);
-            modelAlias = alias.token;
-        }
-
-        for (int i = 1, n = joinModels.size(); i < n; i++) {
-            QueryModel jm = joinModels.getQuick(i);
-
-            ObjList<ExprNode> jc = jm.getJoinColumns();
-            if (jc.size() > 0) {
-
-                String jmAlias;
-
-                if (jm.getAlias() != null) {
-                    jmAlias = jm.getAlias().token;
-                } else if (jm.getTableName() != null) {
-                    jmAlias = jm.getTableName().token;
-                } else {
-                    ExprNode alias = makeJoinAlias(defaultAliasCount++);
-                    jm.setAlias(alias);
-                    jmAlias = alias.token;
-                }
-
-                ExprNode joinCriteria = jm.getJoinCriteria();
-                for (int j = 0, m = jc.size(); j < m; j++) {
-                    ExprNode node = jc.getQuick(j);
-                    ExprNode eq = makeOperation("=", makeModelAlias(modelAlias, node), makeModelAlias(jmAlias, node));
-                    if (joinCriteria == null) {
-                        joinCriteria = eq;
-                    } else {
-                        joinCriteria = makeOperation("and", joinCriteria, eq);
+                if (joinColumnsSize > 0) {
+                    final String jmAlias = createJoinAlias(jm);
+                    ExprNode joinCriteria = jm.getJoinCriteria();
+                    for (int j = 0; j < joinColumnsSize; j++) {
+                        ExprNode node = jc.getQuick(j);
+                        ExprNode eq = makeOperation("=", makeModelAlias(modelAlias, node), makeModelAlias(jmAlias, node));
+                        if (joinCriteria == null) {
+                            joinCriteria = eq;
+                        } else {
+                            joinCriteria = makeOperation("and", joinCriteria, eq);
+                        }
                     }
+                    jm.setJoinCriteria(joinCriteria);
                 }
-                jm.setJoinCriteria(joinCriteria);
+            }
+        }
+
+        if (model.getNestedModel() != null) {
+            resolveJoinColumns(model.getNestedModel());
+        }
+
+        for (int i = 1; i < size; i++) {
+            QueryModel m = joinModels.getQuick(i);
+            if (m != null) {
+                resolveJoinColumns(m);
             }
         }
     }
