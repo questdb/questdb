@@ -51,6 +51,7 @@ public final class SqlLexerOptimiser {
     private static final int ORDER_BY_INVARIANT = 2;
     private final static IntHashSet joinBarriers;
     private final static CharSequenceHashSet nullConstants = new CharSequenceHashSet();
+    private static final CharSequenceHashSet disallowedAliases = new CharSequenceHashSet();
     private final ObjectPool<ExprNode> exprNodePool = new ObjectPool<>(ExprNode.FACTORY, 128);
     private final ExprAstBuilder astBuilder = new ExprAstBuilder();
     private final ObjectPool<QueryModel> queryModelPool = new ObjectPool<>(QueryModel.FACTORY, 8);
@@ -176,7 +177,7 @@ public final class SqlLexerOptimiser {
             node.paramCount = 2;
             node.lhs = ao;
             node.rhs = bo;
-            addWhereClause(parent, ai, node);
+            addWhereNode(parent, ai, node);
         } else {
             // (different tables)
             JoinContext jc = contextPool.next();
@@ -229,17 +230,15 @@ public final class SqlLexerOptimiser {
                         node.lhs = jc.aNodes.getQuick(k);
                         node.rhs = constNameToNode.get(name);
                         node.paramCount = 2;
-                        addWhereClause(parent, jc.slaveIndex, node);
+                        addWhereNode(parent, jc.slaveIndex, node);
                     }
                 }
             }
         }
     }
 
-    //todo: there is similar method, review
-    private void addWhereClause(QueryModel parent, int index, ExprNode filter) {
-        QueryModel m = parent.getJoinModels().getQuick(index);
-        m.setWhereClause(concatFilters(m.getWhereClause(), filter));
+    private void addWhereNode(QueryModel model, int joinModelIndex, ExprNode node) {
+        addWhereNode(model.getJoinModels().getQuick(joinModelIndex), node);
     }
 
     private void addWhereNode(QueryModel model, ExprNode node) {
@@ -299,7 +298,7 @@ public final class SqlLexerOptimiser {
                     jc = contextPool.next();
                     jc.slaveIndex = literalCollectorBIndexes.getQuick(0);
 
-                    addWhereClause(parent, jc.slaveIndex, node);
+                    addWhereNode(parent, jc.slaveIndex, node);
                     addJoinContext(parent, jc);
 
                     CharSequence cs = literalCollectorBNames.getQuick(0);
@@ -318,7 +317,7 @@ public final class SqlLexerOptimiser {
                     if (lhi == rhi) {
                         // single table reference
                         jc.slaveIndex = lhi;
-                        addWhereClause(parent, lhi, node);
+                        addWhereNode(parent, lhi, node);
                     } else {
                         jc.aNodes.add(node.lhs);
                         jc.bNodes.add(node.rhs);
@@ -338,7 +337,7 @@ public final class SqlLexerOptimiser {
                         && !joinBarriers.contains(parent.getJoinModels().get(literalCollectorAIndexes.getQuick(0)).getJoinType())) {
                     // single table reference + constant
                     jc.slaveIndex = lhi;
-                    addWhereClause(parent, lhi, node);
+                    addWhereNode(parent, lhi, node);
                     addJoinContext(parent, jc);
 
                     CharSequence cs = literalCollectorANames.getQuick(0);
@@ -413,7 +412,7 @@ public final class SqlLexerOptimiser {
                         && !joinBarriers.contains(parent.getJoinModels().getQuick(refs.getQuick(0)).getJoinType())) {
                     // get single table reference out of the way right away
                     // we don't have to wait until "our" table comes along
-                    addWhereClause(parent, refs.getQuick(0), filterNodes.getQuick(k));
+                    addWhereNode(parent, refs.getQuick(0), filterNodes.getQuick(k));
                     postFilterRemoved.add(k);
                 } else {
                     boolean qualifies = true;
@@ -510,9 +509,20 @@ public final class SqlLexerOptimiser {
     }
 
     private String createColumnAlias(CharSequence base, int indexOfDot, CharSequenceIntHashMap nameTypeMap) {
+        final boolean disallowed = disallowedAliases.contains(base);
+
+        // short and sweet version
+        if (indexOfDot == -1 && !disallowed && !nameTypeMap.contains(base)) {
+            return Chars.toString(base);
+        }
+
         columnNameAssembly.clear();
         if (indexOfDot == -1) {
-            columnNameAssembly.put(base);
+            if (disallowed) {
+                columnNameAssembly.put("column");
+            } else {
+                columnNameAssembly.put(base);
+            }
         } else {
             columnNameAssembly.put(base, indexOfDot + 1, base.length());
         }
@@ -688,7 +698,12 @@ public final class SqlLexerOptimiser {
         }
     }
 
-    private void emitLiterals(@Transient ExprNode node, QueryModel translatingModel, QueryModel innerModel) {
+    private void emitLiterals(
+            @Transient ExprNode node,
+            QueryModel translatingModel,
+            QueryModel innerModel,
+            QueryModel validatingModel
+    ) throws ParserException {
 
         this.exprNodeStack.clear();
 
@@ -699,7 +714,7 @@ public final class SqlLexerOptimiser {
             if (node != null) {
 
                 if (node.rhs != null) {
-                    ExprNode n = replaceLiteral(node.rhs, translatingModel, innerModel);
+                    ExprNode n = replaceLiteral(node.rhs, translatingModel, innerModel, validatingModel);
                     if (node.rhs == n) {
                         this.exprNodeStack.push(node.rhs);
                     } else {
@@ -707,7 +722,7 @@ public final class SqlLexerOptimiser {
                     }
                 }
 
-                ExprNode n = replaceLiteral(node.lhs, translatingModel, innerModel);
+                ExprNode n = replaceLiteral(node.lhs, translatingModel, innerModel, validatingModel);
                 if (n == node.lhs) {
                     node = node.lhs;
                 } else {
@@ -736,7 +751,7 @@ public final class SqlLexerOptimiser {
         CharSequence tok = tok();
         int pos = lexer.position();
         validateLiteral(pos, tok);
-        return exprNodePool.next().of(ExprNode.LITERAL, tok.toString(), 0, pos);
+        return exprNodePool.next().of(ExprNode.LITERAL, Chars.toString(tok), 0, pos);
     }
 
     private void expectTok(CharSequence tok, int position, CharSequence expected) throws ParserException {
@@ -1142,7 +1157,6 @@ public final class SqlLexerOptimiser {
                     } catch (RuntimeException e) {
                         // keep node where it is
                         addWhereNode(parent, node);
-//                        parent.setWhereClause(concatFilters(parent.getWhereClause(), node));
                         continue;
                     }
 
@@ -1199,7 +1213,7 @@ public final class SqlLexerOptimiser {
         optimiseInvertedBooleans(model);
         collectJoinModelAliases(model);
         enumerateTableColumns(model);
-        QueryModel rewrittenModel = rewriteSelectClause(model);
+        QueryModel rewrittenModel = rewriteOrderBy(rewriteSelectClause(model));
         optimiseOrderBy(rewrittenModel, ORDER_BY_UNKNOWN);
         createOrderHash(rewrittenModel);
         optimiseJoins(rewrittenModel);
@@ -1295,11 +1309,8 @@ public final class SqlLexerOptimiser {
         }
 
         ObjList<QueryModel> joinModels = model.getJoinModels();
-        for (int i = 0, n = joinModels.size(); i < n; i++) {
-            QueryModel m = joinModels.getQuick(i);
-            if (m != model) {
-                optimiseInvertedBooleans(joinModels.getQuick(i));
-            }
+        for (int i = 1, n = joinModels.size(); i < n; i++) {
+            optimiseInvertedBooleans(joinModels.getQuick(i));
         }
     }
 
@@ -1407,7 +1418,7 @@ public final class SqlLexerOptimiser {
 
     private ParsedModel parseCreateTable() throws ParserException {
         final CreateTableModel model = createTableModelPool.next();
-        model.setName(exprNodePool.next().of(ExprNode.LITERAL, Chars.stripQuotes(tok().toString()), 0, lexer.position()));
+        model.setName(exprNodePool.next().of(ExprNode.LITERAL, Chars.stripQuotes(Chars.toString(tok())), 0, lexer.position()));
 
         CharSequence tok = tok();
 
@@ -1859,7 +1870,7 @@ public final class SqlLexerOptimiser {
                 if (Chars.indexOf(tok, '.') != -1) {
                     throw ParserException.$(aliasPosition, "'.' is not allowed here");
                 }
-                alias = tok.toString();
+                alias = Chars.toString(tok);
                 tok = tok();
             } else {
                 alias = createColumnAlias(expr, model);
@@ -1931,7 +1942,7 @@ public final class SqlLexerOptimiser {
 
         while (true) {
             final int position = lexer.position();
-            final String name = notTermTok().toString();
+            final String name = Chars.toString(notTermTok());
             final int type = ColumnType.columnTypeOf(notTermTok());
 
             if (!model.addColumn(name, type)) {
@@ -2172,7 +2183,8 @@ public final class SqlLexerOptimiser {
         return node;
     }
 
-    private ExprNode replaceLiteral(@Transient ExprNode node, QueryModel translatingModel, QueryModel innerModel) {
+    private ExprNode replaceLiteral(@Transient ExprNode node, QueryModel translatingModel, QueryModel
+            innerModel, QueryModel validatingModel) throws ParserException {
         if (node != null && node.type == ExprNode.LITERAL) {
             final CharSequenceObjHashMap<String> map = translatingModel.getColumnToAliasMap();
             int index = map.keyIndex(node.token);
@@ -2180,9 +2192,8 @@ public final class SqlLexerOptimiser {
                 // this is the first time we see this column and must create alias
                 String alias = createColumnAlias(node, translatingModel);
                 QueryColumn column = queryColumnPool.next().of(alias, node.position, node);
-
                 // add column to both models
-                translatingModel.addColumn(column);
+                addColumnToTranslatingModel(column, translatingModel, validatingModel);
                 if (innerModel != null) {
                     innerModel.addColumn(column);
                 }
@@ -2245,15 +2256,190 @@ public final class SqlLexerOptimiser {
         }
     }
 
-    private QueryModel rewriteSelectClause(QueryModel model) throws ParserException {
-        QueryModel nestedModel = model.getNestedModel();
-        if (nestedModel != null) {
-            QueryModel rewritten = rewriteSelectClause(nestedModel);
-            if (rewritten != nestedModel) {
-                model.setNestedModel(rewritten);
+    private QueryModel rewriteOrderBy(QueryModel model) throws ParserException {
+        // find base model and check if there is "group-by" model in between
+        // when we are dealing with "group by" model some of the implicit "order by" columns have to be dropped,
+        // for example:
+        // select a, sum(b) from T order by c
+        //
+        // above is valid but sorting on "c" would be redundant. However in the following example
+        //
+        // select a, b from T order by c
+        //
+        // ordering is does affect query result
+        QueryModel result = model;
+        QueryModel base = model;
+        QueryModel baseParent = model;
+        QueryModel wrapper = null;
+        final int modelColumnCount = model.getColumns().size();
+        boolean groupBy = false;
+
+        while (base.getColumns().size() > 0) {
+            baseParent = base;
+            base = base.getNestedModel();
+            groupBy = groupBy || baseParent.getSelectModelType() == QueryModel.SELECT_MODEL_GROUP_BY;
+        }
+
+        // find out how "order by" columns are referenced
+        ObjList<ExprNode> orderByNodes = base.getOrderBy();
+        int sz = orderByNodes.size();
+        if (sz > 0) {
+            boolean ascendColumns = true;
+            // for each order by column check how deep we need to go between "model" and "base"
+            for (int i = 0; i < sz; i++) {
+                final ExprNode orderBy = orderByNodes.getQuick(i);
+                final String column = orderBy.token;
+                final int dot = column.indexOf('.');
+                // is this a table reference?
+                if (dot > -1 || !model.getColumnNameTypeMap().contains(column)) {
+                    // validate column
+                    getIndexOfTableForColumn(base, column, dot, orderBy.position);
+
+                    // good news, our column matched base model
+                    // this condition is to ignore order by columns that are not in select and behind group by
+                    if (ascendColumns && base != model) {
+                        // check if column is aliased as either
+                        // "x y" or "tab.x y" or "t.x y", where "t" is alias of table "tab"
+                        final CharSequenceObjHashMap<String> map = baseParent.getColumnToAliasMap();
+                        int index = map.keyIndex(column);
+                        if (index > -1) {
+                            if (dot > -1) {
+                                // we have the following that are true:
+                                // 1. column does have table alias, e.g. tab.x
+                                // 2. column definitely exists
+                                // 3. column is _not_ referenced as select tab.x from tab
+                                //
+                                // lets check if column is referenced as select x from tab
+                                // this will determine is column is referenced by select at all
+
+                                index = map.keyIndex(column, dot + 1, column.length());
+                            } else {
+                                // we have the following that are true:
+                                // 1. column does not have table alias, e.g. it is just "x"
+                                // 2. column definitely exists
+                                // 3. column is unambiguous because it was successfully found without table alias
+                                // 4. column is _not_ referenced as select x from tab
+                                //
+                                // check if column is referenced via table prefix
+                                // table prefix is either alias, if exists, or table name
+                                index = map.keyIndex(column);
+                            }
+                        }
+
+                        if (index < 0) {
+                            // we have found alias, rewrite order by column
+                            orderBy.token = map.valueAt(index);
+                        } else {
+                            // we must attempt to ascend order by column
+                            // when we have group by model, ascent is not possible
+                            if (groupBy) {
+                                ascendColumns = false;
+                            } else {
+                                if (baseParent.getSelectModelType() != QueryModel.SELECT_MODEL_CHOOSE) {
+                                    QueryModel synthetic = queryModelPool.next();
+                                    synthetic.setSelectModelType(QueryModel.SELECT_MODEL_CHOOSE);
+                                    for (int j = 0, z = baseParent.getColumns().size(); j < z; j++) {
+                                        synthetic.addColumn(baseParent.getColumns().getQuick(j));
+                                    }
+                                    synthetic.setNestedModel(base);
+                                    baseParent.setNestedModel(synthetic);
+                                    baseParent = synthetic;
+                                }
+
+                                // if base parent model is already "choose" type, use that and ascend alias all the way up
+                                String alias = createColumnAlias(column, dot, baseParent.getColumnNameTypeMap());
+                                baseParent.addColumn(queryColumnPool.next().of(
+                                        alias,
+                                        0,
+                                        exprNodePool.next().of(ExprNode.LITERAL, column, 0, 0)
+                                ));
+
+                                // do we have more than one parent model?
+                                if (model != baseParent) {
+                                    QueryColumn col = queryColumnPool.next().of(
+                                            alias,
+                                            0,
+                                            exprNodePool.next().of(ExprNode.LITERAL, alias, 0, 0)
+                                    );
+
+                                    QueryModel m = model;
+                                    do {
+                                        m.addColumn(col);
+                                        m = m.getNestedModel();
+                                    } while (m != baseParent);
+                                }
+
+                                orderBy.token = alias;
+
+                                if (wrapper == null) {
+                                    wrapper = queryModelPool.next();
+                                    wrapper.setSelectModelType(QueryModel.SELECT_MODEL_CHOOSE);
+                                    for (int j = 0; j < modelColumnCount; j++) {
+
+                                        String refAlias = model.getColumns().getQuick(j).getAlias();
+                                        wrapper.addColumn(queryColumnPool.next().of(
+                                                refAlias,
+                                                0,
+                                                exprNodePool.next().of(ExprNode.LITERAL, refAlias, 0, 0)
+                                        ));
+                                    }
+                                    result = wrapper;
+                                    wrapper.setNestedModel(model);
+                                }
+                            }
+                        }
+                    }
+                }
+                if (ascendColumns && base != model) {
+                    model.addOrderBy(orderBy, base.getOrderByDirection().getQuick(i));
+                }
+            }
+
+            if (base != model) {
+                base.clearOrderBy();
             }
         }
-        return model.getColumns().size() > 0 ? rewriteSelectClause0(model) : model;
+
+        QueryModel nested = base.getNestedModel();
+        if (nested != null) {
+            QueryModel rewritten = rewriteOrderBy(nested);
+            if (rewritten != nested) {
+                base.setNestedModel(rewritten);
+            }
+        }
+
+        ObjList<QueryModel> joinModels = base.getJoinModels();
+        for (int i = 1, n = joinModels.size(); i < n; i++) {
+            // we can ignore result of order by rewrite for because
+            // 1. when join model is not a sub-query it will always have all the fields, so order by wouldn't
+            //    introduce synthetic model (no column needs to be hidden)
+            // 2. when join model is a sub-query it will have nested model, which can be rewritten. Parent model
+            //    would remain the same again.
+            rewriteOrderBy(joinModels.getQuick(i));
+        }
+
+        return result;
+    }
+
+    private QueryModel rewriteSelectClause(QueryModel model) throws ParserException {
+        ObjList<QueryModel> models = model.getJoinModels();
+        for (int i = 0, n = models.size(); i < n; i++) {
+            QueryModel m = models.getQuick(i);
+            QueryModel nestedModel = m.getNestedModel();
+            if (nestedModel != null) {
+                QueryModel rewritten = rewriteSelectClause(nestedModel);
+                if (rewritten != nestedModel) {
+                    m.setNestedModel(rewritten);
+                }
+            }
+
+            if (m.getColumns().size() > 0) {
+                model.replaceJoinModel(i, rewriteSelectClause0(m));
+            }
+        }
+
+        // "model" is always first in its own list of join models
+        return models.getQuick(0);
     }
 
     @NotNull
@@ -2263,6 +2449,7 @@ public final class SqlLexerOptimiser {
         QueryModel groupByModel = queryModelPool.next();
         groupByModel.setSelectModelType(QueryModel.SELECT_MODEL_GROUP_BY);
         groupByModel.setSampleBy(model.getSampleBy());
+
         QueryModel outerModel = queryModelPool.next();
         outerModel.setSelectModelType(QueryModel.SELECT_MODEL_VIRTUAL);
         QueryModel innerModel = queryModelPool.next();
@@ -2320,7 +2507,7 @@ public final class SqlLexerOptimiser {
                         analyticModel.addColumn(qc);
 
                         // ensure literals referenced by analytic column are present in nested models
-                        emitLiterals(qc.getAst(), translatingModel, innerModel);
+                        emitLiterals(qc.getAst(), translatingModel, innerModel, baseModel);
                         useAnalyticModel = true;
                         continue;
                     } else if (FunctionFactories.isAggregate(qc.getAst().token)) {
@@ -2335,7 +2522,7 @@ public final class SqlLexerOptimiser {
                                 exprNodePool.next().of(ExprNode.LITERAL, qc.getAlias(), 0, 0));
                         outerModel.addColumn(groupByColumn);
                         // pull out literals
-                        emitLiterals(qc.getAst(), translatingModel, innerModel);
+                        emitLiterals(qc.getAst(), translatingModel, innerModel, baseModel);
                         useGroupByModel = true;
                         continue;
                     }
@@ -2351,7 +2538,7 @@ public final class SqlLexerOptimiser {
 
                     // pull literals from newly created group-by columns into both of underlying models
                     for (int j = beforeSplit, n = groupByModel.getColumns().size(); j < n; j++) {
-                        emitLiterals(groupByModel.getColumns().getQuick(i).getAst(), translatingModel, innerModel);
+                        emitLiterals(groupByModel.getColumns().getQuick(i).getAst(), translatingModel, innerModel, baseModel);
                     }
 
                     useGroupByModel = true;
@@ -2374,7 +2561,7 @@ public final class SqlLexerOptimiser {
                     );
 
                     // pull literals only into translating model
-                    emitLiterals(qc.getAst(), translatingModel, null);
+                    emitLiterals(qc.getAst(), translatingModel, null, baseModel);
                     groupByModel.addColumn(innerColumn);
                     analyticModel.addColumn(innerColumn);
                     outerModel.addColumn(innerColumn);
@@ -2565,17 +2752,19 @@ public final class SqlLexerOptimiser {
     }
 
     static {
-        nullConstants.add("null");
-        nullConstants.add("NaN");
+        for (int i = 0, n = ExprOperator.operators.size(); i < n; i++) {
+            disallowedAliases.add(ExprOperator.operators.getQuick(i).token);
+        }
     }
 
     static {
         joinBarriers = new IntHashSet();
         joinBarriers.add(QueryModel.JOIN_OUTER);
         joinBarriers.add(QueryModel.JOIN_ASOF);
-    }
 
-    static {
+        nullConstants.add("null");
+        nullConstants.add("NaN");
+
         tableAliasStop.add("where");
         tableAliasStop.add("latest");
         tableAliasStop.add("join");

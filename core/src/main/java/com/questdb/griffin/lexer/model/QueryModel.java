@@ -187,8 +187,17 @@ public class QueryModel implements Mutable, ParsedModel, AliasTranslator, Sinkab
         columnToAliasMap.clear();
     }
 
+    public void clearOrderBy() {
+        orderBy.clear();
+        orderByDirection.clear();
+    }
+
     public ExprNode getAlias() {
         return alias;
+    }
+
+    public void replaceJoinModel(int pos, QueryModel model) {
+        joinModels.setQuick(pos, model);
     }
 
     public void setAlias(ExprNode alias) {

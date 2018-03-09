@@ -67,6 +67,10 @@ public class CharSequenceIntHashMap implements Mutable {
         free = this.capacity;
     }
 
+    public boolean contains(CharSequence key) {
+        return keyIndex(key) < 0;
+    }
+
     public int get(CharSequence key) {
         return valueAt(keyIndex(key));
     }
