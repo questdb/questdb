@@ -750,6 +750,36 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testJoinColumnResolutionOnSubQuery() throws ParserException {
+        assertModel(
+                "select-group-by sum(timestamp) sum from ((y) _xQdbA0 cross join (x))",
+                "select sum(timestamp) from (y) cross join (x)",
+                modelOf("x").col("ccy", ColumnType.SYMBOL),
+                modelOf("y").col("ccy", ColumnType.SYMBOL).col("timestamp", ColumnType.TIMESTAMP)
+        );
+    }
+
+    @Test
+    public void testJoinColumnResolutionOnSubQuery2() throws ParserException {
+        assertModel(
+                "select-group-by sum(timestamp) sum from ((y) _xQdbA0 join (x) _xQdbA1 on _xQdbA1.ccy = _xQdbA0.ccy and _xQdbA1.sym = _xQdbA0.sym)",
+                "select sum(timestamp) from (y) join (x) on (ccy, sym)",
+                modelOf("x").col("ccy", ColumnType.SYMBOL).col("sym", ColumnType.INT),
+                modelOf("y").col("ccy", ColumnType.SYMBOL).col("timestamp", ColumnType.TIMESTAMP).col("sym", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testJoinColumnResolutionOnSubQuery3() throws ParserException {
+        assertModel(
+                "select-group-by sum(timestamp) sum from ((y) _xQdbA0 cross join x)",
+                "select sum(timestamp) from (y) cross join x",
+                modelOf("x").col("ccy", ColumnType.SYMBOL),
+                modelOf("y").col("ccy", ColumnType.SYMBOL).col("timestamp", ColumnType.TIMESTAMP)
+        );
+    }
+
+    @Test
     public void testJoinCycle() throws Exception {
         assertModel(
                 "orders" +
@@ -845,6 +875,22 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
                 modelOf("orderDetails").col("orderId", ColumnType.INT).col("productId", ColumnType.INT),
                 modelOf("products").col("productId", ColumnType.INT).col("supplier", ColumnType.SYMBOL),
                 modelOf("suppliers").col("supplier", ColumnType.SYMBOL)
+        );
+    }
+
+    @Test
+    public void testJoinOnColumns() throws ParserException {
+        assertModel(
+                "select-choose a.x x, b.y y from (tab1 a join tab2 b on b.z = a.z)",
+                "select a.x, b.y from tab1 a join tab2 b on (z)",
+                modelOf("tab1")
+                        .col("x", ColumnType.INT)
+                        .col("z", ColumnType.INT),
+                modelOf("tab2")
+                        .col("x", ColumnType.INT)
+                        .col("y", ColumnType.INT)
+                        .col("z", ColumnType.INT)
+                        .col("s", ColumnType.INT)
         );
     }
 
@@ -963,6 +1009,17 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
                         .col("z", ColumnType.INT)
         );
 
+    }
+
+    @Test
+    public void testOrderByAmbiguousColumn() {
+        assertSyntaxError(
+                "select tab1.x from tab1 join tab2 on (x) order by y",
+                50,
+                "Ambiguous",
+                modelOf("tab1").col("x", ColumnType.INT).col("y", ColumnType.INT),
+                modelOf("tab2").col("x", ColumnType.INT).col("y", ColumnType.INT)
+        );
     }
 
     @Test
@@ -1182,6 +1239,41 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
         assertSyntaxError("select x,y from tab sample by 2m", 30, "at least one",
                 modelOf("tab").col("x", ColumnType.INT).col("y", ColumnType.INT)
         );
+    }
+
+    @Test
+    public void testSelectAliasAsFunction() {
+        assertSyntaxError(
+                "select sum(x) x() from tab",
+                15,
+                ",|from expected",
+                modelOf("tab").col("x", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testSelectAnalyticOperator() {
+        assertSyntaxError(
+                "select sum(x), 2*x over() from tab",
+                16,
+                "Analytic function expected",
+                modelOf("tab").col("x", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testSelectGroupByAndAnalytic() {
+        assertSyntaxError(
+                "select sum(x), count() over() from tab",
+                0,
+                "Analytic function is not allowed",
+                modelOf("tab").col("x", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testSelectOnItsOwn() {
+        assertSyntaxError("select ", 6, "missing column");
     }
 
     @Test
