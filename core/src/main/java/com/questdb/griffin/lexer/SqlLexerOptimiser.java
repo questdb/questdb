@@ -116,6 +116,21 @@ public final class SqlLexerOptimiser {
             for (int i = 0, k = m.getColumnCount(); i < k; i++) {
                 model.addField(createColumnAlias(m.getColumnName(i), model));
             }
+
+            // validate explicitly defined timestamp, if it exists
+            ExprNode timestamp = model.getTimestamp();
+            if (timestamp == null) {
+                if (m.getTimestampIndex() != -1) {
+                    model.setTimestamp(exprNodePool.next().of(ExprNode.LITERAL, m.getColumnQuick(m.getTimestampIndex()).getName(), 0, 0));
+                }
+            } else {
+                int index = m.getColumnIndexQuiet(timestamp.token);
+                if (index == -1) {
+                    throw ParserException.invalidColumn(timestamp.position, timestamp.token);
+                } else if (m.getColumnQuick(index).getType() != ColumnType.TIMESTAMP) {
+                    throw ParserException.$(timestamp.position, "not a TIMESTAMP");
+                }
+            }
         } else {
             if (model.getNestedModel() != null) {
                 enumerateTableColumns(model.getNestedModel());
@@ -406,7 +421,7 @@ public final class SqlLexerOptimiser {
                     // condition has no table references
                     // must evaluate as constant
                     postFilterRemoved.add(k);
-                    parent.addParsedWhereConst(k);
+                    parent.setConstWhereClause(concatFilters(parent.getConstWhereClause(), filterNodes.getQuick(k)));
                 } else if (rs == 1
                         && nullCounts.getQuick(k) == 0
                         // single table reference and this table is not joined via OUTER or ASOF
@@ -579,7 +594,7 @@ public final class SqlLexerOptimiser {
         }
     }
 
-    // order hash is used to determine redundant order by clauses
+    // order hash is used to determine redundant order when parsing analytic function definition
     private void createOrderHash(QueryModel model) {
         CharSequenceIntHashMap hash = model.getOrderHash();
         hash.clear();
@@ -611,6 +626,37 @@ public final class SqlLexerOptimiser {
                 }
             }
         }
+    }
+
+    private void createSelectColumn(
+            String columnName,
+            ExprNode columnAst,
+            QueryModel baseModel,
+            QueryModel translatingModel,
+            QueryModel innerModel,
+            QueryModel groupByModel,
+            QueryModel analyticModel,
+            QueryModel outerModel
+    ) throws ParserException {
+        final String alias = createColumnAlias(columnName, translatingModel);
+
+        addColumnToTranslatingModel(queryColumnPool.next().of(
+                alias,
+                0,
+                columnAst
+        ), translatingModel, baseModel);
+
+        QueryColumn translatedColumn = queryColumnPool.next().of(
+                alias,
+                0,
+                // flatten the node
+                exprNodePool.next().of(ExprNode.LITERAL, alias, 0, 0));
+
+        // create column that references inner alias we just created
+        innerModel.addColumn(translatedColumn);
+        groupByModel.addColumn(translatedColumn);
+        analyticModel.addColumn(translatedColumn);
+        outerModel.addColumn(translatedColumn);
     }
 
     private int doReorderTables(QueryModel parent, IntList ordered) {
@@ -798,7 +844,6 @@ public final class SqlLexerOptimiser {
     }
 
     private int getIndexOfTableForColumn(QueryModel model, CharSequence column, int dot, int position) throws ParserException {
-//        CharSequence column = model.translateAlias(column);
         ObjList<QueryModel> joinModels = model.getJoinModels();
         int index = -1;
         if (dot == -1) {
@@ -905,11 +950,9 @@ public final class SqlLexerOptimiser {
     }
 
     private ExprNode literal() {
-        CharSequence tok = lexer.optionTok();
-        if (tok == null) {
-            return null;
-        }
-        return exprNodePool.next().of(ExprNode.LITERAL, Chars.stripQuotes(tok.toString()), 0, lexer.position());
+        // this can never be null in its current contexts
+        // every time this function is called is after lexer.unparse(), which ensures non-null token.
+        return exprNodePool.next().of(ExprNode.LITERAL, Chars.stripQuotes(lexer.optionTok().toString()), 0, lexer.position());
     }
 
     private ExprNode makeJoinAlias(int index) {
@@ -957,16 +1000,17 @@ public final class SqlLexerOptimiser {
 
             for (int k = 0, z = a.aNames.size(); k < z; k++) {
 
-                if (deletedContexts.contains(k)) {
-                    continue;
-                }
+                // don't seem to be adding indexes outside of main loop
+//                if (deletedContexts.contains(k)) {
+//                    continue;
+//                }
 
-                CharSequence aan = a.aNames.getQuick(k);
-                int aai = a.aIndexes.getQuick(k);
-                ExprNode aao = a.aNodes.getQuick(k);
-                CharSequence abn = a.bNames.getQuick(k);
-                int abi = a.bIndexes.getQuick(k);
-                ExprNode abo = a.bNodes.getQuick(k);
+                final CharSequence aan = a.aNames.getQuick(k);
+                final int aai = a.aIndexes.getQuick(k);
+                final ExprNode aao = a.aNodes.getQuick(k);
+                final CharSequence abn = a.bNames.getQuick(k);
+                final int abi = a.bIndexes.getQuick(k);
+                final ExprNode abo = a.bNodes.getQuick(k);
 
                 if (aai == bai && Chars.equals(aan, ban)) {
                     // a.x = ?.x
@@ -1091,7 +1135,6 @@ public final class SqlLexerOptimiser {
 
         final int n = nodes.size();
         if (n > 0) {
-            OUTER:
             for (int i = 0; i < n; i++) {
                 final ExprNode node = nodes.getQuick(i);
                 // collect table references this where clause element
@@ -1101,40 +1144,17 @@ public final class SqlLexerOptimiser {
                 literalCollector.resetNullCount();
                 traversalAlgo.traverse(node, literalCollector.lhs());
 
-                int z = literalCollectorAIndexes.size();
-                if (z == 0) {
-                    // this is a constant condition, keep it with this model
-                    model.setWhereClause(concatFilters(model.getWhereClause(), node));
-                    continue;
-                }
+                // at this point we must not have constant conditions in where clause
+                assert literalCollectorAIndexes.size() > 0;
 
-                // check if all table indexes are the same
-                int tableIndex = -1;
-                for (int j = 0; j < z; j++) {
-                    int index = literalCollectorAIndexes.getQuick(j);
-                    if (index == -1) {
-                        throw ParserException.invalidColumn(0, literalCollectorANames.getQuick(j));
-                    }
-
-                    if (tableIndex == -1) {
-                        tableIndex = index;
-                    } else if (tableIndex != index) {
-                        // where clause element references multiple tables, it has to stay where it is
-                        addWhereNode(model, node);
-                        continue OUTER;
-                    }
-                }
-
-                // when previous loop finishes without interruptions we have
-                // where clause element belong to "tableIndex" join model
-                assert tableIndex != -1;
-
+                // by now all where clause must reference single table only and all column references have to be valid
+                // they would have been rewritten and validated as join analysis stage
+                final int tableIndex = literalCollectorAIndexes.getQuick(0);
                 QueryModel parent = model.getJoinModels().getQuick(tableIndex);
                 QueryModel nested = parent.getNestedModel();
                 if (nested == null) {
                     // there is no nested model for this table, keep where clause element with this model
                     addWhereNode(parent, node);
-//                    parent.setWhereClause(concatFilters(parent.getWhereClause(), node));
                 } else {
                     // now that we have identified sub-query we have to rewrite our where clause
                     // to potentially replace all of column references with actual literals used inside
@@ -1154,12 +1174,14 @@ public final class SqlLexerOptimiser {
                     final CharSequenceIntHashMap nameTypeMap = nested.getColumnNameTypeMap();
 
                     try {
+                        //todo: refactor GC out
                         traversalAlgo.traverse(nodes.getQuick(i), (node1) -> {
                             if (node1.type == ExprNode.LITERAL) {
                                 int dot = node1.token.indexOf('.');
                                 int index = dot == -1 ? nameTypeMap.keyIndex(node1.token) : nameTypeMap.keyIndex(node1.token, dot + 1, node1.token.length());
                                 if (index < 0) {
                                     if (nameTypeMap.valueAt(index) != ExprNode.LITERAL) {
+                                        // todo: refactor GC out
                                         throw new RuntimeException();
                                     }
                                 } else {
@@ -1175,6 +1197,7 @@ public final class SqlLexerOptimiser {
 
                     // go ahead and rewrite expression
                     final CharSequenceObjHashMap<CharSequence> aliasToColumnMap = nested.getAliasToColumnMap();
+                    //todo: refactor GC out
                     traversalAlgo.traverse(nodes.getQuick(i), (node1) -> {
                         if (node1.type == ExprNode.LITERAL) {
                             int dot = node1.token.indexOf('.');
@@ -1223,10 +1246,10 @@ public final class SqlLexerOptimiser {
 
     private QueryModel optimise(QueryModel model) throws ParserException {
         resolveJoinColumns(model);
-        optimiseInvertedBooleans(model);
+        optimiseBooleanNot(model);
         collectJoinModelAliases(model);
         enumerateTableColumns(model);
-        QueryModel rewrittenModel = rewriteOrderBy(rewriteSelectClause(model));
+        final QueryModel rewrittenModel = rewriteOrderBy(rewriteSelectClause(model));
         optimiseOrderBy(rewrittenModel, ORDER_BY_UNKNOWN);
         createOrderHash(rewrittenModel);
         optimiseJoins(rewrittenModel);
@@ -1234,11 +1257,11 @@ public final class SqlLexerOptimiser {
         return rewrittenModel;
     }
 
-    private ExprNode optimiseInvertedBooleans(final ExprNode node, boolean reverse) throws ParserException {
+    private ExprNode optimiseBooleanNot(final ExprNode node, boolean reverse) throws ParserException {
         switch (node.token) {
             case "not":
                 if (reverse) {
-                    return optimiseInvertedBooleans(node.rhs, false);
+                    return optimiseBooleanNot(node.rhs, false);
                 } else {
                     switch (node.rhs.type) {
                         case ExprNode.LITERAL:
@@ -1246,7 +1269,7 @@ public final class SqlLexerOptimiser {
                             return node;
                         default:
                             assertNotNull(node.rhs, node.position, "Missing right argument");
-                            return optimiseInvertedBooleans(node.rhs, true);
+                            return optimiseBooleanNot(node.rhs, true);
                     }
                 }
             case "and":
@@ -1255,8 +1278,8 @@ public final class SqlLexerOptimiser {
                 }
                 assertNotNull(node.lhs, node.position, "Missing left argument");
                 assertNotNull(node.rhs, node.position, "Missing right argument");
-                node.lhs = optimiseInvertedBooleans(node.lhs, reverse);
-                node.rhs = optimiseInvertedBooleans(node.rhs, reverse);
+                node.lhs = optimiseBooleanNot(node.lhs, reverse);
+                node.rhs = optimiseBooleanNot(node.rhs, reverse);
                 return node;
             case "or":
                 if (reverse) {
@@ -1264,8 +1287,8 @@ public final class SqlLexerOptimiser {
                 }
                 assertNotNull(node.lhs, node.position, "Missing left argument");
                 assertNotNull(node.rhs, node.position, "Missing right argument");
-                node.lhs = optimiseInvertedBooleans(node.lhs, reverse);
-                node.rhs = optimiseInvertedBooleans(node.rhs, reverse);
+                node.lhs = optimiseBooleanNot(node.lhs, reverse);
+                node.rhs = optimiseBooleanNot(node.rhs, reverse);
                 return node;
             case ">":
                 if (reverse) {
@@ -1311,19 +1334,19 @@ public final class SqlLexerOptimiser {
         }
     }
 
-    private void optimiseInvertedBooleans(QueryModel model) throws ParserException {
+    private void optimiseBooleanNot(QueryModel model) throws ParserException {
         ExprNode where = model.getWhereClause();
         if (where != null) {
-            model.setWhereClause(optimiseInvertedBooleans(where, false));
+            model.setWhereClause(optimiseBooleanNot(where, false));
         }
 
         if (model.getNestedModel() != null) {
-            optimiseInvertedBooleans(model.getNestedModel());
+            optimiseBooleanNot(model.getNestedModel());
         }
 
         ObjList<QueryModel> joinModels = model.getJoinModels();
         for (int i = 1, n = joinModels.size(); i < n; i++) {
-            optimiseInvertedBooleans(joinModels.getQuick(i));
+            optimiseBooleanNot(joinModels.getQuick(i));
         }
     }
 
@@ -1358,8 +1381,8 @@ public final class SqlLexerOptimiser {
             }
 
             createImpliedDependencies(model);
-            reorderTables(model);
             homogenizeCrossJoins(model);
+            reorderTables(model);
             assignFilters(model);
             alignJoinClauses(model);
             addTransitiveFilters(model);
@@ -1370,7 +1393,7 @@ public final class SqlLexerOptimiser {
         }
     }
 
-    // removes redundant order by clauses?
+    // removes redundant order by clauses from sub-queries
     private void optimiseOrderBy(QueryModel model, int orderByState) {
         ObjList<QueryColumn> columns = model.getColumns();
         int subQueryOrderByState;
@@ -1568,13 +1591,6 @@ public final class SqlLexerOptimiser {
             parseSelectClause(model);
             QueryModel nestedModel = queryModelPool.next();
             parseFromClause(nestedModel, subQuery);
-
-            // keep "sample by" with select as this is an implicit aggregation column
-            if (nestedModel.getSampleBy() != null) {
-                model.setSampleBy(nestedModel.getSampleBy());
-                nestedModel.setSampleBy(null);
-            }
-
             model.setNestedModel(nestedModel);
             return model;
         } else {
@@ -2258,6 +2274,19 @@ public final class SqlLexerOptimiser {
         }
     }
 
+    /**
+     * Rewrites order by clause to achieve simple column resolution for model parser.
+     * Order by must never reference column that doesn't exist in its own select list.
+     * <p>
+     * Because order by clause logically executes after "select" it must be able to
+     * reference results of arithmetic expression, aggregation function results, arithmetic with
+     * aggregation results and analytic functions. Somewhat contradictory to this order by must
+     * also be able to reference columns of table or sub-query that are not even in select clause.
+     *
+     * @param model inbound model
+     * @return outbound model
+     * @throws ParserException when column names are ambiguos or not found at all.
+     */
     private QueryModel rewriteOrderBy(QueryModel model) throws ParserException {
         // find base model and check if there is "group-by" model in between
         // when we are dealing with "group by" model some of the implicit "order by" columns have to be dropped,
@@ -2450,8 +2479,6 @@ public final class SqlLexerOptimiser {
 
         QueryModel groupByModel = queryModelPool.next();
         groupByModel.setSelectModelType(QueryModel.SELECT_MODEL_GROUP_BY);
-        groupByModel.setSampleBy(model.getSampleBy());
-
         QueryModel outerModel = queryModelPool.next();
         outerModel.setSelectModelType(QueryModel.SELECT_MODEL_VIRTUAL);
         QueryModel innerModel = queryModelPool.next();
@@ -2468,6 +2495,31 @@ public final class SqlLexerOptimiser {
         final ObjList<QueryColumn> columns = model.getColumns();
         final QueryModel baseModel = model.getNestedModel();
 
+        // sample by clause should be promoted to all of the models as well as validated
+        final ExprNode sampleBy = baseModel.getSampleBy();
+        if (sampleBy != null) {
+            final ExprNode timestamp = baseModel.getTimestamp();
+            if (timestamp == null) {
+                throw ParserException.$(sampleBy.position, "TIMESTAMP column is not defined");
+            }
+
+            groupByModel.setSampleBy(sampleBy);
+            groupByModel.setTimestamp(timestamp);
+            baseModel.setSampleBy(null);
+            baseModel.setTimestamp(null);
+
+            createSelectColumn(
+                    timestamp.token,
+                    timestamp,
+                    baseModel,
+                    translatingModel,
+                    innerModel,
+                    groupByModel,
+                    analyticModel,
+                    outerModel
+            );
+        }
+
         // create virtual columns from select list
         for (int i = 0, k = columns.size(); i < k; i++) {
             final QueryColumn qc = columns.getQuick(i);
@@ -2482,24 +2534,16 @@ public final class SqlLexerOptimiser {
                 // in general sense we need to create new column in case
                 // there is change of alias, for example we may have something as simple as
                 // select a.f, b.f from ....
-                QueryColumn column = queryColumnPool.next().of(
-                        createColumnAlias(qc.getAlias(), translatingModel),
-                        0,
-                        qc.getAst()
+                createSelectColumn(
+                        qc.getAlias(),
+                        qc.getAst(),
+                        baseModel,
+                        translatingModel,
+                        innerModel,
+                        groupByModel,
+                        analyticModel,
+                        outerModel
                 );
-
-                addColumnToTranslatingModel(column, translatingModel, baseModel);
-
-                QueryColumn translatedColumn = queryColumnPool.next().of(
-                        column.getAlias(),
-                        0,
-                        // flatten the node
-                        exprNodePool.next().of(ExprNode.LITERAL, column.getAlias(), 0, 0));
-                // create column that references inner alias we just created
-                innerModel.addColumn(translatedColumn);
-                groupByModel.addColumn(translatedColumn);
-                analyticModel.addColumn(translatedColumn);
-                outerModel.addColumn(translatedColumn);
             } else {
                 // when column is direct call to aggregation function, such as
                 // select sum(x) ...
@@ -2570,6 +2614,7 @@ public final class SqlLexerOptimiser {
                 }
             }
         }
+
         // fail if we have both analytic and group-by models
         if (useAnalyticModel && useGroupByModel) {
             throw ParserException.$(0, "Analytic function is not allowed in context of aggregation. Use sub-query.");
