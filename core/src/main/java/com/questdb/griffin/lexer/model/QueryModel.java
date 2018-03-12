@@ -69,7 +69,6 @@ public class QueryModel implements Mutable, ParsedModel, AliasTranslator, Sinkab
     private final CharSequenceIntHashMap columnNameTypeMap = new CharSequenceIntHashMap();
     // list of "and" concatenated expressions
     private final ObjList<ExprNode> parsedWhere = new ObjList<>();
-    private final IntHashSet parsedWhereConsts = new IntHashSet();
     private final ArrayDeque<ExprNode> exprNodeStack = new ArrayDeque<>();
     private final CharSequenceIntHashMap orderHash = new CharSequenceIntHashMap(4, 0.5, -1);
     private final ObjList<ExprNode> joinColumns = new ObjList<>(4);
@@ -77,6 +76,7 @@ public class QueryModel implements Mutable, ParsedModel, AliasTranslator, Sinkab
     private CharSequenceObjHashMap<Parameter> parameterMap = new CharSequenceObjHashMap<>();
     private ExprNode whereClause;
     private ExprNode postJoinWhereClause;
+    private ExprNode constWhereClause;
     private QueryModel nestedModel;
     private ExprNode tableName;
     private ExprNode alias;
@@ -90,6 +90,7 @@ public class QueryModel implements Mutable, ParsedModel, AliasTranslator, Sinkab
     private ExprNode limitLo;
     private ExprNode limitHi;
     private int selectModelType = SELECT_MODEL_NONE;
+
 
     private QueryModel() {
         joinModels.add(this);
@@ -139,10 +140,6 @@ public class QueryModel implements Mutable, ParsedModel, AliasTranslator, Sinkab
         orderByDirection.add(direction);
     }
 
-    public void addParsedWhereConst(int index) {
-        parsedWhereConsts.add(index);
-    }
-
     public void addParsedWhereNode(ExprNode node) {
         parsedWhere.add(node);
     }
@@ -162,6 +159,7 @@ public class QueryModel implements Mutable, ParsedModel, AliasTranslator, Sinkab
         dependencies.clear();
         parsedWhere.clear();
         whereClause = null;
+        constWhereClause = null;
         nestedModel = null;
         tableName = null;
         alias = null;
@@ -170,7 +168,6 @@ public class QueryModel implements Mutable, ParsedModel, AliasTranslator, Sinkab
         joinType = JOIN_INNER;
         orderedJoinModels1.clear();
         orderedJoinModels2.clear();
-        parsedWhereConsts.clear();
         aliasIndexes.clear();
         postJoinWhereClause = null;
         context = null;
@@ -194,10 +191,6 @@ public class QueryModel implements Mutable, ParsedModel, AliasTranslator, Sinkab
 
     public ExprNode getAlias() {
         return alias;
-    }
-
-    public void replaceJoinModel(int pos, QueryModel model) {
-        joinModels.setQuick(pos, model);
     }
 
     public void setAlias(ExprNode alias) {
@@ -226,6 +219,14 @@ public class QueryModel implements Mutable, ParsedModel, AliasTranslator, Sinkab
 
     public ObjList<QueryColumn> getColumns() {
         return columns;
+    }
+
+    public ExprNode getConstWhereClause() {
+        return constWhereClause;
+    }
+
+    public void setConstWhereClause(ExprNode constWhereClause) {
+        this.constWhereClause = constWhereClause;
     }
 
     public JoinContext getContext() {
@@ -326,10 +327,6 @@ public class QueryModel implements Mutable, ParsedModel, AliasTranslator, Sinkab
 
     public ObjList<ExprNode> getParsedWhere() {
         return parsedWhere;
-    }
-
-    public IntHashSet getParsedWhereConsts() {
-        return parsedWhereConsts;
     }
 
     public ExprNode getPostJoinWhereClause() {
@@ -460,6 +457,10 @@ public class QueryModel implements Mutable, ParsedModel, AliasTranslator, Sinkab
         dependencies.remove(index);
     }
 
+    public void replaceJoinModel(int pos, QueryModel model) {
+        joinModels.setQuick(pos, model);
+    }
+
     public void setLimit(ExprNode lo, ExprNode hi) {
         this.limitLo = lo;
         this.limitHi = hi;
@@ -467,6 +468,40 @@ public class QueryModel implements Mutable, ParsedModel, AliasTranslator, Sinkab
 
     @Override
     public void toSink(CharSink sink) {
+        toSink0(sink, false);
+    }
+
+    @Override
+    public CharSequence translateAlias(CharSequence column) {
+        return aliasToColumnMap.get(column);
+    }
+
+    private static void aliasToSink(CharSequence alias, CharSink sink) {
+        sink.put(' ');
+        boolean quote = Chars.indexOf(alias, ' ') != -1;
+        if (quote) {
+            sink.put('\'').put(alias).put('\'');
+        } else {
+            sink.put(alias);
+        }
+    }
+
+    private String getSelectModelTypeText() {
+        switch (selectModelType) {
+            case SELECT_MODEL_CHOOSE:
+                return "select-choose";
+            case SELECT_MODEL_VIRTUAL:
+                return "select-virtual";
+            case SELECT_MODEL_ANALYTIC:
+                return "select-analytic";
+            case SELECT_MODEL_GROUP_BY:
+                return "select-group-by";
+            default:
+                return "select";
+        }
+    }
+
+    private void toSink0(CharSink sink, boolean joinSlave) {
         if (columns.size() > 0) {
             sink.put(getSelectModelTypeText()).put(' ');
             for (int i = 0, n = columns.size(); i < n; i++) {
@@ -554,53 +589,51 @@ public class QueryModel implements Mutable, ParsedModel, AliasTranslator, Sinkab
 
         if (orderedJoinModels.size() > 1) {
             for (int i = 0, n = orderedJoinModels.size(); i < n; i++) {
-                int index = orderedJoinModels.getQuick(i);
-                QueryModel model = joinModels.getQuick(index);
-                if (model == this) {
-                    continue;
-                }
-                switch (model.getJoinType()) {
-                    case JOIN_OUTER:
-                        sink.put(" outer join ");
-                        break;
-                    case JOIN_ASOF:
-                        sink.put(" asof join ");
-                        break;
-                    case JOIN_CROSS:
-                        sink.put(" cross join ");
-                        break;
-                    default:
-                        sink.put(" join ");
-                }
-
-                if (model.getWhereClause() != null) {
-                    sink.put('(');
-                    model.toSink(sink);
-                    sink.put(')');
-                    if (model.getAlias() != null) {
-                        aliasToSink(model.getAlias().token, sink);
+                QueryModel model = joinModels.getQuick(orderedJoinModels.getQuick(i));
+                if (model != this) {
+                    switch (model.getJoinType()) {
+                        case JOIN_OUTER:
+                            sink.put(" outer join ");
+                            break;
+                        case JOIN_ASOF:
+                            sink.put(" asof join ");
+                            break;
+                        case JOIN_CROSS:
+                            sink.put(" cross join ");
+                            break;
+                        default:
+                            sink.put(" join ");
                     }
-                } else {
-                    model.toSink(sink);
-                }
 
-                JoinContext jc = model.getContext();
-                if (jc != null && jc.aIndexes.size() > 0) {
-                    // join clause
-                    sink.put(" on ");
-                    for (int k = 0, z = jc.aIndexes.size(); k < z; k++) {
-                        if (k > 0) {
-                            sink.put(" and ");
+                    if (model.getWhereClause() != null) {
+                        sink.put('(');
+                        model.toSink0(sink, true);
+                        sink.put(')');
+                        if (model.getAlias() != null) {
+                            aliasToSink(model.getAlias().token, sink);
                         }
-                        jc.aNodes.getQuick(k).toSink(sink);
-                        sink.put(" = ");
-                        jc.bNodes.getQuick(k).toSink(sink);
+                    } else {
+                        model.toSink0(sink, true);
                     }
-                }
 
-                if (model.getPostJoinWhereClause() != null) {
-                    sink.put(" post-join-where ");
-                    model.getPostJoinWhereClause().toSink(sink);
+                    JoinContext jc = model.getContext();
+                    if (jc != null && jc.aIndexes.size() > 0) {
+                        // join clause
+                        sink.put(" on ");
+                        for (int k = 0, z = jc.aIndexes.size(); k < z; k++) {
+                            if (k > 0) {
+                                sink.put(" and ");
+                            }
+                            jc.aNodes.getQuick(k).toSink(sink);
+                            sink.put(" = ");
+                            jc.bNodes.getQuick(k).toSink(sink);
+                        }
+                    }
+
+                    if (model.getPostJoinWhereClause() != null) {
+                        sink.put(" post-join-where ");
+                        model.getPostJoinWhereClause().toSink(sink);
+                    }
                 }
             }
         }
@@ -608,6 +641,16 @@ public class QueryModel implements Mutable, ParsedModel, AliasTranslator, Sinkab
         if (whereClause != null) {
             sink.put(" where ");
             whereClause.toSink(sink);
+        }
+
+        if (constWhereClause != null) {
+            sink.put(" const-where ");
+            constWhereClause.toSink(sink);
+        }
+
+        if (!joinSlave && postJoinWhereClause != null) {
+            sink.put(" post-join-where ");
+            postJoinWhereClause.toSink(sink);
         }
 
         if (sampleBy != null) {
@@ -637,36 +680,6 @@ public class QueryModel implements Mutable, ParsedModel, AliasTranslator, Sinkab
                 sink.put(',');
                 limitHi.toSink(sink);
             }
-        }
-    }
-
-    @Override
-    public CharSequence translateAlias(CharSequence column) {
-        return aliasToColumnMap.get(column);
-    }
-
-    private static void aliasToSink(CharSequence alias, CharSink sink) {
-        sink.put(' ');
-        boolean quote = Chars.indexOf(alias, ' ') != -1;
-        if (quote) {
-            sink.put('\'').put(alias).put('\'');
-        } else {
-            sink.put(alias);
-        }
-    }
-
-    private String getSelectModelTypeText() {
-        switch (selectModelType) {
-            case SELECT_MODEL_CHOOSE:
-                return "select-choose";
-            case SELECT_MODEL_VIRTUAL:
-                return "select-virtual";
-            case SELECT_MODEL_ANALYTIC:
-                return "select-analytic";
-            case SELECT_MODEL_GROUP_BY:
-                return "select-group-by";
-            default:
-                return "select";
         }
     }
 

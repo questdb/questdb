@@ -366,9 +366,9 @@ public class QueryCompiler {
         throw QueryError.$(position, "Duplicate alias");
     }
 
-    private void addFilterOrEmitJoin(QueryModel parent, int idx, int ai, CharSequence an, ExprNode ao, int bi, CharSequence bn, ExprNode bo) {
+    private void addFilterOrEmitJoin(QueryModel parent, int index, int ai, CharSequence an, ExprNode ao, int bi, CharSequence bn, ExprNode bo) {
         if (ai == bi && Chars.equals(an, bn)) {
-            deletedContexts.add(idx);
+            deletedContexts.add(index);
             return;
         }
 
@@ -393,7 +393,7 @@ public class QueryCompiler {
             emittedJoinClauses.add(jc);
         }
 
-        deletedContexts.add(idx);
+        deletedContexts.add(index);
     }
 
     private void addJoinContext(QueryModel parent, JoinContext context) {
