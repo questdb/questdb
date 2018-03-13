@@ -414,6 +414,39 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCrossJoinWithClause() throws ParserException {
+        assertModel("(customers where name ~ 'X') c" +
+                        " cross join (customers where name ~ 'X' and age = 30) c1" +
+                        " limit 10",
+                "with" +
+                        " cust as (customers where name ~ 'X')" +
+                        " cust c cross join cust c1 where c1.age = 30 " +
+                        " limit 10",
+                modelOf("customers")
+                        .col("customerId", ColumnType.INT)
+                        .col("name", ColumnType.STRING)
+                        .col("age", ColumnType.BYTE)
+        );
+    }
+
+    @Test
+    public void testJoinWithClausesDefaultAlias() throws ParserException {
+        assertModel("(customers where name ~ 'X') cust" +
+                        " outer join (select-choose customerId from (orders where amount > 100)) ord on ord.customerId = cust.customerId" +
+                        " post-join-where ord.customerId != null" +
+                        " limit 10",
+                "with" +
+                        " cust as (customers where name ~ 'X')," +
+                        " ord as (select customerId from orders where amount > 100)" +
+                        " cust outer join ord on (customerId) " +
+                        " where ord.customerId != null" +
+                        " limit 10",
+                modelOf("customers").col("customerId", ColumnType.INT).col("name", ColumnType.STRING),
+                modelOf("orders").col("customerId", ColumnType.INT).col("amount", ColumnType.DOUBLE)
+        );
+    }
+
+    @Test
     public void testDisallowDotInColumnAlias() {
         assertSyntaxError("select x x.y, y from tab order by x", 9, "not allowed");
     }
@@ -808,7 +841,6 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
                 modelOf("orderDetails").col("orderId", ColumnType.INT).col("productId", ColumnType.INT),
                 modelOf("products").col("productId", ColumnType.INT).col("supplier", ColumnType.SYMBOL),
                 modelOf("suppliers").col("supplier", ColumnType.SYMBOL)
-
         );
     }
 
@@ -1139,6 +1171,34 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
                         " where 100 = c.cid",
                 modelOf("customers").col("customerId", ColumnType.INT),
                 modelOf("orders").col("customerId", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testJoinWithClausesExplicitAlias() throws ParserException {
+        assertModel("(customers where name ~ 'X') c" +
+                        " outer join (select-choose customerId from (orders where amount > 100)) o on o.customerId = c.customerId" +
+                        " post-join-where o.customerId != null" +
+                        " limit 10",
+                "with" +
+                        " cust as (customers where name ~ 'X')," +
+                        " ord as (select customerId from orders where amount > 100)" +
+                        " cust c outer join ord o on (customerId) " +
+                        " where o.customerId != null" +
+                        " limit 10",
+                modelOf("customers").col("customerId", ColumnType.INT).col("name", ColumnType.STRING),
+                modelOf("orders").col("customerId", ColumnType.INT).col("amount", ColumnType.DOUBLE)
+        );
+    }
+
+    @Test
+    public void testWithDuplicateName() {
+        assertSyntaxError(
+                "with x as (tab), x as (tab2) x",
+                17,
+                "duplicate name",
+                modelOf("tab").col("x", ColumnType.INT),
+                modelOf("tab2").col("x", ColumnType.INT)
         );
     }
 
@@ -1928,6 +1988,28 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
                         .col("x", ColumnType.INT)
                         .col("y", ColumnType.INT)
                         .col("z", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testWithSelectFrom() throws ParserException {
+        assertModel(
+                "select-choose a from ((select-choose a from (tab)) x)",
+                "with x as (" +
+                        " select a from tab" +
+                        ") select a from x",
+                modelOf("tab").col("a", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testWithSelectFrom2() throws ParserException {
+        assertModel(
+                "(select-choose a from (tab)) x",
+                "with x as (" +
+                        " select a from tab" +
+                        ") x",
+                modelOf("tab").col("a", ColumnType.INT)
         );
     }
 

@@ -503,10 +503,6 @@ public final class SqlLexerOptimiser {
     }
 
     private ExprNode concatFilters(ExprNode old, ExprNode filter) {
-        if (filter == null || filter == old) {
-            return old;
-        }
-
         if (old == null) {
             return filter;
         } else {
@@ -1542,32 +1538,6 @@ public final class SqlLexerOptimiser {
         return model;
     }
 
-    private QueryModel parseDml(boolean subQuery) throws ParserException {
-
-        CharSequence tok;
-        QueryModel model = queryModelPool.next();
-
-        tok = tok();
-
-        if (Chars.equals(tok, "with")) {
-            parseWithClauses(model);
-            tok = tok();
-        }
-
-        // [select]
-        if (Chars.equals(tok, "select")) {
-            model.setSelectModelType(QueryModel.SELECT_MODEL_CHOOSE);
-            parseSelectClause(model);
-            QueryModel nestedModel = queryModelPool.next();
-            parseFromClause(nestedModel, subQuery);
-            model.setNestedModel(nestedModel);
-            return model;
-        } else {
-            lexer.unparse();
-            return parseFromClause(model, subQuery);
-        }
-    }
-
     private void parseCreateTableColumns(CreateTableModel model) throws ParserException {
         if (!Chars.equals(tok(), '(')) {
             throw err("( expected");
@@ -1588,7 +1558,7 @@ public final class SqlLexerOptimiser {
                 case ColumnType.LONG:
                 case ColumnType.STRING:
                 case ColumnType.SYMBOL:
-                    tok = parseIndexDefinition(model);
+                    tok = parseCreateTableIndexDef(model);
                     break;
                 default:
                     tok = null;
@@ -1609,7 +1579,7 @@ public final class SqlLexerOptimiser {
         }
     }
 
-    private CharSequence parseIndexDefinition(CreateTableModel model) throws ParserException {
+    private CharSequence parseCreateTableIndexDef(CreateTableModel model) throws ParserException {
         CharSequence tok = tok();
 
         if (isFieldTerm(tok)) {
@@ -1635,7 +1605,33 @@ public final class SqlLexerOptimiser {
         return null;
     }
 
-    private QueryModel parseFromClause(QueryModel model, boolean subQuery) throws ParserException {
+    private QueryModel parseDml(boolean subQuery) throws ParserException {
+
+        CharSequence tok;
+        QueryModel model = queryModelPool.next();
+
+        tok = tok();
+
+        if (Chars.equals(tok, "with")) {
+            parseWithClauses(model);
+            tok = tok();
+        }
+
+        // [select]
+        if (Chars.equals(tok, "select")) {
+            model.setSelectModelType(QueryModel.SELECT_MODEL_CHOOSE);
+            parseSelectClause(model);
+            QueryModel nestedModel = queryModelPool.next();
+            parseFromClause(nestedModel, model, subQuery);
+            model.setNestedModel(nestedModel);
+            return model;
+        } else {
+            lexer.unparse();
+            return parseFromClause(model, model, subQuery);
+        }
+    }
+
+    private QueryModel parseFromClause(QueryModel model, QueryModel masterModel, boolean subQuery) throws ParserException {
         CharSequence tok = tok();
         // expect "(" in case of sub-query
 
@@ -1666,7 +1662,7 @@ public final class SqlLexerOptimiser {
 
             lexer.unparse();
 
-            parseSelectFrom(model, model);
+            parseSelectFrom(model, masterModel);
 
             tok = lexer.optionTok();
 
@@ -1771,6 +1767,83 @@ public final class SqlLexerOptimiser {
             throw ParserException.position(lexer.position()).put("Unexpected token: ").put(tok);
         }
         return model;
+    }
+
+    private QueryModel parseJoin(CharSequence tok, int joinType, QueryModel parent) throws ParserException {
+        QueryModel joinModel = queryModelPool.next();
+        joinModel.setJoinType(joinType);
+
+        if (!Chars.equals(tok, "join")) {
+            expectTok("join");
+        }
+
+        tok = tok();
+
+        if (Chars.equals(tok, '(')) {
+            joinModel.setNestedModel(parseDml(true));
+            expectTok(')');
+        } else {
+            lexer.unparse();
+            parseSelectFrom(joinModel, parent);
+        }
+
+        tok = lexer.optionTok();
+
+        if (tok != null && !tableAliasStop.contains(tok)) {
+            lexer.unparse();
+            joinModel.setAlias(expr());
+        } else {
+            lexer.unparse();
+        }
+
+        tok = lexer.optionTok();
+
+        if (joinType == QueryModel.JOIN_CROSS && tok != null && Chars.equals(tok, "on")) {
+            throw ParserException.$(lexer.position(), "Cross joins cannot have join clauses");
+        }
+
+        switch (joinType) {
+            case QueryModel.JOIN_ASOF:
+                if (tok == null || !Chars.equals("on", tok)) {
+                    lexer.unparse();
+                    break;
+                }
+                // intentional fall through
+            case QueryModel.JOIN_INNER:
+            case QueryModel.JOIN_OUTER:
+                expectTok(tok, lexer.position(), "on");
+                astBuilder.reset();
+                exprParser.parseExpr(lexer, astBuilder);
+                ExprNode expr;
+                switch (astBuilder.size()) {
+                    case 0:
+                        throw ParserException.$(lexer.position(), "Expression expected");
+                    case 1:
+                        expr = astBuilder.poll();
+                        if (expr.type == ExprNode.LITERAL) {
+                            do {
+                                joinModel.addJoinColumn(expr);
+                            } while ((expr = astBuilder.poll()) != null);
+                        } else {
+                            joinModel.setJoinCriteria(expr);
+                        }
+                        break;
+                    default:
+                        // this code handles "join on (a,b,c)", e.g. list of columns
+                        while ((expr = astBuilder.poll()) != null) {
+                            if (expr.type != ExprNode.LITERAL) {
+                                throw ParserException.$(lexer.position(), "Column name expected");
+                            }
+                            joinModel.addJoinColumn(expr);
+                        }
+                        break;
+                }
+                break;
+            default:
+                lexer.unparse();
+        }
+
+        return joinModel;
     }
 
     private void parseLatestBy(QueryModel model) throws ParserException {
@@ -1898,90 +1971,14 @@ public final class SqlLexerOptimiser {
         }
     }
 
-    private QueryModel parseJoin(CharSequence tok, int joinType, QueryModel parent) throws ParserException {
-        QueryModel joinModel = queryModelPool.next();
-        joinModel.setJoinType(joinType);
-
-        if (!Chars.equals(tok, "join")) {
-            expectTok("join");
-        }
-
-        tok = tok();
-
-        if (Chars.equals(tok, '(')) {
-            joinModel.setNestedModel(parseDml(true));
-            expectTok(')');
-        } else {
-            lexer.unparse();
-            parseSelectFrom(joinModel, parent);
-        }
-
-        tok = lexer.optionTok();
-
-        if (tok != null && !tableAliasStop.contains(tok)) {
-            lexer.unparse();
-            joinModel.setAlias(expr());
-        } else {
-            lexer.unparse();
-        }
-
-        tok = lexer.optionTok();
-
-        if (joinType == QueryModel.JOIN_CROSS && tok != null && Chars.equals(tok, "on")) {
-            throw ParserException.$(lexer.position(), "Cross joins cannot have join clauses");
-        }
-
-        switch (joinType) {
-            case QueryModel.JOIN_ASOF:
-                if (tok == null || !Chars.equals("on", tok)) {
-                    lexer.unparse();
-                    break;
-                }
-                // intentional fall through
-            case QueryModel.JOIN_INNER:
-            case QueryModel.JOIN_OUTER:
-                expectTok(tok, lexer.position(), "on");
-                astBuilder.reset();
-                exprParser.parseExpr(lexer, astBuilder);
-                ExprNode expr;
-                switch (astBuilder.size()) {
-                    case 0:
-                        throw ParserException.$(lexer.position(), "Expression expected");
-                    case 1:
-                        expr = astBuilder.poll();
-                        if (expr.type == ExprNode.LITERAL) {
-                            do {
-                                joinModel.addJoinColumn(expr);
-                            } while ((expr = astBuilder.poll()) != null);
-                        } else {
-                            joinModel.setJoinCriteria(expr);
-                        }
-                        break;
-                    default:
-                        // this code handles "join on (a,b,c)", e.g. list of columns
-                        while ((expr = astBuilder.poll()) != null) {
-                            if (expr.type != ExprNode.LITERAL) {
-                                throw ParserException.$(lexer.position(), "Column name expected");
-                            }
-                            joinModel.addJoinColumn(expr);
-                        }
-                        break;
-                }
-                break;
-            default:
-                lexer.unparse();
-        }
-
-        return joinModel;
-    }
-
-    private void parseSelectFrom(QueryModel target, QueryModel model) throws ParserException {
+    private void parseSelectFrom(QueryModel model, QueryModel masterModel) throws ParserException {
         ExprNode tableName = literal();
-        WithClauseModel withClause = tableName != null ? model.getWithClause(tableName.token) : null;
+        WithClauseModel withClause = tableName != null ? masterModel.getWithClause(tableName.token) : null;
         if (withClause != null) {
-            target.setNestedModel(getOrParseQueryModelFromWithClause(withClause));
+            model.setNestedModel(getOrParseQueryModelFromWithClause(withClause));
+            model.setAlias(tableName);
         } else {
-            target.setTableName(tableName);
+            model.setTableName(tableName);
         }
     }
 
