@@ -910,6 +910,26 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testJoinOnExpression() {
+        assertSyntaxError(
+                "a join b on (x,x+1)",
+                18,
+                "Column name expected",
+                modelOf("a").col("x", ColumnType.INT),
+                modelOf("b").col("x", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testJoinOnExpression2() throws ParserException {
+        assertModel("a cross join (b where b.x) where a.x + 1",
+                "a join b on a.x+1 and b.x",
+                modelOf("a").col("x", ColumnType.INT),
+                modelOf("b").col("x", ColumnType.INT)
+        );
+    }
+
+    @Test
     public void testJoinOneFieldToTwoAcross2() throws Exception {
         assertModel(
                 "orders" +
