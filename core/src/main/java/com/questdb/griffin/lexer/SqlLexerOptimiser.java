@@ -95,6 +95,7 @@ public final class SqlLexerOptimiser {
     private Lexer lexer = new Lexer();
     private ObjList<JoinContext> emittedJoinClauses;
     private int defaultAliasCount = 0;
+    private boolean subQueryMode = false;
 
     public SqlLexerOptimiser(CairoEngine engine, CairoConfiguration configuration) {
         this.engine = engine;
@@ -160,7 +161,13 @@ public final class SqlLexerOptimiser {
         }
 
         lexer.unparse();
-        return optimise(parseDml(false));
+
+        QueryModel model = parseDml();
+        tok = optTok();
+        if (tok != null) {
+            throw ParserException.position(lexer.position()).put("unexpected token: ").put(tok);
+        }
+        return optimise(model);
     }
 
     private static void assertNotNull(ExprNode node, int position, String message) throws ParserException {
@@ -474,6 +481,7 @@ public final class SqlLexerOptimiser {
         literalCollectorBIndexes.clear();
         literalCollectorANames.clear();
         literalCollectorBNames.clear();
+        subQueryMode = false;
     }
 
     private void collectJoinModelAliases(QueryModel model) throws ParserException {
@@ -822,7 +830,7 @@ public final class SqlLexerOptimiser {
     }
 
     private void expectTok(CharSequence expected) throws ParserException {
-        CharSequence tok = lexer.optionTok();
+        CharSequence tok = optTok();
         if (tok == null) {
             throw ParserException.position(lexer.position()).put('\'').put(expected).put("' expected");
         }
@@ -830,7 +838,7 @@ public final class SqlLexerOptimiser {
     }
 
     private void expectTok(char expected) throws ParserException {
-        CharSequence tok = lexer.optionTok();
+        CharSequence tok = optTok();
         if (tok == null) {
             throw ParserException.position(lexer.position()).put(expected).put(" expected");
         }
@@ -945,7 +953,7 @@ public final class SqlLexerOptimiser {
     private ExprNode literal() {
         // this can never be null in its current contexts
         // every time this function is called is after lexer.unparse(), which ensures non-null token.
-        return exprNodePool.next().of(ExprNode.LITERAL, Chars.stripQuotes(lexer.optionTok().toString()), 0, lexer.position());
+        return exprNodePool.next().of(ExprNode.LITERAL, Chars.stripQuotes(optTok().toString()), 0, lexer.position());
     }
 
     private ExprNode makeJoinAlias(int index) {
@@ -1204,6 +1212,14 @@ public final class SqlLexerOptimiser {
         return tok;
     }
 
+    private CharSequence optTok() {
+        CharSequence tok = lexer.optionTok();
+        if (tok == null || (subQueryMode && Chars.equals(tok, ')'))) {
+            return null;
+        }
+        return tok;
+    }
+
     private QueryModel optimise(QueryModel model) throws ParserException {
         resolveJoinColumns(model);
         optimiseBooleanNot(model);
@@ -1420,14 +1436,14 @@ public final class SqlLexerOptimiser {
             parseCreateTableColumns(model);
         } else if (Chars.equals(tok, "as")) {
             expectTok('(');
-            model.setQueryModel(parseDml(true));
+            model.setQueryModel(parseSubQuery());
             expectTok(')');
         } else {
             throw ParserException.position(lexer.position()).put("Unexpected token");
         }
 
 
-        tok = lexer.optionTok();
+        tok = optTok();
         while (tok != null && Chars.equals(tok, ',')) {
 
             int pos = lexer.position();
@@ -1461,7 +1477,7 @@ public final class SqlLexerOptimiser {
                 }
                 expectTok(tok, pos, ')');
 
-                tok = lexer.optionTok();
+                tok = optTok();
             } else if (Chars.equals(tok, "cast")) {
                 expectTok('(');
                 ColumnCastModel columnCastModel = columnCastModelPool.next();
@@ -1478,7 +1494,7 @@ public final class SqlLexerOptimiser {
                 columnCastModel.setType(type, node.position);
 
                 if (type == ColumnType.SYMBOL) {
-                    tok = lexer.optionTok();
+                    tok = optTok();
                     pos = lexer.position();
 
                     if (Chars.equals(tok, "count")) {
@@ -1500,7 +1516,7 @@ public final class SqlLexerOptimiser {
                     throw ParserException.$(columnCastModel.getName().position, "duplicate cast");
                 }
 
-                tok = lexer.optionTok();
+                tok = optTok();
             } else {
                 throw ParserException.$(pos, "Unexpected token");
             }
@@ -1509,19 +1525,19 @@ public final class SqlLexerOptimiser {
         ExprNode timestamp = parseTimestamp(tok);
         if (timestamp != null) {
             model.setTimestamp(timestamp);
-            tok = lexer.optionTok();
+            tok = optTok();
         }
 
         ExprNode partitionBy = parseCreateTablePartition(tok);
         if (partitionBy != null) {
             model.setPartitionBy(partitionBy);
-            tok = lexer.optionTok();
+            tok = optTok();
         }
 
         ExprNode hint = parseCreateTableRecordHint(tok);
         if (hint != null) {
             model.setRecordHint(hint);
-            tok = lexer.optionTok();
+            tok = optTok();
         }
 
         if (tok != null) {
@@ -1615,7 +1631,7 @@ public final class SqlLexerOptimiser {
         return null;
     }
 
-    private QueryModel parseDml(boolean subQuery) throws ParserException {
+    private QueryModel parseDml() throws ParserException {
 
         CharSequence tok;
         QueryModel model = queryModelPool.next();
@@ -1632,33 +1648,33 @@ public final class SqlLexerOptimiser {
             model.setSelectModelType(QueryModel.SELECT_MODEL_CHOOSE);
             parseSelectClause(model);
             QueryModel nestedModel = queryModelPool.next();
-            parseFromClause(nestedModel, model, subQuery);
+            parseFromClause(nestedModel, model);
             model.setNestedModel(nestedModel);
             return model;
         } else {
             lexer.unparse();
-            return parseFromClause(model, model, subQuery);
+            return parseFromClause(model, model);
         }
     }
 
-    private QueryModel parseFromClause(QueryModel model, QueryModel masterModel, boolean subQuery) throws ParserException {
+    private QueryModel parseFromClause(QueryModel model, QueryModel masterModel) throws ParserException {
         CharSequence tok = expectTableNameOrSubQuery();
         // expect "(" in case of sub-query
 
         if (Chars.equals(tok, '(')) {
-            model.setNestedModel(parseDml(true));
+            model.setNestedModel(parseSubQuery());
 
             // expect closing bracket
             expectTok(')');
 
-            tok = lexer.optionTok();
+            tok = optTok();
 
             // check if tok is not "where" - should be alias
 
             if (tok != null && !tableAliasStop.contains(tok)) {
                 lexer.unparse();
                 model.setAlias(literal());
-                tok = lexer.optionTok();
+                tok = optTok();
             }
 
             // expect [timestamp(column)]
@@ -1666,7 +1682,7 @@ public final class SqlLexerOptimiser {
             ExprNode timestamp = parseTimestamp(tok);
             if (timestamp != null) {
                 model.setTimestamp(timestamp);
-                tok = lexer.optionTok();
+                tok = optTok();
             }
         } else {
 
@@ -1674,12 +1690,12 @@ public final class SqlLexerOptimiser {
 
             parseSelectFrom(model, masterModel);
 
-            tok = lexer.optionTok();
+            tok = optTok();
 
             if (tok != null && !tableAliasStop.contains(tok)) {
                 lexer.unparse();
                 model.setAlias(literal());
-                tok = lexer.optionTok();
+                tok = optTok();
             }
 
             // expect [timestamp(column)]
@@ -1687,14 +1703,14 @@ public final class SqlLexerOptimiser {
             ExprNode timestamp = parseTimestamp(tok);
             if (timestamp != null) {
                 model.setTimestamp(timestamp);
-                tok = lexer.optionTok();
+                tok = optTok();
             }
 
             // expect [latest by]
 
             if (Chars.equalsNc("latest", tok)) {
                 parseLatestBy(model);
-                tok = lexer.optionTok();
+                tok = optTok();
             }
         }
 
@@ -1703,14 +1719,14 @@ public final class SqlLexerOptimiser {
         int joinType;
         while (tok != null && (joinType = joinStartSet.get(tok)) != -1) {
             model.addJoinModel(parseJoin(tok, joinType, model));
-            tok = lexer.optionTok();
+            tok = optTok();
         }
 
         // expect [where]
 
         if (tok != null && Chars.equals(tok, "where")) {
             model.setWhereClause(expr());
-            tok = lexer.optionTok();
+            tok = optTok();
         }
 
         // expect [group by]
@@ -1718,7 +1734,7 @@ public final class SqlLexerOptimiser {
         if (tok != null && Chars.equals(tok, "sample")) {
             expectTok("by");
             model.setSampleBy(expectLiteral());
-            tok = lexer.optionTok();
+            tok = optTok();
         }
 
         // expect [order by]
@@ -1735,19 +1751,19 @@ public final class SqlLexerOptimiser {
                 lexer.unparse();
                 ExprNode n = expectLiteral();
 
-                tok = lexer.optionTok();
+                tok = optTok();
 
                 if (tok != null && Chars.equalsIgnoreCase(tok, "desc")) {
 
                     model.addOrderBy(n, QueryModel.ORDER_DIRECTION_DESCENDING);
-                    tok = lexer.optionTok();
+                    tok = optTok();
 
                 } else {
 
                     model.addOrderBy(n, QueryModel.ORDER_DIRECTION_ASCENDING);
 
                     if (tok != null && Chars.equalsIgnoreCase(tok, "asc")) {
-                        tok = lexer.optionTok();
+                        tok = optTok();
                     }
                 }
 
@@ -1763,19 +1779,16 @@ public final class SqlLexerOptimiser {
             ExprNode lo = expr();
             ExprNode hi = null;
 
-            tok = lexer.optionTok();
+            tok = optTok();
             if (tok != null && Chars.equals(tok, ',')) {
                 hi = expr();
-                tok = lexer.optionTok();
+                tok = optTok();
             }
             model.setLimit(lo, hi);
         }
 
-        if (subQuery) {
-            lexer.unparse();
-        } else if (tok != null) {
-            throw ParserException.position(lexer.position()).put("Unexpected token: ").put(tok);
-        }
+        lexer.unparse();
+
         return model;
     }
 
@@ -1790,14 +1803,14 @@ public final class SqlLexerOptimiser {
         tok = expectTableNameOrSubQuery();
 
         if (Chars.equals(tok, '(')) {
-            joinModel.setNestedModel(parseDml(true));
+            joinModel.setNestedModel(parseSubQuery());
             expectTok(')');
         } else {
             lexer.unparse();
             parseSelectFrom(joinModel, parent);
         }
 
-        tok = lexer.optionTok();
+        tok = optTok();
 
         if (tok != null && !tableAliasStop.contains(tok)) {
             lexer.unparse();
@@ -1806,7 +1819,7 @@ public final class SqlLexerOptimiser {
             lexer.unparse();
         }
 
-        tok = lexer.optionTok();
+        tok = optTok();
 
         if (joinType == QueryModel.JOIN_CROSS && tok != null && Chars.equals(tok, "on")) {
             throw ParserException.$(lexer.position(), "Cross joins cannot have join clauses");
@@ -1967,6 +1980,15 @@ public final class SqlLexerOptimiser {
         }
     }
 
+    private QueryModel parseSubQuery() throws ParserException {
+        this.subQueryMode = true;
+        try {
+            return parseDml();
+        } finally {
+            this.subQueryMode = false;
+        }
+    }
+
     private ExprNode parseTimestamp(CharSequence tok) throws ParserException {
         if (Chars.equalsNc("timestamp", tok)) {
             expectTok('(');
@@ -1988,7 +2010,7 @@ public final class SqlLexerOptimiser {
         Lexer tmp = this.lexer;
         this.lexer = secondaryLexer;
         try {
-            return parseDml(true);
+            return parseSubQuery();
         } finally {
             lexer = tmp;
         }
@@ -2006,14 +2028,14 @@ public final class SqlLexerOptimiser {
             expectTok('(');
             int lo, hi;
             lo = lexer.position();
-            QueryModel m = parseDml(true);
+            QueryModel m = parseSubQuery();
             hi = lexer.position();
             WithClauseModel wcm = withClauseModelPool.next();
             wcm.of(lo + 1, hi, m);
             expectTok(')');
             model.addWithClause(name.token, wcm);
 
-            CharSequence tok = lexer.optionTok();
+            CharSequence tok = optTok();
             if (tok == null || !Chars.equals(tok, ',')) {
                 lexer.unparse();
                 break;
@@ -2669,7 +2691,7 @@ public final class SqlLexerOptimiser {
     }
 
     private CharSequence tok(String expectedList) throws ParserException {
-        CharSequence tok = lexer.optionTok();
+        CharSequence tok = optTok();
         if (tok == null) {
             throw ParserException.position(lexer.position()).put(expectedList).put(" expected");
         }

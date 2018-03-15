@@ -38,7 +38,6 @@ import com.questdb.std.str.Path;
 import com.questdb.test.tools.TestUtils;
 import org.junit.AfterClass;
 import org.junit.Assert;
-import org.junit.Ignore;
 import org.junit.Test;
 
 import java.io.IOException;
@@ -62,7 +61,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testAliasWithSpaceX() {
-        assertSyntaxError("from x 'a b' where x > 1", 7, "Unexpected");
+        assertSyntaxError("from x 'a b' where x > 1", 7, "unexpected");
     }
 
     @Test
@@ -644,19 +643,8 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     }
 
     @Test
-    @Ignore
-    public void testInvalidColumnInWithClause() {
-        assertSyntaxError(
-                "with x as (select a from) x",
-                26,
-                "Invalid column",
-                modelOf("tab").col("b", ColumnType.INT)
-        );
-    }
-
-    @Test
     public void testInvalidGroupBy1() {
-        assertSyntaxError("select x, y from tab sample by x,", 32, "Unexpected");
+        assertSyntaxError("select x, y from tab sample by x,", 32, "unexpected");
     }
 
     @Test
@@ -666,7 +654,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testInvalidGroupBy3() {
-        assertSyntaxError("select x, y from tab sample by x, order by y", 32, "Unexpected token: ,");
+        assertSyntaxError("select x, y from tab sample by x, order by y", 32, "unexpected token: ,");
     }
 
     @Test
@@ -686,7 +674,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testInvalidOrderBy2() {
-        assertSyntaxError("select x, y from (tab order by x,)", 33, "Expression expected");
+        assertSyntaxError("select x, y from (tab order by x,)", 33, "column name or alias expected");
     }
 
     @Test
@@ -1287,7 +1275,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
                         "-- where x = 10\n");
                 Assert.fail();
             } catch (ParserException e) {
-                TestUtils.assertEquals("Unexpected token: Date", e.getFlyweightMessage());
+                TestUtils.assertEquals("unexpected token: Date", e.getFlyweightMessage());
             }
         }
     }
@@ -1298,6 +1286,16 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
                 "select a from",
                 9,
                 "table name or sub-query expected"
+        );
+    }
+
+    @Test
+    public void testMissingTableInSubQuery() {
+        assertSyntaxError(
+                "with x as (select a from) x",
+                24,
+                "table name or sub-query expected",
+                modelOf("tab").col("b", ColumnType.INT)
         );
     }
 
@@ -1554,7 +1552,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testOrderByExpression() {
-        assertSyntaxError("select x, y from tab order by x+y", 31, "Unexpected");
+        assertSyntaxError("select x, y from tab order by x+y", 31, "unexpected");
     }
 
     @Test
@@ -1944,7 +1942,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testSingleTableLimitLoHiExtraToken() {
-        assertSyntaxError("select x x, y y from tab where x > z limit 100,200 b", 51, "Unexpected");
+        assertSyntaxError("select x x, y y from tab where x > z limit 100,200 b", 51, "unexpected");
     }
 
     @Test
