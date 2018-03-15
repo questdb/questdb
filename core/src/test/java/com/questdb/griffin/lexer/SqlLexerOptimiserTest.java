@@ -38,6 +38,7 @@ import com.questdb.std.str.Path;
 import com.questdb.test.tools.TestUtils;
 import org.junit.AfterClass;
 import org.junit.Assert;
+import org.junit.Ignore;
 import org.junit.Test;
 
 import java.io.IOException;
@@ -321,12 +322,12 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testCreateTableMissingDef() {
-        assertSyntaxError("create table xyx", 13, "Unexpected");
+        assertSyntaxError("create table xyx", 13, "'(' or 'as' expected");
     }
 
     @Test
     public void testCreateTableMissingName() {
-        assertSyntaxError("create table ", 12, "Unexpected");
+        assertSyntaxError("create table ", 12, "table name expected");
     }
 
     @Test
@@ -430,23 +431,6 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testJoinWithClausesDefaultAlias() throws ParserException {
-        assertModel("(customers where name ~ 'X') cust" +
-                        " outer join (select-choose customerId from (orders where amount > 100)) ord on ord.customerId = cust.customerId" +
-                        " post-join-where ord.customerId != null" +
-                        " limit 10",
-                "with" +
-                        " cust as (customers where name ~ 'X')," +
-                        " ord as (select customerId from orders where amount > 100)" +
-                        " cust outer join ord on (customerId) " +
-                        " where ord.customerId != null" +
-                        " limit 10",
-                modelOf("customers").col("customerId", ColumnType.INT).col("name", ColumnType.STRING),
-                modelOf("orders").col("customerId", ColumnType.INT).col("amount", ColumnType.DOUBLE)
-        );
-    }
-
-    @Test
     public void testDisallowDotInColumnAlias() {
         assertSyntaxError("select x x.y, y from tab order by x", 9, "not allowed");
     }
@@ -482,13 +466,13 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testEmptyGroupBy() {
-        assertSyntaxError("select x, y from tab sample by", 28, "end of input");
+    public void testEmptyOrderBy() {
+        assertSyntaxError("select x, y from tab order by", 27, "column name or alias expected");
     }
 
     @Test
-    public void testEmptyOrderBy() {
-        assertSyntaxError("select x, y from tab order by", 27, "end of input");
+    public void testEmptySampleBy() {
+        assertSyntaxError("select x, y from tab sample by", 28, "literal expected");
     }
 
     @Test
@@ -527,7 +511,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testExtraCommaPartitionByInAnalyticFunction() {
-        assertSyntaxError("select a,b, f(c) my over (partition by b, order by ts) from xyz", 48, ") expected");
+        assertSyntaxError("select a,b, f(c) my over (partition by b, order by ts) from xyz", 48, "')' expected");
     }
 
     @Test
@@ -660,6 +644,17 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     }
 
     @Test
+    @Ignore
+    public void testInvalidColumnInWithClause() {
+        assertSyntaxError(
+                "with x as (select a from) x",
+                26,
+                "Invalid column",
+                modelOf("tab").col("b", ColumnType.INT)
+        );
+    }
+
+    @Test
     public void testInvalidGroupBy1() {
         assertSyntaxError("select x, y from tab sample by x,", 32, "Unexpected");
     }
@@ -686,7 +681,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testInvalidOrderBy1() {
-        assertSyntaxError("select x, y from tab order by x,", 31, "end of input");
+        assertSyntaxError("select x, y from tab order by x,", 31, "column name or alias expected");
     }
 
     @Test
@@ -780,6 +775,17 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testJoin3() throws Exception {
+        assertModel(
+                "select-choose x from ((select-choose tab2.x x from (tab join tab2 on tab2.x = tab.x cross join tab3 post-join-where tab3.x f tab2.x = tab.x)))",
+                "select x from (select tab2.x from tab join tab2 on tab.x=tab2.x join tab3 on f(tab3.x,tab2.x) = tab.x)",
+                modelOf("tab").col("x", ColumnType.INT),
+                modelOf("tab2").col("x", ColumnType.INT),
+                modelOf("tab3").col("x", ColumnType.INT)
+        );
+    }
+
+    @Test
     public void testJoinColumnAlias() {
         assertSyntaxError(
                 "(select c.customerId, o.customerId kk, count() from customers c" +
@@ -841,6 +847,28 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
                 modelOf("orderDetails").col("orderId", ColumnType.INT).col("productId", ColumnType.INT),
                 modelOf("products").col("productId", ColumnType.INT).col("supplier", ColumnType.SYMBOL),
                 modelOf("suppliers").col("supplier", ColumnType.SYMBOL)
+        );
+    }
+
+    @Test
+    public void testJoinCycle2() throws Exception {
+        assertModel(
+                "orders" +
+                        " join customers on customers.customerId = orders.customerId" +
+                        " join orderDetails d on d.productId = orders.orderId" +
+                        " join suppliers on suppliers.x = d.orderId and suppliers.supplier = orders.orderId" +
+                        " join products on products.productId = orders.orderId and products.supplier = suppliers.supplier",
+                "orders" +
+                        " join customers on orders.orderId = products.productId" +
+                        " join orderDetails d on products.supplier = suppliers.supplier" +
+                        " join suppliers on orders.customerId = customers.customerId" +
+                        " join products on d.productId = products.productId and orders.orderId = products.productId" +
+                        " where orders.orderId = suppliers.supplier and d.orderId = suppliers.x",
+                modelOf("orders").col("customerId", ColumnType.INT).col("orderId", ColumnType.INT),
+                modelOf("customers").col("customerId", ColumnType.INT),
+                modelOf("orderDetails").col("orderId", ColumnType.INT).col("productId", ColumnType.INT),
+                modelOf("products").col("productId", ColumnType.INT).col("supplier", ColumnType.SYMBOL),
+                modelOf("suppliers").col("supplier", ColumnType.SYMBOL).col("x", ColumnType.INT)
         );
     }
 
@@ -1175,6 +1203,32 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testJoinTableMissing() {
+        assertSyntaxError(
+                "select a from tab join",
+                18,
+                "table name or sub-query expected"
+        );
+    }
+
+    @Test
+    public void testJoinWithClausesDefaultAlias() throws ParserException {
+        assertModel("(customers where name ~ 'X') cust" +
+                        " outer join (select-choose customerId from (orders where amount > 100)) ord on ord.customerId = cust.customerId" +
+                        " post-join-where ord.customerId != null" +
+                        " limit 10",
+                "with" +
+                        " cust as (customers where name ~ 'X')," +
+                        " ord as (select customerId from orders where amount > 100)" +
+                        " cust outer join ord on (customerId) " +
+                        " where ord.customerId != null" +
+                        " limit 10",
+                modelOf("customers").col("customerId", ColumnType.INT).col("name", ColumnType.STRING),
+                modelOf("orders").col("customerId", ColumnType.INT).col("amount", ColumnType.DOUBLE)
+        );
+    }
+
+    @Test
     public void testJoinWithClausesExplicitAlias() throws ParserException {
         assertModel("(customers where name ~ 'X') c" +
                         " outer join (select-choose customerId from (orders where amount > 100)) o on o.customerId = c.customerId" +
@@ -1188,17 +1242,6 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
                         " limit 10",
                 modelOf("customers").col("customerId", ColumnType.INT).col("name", ColumnType.STRING),
                 modelOf("orders").col("customerId", ColumnType.INT).col("amount", ColumnType.DOUBLE)
-        );
-    }
-
-    @Test
-    public void testWithDuplicateName() {
-        assertSyntaxError(
-                "with x as (tab), x as (tab2) x",
-                17,
-                "duplicate name",
-                modelOf("tab").col("x", ColumnType.INT),
-                modelOf("tab2").col("x", ColumnType.INT)
         );
     }
 
@@ -1250,6 +1293,15 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMissingTable() {
+        assertSyntaxError(
+                "select a from",
+                9,
+                "table name or sub-query expected"
+        );
+    }
+
+    @Test
     public void testMissingWhere() {
         try {
             parser.parse("select id, x + 10, x from tab id ~ 'HBRO'");
@@ -1294,6 +1346,45 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
                         .col("x", ColumnType.INT)
                         .col("y", ColumnType.INT)
                         .col("z", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testNestedJoinReorder() throws Exception {
+        assertModel(
+                "(select-choose orders.orderId orderId, products.productId productId" +
+                        " from (orders" +
+                        " join (orderDetails d where d.productId = d.orderId) d on d.orderId = orders.customerId" +
+                        " join customers on customers.customerId = orders.customerId" +
+                        " join products on products.productId = d.productId" +
+                        " join suppliers on suppliers.supplier = products.supplier" +
+                        " where orders.orderId = orders.customerId)" +
+                        ") x cross join (orders" +
+                        " join customers on customers.customerId = orders.customerId" +
+                        " join (orderDetails d where d.orderId = d.productId) d on d.productId = orders.orderId" +
+                        " join suppliers on suppliers.supplier = orders.orderId" +
+                        " join products on products.productId = orders.orderId and products.supplier = suppliers.supplier) y",
+                "with x as (select orders.orderId, products.productId from " +
+                        "orders" +
+                        " join orderDetails d on d.orderId = orders.orderId and d.orderId = customers.customerId" +
+                        " join customers on orders.customerId = customers.customerId" +
+                        " join products on d.productId = products.productId" +
+                        " join suppliers on products.supplier = suppliers.supplier" +
+                        " where d.productId = d.orderId), " +
+                        " y as (" +
+                        "orders" +
+                        " join customers on orders.customerId = customers.customerId" +
+                        " join orderDetails d on d.orderId = orders.orderId and orders.orderId = products.productId" +
+                        " join suppliers on products.supplier = suppliers.supplier" +
+                        " join products on d.productId = products.productId and orders.orderId = products.productId" +
+                        " where orders.orderId = suppliers.supplier)" +
+                        " x cross join y",
+                modelOf("orders").col("orderId", ColumnType.INT).col("customerId", ColumnType.INT),
+                modelOf("customers").col("customerId", ColumnType.INT),
+                modelOf("orderDetails").col("orderId", ColumnType.INT).col("productId", ColumnType.INT),
+                modelOf("products").col("productId", ColumnType.INT).col("supplier", ColumnType.INT),
+                modelOf("suppliers").col("supplier", ColumnType.INT),
+                modelOf("shippers").col("shipper", ColumnType.INT)
         );
     }
 
@@ -1774,7 +1865,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
         assertSyntaxError(
                 "select sum(x) x() from tab",
                 15,
-                ",|from expected",
+                "',' or 'from' expected",
                 modelOf("tab").col("x", ColumnType.INT)
         );
     }
@@ -1968,7 +2059,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testUnderTerminatedOver2() {
-        assertSyntaxError("select a,b, f(c) my over (partition by b order by ts", 50, "Unexpected");
+        assertSyntaxError("select a,b, f(c) my over (partition by b order by ts", 50, "'asc' or 'desc' expected");
     }
 
     @Test
@@ -1988,6 +2079,17 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
                         .col("x", ColumnType.INT)
                         .col("y", ColumnType.INT)
                         .col("z", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testWithDuplicateName() {
+        assertSyntaxError(
+                "with x as (tab), x as (tab2) x",
+                17,
+                "duplicate name",
+                modelOf("tab").col("x", ColumnType.INT),
+                modelOf("tab2").col("x", ColumnType.INT)
         );
     }
 

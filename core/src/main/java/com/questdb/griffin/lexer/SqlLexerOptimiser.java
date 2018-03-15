@@ -149,7 +149,7 @@ public final class SqlLexerOptimiser {
     public ParsedModel parse(CharSequence query) throws ParserException {
         clear();
         lexer.setContent(query);
-        CharSequence tok = tok();
+        CharSequence tok = tok("'create', 'rename' or 'select'");
 
         if (Chars.equals(tok, "create")) {
             return parseCreateStatement();
@@ -805,24 +805,36 @@ public final class SqlLexerOptimiser {
     }
 
     private ExprNode expectLiteral() throws ParserException {
-        CharSequence tok = tok();
+        CharSequence tok = tok("literal");
         int pos = lexer.position();
         validateLiteral(pos, tok);
         return exprNodePool.next().of(ExprNode.LITERAL, Chars.toString(tok), 0, pos);
     }
 
-    private void expectTok(CharSequence tok, int position, CharSequence expected) throws ParserException {
+    private CharSequence expectTableNameOrSubQuery() throws ParserException {
+        return tok("table name or sub-query");
+    }
+
+    private void expectTok(CharSequence tok, CharSequence expected) throws ParserException {
         if (tok == null || !Chars.equals(tok, expected)) {
-            throw ParserException.position(position).put('\'').put(expected).put("' expected");
+            throw ParserException.position(lexer.position()).put('\'').put(expected).put("' expected");
         }
     }
 
     private void expectTok(CharSequence expected) throws ParserException {
-        expectTok(tok(), lexer.position(), expected);
+        CharSequence tok = lexer.optionTok();
+        if (tok == null) {
+            throw ParserException.position(lexer.position()).put('\'').put(expected).put("' expected");
+        }
+        expectTok(tok, expected);
     }
 
     private void expectTok(char expected) throws ParserException {
-        expectTok(tok(), lexer.position(), expected);
+        CharSequence tok = lexer.optionTok();
+        if (tok == null) {
+            throw ParserException.position(lexer.position()).put(expected).put(" expected");
+        }
+        expectTok(tok, lexer.position(), expected);
     }
 
     private void expectTok(CharSequence tok, int pos, char expected) throws ParserException {
@@ -874,23 +886,6 @@ public final class SqlLexerOptimiser {
             }
 
             return index;
-        }
-    }
-
-    private QueryModel getOrParseQueryModelFromWithClause(WithClauseModel wcm) throws ParserException {
-        QueryModel m = wcm.popModel();
-        if (m != null) {
-            return m;
-        }
-
-        secondaryLexer.setContent(lexer.getContent(), wcm.getLo(), wcm.getHi());
-
-        Lexer tmp = this.lexer;
-        this.lexer = secondaryLexer;
-        try {
-            return parseDml(true);
-        } finally {
-            lexer = tmp;
         }
     }
 
@@ -1202,7 +1197,7 @@ public final class SqlLexerOptimiser {
     }
 
     private CharSequence notTermTok() throws ParserException {
-        CharSequence tok = tok();
+        CharSequence tok = tok("')' or ','");
         if (isFieldTerm(tok)) {
             throw err("Invalid column definition");
         }
@@ -1321,6 +1316,7 @@ public final class SqlLexerOptimiser {
         int n = joinModels.size();
         if (n > 1) {
             emittedJoinClauses = joinClausesSwap1;
+            emittedJoinClauses.clear();
 
             // for sake of clarity, "model" model is the first in the list of
             // joinModels, e.g. joinModels.get(0) == model
@@ -1341,10 +1337,7 @@ public final class SqlLexerOptimiser {
                 processJoinConditions(model, joinModels.getQuick(i).getJoinCriteria());
             }
 
-            if (emittedJoinClauses.size() > 0) {
-                processEmittedJoinClauses(model);
-            }
-
+            processEmittedJoinClauses(model);
             createImpliedDependencies(model);
             homogenizeCrossJoins(model);
             reorderTables(model);
@@ -1353,8 +1346,11 @@ public final class SqlLexerOptimiser {
             addTransitiveFilters(model);
         }
 
-        if (model.getNestedModel() != null) {
-            optimiseJoins(model.getNestedModel());
+        for (int i = 0; i < n; i++) {
+            QueryModel m = model.getJoinModels().getQuick(i).getNestedModel();
+            if (m != null) {
+                optimiseJoins(m);
+            }
         }
     }
 
@@ -1409,19 +1405,15 @@ public final class SqlLexerOptimiser {
     }
 
     private ParsedModel parseCreateStatement() throws ParserException {
-        CharSequence tok = tok();
-        if (Chars.equals(tok, "table")) {
-            return parseCreateTable();
-        }
-
-        throw err("table expected");
+        expectTok("table");
+        return parseCreateTable();
     }
 
     private ParsedModel parseCreateTable() throws ParserException {
         final CreateTableModel model = createTableModelPool.next();
-        model.setName(exprNodePool.next().of(ExprNode.LITERAL, Chars.stripQuotes(Chars.toString(tok())), 0, lexer.position()));
+        model.setName(exprNodePool.next().of(ExprNode.LITERAL, Chars.stripQuotes(Chars.toString(tok("table name"))), 0, lexer.position()));
 
-        CharSequence tok = tok();
+        CharSequence tok = tok("'(' or 'as'");
 
         if (Chars.equals(tok, '(')) {
             lexer.unparse();
@@ -1440,7 +1432,7 @@ public final class SqlLexerOptimiser {
 
             int pos = lexer.position();
 
-            tok = tok();
+            tok = tok("'index' or 'cast'");
             if (Chars.equals(tok, "index")) {
                 expectTok('(');
 
@@ -1452,18 +1444,18 @@ public final class SqlLexerOptimiser {
                 }
 
                 pos = lexer.position();
-                tok = tok();
+                tok = tok("'block' or 'cast'");
                 if (Chars.equals(tok, "block")) {
 
                     expectTok("size");
 
                     try {
-                        model.setIndexFlags(columnIndex, true, Numbers.ceilPow2(Numbers.parseInt(tok())) - 1);
+                        model.setIndexFlags(columnIndex, true, Numbers.ceilPow2(Numbers.parseInt(tok("number expected"))) - 1);
                     } catch (NumericException e) {
                         throw ParserException.$(pos, "Int constant expected");
                     }
                     pos = lexer.position();
-                    tok = tok();
+                    tok = tok(") expected");
                 } else {
                     model.setIndexFlags(columnIndex, true, configuration.getIndexValueBlockSize());
                 }
@@ -1491,15 +1483,15 @@ public final class SqlLexerOptimiser {
 
                     if (Chars.equals(tok, "count")) {
                         try {
-                            columnCastModel.setCount(Numbers.parseInt(tok()));
-                            tok = tok();
+                            columnCastModel.setCount(Numbers.parseInt(tok("number expected")));
+                            tok = tok(") expected");
                         } catch (NumericException e) {
                             throw ParserException.$(pos, "int value expected");
                         }
                     }
                 } else {
                     pos = lexer.position();
-                    tok = tok();
+                    tok = tok(") expected");
                 }
 
                 expectTok(tok, pos, ')');
@@ -1520,13 +1512,13 @@ public final class SqlLexerOptimiser {
             tok = lexer.optionTok();
         }
 
-        ExprNode partitionBy = parsePartitionBy(tok);
+        ExprNode partitionBy = parseCreateTablePartition(tok);
         if (partitionBy != null) {
             model.setPartitionBy(partitionBy);
             tok = lexer.optionTok();
         }
 
-        ExprNode hint = parseRecordHint(tok);
+        ExprNode hint = parseCreateTableRecordHint(tok);
         if (hint != null) {
             model.setRecordHint(hint);
             tok = lexer.optionTok();
@@ -1539,9 +1531,7 @@ public final class SqlLexerOptimiser {
     }
 
     private void parseCreateTableColumns(CreateTableModel model) throws ParserException {
-        if (!Chars.equals(tok(), '(')) {
-            throw err("( expected");
-        }
+        expectTok('(');
 
         while (true) {
             final int position = lexer.position();
@@ -1566,7 +1556,7 @@ public final class SqlLexerOptimiser {
             }
 
             if (tok == null) {
-                tok = tok();
+                tok = tok(", | ) expected");
             }
 
             if (Chars.equals(tok, ')')) {
@@ -1580,28 +1570,48 @@ public final class SqlLexerOptimiser {
     }
 
     private CharSequence parseCreateTableIndexDef(CreateTableModel model) throws ParserException {
-        CharSequence tok = tok();
+        CharSequence tok = tok(") | , | index expected");
 
         if (isFieldTerm(tok)) {
             return tok;
         }
 
-        expectTok(tok, lexer.position(), "index");
+        expectTok(tok, "index");
 
-        if (isFieldTerm(tok = tok())) {
+        if (isFieldTerm(tok = tok(") | , expected"))) {
             model.setIndexFlags(true, configuration.getIndexValueBlockSize());
             return tok;
         }
 
-        expectTok(tok, lexer.position(), "block");
+        expectTok(tok, "block");
         expectTok("size");
 
         try {
-            model.setIndexFlags(true, Numbers.parseInt(tok()));
+            model.setIndexFlags(true, Numbers.parseInt(tok("number expected")));
         } catch (NumericException e) {
             throw err("bad int");
         }
 
+        return null;
+    }
+
+    private ExprNode parseCreateTablePartition(CharSequence tok) throws ParserException {
+        if (Chars.equalsNc("partition", tok)) {
+            expectTok("by");
+            return expectLiteral();
+        }
+        return null;
+    }
+
+    private ExprNode parseCreateTableRecordHint(CharSequence tok) throws ParserException {
+        if (Chars.equalsNc("record", tok)) {
+            expectTok("hint");
+            ExprNode hint = expectExpr();
+            if (hint.type != ExprNode.CONSTANT) {
+                throw ParserException.$(hint.position, "Constant expected");
+            }
+            return hint;
+        }
         return null;
     }
 
@@ -1610,11 +1620,11 @@ public final class SqlLexerOptimiser {
         CharSequence tok;
         QueryModel model = queryModelPool.next();
 
-        tok = tok();
+        tok = tok("'select', 'with' or table name expected");
 
         if (Chars.equals(tok, "with")) {
             parseWithClauses(model);
-            tok = tok();
+            tok = tok("'select' or table name expected");
         }
 
         // [select]
@@ -1632,7 +1642,7 @@ public final class SqlLexerOptimiser {
     }
 
     private QueryModel parseFromClause(QueryModel model, QueryModel masterModel, boolean subQuery) throws ParserException {
-        CharSequence tok = tok();
+        CharSequence tok = expectTableNameOrSubQuery();
         // expect "(" in case of sub-query
 
         if (Chars.equals(tok, '(')) {
@@ -1716,7 +1726,7 @@ public final class SqlLexerOptimiser {
         if (tok != null && Chars.equals(tok, "order")) {
             expectTok("by");
             do {
-                tok = tok();
+                tok = tok("column name or alias");
 
                 if (Chars.equals(tok, ')')) {
                     throw err("Expression expected");
@@ -1777,7 +1787,7 @@ public final class SqlLexerOptimiser {
             expectTok("join");
         }
 
-        tok = tok();
+        tok = expectTableNameOrSubQuery();
 
         if (Chars.equals(tok, '(')) {
             joinModel.setNestedModel(parseDml(true));
@@ -1811,7 +1821,7 @@ public final class SqlLexerOptimiser {
                 // intentional fall through
             case QueryModel.JOIN_INNER:
             case QueryModel.JOIN_OUTER:
-                expectTok(tok, lexer.position(), "on");
+                expectTok(tok, "on");
                 astBuilder.reset();
                 exprParser.parseExpr(lexer, astBuilder);
                 ExprNode expr;
@@ -1851,26 +1861,6 @@ public final class SqlLexerOptimiser {
         model.setLatestBy(expr());
     }
 
-    private ExprNode parsePartitionBy(CharSequence tok) throws ParserException {
-        if (Chars.equalsNc("partition", tok)) {
-            expectTok("by");
-            return expectLiteral();
-        }
-        return null;
-    }
-
-    private ExprNode parseRecordHint(CharSequence tok) throws ParserException {
-        if (Chars.equalsNc("record", tok)) {
-            expectTok("hint");
-            ExprNode hint = expectExpr();
-            if (hint.type != ExprNode.CONSTANT) {
-                throw ParserException.$(hint.position, "Constant expected");
-            }
-            return hint;
-        }
-        return null;
-    }
-
     private ParsedModel parseRenameStatement() throws ParserException {
         expectTok("table");
         RenameTableModel model = renameTableModelPool.next();
@@ -1900,14 +1890,14 @@ public final class SqlLexerOptimiser {
             String alias;
             int aliasPosition = lexer.position();
 
-            tok = tok();
+            tok = tok("',', 'from', 'over' or literal");
 
             if (!columnAliasStop.contains(tok)) {
                 if (Chars.indexOf(tok, '.') != -1) {
                     throw ParserException.$(aliasPosition, "'.' is not allowed here");
                 }
                 alias = Chars.toString(tok);
-                tok = tok();
+                tok = tok("',', 'from' or 'over'");
             } else {
                 alias = createColumnAlias(expr, model);
                 aliasPosition = -1;
@@ -1918,7 +1908,7 @@ public final class SqlLexerOptimiser {
                 expectTok('(');
 
                 AnalyticColumn col = analyticColumnPool.next().of(alias, aliasPosition, expr);
-                tok = tok();
+                tok = tok("'");
 
                 if (Chars.equals(tok, "partition")) {
                     expectTok("by");
@@ -1927,7 +1917,7 @@ public final class SqlLexerOptimiser {
 
                     do {
                         partitionBy.add(expectLiteral());
-                        tok = tok();
+                        tok = tok("'order' or ')'");
                     } while (Chars.equals(tok, ','));
                 }
 
@@ -1936,27 +1926,22 @@ public final class SqlLexerOptimiser {
 
                     do {
                         ExprNode e = expectLiteral();
-                        tok = tok();
+                        tok = tok("'asc' or 'desc'");
 
                         if (Chars.equalsIgnoreCase(tok, "desc")) {
                             col.addOrderBy(e, QueryModel.ORDER_DIRECTION_DESCENDING);
-                            tok = tok();
+                            tok = tok("',' or ')'");
                         } else {
                             col.addOrderBy(e, QueryModel.ORDER_DIRECTION_ASCENDING);
                             if (Chars.equalsIgnoreCase(tok, "asc")) {
-                                tok = tok();
+                                tok = tok("',' or ')'");
                             }
                         }
                     } while (Chars.equals(tok, ','));
                 }
-
-                if (!Chars.equals(tok, ')')) {
-                    throw err(") expected");
-                }
-
+                expectTok(tok, lexer.position(), ')');
                 model.addColumn(col);
-
-                tok = tok();
+                tok = tok("'from' or ','");
             } else {
                 model.addColumn(queryColumnPool.next().of(alias, aliasPosition, expr));
             }
@@ -1966,7 +1951,7 @@ public final class SqlLexerOptimiser {
             }
 
             if (!Chars.equals(tok, ',')) {
-                throw err(",|from expected");
+                throw err("',' or 'from' expected");
             }
         }
     }
@@ -1975,7 +1960,7 @@ public final class SqlLexerOptimiser {
         ExprNode tableName = literal();
         WithClauseModel withClause = tableName != null ? masterModel.getWithClause(tableName.token) : null;
         if (withClause != null) {
-            model.setNestedModel(getOrParseQueryModelFromWithClause(withClause));
+            model.setNestedModel(parseWith(withClause));
             model.setAlias(tableName);
         } else {
             model.setTableName(tableName);
@@ -1990,6 +1975,23 @@ public final class SqlLexerOptimiser {
             return result;
         }
         return null;
+    }
+
+    private QueryModel parseWith(WithClauseModel wcm) throws ParserException {
+        QueryModel m = wcm.popModel();
+        if (m != null) {
+            return m;
+        }
+
+        secondaryLexer.setContent(lexer.getContent(), wcm.getLo(), wcm.getHi());
+
+        Lexer tmp = this.lexer;
+        this.lexer = secondaryLexer;
+        try {
+            return parseDml(true);
+        } finally {
+            lexer = tmp;
+        }
     }
 
     private void parseWithClauses(QueryModel model) throws ParserException {
@@ -2020,21 +2022,11 @@ public final class SqlLexerOptimiser {
     }
 
     private void processEmittedJoinClauses(QueryModel model) {
-        // process emitted join conditions
-        do {
-            ObjList<JoinContext> clauses = emittedJoinClauses;
-
-            if (clauses == joinClausesSwap1) {
-                emittedJoinClauses = joinClausesSwap2;
-            } else {
-                emittedJoinClauses = joinClausesSwap1;
-            }
-            emittedJoinClauses.clear();
-            for (int i = 0, k = clauses.size(); i < k; i++) {
-                addJoinContext(model, clauses.getQuick(i));
-            }
-        } while (emittedJoinClauses.size() > 0);
-
+        // pick up join clauses emitted at initial analysis stage
+        // as we merge contexts at this level no more clauses is be emitted
+        for (int i = 0, k = emittedJoinClauses.size(); i < k; i++) {
+            addJoinContext(model, emittedJoinClauses.getQuick(i));
+        }
     }
 
     /**
@@ -2645,38 +2637,41 @@ public final class SqlLexerOptimiser {
             return false;
         }
 
-        JoinContext jc = context;
-        clausesToSteal.clear();
-
-        JoinContext that = jm.getContext();
+        final JoinContext that = jm.getContext();
         if (that != null && that.parents.contains(to)) {
-            int zc = that.aIndexes.size();
-            for (int z = 0; z < zc; z++) {
-                if (that.aIndexes.getQuick(z) == to || that.bIndexes.getQuick(z) == to) {
-                    clausesToSteal.add(z);
-                }
-            }
-
-            if (clausesToSteal.size() < zc) {
-                QueryModel target = joinModels.getQuick(to);
-                target.getDependencies().clear();
-                if (jc == null) {
-                    target.setContext(jc = contextPool.next());
-                }
-                jc.slaveIndex = to;
-                jm.setContext(moveClauses(parent, that, jc, clausesToSteal));
-                if (target.getJoinType() == QueryModel.JOIN_CROSS) {
-                    target.setJoinType(QueryModel.JOIN_INNER);
-                }
-            }
+            swapJoinOrder0(parent, jm, to, context);
         }
         return true;
     }
 
-    private CharSequence tok() throws ParserException {
+    private void swapJoinOrder0(QueryModel parent, QueryModel jm, int to, JoinContext jc) {
+        final JoinContext that = jm.getContext();
+        clausesToSteal.clear();
+        int zc = that.aIndexes.size();
+        for (int z = 0; z < zc; z++) {
+            if (that.aIndexes.getQuick(z) == to || that.bIndexes.getQuick(z) == to) {
+                clausesToSteal.add(z);
+            }
+        }
+
+        if (clausesToSteal.size() < zc) {
+            QueryModel target = parent.getJoinModels().getQuick(to);
+            target.getDependencies().clear();
+            if (jc == null) {
+                target.setContext(jc = contextPool.next());
+            }
+            jc.slaveIndex = to;
+            jm.setContext(moveClauses(parent, that, jc, clausesToSteal));
+            if (target.getJoinType() == QueryModel.JOIN_CROSS) {
+                target.setJoinType(QueryModel.JOIN_INNER);
+            }
+        }
+    }
+
+    private CharSequence tok(String expectedList) throws ParserException {
         CharSequence tok = lexer.optionTok();
         if (tok == null) {
-            throw err("Unexpected end of input");
+            throw ParserException.position(lexer.position()).put(expectedList).put(" expected");
         }
         return tok;
     }
