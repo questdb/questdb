@@ -69,6 +69,7 @@ public class QueryModel implements Mutable, ParsedModel, AliasTranslator, Sinkab
     private final CharSequenceIntHashMap columnNameTypeMap = new CharSequenceIntHashMap();
     // list of "and" concatenated expressions
     private final ObjList<ExprNode> parsedWhere = new ObjList<>();
+    private final IntHashSet parsedWhereConsts = new IntHashSet();
     private final ArrayDeque<ExprNode> exprNodeStack = new ArrayDeque<>();
     private final CharSequenceIntHashMap orderHash = new CharSequenceIntHashMap(4, 0.5, -1);
     private final ObjList<ExprNode> joinColumns = new ObjList<>(4);
@@ -168,6 +169,7 @@ public class QueryModel implements Mutable, ParsedModel, AliasTranslator, Sinkab
         joinType = JOIN_INNER;
         orderedJoinModels1.clear();
         orderedJoinModels2.clear();
+        parsedWhereConsts.clear();
         aliasIndexes.clear();
         postJoinWhereClause = null;
         context = null;
@@ -328,6 +330,7 @@ public class QueryModel implements Mutable, ParsedModel, AliasTranslator, Sinkab
     public ObjList<ExprNode> getParsedWhere() {
         return parsedWhere;
     }
+
 
     public ExprNode getPostJoinWhereClause() {
         return postJoinWhereClause;
