@@ -77,6 +77,16 @@ public class CharSequenceObjHashMap<V> extends AbstractCharSequenceHashSet {
         return putAt(keyIndex(key), key, value);
     }
 
+    public void putAll(CharSequenceObjHashMap<V> other) {
+        CharSequence[] otherKeys = other.keys;
+        V[] otherValues = other.values;
+        for (int i = 0, n = otherKeys.length; i < n; i++) {
+            if (Unsafe.arrayGet(otherKeys, i) != noEntryKey) {
+                put(Unsafe.arrayGet(otherKeys, i), Unsafe.arrayGet(otherValues, i));
+            }
+        }
+    }
+
     public boolean putAt(int index, CharSequence key, V value) {
         if (putAt0(index, key, value)) {
             list.add(key);

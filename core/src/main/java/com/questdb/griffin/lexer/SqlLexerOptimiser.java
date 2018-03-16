@@ -106,8 +106,6 @@ public final class SqlLexerOptimiser {
     }
 
     public void enumerateTableColumns(QueryModel model) throws ParserException {
-        final CharSequenceIntHashMap columnNameType = model.getColumnNameTypeMap();
-
         final ObjList<QueryModel> jm = model.getJoinModels();
 
         // we have plain tables and possibly joins
@@ -139,7 +137,7 @@ public final class SqlLexerOptimiser {
                 enumerateTableColumns(model.getNestedModel());
                 // copy columns of nested model onto parent one
                 // we must treat sub-query just like we do a table
-                columnNameType.putAll(model.getNestedModel().getColumnNameTypeMap());
+                model.copyColumnsFrom(model.getNestedModel());
             }
         }
         for (int i = 1, n = jm.size(); i < n; i++) {
@@ -184,9 +182,14 @@ public final class SqlLexerOptimiser {
         model.getJoinModels().getQuick(parent).removeDependency(child);
     }
 
+    /*
+     * Uses validating model to determine if column name exists and non-ambiguous in case of using joins.
+     */
     private void addColumnToTranslatingModel(QueryColumn column, QueryModel translatingModel, QueryModel validatingModel) throws ParserException {
-        String refColumn = column.getAst().token;
-        getIndexOfTableForColumn(validatingModel, refColumn, refColumn.indexOf('.'), column.getAst().position);
+        if (validatingModel != null) {
+            String refColumn = column.getAst().token;
+            getIndexOfTableForColumn(validatingModel, refColumn, refColumn.indexOf('.'), column.getAst().position);
+        }
         translatingModel.addColumn(column);
     }
 
@@ -482,31 +485,17 @@ public final class SqlLexerOptimiser {
         literalCollectorANames.clear();
         literalCollectorBNames.clear();
         subQueryMode = false;
+        defaultAliasCount = 0;
     }
 
-    private void collectJoinModelAliases(QueryModel model) throws ParserException {
-        collectJoinModelAliases0(model);
-        if (model.getNestedModel() != null) {
-            collectJoinModelAliases(model.getNestedModel());
-        }
-    }
-
-    private void collectJoinModelAliases0(QueryModel model) throws ParserException {
-        final ObjList<QueryModel> models = model.getJoinModels();
-        for (int i = 0, n = models.size(); i < n; i++) {
-            QueryModel joinModel = model.getJoinModels().getQuick(i);
-
-            if (joinModel.getAlias() != null) {
-                if (!model.addAliasIndex(joinModel.getAlias(), i)) {
-                    throw ParserException.$(joinModel.getAlias().position, "Duplicate alias");
-                }
-            } else if (joinModel.getTableName() != null) {
-                model.addAliasIndex(joinModel.getTableName(), i);
+    private void collectAlias(QueryModel parent, int modelIndex, QueryModel model) throws ParserException {
+        final ExprNode alias = model.getAlias();
+        if (alias != null) {
+            if (!parent.addAliasIndex(alias, modelIndex)) {
+                throw ParserException.position(alias.position).put("Duplicate alias: ").put(alias.token);
             }
-
-            if (joinModel != model) {
-                collectJoinModelAliases(joinModel);
-            }
+        } else if (model.getTableName() != null) {
+            parent.addAliasIndex(model.getTableName(), modelIndex);
         }
     }
 
@@ -588,18 +577,6 @@ public final class SqlLexerOptimiser {
         }
     }
 
-    private String createJoinAlias(QueryModel jm) {
-        if (jm.getAlias() != null) {
-            return jm.getAlias().token;
-        } else if (jm.getTableName() != null) {
-            return jm.getTableName().token;
-        } else {
-            ExprNode alias = makeJoinAlias(defaultAliasCount++);
-            jm.setAlias(alias);
-            return alias.token;
-        }
-    }
-
     // order hash is used to determine redundant order when parsing analytic function definition
     private void createOrderHash(QueryModel model) {
         CharSequenceIntHashMap hash = model.getOrderHash();
@@ -637,7 +614,7 @@ public final class SqlLexerOptimiser {
     private void createSelectColumn(
             String columnName,
             ExprNode columnAst,
-            QueryModel baseModel,
+            QueryModel validatingModel,
             QueryModel translatingModel,
             QueryModel innerModel,
             QueryModel groupByModel,
@@ -650,9 +627,9 @@ public final class SqlLexerOptimiser {
                 alias,
                 0,
                 columnAst
-        ), translatingModel, baseModel);
+        ), translatingModel, validatingModel);
 
-        QueryColumn translatedColumn = queryColumnPool.next().of(
+        final QueryColumn translatedColumn = queryColumnPool.next().of(
                 alias,
                 0,
                 // flatten the node
@@ -663,6 +640,88 @@ public final class SqlLexerOptimiser {
         groupByModel.addColumn(translatedColumn);
         analyticModel.addColumn(translatedColumn);
         outerModel.addColumn(translatedColumn);
+    }
+
+    private void createSelectColumnsForWildcard(
+            QueryColumn qc,
+            QueryModel baseModel,
+            QueryModel translatingModel,
+            QueryModel innerModel,
+            QueryModel groupByModel,
+            QueryModel analyticModel,
+            QueryModel outerModel,
+            boolean hasJoins
+    ) throws ParserException {
+        // this could be a wildcard, such as '*' or 'a.*'
+        int dot = qc.getAst().token.indexOf('.');
+        if (dot > -1) {
+            int index = baseModel.getAliasIndex(qc.getAst().token, 0, dot);
+            if (index == -1) {
+                throw ParserException.$(qc.getAst().position, "invalid table alias");
+            }
+
+            // we are targeting single table
+            createSelectColumnsForWildcard0(
+                    baseModel.getJoinModels().getQuick(index),
+                    qc.getAst().position,
+                    translatingModel,
+                    innerModel,
+                    groupByModel,
+                    analyticModel,
+                    outerModel,
+                    hasJoins
+            );
+        } else {
+            ObjList<QueryModel> models = baseModel.getJoinModels();
+            for (int j = 0, z = models.size(); j < z; j++) {
+                createSelectColumnsForWildcard0(
+                        models.getQuick(j),
+                        qc.getAst().position,
+                        translatingModel,
+                        innerModel,
+                        groupByModel,
+                        analyticModel,
+                        outerModel,
+                        hasJoins
+                );
+            }
+        }
+    }
+
+    private void createSelectColumnsForWildcard0(
+            QueryModel srcModel,
+            int wildcardPosition,
+            QueryModel translatingModel,
+            QueryModel innerModel,
+            QueryModel groupByModel,
+            QueryModel analyticModel,
+            QueryModel outerModel,
+            boolean hasJoins
+    ) throws ParserException {
+        final ObjList<CharSequence> columnNames = srcModel.getColumnNames();
+        for (int j = 0, z = columnNames.size(); j < z; j++) {
+            String name = columnNames.getQuick(j).toString();
+            String token;
+            if (hasJoins) {
+                columnNameAssembly.clear();
+                columnNameAssembly.put(srcModel.getName());
+                columnNameAssembly.put('.');
+                columnNameAssembly.put(name);
+                token = columnNameAssembly.toString();
+            } else {
+                token = name;
+            }
+            createSelectColumn(
+                    name,
+                    exprNodePool.next().of(ExprNode.LITERAL, token, 0, wildcardPosition),
+                    null, // do not validate
+                    translatingModel,
+                    innerModel,
+                    groupByModel,
+                    analyticModel,
+                    outerModel
+            );
+        }
     }
 
     private int doReorderTables(QueryModel parent, IntList ordered) {
@@ -1224,7 +1283,6 @@ public final class SqlLexerOptimiser {
         enumerateTableColumns(model);
         resolveJoinColumns(model);
         optimiseBooleanNot(model);
-        collectJoinModelAliases(model);
         final QueryModel rewrittenModel = rewriteOrderBy(rewriteSelectClause(model));
         optimiseOrderBy(rewrittenModel, ORDER_BY_UNKNOWN);
         createOrderHash(rewrittenModel);
@@ -1645,19 +1703,25 @@ public final class SqlLexerOptimiser {
 
         // [select]
         if (Chars.equals(tok, "select")) {
-            model.setSelectModelType(QueryModel.SELECT_MODEL_CHOOSE);
             parseSelectClause(model);
-            QueryModel nestedModel = queryModelPool.next();
-            parseFromClause(nestedModel, model);
-            model.setNestedModel(nestedModel);
-            return model;
         } else {
             lexer.unparse();
-            return parseFromClause(model, model);
+            // do not default to wildcard column selection when
+            // dealing with sub-queries
+            if (subQueryMode) {
+                parseFromClause(model, model);
+                return model;
+            }
+            model.addColumn(queryColumnPool.next().of("*", 0, exprNodePool.next().of(ExprNode.LITERAL, "*", 0, 0)));
         }
+        QueryModel nestedModel = queryModelPool.next();
+        parseFromClause(nestedModel, model);
+        model.setSelectModelType(QueryModel.SELECT_MODEL_CHOOSE);
+        model.setNestedModel(nestedModel);
+        return model;
     }
 
-    private QueryModel parseFromClause(QueryModel model, QueryModel masterModel) throws ParserException {
+    private void parseFromClause(QueryModel model, QueryModel masterModel) throws ParserException {
         CharSequence tok = expectTableNameOrSubQuery();
         // expect "(" in case of sub-query
 
@@ -1714,7 +1778,7 @@ public final class SqlLexerOptimiser {
 
         int joinType;
         while (tok != null && (joinType = joinStartSet.get(tok)) != -1) {
-            model.addJoinModel(parseJoin(tok, joinType, model));
+            model.addJoinModel(parseJoin(tok, joinType, masterModel));
             tok = optTok();
         }
 
@@ -1785,8 +1849,6 @@ public final class SqlLexerOptimiser {
         } else {
             lexer.unparse();
         }
-
-        return model;
     }
 
     private QueryModel parseJoin(CharSequence tok, int joinType, QueryModel parent) throws ParserException {
@@ -1891,9 +1953,40 @@ public final class SqlLexerOptimiser {
     private void parseSelectClause(QueryModel model) throws ParserException {
         CharSequence tok;
         while (true) {
-            ExprNode expr = expr();
-            if (expr == null) {
-                throw ParserException.$(lexer.position(), "missing column");
+            tok = tok("column");
+
+            final ExprNode expr;
+            // this is quite dramatic workaround for lexer
+            // because lexer tokenizes expressions, for something like 'a.*' it would
+            // produce two tokens, 'a.' and '*'
+            // we should be able to tell if they are together or there is whitespace between them
+            // for example "a.  *' would also produce two token and it must be a error
+            // to determine if wildcard is correct we would rely on token position
+            final char last = tok.charAt(tok.length() - 1);
+            if (last == '*') {
+                expr = exprNodePool.next().of(ExprNode.LITERAL, Chars.toString(tok), 0, lexer.position());
+            } else if (last == '.') {
+                // stash 'a.' token
+                final int pos = lexer.position() + tok.length();
+                columnNameAssembly.clear();
+                columnNameAssembly.put(tok);
+                tok = tok("*");
+                if (Chars.equals(tok, '*')) {
+                    if (lexer.position() > pos) {
+                        throw ParserException.$(pos, "whitespace is not allowed");
+                    }
+                    columnNameAssembly.put('*');
+                    expr = exprNodePool.next().of(ExprNode.LITERAL, columnNameAssembly.toString(), 0, lexer.position());
+                } else {
+                    throw ParserException.$(pos, "'*' expected");
+                }
+            } else {
+                lexer.unparse();
+                expr = expr();
+
+                if (expr == null) {
+                    throw ParserException.$(lexer.position(), "missing expression");
+                }
             }
 
             String alias;
@@ -2003,13 +2096,12 @@ public final class SqlLexerOptimiser {
 
         secondaryLexer.setContent(lexer.getContent(), wcm.getLo(), wcm.getHi());
 
+        // we would have parsed this before without exceptions
         Lexer tmp = this.lexer;
         this.lexer = secondaryLexer;
-        try {
-            return parseSubQuery();
-        } finally {
-            lexer = tmp;
-        }
+        QueryModel model = parseSubQuery();
+        lexer = tmp;
+        return model;
     }
 
     private void parseWithClauses(QueryModel model) throws ParserException {
@@ -2208,20 +2300,20 @@ public final class SqlLexerOptimiser {
         return node;
     }
 
-    private void resolveJoinColumns(QueryModel model) {
-        this.defaultAliasCount = 0;
+    private void resolveJoinColumns(QueryModel model) throws ParserException {
         ObjList<QueryModel> joinModels = model.getJoinModels();
         final int size = joinModels.size();
+        final String modelAlias = setAndGetModelAlias(model);
+        // collect own alias
+        collectAlias(model, 0, model);
         if (size > 1) {
-            final String modelAlias = createJoinAlias(model);
-
             for (int i = 1; i < size; i++) {
                 final QueryModel jm = joinModels.getQuick(i);
                 final ObjList<ExprNode> jc = jm.getJoinColumns();
                 final int joinColumnsSize = jc.size();
 
                 if (joinColumnsSize > 0) {
-                    final String jmAlias = createJoinAlias(jm);
+                    final String jmAlias = setAndGetModelAlias(jm);
                     ExprNode joinCriteria = jm.getJoinCriteria();
                     for (int j = 0; j < joinColumnsSize; j++) {
                         ExprNode node = jc.getQuick(j);
@@ -2234,18 +2326,13 @@ public final class SqlLexerOptimiser {
                     }
                     jm.setJoinCriteria(joinCriteria);
                 }
+                resolveJoinColumns(jm);
+                collectAlias(model, i, jm);
             }
         }
 
         if (model.getNestedModel() != null) {
             resolveJoinColumns(model.getNestedModel());
-        }
-
-        for (int i = 1; i < size; i++) {
-            QueryModel m = joinModels.getQuick(i);
-            if (m != null) {
-                resolveJoinColumns(m);
-            }
         }
     }
 
@@ -2436,6 +2523,8 @@ public final class SqlLexerOptimiser {
                 QueryModel rewritten = rewriteSelectClause(nestedModel);
                 if (rewritten != nestedModel) {
                     m.setNestedModel(rewritten);
+                    // since we have rewritten nested model we also have to update column hash
+                    m.copyColumnsFrom(rewritten);
                 }
             }
 
@@ -2469,6 +2558,7 @@ public final class SqlLexerOptimiser {
 
         final ObjList<QueryColumn> columns = model.getColumns();
         final QueryModel baseModel = model.getNestedModel();
+        final boolean hasJoins = baseModel.getJoinModels().size() > 1;
 
         // sample by clause should be promoted to all of the models as well as validated
         final ExprNode sampleBy = baseModel.getSampleBy();
@@ -2509,16 +2599,20 @@ public final class SqlLexerOptimiser {
                 // in general sense we need to create new column in case
                 // there is change of alias, for example we may have something as simple as
                 // select a.f, b.f from ....
-                createSelectColumn(
-                        qc.getAlias(),
-                        qc.getAst(),
-                        baseModel,
-                        translatingModel,
-                        innerModel,
-                        groupByModel,
-                        analyticModel,
-                        outerModel
-                );
+                if (Chars.endsWith(qc.getAst().token, '*')) {
+                    createSelectColumnsForWildcard(qc, baseModel, translatingModel, innerModel, groupByModel, analyticModel, outerModel, hasJoins);
+                } else {
+                    createSelectColumn(
+                            qc.getAlias(),
+                            qc.getAst(),
+                            baseModel,
+                            translatingModel,
+                            innerModel,
+                            groupByModel,
+                            analyticModel,
+                            outerModel
+                    );
+                }
             } else {
                 // when column is direct call to aggregation function, such as
                 // select sum(x) ...
@@ -2638,6 +2732,16 @@ public final class SqlLexerOptimiser {
         }
 
         return root;
+    }
+
+    private String setAndGetModelAlias(QueryModel model) {
+        String name = model.getName();
+        if (name != null) {
+            return name;
+        }
+        ExprNode alias = makeJoinAlias(defaultAliasCount++);
+        model.setAlias(alias);
+        return alias.token;
     }
 
     /**

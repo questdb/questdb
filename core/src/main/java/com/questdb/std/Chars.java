@@ -99,6 +99,14 @@ public final class Chars {
 
     }
 
+    public static boolean endsWith(CharSequence cs, char c) {
+        if (cs == null) {
+            return false;
+        }
+        final int csl = cs.length();
+        return csl != 0 && c == cs.charAt(csl - 1);
+    }
+
     public static boolean equals(CharSequence l, CharSequence r) {
         if (l == r) {
             return true;
@@ -180,6 +188,10 @@ public final class Chars {
         return true;
     }
 
+    public static boolean equalsNc(CharSequence l, CharSequence r) {
+        return r != null && equals(l, r);
+    }
+
     public static int hashCode(CharSequence value, int lo, int hi) {
 
         if (hi == lo) {
@@ -191,10 +203,6 @@ public final class Chars {
             h = 31 * h + value.charAt(p);
         }
         return h;
-    }
-
-    public static boolean equalsNc(CharSequence l, CharSequence r) {
-        return r != null && equals(l, r);
     }
 
     public static int hashCode(CharSequence value) {
@@ -212,18 +220,6 @@ public final class Chars {
             h = 31 * h + value.charAt(p);
         }
         return h;
-    }
-
-    public static boolean noMatch(CharSequence l, int llo, int lhi, CharSequence r, int rlo, int rhi) {
-        int lp = llo;
-        int rp = rlo;
-        while (lp < lhi && rp < rhi) {
-            if (Character.toLowerCase(l.charAt(lp++)) != r.charAt(rp++)) {
-                return true;
-            }
-
-        }
-        return lp != lhi || rp != rhi;
     }
 
     public static int hashCode(DirectBytes value) {
@@ -261,6 +257,18 @@ public final class Chars {
             }
         }
         return -1;
+    }
+
+    public static boolean noMatch(CharSequence l, int llo, int lhi, CharSequence r, int rlo, int rhi) {
+        int lp = llo;
+        int rp = rlo;
+        while (lp < lhi && rp < rhi) {
+            if (Character.toLowerCase(l.charAt(lp++)) != r.charAt(rp++)) {
+                return true;
+            }
+
+        }
+        return lp != lhi || rp != rhi;
     }
 
     public static void putCharsOnly(long address, CharSequence value) {

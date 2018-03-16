@@ -191,6 +191,13 @@ public class QueryModel implements Mutable, ParsedModel, AliasTranslator, Sinkab
         orderByDirection.clear();
     }
 
+    public void copyColumnsFrom(QueryModel other) {
+        this.columnNameTypeMap.clear();
+        this.aliasToColumnMap.clear();
+        this.columnNameTypeMap.putAll(other.columnNameTypeMap);
+        this.aliasToColumnMap.putAll(other.aliasToColumnMap);
+    }
+
     public ExprNode getAlias() {
         return alias;
     }
@@ -213,6 +220,10 @@ public class QueryModel implements Mutable, ParsedModel, AliasTranslator, Sinkab
 
     public CharSequenceIntHashMap getColumnNameTypeMap() {
         return columnNameTypeMap;
+    }
+
+    public ObjList<CharSequence> getColumnNames() {
+        return aliasToColumnMap.keys();
     }
 
     public CharSequenceObjHashMap<String> getColumnToAliasMap() {
@@ -288,6 +299,18 @@ public class QueryModel implements Mutable, ParsedModel, AliasTranslator, Sinkab
         return ParsedModel.QUERY;
     }
 
+    public String getName() {
+        if (alias != null) {
+            return alias.token;
+        }
+
+        if (tableName != null) {
+            return tableName.token;
+        }
+
+        return null;
+    }
+
     public QueryModel getNestedModel() {
         return nestedModel;
     }
@@ -330,7 +353,6 @@ public class QueryModel implements Mutable, ParsedModel, AliasTranslator, Sinkab
     public ObjList<ExprNode> getParsedWhere() {
         return parsedWhere;
     }
-
 
     public ExprNode getPostJoinWhereClause() {
         return postJoinWhereClause;
