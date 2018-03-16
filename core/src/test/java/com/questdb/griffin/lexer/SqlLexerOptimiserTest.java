@@ -38,6 +38,7 @@ import com.questdb.std.str.Path;
 import com.questdb.test.tools.TestUtils;
 import org.junit.AfterClass;
 import org.junit.Assert;
+import org.junit.Ignore;
 import org.junit.Test;
 
 import java.io.IOException;
@@ -938,6 +939,25 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
                 modelOf("orderDetails").col("orderId", ColumnType.INT).col("productId", ColumnType.INT),
                 modelOf("products").col("productId", ColumnType.INT).col("supplier", ColumnType.SYMBOL),
                 modelOf("suppliers").col("supplier", ColumnType.SYMBOL)
+        );
+    }
+
+    @Test
+    @Ignore
+    // todo: this test highlights a bug yet to be fixed
+    public void testJoinOfJoin() throws ParserException {
+        assertModel(
+                "",
+                "(tab join tab1 on (x)) tt join tab2 on(z)",
+                modelOf("tab")
+                        .col("x", ColumnType.INT)
+                        .col("y", ColumnType.INT),
+                modelOf("tab1")
+                        .col("x", ColumnType.INT)
+                        .col("z", ColumnType.INT),
+                modelOf("tab2")
+                        .col("z", ColumnType.INT)
+                        .col("k", ColumnType.INT)
         );
     }
 

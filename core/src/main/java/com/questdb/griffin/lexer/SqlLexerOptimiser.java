@@ -950,10 +950,10 @@ public final class SqlLexerOptimiser {
         return Chars.equals(tok, ')') || Chars.equals(tok, ',');
     }
 
-    private ExprNode literal() {
+    private ExprNode literal(CharSequence name) {
         // this can never be null in its current contexts
         // every time this function is called is after lexer.unparse(), which ensures non-null token.
-        return exprNodePool.next().of(ExprNode.LITERAL, Chars.stripQuotes(optTok().toString()), 0, lexer.position());
+        return exprNodePool.next().of(ExprNode.LITERAL, Chars.stripQuotes(name.toString()), 0, lexer.position());
     }
 
     private ExprNode makeJoinAlias(int index) {
@@ -1221,10 +1221,10 @@ public final class SqlLexerOptimiser {
     }
 
     private QueryModel optimise(QueryModel model) throws ParserException {
+        enumerateTableColumns(model);
         resolveJoinColumns(model);
         optimiseBooleanNot(model);
         collectJoinModelAliases(model);
-        enumerateTableColumns(model);
         final QueryModel rewrittenModel = rewriteOrderBy(rewriteSelectClause(model));
         optimiseOrderBy(rewrittenModel, ORDER_BY_UNKNOWN);
         createOrderHash(rewrittenModel);
@@ -1672,8 +1672,7 @@ public final class SqlLexerOptimiser {
             // check if tok is not "where" - should be alias
 
             if (tok != null && !tableAliasStop.contains(tok)) {
-                lexer.unparse();
-                model.setAlias(literal());
+                model.setAlias(literal(tok));
                 tok = optTok();
             }
 
@@ -1686,15 +1685,12 @@ public final class SqlLexerOptimiser {
             }
         } else {
 
-            lexer.unparse();
-
-            parseSelectFrom(model, masterModel);
+            parseSelectFrom(model, tok, masterModel);
 
             tok = optTok();
 
             if (tok != null && !tableAliasStop.contains(tok)) {
-                lexer.unparse();
-                model.setAlias(literal());
+                model.setAlias(literal(tok));
                 tok = optTok();
             }
 
@@ -1782,12 +1778,13 @@ public final class SqlLexerOptimiser {
             tok = optTok();
             if (tok != null && Chars.equals(tok, ',')) {
                 hi = expr();
-                tok = optTok();
+            } else {
+                lexer.unparse();
             }
             model.setLimit(lo, hi);
+        } else {
+            lexer.unparse();
         }
-
-        lexer.unparse();
 
         return model;
     }
@@ -1806,8 +1803,7 @@ public final class SqlLexerOptimiser {
             joinModel.setNestedModel(parseSubQuery());
             expectTok(')');
         } else {
-            lexer.unparse();
-            parseSelectFrom(joinModel, parent);
+            parseSelectFrom(joinModel, tok, parent);
         }
 
         tok = optTok();
@@ -1969,14 +1965,14 @@ public final class SqlLexerOptimiser {
         }
     }
 
-    private void parseSelectFrom(QueryModel model, QueryModel masterModel) throws ParserException {
-        ExprNode tableName = literal();
-        WithClauseModel withClause = tableName != null ? masterModel.getWithClause(tableName.token) : null;
+    private void parseSelectFrom(QueryModel model, CharSequence name, QueryModel masterModel) throws ParserException {
+        final ExprNode literal = literal(name);
+        final WithClauseModel withClause = masterModel.getWithClause(name);
         if (withClause != null) {
             model.setNestedModel(parseWith(withClause));
-            model.setAlias(tableName);
+            model.setAlias(literal);
         } else {
-            model.setTableName(tableName);
+            model.setTableName(literal);
         }
     }
 
