@@ -55,7 +55,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testAliasWithSpace() throws Exception {
-        assertModel("x 'b a' where x > 1",
+        assertModel("select-choose x from (x 'b a' where x > 1)",
                 "x 'b a' where x > 1",
                 modelOf("x").col("x", ColumnType.INT));
     }
@@ -91,7 +91,12 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     @Test
     public void testAsOfJoin() throws ParserException {
         assertModel(
-                "trades t timestamp (timestamp) asof join quotes q timestamp (timestamp) post-join-where tag = null",
+                "select-choose" +
+                        " t.timestamp timestamp," +
+                        " t.tag tag," +
+                        " q.timestamp timestamp1" +
+                        " from (" +
+                        "trades t timestamp (timestamp) asof join quotes q timestamp (timestamp) post-join-where tag = null)",
                 "trades t asof join quotes q where tag = null",
                 modelOf("trades").timestamp().col("tag", ColumnType.SYMBOL),
                 modelOf("quotes").timestamp()
@@ -101,7 +106,15 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     @Test
     public void testAsOfJoinOrder() throws Exception {
         assertModel(
-                "customers c asof join employees e on e.employeeId = c.customerId join orders o on o.customerId = c.customerId",
+                "select-choose" +
+                        " c.customerId customerId," +
+                        " e.employeeId employeeId," +
+                        " o.customerId customerId1" +
+                        " from (" +
+                        "customers c" +
+                        " asof join employees e on e.employeeId = c.customerId" +
+                        " join orders o on o.customerId = c.customerId" +
+                        ")",
                 "customers c" +
                         " asof join employees e on c.customerId = e.employeeId" +
                         " join orders o on c.customerId = o.customerId",
@@ -127,12 +140,25 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
         //
         // which means "where" clause for "e" table has to be explicitly as post-join-where
         assertModel(
-                "customers c" +
+                "select-choose" +
+                        " c.customerId customerId," +
+                        " e.lastName lastName," +
+                        " e.employeeId employeeId," +
+                        " e.blah blah," +
+                        " e.timestamp timestamp," +
+                        " o.customerId customerId1" +
+                        " from (" +
+                        "customers c" +
                         " asof join" +
-                        " (select-virtual '1' blah, lastName, employeeId, timestamp" +
-                        " from (employees) order by lastName) e on e.employeeId = c.customerId" +
-                        " post-join-where e.lastName = 'x' and e.blah = 'y'" +
-                        " join orders o on o.customerId = c.customerId",
+                        " (select-virtual" +
+                        " '1' blah," +
+                        " lastName," +
+                        " employeeId," +
+                        " timestamp" +
+                        " from (employees)" +
+                        " order by lastName) e on e.employeeId = c.customerId post-join-where e.lastName = 'x' and e.blah = 'y'" +
+                        " join orders o on o.customerId = c.customerId" +
+                        ")",
                 "customers c" +
                         " asof join (select '1' blah, lastName, employeeId, timestamp from employees order by lastName) e on c.customerId = e.employeeId" +
                         " join orders o on c.customerId = o.customerId where e.lastName = 'x' and e.blah = 'y'",
@@ -150,11 +176,26 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     @Test
     public void testAsOfJoinSubQuerySimpleAlias() throws Exception {
         assertModel(
-                "customers c" +
-                        " asof join" +
-                        " (select-virtual '1' blah, lastName, customerId, timestamp" +
-                        " from (select-choose lastName, employeeId customerId, timestamp" +
-                        " from (employees)) order by lastName) a on a.customerId = c.customerId",
+                "select-choose" +
+                        " c.customerId customerId," +
+                        " a.lastName lastName," +
+                        " a.blah blah," +
+                        " a.timestamp timestamp," +
+                        " a.customerId customerId1" +
+                        " from " +
+                        "(" +
+                        "customers c" +
+                        " asof join (" +
+                        "select-virtual" +
+                        " '1' blah," +
+                        " lastName," +
+                        " customerId," +
+                        " timestamp" +
+                        " from (" +
+                        "select-choose" +
+                        " lastName," +
+                        " employeeId customerId," +
+                        " timestamp from (employees)) order by lastName) a on a.customerId = c.customerId)",
                 "customers c" +
                         " asof join (select '1' blah, lastName, employeeId customerId, timestamp from employees order by lastName) a on (customerId)",
                 modelOf("customers")
@@ -169,11 +210,17 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     @Test
     public void testAsOfJoinSubQuerySimpleNoAlias() throws Exception {
         assertModel(
-                "customers c" +
-                        " asof join" +
-                        " (select-virtual '1' blah, lastName, customerId, timestamp" +
+                "select-choose" +
+                        " c.customerId customerId," +
+                        " _xQdbA1.lastName lastName," +
+                        " _xQdbA1.blah blah," +
+                        " _xQdbA1.timestamp timestamp," +
+                        " _xQdbA1.customerId customerId1" +
+                        " from (" +
+                        "customers c" +
+                        " asof join (select-virtual '1' blah, lastName, customerId, timestamp" +
                         " from (select-choose lastName, employeeId customerId, timestamp" +
-                        " from (employees)) order by lastName) _xQdbA0 on _xQdbA0.customerId = c.customerId",
+                        " from (employees)) order by lastName) _xQdbA1 on _xQdbA1.customerId = c.customerId)",
                 "customers c" +
                         " asof join (select '1' blah, lastName, employeeId customerId, timestamp from employees order by lastName) on (customerId)",
                 modelOf("customers").col("customerId", ColumnType.SYMBOL),
@@ -416,9 +463,19 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testCrossJoinWithClause() throws ParserException {
-        assertModel("(customers where name ~ 'X') c" +
+        assertModel(
+                "select-choose" +
+                        " c.name name," +
+                        " c.customerId customerId," +
+                        " c.age age," +
+                        " c1.name name1," +
+                        " c1.customerId customerId1," +
+                        " c1.age age1" +
+                        " from (" +
+                        "(customers where name ~ 'X') c" +
                         " cross join (customers where name ~ 'X' and age = 30) c1" +
-                        " limit 10",
+                        " limit 10" +
+                        ")",
                 "with" +
                         " cust as (customers where name ~ 'X')" +
                         " cust c cross join cust c1 where c1.age = 30 " +
@@ -458,7 +515,12 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     @Test
     public void testDuplicateTables() throws Exception {
         assertModel(
-                "customers cross join customers",
+                "select-choose" +
+                        " customers.customerId customerId," +
+                        " customers.customerName customerName," +
+                        " customers.customerId customerId1," +
+                        " customers.customerName customerName1" +
+                        " from (customers cross join customers)",
                 "customers cross join customers",
                 modelOf("customers").col("customerId", ColumnType.INT).col("customerName", ColumnType.STRING),
                 modelOf("orders").col("customerId", ColumnType.INT).col("product", ColumnType.STRING)
@@ -478,7 +540,12 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     @Test
     public void testEqualsConstantTransitivityLhs() throws Exception {
         assertModel(
-                "customers c outer join (orders o where o.customerId = 100) o on o.customerId = c.customerId where 100 = c.customerId",
+                "select-choose" +
+                        " c.customerId customerId," +
+                        " o.customerId customerId1" +
+                        " from (" +
+                        "customers c" +
+                        " outer join (orders o where o.customerId = 100) o on o.customerId = c.customerId where 100 = c.customerId)",
                 "customers c" +
                         " outer join orders o on c.customerId = o.customerId" +
                         " where 100 = c.customerId",
@@ -490,7 +557,11 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     @Test
     public void testEqualsConstantTransitivityRhs() throws Exception {
         assertModel(
-                "customers c outer join (orders o where o.customerId = 100) o on o.customerId = c.customerId where c.customerId = 100",
+                "select-choose" +
+                        " c.customerId customerId," +
+                        " o.customerId customerId1" +
+                        " from (" +
+                        "customers c outer join (orders o where o.customerId = 100) o on o.customerId = c.customerId where c.customerId = 100)",
                 "customers c" +
                         " outer join orders o on c.customerId = o.customerId" +
                         " where c.customerId = 100",
@@ -516,16 +587,22 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testFilterOnSubQuery() throws Exception {
-        // todo: missing compulsory select-choose after joins that dereferences ambiguous colums
         assertModel(
-                "(select-group-by" +
+                "select-choose" +
+                        " c.customerName customerName," +
+                        " c.count count," +
+                        " c.customerId customerId," +
+                        " o.orderId orderId," +
+                        " o.customerId customerId1" +
+                        " from (" +
+                        "(select-group-by" +
                         " customerId," +
                         " customerName," +
-                        " count() count " +
-                        "from" +
-                        " (customers where customerId > 400 and customerId < 1200)) c" +
-                        " outer join orders o on o.customerId = c.customerId post-join-where o.orderId = NaN " +
-                        "where count > 1 order by c.customerId",
+                        " count() count" +
+                        " from (customers where customerId > 400 and customerId < 1200)) c" +
+                        " outer join orders o on o.customerId = c.customerId" +
+                        " post-join-where o.orderId = NaN where count > 1)" +
+                        " order by customerId",
                 "(select customerId, customerName, count() count from customers) c" +
                         " outer join orders o on c.customerId = o.customerId " +
                         " where o.orderId = NaN and c.customerId > 400 and c.customerId < 1200 and count > 1 order by c.customerId",
@@ -561,7 +638,13 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     @Test
     public void testInnerJoin2() throws Exception {
         assertModel(
-                "customers join orders on orders.customerId = customers.customerId where customerName ~ 'WTBHZVPVZZ'",
+                "select-choose" +
+                        " customers.customerId customerId," +
+                        " customers.customerName customerName," +
+                        " orders.customerId customerId1" +
+                        " from (" +
+                        "customers join orders on orders.customerId = customers.customerId where customerName ~ 'WTBHZVPVZZ'" +
+                        ")",
                 "customers join orders on customers.customerId = orders.customerId where customerName ~ 'WTBHZVPVZZ'",
                 modelOf("customers").col("customerId", ColumnType.INT).col("customerName", ColumnType.STRING),
                 modelOf("orders").col("customerId", ColumnType.INT)
@@ -570,8 +653,15 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testInnerJoinEqualsConstant() throws Exception {
+        // todo: suspicious is the fact we can join non-aliased sub-query
         assertModel(
-                "customers join (orders where productName = 'WTBHZVPVZZ') on orders.customerId = customers.customerId",
+                "select-choose" +
+                        " customers.customerId customerId," +
+                        " orders.customerId customerId1," +
+                        " orders.productName productName" +
+                        " from (" +
+                        "customers" +
+                        " join (orders where productName = 'WTBHZVPVZZ') on orders.customerId = customers.customerId)",
                 "customers join orders on customers.customerId = orders.customerId where productName = 'WTBHZVPVZZ'",
                 modelOf("customers").col("customerId", ColumnType.INT),
                 modelOf("orders").col("customerId", ColumnType.INT).col("productName", ColumnType.STRING));
@@ -580,7 +670,13 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     @Test
     public void testInnerJoinEqualsConstantLhs() throws Exception {
         assertModel(
-                "customers join (orders where 'WTBHZVPVZZ' = productName) on orders.customerId = customers.customerId",
+                "select-choose" +
+                        " customers.customerId customerId," +
+                        " orders.customerId customerId1," +
+                        " orders.productName productName" +
+                        " from (" +
+                        "customers" +
+                        " join (orders where 'WTBHZVPVZZ' = productName) on orders.customerId = customers.customerId)",
                 "customers join orders on customers.customerId = orders.customerId where 'WTBHZVPVZZ' = productName",
                 modelOf("customers").col("customerId", ColumnType.INT),
                 modelOf("orders").col("customerId", ColumnType.INT).col("productName", ColumnType.STRING));
@@ -755,7 +851,11 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     @Test
     public void testJoin2() throws Exception {
         assertModel(
-                "select-choose x from (((select-choose tab2.x x from (tab join tab2 on tab2.x = tab.x)) t join tab3 on tab3.x = t.x))",
+                "select-choose x from (((" +
+                        "select-choose" +
+                        " tab2.x x" +
+                        " from (tab join tab2 on tab2.x = tab.x)) t" +
+                        " join tab3 on tab3.x = t.x) _xQdbA1)",
                 "select x from ((select tab2.x from tab join tab2 on tab.x=tab2.x) t join tab3 on tab3.x = t.x)",
                 modelOf("tab").col("x", ColumnType.INT),
                 modelOf("tab2").col("x", ColumnType.INT),
@@ -766,7 +866,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     @Test
     public void testJoin3() throws Exception {
         assertModel(
-                "select-choose x from ((select-choose tab2.x x from (tab join tab2 on tab2.x = tab.x cross join tab3 post-join-where tab3.x f tab2.x = tab.x)))",
+                "select-choose x from ((select-choose tab2.x x from (tab join tab2 on tab2.x = tab.x cross join tab3 post-join-where tab3.x f tab2.x = tab.x)) _xQdbA1)",
                 "select x from (select tab2.x from tab join tab2 on tab.x=tab2.x join tab3 on f(tab3.x,tab2.x) = tab.x)",
                 modelOf("tab").col("x", ColumnType.INT),
                 modelOf("tab2").col("x", ColumnType.INT),
@@ -790,7 +890,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     @Test
     public void testJoinColumnResolutionOnSubQuery() throws ParserException {
         assertModel(
-                "select-group-by sum(timestamp) sum from ((y) _xQdbA0 cross join (x))",
+                "select-group-by sum(timestamp) sum from ((y) _xQdbA1 cross join (x) _xQdbA2)",
                 "select sum(timestamp) from (y) cross join (x)",
                 modelOf("x").col("ccy", ColumnType.SYMBOL),
                 modelOf("y").col("ccy", ColumnType.SYMBOL).col("timestamp", ColumnType.TIMESTAMP)
@@ -800,7 +900,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     @Test
     public void testJoinColumnResolutionOnSubQuery2() throws ParserException {
         assertModel(
-                "select-group-by sum(timestamp) sum from ((y) _xQdbA0 join (x) _xQdbA1 on _xQdbA1.ccy = _xQdbA0.ccy and _xQdbA1.sym = _xQdbA0.sym)",
+                "select-group-by sum(timestamp) sum from ((y) _xQdbA1 join (x) _xQdbA2 on _xQdbA2.ccy = _xQdbA1.ccy and _xQdbA2.sym = _xQdbA1.sym)",
                 "select sum(timestamp) from (y) join (x) on (ccy, sym)",
                 modelOf("x").col("ccy", ColumnType.SYMBOL).col("sym", ColumnType.INT),
                 modelOf("y").col("ccy", ColumnType.SYMBOL).col("timestamp", ColumnType.TIMESTAMP).col("sym", ColumnType.INT)
@@ -810,7 +910,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     @Test
     public void testJoinColumnResolutionOnSubQuery3() throws ParserException {
         assertModel(
-                "select-group-by sum(timestamp) sum from ((y) _xQdbA0 cross join x)",
+                "select-group-by sum(timestamp) sum from ((y) _xQdbA1 cross join x)",
                 "select sum(timestamp) from (y) cross join x",
                 modelOf("x").col("ccy", ColumnType.SYMBOL),
                 modelOf("y").col("ccy", ColumnType.SYMBOL).col("timestamp", ColumnType.TIMESTAMP)
@@ -820,11 +920,21 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     @Test
     public void testJoinCycle() throws Exception {
         assertModel(
-                "orders" +
+                "select-choose" +
+                        " orders.customerId customerId," +
+                        " orders.orderId orderId," +
+                        " customers.customerId customerId1," +
+                        " d.orderId orderId1," +
+                        " d.productId productId," +
+                        " suppliers.supplier supplier," +
+                        " products.productId productId1," +
+                        " products.supplier supplier1" +
+                        " from (" +
+                        "orders" +
                         " join customers on customers.customerId = orders.customerId" +
                         " join (orderDetails d where d.orderId = d.productId) d on d.productId = orders.orderId" +
                         " join suppliers on suppliers.supplier = orders.orderId" +
-                        " join products on products.productId = orders.orderId and products.supplier = suppliers.supplier",
+                        " join products on products.productId = orders.orderId and products.supplier = suppliers.supplier)",
                 "orders" +
                         " join customers on orders.customerId = customers.customerId" +
                         " join orderDetails d on d.orderId = orders.orderId and orders.orderId = products.productId" +
@@ -842,11 +952,24 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     @Test
     public void testJoinCycle2() throws Exception {
         assertModel(
-                "orders" +
+                "select-choose" +
+                        " orders.customerId" +
+                        " customerId," +
+                        " orders.orderId orderId," +
+                        " customers.customerId customerId1," +
+                        " d.orderId orderId1," +
+                        " d.productId productId," +
+                        " suppliers.supplier supplier," +
+                        " suppliers.x x," +
+                        " products.productId productId1," +
+                        " products.supplier supplier1" +
+                        " from (" +
+                        "orders" +
                         " join customers on customers.customerId = orders.customerId" +
                         " join orderDetails d on d.productId = orders.orderId" +
                         " join suppliers on suppliers.x = d.orderId and suppliers.supplier = orders.orderId" +
-                        " join products on products.productId = orders.orderId and products.supplier = suppliers.supplier",
+                        " join products on products.productId = orders.orderId and products.supplier = suppliers.supplier" +
+                        ")",
                 "orders" +
                         " join customers on orders.orderId = products.productId" +
                         " join orderDetails d on products.supplier = suppliers.supplier" +
@@ -880,14 +1003,17 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     @Test
     public void testJoinGroupByFilter() throws Exception {
         assertModel(
-                "(select-group-by" +
-                        " country," +
-                        " avg(quantity) avg " +
+                "select-choose" +
+                        " avg," +
+                        " country " +
                         "from" +
-                        " (orders o" +
+                        " ((select-group-by country," +
+                        " avg(quantity) avg" +
+                        " from (orders o" +
                         " join (customers c where country ~ '^Z') c on c.customerId = o.customerId" +
-                        " join orderDetails d on d.orderId = o.orderId)) " +
-                        "where avg > 2",
+                        " join orderDetails d on d.orderId = o.orderId)" +
+                        ") _xQdbA1 where avg > 2" +
+                        ")",
                 "(select country, avg(quantity) avg from orders o " +
                         "join customers c on c.customerId = o.customerId " +
                         "join orderDetails d on o.orderId = d.orderId" +
@@ -901,12 +1027,21 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     @Test
     public void testJoinImpliedCrosses() throws Exception {
         assertModel(
-                "orders cross" +
-                        " join products" +
-                        " join suppliers on suppliers.supplier = products.supplier" +
+                "select-choose" +
+                        " orders.customerId customerId," +
+                        " orders.orderId orderId," +
+                        " customers.customerId customerId1," +
+                        " d.orderId orderId1," +
+                        " d.productId productId," +
+                        " products.productId productId1," +
+                        " products.supplier supplier," +
+                        " suppliers.supplier supplier1" +
+                        " from (" +
+                        "orders" +
+                        " cross join products join suppliers on suppliers.supplier = products.supplier" +
                         " cross join customers" +
                         " cross join orderDetails d" +
-                        " const-where 1 = 1 and 2 = 2 and 3 = 3",
+                        " const-where 1 = 1 and 2 = 2 and 3 = 3)",
                 "orders" +
                         " join customers on 1=1" +
                         " join orderDetails d on 2=2" +
@@ -923,11 +1058,21 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     @Test
     public void testJoinMultipleFields() throws Exception {
         assertModel(
-                "orders" +
+                "select-choose" +
+                        " orders.customerId customerId," +
+                        " orders.orderId orderId," +
+                        " customers.customerId customerId1," +
+                        " d.orderId orderId1," +
+                        " d.productId productId," +
+                        " products.productId productId1," +
+                        " products.supplier supplier," +
+                        " suppliers.supplier supplier1" +
+                        " from (" +
+                        "orders" +
                         " join customers on customers.customerId = orders.customerId" +
                         " join (orderDetails d where d.productId = d.orderId) d on d.productId = customers.customerId and d.orderId = orders.orderId" +
                         " join products on products.productId = d.productId" +
-                        " join suppliers on suppliers.supplier = products.supplier",
+                        " join suppliers on suppliers.supplier = products.supplier)",
                 "orders" +
                         " join customers on orders.customerId = customers.customerId" +
                         " join orderDetails d on d.orderId = orders.orderId and d.productId = customers.customerId" +
@@ -943,12 +1088,26 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     }
 
     @Test
-    @Ignore
-    // todo: this test highlights a bug yet to be fixed
     public void testJoinOfJoin() throws ParserException {
         assertModel(
-                "",
-                "(tab join tab1 on (x)) tt join tab2 on(z)",
+                "select-choose" +
+                        " tt.x x," +
+                        " tt.y y," +
+                        " tt.x1 x1," +
+                        " tt.z z," +
+                        " tab2.z z1," +
+                        " tab2.k k" +
+                        " from ((" +
+                        "select-choose" +
+                        " tab.x x," +
+                        " tab.y y," +
+                        " tab1.x x1," +
+                        " tab1.z z" +
+                        " from (tab join tab1 on tab1.x = tab.x)" +
+                        ") tt" +
+                        " join tab2 on tab2.z = tt.z" +
+                        ")",
+                "select * from (select * from tab join tab1 on (x)) tt join tab2 on(z)",
                 modelOf("tab")
                         .col("x", ColumnType.INT)
                         .col("y", ColumnType.INT),
@@ -990,7 +1149,12 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testJoinOnExpression2() throws ParserException {
-        assertModel("a cross join (b where b.x) where a.x + 1",
+        assertModel("select-choose" +
+                        " a.x x," +
+                        " b.x x1" +
+                        " from (" +
+                        "a cross join (b where b.x) where a.x + 1" +
+                        ")",
                 "a join b on a.x+1 and b.x",
                 modelOf("a").col("x", ColumnType.INT),
                 modelOf("b").col("x", ColumnType.INT)
@@ -1000,12 +1164,22 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     @Test
     public void testJoinOneFieldToTwoAcross2() throws Exception {
         assertModel(
-                "orders" +
+                "select-choose" +
+                        " orders.orderId orderId," +
+                        " orders.customerId customerId," +
+                        " customers.customerId customerId1," +
+                        " d.orderId orderId1," +
+                        " d.productId productId," +
+                        " products.productId productId1," +
+                        " products.supplier supplier," +
+                        " suppliers.supplier supplier1" +
+                        " from (" +
+                        "orders" +
                         " join customers on customers.customerId = orders.orderId" +
                         " join (orderDetails d where d.productId = d.orderId) d on d.orderId = orders.orderId" +
                         " join products on products.productId = d.productId" +
                         " join suppliers on suppliers.supplier = products.supplier" +
-                        " where orders.customerId = orders.orderId",
+                        " where orders.customerId = orders.orderId)",
                 "orders" +
                         " join customers on orders.customerId = customers.customerId" +
                         " join orderDetails d on d.orderId = customers.customerId and orders.orderId = d.orderId" +
@@ -1023,12 +1197,22 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     @Test
     public void testJoinOneFieldToTwoReorder() throws Exception {
         assertModel(
-                "orders" +
+                "select-choose" +
+                        " orders.orderId orderId," +
+                        " orders.customerId customerId," +
+                        " d.orderId orderId1," +
+                        " d.productId productId," +
+                        " customers.customerId customerId1," +
+                        " products.productId productId1," +
+                        " products.supplier supplier," +
+                        " suppliers.supplier supplier1" +
+                        " from (" +
+                        "orders" +
                         " join (orderDetails d where d.productId = d.orderId) d on d.orderId = orders.customerId" +
                         " join customers on customers.customerId = orders.customerId" +
                         " join products on products.productId = d.productId" +
                         " join suppliers on suppliers.supplier = products.supplier" +
-                        " where orders.orderId = orders.customerId",
+                        " where orders.orderId = orders.customerId)",
                 "orders" +
                         " join orderDetails d on d.orderId = orders.orderId and d.orderId = customers.customerId" +
                         " join customers on orders.customerId = customers.customerId" +
@@ -1046,11 +1230,16 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     @Test
     public void testJoinOrder4() throws ParserException {
         assertModel(
-                "a" +
+                "select-choose" +
+                        " b.id id," +
+                        " e.id id1" +
+                        " from (" +
+                        "a" +
                         " cross join b" +
                         " asof join d" +
                         " join e on e.id = b.id" +
-                        " cross join c",
+                        " cross join c" +
+                        ")",
                 "a" +
                         " cross join b cross join c" +
                         " asof join d inner join e on b.id = e.id",
@@ -1065,12 +1254,21 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     @Test
     public void testJoinReorder() throws Exception {
         assertModel(
-                "orders" +
+                "select-choose" +
+                        " orders.orderId orderId," +
+                        " customers.customerId customerId," +
+                        " d.orderId orderId1," +
+                        " d.productId productId," +
+                        " products.productId productId1," +
+                        " products.supplier supplier," +
+                        " suppliers.supplier supplier1" +
+                        " from (" +
+                        "orders" +
                         " join (orderDetails d where d.productId = d.orderId) d on d.orderId = orders.orderId" +
                         " join customers on customers.customerId = d.productId" +
                         " join products on products.productId = d.productId" +
-                        " join suppliers on suppliers.supplier = products.supplier" +
-                        " const-where 1 = 1",
+                        " join suppliers on suppliers.supplier = products.supplier const-where 1 = 1" +
+                        ")",
                 "orders" +
                         " join customers on 1=1" +
                         " join orderDetails d on d.orderId = orders.orderId and d.productId = customers.customerId" +
@@ -1088,13 +1286,23 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     @Test
     public void testJoinReorder3() throws Exception {
         assertModel(
-                "orders" +
+                "select-choose" +
+                        " orders.orderId orderId," +
+                        " customers.customerId customerId," +
+                        " shippers.shipper shipper," +
+                        " d.orderId orderId1," +
+                        " d.productId productId," +
+                        " suppliers.supplier supplier," +
+                        " products.productId productId1," +
+                        " products.supplier supplier1" +
+                        " from (" +
+                        "orders" +
                         " join shippers on shippers.shipper = orders.orderId" +
                         " join (orderDetails d where d.productId = d.orderId) d on d.productId = shippers.shipper" +
                         " join products on products.productId = d.productId" +
                         " join suppliers on suppliers.supplier = products.supplier" +
                         " cross join customers" +
-                        " const-where 1 = 1",
+                        " const-where 1 = 1)",
                 "orders" +
                         " outer join customers on 1=1" +
                         " join shippers on shippers.shipper = orders.orderId" +
@@ -1114,10 +1322,21 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     @Test
     public void testJoinReorderRoot() throws Exception {
         assertModel(
-                "customers" +
+                "select-choose" +
+                        " customers.customerId customerId," +
+                        " orders.orderId orderId," +
+                        " d.orderId orderId1," +
+                        " d.productId productId," +
+                        " products.productId productId1," +
+                        " products.supplier supplier," +
+                        " suppliers.supplier supplier1" +
+                        " from (" +
+                        "customers" +
                         " join (orderDetails d where d.productId = d.orderId) d on d.productId = customers.customerId" +
-                        " join orders on orders.orderId = d.orderId join products on products.productId = d.productId" +
-                        " join suppliers on suppliers.supplier = products.supplier",
+                        " join orders on orders.orderId = d.orderId" +
+                        " join products on products.productId = d.productId" +
+                        " join suppliers on suppliers.supplier = products.supplier" +
+                        ")",
                 "customers" +
                         " cross join orders" +
                         " join orderDetails d on d.orderId = orders.orderId and d.productId = customers.customerId" +
@@ -1136,7 +1355,17 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     @Test
     public void testJoinReorderRoot2() throws Exception {
         assertModel(
-                "orders" +
+                "select-choose" +
+                        " orders.orderId orderId," +
+                        " customers.customerId customerId," +
+                        " shippers.shipper shipper," +
+                        " d.orderId orderId1," +
+                        " d.productId productId," +
+                        " products.productId productId1," +
+                        " products.supplier supplier," +
+                        " suppliers.supplier supplier1" +
+                        " from (" +
+                        "orders" +
                         " join shippers on shippers.shipper = orders.orderId" +
                         // joining on productId = shipper is sufficient because:
                         // 1. shipper = orders.orderId
@@ -1145,8 +1374,8 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
                         " join (orderDetails d where d.productId = d.orderId) d on d.productId = shippers.shipper" +
                         " join products on products.productId = d.productId" +
                         " join suppliers on suppliers.supplier = products.supplier" +
-                        " cross join customers" +
-                        " const-where 1 = 1",
+                        " cross join customers const-where 1 = 1" +
+                        ")",
                 "orders" +
                         " outer join customers on 1=1" +
                         " join shippers on shippers.shipper = orders.orderId" +
@@ -1166,8 +1395,13 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     @Test
     public void testJoinSubQuery() throws Exception {
         assertModel(
-                "orders" +
-                        " join (select-choose customerId, customerName from (customers where customerName ~ 'X')) on customerName = orderId",
+                "select-choose" +
+                        " orders.orderId orderId," +
+                        " _xQdbA1.customerName customerName," +
+                        " _xQdbA1.customerId customerId" +
+                        " from (" +
+                        "orders" +
+                        " join (select-choose customerId, customerName from (customers where customerName ~ 'X')) _xQdbA1 on customerName = orderId)",
                 "orders" +
                         " cross join (select customerId, customerName from customers where customerName ~ 'X')" +
                         " where orderId = customerName",
@@ -1220,11 +1454,28 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     }
 
     @Test
+    @Ignore
+    public void testJoinWith() throws ParserException {
+        assertModel(
+                "",
+                "with x as (" +
+                        "select * from tab" +
+                        ") x cross join x cross join x",
+                modelOf("tab").col("y", ColumnType.INT)
+        );
+    }
+
+    @Test
     public void testJoinWithClausesDefaultAlias() throws ParserException {
-        assertModel("(customers where name ~ 'X') cust" +
+        assertModel(
+                "select-choose" +
+                        " cust.customerId customerId," +
+                        " cust.name name," +
+                        " ord.customerId customerId1" +
+                        " from (" +
+                        "(customers where name ~ 'X') cust" +
                         " outer join (select-choose customerId from (orders where amount > 100)) ord on ord.customerId = cust.customerId" +
-                        " post-join-where ord.customerId != null" +
-                        " limit 10",
+                        " post-join-where ord.customerId != null limit 10)",
                 "with" +
                         " cust as (customers where name ~ 'X')," +
                         " ord as (select customerId from orders where amount > 100)" +
@@ -1238,10 +1489,15 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testJoinWithClausesExplicitAlias() throws ParserException {
-        assertModel("(customers where name ~ 'X') c" +
+        assertModel(
+                "select-choose" +
+                        " c.name name," +
+                        " c.customerId customerId," +
+                        " o.customerId customerId1" +
+                        " from ((customers where name ~ 'X') c" +
                         " outer join (select-choose customerId from (orders where amount > 100)) o on o.customerId = c.customerId" +
                         " post-join-where o.customerId != null" +
-                        " limit 10",
+                        " limit 10)",
                 "with" +
                         " cust as (customers where name ~ 'X')," +
                         " ord as (select customerId from orders where amount > 100)" +
@@ -1256,11 +1512,23 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     @Test
     public void testJoinWithFilter() throws Exception {
         assertModel(
-                "customers" +
+                "select-choose" +
+                        " customers.customerId customerId," +
+                        " orders.orderId orderId," +
+                        " d.orderId orderId1," +
+                        " d.productId productId," +
+                        " d.quantity quantity," +
+                        " products.productId productId1," +
+                        " products.supplier supplier," +
+                        " products.price price," +
+                        " suppliers.supplier supplier1" +
+                        " from (" +
+                        "customers" +
                         " join (orderDetails d where d.productId = d.orderId) d on d.productId = customers.customerId" +
                         " join orders on orders.orderId = d.orderId post-join-where d.quantity < orders.orderId" +
                         " join products on products.productId = d.productId post-join-where products.price > d.quantity or d.orderId = orders.orderId" +
-                        " join suppliers on suppliers.supplier = products.supplier",
+                        " join suppliers on suppliers.supplier = products.supplier" +
+                        ")",
                 "customers" +
                         " cross join orders" +
                         " join orderDetails d on d.orderId = orders.orderId and d.productId = customers.customerId" +
@@ -1370,7 +1638,13 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     @Test
     public void testNestedJoinReorder() throws Exception {
         assertModel(
-                "(select-choose orders.orderId orderId, products.productId productId" +
+                "select-choose" +
+                        " x.orderId orderId," +
+                        " x.productId productId," +
+                        " y.orderId orderId1," +
+                        " y.customerId customerId" +
+                        " from (" +
+                        "(select-choose orders.orderId orderId, products.productId productId" +
                         " from (orders" +
                         " join (orderDetails d where d.productId = d.orderId) d on d.orderId = orders.customerId" +
                         " join customers on customers.customerId = orders.customerId" +
@@ -1381,7 +1655,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
                         " join customers on customers.customerId = orders.customerId" +
                         " join (orderDetails d where d.orderId = d.productId) d on d.productId = orders.orderId" +
                         " join suppliers on suppliers.supplier = orders.orderId" +
-                        " join products on products.productId = orders.orderId and products.supplier = suppliers.supplier) y",
+                        " join products on products.productId = orders.orderId and products.supplier = suppliers.supplier) y)",
                 "with x as (select orders.orderId, products.productId from " +
                         "orders" +
                         " join orderDetails d on d.orderId = orders.orderId and d.orderId = customers.customerId" +
@@ -1541,7 +1815,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     @Test
     public void testOptionalSelect() throws Exception {
         assertModel(
-                "tab t2 latest by x where x > 100",
+                "select-choose x from (tab t2 latest by x where x > 100)",
                 "tab t2 latest by x where x > 100",
                 modelOf("tab").col("x", ColumnType.INT));
     }
@@ -1636,8 +1910,8 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     @Test
     public void testOrderByOnJoinSubQuery() throws ParserException {
         assertModel(
-                "select-choose x, y from (select-choose a.x x, b.y y, b.s s from ((select-choose x from (tab1 where x = 'Z')) a join (tab2 where s ~ 'K') b on b.z = a.z) order by s)",
-                "select a.x, b.y from (select x from tab1 where x = 'Z' order by x) a join (tab2 where s ~ 'K') b on a.z=b.z order by b.s",
+                "select-choose x, y from (select-choose a.x x, b.y y, b.s s from ((select-choose x, z from (tab1 where x = 'Z')) a join (tab2 where s ~ 'K') b on b.z = a.z) order by s)",
+                "select a.x, b.y from (select x,z from tab1 where x = 'Z' order by x) a join (tab2 where s ~ 'K') b on a.z=b.z order by b.s",
                 modelOf("tab1")
                         .col("x", ColumnType.INT)
                         .col("z", ColumnType.INT),
@@ -1652,11 +1926,12 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     @Test
     public void testOrderByOnJoinSubQuery2() throws ParserException {
         assertModel(
-                "select-choose a.x x, b.y y from ((select-choose x from (select-choose x, z from (tab1 where x = 'Z') order by z)) a join (tab2 where s ~ 'K') b on b.z = a.z)",
-                "select a.x, b.y from (select x from tab1 where x = 'Z' order by z) a join (tab2 where s ~ 'K') b on a.z=b.z",
+                "select-choose a.x x, b.y y from ((select-choose x, z from (select-choose x, z, p from (tab1 where x = 'Z') order by p)) a join (tab2 where s ~ 'K') b on b.z = a.z)",
+                "select a.x, b.y from (select x,z from tab1 where x = 'Z' order by p) a join (tab2 where s ~ 'K') b on a.z=b.z",
                 modelOf("tab1")
                         .col("x", ColumnType.INT)
-                        .col("z", ColumnType.INT),
+                        .col("z", ColumnType.INT)
+                        .col("p", ColumnType.INT),
                 modelOf("tab2")
                         .col("x", ColumnType.INT)
                         .col("y", ColumnType.INT)
@@ -1766,7 +2041,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     @Test
     public void testOrderByWithSampleBy() throws ParserException {
         assertModel(
-                "select-group-by t, a, sum(b) sum from ((tab order by t)) timestamp (t) sample by 2m order by a",
+                "select-group-by t, a, sum(b) sum from ((tab order by t) _xQdbA1) timestamp (t) sample by 2m order by a",
                 "select a, sum(b) from (tab order by t) timestamp(t) sample by 2m order by a",
                 modelOf("tab")
                         .col("a", ColumnType.INT)
@@ -1779,7 +2054,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     public void testOrderByWithSampleBy2() throws ParserException {
         // todo: need another test to assert exception when sample by clause present without aggregation
         assertModel(
-                "select-group-by a, sum(b) sum from (((tab order by t) timestamp (t) sample by 10m)) order by a",
+                "select-group-by a, sum(b) sum from (((tab order by t) _xQdbA2 timestamp (t) sample by 10m) _xQdbA1) order by a",
                 "select a, sum(b) from ((tab order by t) timestamp(t) sample by 10m order by t)order by a",
                 modelOf("tab")
                         .col("a", ColumnType.INT)
@@ -1899,6 +2174,17 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSelectFromSubQuery() throws ParserException {
+        assertModel(
+                "select-choose a.x x from ((tab where y > 10) a)",
+                "select a.x from (tab where y > 10) a",
+                modelOf("tab")
+                        .col("x", ColumnType.INT)
+                        .col("y", ColumnType.INT)
+        );
+    }
+
+    @Test
     public void testSelectGroupByAndAnalytic() {
         assertSyntaxError(
                 "select sum(x), count() over() from tab",
@@ -1909,8 +2195,26 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSelectMissingExpression() {
+        assertSyntaxError(
+                "select ,a from tab",
+                7,
+                "missing expression"
+        );
+    }
+
+    @Test
+    public void testSelectMissingExpression2() {
+        assertSyntaxError(
+                "select a, from tab",
+                15,
+                "',', 'from' or 'over' expected"
+        );
+    }
+
+    @Test
     public void testSelectOnItsOwn() {
-        assertSyntaxError("select ", 6, "missing column");
+        assertSyntaxError("select ", 6, "column expected");
     }
 
     @Test
@@ -1931,9 +2235,111 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSelectWildcard() throws ParserException {
+        assertModel(
+                "select-choose" +
+                        " tab1.x x," +
+                        " tab1.y y," +
+                        " tab2.x x1," +
+                        " tab2.z z" +
+                        " from (tab1 join tab2 on tab2.x = tab1.x)",
+                "select * from tab1 join tab2 on (x)",
+                modelOf("tab1").col("x", ColumnType.INT).col("y", ColumnType.INT),
+                modelOf("tab2").col("x", ColumnType.INT).col("z", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testSelectWildcardAndExpr() throws ParserException {
+        // todo: Y column is selected twice, code should be able to tell that y and tab1.y is the same column
+        assertModel(
+                "select-virtual" +
+                        " x," +
+                        " y," +
+                        " x1," +
+                        " z," +
+                        " x + y1 column1" +
+                        " from (" +
+                        "select-choose" +
+                        " tab1.x x," +
+                        " tab1.y y," +
+                        " tab2.x x1," +
+                        " tab2.z z," +
+                        " y y1" +
+                        " from (tab1 join tab2 on tab2.x = tab1.x))",
+                "select *, tab1.x + y from tab1 join tab2 on (x)",
+                modelOf("tab1").col("x", ColumnType.INT).col("y", ColumnType.INT),
+                modelOf("tab2").col("x", ColumnType.INT).col("z", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testSelectWildcardDetachedStar() {
+        assertSyntaxError(
+                "select tab2.*, bxx.  * from tab1 a join tab2 on (x)",
+                19,
+                "whitespace is not allowed",
+                modelOf("tab1").col("x", ColumnType.INT).col("y", ColumnType.INT),
+                modelOf("tab2").col("x", ColumnType.INT).col("z", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testSelectWildcardInvalidTableAlias() {
+        assertSyntaxError(
+                "select tab2.*, b.* from tab1 a join tab2 on (x)",
+                17,
+                "invalid table alias",
+                modelOf("tab1").col("x", ColumnType.INT).col("y", ColumnType.INT),
+                modelOf("tab2").col("x", ColumnType.INT).col("z", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testSelectWildcardMissingStar() {
+        assertSyntaxError(
+                "select tab2.*, bxx. from tab1 a join tab2 on (x)",
+                19,
+                "'*' expected",
+                modelOf("tab1").col("x", ColumnType.INT).col("y", ColumnType.INT),
+                modelOf("tab2").col("x", ColumnType.INT).col("z", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testSelectWildcardPrefixed() throws ParserException {
+        assertModel(
+                "select-choose" +
+                        " tab2.x x," +
+                        " tab2.z z," +
+                        " tab1.x x1," +
+                        " tab1.y y" +
+                        " from (tab1 join tab2 on tab2.x = tab1.x)",
+                "select tab2.*, tab1.* from tab1 join tab2 on (x)",
+                modelOf("tab1").col("x", ColumnType.INT).col("y", ColumnType.INT),
+                modelOf("tab2").col("x", ColumnType.INT).col("z", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testSelectWildcardPrefixed2() throws ParserException {
+        assertModel(
+                "select-choose" +
+                        " tab2.x x," +
+                        " tab2.z z," +
+                        " a.x x1," +
+                        " a.y y" +
+                        " from (tab1 a join tab2 on tab2.x = a.x)",
+                "select tab2.*, a.* from tab1 a join tab2 on (x)",
+                modelOf("tab1").col("x", ColumnType.INT).col("y", ColumnType.INT),
+                modelOf("tab2").col("x", ColumnType.INT).col("z", ColumnType.INT)
+        );
+    }
+
+    @Test
     public void testSimpleSubQuery() throws Exception {
         assertModel(
-                "(x where y > 1)",
+                "select-choose y from ((x where y > 1) _xQdbA1)",
                 "(x) where y > 1",
                 modelOf("x").col("y", ColumnType.INT)
         );
@@ -1985,7 +2391,10 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     @Test
     public void testSubQueryAliasWithSpace() throws Exception {
         assertModel(
-                "(x where a > 1 and x > 1) 'b a'",
+                "select-choose" +
+                        " a, x" +
+                        " from (" +
+                        "(x where a > 1 and x > 1) 'b a')",
                 "(x where a > 1) 'b a' where x > 1",
                 modelOf("x")
                         .col("x", ColumnType.INT)
@@ -1995,7 +2404,11 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     @Test
     public void testSubQueryLimitLoHi() throws Exception {
         assertModel(
-                "(select-choose x, y from (tab where x > z and x = y limit 100,200)) limit 150",
+                "select-choose" +
+                        " x," +
+                        " y" +
+                        " from (" +
+                        "(select-choose x, y from (tab where x > z and x = y limit 100,200)) _xQdbA1 limit 150)",
                 "(select x x, y y from tab where x > z limit 100,200) where x = y limit 150",
                 modelOf("tab").col("x", ColumnType.INT).col("y", ColumnType.INT).col("z", ColumnType.INT)
         );
@@ -2003,7 +2416,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testTimestampOnSubQuery() throws Exception {
-        assertModel("select-choose x from ((a b where x > y) timestamp (x))",
+        assertModel("select-choose x from ((a b where x > y) _xQdbA1 timestamp (x))",
                 "select x from (a b) timestamp(x) where x > y",
                 modelOf("a").col("x", ColumnType.INT).col("y", ColumnType.INT));
     }
@@ -2125,11 +2538,24 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     @Test
     public void testWithSelectFrom2() throws ParserException {
         assertModel(
-                "(select-choose a from (tab)) x",
+                "select-choose a from ((select-choose a from (tab)) x)",
                 "with x as (" +
                         " select a from tab" +
                         ") x",
                 modelOf("tab").col("a", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testWithSyntaxError() {
+        assertSyntaxError(
+                "with x as (" +
+                        " select ,a from tab" +
+                        ") x",
+                19,
+                "missing expression",
+                modelOf("tab").col("a", ColumnType.INT)
+
         );
     }
 
