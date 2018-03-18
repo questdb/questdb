@@ -38,7 +38,6 @@ import com.questdb.std.str.Path;
 import com.questdb.test.tools.TestUtils;
 import org.junit.AfterClass;
 import org.junit.Assert;
-import org.junit.Ignore;
 import org.junit.Test;
 
 import java.io.IOException;
@@ -506,7 +505,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     @Test
     public void testDuplicateAlias() {
         assertSyntaxError("customers a" +
-                        " cross join orders a", 30, "Duplicate",
+                        " cross join orders a", 30, "duplicate",
                 modelOf("customers").col("customerId", ColumnType.INT).col("customerName", ColumnType.STRING),
                 modelOf("orders").col("customerId", ColumnType.INT).col("product", ColumnType.STRING)
         );
@@ -518,10 +517,10 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
                 "select-choose" +
                         " customers.customerId customerId," +
                         " customers.customerName customerName," +
-                        " customers.customerId customerId1," +
-                        " customers.customerName customerName1" +
-                        " from (customers cross join customers)",
-                "customers cross join customers",
+                        " cust.customerId customerId1," +
+                        " cust.customerName customerName1" +
+                        " from (customers cross join customers cust)",
+                "customers cross join customers cust",
                 modelOf("customers").col("customerId", ColumnType.INT).col("customerName", ColumnType.STRING),
                 modelOf("orders").col("customerId", ColumnType.INT).col("product", ColumnType.STRING)
         );
@@ -981,6 +980,16 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
                 modelOf("orderDetails").col("orderId", ColumnType.INT).col("productId", ColumnType.INT),
                 modelOf("products").col("productId", ColumnType.INT).col("supplier", ColumnType.SYMBOL),
                 modelOf("suppliers").col("supplier", ColumnType.SYMBOL).col("x", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testJoinDuplicateTables() {
+        assertSyntaxError(
+                "select * from tab cross join tab",
+                29,
+                "duplicate",
+                modelOf("tab").col("y", ColumnType.INT)
         );
     }
 
@@ -1454,13 +1463,19 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     }
 
     @Test
-    @Ignore
     public void testJoinWith() throws ParserException {
         assertModel(
-                "",
+                "select-choose" +
+                        " x.y y," +
+                        " x1.y y1," +
+                        " x2.y y2" +
+                        " from" +
+                        " ((select-choose y from (tab)) x" +
+                        " cross join (select-choose y from (tab)) x1" +
+                        " cross join (select-choose y from (tab)) x2)",
                 "with x as (" +
                         "select * from tab" +
-                        ") x cross join x cross join x",
+                        ") x cross join x x1 cross join x x2",
                 modelOf("tab").col("y", ColumnType.INT)
         );
     }

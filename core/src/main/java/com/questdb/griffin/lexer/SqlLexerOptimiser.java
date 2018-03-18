@@ -489,14 +489,11 @@ public final class SqlLexerOptimiser {
     }
 
     private void collectAlias(QueryModel parent, int modelIndex, QueryModel model) throws ParserException {
-        final ExprNode alias = model.getAlias();
-        if (alias != null) {
-            if (!parent.addAliasIndex(alias, modelIndex)) {
-                throw ParserException.position(alias.position).put("Duplicate alias: ").put(alias.token);
-            }
-        } else if (model.getTableName() != null) {
-            parent.addAliasIndex(model.getTableName(), modelIndex);
+        final ExprNode alias = model.getAlias() != null ? model.getAlias() : model.getTableName();
+        if (parent.addAliasIndex(alias, modelIndex)) {
+            return;
         }
+        throw ParserException.position(alias.position).put("duplicate table or alias: ").put(alias.token);
     }
 
     private ExprNode concatFilters(ExprNode old, ExprNode filter) {
