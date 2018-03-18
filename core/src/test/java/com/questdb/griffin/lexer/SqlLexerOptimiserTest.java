@@ -528,7 +528,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testEmptyOrderBy() {
-        assertSyntaxError("select x, y from tab order by", 27, "column name or alias expected");
+        assertSyntaxError("select x, y from tab order by", 27, "literal expected");
     }
 
     @Test
@@ -616,7 +616,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
                 "select-choose customerName, orderId, productId" +
                         " from (" +
                         "customers" +
-                        " join (orders where product = 'X') on orders.customerId = customers.customerId where customerName ~ 'WTBHZVPVZZ')",
+                        " join (orders where product = 'X') orders on orders.customerId = customers.customerId where customerName ~ 'WTBHZVPVZZ')",
                 "select customerName, orderId, productId " +
                         "from customers join orders on customers.customerId = orders.customerId where customerName ~ 'WTBHZVPVZZ' and product = 'X'",
                 modelOf("customers").col("customerId", ColumnType.INT).col("customerName", ColumnType.STRING),
@@ -652,7 +652,6 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testInnerJoinEqualsConstant() throws Exception {
-        // todo: suspicious is the fact we can join non-aliased sub-query
         assertModel(
                 "select-choose" +
                         " customers.customerId customerId," +
@@ -660,7 +659,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
                         " orders.productName productName" +
                         " from (" +
                         "customers" +
-                        " join (orders where productName = 'WTBHZVPVZZ') on orders.customerId = customers.customerId)",
+                        " join (orders where productName = 'WTBHZVPVZZ') orders on orders.customerId = customers.customerId)",
                 "customers join orders on customers.customerId = orders.customerId where productName = 'WTBHZVPVZZ'",
                 modelOf("customers").col("customerId", ColumnType.INT),
                 modelOf("orders").col("customerId", ColumnType.INT).col("productName", ColumnType.STRING));
@@ -675,7 +674,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
                         " orders.productName productName" +
                         " from (" +
                         "customers" +
-                        " join (orders where 'WTBHZVPVZZ' = productName) on orders.customerId = customers.customerId)",
+                        " join (orders where 'WTBHZVPVZZ' = productName) orders on orders.customerId = customers.customerId)",
                 "customers join orders on customers.customerId = orders.customerId where 'WTBHZVPVZZ' = productName",
                 modelOf("customers").col("customerId", ColumnType.INT),
                 modelOf("orders").col("customerId", ColumnType.INT).col("productName", ColumnType.STRING));
@@ -688,7 +687,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
                         " from (" +
                         "(select-choose customerName, orderId, productId, productName from (" +
                         "customers" +
-                        " join (orders where productName ~ 'WTBHZVPVZZ') on orders.customerId = customers.customerId)" +
+                        " join (orders where productName ~ 'WTBHZVPVZZ') orders on orders.customerId = customers.customerId)" +
                         ") x" +
                         " join products p on p.productId = x.productId)",
                 "select customerName, productName, orderId from (" +
@@ -765,12 +764,12 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testInvalidOrderBy1() {
-        assertSyntaxError("select x, y from tab order by x,", 31, "column name or alias expected");
+        assertSyntaxError("select x, y from tab order by x,", 31, "literal expected");
     }
 
     @Test
     public void testInvalidOrderBy2() {
-        assertSyntaxError("select x, y from (tab order by x,)", 33, "column name or alias expected");
+        assertSyntaxError("select x, y from (tab order by x,)", 33, "literal expected");
     }
 
     @Test
@@ -994,6 +993,26 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testJoinFunction() throws ParserException {
+        assertModel(
+                "select-choose" +
+                        " tab.x x," +
+                        " t.y y," +
+                        " t1.z z" +
+                        " from (" +
+                        "tab" +
+                        " join t on f(y) = f(x)" +
+                        " join t1 on z = f(x)" +
+                        " const-where 1 = 1" +
+                        ")",
+                "select * from tab join t on f(x)=f(y) join t1 on 1=1 where z=f(x)",
+                modelOf("tab").col("x", ColumnType.INT),
+                modelOf("t").col("y", ColumnType.INT),
+                modelOf("t1").col("z", ColumnType.INT)
+        );
+    }
+
+    @Test
     public void testJoinGroupBy() throws Exception {
         assertModel("select-group-by" +
                         " country," +
@@ -1162,7 +1181,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
                         " a.x x," +
                         " b.x x1" +
                         " from (" +
-                        "a cross join (b where b.x) where a.x + 1" +
+                        "a cross join (b where b.x) b where a.x + 1" +
                         ")",
                 "a join b on a.x+1 and b.x",
                 modelOf("a").col("x", ColumnType.INT),
@@ -1566,6 +1585,15 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLatestBySyntax() {
+        assertSyntaxError(
+                "select * from tab latest",
+                18,
+                "'by' expected"
+        );
+    }
+
+    @Test
     public void testLexerReset() {
 
         for (int i = 0; i < 10; i++) {
@@ -1581,6 +1609,16 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
                 TestUtils.assertEquals("unexpected token: Date", e.getFlyweightMessage());
             }
         }
+    }
+
+    @Test
+    public void testMissingArgument() {
+        assertSyntaxError(
+                "select x from tab where not (x != 1 and)",
+                36,
+                "Missing right argument",
+                modelOf("tab").col("x", ColumnType.INT)
+        );
     }
 
     @Test
@@ -2068,9 +2106,12 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     @Test
     public void testOrderByWithSampleBy2() throws ParserException {
         // todo: need another test to assert exception when sample by clause present without aggregation
+        // we are not looking to deal with 'sample by' outside of selected column context, clauses hidden
+        // deep inside of sub-queries need to be explicitly validated. This could be an easy win when we
+        // go about collapsing sub-queries
         assertModel(
                 "select-group-by a, sum(b) sum from (((tab order by t) _xQdbA2 timestamp (t) sample by 10m) _xQdbA1) order by a",
-                "select a, sum(b) from ((tab order by t) timestamp(t) sample by 10m order by t)order by a",
+                "select a, sum(b) from ((tab order by t) timestamp(t) sample by 10m order by t) order by a",
                 modelOf("tab")
                         .col("a", ColumnType.INT)
                         .col("b", ColumnType.INT)
@@ -2426,6 +2467,15 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
                         "(select-choose x, y from (tab where x > z and x = y limit 100,200)) _xQdbA1 limit 150)",
                 "(select x x, y y from tab where x > z limit 100,200) where x = y limit 150",
                 modelOf("tab").col("x", ColumnType.INT).col("y", ColumnType.INT).col("z", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testSubQueryUnclosed() {
+        assertSyntaxError(
+                "select x from (tab where x > 10",
+                29,
+                ") expected"
         );
     }
 
