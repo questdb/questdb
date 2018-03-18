@@ -607,9 +607,9 @@ public class QueryModel implements Mutable, ParsedModel, AliasTranslator, Sinkab
             sink.put(')');
         }
 
-        if (latestBy != null) {
+        if (getLatestBy() != null) {
             sink.put(" latest by ");
-            latestBy.toSink(sink);
+            getLatestBy().toSink(sink);
         }
 
         if (orderedJoinModels.size() > 1) {
@@ -636,6 +636,8 @@ public class QueryModel implements Mutable, ParsedModel, AliasTranslator, Sinkab
                         sink.put(')');
                         if (model.getAlias() != null) {
                             aliasToSink(model.getAlias().token, sink);
+                        } else if (model.getTableName() != null) {
+                            aliasToSink(model.getTableName().token, sink);
                         }
                     } else {
                         model.toSink0(sink, true);
@@ -696,14 +698,14 @@ public class QueryModel implements Mutable, ParsedModel, AliasTranslator, Sinkab
             }
         }
 
-        if (limitLo != null || limitHi != null) {
+        if (getLimitLo() != null || getLimitHi() != null) {
             sink.put(" limit ");
-            if (limitLo != null) {
-                limitLo.toSink(sink);
+            if (getLimitLo() != null) {
+                getLimitLo().toSink(sink);
             }
-            if (limitHi != null) {
+            if (getLimitHi() != null) {
                 sink.put(',');
-                limitHi.toSink(sink);
+                getLimitHi().toSink(sink);
             }
         }
     }

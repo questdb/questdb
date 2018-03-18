@@ -1307,8 +1307,8 @@ public final class SqlLexerOptimiser {
                 if (reverse) {
                     node.token = "or";
                 }
-                assertNotNull(node.lhs, node.position, "Missing left argument");
-                assertNotNull(node.rhs, node.position, "Missing right argument");
+                assertNotNull(node.lhs, node.position, "Missing right argument");
+                assertNotNull(node.rhs, node.position, "Missing left argument");
                 node.lhs = optimiseBooleanNot(node.lhs, reverse);
                 node.rhs = optimiseBooleanNot(node.rhs, reverse);
                 return node;
@@ -1316,8 +1316,8 @@ public final class SqlLexerOptimiser {
                 if (reverse) {
                     node.token = "and";
                 }
-                assertNotNull(node.lhs, node.position, "Missing left argument");
-                assertNotNull(node.rhs, node.position, "Missing right argument");
+                assertNotNull(node.lhs, node.position, "Missing right argument");
+                assertNotNull(node.rhs, node.position, "Missing left argument");
                 node.lhs = optimiseBooleanNot(node.lhs, reverse);
                 node.rhs = optimiseBooleanNot(node.rhs, reverse);
                 return node;
@@ -1799,13 +1799,6 @@ public final class SqlLexerOptimiser {
         if (tok != null && Chars.equals(tok, "order")) {
             expectTok("by");
             do {
-                tok = tok("column name or alias");
-
-                if (Chars.equals(tok, ')')) {
-                    throw err("Expression expected");
-                }
-
-                lexer.unparse();
                 ExprNode n = expectLiteral();
 
                 tok = optTok();
