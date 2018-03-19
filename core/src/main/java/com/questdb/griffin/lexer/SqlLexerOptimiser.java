@@ -32,7 +32,6 @@ import com.questdb.griffin.common.ExprNode;
 import com.questdb.griffin.lexer.model.*;
 import com.questdb.ql.ops.FunctionFactories;
 import com.questdb.std.*;
-import com.questdb.std.str.CharSink;
 import com.questdb.std.str.FlyweightCharSequence;
 import com.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
@@ -620,15 +619,13 @@ public final class SqlLexerOptimiser {
     ) throws ParserException {
         final String alias = createColumnAlias(columnName, translatingModel);
 
-        addColumnToTranslatingModel(queryColumnPool.next().of(
-                alias,
-                columnAst
-        ), translatingModel, validatingModel);
+        addColumnToTranslatingModel(
+                queryColumnPool.next().of(
+                        alias,
+                        columnAst
+                ), translatingModel, validatingModel);
 
-        final QueryColumn translatedColumn = queryColumnPool.next().of(
-                alias,
-                // flatten the node
-                exprNodePool.next().of(ExprNode.LITERAL, alias, 0, 0));
+        final QueryColumn translatedColumn = nextColumn(alias);
 
         // create column that references inner alias we just created
         innerModel.addColumn(translatedColumn);
@@ -708,7 +705,7 @@ public final class SqlLexerOptimiser {
             }
             createSelectColumn(
                     name,
-                    exprNodePool.next().of(ExprNode.LITERAL, token, 0, wildcardPosition),
+                    nextLiteral(token, wildcardPosition),
                     null, // do not validate
                     translatingModel,
                     innerModel,
@@ -870,7 +867,7 @@ public final class SqlLexerOptimiser {
         CharSequence tok = tok("literal");
         int pos = lexer.position();
         validateLiteral(pos, tok);
-        return exprNodePool.next().of(ExprNode.LITERAL, Chars.toString(tok), 0, pos);
+        return nextLiteral(Chars.toString(tok), pos);
     }
 
     private CharSequence expectTableNameOrSubQuery() throws ParserException {
@@ -1011,21 +1008,15 @@ public final class SqlLexerOptimiser {
     }
 
     private ExprNode makeJoinAlias(int index) {
-        return exprNodePool.next().of(
-                ExprNode.LITERAL,
-                Misc.getThreadLocalBuilder().put(QueryModel.SUB_QUERY_ALIAS_PREFIX).put(index).toString(),
-                0,
-                0);
+        columnNameAssembly.clear();
+        columnNameAssembly.put(QueryModel.SUB_QUERY_ALIAS_PREFIX).put(index);
+        return nextLiteral(columnNameAssembly.toString());
     }
 
     private ExprNode makeModelAlias(String modelAlias, ExprNode node) {
-        CharSink b = Misc.getThreadLocalBuilder().put(modelAlias).put('.').put(node.token);
-        return exprNodePool.next().of(
-                ExprNode.LITERAL,
-                b.toString(),
-                0,
-                node.position
-        );
+        columnNameAssembly.clear();
+        columnNameAssembly.put(modelAlias).put('.').put(node.token);
+        return nextLiteral(columnNameAssembly.toString(), node.position);
     }
 
     private ExprNode makeOperation(String token, ExprNode lhs, ExprNode rhs) {
@@ -1258,6 +1249,22 @@ public final class SqlLexerOptimiser {
         }
     }
 
+    private QueryColumn nextColumn(String alias, String name) {
+        return queryColumnPool.next().of(alias, nextLiteral(name, 0));
+    }
+
+    private QueryColumn nextColumn(String name) {
+        return nextColumn(name, name);
+    }
+
+    private ExprNode nextLiteral(String token, int position) {
+        return exprNodePool.next().of(ExprNode.LITERAL, token, 0, position);
+    }
+
+    private ExprNode nextLiteral(String token) {
+        return nextLiteral(token, 0);
+    }
+
     private CharSequence notTermTok() throws ParserException {
         CharSequence tok = tok("')' or ','");
         if (isFieldTerm(tok)) {
@@ -1480,7 +1487,7 @@ public final class SqlLexerOptimiser {
 
     private ParsedModel parseCreateTable() throws ParserException {
         final CreateTableModel model = createTableModelPool.next();
-        model.setName(exprNodePool.next().of(ExprNode.LITERAL, Chars.stripQuotes(Chars.toString(tok("table name"))), 0, lexer.position()));
+        model.setName(nextLiteral(Chars.stripQuotes(Chars.toString(tok("table name"))), lexer.position()));
 
         CharSequence tok = tok("'(' or 'as'");
 
@@ -1707,7 +1714,7 @@ public final class SqlLexerOptimiser {
                 parseFromClause(model, model);
                 return model;
             }
-            model.addColumn(queryColumnPool.next().of("*", exprNodePool.next().of(ExprNode.LITERAL, "*", 0, 0)));
+            model.addColumn(nextColumn("*"));
         }
         QueryModel nestedModel = queryModelPool.next();
         parseFromClause(nestedModel, model);
@@ -1952,7 +1959,7 @@ public final class SqlLexerOptimiser {
             // to determine if wildcard is correct we would rely on token position
             final char last = tok.charAt(tok.length() - 1);
             if (last == '*') {
-                expr = exprNodePool.next().of(ExprNode.LITERAL, Chars.toString(tok), 0, lexer.position());
+                expr = nextLiteral(Chars.toString(tok), lexer.position());
             } else if (last == '.') {
                 // stash 'a.' token
                 final int pos = lexer.position() + tok.length();
@@ -1964,7 +1971,7 @@ public final class SqlLexerOptimiser {
                         throw ParserException.$(pos, "whitespace is not allowed");
                     }
                     columnNameAssembly.put('*');
-                    expr = exprNodePool.next().of(ExprNode.LITERAL, columnNameAssembly.toString(), 0, lexer.position());
+                    expr = nextLiteral(columnNameAssembly.toString(), lexer.position());
                 } else {
                     throw ParserException.$(pos, "'*' expected");
                 }
@@ -2260,7 +2267,7 @@ public final class SqlLexerOptimiser {
         if (node != null && FunctionFactories.isAggregate(node.token)) {
             QueryColumn c = queryColumnPool.next().of(createColumnAlias(node, model), node);
             model.addColumn(c);
-            return exprNodePool.next().of(ExprNode.LITERAL, c.getAlias(), 0, 0);
+            return nextLiteral(c.getAlias());
         }
         return node;
     }
@@ -2279,9 +2286,9 @@ public final class SqlLexerOptimiser {
                 if (innerModel != null) {
                     innerModel.addColumn(column);
                 }
-                return exprNodePool.next().of(ExprNode.LITERAL, alias, 0, node.position);
+                return nextLiteral(alias, node.position);
             }
-            return exprNodePool.next().of(ExprNode.LITERAL, map.valueAt(index), 0, node.position);
+            return nextLiteral(map.valueAt(index), node.position);
         }
         return node;
     }
@@ -2427,21 +2434,13 @@ public final class SqlLexerOptimiser {
 
                                 // if base parent model is already "choose" type, use that and ascend alias all the way up
                                 String alias = createColumnAlias(column, dot, baseParent.getColumnNameTypeMap());
-                                baseParent.addColumn(queryColumnPool.next().of(
-                                        alias,
-                                        exprNodePool.next().of(ExprNode.LITERAL, column, 0, 0)
-                                ));
+                                baseParent.addColumn(nextColumn(alias, column));
 
                                 // do we have more than one parent model?
                                 if (model != baseParent) {
-                                    QueryColumn col = queryColumnPool.next().of(
-                                            alias,
-                                            exprNodePool.next().of(ExprNode.LITERAL, alias, 0, 0)
-                                    );
-
                                     QueryModel m = model;
                                     do {
-                                        m.addColumn(col);
+                                        m.addColumn(nextColumn(alias));
                                         m = m.getNestedModel();
                                     } while (m != baseParent);
                                 }
@@ -2452,12 +2451,7 @@ public final class SqlLexerOptimiser {
                                     wrapper = queryModelPool.next();
                                     wrapper.setSelectModelType(QueryModel.SELECT_MODEL_CHOOSE);
                                     for (int j = 0; j < modelColumnCount; j++) {
-
-                                        String refAlias = model.getColumns().getQuick(j).getAlias();
-                                        wrapper.addColumn(queryColumnPool.next().of(
-                                                refAlias,
-                                                exprNodePool.next().of(ExprNode.LITERAL, refAlias, 0, 0)
-                                        ));
+                                        wrapper.addColumn(nextColumn(model.getColumns().getQuick(j).getAlias()));
                                     }
                                     result = wrapper;
                                     wrapper.setNestedModel(model);
@@ -2613,11 +2607,7 @@ public final class SqlLexerOptimiser {
                         // group-by column references might be needed when we have
                         // outer model supporting arithmetic such as:
                         // select sum(a)+sum(b) ....
-                        QueryColumn groupByColumn = queryColumnPool.next().of(
-                                qc.getAlias(),
-                                // flatten node down to alias
-                                exprNodePool.next().of(ExprNode.LITERAL, qc.getAlias(), 0, 0));
-                        outerModel.addColumn(groupByColumn);
+                        outerModel.addColumn(nextColumn(qc.getAlias()));
                         // pull out literals
                         emitLiterals(qc.getAst(), translatingModel, innerModel, baseModel);
                         useGroupByModel = true;
@@ -2651,10 +2641,7 @@ public final class SqlLexerOptimiser {
                     // select a, b+c ...
                     // it should translate to:
                     // select a, x from (select a, b+c x from (select a,b,c ...))
-                    QueryColumn innerColumn = queryColumnPool.next().of(
-                            qc.getAlias(),
-                            exprNodePool.next().of(ExprNode.LITERAL, qc.getAlias(), 0, 0)
-                    );
+                    final QueryColumn innerColumn = nextColumn(qc.getAlias());
 
                     // pull literals only into translating model
                     emitLiterals(qc.getAst(), translatingModel, null, baseModel);
