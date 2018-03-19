@@ -112,6 +112,31 @@ public class WriterPoolTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testBasicCharSequence() throws Exception {
+
+        try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE).col("ts", ColumnType.DATE)) {
+            CairoTestUtils.create(model);
+        }
+
+        assertWithPool(pool -> {
+            sink.clear();
+            sink.put("x");
+
+            TableWriter writer1 = pool.get(sink);
+            Assert.assertNotNull(writer1);
+            writer1.close();
+
+            // mutate sink
+            sink.clear();
+            sink.put("y");
+
+            try (TableWriter writer2 = pool.get("x")) {
+                Assert.assertTrue(writer1 == writer2);
+            }
+        });
+    }
+
+    @Test
     public void testCannotLockWriter() throws Exception {
 
         final TestFilesFacade ff = new TestFilesFacade() {

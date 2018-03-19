@@ -684,6 +684,31 @@ public class ReaderPoolTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testBasicCharSequence() throws Exception {
+
+        try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE).col("ts", ColumnType.DATE)) {
+            CairoTestUtils.create(model);
+        }
+
+        assertWithPool(pool -> {
+            sink.clear();
+            sink.put("x");
+
+            TableReader reader1 = pool.get(sink);
+            Assert.assertNotNull(reader1);
+            reader1.close();
+
+            // mutate sink
+            sink.clear();
+            sink.put("y");
+
+            try (TableReader reader2 = pool.get("x")) {
+                Assert.assertTrue(reader1 == reader2);
+            }
+        });
+    }
+
     private void assertWithPool(PoolAwareCode code) throws Exception {
         assertWithPool(code, configuration);
     }

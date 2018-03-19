@@ -30,7 +30,6 @@ import com.questdb.std.ObjectFactory;
 public class QueryColumn implements Mutable {
     public final static ObjectFactory<QueryColumn> FACTORY = QueryColumn::new;
     private String alias;
-    private int aliasPosition;
     private ExprNode ast;
 
     protected QueryColumn() {
@@ -46,10 +45,6 @@ public class QueryColumn implements Mutable {
         return alias;
     }
 
-    public int getAliasPosition() {
-        return aliasPosition;
-    }
-
     public ExprNode getAst() {
         return ast;
     }
@@ -58,24 +53,8 @@ public class QueryColumn implements Mutable {
         return alias != null ? alias : ast.token;
     }
 
-    @Override
-    public int hashCode() {
-        int result = alias != null ? alias.hashCode() : 0;
-        result = 31 * result + (ast != null ? ast.hashCode() : 0);
-        return result;
-    }
-
-    @Override
-    public boolean equals(Object o) {
-        if (this == o) return true;
-        if (o == null || getClass() != o.getClass()) return false;
-        QueryColumn that = (QueryColumn) o;
-        return alias != null ? alias.equals(that.alias) : that.alias == null && (ast != null ? ast.equals(that.ast) : that.ast == null);
-    }
-
-    public QueryColumn of(String alias, int aliasPosition, ExprNode ast) {
+    public QueryColumn of(String alias, ExprNode ast) {
         this.alias = alias;
-        this.aliasPosition = aliasPosition;
         this.ast = ast;
         return this;
     }

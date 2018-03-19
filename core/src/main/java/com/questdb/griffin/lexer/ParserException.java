@@ -84,6 +84,11 @@ public class ParserException extends Exception implements Sinkable {
         return this;
     }
 
+    public ParserException put(Sinkable sinkable) {
+        message.put(sinkable);
+        return this;
+    }
+
     @Override
     public void toSink(CharSink sink) {
         sink.put('[').put(position).put("]: ").put(message);

@@ -23,17 +23,18 @@
 
 package com.questdb.griffin.lexer;
 
-import com.questdb.cairo.AbstractCairoTest;
-import com.questdb.cairo.CairoTestUtils;
-import com.questdb.cairo.Engine;
-import com.questdb.cairo.TableModel;
+import com.questdb.cairo.*;
 import com.questdb.cairo.sql.CairoEngine;
 import com.questdb.common.ColumnType;
 import com.questdb.common.PartitionBy;
 import com.questdb.griffin.lexer.model.CreateTableModel;
 import com.questdb.griffin.lexer.model.ParsedModel;
 import com.questdb.griffin.lexer.model.QueryModel;
+import com.questdb.std.Chars;
 import com.questdb.std.Files;
+import com.questdb.std.FilesFacade;
+import com.questdb.std.FilesFacadeImpl;
+import com.questdb.std.str.LPSZ;
 import com.questdb.std.str.Path;
 import com.questdb.test.tools.TestUtils;
 import org.junit.AfterClass;
@@ -84,6 +85,15 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
                         .col("x", ColumnType.INT)
                         .col("y", ColumnType.INT)
                         .col("z", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testAnalyticPartitionByMultiple() throws Exception {
+        assertModel(
+                "select-analytic a, b, f(c) my over (partition by b, a order by ts), d(c) d over () from (xyz)",
+                "select a,b, f(c) my over (partition by b, a order by ts), d(c) over() from xyz",
+                modelOf("xyz").col("c", ColumnType.INT).col("b", ColumnType.INT).col("a", ColumnType.INT)
         );
     }
 
@@ -2026,6 +2036,17 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testOrderByOnMultipleColumns() throws ParserException {
+        assertModel(
+                "select-choose z from (select-choose y z, x from (tab) order by z desc, x)",
+                "select y z from tab order by z desc, x",
+                modelOf("tab")
+                        .col("x", ColumnType.DOUBLE)
+                        .col("y", ColumnType.INT)
+        );
+    }
+
+    @Test
     public void testOrderByOnNonSelectedColumn() throws ParserException {
         assertModel(
                 "select-choose y from (select-choose y, x from (tab) order by x)",
@@ -2480,6 +2501,93 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTableNameAsArithmetic() {
+        assertSyntaxError(
+                "select x from 'tab' + 1",
+                22,
+                "unexpected",
+                modelOf("tab").col("x", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testTableNameCannotOpen() {
+        final FilesFacade ff = new FilesFacadeImpl() {
+            @Override
+            public long openRO(LPSZ name) {
+                if (Chars.endsWith(name, TableUtils.META_FILE_NAME)) {
+                    return -1;
+                }
+                return super.openRO(name);
+            }
+        };
+        CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+            @Override
+            public FilesFacade getFilesFacade() {
+                return ff;
+            }
+        };
+
+        CairoEngine engine = new Engine(configuration);
+        SqlLexerOptimiser lexer = new SqlLexerOptimiser(engine, configuration);
+
+        assertSyntaxError(
+                lexer,
+                engine,
+                "select * from tab",
+                14,
+                "Cannot open file",
+                modelOf("tab").col("x", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testTableNameJustNoRowidMarker() {
+        assertSyntaxError(
+                "select * from '*!*'",
+                14,
+                "come on"
+        );
+    }
+
+    @Test
+    public void testTableNameLocked() {
+        engine.lock("tab");
+        try {
+            assertSyntaxError(
+                    "select * from tab",
+                    14,
+                    "table is locked",
+                    modelOf("tab").col("x", ColumnType.INT)
+            );
+        } finally {
+            engine.unlock("tab");
+        }
+    }
+
+    @Test
+    public void testTableNameReserved() {
+        try (Path path = new Path()) {
+            configuration.getFilesFacade().touch(path.of(root).concat("tab").$());
+        }
+
+        assertSyntaxError(
+                "select * from tab",
+                14,
+                "table directory is of unknown format"
+        );
+    }
+
+    @Test
+    public void testTableNameWithNoRowidMarker() throws ParserException {
+        assertModel(
+                "select-choose x from (*!*tab)",
+                "select * from '*!*tab'",
+                modelOf("tab").col("x", ColumnType.INT)
+        );
+    }
+
+    @Test
     public void testTimestampOnSubQuery() throws Exception {
         assertModel("select-choose x from ((a b where x > y) _xQdbA1 timestamp (x))",
                 "select x from (a b) timestamp(x) where x > y",
@@ -2624,14 +2732,26 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
         );
     }
 
-    private void assertModel(String expected, String query, TableModel... tableModels) throws ParserException {
+    private static void assertSyntaxError(String query, int position, String contains, TableModel... tableModels) {
+        assertSyntaxError(parser, engine, query, position, contains, tableModels);
+    }
+
+    private static void assertSyntaxError(
+            SqlLexerOptimiser parser,
+            CairoEngine engine,
+            String query,
+            int position,
+            String contains,
+            TableModel... tableModels) {
         try {
             for (int i = 0, n = tableModels.length; i < n; i++) {
                 CairoTestUtils.create(tableModels[i]);
             }
-            sink.clear();
-            ((QueryModel) parser.parse(query)).toSink(sink);
-            TestUtils.assertEquals(expected, sink);
+            parser.parse(query);
+            Assert.fail("Exception expected");
+        } catch (ParserException e) {
+            Assert.assertEquals(position, e.getPosition());
+            TestUtils.assertContains(e.getMessage(), contains);
         } finally {
             Assert.assertTrue(engine.releaseAllReaders());
             for (int i = 0, n = tableModels.length; i < n; i++) {
@@ -2643,16 +2763,16 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
         }
     }
 
-    private void assertSyntaxError(String query, int position, String contains, TableModel... tableModels) {
+    private void assertModel(String expected, String query, TableModel... tableModels) throws ParserException {
         try {
             for (int i = 0, n = tableModels.length; i < n; i++) {
                 CairoTestUtils.create(tableModels[i]);
             }
-            parser.parse(query);
-            Assert.fail("Exception expected");
-        } catch (ParserException e) {
-            Assert.assertEquals(position, e.getPosition());
-            TestUtils.assertContains(e.getMessage(), contains);
+            sink.clear();
+            ParsedModel model = parser.parse(query);
+            Assert.assertEquals(model.getModelType(), ParsedModel.QUERY);
+            ((QueryModel) model).toSink(sink);
+            TestUtils.assertEquals(expected, sink);
         } finally {
             Assert.assertTrue(engine.releaseAllReaders());
             for (int i = 0, n = tableModels.length; i < n; i++) {

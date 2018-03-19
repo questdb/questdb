@@ -120,15 +120,14 @@ public abstract class AbstractCharSink implements CharSink {
     }
 
     @Override
-    public CharSink encodeUtf8(CharSequence cs, int from, int len) {
-        int hi = len + from;
+    public CharSink encodeUtf8(CharSequence cs, int from, int to) {
         int i = from;
-        while (i < hi) {
+        while (i < to) {
             char c = cs.charAt(i++);
             if (c < 128) {
                 putUtf8Special(c);
             } else {
-                i = putUtf8Internal(cs, hi, i, c);
+                i = putUtf8Internal(cs, to, i, c);
             }
         }
         return this;
