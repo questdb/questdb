@@ -51,8 +51,8 @@ public final class AnalyticColumn extends QueryColumn {
     }
 
     @Override
-    public AnalyticColumn of(String alias, int aliasPosition, ExprNode ast) {
-        return (AnalyticColumn) super.of(alias, aliasPosition, ast);
+    public AnalyticColumn of(String alias, ExprNode ast) {
+        return (AnalyticColumn) super.of(alias, ast);
     }
 
     public ObjList<ExprNode> getOrderBy() {

@@ -26,14 +26,15 @@ package com.questdb.griffin.lexer.model;
 import com.questdb.cairo.CairoException;
 import com.questdb.cairo.TableReader;
 import com.questdb.cairo.TableUtils;
+import com.questdb.cairo.pool.ex.EntryLockedException;
 import com.questdb.cairo.sql.CairoEngine;
 import com.questdb.common.JournalRuntimeException;
 import com.questdb.common.RecordMetadata;
 import com.questdb.griffin.common.ExprNode;
-import com.questdb.griffin.compiler.Parameter;
 import com.questdb.griffin.lexer.ParserException;
 import com.questdb.std.*;
 import com.questdb.std.str.CharSink;
+import com.questdb.std.str.FlyweightCharSequence;
 
 import java.util.ArrayDeque;
 
@@ -74,7 +75,6 @@ public class QueryModel implements Mutable, ParsedModel, AliasTranslator, Sinkab
     private final CharSequenceIntHashMap orderHash = new CharSequenceIntHashMap(4, 0.5, -1);
     private final ObjList<ExprNode> joinColumns = new ObjList<>(4);
     private final CharSequenceObjHashMap<WithClauseModel> withClauses = new CharSequenceObjHashMap<>();
-    private CharSequenceObjHashMap<Parameter> parameterMap = new CharSequenceObjHashMap<>();
     private ExprNode whereClause;
     private ExprNode postJoinWhereClause;
     private ExprNode constWhereClause;
@@ -95,14 +95,6 @@ public class QueryModel implements Mutable, ParsedModel, AliasTranslator, Sinkab
 
     private QueryModel() {
         joinModels.add(this);
-    }
-
-    public static boolean hasMarker(String name) {
-        return name.indexOf(NO_ROWID_MARKER) == 0;
-    }
-
-    public static String stripMarker(String name) {
-        return hasMarker(name) ? name.substring(NO_ROWID_MARKER.length()) : name;
     }
 
     public boolean addAliasIndex(ExprNode node, int index) {
@@ -177,7 +169,6 @@ public class QueryModel implements Mutable, ParsedModel, AliasTranslator, Sinkab
         limitHi = null;
         limitLo = null;
         columnNameTypeMap.clear();
-        parameterMap.clear();
         timestamp = null;
         exprNodeStack.clear();
         joinColumns.clear();
@@ -342,14 +333,6 @@ public class QueryModel implements Mutable, ParsedModel, AliasTranslator, Sinkab
         this.orderedJoinModels = that;
     }
 
-    public CharSequenceObjHashMap<Parameter> getParameterMap() {
-        return parameterMap;
-    }
-
-    public void setParameterMap(CharSequenceObjHashMap<Parameter> parameterMap) {
-        this.parameterMap = parameterMap;
-    }
-
     public ObjList<ExprNode> getParsedWhere() {
         return parsedWhere;
     }
@@ -378,18 +361,21 @@ public class QueryModel implements Mutable, ParsedModel, AliasTranslator, Sinkab
         this.selectModelType = selectModelType;
     }
 
-    public RecordMetadata getTableMetadata(CairoEngine engine) throws ParserException {
-
-        // todo: this method generates garbage - fix pls
-
+    public RecordMetadata getTableMetadata(CairoEngine engine, FlyweightCharSequence charSequence) throws ParserException {
+        // table name must not contain quotes by now
         ExprNode readerNode = getTableName();
-        if (readerNode.type != ExprNode.LITERAL && readerNode.type != ExprNode.CONSTANT) {
-            throw ParserException.$(readerNode.position, "Journal name must be either literal or string constant");
+
+        int lo = 0;
+        int hi = readerNode.token.length();
+        if (Chars.startsWith(readerNode.token, NO_ROWID_MARKER)) {
+            lo += NO_ROWID_MARKER.length();
         }
 
-        String reader = stripMarker(Chars.stripQuotes(readerNode.token));
+        if (lo == hi) {
+            throw ParserException.$(readerNode.position, "come on, where is table name?");
+        }
 
-        int status = engine.getStatus(reader);
+        int status = engine.getStatus(readerNode.token, lo, hi);
 
         if (status == TableUtils.TABLE_DOES_NOT_EXIST) {
             throw ParserException.$(readerNode.position, "table does not exist");
@@ -399,10 +385,12 @@ public class QueryModel implements Mutable, ParsedModel, AliasTranslator, Sinkab
             throw ParserException.$(readerNode.position, "table directory is of unknown format");
         }
 
-        try (TableReader r = engine.getReader(reader)) {
+        try (TableReader r = engine.getReader(charSequence.of(readerNode.token, lo, hi - lo))) {
             return r.getMetadata();
+        } catch (EntryLockedException e) {
+            throw ParserException.position(readerNode.position).put("table is locked: ").put(charSequence);
         } catch (CairoException e) {
-            throw ParserException.$(readerNode.position, e.getMessage());
+            throw ParserException.position(readerNode.position).put(e);
         }
     }
 

@@ -95,8 +95,8 @@ public class Engine implements Closeable, CairoEngine {
     }
 
     @Override
-    public int getStatus(CharSequence tableName) {
-        return TableUtils.exists(configuration.getFilesFacade(), path, configuration.getRoot(), tableName);
+    public int getStatus(CharSequence tableName, int lo, int hi) {
+        return TableUtils.exists(configuration.getFilesFacade(), path, configuration.getRoot(), tableName, lo, hi);
     }
 
     @Override
@@ -108,6 +108,7 @@ public class Engine implements Closeable, CairoEngine {
         return writerPool.get(tableName);
     }
 
+    @Override
     public boolean lock(CharSequence tableName) {
         if (writerPool.lock(tableName)) {
             boolean locked = readerPool.lock(tableName);
@@ -149,6 +150,7 @@ public class Engine implements Closeable, CairoEngine {
         }
     }
 
+    @Override
     public void unlock(CharSequence tableName) {
         readerPool.unlock(tableName);
         writerPool.unlock(tableName);

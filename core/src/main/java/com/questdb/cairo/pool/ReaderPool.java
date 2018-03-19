@@ -48,7 +48,7 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
     private static final int NEXT_OPEN = 0;
     private static final int NEXT_ALLOCATED = 1;
     private static final int NEXT_LOCKED = 2;
-    private final ConcurrentHashMap<CharSequence, Entry> entries = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<Entry> entries = new ConcurrentHashMap<>();
     private final int maxSegments;
     private final int maxEntries;
 
@@ -158,8 +158,11 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
 
         Entry e = entries.get(name);
         if (e == null) {
-            LOG.info().$('\'').$(name).$("' not found, nothing to lock").$();
-            return true;
+            e = new Entry(0, clock.getTicks());
+            Entry other = entries.putIfAbsent(name, e);
+            if (other != null) {
+                e = other;
+            }
         }
 
         long thread = Thread.currentThread().getId();
@@ -240,17 +243,6 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
         LOG.info().$("closed").$();
     }
 
-    private void closeReader(long thread, Entry entry, int index, short ev, int reason) {
-        R r = Unsafe.arrayGet(entry.readers, index);
-        if (r != null) {
-            r.goodby();
-            r.close();
-            LOG.info().$("closed '").$(r.getTableName()).$("' [at=").$(entry.index).$(':').$(index).$(", reason=").$(PoolConstants.closeReasonText(reason)).$(']').$();
-            notifyListener(thread, r.getTableName(), ev, entry.index, index);
-            Unsafe.arrayPut(entry.readers, index, null);
-        }
-    }
-
     @Override
     protected boolean releaseAll(long deadline) {
         long thread = Thread.currentThread().getId();
@@ -294,6 +286,17 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
             return removed;
         } else {
             return casFailures == 0;
+        }
+    }
+
+    private void closeReader(long thread, Entry entry, int index, short ev, int reason) {
+        R r = Unsafe.arrayGet(entry.readers, index);
+        if (r != null) {
+            r.goodby();
+            r.close();
+            LOG.info().$("closed '").$(r.getTableName()).$("' [at=").$(entry.index).$(':').$(index).$(", reason=").$(PoolConstants.closeReasonText(reason)).$(']').$();
+            notifyListener(thread, r.getTableName(), ev, entry.index, index);
+            Unsafe.arrayPut(entry.readers, index, null);
         }
     }
 

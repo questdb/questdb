@@ -111,7 +111,7 @@ public final class SqlLexerOptimiser {
         // we have plain tables and possibly joins
         // deal with _this_ model first, it will always be the first element in join model list
         if (model.getTableName() != null) {
-            RecordMetadata m = model.getTableMetadata(engine);
+            RecordMetadata m = model.getTableMetadata(engine, csPool.next());
             // column names are not allowed to have dot
             // todo: test that this is the case
             for (int i = 0, k = m.getColumnCount(); i < k; i++) {
@@ -622,13 +622,11 @@ public final class SqlLexerOptimiser {
 
         addColumnToTranslatingModel(queryColumnPool.next().of(
                 alias,
-                0,
                 columnAst
         ), translatingModel, validatingModel);
 
         final QueryColumn translatedColumn = queryColumnPool.next().of(
                 alias,
-                0,
                 // flatten the node
                 exprNodePool.next().of(ExprNode.LITERAL, alias, 0, 0));
 
@@ -1709,7 +1707,7 @@ public final class SqlLexerOptimiser {
                 parseFromClause(model, model);
                 return model;
             }
-            model.addColumn(queryColumnPool.next().of("*", 0, exprNodePool.next().of(ExprNode.LITERAL, "*", 0, 0)));
+            model.addColumn(queryColumnPool.next().of("*", exprNodePool.next().of(ExprNode.LITERAL, "*", 0, 0)));
         }
         QueryModel nestedModel = queryModelPool.next();
         parseFromClause(nestedModel, model);
@@ -1980,26 +1978,24 @@ public final class SqlLexerOptimiser {
             }
 
             String alias;
-            int aliasPosition = lexer.position();
 
             tok = tok("',', 'from', 'over' or literal");
 
             if (!columnAliasStop.contains(tok)) {
                 if (Chars.indexOf(tok, '.') != -1) {
-                    throw ParserException.$(aliasPosition, "'.' is not allowed here");
+                    throw ParserException.$(lexer.position(), "'.' is not allowed here");
                 }
                 alias = Chars.toString(tok);
                 tok = tok("',', 'from' or 'over'");
             } else {
                 alias = createColumnAlias(expr, model);
-                aliasPosition = -1;
             }
 
             if (Chars.equals(tok, "over")) {
                 // analytic
                 expectTok('(');
 
-                AnalyticColumn col = analyticColumnPool.next().of(alias, aliasPosition, expr);
+                AnalyticColumn col = analyticColumnPool.next().of(alias, expr);
                 tok = tok("'");
 
                 if (Chars.equals(tok, "partition")) {
@@ -2035,7 +2031,7 @@ public final class SqlLexerOptimiser {
                 model.addColumn(col);
                 tok = tok("'from' or ','");
             } else {
-                model.addColumn(queryColumnPool.next().of(alias, aliasPosition, expr));
+                model.addColumn(queryColumnPool.next().of(alias, expr));
             }
 
             if (Chars.equals(tok, "from")) {
@@ -2262,7 +2258,7 @@ public final class SqlLexerOptimiser {
 
     private ExprNode replaceIfAggregate(@Transient ExprNode node, QueryModel model) {
         if (node != null && FunctionFactories.isAggregate(node.token)) {
-            QueryColumn c = queryColumnPool.next().of(createColumnAlias(node, model), node.position, node);
+            QueryColumn c = queryColumnPool.next().of(createColumnAlias(node, model), node);
             model.addColumn(c);
             return exprNodePool.next().of(ExprNode.LITERAL, c.getAlias(), 0, 0);
         }
@@ -2277,7 +2273,7 @@ public final class SqlLexerOptimiser {
             if (index > -1) {
                 // this is the first time we see this column and must create alias
                 String alias = createColumnAlias(node, translatingModel);
-                QueryColumn column = queryColumnPool.next().of(alias, node.position, node);
+                QueryColumn column = queryColumnPool.next().of(alias, node);
                 // add column to both models
                 addColumnToTranslatingModel(column, translatingModel, validatingModel);
                 if (innerModel != null) {
@@ -2433,7 +2429,6 @@ public final class SqlLexerOptimiser {
                                 String alias = createColumnAlias(column, dot, baseParent.getColumnNameTypeMap());
                                 baseParent.addColumn(queryColumnPool.next().of(
                                         alias,
-                                        0,
                                         exprNodePool.next().of(ExprNode.LITERAL, column, 0, 0)
                                 ));
 
@@ -2441,7 +2436,6 @@ public final class SqlLexerOptimiser {
                                 if (model != baseParent) {
                                     QueryColumn col = queryColumnPool.next().of(
                                             alias,
-                                            0,
                                             exprNodePool.next().of(ExprNode.LITERAL, alias, 0, 0)
                                     );
 
@@ -2462,7 +2456,6 @@ public final class SqlLexerOptimiser {
                                         String refAlias = model.getColumns().getQuick(j).getAlias();
                                         wrapper.addColumn(queryColumnPool.next().of(
                                                 refAlias,
-                                                0,
                                                 exprNodePool.next().of(ExprNode.LITERAL, refAlias, 0, 0)
                                         ));
                                     }
@@ -2622,7 +2615,6 @@ public final class SqlLexerOptimiser {
                         // select sum(a)+sum(b) ....
                         QueryColumn groupByColumn = queryColumnPool.next().of(
                                 qc.getAlias(),
-                                0,
                                 // flatten node down to alias
                                 exprNodePool.next().of(ExprNode.LITERAL, qc.getAlias(), 0, 0));
                         outerModel.addColumn(groupByColumn);
@@ -2661,7 +2653,6 @@ public final class SqlLexerOptimiser {
                     // select a, x from (select a, b+c x from (select a,b,c ...))
                     QueryColumn innerColumn = queryColumnPool.next().of(
                             qc.getAlias(),
-                            0,
                             exprNodePool.next().of(ExprNode.LITERAL, qc.getAlias(), 0, 0)
                     );
 

@@ -300,7 +300,7 @@ public final class Chars {
                         if (inQuote) {
                             lastLen++;
                         } else {
-                            paths.add(new Path().of(args, lastIndex, lastLen).$());
+                            paths.add(new Path().of(args, lastIndex, lastLen + lastIndex).$());
                             lastLen = 0;
                         }
                     }
@@ -319,7 +319,7 @@ public final class Chars {
         }
 
         if (lastLen > 0) {
-            paths.add(new Path().of(args, lastIndex, lastLen).$());
+            paths.add(new Path().of(args, lastIndex, lastLen + lastIndex).$());
         }
         return paths;
     }
