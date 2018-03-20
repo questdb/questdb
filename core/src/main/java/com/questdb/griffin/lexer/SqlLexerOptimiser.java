@@ -27,6 +27,7 @@ import com.questdb.cairo.CairoConfiguration;
 import com.questdb.cairo.sql.CairoEngine;
 import com.questdb.common.ColumnType;
 import com.questdb.common.NumericException;
+import com.questdb.common.PartitionBy;
 import com.questdb.common.RecordMetadata;
 import com.questdb.griffin.common.ExprNode;
 import com.questdb.griffin.lexer.model.*;
@@ -149,6 +150,10 @@ public final class SqlLexerOptimiser {
         lexer.setContent(query);
         CharSequence tok = tok("'create', 'rename' or 'select'");
 
+        if (Chars.equals(tok, "select")) {
+            return parseSelect();
+        }
+
         if (Chars.equals(tok, "create")) {
             return parseCreateStatement();
         }
@@ -157,14 +162,7 @@ public final class SqlLexerOptimiser {
             return parseRenameStatement();
         }
 
-        lexer.unparse();
-
-        QueryModel model = parseDml();
-        tok = optTok();
-        if (tok != null) {
-            throw ParserException.position(lexer.position()).put("unexpected token: ").put(tok);
-        }
-        return optimise(model);
+        return parseSelect();
     }
 
     private static void assertNotNull(ExprNode node, int position, String message) throws ParserException {
@@ -320,7 +318,7 @@ public final class SqlLexerOptimiser {
                 if (bSize == 1
                         && literalCollector.nullCount == 0
                         // table must not be OUTER or ASOF joined
-                        && !joinBarriers.contains(parent.getJoinModels().get(literalCollectorBIndexes.getQuick(0)).getJoinType())) {
+                        && joinBarriers.excludes(parent.getJoinModels().get(literalCollectorBIndexes.getQuick(0)).getJoinType())) {
                     // single table reference + constant
                     jc = contextPool.next();
                     jc.slaveIndex = literalCollectorBIndexes.getQuick(0);
@@ -361,7 +359,7 @@ public final class SqlLexerOptimiser {
                     addJoinContext(parent, jc);
                 } else if (bSize == 0
                         && literalCollector.nullCount == 0
-                        && !joinBarriers.contains(parent.getJoinModels().get(literalCollectorAIndexes.getQuick(0)).getJoinType())) {
+                        && joinBarriers.excludes(parent.getJoinModels().get(literalCollectorAIndexes.getQuick(0)).getJoinType())) {
                     // single table reference + constant
                     jc.slaveIndex = lhi;
                     addWhereNode(parent, lhi, node);
@@ -436,7 +434,7 @@ public final class SqlLexerOptimiser {
                 } else if (rs == 1
                         && nullCounts.getQuick(k) == 0
                         // single table reference and this table is not joined via OUTER or ASOF
-                        && !joinBarriers.contains(parent.getJoinModels().getQuick(refs.getQuick(0)).getJoinType())) {
+                        && joinBarriers.excludes(parent.getJoinModels().getQuick(refs.getQuick(0)).getJoinType())) {
                     // get single table reference out of the way right away
                     // we don't have to wait until "our" table comes along
                     addWhereNode(parent, refs.getQuick(0), filterNodes.getQuick(k));
@@ -445,7 +443,7 @@ public final class SqlLexerOptimiser {
                     boolean qualifies = true;
                     // check if filter references table processed so far
                     for (int y = 0; y < rs; y++) {
-                        if (!tablesSoFar.contains(refs.getQuick(y))) {
+                        if (tablesSoFar.excludes(refs.getQuick(y))) {
                             qualifies = false;
                             break;
                         }
@@ -519,7 +517,7 @@ public final class SqlLexerOptimiser {
         final boolean disallowed = disallowedAliases.contains(base);
 
         // short and sweet version
-        if (indexOfDot == -1 && !disallowed && !nameTypeMap.contains(base)) {
+        if (indexOfDot == -1 && !disallowed && nameTypeMap.excludes(base)) {
             return Chars.toString(base);
         }
 
@@ -541,10 +539,9 @@ public final class SqlLexerOptimiser {
                 columnNameAssembly.put(sequence);
             }
             sequence++;
-            if (nameTypeMap.keyIndex(columnNameAssembly) < 0) {
-                continue;
+            if (nameTypeMap.excludes(columnNameAssembly)) {
+                return columnNameAssembly.toString();
             }
-            return columnNameAssembly.toString();
         }
     }
 
@@ -863,6 +860,14 @@ public final class SqlLexerOptimiser {
         return n;
     }
 
+    private int expectInt() throws ParserException {
+        try {
+            return Numbers.parseInt(tok("integer"));
+        } catch (NumericException e) {
+            throw err("bad integer");
+        }
+    }
+
     private ExprNode expectLiteral() throws ParserException {
         CharSequence tok = tok("literal");
         int pos = lexer.position();
@@ -917,7 +922,7 @@ public final class SqlLexerOptimiser {
         int index = -1;
         if (dot == -1) {
             for (int i = 0, n = joinModels.size(); i < n; i++) {
-                if (joinModels.getQuick(i).getColumnNameTypeMap().get(column) == -1) {
+                if (joinModels.getQuick(i).getColumnNameTypeMap().excludes(column)) {
                     continue;
                 }
 
@@ -940,7 +945,7 @@ public final class SqlLexerOptimiser {
                 throw ParserException.$(position, "Invalid table name or alias");
             }
 
-            if (joinModels.getQuick(index).getColumnNameTypeMap().keyIndex(column, dot + 1, column.length()) > -1) {
+            if (joinModels.getQuick(index).getColumnNameTypeMap().excludes(column, dot + 1, column.length())) {
                 throw ParserException.invalidColumn(position, column);
             }
 
@@ -1113,7 +1118,7 @@ public final class SqlLexerOptimiser {
             }
 
             if (deletedContexts.contains(i)) {
-                if (!r.parents.contains(min)) {
+                if (r.parents.excludes(min)) {
                     unlinkDependencies(parent, min, max);
                 }
             } else {
@@ -1135,10 +1140,6 @@ public final class SqlLexerOptimiser {
     private JoinContext moveClauses(QueryModel parent, JoinContext from, JoinContext to, IntList positions) {
         int p = 0;
         int m = positions.size();
-
-        if (m == 0) {
-            return from;
-        }
 
         JoinContext result = contextPool.next();
         result.slaveIndex = from.slaveIndex;
@@ -1268,7 +1269,7 @@ public final class SqlLexerOptimiser {
     private CharSequence notTermTok() throws ParserException {
         CharSequence tok = tok("')' or ','");
         if (isFieldTerm(tok)) {
-            throw err("Invalid column definition");
+            throw err("missing column definition");
         }
         return tok;
     }
@@ -1496,7 +1497,9 @@ public final class SqlLexerOptimiser {
             parseCreateTableColumns(model);
         } else if (Chars.equals(tok, "as")) {
             expectTok('(');
-            model.setQueryModel(parseSubQuery());
+            QueryModel queryModel = optimise(parseDml());
+
+            model.setQueryModel(queryModel);
             expectTok(')');
         } else {
             throw ParserException.position(lexer.position()).put("Unexpected token");
@@ -1519,24 +1522,14 @@ public final class SqlLexerOptimiser {
                     throw ParserException.invalidColumn(pos, columnName.token);
                 }
 
-                pos = lexer.position();
-                tok = tok("'block' or 'cast'");
-                if (Chars.equals(tok, "block")) {
-
-                    expectTok("size");
-
-                    try {
-                        model.setIndexFlags(columnIndex, true, Numbers.ceilPow2(Numbers.parseInt(tok("number expected"))) - 1);
-                    } catch (NumericException e) {
-                        throw ParserException.$(pos, "Int constant expected");
-                    }
-                    pos = lexer.position();
-                    tok = tok(") expected");
+                tok = tok("'capacity'");
+                if (Chars.equals(tok, "capacity")) {
+                    model.setIndexFlags(columnIndex, true, Numbers.ceilPow2(expectInt()) - 1);
                 } else {
                     model.setIndexFlags(columnIndex, true, configuration.getIndexValueBlockSize());
+                    lexer.unparse();
                 }
-                expectTok(tok, pos, ')');
-
+                expectTok(')');
                 tok = optTok();
             } else if (Chars.equals(tok, "cast")) {
                 expectTok('(');
@@ -1558,12 +1551,8 @@ public final class SqlLexerOptimiser {
                     pos = lexer.position();
 
                     if (Chars.equals(tok, "count")) {
-                        try {
-                            columnCastModel.setCount(Numbers.parseInt(tok("number expected")));
-                            tok = tok(") expected");
-                        } catch (NumericException e) {
-                            throw ParserException.$(pos, "int value expected");
-                        }
+                        columnCastModel.setCount(expectInt());
+                        tok = tok(") expected");
                     }
                 } else {
                     pos = lexer.position();
@@ -1584,19 +1573,23 @@ public final class SqlLexerOptimiser {
 
         ExprNode timestamp = parseTimestamp(tok);
         if (timestamp != null) {
+            int index = model.getColumnIndex(timestamp.token);
+            if (index == -1) {
+                throw ParserException.invalidColumn(timestamp.position, timestamp.token);
+            }
+            if (model.getColumnType(index) != ColumnType.TIMESTAMP) {
+                throw ParserException.$(timestamp.position, "referent is not a TIMESTAMP");
+            }
             model.setTimestamp(timestamp);
             tok = optTok();
         }
 
         ExprNode partitionBy = parseCreateTablePartition(tok);
         if (partitionBy != null) {
+            if (PartitionBy.fromString(partitionBy.token) == -1) {
+                throw ParserException.$(partitionBy.position, "'NONE', 'DAY', 'MONTH' or 'YEAR' expected");
+            }
             model.setPartitionBy(partitionBy);
-            tok = optTok();
-        }
-
-        ExprNode hint = parseCreateTableRecordHint(tok);
-        if (hint != null) {
-            model.setRecordHint(hint);
             tok = optTok();
         }
 
@@ -1620,10 +1613,21 @@ public final class SqlLexerOptimiser {
 
             CharSequence tok;
             switch (type) {
-                case ColumnType.INT:
-                case ColumnType.LONG:
-                case ColumnType.STRING:
                 case ColumnType.SYMBOL:
+                    tok = tok("'capacity', 'nocache', 'cache', 'index' or ')'");
+
+                    if (Chars.equals(tok, "capacity")) {
+                        model.symbolCapacity(expectInt());
+                        tok = tok("'nocache', 'cache', 'index' or ')'");
+                    }
+
+                    if (Chars.equals(tok, "nocache")) {
+                        model.cached(false);
+                    } else if (Chars.equals(tok, "cache")) {
+                        model.cached(true);
+                    } else {
+                        lexer.unparse();
+                    }
                     tok = parseCreateTableIndexDef(model);
                     break;
                 default:
@@ -1632,7 +1636,7 @@ public final class SqlLexerOptimiser {
             }
 
             if (tok == null) {
-                tok = tok(", | ) expected");
+                tok = tok("',' or ')'");
             }
 
             if (Chars.equals(tok, ')')) {
@@ -1640,13 +1644,13 @@ public final class SqlLexerOptimiser {
             }
 
             if (!Chars.equals(tok, ',')) {
-                throw err(", or ) expected");
+                throw err("',' or ')' expected");
             }
         }
     }
 
     private CharSequence parseCreateTableIndexDef(CreateTableModel model) throws ParserException {
-        CharSequence tok = tok(") | , | index expected");
+        CharSequence tok = tok("')', or 'index'");
 
         if (isFieldTerm(tok)) {
             return tok;
@@ -1659,15 +1663,8 @@ public final class SqlLexerOptimiser {
             return tok;
         }
 
-        expectTok(tok, "block");
-        expectTok("size");
-
-        try {
-            model.setIndexFlags(true, Numbers.parseInt(tok("number expected")));
-        } catch (NumericException e) {
-            throw err("bad int");
-        }
-
+        expectTok(tok, "capacity");
+        model.setIndexFlags(true, expectInt());
         return null;
     }
 
@@ -1675,18 +1672,6 @@ public final class SqlLexerOptimiser {
         if (Chars.equalsNc("partition", tok)) {
             expectTok("by");
             return expectLiteral();
-        }
-        return null;
-    }
-
-    private ExprNode parseCreateTableRecordHint(CharSequence tok) throws ParserException {
-        if (Chars.equalsNc("record", tok)) {
-            expectTok("hint");
-            ExprNode hint = expectExpr();
-            if (hint.type != ExprNode.CONSTANT) {
-                throw ParserException.$(hint.position, "Constant expected");
-            }
-            return hint;
         }
         return null;
     }
@@ -1737,7 +1722,7 @@ public final class SqlLexerOptimiser {
 
             // check if tok is not "where" - should be alias
 
-            if (tok != null && !tableAliasStop.contains(tok)) {
+            if (tok != null && tableAliasStop.excludes(tok)) {
                 model.setAlias(literal(tok));
                 tok = optTok();
             }
@@ -1755,7 +1740,7 @@ public final class SqlLexerOptimiser {
 
             tok = optTok();
 
-            if (tok != null && !tableAliasStop.contains(tok)) {
+            if (tok != null && tableAliasStop.excludes(tok)) {
                 model.setAlias(literal(tok));
                 tok = optTok();
             }
@@ -1865,7 +1850,7 @@ public final class SqlLexerOptimiser {
 
         tok = optTok();
 
-        if (tok != null && !tableAliasStop.contains(tok)) {
+        if (tok != null && tableAliasStop.excludes(tok)) {
             lexer.unparse();
             joinModel.setAlias(expr());
         } else {
@@ -1945,6 +1930,16 @@ public final class SqlLexerOptimiser {
         return model;
     }
 
+    private ParsedModel parseSelect() throws ParserException {
+        lexer.unparse();
+        final QueryModel model = parseDml();
+        final CharSequence tok = optTok();
+        if (tok != null) {
+            throw ParserException.position(lexer.position()).put("unexpected token: ").put(tok);
+        }
+        return optimise(model);
+    }
+
     private void parseSelectClause(QueryModel model) throws ParserException {
         CharSequence tok;
         while (true) {
@@ -1988,7 +1983,7 @@ public final class SqlLexerOptimiser {
 
             tok = tok("',', 'from', 'over' or literal");
 
-            if (!columnAliasStop.contains(tok)) {
+            if (columnAliasStop.excludes(tok)) {
                 if (Chars.indexOf(tok, '.') != -1) {
                     throw ParserException.$(lexer.position(), "'.' is not allowed here");
                 }
@@ -2377,7 +2372,7 @@ public final class SqlLexerOptimiser {
                 final String column = orderBy.token;
                 final int dot = column.indexOf('.');
                 // is this a table reference?
-                if (dot > -1 || !model.getColumnNameTypeMap().contains(column)) {
+                if (dot > -1 || model.getColumnNameTypeMap().excludes(column)) {
                     // validate column
                     getIndexOfTableForColumn(base, column, dot, orderBy.position);
 
@@ -2388,28 +2383,15 @@ public final class SqlLexerOptimiser {
                         // "x y" or "tab.x y" or "t.x y", where "t" is alias of table "tab"
                         final CharSequenceObjHashMap<String> map = baseParent.getColumnToAliasMap();
                         int index = map.keyIndex(column);
-                        if (index > -1) {
-                            if (dot > -1) {
-                                // we have the following that are true:
-                                // 1. column does have table alias, e.g. tab.x
-                                // 2. column definitely exists
-                                // 3. column is _not_ referenced as select tab.x from tab
-                                //
-                                // lets check if column is referenced as select x from tab
-                                // this will determine is column is referenced by select at all
-
-                                index = map.keyIndex(column, dot + 1, column.length());
-                            } else {
-                                // we have the following that are true:
-                                // 1. column does not have table alias, e.g. it is just "x"
-                                // 2. column definitely exists
-                                // 3. column is unambiguous because it was successfully found without table alias
-                                // 4. column is _not_ referenced as select x from tab
-                                //
-                                // check if column is referenced via table prefix
-                                // table prefix is either alias, if exists, or table name
-                                index = map.keyIndex(column);
-                            }
+                        if (index > -1 && dot > -1) {
+                            // we have the following that are true:
+                            // 1. column does have table alias, e.g. tab.x
+                            // 2. column definitely exists
+                            // 3. column is _not_ referenced as select tab.x from tab
+                            //
+                            // lets check if column is referenced as select x from tab
+                            // this will determine is column is referenced by select at all
+                            index = map.keyIndex(column, dot + 1, column.length());
                         }
 
                         if (index < 0) {
@@ -2744,6 +2726,9 @@ public final class SqlLexerOptimiser {
             }
         }
 
+        // we check that parent contains "to", so we must have something to do
+        assert clausesToSteal.size() > 0;
+
         if (clausesToSteal.size() < zc) {
             QueryModel target = parent.getJoinModels().getQuick(to);
             target.getDependencies().clear();
@@ -2819,10 +2804,10 @@ public final class SqlLexerOptimiser {
     }
 
     private static class LiteralRewritingVisitor implements PostOrderTreeTraversalAlgo.Visitor {
-        private CharSequenceObjHashMap<CharSequence> aliasToColumnMap;
+        private CharSequenceObjHashMap<CharSequence> nameTypeMap;
 
         public PostOrderTreeTraversalAlgo.Visitor of(CharSequenceObjHashMap<CharSequence> aliasToColumnMap) {
-            this.aliasToColumnMap = aliasToColumnMap;
+            this.nameTypeMap = aliasToColumnMap;
             return this;
         }
 
@@ -2830,11 +2815,11 @@ public final class SqlLexerOptimiser {
         public void visit(ExprNode node) {
             if (node.type == ExprNode.LITERAL) {
                 int dot = node.token.indexOf('.');
-                int index = dot == -1 ? aliasToColumnMap.keyIndex(node.token) : aliasToColumnMap.keyIndex(node.token, dot + 1, node.token.length());
+                int index = dot == -1 ? nameTypeMap.keyIndex(node.token) : nameTypeMap.keyIndex(node.token, dot + 1, node.token.length());
                 // we have table column hit when alias is not found
                 // in this case expression rewrite is unnecessary
                 if (index < 0) {
-                    CharSequence column = aliasToColumnMap.valueAt(index);
+                    CharSequence column = nameTypeMap.valueAt(index);
                     assert column != null;
                     // it is also unnecessary to rewrite literal if target value is the same
                     if (!Chars.equals(node.token, column)) {

@@ -240,7 +240,7 @@ public class ExprParser {
                                 break;
                         }
                         opStack.push(node);
-                    } else if (!nonLiteralBranches.contains(thisBranch)) {
+                    } else if (nonLiteralBranches.excludes(thisBranch)) {
                         thisBranch = BRANCH_LITERAL;
                         // If the token is a function token, then push it onto the stack.
                         opStack.push(exprNodePool.next().of(ExprNode.LITERAL, Chars.toString(tok), Integer.MIN_VALUE, lexer.position()));

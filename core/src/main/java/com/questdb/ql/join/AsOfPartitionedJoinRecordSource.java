@@ -111,7 +111,7 @@ public class AsOfPartitionedJoinRecordSource extends AbstractCombinedRecordSourc
                     case ColumnType.BINARY:
                         throw new JournalRuntimeException("Binary columns are not supported");
                     case ColumnType.STRING:
-                        if (!masterKeyColumns.contains(slave.getMetadata().getColumnName(i))) {
+                        if (masterKeyColumns.excludes(slave.getMetadata().getColumnName(i))) {
                             var = true;
                         }
                         break OUT;

@@ -262,11 +262,17 @@ public class ComparatorCompiler {
                     throw new JournalUnsupportedTypeException(ColumnType.nameOf(m.getColumnQuick(index).getType()));
             }
 
+            int keyIndex;
             int nameIndex;
-            int typeIndex = typeMap.get(fieldType);
-            if (typeIndex == -1) {
-                typeMap.put(fieldType, typeIndex = asm.poolUtf8(fieldType));
+            int typeIndex;
+
+            keyIndex = typeMap.keyIndex(fieldType);
+            if (keyIndex > -1) {
+                typeMap.putAt(keyIndex, fieldType, typeIndex = asm.poolUtf8(fieldType));
+            } else {
+                typeIndex = typeMap.valueAt(keyIndex);
             }
+
             fieldTypeIndices.add(typeIndex);
             fieldNameIndices.add(nameIndex = asm.poolUtf8().put('f').put(i).$());
             fieldIndices.add(asm.poolField(thisClassIndex, asm.poolNameAndType(nameIndex, typeIndex)));
@@ -278,14 +284,12 @@ public class ComparatorCompiler {
             if (getterNameB != null) {
                 methodMap.putIfAbsent(getterNameB, methodIndex = asm.poolInterfaceMethod(recordClassIndex, getterNameB, "(I)" + fieldType));
             }
-            fieldRecordAccessorIndicesB.add(methodIndex);
 
-            int comparatorIndex = comparatorMap.get(comparatorClass.getName());
-            if (comparatorIndex == -1) {
-                int nt = asm.poolNameAndType(compareMethodIndex, comparatorDesc == null ? asm.poolUtf8().put('(').put(fieldType).put(fieldType).put(")I").$() : asm.poolUtf8(comparatorDesc));
-                comparatorIndex = asm.poolMethod(asm.poolClass(comparatorClass), nt);
-            }
-            comparatorAccessorIndices.add(comparatorIndex);
+            fieldRecordAccessorIndicesB.add(methodIndex);
+            comparatorAccessorIndices.add(
+                    asm.poolMethod(asm.poolClass(comparatorClass),
+                            asm.poolNameAndType(compareMethodIndex, comparatorDesc == null ? asm.poolUtf8().put('(').put(fieldType).put(fieldType).put(")I").$() : asm.poolUtf8(comparatorDesc))
+                    ));
         }
     }
 }

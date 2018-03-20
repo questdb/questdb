@@ -23,10 +23,12 @@
 
 package com.questdb.griffin.lexer.model;
 
+import com.questdb.common.ColumnType;
 import com.questdb.griffin.common.ExprNode;
 import com.questdb.std.*;
+import com.questdb.std.str.CharSink;
 
-public class CreateTableModel implements Mutable, ParsedModel {
+public class CreateTableModel implements Mutable, ParsedModel, Sinkable {
     public static final ObjectFactory<CreateTableModel> FACTORY = CreateTableModel::new;
     private static final long COLUMN_FLAG_CHACHED = 1L;
     private static final long COLUMN_FLAG_INDEXED = 2L;
@@ -38,7 +40,6 @@ public class CreateTableModel implements Mutable, ParsedModel {
     private QueryModel queryModel;
     private ExprNode timestamp;
     private ExprNode partitionBy;
-    private ExprNode recordHint;
 
     private CreateTableModel() {
     }
@@ -58,13 +59,25 @@ public class CreateTableModel implements Mutable, ParsedModel {
         return columnCastModels.put(model.getName().token, model);
     }
 
+    public CreateTableModel cached(boolean cached) {
+        int last = columnBits.size() - 1;
+        assert last > 0;
+        assert ((int) columnBits.getQuick(last - 1) == ColumnType.SYMBOL);
+        long bits = columnBits.getQuick(last);
+        if (cached) {
+            columnBits.setQuick(last, bits | COLUMN_FLAG_CHACHED);
+        } else {
+            columnBits.setQuick(last, bits & ~COLUMN_FLAG_CHACHED);
+        }
+        return this;
+    }
+
     @Override
     public void clear() {
         columnCastModels.clear();
         queryModel = null;
         timestamp = null;
         partitionBy = null;
-        recordHint = null;
         name = null;
         columnBits.clear();
         columnNames.clear();
@@ -128,12 +141,12 @@ public class CreateTableModel implements Mutable, ParsedModel {
         this.queryModel = queryModel;
     }
 
-    public ExprNode getRecordHint() {
-        return recordHint;
+    public boolean getSymbolCacheFlag(int index) {
+        return (columnBits.getQuick(index * 2 + 1) & COLUMN_FLAG_CHACHED) == COLUMN_FLAG_CHACHED;
     }
 
-    public void setRecordHint(ExprNode recordHint) {
-        this.recordHint = recordHint;
+    public int getSymbolCapacity(int index) {
+        return (int) (columnBits.getQuick(index * 2) >> 32);
     }
 
     public ExprNode getTimestamp() {
@@ -150,6 +163,63 @@ public class CreateTableModel implements Mutable, ParsedModel {
 
     public void setIndexFlags(int columnIndex, boolean indexFlag, int indexValueBlockSize) {
         setIndexFlags0(columnIndex * 2 + 1, indexFlag, indexValueBlockSize);
+    }
+
+    public void symbolCapacity(int capacity) {
+        int pos = columnBits.size() - 2;
+        assert pos > -1;
+        long bits = columnBits.getQuick(pos);
+        assert ((int) bits == ColumnType.SYMBOL);
+        bits = (((long) capacity) << 32) | (int) bits;
+        columnBits.setQuick(pos, bits);
+    }
+
+    @Override
+    public void toSink(CharSink sink) {
+        sink.put("create table ");
+        sink.put(getName().token);
+        if (getQueryModel() != null) {
+            sink.put(" as (");
+            getQueryModel().toSink(sink);
+            sink.put(')');
+        } else {
+            sink.put(" (");
+            int count = getColumnCount();
+            for (int i = 0; i < count; i++) {
+                if (i > 0) {
+                    sink.put(", ");
+                }
+                sink.put(getColumnName(i));
+                sink.put(' ');
+                sink.put(ColumnType.nameOf(getColumnType(i)));
+
+                if (getColumnType(i) == ColumnType.SYMBOL) {
+                    sink.put(" capacity ");
+                    sink.put(getSymbolCapacity(i));
+                    if (getSymbolCacheFlag(i)) {
+                        sink.put(" cache");
+                    } else {
+                        sink.put(" nocache");
+                    }
+                }
+
+                if (getIndexedFlag(i)) {
+                    sink.put(" index capacity ");
+                    sink.put(getIndexBlockCapacity(i));
+                }
+            }
+            sink.put(')');
+        }
+
+        if (getTimestamp() != null) {
+            sink.put(" timestamp(");
+            sink.put(getTimestamp().token);
+            sink.put(')');
+        }
+
+        if (getPartitionBy() != null) {
+            sink.put(" partition by ").put(getPartitionBy().token);
+        }
     }
 
     private void setIndexFlags0(int columnIndex, boolean indexFlag, int indexValueBlockSize) {

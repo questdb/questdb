@@ -48,11 +48,11 @@ public class TableWriterMetadata extends AbstractRecordMetadata {
         // don't create strings in this loop, we already have them in columnNameIndexMap
         for (int i = 0; i < columnCount; i++) {
             CharSequence name = metaMem.getStr(offset);
-            int index = columnNameIndexMap.keyIndex(name);
+            assert name != null;
             int type = TableUtils.getColumnType(metaMem, i);
             columnMetadata.add(
                     new TableColumnMetadata(
-                            columnNameIndexMap.keyAt(index).toString(),
+                            name.toString(),
                             type,
                             TableUtils.isColumnIndexed(metaMem, i),
                             TableUtils.getIndexBlockCapacity(metaMem, i)

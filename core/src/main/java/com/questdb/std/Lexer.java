@@ -26,15 +26,14 @@ package com.questdb.std;
 import com.questdb.std.str.AbstractCharSequence;
 import com.questdb.std.str.ByteSequence;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
-import java.util.ArrayList;
 import java.util.Comparator;
-import java.util.List;
 
 public class Lexer implements ImmutableIterator<CharSequence> {
     public static final LenComparator COMPARATOR = new LenComparator();
     private static final CharSequenceHashSet whitespace = new CharSequenceHashSet();
-    private final IntObjHashMap<List<CharSequence>> symbols = new IntObjHashMap<>();
+    private final IntObjHashMap<ObjList<CharSequence>> symbols = new IntObjHashMap<>();
     private final CharSequence floatingSequence = new FloatingSequence();
     private final CharSequence floatingByteSequence = new FloatingByteSequence();
     private CharSequence next = null;
@@ -55,10 +54,13 @@ public class Lexer implements ImmutableIterator<CharSequence> {
 
     public final void defineSymbol(String token) {
         char c0 = token.charAt(0);
-        List<CharSequence> l = symbols.get(c0);
-        if (l == null) {
-            l = new ArrayList<>();
-            symbols.put(c0, l);
+        ObjList<CharSequence> l;
+        int index = symbols.keyIndex(c0);
+        if (index > -1) {
+            l = new ObjList<>();
+            symbols.putAt(index, c0, l);
+        } else {
+            l = symbols.valueAt(index);
         }
         l.add(token);
         l.sort(COMPARATOR);
@@ -199,7 +201,7 @@ public class Lexer implements ImmutableIterator<CharSequence> {
                 continue;
             }
 
-            if (blockCount == 0 && !whitespace.contains(cs)) {
+            if (blockCount == 0 && whitespace.excludes(cs)) {
                 return cs;
             }
         }
@@ -227,15 +229,16 @@ public class Lexer implements ImmutableIterator<CharSequence> {
         unparsed = last;
     }
 
-    private static CharSequence findToken0(char c, CharSequence content, int _pos, int _len, IntObjHashMap<List<CharSequence>> symbols) {
+    private static CharSequence findToken0(char c, CharSequence content, int _pos, int _len, IntObjHashMap<ObjList<CharSequence>> symbols) {
+        final int index = symbols.keyIndex(c);
+        return index > -1 ? null : findToken00(content, _pos, _len, symbols, index);
+    }
 
-        List<CharSequence> l = symbols.get(c);
-        if (l == null) {
-            return null;
-        }
-
+    @Nullable
+    private static CharSequence findToken00(CharSequence content, int _pos, int _len, IntObjHashMap<ObjList<CharSequence>> symbols, int index) {
+        final ObjList<CharSequence> l = symbols.valueAt(index);
         for (int i = 0, sz = l.size(); i < sz; i++) {
-            CharSequence txt = l.get(i);
+            CharSequence txt = l.getQuick(i);
             int n = txt.length();
             boolean match = (n - 2) < (_len - _pos);
             if (match) {

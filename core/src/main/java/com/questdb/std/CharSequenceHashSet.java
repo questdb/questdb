@@ -106,10 +106,11 @@ public class CharSequenceHashSet implements Mutable {
     }
 
     public boolean contains(CharSequence key) {
-        if (key == null) {
-            return hasNull;
-        }
-        return keyIndex(key) < 0;
+        return key == null ? hasNull : keyIndex(key) < 0;
+    }
+
+    public boolean excludes(CharSequence key) {
+        return key == null ? !hasNull : keyIndex(key) > -1;
     }
 
     public CharSequence get(int index) {

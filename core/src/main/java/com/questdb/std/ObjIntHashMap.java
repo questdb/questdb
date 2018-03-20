@@ -67,17 +67,7 @@ public class ObjIntHashMap<K> implements Iterable<ObjIntHashMap.Entry<K>>, Mutab
     }
 
     public int get(K key) {
-        int index = key.hashCode() & mask;
-
-        if (Unsafe.arrayGet(keys, index) == noEntryValue) {
-            return noKeyValue;
-        }
-
-        if (Unsafe.arrayGet(keys, index) == key || key.equals(Unsafe.arrayGet(keys, index))) {
-            return values[index];
-        }
-
-        return probe(key, index);
+        return valueAt(keyIndex(key));
     }
 
     public Iterable<Entry<K>> immutableIterator() {
@@ -91,85 +81,68 @@ public class ObjIntHashMap<K> implements Iterable<ObjIntHashMap.Entry<K>>, Mutab
         return iterator;
     }
 
-    public void put(K key, int value) {
+    public int keyIndex(K key) {
         int index = key.hashCode() & mask;
-        if (cantPutAt(index, key, value)) {
-            probeInsert(key, index, value);
+
+        if (Unsafe.arrayGet(keys, index) == noEntryValue) {
+            return index;
         }
+
+        if (Unsafe.arrayGet(keys, index) == key || key.equals(Unsafe.arrayGet(keys, index))) {
+            return -index - 1;
+        }
+
+        return probe(key, index);
+    }
+
+    public void put(K key, int value) {
+        putAt(keyIndex(key), key, value);
+    }
+
+    public boolean putAt(int index, K key, int value) {
+        if (index < 0) {
+            Unsafe.arrayPut(values, -index - 1, value);
+            return false;
+        }
+        putAt0(index, key, value);
+        return true;
     }
 
     public boolean putIfAbsent(K key, int value) {
-        int index = key.hashCode() & mask;
-        if (Unsafe.arrayGet(keys, index) == noEntryValue) {
-            keys[index] = key;
-            values[index] = value;
-            free--;
-            if (free == 0) {
-                rehash();
-            }
+        final int index = keyIndex(key);
+        if (index > -1) {
+            putAt(index, key, value);
             return true;
         }
-
-        return Unsafe.arrayGet(keys, index) != key && !key.equals(Unsafe.arrayGet(keys, index)) && probeInsertIfAbsent(key, index, value);
+        return false;
     }
 
     public int size() {
         return capacity - free;
     }
 
-    private boolean cantPutAt(int index, K key, int value) {
-        if (Unsafe.arrayGet(keys, index) == noEntryValue) {
-            Unsafe.arrayPut(keys, index, key);
-            Unsafe.arrayPut(values, index, value);
-            free--;
-            if (free == 0) {
-                rehash();
-            }
-            return false;
-        }
-
-        if (Unsafe.arrayGet(keys, index) == key || key.equals(Unsafe.arrayGet(keys, index))) {
-            Unsafe.arrayPut(values, index, value);
-            return false;
-        }
-        return true;
+    public int valueAt(int index) {
+        return index < 0 ? Unsafe.arrayGet(values, -index - 1) : noKeyValue;
     }
 
     private int probe(K key, int index) {
         do {
             index = (index + 1) & mask;
             if (Unsafe.arrayGet(keys, index) == noEntryValue) {
-                return noKeyValue;
+                return index;
             }
             if (Unsafe.arrayGet(keys, index) == key || key.equals(Unsafe.arrayGet(keys, index))) {
-                return Unsafe.arrayGet(values, index);
+                return -index - 1;
             }
         } while (true);
     }
 
-    private void probeInsert(K key, int index, int value) {
-        do {
-            index = (index + 1) & mask;
-        } while (cantPutAt(index, key, value));
-    }
-
-    private boolean probeInsertIfAbsent(K key, int index, int value) {
-        do {
-            index = (index + 1) & mask;
-            if (Unsafe.arrayGet(keys, index) == noEntryValue) {
-                Unsafe.arrayPut(keys, index, key);
-                Unsafe.arrayPut(values, index, value);
-                free--;
-                if (free == 0) {
-                    rehash();
-                }
-                return true;
-            }
-
-            if (Unsafe.arrayGet(keys, index) == key || key.equals(Unsafe.arrayGet(keys, index))) {
-                return false;
-            }
-        } while (true);
+    private void putAt0(int index, K key, int value) {
+        Unsafe.arrayPut(keys, index, key);
+        Unsafe.arrayPut(values, index, value);
+        if (--free == 0) {
+            rehash();
+        }
     }
 
     @SuppressWarnings({"unchecked"})

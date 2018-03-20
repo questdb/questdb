@@ -57,10 +57,10 @@ class TableReaderMetadata extends AbstractRecordMetadata implements Closeable {
             // don't create strings in this loop, we already have them in columnNameIndexMap
             for (int i = 0; i < columnCount; i++) {
                 CharSequence name = metaMem.getStr(offset);
-                int index = columnNameIndexMap.keyIndex(name);
+                assert name != null;
                 columnMetadata.add(
                         new TableColumnMetadata(
-                                columnNameIndexMap.keyAt(index).toString(),
+                                name.toString(),
                                 TableUtils.getColumnType(metaMem, i),
                                 TableUtils.isColumnIndexed(metaMem, i),
                                 TableUtils.getIndexBlockCapacity(metaMem, i)

@@ -150,8 +150,8 @@ public class SymbolMapWriter implements Closeable {
         }
 
         if (cache != null) {
-            int key = cache.get(symbol);
-            return key != -1 ? key : lookupPutAndCache(symbol);
+            int index = cache.keyIndex(symbol);
+            return index < 0 ? cache.valueAt(index) : lookupPutAndCache(index, symbol);
         }
         return lookupAndPut(symbol);
     }
@@ -199,10 +199,10 @@ public class SymbolMapWriter implements Closeable {
         return put0(symbol, hash);
     }
 
-    private int lookupPutAndCache(CharSequence symbol) {
+    private int lookupPutAndCache(int index, CharSequence symbol) {
         int result;
         result = lookupAndPut(symbol);
-        cache.put(symbol.toString(), result);
+        cache.putAt(index, symbol.toString(), result);
         return result;
     }
 
