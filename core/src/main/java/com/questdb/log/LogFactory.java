@@ -78,10 +78,13 @@ public class LogFactory implements Closeable {
     }
 
     public void add(final LogWriterConfig config) {
-        ScopeConfiguration scopeConf = scopeConfigMap.get(config.getScope());
-        if (scopeConf == null) {
-            scopeConfigMap.put(config.getScope(), scopeConf = new ScopeConfiguration(3));
+        final int index = scopeConfigMap.keyIndex(config.getScope());
+        ScopeConfiguration scopeConf;
+        if (index > -1) {
+            scopeConfigMap.putAt(index, config.getScope(), scopeConf = new ScopeConfiguration(3));
             scopeConfigs.add(scopeConf);
+        } else {
+            scopeConf = scopeConfigMap.valueAt(index);
         }
         scopeConf.add(config);
     }
@@ -403,9 +406,10 @@ public class LogFactory implements Closeable {
             for (int i = 0, n = channels.length; i < n; i++) {
                 int index = Unsafe.arrayGet(channels, i);
                 if (index > 0) {
-                    Holder h = holderMap.get(index);
-                    if (h == null) {
-                        holderMap.put(index, h = new Holder(queueDepth, recordLength));
+                    int keyIndex = holderMap.keyIndex(index);
+                    if (keyIndex > -1) {
+                        Holder h = new Holder(queueDepth, recordLength);
+                        holderMap.putAt(keyIndex, index, h);
                         holderList.add(h);
                     }
                 }

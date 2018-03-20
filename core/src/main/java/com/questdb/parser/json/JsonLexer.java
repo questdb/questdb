@@ -277,7 +277,7 @@ public class JsonLexer implements Mutable, Closeable {
     }
 
     private static boolean isNotATerminator(char c) {
-        return !unquotedTerminators.contains(c);
+        return unquotedTerminators.excludes(c);
     }
 
     private void cacheIncompleteTag(long valueStart, long hi) throws JsonException {

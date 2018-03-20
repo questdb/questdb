@@ -70,8 +70,11 @@ public final class ColumnType {
     }
 
     public static String nameOf(int columnType) {
-        String name = typeNameMap.get(columnType);
-        return name != null ? name : "unknown";
+        final int index = typeNameMap.keyIndex(columnType);
+        if (index > -1) {
+            return "unknown";
+        }
+        return typeNameMap.valueAt(index);
     }
 
     public static int pow2SizeOf(int columnType) {

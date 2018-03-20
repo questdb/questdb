@@ -39,10 +39,10 @@ import com.questdb.std.str.Path;
 import com.questdb.test.tools.TestUtils;
 import org.junit.AfterClass;
 import org.junit.Assert;
+import org.junit.Ignore;
 import org.junit.Test;
 
 import java.io.IOException;
-import java.util.HashSet;
 
 public class SqlLexerOptimiserTest extends AbstractCairoTest {
     private final static CairoEngine engine = new Engine(configuration);
@@ -258,122 +258,295 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testCreateTable() throws ParserException {
-        final String sql = "create table x (" +
-                "a INT, " +
-                "b BYTE, " +
-                "c SHORT, " +
-                "d LONG, " +
-                "e FLOAT, " +
-                "f DOUBLE, " +
-                "g DATE, " +
-                "h BINARY, " +
-                "t TIMESTAMP, " +
-                "x SYMBOL, " +
-                "z STRING, " +
-                "y BOOLEAN) " +
-                "timestamp(t) " +
-                "partition by MONTH " +
-                "record hint 100";
+        assertDDL(
+                "create table x (" +
+                        "a INT," +
+                        " b BYTE," +
+                        " c SHORT," +
+                        " d LONG," +
+                        " e FLOAT," +
+                        " f DOUBLE," +
+                        " g DATE," +
+                        " h BINARY," +
+                        " t TIMESTAMP," +
+                        " x SYMBOL capacity 128 cache," +
+                        " z STRING," +
+                        " y BOOLEAN) timestamp(t) partition by MONTH",
+                "create table x (" +
+                        "a INT, " +
+                        "b BYTE, " +
+                        "c SHORT, " +
+                        "d LONG, " +
+                        "e FLOAT, " +
+                        "f DOUBLE, " +
+                        "g DATE, " +
+                        "h BINARY, " +
+                        "t TIMESTAMP, " +
+                        "x SYMBOL, " +
+                        "z STRING, " +
+                        "y BOOLEAN) " +
+                        "timestamp(t) " +
+                        "partition by MONTH");
+    }
 
-        String expectedNames[] = {"a", "b", "c", "d", "e", "f", "g", "h", "t", "x", "z", "y"};
-        int expectedTypes[] = {
-                ColumnType.INT,
-                ColumnType.BYTE,
-                ColumnType.SHORT,
-                ColumnType.LONG,
-                ColumnType.FLOAT,
-                ColumnType.DOUBLE,
-                ColumnType.DATE,
-                ColumnType.BINARY,
-                ColumnType.TIMESTAMP,
-                ColumnType.SYMBOL,
-                ColumnType.STRING,
-                ColumnType.BOOLEAN
-        };
+    @Test
+    public void testCreateTableAsSelect() throws ParserException {
+        CairoTestUtils.create(modelOf("tab")
+                .col("a", ColumnType.INT)
+                .col("b", ColumnType.DOUBLE)
+                .col("c", ColumnType.STRING));
+        assertDDL(
+                "create table X as (select-choose a, b, c from (tab))",
+                "create table X as ( select a, b, c from tab )"
+        );
+    }
 
-        String expectedIndexColumns[] = {};
-        int expectedBlockSizes[] = {};
+    @Test
+    @Ignore
+    public void testCreateTableAsSelectIndex() throws ParserException {
+        assertDDL(
+                "create table X as (select-choose a, b, c from (tabX))",
+                "create table X as ( select a, b, c from tab ), index(b)"
+        );
+    }
 
-        assertTableModel(sql, expectedNames, expectedTypes, expectedIndexColumns, expectedBlockSizes, 8, "MONTH");
+    @Test
+    public void testCreateTableBadColumnDef() {
+        assertSyntaxError(
+                "create table x (" +
+                        "a INT, " +
+                        "b BYTE, " +
+                        "g DATE, " +
+                        "h BINARY, " +
+                        "t TIMESTAMP blah, " +
+                        "x SYMBOL index, " +
+                        "z STRING, " +
+                        "bool BOOLEAN) " +
+                        "timestamp(t) " +
+                        "partition by YEAR index",
+                61,
+                "',' or ')' expected"
+        );
+    }
+
+    @Test
+    public void testCreateTableBadTimestamp() {
+        assertSyntaxError(
+                "create table x (" +
+                        "a INT, " +
+                        "b BYTE, " +
+                        "g DATE, " +
+                        "h BINARY, " +
+                        "t TIMESTAMP, " +
+                        "x SYMBOL index, " +
+                        "z STRING, " +
+                        "bool BOOLEAN) " +
+                        "timestamp(h) " +
+                        "partition by YEAR",
+                112,
+                "referent is not a TIMESTAMP"
+        );
+    }
+
+    @Test
+    public void testCreateTableCacheCapacity() throws ParserException {
+        assertDDL("create table x (" +
+                        "a INT," +
+                        " b BYTE," +
+                        " c SHORT," +
+                        " d LONG," +
+                        " e FLOAT," +
+                        " f DOUBLE," +
+                        " g DATE," +
+                        " h BINARY," +
+                        " t TIMESTAMP," +
+                        " x SYMBOL capacity 64 cache," +
+                        " z STRING," +
+                        " y BOOLEAN)" +
+                        " timestamp(t)" +
+                        " partition by YEAR",
+                "create table x (" +
+                        "a INT, " +
+                        "b BYTE, " +
+                        "c SHORT, " +
+                        "d LONG, " +
+                        "e FLOAT, " +
+                        "f DOUBLE, " +
+                        "g DATE, " +
+                        "h BINARY, " +
+                        "t TIMESTAMP, " +
+                        "x SYMBOL capacity 64 cache, " +
+                        "z STRING, " +
+                        "y BOOLEAN) " +
+                        "timestamp(t) " +
+                        "partition by YEAR");
+    }
+
+    @Test
+    public void testCreateTableDuplicateColumn() {
+        assertSyntaxError(
+                "create table x (" +
+                        "a INT, " +
+                        "b BYTE, " +
+                        "c SHORT, " +
+                        "d LONG, " +
+                        "e FLOAT, " +
+                        "f DOUBLE, " +
+                        "g DATE, " +
+                        "h BINARY, " +
+                        "t TIMESTAMP, " +
+                        "x SYMBOL index, " +
+                        "z STRING, " +
+                        "t BOOLEAN) " +
+                        "timestamp(t) " +
+                        "partition by YEAR",
+                122,
+                "Duplicate column"
+        );
     }
 
     @Test
     public void testCreateTableInPlaceIndex() throws ParserException {
-        final String sql = "create table x (" +
-                "a INT, " +
-                "b BYTE, " +
-                "c SHORT, " +
-                "d LONG index, " + // <-- index here
-                "e FLOAT, " +
-                "f DOUBLE, " +
-                "g DATE, " +
-                "h BINARY, " +
-                "t TIMESTAMP, " +
-                "x SYMBOL index, " + // <-- index here
-                "z STRING, " +
-                "y BOOLEAN) " +
-                "timestamp(t) " +
-                "partition by YEAR " +
-                "record hint 100";
-
-        String expectedNames[] = {"a", "b", "c", "d", "e", "f", "g", "h", "t", "x", "z", "y"};
-        int expectedTypes[] = {
-                ColumnType.INT,
-                ColumnType.BYTE,
-                ColumnType.SHORT,
-                ColumnType.LONG,
-                ColumnType.FLOAT,
-                ColumnType.DOUBLE,
-                ColumnType.DATE,
-                ColumnType.BINARY,
-                ColumnType.TIMESTAMP,
-                ColumnType.SYMBOL,
-                ColumnType.STRING,
-                ColumnType.BOOLEAN
-        };
-
-        String expectedIndexColumns[] = {"d", "x"};
-        int expectedBlockSizes[] = {configuration.getIndexValueBlockSize(), configuration.getIndexValueBlockSize()};
-        assertTableModel(sql, expectedNames, expectedTypes, expectedIndexColumns, expectedBlockSizes, 8, "YEAR");
+        assertDDL("create table x (" +
+                        "a INT," +
+                        " b BYTE," +
+                        " c SHORT," +
+                        " d LONG," +
+                        " e FLOAT," +
+                        " f DOUBLE," +
+                        " g DATE," +
+                        " h BINARY," +
+                        " t TIMESTAMP," +
+                        " x SYMBOL capacity 128 cache index capacity 256," +
+                        " z STRING," +
+                        " y BOOLEAN)" +
+                        " timestamp(t)" +
+                        " partition by YEAR",
+                "create table x (" +
+                        "a INT, " +
+                        "b BYTE, " +
+                        "c SHORT, " +
+                        "d LONG, " +
+                        "e FLOAT, " +
+                        "f DOUBLE, " +
+                        "g DATE, " +
+                        "h BINARY, " +
+                        "t TIMESTAMP, " +
+                        "x SYMBOL index, " + // <-- index here
+                        "z STRING, " +
+                        "y BOOLEAN) " +
+                        "timestamp(t) " +
+                        "partition by YEAR");
     }
 
     @Test
     public void testCreateTableInPlaceIndexAndBlockSize() throws ParserException {
-        final String sql = "create table x (" +
-                "a INT index block size 16, " +
-                "b BYTE, " +
-                "c SHORT, " +
-                "t TIMESTAMP, " +
-                "d LONG, " +
-                "e FLOAT, " +
-                "f DOUBLE, " +
-                "g DATE, " +
-                "h BINARY, " +
-                "x SYMBOL index block size 128, " +
-                "z STRING, " +
-                "y BOOLEAN) " +
-                "timestamp(t) " +
-                "partition by MONTH " +
-                "record hint 100";
+        assertDDL(
+                "create table x (" +
+                        "a INT," +
+                        " b BYTE," +
+                        " c SHORT," +
+                        " t TIMESTAMP," +
+                        " d LONG," +
+                        " e FLOAT," +
+                        " f DOUBLE," +
+                        " g DATE," +
+                        " h BINARY," +
+                        " x SYMBOL capacity 128 cache index capacity 128," +
+                        " z STRING," +
+                        " y BOOLEAN) timestamp(t) partition by MONTH",
+                "create table x (" +
+                        "a INT, " +
+                        "b BYTE, " +
+                        "c SHORT, " +
+                        "t TIMESTAMP, " +
+                        "d LONG, " +
+                        "e FLOAT, " +
+                        "f DOUBLE, " +
+                        "g DATE, " +
+                        "h BINARY, " +
+                        "x SYMBOL index capacity 128, " +
+                        "z STRING, " +
+                        "y BOOLEAN) " +
+                        "timestamp(t) " +
+                        "partition by MONTH");
+    }
 
-        String expectedNames[] = {"a", "b", "c", "t", "d", "e", "f", "g", "h", "x", "z", "y"};
-        int expectedTypes[] = {
-                ColumnType.INT,
-                ColumnType.BYTE,
-                ColumnType.SHORT,
-                ColumnType.TIMESTAMP,
-                ColumnType.LONG,
-                ColumnType.FLOAT,
-                ColumnType.DOUBLE,
-                ColumnType.DATE,
-                ColumnType.BINARY,
-                ColumnType.SYMBOL,
-                ColumnType.STRING,
-                ColumnType.BOOLEAN
-        };
-        String expectedIndexColumns[] = {"a", "x"};
-        int expectedBlockSizes[] = {16, 128};
-        assertTableModel(sql, expectedNames, expectedTypes, expectedIndexColumns, expectedBlockSizes, 3, "MONTH");
+    @Test
+    public void testCreateTableInvalidColumnInIndex() {
+        assertSyntaxError(
+                "create table x (" +
+                        "a INT, " +
+                        "b BYTE, " +
+                        "g DATE, " +
+                        "h BINARY, " +
+                        "t TIMESTAMP, " +
+                        "x SYMBOL index, " +
+                        "z STRING, " +
+                        "bool BOOLEAN), " +
+                        "index(k) " +
+                        "timestamp(t) " +
+                        "partition by YEAR",
+                108,
+                "Invalid column"
+        );
+    }
+
+    @Test
+    public void testCreateTableInvalidPartitionBy() {
+        assertSyntaxError(
+                "create table x (" +
+                        "a INT, " +
+                        "b BYTE, " +
+                        "g DATE, " +
+                        "h BINARY, " +
+                        "t TIMESTAMP, " +
+                        "x SYMBOL index, " +
+                        "z STRING, " +
+                        "bool BOOLEAN) " +
+                        "timestamp(t) " +
+                        "partition by EPOCH",
+                128,
+                "'NONE', 'DAY', 'MONTH' or 'YEAR' expected"
+        );
+    }
+
+    @Test
+    public void testCreateTableInvalidTimestampColumn() {
+        assertSyntaxError(
+                "create table x (" +
+                        "a INT, " +
+                        "b BYTE, " +
+                        "g DATE, " +
+                        "h BINARY, " +
+                        "t TIMESTAMP, " +
+                        "x SYMBOL index, " +
+                        "z STRING, " +
+                        "bool BOOLEAN) " +
+                        "timestamp(zyz) " +
+                        "partition by YEAR",
+                112,
+                "Invalid column"
+        );
+    }
+
+    @Test
+    public void testCreateTableMissingColumnDef() {
+        assertSyntaxError(
+                "create table x (" +
+                        "a INT, " +
+                        "b BYTE, " +
+                        "g DATE, " +
+                        "h BINARY, " +
+                        "t TIMESTAMP, " +
+                        "x SYMBOL index, " +
+                        "z STRING, " +
+                        "bool BOOLEAN, ) " +
+                        "timestamp(t) " +
+                        "partition by YEAR index",
+                102,
+                "missing column definition"
+        );
     }
 
     @Test
@@ -387,44 +560,183 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCreateTableWithIndex() throws ParserException {
+    public void testCreateTableNoCache() throws ParserException {
+        assertDDL("create table x (" +
+                        "a INT," +
+                        " b BYTE," +
+                        " c SHORT," +
+                        " d LONG," +
+                        " e FLOAT," +
+                        " f DOUBLE," +
+                        " g DATE," +
+                        " h BINARY," +
+                        " t TIMESTAMP," +
+                        " x SYMBOL capacity 128 nocache," +
+                        " z STRING," +
+                        " y BOOLEAN)" +
+                        " timestamp(t)" +
+                        " partition by YEAR",
+                "create table x (" +
+                        "a INT, " +
+                        "b BYTE, " +
+                        "c SHORT, " +
+                        "d LONG, " +
+                        "e FLOAT, " +
+                        "f DOUBLE, " +
+                        "g DATE, " +
+                        "h BINARY, " +
+                        "t TIMESTAMP, " +
+                        "x SYMBOL nocache, " +
+                        "z STRING, " +
+                        "y BOOLEAN) " +
+                        "timestamp(t) " +
+                        "partition by YEAR");
+    }
 
-        final String sql = "create table x (" +
-                "a INT index block size 16, " +
-                "b BYTE, " +
-                "c SHORT, " +
-                "d LONG, " +
-                "e FLOAT, " +
-                "f DOUBLE, " +
-                "g DATE, " +
-                "h BINARY, " +
-                "t TIMESTAMP, " +
-                "x SYMBOL, " +
-                "z STRING, " +
-                "y BOOLEAN)" +
-                ", index(x) " +
-                "timestamp(t) " +
-                "partition by MONTH " +
-                "record hint 100";
+    @Test
+    public void testCreateTableNoCacheIndex() throws ParserException {
+        assertDDL("create table x (" +
+                        "a INT," +
+                        " b BYTE," +
+                        " c SHORT," +
+                        " d LONG," +
+                        " e FLOAT," +
+                        " f DOUBLE," +
+                        " g DATE," +
+                        " h BINARY," +
+                        " t TIMESTAMP," +
+                        " x SYMBOL capacity 128 nocache index capacity 256," +
+                        " z STRING," +
+                        " y BOOLEAN)" +
+                        " timestamp(t)" +
+                        " partition by YEAR",
+                "create table x (" +
+                        "a INT, " +
+                        "b BYTE, " +
+                        "c SHORT, " +
+                        "d LONG, " +
+                        "e FLOAT, " +
+                        "f DOUBLE, " +
+                        "g DATE, " +
+                        "h BINARY, " +
+                        "t TIMESTAMP, " +
+                        "x SYMBOL nocache index, " +
+                        "z STRING, " +
+                        "y BOOLEAN) " +
+                        "timestamp(t) " +
+                        "partition by YEAR");
+    }
 
-        String expectedNames[] = {"a", "b", "c", "d", "e", "f", "g", "h", "t", "x", "z", "y"};
-        int expectedTypes[] = {
-                ColumnType.INT,
-                ColumnType.BYTE,
-                ColumnType.SHORT,
-                ColumnType.LONG,
-                ColumnType.FLOAT,
-                ColumnType.DOUBLE,
-                ColumnType.DATE,
-                ColumnType.BINARY,
-                ColumnType.TIMESTAMP,
-                ColumnType.SYMBOL,
-                ColumnType.STRING,
-                ColumnType.BOOLEAN
-        };
-        String expectedIndexColumns[] = {"a", "x"};
-        int expectedBlockSizes[] = {16, configuration.getIndexValueBlockSize()};
-        assertTableModel(sql, expectedNames, expectedTypes, expectedIndexColumns, expectedBlockSizes, 8, "MONTH");
+    @Test
+    public void testCreateTableOutOfPlaceIndex() throws ParserException {
+        assertDDL(
+                "create table x (" +
+                        "a INT index capacity 256," +
+                        " b BYTE," +
+                        " c SHORT," +
+                        " t TIMESTAMP," +
+                        " d LONG," +
+                        " e FLOAT," +
+                        " f DOUBLE," +
+                        " g DATE," +
+                        " h BINARY," +
+                        " x SYMBOL capacity 128 cache index capacity 256," +
+                        " z STRING," +
+                        " y BOOLEAN)" +
+                        " timestamp(t)" +
+                        " partition by MONTH",
+                "create table x (" +
+                        "a INT, " +
+                        "b BYTE, " +
+                        "c SHORT, " +
+                        "t TIMESTAMP, " +
+                        "d LONG, " +
+                        "e FLOAT, " +
+                        "f DOUBLE, " +
+                        "g DATE, " +
+                        "h BINARY, " +
+                        "x SYMBOL, " +
+                        "z STRING, " +
+                        "y BOOLEAN) " +
+                        ", index (a) " +
+                        ", index (x) " +
+                        "timestamp(t) " +
+                        "partition by MONTH");
+    }
+
+    @Test
+    public void testCreateTableOutOfPlaceIndexAndCapacity() throws ParserException {
+        assertDDL(
+                "create table x (" +
+                        "a INT index capacity 16," +
+                        " b BYTE," +
+                        " c SHORT," +
+                        " t TIMESTAMP," +
+                        " d LONG," +
+                        " e FLOAT," +
+                        " f DOUBLE," +
+                        " g DATE," +
+                        " h BINARY," +
+                        " x SYMBOL capacity 128 cache index capacity 32," +
+                        " z STRING," +
+                        " y BOOLEAN)" +
+                        " timestamp(t)" +
+                        " partition by MONTH",
+                "create table x (" +
+                        "a INT, " +
+                        "b BYTE, " +
+                        "c SHORT, " +
+                        "t TIMESTAMP, " +
+                        "d LONG, " +
+                        "e FLOAT, " +
+                        "f DOUBLE, " +
+                        "g DATE, " +
+                        "h BINARY, " +
+                        "x SYMBOL, " +
+                        "z STRING, " +
+                        "y BOOLEAN) " +
+                        ", index (a capacity 16) " +
+                        ", index (x capacity 24) " +
+                        "timestamp(t) " +
+                        "partition by MONTH");
+    }
+
+    @Test
+    public void testCreateTableUnexpectedTrailingToken() {
+        assertSyntaxError(
+                "create table x (" +
+                        "a INT, " +
+                        "b BYTE, " +
+                        "g DATE, " +
+                        "h BINARY, " +
+                        "t TIMESTAMP, " +
+                        "x SYMBOL index, " +
+                        "z STRING, " +
+                        "bool BOOLEAN) " +
+                        "timestamp(t) " +
+                        "partition by YEAR index",
+                133,
+                "Unexpected token"
+        );
+    }
+
+    @Test
+    public void testCreateTableUnexpectedTrailingToken2() {
+        assertSyntaxError(
+                "create table x (" +
+                        "a INT, " +
+                        "b BYTE, " +
+                        "g DATE, " +
+                        "h BINARY, " +
+                        "t TIMESTAMP, " +
+                        "x SYMBOL index, " +
+                        "z STRING, " +
+                        "bool BOOLEAN) " +
+                        "timestamp(t) " +
+                        " index",
+                116,
+                "Unexpected token"
+        );
     }
 
     @Test
@@ -2763,6 +3075,15 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
         }
     }
 
+    private void assertDDL(String expected, String ddl) throws ParserException {
+        ParsedModel model = parser.parse(ddl);
+        Assert.assertEquals(ParsedModel.CREATE_JOURNAL, model.getModelType());
+        Assert.assertTrue(model instanceof CreateTableModel);
+        sink.clear();
+        ((CreateTableModel) model).toSink(sink);
+        TestUtils.assertEquals(expected, sink);
+    }
+
     private void assertModel(String expected, String query, TableModel... tableModels) throws ParserException {
         try {
             for (int i = 0, n = tableModels.length; i < n; i++) {
@@ -2782,46 +3103,6 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
                 tableModel.close();
             }
         }
-    }
-
-    private void assertTableModel(
-            String sql,
-            String[] expectedNames,
-            int[] expectedTypes,
-            String[] columnsWithIndexes,
-            int[] expectedBlockSizes,
-            int expectedTimestampIndex,
-            String expectedPartitionBy) throws ParserException {
-
-        ParsedModel model = parser.parse(sql);
-        Assert.assertTrue(model instanceof CreateTableModel);
-
-        final CreateTableModel m = (CreateTableModel) model;
-
-        Assert.assertEquals(expectedPartitionBy, m.getPartitionBy().token);
-        Assert.assertEquals(expectedNames.length, m.getColumnCount());
-
-        // check indexes
-        HashSet<String> indexed = new HashSet<>();
-        for (int i = 0, n = columnsWithIndexes.length; i < n; i++) {
-            int index = m.getColumnIndex(columnsWithIndexes[i]);
-
-            Assert.assertNotEquals(-1, index);
-            Assert.assertTrue(m.getIndexedFlag(index));
-            Assert.assertEquals(expectedBlockSizes[i], m.getIndexBlockCapacity(index));
-            indexed.add(columnsWithIndexes[i]);
-        }
-
-        for (int i = 0, n = m.getColumnCount(); i < n; i++) {
-            Assert.assertEquals(expectedNames[i], m.getColumnName(i));
-            Assert.assertEquals(expectedTypes[i], m.getColumnType(i));
-            // assert that non-indexed columns are correctly reflected in model
-            if (!indexed.contains(expectedNames[i])) {
-                Assert.assertFalse(m.getIndexedFlag(i));
-                Assert.assertEquals(0, m.getIndexBlockCapacity(i));
-            }
-        }
-        Assert.assertEquals(expectedTimestampIndex, m.getColumnIndex(m.getTimestamp().token));
     }
 
     private TableModel modelOf(String tableName) {
