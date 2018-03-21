@@ -852,6 +852,10 @@ public final class SqlLexerOptimiser {
         return ParserException.$(lexer.position(), msg);
     }
 
+    private ParserException errUnexpected(CharSequence token) {
+        return ParserException.unexpectedToken(lexer.position(), token);
+    }
+
     private ExprNode expectExpr() throws ParserException {
         ExprNode n = expr();
         if (n == null) {
@@ -915,6 +919,14 @@ public final class SqlLexerOptimiser {
 
     private CharSequence extractColumnName(CharSequence token, int dot) {
         return dot == -1 ? token : csPool.next().of(token, dot + 1, token.length() - dot - 1);
+    }
+
+    private int getCreateTableColumnIndex(CreateTableModel model, CharSequence columnName, int position) throws ParserException {
+        int index = model.getColumnIndex(columnName);
+        if (index == -1) {
+            throw ParserException.invalidColumn(position, columnName);
+        }
+        return index;
     }
 
     private int getIndexOfTableForColumn(QueryModel model, CharSequence column, int dot, int position) throws ParserException {
@@ -1496,90 +1508,26 @@ public final class SqlLexerOptimiser {
             lexer.unparse();
             parseCreateTableColumns(model);
         } else if (Chars.equals(tok, "as")) {
-            expectTok('(');
-            QueryModel queryModel = optimise(parseDml());
-
-            model.setQueryModel(queryModel);
-            expectTok(')');
+            parseCreateTableAsSelect(model);
         } else {
-            throw ParserException.position(lexer.position()).put("Unexpected token");
+            throw errUnexpected(tok);
         }
 
-
-        tok = optTok();
-        while (tok != null && Chars.equals(tok, ',')) {
-
-            int pos = lexer.position();
-
+        while ((tok = optTok()) != null && Chars.equals(tok, ',')) {
             tok = tok("'index' or 'cast'");
             if (Chars.equals(tok, "index")) {
-                expectTok('(');
-
-                pos = lexer.position();
-                ExprNode columnName = expectLiteral();
-                final int columnIndex = model.getColumnIndex(columnName.token);
-                if (columnIndex == -1) {
-                    throw ParserException.invalidColumn(pos, columnName.token);
-                }
-
-                tok = tok("'capacity'");
-                if (Chars.equals(tok, "capacity")) {
-                    model.setIndexFlags(columnIndex, true, Numbers.ceilPow2(expectInt()) - 1);
-                } else {
-                    model.setIndexFlags(columnIndex, true, configuration.getIndexValueBlockSize());
-                    lexer.unparse();
-                }
-                expectTok(')');
-                tok = optTok();
+                parseCreateTableIndexDef(model);
             } else if (Chars.equals(tok, "cast")) {
-                expectTok('(');
-                ColumnCastModel columnCastModel = columnCastModelPool.next();
-
-                columnCastModel.setName(expectLiteral());
-                expectTok("as");
-
-                ExprNode node = expectLiteral();
-                int type = ColumnType.columnTypeOf(node.token);
-                if (type == -1) {
-                    throw ParserException.$(node.position, "invalid type");
-                }
-
-                columnCastModel.setType(type, node.position);
-
-                if (type == ColumnType.SYMBOL) {
-                    tok = optTok();
-                    pos = lexer.position();
-
-                    if (Chars.equals(tok, "count")) {
-                        columnCastModel.setCount(expectInt());
-                        tok = tok(") expected");
-                    }
-                } else {
-                    pos = lexer.position();
-                    tok = tok(") expected");
-                }
-
-                expectTok(tok, pos, ')');
-
-                if (!model.addColumnCastModel(columnCastModel)) {
-                    throw ParserException.$(columnCastModel.getName().position, "duplicate cast");
-                }
-
-                tok = optTok();
+                parseCreateTableCastDef(model);
             } else {
-                throw ParserException.$(pos, "Unexpected token");
+                throw errUnexpected(tok);
             }
         }
 
         ExprNode timestamp = parseTimestamp(tok);
         if (timestamp != null) {
-            int index = model.getColumnIndex(timestamp.token);
-            if (index == -1) {
-                throw ParserException.invalidColumn(timestamp.position, timestamp.token);
-            }
-            if (model.getColumnType(index) != ColumnType.TIMESTAMP) {
-                throw ParserException.$(timestamp.position, "referent is not a TIMESTAMP");
-            }
+            // ignore index, validate column
+            getCreateTableColumnIndex(model, timestamp.token, timestamp.position);
             model.setTimestamp(timestamp);
             tok = optTok();
         }
@@ -1594,9 +1542,55 @@ public final class SqlLexerOptimiser {
         }
 
         if (tok != null) {
-            throw ParserException.$(lexer.position(), "Unexpected token");
+            throw errUnexpected(tok);
         }
         return model;
+    }
+
+    private void parseCreateTableAsSelect(CreateTableModel model) throws ParserException {
+        expectTok('(');
+        QueryModel queryModel = optimise(parseDml());
+        ObjList<QueryColumn> columns = queryModel.getColumns();
+        assert columns.size() > 0;
+
+        // we do not know types of columns at this stage
+        // compiler must put table together using query metadata.
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            model.addColumn(columns.getQuick(i).getName(), -1, configuration.getCutlassSymbolCapacity());
+        }
+
+        model.setQueryModel(queryModel);
+        expectTok(')');
+    }
+
+    private void parseCreateTableCastDef(CreateTableModel model) throws ParserException {
+        if (model.getQueryModel() == null) {
+            throw ParserException.$(lexer.position(), "cast is only supported in 'create table as ...' context");
+        }
+        expectTok('(');
+        ColumnCastModel columnCastModel = columnCastModelPool.next();
+
+        columnCastModel.setName(expectLiteral());
+        expectTok("as");
+
+        final ExprNode node = expectLiteral();
+        final int type = toColumnType(node.token);
+        columnCastModel.setType(type, node.position);
+
+        if (type == ColumnType.SYMBOL) {
+            if (Chars.equals(optTok(), "capacity")) {
+                columnCastModel.setSymbolCapacity(expectInt());
+            } else {
+                lexer.unparse();
+                columnCastModel.setSymbolCapacity(configuration.getCutlassSymbolCapacity());
+            }
+        }
+
+        expectTok(')');
+
+        if (!model.addColumnCastModel(columnCastModel)) {
+            throw ParserException.$(columnCastModel.getName().position, "duplicate cast");
+        }
     }
 
     private void parseCreateTableColumns(CreateTableModel model) throws ParserException {
@@ -1605,9 +1599,9 @@ public final class SqlLexerOptimiser {
         while (true) {
             final int position = lexer.position();
             final String name = Chars.toString(notTermTok());
-            final int type = ColumnType.columnTypeOf(notTermTok());
+            final int type = toColumnType(notTermTok());
 
-            if (!model.addColumn(name, type)) {
+            if (!model.addColumn(name, type, configuration.getCutlassSymbolCapacity())) {
                 throw ParserException.$(position, "Duplicate column");
             }
 
@@ -1628,7 +1622,7 @@ public final class SqlLexerOptimiser {
                     } else {
                         lexer.unparse();
                     }
-                    tok = parseCreateTableIndexDef(model);
+                    tok = parseCreateTableInlineIndexDef(model);
                     break;
                 default:
                     tok = null;
@@ -1649,10 +1643,24 @@ public final class SqlLexerOptimiser {
         }
     }
 
-    private CharSequence parseCreateTableIndexDef(CreateTableModel model) throws ParserException {
+    private void parseCreateTableIndexDef(CreateTableModel model) throws ParserException {
+        expectTok('(');
+        final int columnIndex = getCreateTableColumnIndex(model, expectLiteral().token, lexer.position());
+
+        if (Chars.equals(tok("'capacity'"), "capacity")) {
+            model.setIndexFlags(columnIndex, true, Numbers.ceilPow2(expectInt()) - 1);
+        } else {
+            model.setIndexFlags(columnIndex, true, configuration.getIndexValueBlockSize());
+            lexer.unparse();
+        }
+        expectTok(')');
+    }
+
+    private CharSequence parseCreateTableInlineIndexDef(CreateTableModel model) throws ParserException {
         CharSequence tok = tok("')', or 'index'");
 
         if (isFieldTerm(tok)) {
+            model.setIndexFlags(false, configuration.getIndexValueBlockSize());
             return tok;
         }
 
@@ -1935,7 +1943,7 @@ public final class SqlLexerOptimiser {
         final QueryModel model = parseDml();
         final CharSequence tok = optTok();
         if (tok != null) {
-            throw ParserException.position(lexer.position()).put("unexpected token: ").put(tok);
+            throw errUnexpected(tok);
         }
         return optimise(model);
     }
@@ -2741,6 +2749,14 @@ public final class SqlLexerOptimiser {
                 target.setJoinType(QueryModel.JOIN_INNER);
             }
         }
+    }
+
+    private int toColumnType(CharSequence tok) throws ParserException {
+        final int type = ColumnType.columnTypeOf(tok);
+        if (type == -1) {
+            throw ParserException.$(lexer.position(), "unsupported column type: ").put(tok);
+        }
+        return type;
     }
 
     private CharSequence tok(String expectedList) throws ParserException {

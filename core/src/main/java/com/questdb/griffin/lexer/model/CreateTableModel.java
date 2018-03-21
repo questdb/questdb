@@ -32,6 +32,7 @@ public class CreateTableModel implements Mutable, ParsedModel, Sinkable {
     public static final ObjectFactory<CreateTableModel> FACTORY = CreateTableModel::new;
     private static final long COLUMN_FLAG_CHACHED = 1L;
     private static final long COLUMN_FLAG_INDEXED = 2L;
+    private static int DEFAULT_SYMBOL_CAPACITY = 128;
     private final CharSequenceObjHashMap<ColumnCastModel> columnCastModels = new CharSequenceObjHashMap<>();
     private final LongList columnBits = new LongList();
     private final ObjList<CharSequence> columnNames = new ObjList<>();
@@ -44,11 +45,10 @@ public class CreateTableModel implements Mutable, ParsedModel, Sinkable {
     private CreateTableModel() {
     }
 
-    public boolean addColumn(CharSequence name, int type) {
+    public boolean addColumn(CharSequence name, int type, int symbolCapacity) {
         if (columnNameIndexMap.put(name, columnNames.size())) {
             columnNames.add(Chars.stringOf(name));
-            // set default symbol capacity
-            columnBits.add((128L << 32) | type);
+            columnBits.add(((long) symbolCapacity << 32) | type);
             columnBits.add(COLUMN_FLAG_CHACHED);
             return true;
         }
@@ -182,6 +182,32 @@ public class CreateTableModel implements Mutable, ParsedModel, Sinkable {
             sink.put(" as (");
             getQueryModel().toSink(sink);
             sink.put(')');
+            for (int i = 0, n = getColumnCount(); i < n; i++) {
+                if (getIndexedFlag(i)) {
+                    sink.put(", index(");
+                    sink.put(getColumnName(i));
+                    sink.put(" capacity ");
+                    sink.put(getIndexBlockCapacity(i));
+                    sink.put(')');
+                }
+            }
+            final ObjList<CharSequence> castColumns = getColumnCastModels().keys();
+            for (int i = 0, n = castColumns.size(); i < n; i++) {
+                final CharSequence column = castColumns.getQuick(i);
+                final ColumnCastModel m = getColumnCastModels().get(column);
+                final int type = m.getColumnType();
+                sink.put(", cast(");
+                sink.put(column);
+                sink.put(" as ");
+                sink.put(ColumnType.nameOf(type));
+                sink.put(':');
+                sink.put(m.getColumnTypePos());
+                if (type == ColumnType.SYMBOL) {
+                    sink.put(" capacity ");
+                    sink.put(m.getSymbolCapacity());
+                }
+                sink.put(')');
+            }
         } else {
             sink.put(" (");
             int count = getColumnCount();

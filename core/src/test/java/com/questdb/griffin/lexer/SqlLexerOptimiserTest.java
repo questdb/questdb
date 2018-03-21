@@ -39,7 +39,6 @@ import com.questdb.std.str.Path;
 import com.questdb.test.tools.TestUtils;
 import org.junit.AfterClass;
 import org.junit.Assert;
-import org.junit.Ignore;
 import org.junit.Test;
 
 import java.io.IOException;
@@ -257,6 +256,19 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCreateAsSelectInvalidIndex() {
+        assertSyntaxError(
+                "create table X as ( select a, b, c from tab ), index(x)",
+                53,
+                "Invalid column",
+                modelOf("tab")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.DOUBLE)
+                        .col("c", ColumnType.STRING)
+        );
+    }
+
+    @Test
     public void testCreateTable() throws ParserException {
         assertDDL(
                 "create table x (" +
@@ -291,22 +303,52 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testCreateTableAsSelect() throws ParserException {
-        CairoTestUtils.create(modelOf("tab")
-                .col("a", ColumnType.INT)
-                .col("b", ColumnType.DOUBLE)
-                .col("c", ColumnType.STRING));
         assertDDL(
                 "create table X as (select-choose a, b, c from (tab))",
-                "create table X as ( select a, b, c from tab )"
+                "create table X as ( select a, b, c from tab )",
+                modelOf("tab")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.DOUBLE)
+                        .col("c", ColumnType.STRING)
         );
     }
 
     @Test
-    @Ignore
     public void testCreateTableAsSelectIndex() throws ParserException {
         assertDDL(
-                "create table X as (select-choose a, b, c from (tabX))",
-                "create table X as ( select a, b, c from tab ), index(b)"
+                "create table X as (select-choose a, b, c from (tab)), index(b capacity 256)",
+                "create table X as ( select a, b, c from tab ), index(b)",
+                modelOf("tab")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.DOUBLE)
+                        .col("c", ColumnType.STRING)
+
+        );
+    }
+
+    @Test
+    public void testCreateTableAsSelectIndexCapacity() throws ParserException {
+        assertDDL(
+                "create table X as (select-choose a, b, c from (tab)), index(b capacity 64)",
+                "create table X as ( select a, b, c from tab ), index(b capacity 64)",
+                modelOf("tab")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.DOUBLE)
+                        .col("c", ColumnType.STRING)
+
+        );
+    }
+
+    @Test
+    public void testCreateTableAsSelectTimestamp() throws ParserException {
+        assertDDL(
+                "create table X as (select-choose a, b, c from (tab)) timestamp(b)",
+                "create table X as ( select a, b, c from tab ) timestamp(b)",
+                modelOf("tab")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.DOUBLE)
+                        .col("c", ColumnType.STRING)
+
         );
     }
 
@@ -326,25 +368,6 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
                         "partition by YEAR index",
                 61,
                 "',' or ')' expected"
-        );
-    }
-
-    @Test
-    public void testCreateTableBadTimestamp() {
-        assertSyntaxError(
-                "create table x (" +
-                        "a INT, " +
-                        "b BYTE, " +
-                        "g DATE, " +
-                        "h BINARY, " +
-                        "t TIMESTAMP, " +
-                        "x SYMBOL index, " +
-                        "z STRING, " +
-                        "bool BOOLEAN) " +
-                        "timestamp(h) " +
-                        "partition by YEAR",
-                112,
-                "referent is not a TIMESTAMP"
         );
     }
 
@@ -380,6 +403,58 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
                         "y BOOLEAN) " +
                         "timestamp(t) " +
                         "partition by YEAR");
+    }
+
+    @Test
+    public void testCreateTableCastCapacityDef() throws ParserException {
+        assertDDL(
+                "create table x as (select-choose a, b, c from (tab)), cast(a as DOUBLE:35), cast(c as SYMBOL:54 capacity 16)",
+                "create table x as (tab), cast(a as double), cast(c as symbol capacity 16)",
+                modelOf("tab")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.LONG)
+                        .col("c", ColumnType.STRING)
+
+        );
+    }
+
+    @Test
+    public void testCreateTableCastDef() throws ParserException {
+        assertDDL(
+                "create table x as (select-choose a, b, c from (tab)), cast(a as DOUBLE:35), cast(c as SYMBOL:54 capacity 128)",
+                "create table x as (tab), cast(a as double), cast(c as symbol)",
+                modelOf("tab")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.LONG)
+                        .col("c", ColumnType.STRING)
+
+        );
+    }
+
+    @Test
+    public void testCreateTableCastUnsupportedType() {
+        assertSyntaxError(
+                "create table x as (tab), cast(b as integer)",
+                35,
+                "unsupported column type",
+                modelOf("tab")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.LONG)
+                        .col("c", ColumnType.STRING)
+        );
+    }
+
+    @Test
+    public void testCreateTableDuplicateCast() {
+        assertSyntaxError(
+                "create table x as (tab), cast(b as double), cast(b as long)",
+                49,
+                "duplicate cast",
+                modelOf("tab")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.LONG)
+                        .col("c", ColumnType.STRING)
+        );
     }
 
     @Test
@@ -473,6 +548,15 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCreateTableInvalidCapacity() {
+        assertSyntaxError(
+                "create table x (a symbol capacity z)",
+                34,
+                "bad integer"
+        );
+    }
+
+    @Test
     public void testCreateTableInvalidColumnInIndex() {
         assertSyntaxError(
                 "create table x (" +
@@ -487,8 +571,17 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
                         "index(k) " +
                         "timestamp(t) " +
                         "partition by YEAR",
-                108,
+                109,
                 "Invalid column"
+        );
+    }
+
+    @Test
+    public void testCreateTableInvalidColumnType() {
+        assertSyntaxError(
+                "create table tab (a int, b integer)",
+                27,
+                "unsupported column type"
         );
     }
 
@@ -527,6 +620,28 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
                         "partition by YEAR",
                 112,
                 "Invalid column"
+        );
+    }
+
+    @Test
+    public void testCreateTableMisplacedCastCapacity() {
+        assertSyntaxError(
+                "create table x as (tab), cast(a as double capacity 16)",
+                42,
+                "')' expected",
+                modelOf("tab")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.LONG)
+                        .col("c", ColumnType.STRING)
+        );
+    }
+
+    @Test
+    public void testCreateTableMisplacedCastDef() {
+        assertSyntaxError(
+                "create table tab (a int, b long), cast (a as double)",
+                34,
+                "cast is only supported"
         );
     }
 
@@ -702,6 +817,24 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCreateTableUnexpectedToken() {
+        assertSyntaxError(
+                "create table x blah",
+                15,
+                "unexpected token"
+        );
+    }
+
+    @Test
+    public void testCreateTableUnexpectedToken2() {
+        assertSyntaxError(
+                "create table x (a int, b double), xyz",
+                34,
+                "unexpected token"
+        );
+    }
+
+    @Test
     public void testCreateTableUnexpectedTrailingToken() {
         assertSyntaxError(
                 "create table x (" +
@@ -716,7 +849,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
                         "timestamp(t) " +
                         "partition by YEAR index",
                 133,
-                "Unexpected token"
+                "unexpected token"
         );
     }
 
@@ -735,7 +868,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
                         "timestamp(t) " +
                         " index",
                 116,
-                "Unexpected token"
+                "unexpected token"
         );
     }
 
@@ -3075,25 +3208,33 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
         }
     }
 
-    private void assertDDL(String expected, String ddl) throws ParserException {
-        ParsedModel model = parser.parse(ddl);
-        Assert.assertEquals(ParsedModel.CREATE_JOURNAL, model.getModelType());
-        Assert.assertTrue(model instanceof CreateTableModel);
-        sink.clear();
-        ((CreateTableModel) model).toSink(sink);
-        TestUtils.assertEquals(expected, sink);
+    private void assertDDL(String expected, String ddl, TableModel... tableModels) throws ParserException {
+        createModelsAndRun(() -> {
+            ParsedModel model = parser.parse(ddl);
+            Assert.assertEquals(ParsedModel.CREATE_JOURNAL, model.getModelType());
+            Assert.assertTrue(model instanceof CreateTableModel);
+            sink.clear();
+            ((CreateTableModel) model).toSink(sink);
+            TestUtils.assertEquals(expected, sink);
+        }, tableModels);
     }
 
     private void assertModel(String expected, String query, TableModel... tableModels) throws ParserException {
-        try {
-            for (int i = 0, n = tableModels.length; i < n; i++) {
-                CairoTestUtils.create(tableModels[i]);
-            }
+        createModelsAndRun(() -> {
             sink.clear();
             ParsedModel model = parser.parse(query);
             Assert.assertEquals(model.getModelType(), ParsedModel.QUERY);
             ((QueryModel) model).toSink(sink);
             TestUtils.assertEquals(expected, sink);
+        }, tableModels);
+    }
+
+    private void createModelsAndRun(CairoAware runnable, TableModel... tableModels) throws ParserException {
+        try {
+            for (int i = 0, n = tableModels.length; i < n; i++) {
+                CairoTestUtils.create(tableModels[i]);
+            }
+            runnable.run();
         } finally {
             Assert.assertTrue(engine.releaseAllReaders());
             for (int i = 0, n = tableModels.length; i < n; i++) {
@@ -3107,5 +3248,10 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     private TableModel modelOf(String tableName) {
         return new TableModel(configuration, tableName, PartitionBy.NONE);
+    }
+
+    @FunctionalInterface
+    private interface CairoAware {
+        void run() throws ParserException;
     }
 }

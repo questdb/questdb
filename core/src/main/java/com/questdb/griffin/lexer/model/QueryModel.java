@@ -28,7 +28,6 @@ import com.questdb.cairo.TableReader;
 import com.questdb.cairo.TableUtils;
 import com.questdb.cairo.pool.ex.EntryLockedException;
 import com.questdb.cairo.sql.CairoEngine;
-import com.questdb.common.JournalRuntimeException;
 import com.questdb.common.RecordMetadata;
 import com.questdb.griffin.common.ExprNode;
 import com.questdb.griffin.lexer.ParserException;
@@ -327,9 +326,7 @@ public class QueryModel implements Mutable, ParsedModel, AliasTranslator, Sinkab
     }
 
     public void setOrderedJoinModels(IntList that) {
-        if (that != orderedJoinModels1 && that != orderedJoinModels2) {
-            throw new JournalRuntimeException("Passing foreign list breaks convention");
-        }
+        assert that == orderedJoinModels1 || that == orderedJoinModels2;
         this.orderedJoinModels = that;
     }
 
