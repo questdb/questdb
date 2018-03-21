@@ -48,7 +48,7 @@ public class RenameTableModel implements Mutable, ParsedModel {
 
     @Override
     public int getModelType() {
-        return ParsedModel.RENAME_JOURNAL;
+        return ParsedModel.RENAME_TABLE;
     }
 
     public ExprNode getTo() {

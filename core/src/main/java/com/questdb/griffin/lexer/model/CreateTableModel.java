@@ -114,7 +114,7 @@ public class CreateTableModel implements Mutable, ParsedModel, Sinkable {
 
     @Override
     public int getModelType() {
-        return ParsedModel.CREATE_JOURNAL;
+        return ParsedModel.CREATE_TABLE;
     }
 
     public ExprNode getName() {

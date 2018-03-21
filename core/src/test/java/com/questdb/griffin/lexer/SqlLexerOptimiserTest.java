@@ -54,7 +54,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testAliasWithSpace() throws Exception {
-        assertModel("select-choose x from (x 'b a' where x > 1)",
+        assertQuery("select-choose x from (x 'b a' where x > 1)",
                 "x 'b a' where x > 1",
                 modelOf("x").col("x", ColumnType.INT));
     }
@@ -74,7 +74,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testAnalyticOrderDirection() throws Exception {
-        assertModel(
+        assertQuery(
                 "select-analytic a, b, f(c) my over (partition by b order by ts desc, x, y) from (xyz)",
                 "select a,b, f(c) my over (partition by b order by ts desc, x asc, y) from xyz",
                 modelOf("xyz")
@@ -89,7 +89,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testAnalyticPartitionByMultiple() throws Exception {
-        assertModel(
+        assertQuery(
                 "select-analytic a, b, f(c) my over (partition by b, a order by ts), d(c) d over () from (xyz)",
                 "select a,b, f(c) my over (partition by b, a order by ts), d(c) over() from xyz",
                 modelOf("xyz").col("c", ColumnType.INT).col("b", ColumnType.INT).col("a", ColumnType.INT)
@@ -98,7 +98,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testAsOfJoin() throws ParserException {
-        assertModel(
+        assertQuery(
                 "select-choose" +
                         " t.timestamp timestamp," +
                         " t.tag tag," +
@@ -113,7 +113,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testAsOfJoinOrder() throws Exception {
-        assertModel(
+        assertQuery(
                 "select-choose" +
                         " c.customerId customerId," +
                         " e.employeeId employeeId," +
@@ -147,7 +147,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
         //        11. TOP
         //
         // which means "where" clause for "e" table has to be explicitly as post-join-where
-        assertModel(
+        assertQuery(
                 "select-choose" +
                         " c.customerId customerId," +
                         " e.lastName lastName," +
@@ -183,7 +183,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testAsOfJoinSubQuerySimpleAlias() throws Exception {
-        assertModel(
+        assertQuery(
                 "select-choose" +
                         " c.customerId customerId," +
                         " a.lastName lastName," +
@@ -217,7 +217,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testAsOfJoinSubQuerySimpleNoAlias() throws Exception {
-        assertModel(
+        assertQuery(
                 "select-choose" +
                         " c.customerId customerId," +
                         " _xQdbA1.lastName lastName," +
@@ -241,7 +241,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testCount() throws Exception {
-        assertModel(
+        assertQuery(
                 "select-group-by" +
                         " customerId," +
                         " count() count " +
@@ -270,7 +270,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testCreateTable() throws ParserException {
-        assertDDL(
+        assertCreateTable(
                 "create table x (" +
                         "a INT," +
                         " b BYTE," +
@@ -303,7 +303,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testCreateTableAsSelect() throws ParserException {
-        assertDDL(
+        assertCreateTable(
                 "create table X as (select-choose a, b, c from (tab))",
                 "create table X as ( select a, b, c from tab )",
                 modelOf("tab")
@@ -315,7 +315,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testCreateTableAsSelectIndex() throws ParserException {
-        assertDDL(
+        assertCreateTable(
                 "create table X as (select-choose a, b, c from (tab)), index(b capacity 256)",
                 "create table X as ( select a, b, c from tab ), index(b)",
                 modelOf("tab")
@@ -328,7 +328,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testCreateTableAsSelectIndexCapacity() throws ParserException {
-        assertDDL(
+        assertCreateTable(
                 "create table X as (select-choose a, b, c from (tab)), index(b capacity 64)",
                 "create table X as ( select a, b, c from tab ), index(b capacity 64)",
                 modelOf("tab")
@@ -341,7 +341,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testCreateTableAsSelectTimestamp() throws ParserException {
-        assertDDL(
+        assertCreateTable(
                 "create table X as (select-choose a, b, c from (tab)) timestamp(b)",
                 "create table X as ( select a, b, c from tab ) timestamp(b)",
                 modelOf("tab")
@@ -373,7 +373,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testCreateTableCacheCapacity() throws ParserException {
-        assertDDL("create table x (" +
+        assertCreateTable("create table x (" +
                         "a INT," +
                         " b BYTE," +
                         " c SHORT," +
@@ -407,7 +407,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testCreateTableCastCapacityDef() throws ParserException {
-        assertDDL(
+        assertCreateTable(
                 "create table x as (select-choose a, b, c from (tab)), cast(a as DOUBLE:35), cast(c as SYMBOL:54 capacity 16)",
                 "create table x as (tab), cast(a as double), cast(c as symbol capacity 16)",
                 modelOf("tab")
@@ -420,7 +420,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testCreateTableCastDef() throws ParserException {
-        assertDDL(
+        assertCreateTable(
                 "create table x as (select-choose a, b, c from (tab)), cast(a as DOUBLE:35), cast(c as SYMBOL:54 capacity 128)",
                 "create table x as (tab), cast(a as double), cast(c as symbol)",
                 modelOf("tab")
@@ -482,7 +482,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testCreateTableInPlaceIndex() throws ParserException {
-        assertDDL("create table x (" +
+        assertCreateTable("create table x (" +
                         "a INT," +
                         " b BYTE," +
                         " c SHORT," +
@@ -516,7 +516,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testCreateTableInPlaceIndexAndBlockSize() throws ParserException {
-        assertDDL(
+        assertCreateTable(
                 "create table x (" +
                         "a INT," +
                         " b BYTE," +
@@ -676,7 +676,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testCreateTableNoCache() throws ParserException {
-        assertDDL("create table x (" +
+        assertCreateTable("create table x (" +
                         "a INT," +
                         " b BYTE," +
                         " c SHORT," +
@@ -710,7 +710,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testCreateTableNoCacheIndex() throws ParserException {
-        assertDDL("create table x (" +
+        assertCreateTable("create table x (" +
                         "a INT," +
                         " b BYTE," +
                         " c SHORT," +
@@ -744,7 +744,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testCreateTableOutOfPlaceIndex() throws ParserException {
-        assertDDL(
+        assertCreateTable(
                 "create table x (" +
                         "a INT index capacity 256," +
                         " b BYTE," +
@@ -781,7 +781,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testCreateTableOutOfPlaceIndexAndCapacity() throws ParserException {
-        assertDDL(
+        assertCreateTable(
                 "create table x (" +
                         "a INT index capacity 16," +
                         " b BYTE," +
@@ -884,7 +884,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testCrossJoin2() throws Exception {
-        assertModel(
+        assertQuery(
                 "select-choose a.x x from (a a cross join b z)",
                 "select a.x from a a cross join b z",
                 modelOf("a").col("x", ColumnType.INT),
@@ -893,7 +893,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testCrossJoin3() throws Exception {
-        assertModel(
+        assertQuery(
                 "select-choose a.x x from (a a join c on c.x = a.x cross join b z)",
                 "select a.x from a a " +
                         "cross join b z " +
@@ -906,7 +906,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testCrossJoinNoAlias() throws Exception {
-        assertModel("select-choose a.x x from (a a join c on c.x = a.x cross join b)",
+        assertQuery("select-choose a.x x from (a a join c on c.x = a.x cross join b)",
                 "select a.x from a a " +
                         "cross join b " +
                         "join c on a.x = c.x",
@@ -917,7 +917,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testCrossJoinWithClause() throws ParserException {
-        assertModel(
+        assertQuery(
                 "select-choose" +
                         " c.name name," +
                         " c.customerId customerId," +
@@ -948,7 +948,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testDisallowedColumnAliases() throws ParserException {
-        assertModel(
+        assertQuery(
                 "select-virtual x + z column, x - z column1, x * z column2, x / z column3, x % z column4, x ^ z column5 from (tab1)",
                 "select x+z, x-z, x*z, x/z, x%z, x^z from tab1",
                 modelOf("tab1")
@@ -968,7 +968,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testDuplicateTables() throws Exception {
-        assertModel(
+        assertQuery(
                 "select-choose" +
                         " customers.customerId customerId," +
                         " customers.customerName customerName," +
@@ -993,7 +993,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testEqualsConstantTransitivityLhs() throws Exception {
-        assertModel(
+        assertQuery(
                 "select-choose" +
                         " c.customerId customerId," +
                         " o.customerId customerId1" +
@@ -1010,7 +1010,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testEqualsConstantTransitivityRhs() throws Exception {
-        assertModel(
+        assertQuery(
                 "select-choose" +
                         " c.customerId customerId," +
                         " o.customerId customerId1" +
@@ -1041,7 +1041,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testFilterOnSubQuery() throws Exception {
-        assertModel(
+        assertQuery(
                 "select-choose" +
                         " c.customerName customerName," +
                         " c.count count," +
@@ -1067,7 +1067,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testGenericPreFilterPlacement() throws Exception {
-        assertModel(
+        assertQuery(
                 "select-choose customerName, orderId, productId" +
                         " from (" +
                         "customers" +
@@ -1081,7 +1081,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testInnerJoin() throws Exception {
-        assertModel(
+        assertQuery(
                 "select-choose a.x x from (a a join b on b.x = a.x)",
                 "select a.x from a a inner join b on b.x = a.x",
                 modelOf("a").col("x", ColumnType.INT),
@@ -1091,7 +1091,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testInnerJoin2() throws Exception {
-        assertModel(
+        assertQuery(
                 "select-choose" +
                         " customers.customerId customerId," +
                         " customers.customerName customerName," +
@@ -1107,7 +1107,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testInnerJoinEqualsConstant() throws Exception {
-        assertModel(
+        assertQuery(
                 "select-choose" +
                         " customers.customerId customerId," +
                         " orders.customerId customerId1," +
@@ -1122,7 +1122,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testInnerJoinEqualsConstantLhs() throws Exception {
-        assertModel(
+        assertQuery(
                 "select-choose" +
                         " customers.customerId customerId," +
                         " orders.customerId customerId1," +
@@ -1137,7 +1137,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testInnerJoinSubQuery() throws Exception {
-        assertModel(
+        assertQuery(
                 "select-choose customerName, productName, orderId" +
                         " from (" +
                         "(select-choose customerName, orderId, productId, productName from (" +
@@ -1155,7 +1155,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
                 modelOf("products").col("productId", ColumnType.INT)
         );
 
-        assertModel(
+        assertQuery(
                 "select-choose customerName, productName, orderId from (customers join (orders o where productName ~ 'WTBHZVPVZZ') o on o.customerId = customers.customerId join products p on p.productId = o.productId)",
                 "select customerName, productName, orderId " +
                         " from customers join orders o on customers.customerId = o.customerId " +
@@ -1280,7 +1280,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testJoin1() throws Exception {
-        assertModel(
+        assertQuery(
                 "select-choose t1.x x, y from " +
                         "(" +
                         "(select-choose x from " +
@@ -1303,7 +1303,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testJoin2() throws Exception {
-        assertModel(
+        assertQuery(
                 "select-choose x from (((" +
                         "select-choose" +
                         " tab2.x x" +
@@ -1318,7 +1318,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testJoin3() throws Exception {
-        assertModel(
+        assertQuery(
                 "select-choose x from ((select-choose tab2.x x from (tab join tab2 on tab2.x = tab.x cross join tab3 post-join-where tab3.x f tab2.x = tab.x)) _xQdbA1)",
                 "select x from (select tab2.x from tab join tab2 on tab.x=tab2.x join tab3 on f(tab3.x,tab2.x) = tab.x)",
                 modelOf("tab").col("x", ColumnType.INT),
@@ -1342,7 +1342,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testJoinColumnResolutionOnSubQuery() throws ParserException {
-        assertModel(
+        assertQuery(
                 "select-group-by sum(timestamp) sum from ((y) _xQdbA1 cross join (x) _xQdbA2)",
                 "select sum(timestamp) from (y) cross join (x)",
                 modelOf("x").col("ccy", ColumnType.SYMBOL),
@@ -1352,7 +1352,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testJoinColumnResolutionOnSubQuery2() throws ParserException {
-        assertModel(
+        assertQuery(
                 "select-group-by sum(timestamp) sum from ((y) _xQdbA1 join (x) _xQdbA2 on _xQdbA2.ccy = _xQdbA1.ccy and _xQdbA2.sym = _xQdbA1.sym)",
                 "select sum(timestamp) from (y) join (x) on (ccy, sym)",
                 modelOf("x").col("ccy", ColumnType.SYMBOL).col("sym", ColumnType.INT),
@@ -1362,7 +1362,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testJoinColumnResolutionOnSubQuery3() throws ParserException {
-        assertModel(
+        assertQuery(
                 "select-group-by sum(timestamp) sum from ((y) _xQdbA1 cross join x)",
                 "select sum(timestamp) from (y) cross join x",
                 modelOf("x").col("ccy", ColumnType.SYMBOL),
@@ -1372,7 +1372,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testJoinCycle() throws Exception {
-        assertModel(
+        assertQuery(
                 "select-choose" +
                         " orders.customerId customerId," +
                         " orders.orderId orderId," +
@@ -1404,7 +1404,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testJoinCycle2() throws Exception {
-        assertModel(
+        assertQuery(
                 "select-choose" +
                         " orders.customerId" +
                         " customerId," +
@@ -1449,7 +1449,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testJoinFunction() throws ParserException {
-        assertModel(
+        assertQuery(
                 "select-choose" +
                         " tab.x x," +
                         " t.y y," +
@@ -1469,7 +1469,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testJoinGroupBy() throws Exception {
-        assertModel("select-group-by" +
+        assertQuery("select-group-by" +
                         " country," +
                         " avg(quantity) avg " +
                         "from (orders o join (customers c where country ~ '^Z') c on c.customerId = o.customerId join orderDetails d on d.orderId = o.orderId)",
@@ -1485,7 +1485,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testJoinGroupByFilter() throws Exception {
-        assertModel(
+        assertQuery(
                 "select-choose" +
                         " avg," +
                         " country " +
@@ -1509,7 +1509,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testJoinImpliedCrosses() throws Exception {
-        assertModel(
+        assertQuery(
                 "select-choose" +
                         " orders.customerId customerId," +
                         " orders.orderId orderId," +
@@ -1540,7 +1540,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testJoinMultipleFields() throws Exception {
-        assertModel(
+        assertQuery(
                 "select-choose" +
                         " orders.customerId customerId," +
                         " orders.orderId orderId," +
@@ -1572,7 +1572,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testJoinOfJoin() throws ParserException {
-        assertModel(
+        assertQuery(
                 "select-choose" +
                         " tt.x x," +
                         " tt.y y," +
@@ -1605,7 +1605,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testJoinOnColumns() throws ParserException {
-        assertModel(
+        assertQuery(
                 "select-choose a.x x, b.y y from (tab1 a join tab2 b on b.z = a.z)",
                 "select a.x, b.y from tab1 a join tab2 b on (z)",
                 modelOf("tab1")
@@ -1632,7 +1632,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testJoinOnExpression2() throws ParserException {
-        assertModel("select-choose" +
+        assertQuery("select-choose" +
                         " a.x x," +
                         " b.x x1" +
                         " from (" +
@@ -1646,7 +1646,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testJoinOneFieldToTwoAcross2() throws Exception {
-        assertModel(
+        assertQuery(
                 "select-choose" +
                         " orders.orderId orderId," +
                         " orders.customerId customerId," +
@@ -1679,7 +1679,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testJoinOneFieldToTwoReorder() throws Exception {
-        assertModel(
+        assertQuery(
                 "select-choose" +
                         " orders.orderId orderId," +
                         " orders.customerId customerId," +
@@ -1712,7 +1712,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testJoinOrder4() throws ParserException {
-        assertModel(
+        assertQuery(
                 "select-choose" +
                         " b.id id," +
                         " e.id id1" +
@@ -1736,7 +1736,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testJoinReorder() throws Exception {
-        assertModel(
+        assertQuery(
                 "select-choose" +
                         " orders.orderId orderId," +
                         " customers.customerId customerId," +
@@ -1768,7 +1768,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testJoinReorder3() throws Exception {
-        assertModel(
+        assertQuery(
                 "select-choose" +
                         " orders.orderId orderId," +
                         " customers.customerId customerId," +
@@ -1804,7 +1804,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testJoinReorderRoot() throws Exception {
-        assertModel(
+        assertQuery(
                 "select-choose" +
                         " customers.customerId customerId," +
                         " orders.orderId orderId," +
@@ -1837,7 +1837,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testJoinReorderRoot2() throws Exception {
-        assertModel(
+        assertQuery(
                 "select-choose" +
                         " orders.orderId orderId," +
                         " customers.customerId customerId," +
@@ -1877,7 +1877,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testJoinSubQuery() throws Exception {
-        assertModel(
+        assertQuery(
                 "select-choose" +
                         " orders.orderId orderId," +
                         " _xQdbA1.customerName customerName," +
@@ -1896,7 +1896,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testJoinSubQueryConstantWhere() throws Exception {
-        assertModel(
+        assertQuery(
                 "select-choose o.customerId customerId" +
                         " from ((select-choose customerId cid from (customers where 100 = customerId)) c" +
                         " outer join (orders o where o.customerId = 100) o on o.customerId = c.cid" +
@@ -1911,7 +1911,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testJoinSubQueryWherePosition() throws Exception {
-        assertModel(
+        assertQuery(
                 "select-choose" +
                         " o.customerId customerId " +
                         "from " +
@@ -1938,7 +1938,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testJoinWith() throws ParserException {
-        assertModel(
+        assertQuery(
                 "select-choose" +
                         " x.y y," +
                         " x1.y y1," +
@@ -1956,7 +1956,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testJoinWithClausesDefaultAlias() throws ParserException {
-        assertModel(
+        assertQuery(
                 "select-choose" +
                         " cust.customerId customerId," +
                         " cust.name name," +
@@ -1978,7 +1978,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testJoinWithClausesExplicitAlias() throws ParserException {
-        assertModel(
+        assertQuery(
                 "select-choose" +
                         " c.name name," +
                         " c.customerId customerId," +
@@ -2000,7 +2000,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testJoinWithFilter() throws Exception {
-        assertModel(
+        assertQuery(
                 "select-choose" +
                         " customers.customerId customerId," +
                         " orders.orderId orderId," +
@@ -2107,7 +2107,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testMixedFieldsSubQuery() throws Exception {
-        assertModel(
+        assertQuery(
                 "select-choose x, y from ((select-virtual x, z + x y from (tab t2 latest by x where x > 100)) t1 where y > 0)",
                 "select x, y from (select x,z + x y from tab t2 latest by x where x > 100) t1 where y > 0",
                 modelOf("tab").col("x", ColumnType.INT).col("z", ColumnType.INT));
@@ -2115,7 +2115,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testMostRecentWhereClause() throws Exception {
-        assertModel(
+        assertQuery(
                 "select-virtual x, sum + 25 ohoh from (select-group-by x, sum(z) sum from (select-virtual a + b * c x, z from (zyzy latest by x where in(y,x,a) and b = 10)))",
                 "select a+b*c x, sum(z)+25 ohoh from zyzy latest by x where a in (x,y) and b = 10",
                 modelOf("zyzy")
@@ -2130,7 +2130,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testMultipleExpressions() throws Exception {
-        assertModel(
+        assertQuery(
                 "select-virtual x, sum + 25 ohoh from (select-group-by x, sum(z) sum from (select-virtual a + b * c x, z from (zyzy)))",
                 "select a+b*c x, sum(z)+25 ohoh from zyzy",
                 modelOf("zyzy")
@@ -2145,7 +2145,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testNestedJoinReorder() throws Exception {
-        assertModel(
+        assertQuery(
                 "select-choose" +
                         " x.orderId orderId," +
                         " x.productId productId," +
@@ -2190,7 +2190,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testOneAnalyticColumn() throws Exception {
-        assertModel(
+        assertQuery(
                 "select-analytic a, b, f(c) f over (partition by b order by ts) from (xyz)",
                 "select a,b, f(c) over (partition by b order by ts) from xyz",
                 modelOf("xyz")
@@ -2202,7 +2202,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testOptimiseNotAnd() throws ParserException {
-        assertModel(
+        assertQuery(
                 "select-choose a, b from (tab where a != b or b != a)",
                 "select a, b from tab where not (a = b and b = a)",
                 modelOf("tab")
@@ -2212,7 +2212,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testOptimiseNotEqual() throws ParserException {
-        assertModel(
+        assertQuery(
                 "select-choose a, b from (tab where a != b)",
                 "select a, b from tab where not (a = b)",
                 modelOf("tab")
@@ -2222,7 +2222,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testOptimiseNotGreater() throws ParserException {
-        assertModel(
+        assertQuery(
                 "select-choose a, b from (tab where a <= b)",
                 "select a, b from tab where not (a > b)",
                 modelOf("tab")
@@ -2232,7 +2232,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testOptimiseNotGreaterOrEqual() throws ParserException {
-        assertModel(
+        assertQuery(
                 "select-choose a, b from (tab where a < b)",
                 "select a, b from tab where not (a >= b)",
                 modelOf("tab")
@@ -2242,7 +2242,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testOptimiseNotLess() throws ParserException {
-        assertModel(
+        assertQuery(
                 "select-choose a, b from (tab where a >= b)",
                 "select a, b from tab where not (a < b)",
                 modelOf("tab")
@@ -2252,7 +2252,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testOptimiseNotLessOrEqual() throws ParserException {
-        assertModel(
+        assertQuery(
                 "select-choose a, b from (tab where a > b)",
                 "select a, b from tab where not (a <= b)",
                 modelOf("tab")
@@ -2262,7 +2262,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testOptimiseNotLiteral() throws ParserException {
-        assertModel(
+        assertQuery(
                 "select-choose a, b from (tab where not(a))",
                 "select a, b from tab where not (a)",
                 modelOf("tab")
@@ -2272,7 +2272,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testOptimiseNotLiteralOr() throws ParserException {
-        assertModel(
+        assertQuery(
                 "select-choose a, b from (tab where not(a) and b != a)",
                 "select a, b from tab where not (a or b = a)",
                 modelOf("tab")
@@ -2282,7 +2282,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testOptimiseNotNotEqual() throws ParserException {
-        assertModel(
+        assertQuery(
                 "select-choose a, b from (tab where a = b)",
                 "select a, b from tab where not (a != b)",
                 modelOf("tab")
@@ -2292,7 +2292,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testOptimiseNotNotNotEqual() throws ParserException {
-        assertModel(
+        assertQuery(
                 "select-choose a, b from (tab where a != b)",
                 "select a, b from tab where not(not (a != b))",
                 modelOf("tab")
@@ -2302,7 +2302,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testOptimiseNotOr() throws ParserException {
-        assertModel(
+        assertQuery(
                 "select-choose a, b from (tab where a != b and b != a)",
                 "select a, b from tab where not (a = b or b = a)",
                 modelOf("tab")
@@ -2312,7 +2312,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testOptimiseNotOrLiterals() throws ParserException {
-        assertModel(
+        assertQuery(
                 "select-choose a, b from (tab where not(a) and not(b))",
                 "select a, b from tab where not (a or b)",
                 modelOf("tab")
@@ -2322,7 +2322,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testOptionalSelect() throws Exception {
-        assertModel(
+        assertQuery(
                 "select-choose x from (tab t2 latest by x where x > 100)",
                 "tab t2 latest by x where x > 100",
                 modelOf("tab").col("x", ColumnType.INT));
@@ -2330,7 +2330,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testOrderBy1() throws Exception {
-        assertModel(
+        assertQuery(
                 "select-choose x, y from (select-choose x, y, z from (tab) order by x, y, z)",
                 "select x,y from tab order by x,y,z",
                 modelOf("tab")
@@ -2359,7 +2359,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testOrderByGroupByCol() throws ParserException {
-        assertModel(
+        assertQuery(
                 "select-group-by a, sum(b) b from (tab) order by b",
                 "select a, sum(b) b from tab order by b",
                 modelOf("tab").col("a", ColumnType.INT).col("b", ColumnType.INT)
@@ -2368,7 +2368,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testOrderByGroupByColPrefixed() throws ParserException {
-        assertModel(
+        assertQuery(
                 "select-group-by a, sum(b) b from (tab)",
                 "select a, sum(b) b from tab order by tab.b, a",
                 modelOf("tab").col("a", ColumnType.INT).col("b", ColumnType.INT)
@@ -2377,7 +2377,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testOrderByGroupByColPrefixed2() throws ParserException {
-        assertModel(
+        assertQuery(
                 "select-group-by a, sum(b) b from (tab) order by a",
                 "select a, sum(b) b from tab order by a, tab.b",
                 modelOf("tab").col("a", ColumnType.INT).col("b", ColumnType.INT)
@@ -2386,7 +2386,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testOrderByGroupByColPrefixed3() throws ParserException {
-        assertModel(
+        assertQuery(
                 "select-group-by a, sum(b) b from (tab) order by a",
                 "select a, sum(b) b from tab order by tab.a, tab.b",
                 modelOf("tab").col("a", ColumnType.INT).col("b", ColumnType.INT)
@@ -2395,7 +2395,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testOrderByOnAliasedColumn() throws ParserException {
-        assertModel(
+        assertQuery(
                 "select-choose y from (select-choose y, tab.x x from (tab) order by x)",
                 "select y from tab order by tab.x",
                 modelOf("tab")
@@ -2406,7 +2406,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testOrderByOnExpression() throws ParserException {
-        assertModel(
+        assertQuery(
                 "select-virtual y + x z from (tab) order by z",
                 "select y+x z from tab order by z",
                 modelOf("tab")
@@ -2417,7 +2417,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testOrderByOnJoinSubQuery() throws ParserException {
-        assertModel(
+        assertQuery(
                 "select-choose x, y from (select-choose a.x x, b.y y, b.s s from ((select-choose x, z from (tab1 where x = 'Z')) a join (tab2 where s ~ 'K') b on b.z = a.z) order by s)",
                 "select a.x, b.y from (select x,z from tab1 where x = 'Z' order by x) a join (tab2 where s ~ 'K') b on a.z=b.z order by b.s",
                 modelOf("tab1")
@@ -2433,7 +2433,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testOrderByOnJoinSubQuery2() throws ParserException {
-        assertModel(
+        assertQuery(
                 "select-choose a.x x, b.y y from ((select-choose x, z from (select-choose x, z, p from (tab1 where x = 'Z') order by p)) a join (tab2 where s ~ 'K') b on b.z = a.z)",
                 "select a.x, b.y from (select x,z from tab1 where x = 'Z' order by p) a join (tab2 where s ~ 'K') b on a.z=b.z",
                 modelOf("tab1")
@@ -2450,7 +2450,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testOrderByOnJoinSubQuery3() throws ParserException {
-        assertModel(
+        assertQuery(
                 "select-choose a.x x, b.y y from ((select-choose x from (select-choose x, z from (tab1 where x = 'Z') order by z)) a asof join (select-choose y, z from (select-choose y, z, s from (tab2 where s ~ 'K') order by s)) b on b.z = a.x)",
                 "select a.x, b.y from (select x from tab1 where x = 'Z' order by z) a asof join (select y,z from tab2 where s ~ 'K' order by s) b where a.x = b.z",
                 modelOf("tab1")
@@ -2466,7 +2466,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testOrderByOnJoinTableReference() throws ParserException {
-        assertModel(
+        assertQuery(
                 "select-choose x, y from (select-choose a.x x, b.y y, b.s s from (tab1 a join tab2 b on b.z = a.z) order by s)",
                 "select a.x, b.y from tab1 a join tab2 b on a.z = b.z order by b.s",
                 modelOf("tab1")
@@ -2482,7 +2482,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testOrderByOnMultipleColumns() throws ParserException {
-        assertModel(
+        assertQuery(
                 "select-choose z from (select-choose y z, x from (tab) order by z desc, x)",
                 "select y z from tab order by z desc, x",
                 modelOf("tab")
@@ -2493,7 +2493,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testOrderByOnNonSelectedColumn() throws ParserException {
-        assertModel(
+        assertQuery(
                 "select-choose y from (select-choose y, x from (tab) order by x)",
                 "select y from tab order by x",
                 modelOf("tab")
@@ -2504,7 +2504,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testOrderByOnNonSelectedColumn2() throws ParserException {
-        assertModel(
+        assertQuery(
                 "select-choose column from (select-virtual 2 * y + x column, x from (select-choose 2 * y + x column, x from (tab)) order by x)",
                 "select 2*y+x from tab order by x",
                 modelOf("tab")
@@ -2515,7 +2515,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testOrderByOnNonSelectedColumn3() throws ParserException {
-        assertModel(
+        assertQuery(
                 "select-choose" +
                         " column," +
                         " column1" +
@@ -2537,7 +2537,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testOrderByOnOuterResult() throws ParserException {
-        assertModel(
+        assertQuery(
                 "select-virtual x, sum1 + sum z from (select-group-by x, sum(3 / x) sum, sum(2 * y + x) sum1 from (tab)) order by z",
                 "select x, sum(2*y+x) + sum(3/x) z from tab order by z asc, tab.y desc",
                 modelOf("tab")
@@ -2548,7 +2548,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testOrderByOnSelectedAlias() throws ParserException {
-        assertModel(
+        assertQuery(
                 "select-choose y z from (tab) order by z",
                 "select y z from tab order by z",
                 modelOf("tab")
@@ -2559,7 +2559,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testOrderByWithSampleBy() throws ParserException {
-        assertModel(
+        assertQuery(
                 "select-group-by t, a, sum(b) sum from ((tab order by t) _xQdbA1) timestamp (t) sample by 2m order by a",
                 "select a, sum(b) from (tab order by t) timestamp(t) sample by 2m order by a",
                 modelOf("tab")
@@ -2575,7 +2575,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
         // we are not looking to deal with 'sample by' outside of selected column context, clauses hidden
         // deep inside of sub-queries need to be explicitly validated. This could be an easy win when we
         // go about collapsing sub-queries
-        assertModel(
+        assertQuery(
                 "select-group-by a, sum(b) sum from (((tab order by t) _xQdbA2 timestamp (t) sample by 10m) _xQdbA1) order by a",
                 "select a, sum(b) from ((tab order by t) timestamp(t) sample by 10m order by t) order by a",
                 modelOf("tab")
@@ -2587,7 +2587,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testOuterJoin() throws Exception {
-        assertModel(
+        assertQuery(
                 "select-choose a.x x from (a a outer join b on b.x = a.x)",
                 "select a.x from a a outer join b on b.x = a.x",
                 modelOf("a").col("x", ColumnType.INT),
@@ -2597,7 +2597,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testSampleBy() throws Exception {
-        assertModel(
+        assertQuery(
                 "select-group-by timestamp, x, avg(y) avg from (tab) timestamp (timestamp) sample by 2m",
                 "select x,avg(y) from tab sample by 2m",
                 modelOf("tab")
@@ -2609,7 +2609,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testSampleByAlreadySelected() throws Exception {
-        assertModel(
+        assertQuery(
                 "select-group-by x, x1, avg(y) avg from (select-choose x, x x1, y from (tab)) timestamp (x) sample by 2m",
                 "select x,avg(y) from tab timestamp(x) sample by 2m",
                 modelOf("tab")
@@ -2620,7 +2620,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testSampleByAltTimestamp() throws Exception {
-        assertModel(
+        assertQuery(
                 "select-group-by t, x, avg(y) avg from (tab) timestamp (t) sample by 2m",
                 "select x,avg(y) from tab timestamp(t) sample by 2m",
                 modelOf("tab")
@@ -2697,7 +2697,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testSelectFromSubQuery() throws ParserException {
-        assertModel(
+        assertQuery(
                 "select-choose a.x x from ((tab where y > 10) a)",
                 "select a.x from (tab where y > 10) a",
                 modelOf("tab")
@@ -2741,7 +2741,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testSelectPlainColumns() throws Exception {
-        assertModel(
+        assertQuery(
                 "select-choose a, b, c from (t)",
                 "select a,b,c from t",
                 modelOf("t").col("a", ColumnType.INT).col("b", ColumnType.INT).col("c", ColumnType.INT)
@@ -2750,7 +2750,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testSelectSingleExpression() throws Exception {
-        assertModel(
+        assertQuery(
                 "select-virtual a + b * c x from (t)",
                 "select a+b*c x from t",
                 modelOf("t").col("a", ColumnType.INT).col("b", ColumnType.INT).col("c", ColumnType.INT));
@@ -2758,7 +2758,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testSelectWildcard() throws ParserException {
-        assertModel(
+        assertQuery(
                 "select-choose" +
                         " tab1.x x," +
                         " tab1.y y," +
@@ -2774,7 +2774,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     @Test
     public void testSelectWildcardAndExpr() throws ParserException {
         // todo: Y column is selected twice, code should be able to tell that y and tab1.y is the same column
-        assertModel(
+        assertQuery(
                 "select-virtual" +
                         " x," +
                         " y," +
@@ -2830,7 +2830,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testSelectWildcardPrefixed() throws ParserException {
-        assertModel(
+        assertQuery(
                 "select-choose" +
                         " tab2.x x," +
                         " tab2.z z," +
@@ -2845,7 +2845,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testSelectWildcardPrefixed2() throws ParserException {
-        assertModel(
+        assertQuery(
                 "select-choose" +
                         " tab2.x x," +
                         " tab2.z z," +
@@ -2860,7 +2860,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testSimpleSubQuery() throws Exception {
-        assertModel(
+        assertQuery(
                 "select-choose y from ((x where y > 1) _xQdbA1)",
                 "(x) where y > 1",
                 modelOf("x").col("y", ColumnType.INT)
@@ -2869,7 +2869,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testSingleTableLimit() throws Exception {
-        assertModel(
+        assertQuery(
                 "select-choose x, y from (tab where x > z limit 100)",
                 "select x x, y y from tab where x > z limit 100",
                 modelOf("tab")
@@ -2881,7 +2881,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testSingleTableLimitLoHi() throws Exception {
-        assertModel(
+        assertQuery(
                 "select-choose x, y from (tab where x > z limit 100,200)",
                 "select x x, y y from tab where x > z limit 100,200",
                 modelOf("tab").col("x", ColumnType.INT).col("y", ColumnType.INT).col("z", ColumnType.INT)
@@ -2895,7 +2895,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testSingleTableNoWhereLimit() throws Exception {
-        assertModel(
+        assertQuery(
                 "select-choose x, y from (tab limit 100)",
                 "select x x, y y from tab limit 100",
                 modelOf("tab").col("x", ColumnType.INT).col("y", ColumnType.INT));
@@ -2903,7 +2903,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testSubQuery() throws Exception {
-        assertModel(
+        assertQuery(
                 "select-choose x, y from ((select-choose x, y from (tab t2 latest by x where x > 100 and y > 0)) t1)",
                 "select x, y from (select x, y from tab t2 latest by x where x > 100) t1 where y > 0",
                 modelOf("tab").col("x", ColumnType.INT).col("y", ColumnType.INT)
@@ -2912,7 +2912,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testSubQueryAliasWithSpace() throws Exception {
-        assertModel(
+        assertQuery(
                 "select-choose" +
                         " a, x" +
                         " from (" +
@@ -2925,7 +2925,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testSubQueryLimitLoHi() throws Exception {
-        assertModel(
+        assertQuery(
                 "select-choose" +
                         " x," +
                         " y" +
@@ -3025,7 +3025,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testTableNameWithNoRowidMarker() throws ParserException {
-        assertModel(
+        assertQuery(
                 "select-choose x from (*!*tab)",
                 "select * from '*!*tab'",
                 modelOf("tab").col("x", ColumnType.INT)
@@ -3034,14 +3034,14 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testTimestampOnSubQuery() throws Exception {
-        assertModel("select-choose x from ((a b where x > y) _xQdbA1 timestamp (x))",
+        assertQuery("select-choose x from ((a b where x > y) _xQdbA1 timestamp (x))",
                 "select x from (a b) timestamp(x) where x > y",
                 modelOf("a").col("x", ColumnType.INT).col("y", ColumnType.INT));
     }
 
     @Test
     public void testTimestampOnTable() throws Exception {
-        assertModel(
+        assertQuery(
                 "select-choose x from (a b timestamp (x) where x > y)",
                 "select x from a b timestamp(x) where x > y",
                 modelOf("a")
@@ -3089,7 +3089,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testTwoAnalyticColumns() throws Exception {
-        assertModel(
+        assertQuery(
                 "select-analytic a, b, f(c) my over (partition by b order by ts), d(c) d over () from (xyz)",
                 "select a,b, f(c) my over (partition by b order by ts), d(c) over() from xyz",
                 modelOf("xyz").col("c", ColumnType.INT).col("b", ColumnType.INT).col("a", ColumnType.INT)
@@ -3118,7 +3118,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testWhereClause() throws Exception {
-        assertModel(
+        assertQuery(
                 "select-virtual x, sum + 25 ohoh from (select-group-by x, sum(z) sum from (select-virtual a + b * c x, z from (zyzy where in(10,0,a) and b = 10)))",
                 "select a+b*c x, sum(z)+25 ohoh from zyzy where a in (0,10) and b = 10",
                 modelOf("zyzy")
@@ -3144,7 +3144,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testWithSelectFrom() throws ParserException {
-        assertModel(
+        assertQuery(
                 "select-choose a from ((select-choose a from (tab)) x)",
                 "with x as (" +
                         " select a from tab" +
@@ -3155,7 +3155,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testWithSelectFrom2() throws ParserException {
-        assertModel(
+        assertQuery(
                 "select-choose a from ((select-choose a from (tab)) x)",
                 "with x as (" +
                         " select a from tab" +
@@ -3208,10 +3208,10 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
         }
     }
 
-    private void assertDDL(String expected, String ddl, TableModel... tableModels) throws ParserException {
+    private void assertCreateTable(String expected, String ddl, TableModel... tableModels) throws ParserException {
         createModelsAndRun(() -> {
             ParsedModel model = parser.parse(ddl);
-            Assert.assertEquals(ParsedModel.CREATE_JOURNAL, model.getModelType());
+            Assert.assertEquals(ParsedModel.CREATE_TABLE, model.getModelType());
             Assert.assertTrue(model instanceof CreateTableModel);
             sink.clear();
             ((CreateTableModel) model).toSink(sink);
@@ -3219,7 +3219,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
         }, tableModels);
     }
 
-    private void assertModel(String expected, String query, TableModel... tableModels) throws ParserException {
+    private void assertQuery(String expected, String query, TableModel... tableModels) throws ParserException {
         createModelsAndRun(() -> {
             sink.clear();
             ParsedModel model = parser.parse(query);

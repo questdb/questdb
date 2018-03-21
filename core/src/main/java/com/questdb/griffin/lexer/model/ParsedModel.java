@@ -25,8 +25,8 @@ package com.questdb.griffin.lexer.model;
 
 public interface ParsedModel {
     int QUERY = 1;
-    int CREATE_JOURNAL = 2;
-    int RENAME_JOURNAL = 3;
+    int CREATE_TABLE = 2;
+    int RENAME_TABLE = 3;
 
     int getModelType();
 }
