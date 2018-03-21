@@ -49,7 +49,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public int getCutlassSymbolCapacity() {
-        return 64;
+        return 128;
     }
 
     @Override

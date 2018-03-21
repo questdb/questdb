@@ -56,6 +56,10 @@ public class ParserException extends Exception implements Sinkable {
         return ex;
     }
 
+    public static ParserException unexpectedToken(int position, CharSequence token) {
+        return position(position).put("unexpected token: ").put(token);
+    }
+
     public CharSequence getFlyweightMessage() {
         return message;
     }
@@ -67,11 +71,6 @@ public class ParserException extends Exception implements Sinkable {
 
     public int getPosition() {
         return position;
-    }
-
-    public ParserException put(long value) {
-        message.put(value);
-        return this;
     }
 
     public ParserException put(CharSequence cs) {
