@@ -24,6 +24,7 @@
 package com.questdb.griffin.lexer;
 
 import com.questdb.griffin.common.ExprNode;
+import com.questdb.std.Chars;
 import com.questdb.std.Lexer;
 import com.questdb.std.ObjectPool;
 import com.questdb.test.tools.TestUtils;
@@ -45,6 +46,58 @@ public class ExprParserTest {
     @Test
     public void testBinaryMinus() throws Exception {
         x("4c-", "4-c");
+    }
+
+    @Test
+    public void testCaseInFunction() throws ParserException {
+        x(
+                "xyab+10>'a'ab-3<'b'0case10+zf*",
+                "x*f(y,case when (a+b) > 10 then 'a' when (a-b)<3 then 'b' else 0 end + 10,z)");
+    }
+
+    @Test
+    public void testCaseMisplacedElse() {
+        assertFail(
+                "case when x else y end",
+                12,
+                "'then' expected"
+        );
+    }
+
+    @Test
+    public void testCaseMissingElseArg() {
+        assertFail(
+                "case when a > b then 1 else end",
+                28,
+                "missing arguments"
+        );
+    }
+
+    @Test
+    public void testCaseMissingThen() {
+        assertFail(
+                "case when x when y end",
+                12,
+                "'then' expected"
+        );
+    }
+
+    @Test
+    public void testCaseMissingThenArg() {
+        assertFail(
+                "case when a > b then else 2 end",
+                21,
+                "missing arguments"
+        );
+    }
+
+    @Test
+    public void testCaseMissingWhen() {
+        assertFail(
+                "case then x end",
+                5,
+                "'when' expected"
+        );
     }
 
     @Test
@@ -98,23 +151,27 @@ public class ExprParserTest {
     }
 
     @Test
-    public void testMissingArgAtBraceError() {
-        try {
-            x("", "x * 4 + c(x,y,)");
-            Assert.fail("Expected syntax exception");
-        } catch (ParserException e) {
-            Assert.assertEquals(14, e.getPosition());
-        }
+    public void testCaseMissingWhenArg() {
+        assertFail(
+                "case when then 1 else 2 end",
+                10,
+                "missing arguments"
+        );
     }
 
     @Test
-    public void testMissingArgError() {
-        try {
-            x("", "x * 4 + c(x,,y)");
-            Assert.fail("Expected syntax exception");
-        } catch (ParserException e) {
-            Assert.assertEquals(12, e.getPosition());
-        }
+    public void testCaseNested() throws ParserException {
+        x("x0>y1='a''b'casex0<'c'case",
+                "case when x > 0 then case when y = 1 then 'a' else 'b' end when x < 0 then 'c' end");
+    }
+
+    @Test
+    public void testCaseUnbalanced() {
+        assertFail(
+                "case when x then y",
+                0,
+                "unbalanced 'case'"
+        );
     }
 
     @Test
@@ -138,6 +195,38 @@ public class ExprParserTest {
     }
 
     @Test
+    public void testMissingArgAtBraceError() {
+        assertFail("x * 4 + c(x,y,)", 14, "missing arguments");
+    }
+
+    @Test
+    public void testMissingArgError() {
+        assertFail("x * 4 + c(x,,y)", 12, "missing arguments");
+    }
+
+    @Test
+    public void testMissingArgError2() {
+        assertFail("x * 4 + c(,x,y)", 10, "missing arguments");
+    }
+
+    @Test
+    public void testSimpleCase() throws ParserException {
+        x("w1th1w2th2elscase", "case when w1 then th1 when w2 then th2 else els end");
+    }
+
+    @Test
+    public void testSimpleCaseInArithmetic() throws ParserException {
+        x("w11+10='th1'w23*1>'th2'0case5*1+",
+                "case" +
+                        " when w1+1=10" +
+                        " then 'th1'" +
+                        " when w2*3>1" +
+                        " then 'th2'" +
+                        " else 0" +
+                        " end * 5 + 1");
+    }
+
+    @Test
     public void testSimpleLiteralExit() throws Exception {
         x("a", "a lit");
     }
@@ -148,13 +237,44 @@ public class ExprParserTest {
     }
 
     @Test
+    public void testSimpleCaseWithArithmetic() throws ParserException {
+        x("w11+10='th1'w23*1>'th2'0case",
+                "case" +
+                        " when w1+1=10" +
+                        " then 'th1'" +
+                        " when w2*3>1" +
+                        " then 'th2'" +
+                        " else 0" +
+                        " end");
+    }
+
+    @Test
+    public void testSimpleCaseWithBraces() throws ParserException {
+        x("10w11+5*10='th1'1-w23*1>'th2'0case1+*",
+                "10*(case" +
+                        " when (w1+1)*5=10" +
+                        " then 'th1'-1" +
+                        " when w2*3>1" +
+                        " then 'th2'" +
+                        " else 0" +
+                        " end + 1)");
+    }
+
+    @Test
+    public void testSimpleCaseWithOuterBraces() throws ParserException {
+        x("10w11+10='th1'w23*1>'th2'0case1+*",
+                "10*(case" +
+                        " when w1+1=10" +
+                        " then 'th1'" +
+                        " when w2*3>1" +
+                        " then 'th2'" +
+                        " else 0" +
+                        " end + 1)");
+    }
+
+    @Test
     public void testUnbalancedLeftBrace() {
-        try {
-            x("", "a+b(5,c(x,y)");
-            Assert.fail("Expected exception");
-        } catch (ParserException e) {
-            Assert.assertEquals(3, e.getPosition());
-        }
+        assertFail("a+b(5,c(x,y)", 3, "unbalanced");
     }
 
     @Test
@@ -165,6 +285,20 @@ public class ExprParserTest {
     @Test
     public void testWhacky() throws Exception {
         x("ab^-", "a-^b");
+    }
+
+    private void assertFail(String content, int pos, String contains) {
+        try {
+            RpnBuilder r = new RpnBuilder();
+            lexer.setContent(content);
+            parser.parseExpr(lexer, r);
+            Assert.fail("expected exception");
+        } catch (ParserException e) {
+            Assert.assertEquals(pos, e.getPosition());
+            if (!Chars.contains(e.getFlyweightMessage(), contains)) {
+                Assert.fail(e.getMessage() + " does not contain '" + contains + '\'');
+            }
+        }
     }
 
     private void x(CharSequence expectedRpn, String content) throws ParserException {
