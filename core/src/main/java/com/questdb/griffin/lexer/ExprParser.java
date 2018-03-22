@@ -40,6 +40,8 @@ public class ExprParser {
     private static final int BRANCH_OPERATOR = 5;
     private static final int BRANCH_LITERAL = 6;
     private static final int BRANCH_LAMBDA = 7;
+    private static final int BRANCH_CASE_CONTROL = 9;
+    private static final CharSequenceIntHashMap caseKeywords = new CharSequenceIntHashMap();
     private final Deque<ExprNode> opStack = new ArrayDeque<>();
     private final IntStack paramCountStack = new IntStack();
     private final ObjectPool<ExprNode> exprNodePool;
@@ -71,25 +73,25 @@ public class ExprParser {
 
         int paramCount = 0;
         int braceCount = 0;
+        int caseCount = 0;
 
         ExprNode node;
         CharSequence tok;
-        char thisChar = 0, prevChar;
+        char thisChar;
         int prevBranch;
         int thisBranch = BRANCH_NONE;
 
         OUT:
         while ((tok = lexer.optionTok()) != null) {
-            prevChar = thisChar;
             thisChar = tok.charAt(0);
             prevBranch = thisBranch;
 
             switch (thisChar) {
                 case ',':
-                    thisBranch = BRANCH_COMMA;
-                    if (prevChar == ',') {
-                        throw ParserException.$(lexer.position(), "Missing argument");
+                    if (prevBranch == BRANCH_COMMA || prevBranch == BRANCH_LEFT_BRACE) {
+                        throw missingArgs(lexer.position());
                     }
+                    thisBranch = BRANCH_COMMA;
 
                     if (braceCount == 0) {
                         // comma outside of braces
@@ -123,9 +125,10 @@ public class ExprParser {
                     break;
 
                 case ')':
-                    if (prevChar == ',') {
-                        throw ParserException.$(lexer.position(), "Missing argument");
+                    if (prevBranch == BRANCH_COMMA) {
+                        throw missingArgs(lexer.position());
                     }
+
                     if (braceCount == 0) {
                         lexer.unparse();
                         break OUT;
@@ -144,13 +147,14 @@ public class ExprParser {
 
                     // enable operation or literal absorb parameters
                     if ((node = opStack.peek()) != null && (node.type == ExprNode.LITERAL || (node.type == ExprNode.SET_OPERATION))) {
-                        node.paramCount = (prevChar == '(' ? 0 : paramCount + 1) + (node.paramCount == 2 ? 1 : 0);
+                        node.paramCount = (prevBranch == BRANCH_LEFT_BRACE ? 0 : paramCount + 1) + (node.paramCount == 2 ? 1 : 0);
                         node.type = ExprNode.FUNCTION;
                         listener.onNode(node);
                         opStack.poll();
-                        if (paramCountStack.notEmpty()) {
-                            paramCount = paramCountStack.pop();
-                        }
+                    }
+
+                    if (paramCountStack.notEmpty()) {
+                        paramCount = paramCountStack.pop();
                     }
                     break;
                 case '`':
@@ -240,8 +244,85 @@ public class ExprParser {
                                 break;
                         }
                         opStack.push(node);
-                    } else if (nonLiteralBranches.excludes(thisBranch)) {
+                    } else if (caseCount > 0 || nonLiteralBranches.excludes(thisBranch)) {
+
                         thisBranch = BRANCH_LITERAL;
+
+                        // here we handle literals, in case of "case" statement some of these literals
+                        // are going to flush operation stack
+                        switch (thisChar) {
+                            case 'c':
+                                if (Chars.equals("case", tok)) {
+                                    caseCount++;
+                                    paramCountStack.push(paramCount);
+                                    paramCount = 0;
+                                    opStack.push(exprNodePool.next().of(ExprNode.FUNCTION, Chars.toString(tok), Integer.MAX_VALUE, lexer.position()));
+                                    continue;
+                                }
+                                break;
+                            case 'e':
+                                if (Chars.equals("end", tok)) {
+                                    if (prevBranch == BRANCH_CASE_CONTROL) {
+                                        throw missingArgs(lexer.position());
+                                    }
+
+                                    // If the token is a right parenthesis:
+                                    // Until the token at the top of the stack is a left parenthesis, pop operators off the stack onto the output queue.
+                                    // Pop the left parenthesis from the stack, but not onto the output queue.
+                                    //        If the token at the top of the stack is a function token, pop it onto the output queue.
+                                    //        If the stack runs out without finding a left parenthesis, then there are mismatched parentheses.
+                                    while ((node = opStack.poll()) != null && !Chars.equals("case", node.token)) {
+                                        listener.onNode(node);
+                                    }
+
+                                    listener.onNode(node);
+
+                                    // make sure we restore paramCount
+                                    if (paramCountStack.notEmpty()) {
+                                        paramCount = paramCountStack.pop();
+                                    }
+
+                                    caseCount--;
+                                    continue;
+                                }
+                                // fall through
+                            case 'w':
+                            case 't':
+                                int keywordIndex = caseKeywords.get(tok);
+                                if (keywordIndex > -1) {
+
+                                    if (prevBranch == BRANCH_CASE_CONTROL) {
+                                        throw missingArgs(lexer.position());
+                                    }
+
+                                    switch (keywordIndex) {
+                                        case 0: // when
+                                        case 2: // else
+                                            if ((paramCount % 2) != 0) {
+                                                throw ParserException.$(lexer.position(), "'then' expected");
+                                            }
+                                            break;
+                                        default: // then
+                                            if ((paramCount % 2) == 0) {
+                                                throw ParserException.$(lexer.position(), "'when' expected");
+                                            }
+                                            break;
+                                    }
+
+                                    while ((node = opStack.poll()) != null && !Chars.equals("case", node.token)) {
+                                        listener.onNode(node);
+                                    }
+                                    if (node != null) {
+                                        opStack.push(node);
+                                    }
+
+                                    paramCount++;
+                                    thisBranch = BRANCH_CASE_CONTROL;
+                                    continue;
+                                }
+                                break;
+                        }
+
                         // If the token is a function token, then push it onto the stack.
                         opStack.push(exprNodePool.next().of(ExprNode.LITERAL, Chars.toString(tok), Integer.MIN_VALUE, lexer.position()));
                     } else {
@@ -255,10 +336,19 @@ public class ExprParser {
 
         while ((node = opStack.poll()) != null) {
             if (node.token.charAt(0) == '(') {
-                throw ParserException.$(node.position, "Unbalanced (");
+                throw ParserException.$(node.position, "unbalanced (");
             }
+
+            if (Chars.equals("case", node.token)) {
+                throw ParserException.$(node.position, "unbalanced 'case'");
+            }
+
             listener.onNode(node);
         }
+    }
+
+    private static ParserException missingArgs(int position) {
+        return ParserException.$(position, "missing arguments");
     }
 
     static {
@@ -266,5 +356,10 @@ public class ExprParser {
         nonLiteralBranches.add(BRANCH_CONSTANT);
         nonLiteralBranches.add(BRANCH_LITERAL);
         nonLiteralBranches.add(BRANCH_LAMBDA);
+
+        caseKeywords.put("when", 0);
+        caseKeywords.put("then", 1);
+        caseKeywords.put("else", 2);
+
     }
 }
