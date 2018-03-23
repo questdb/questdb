@@ -974,7 +974,6 @@ public class TableWriter implements Closeable {
                 // lets not leave half baked file sitting around
                 LOG.error().$("failed to create index [name=").utf8(path).$(']').$();
                 if (!ff.remove(path)) {
-                    //todo: not hit by test
                     LOG.error().$("failed to remove '").utf8(path).$("'. Please remove MANUALLY.").$();
                 }
                 throw e;
