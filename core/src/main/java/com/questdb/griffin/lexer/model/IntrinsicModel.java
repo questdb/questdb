@@ -74,31 +74,27 @@ public class IntrinsicModel implements Mutable {
     }
 
     public void intersectIntervals(long lo, long hi) {
-        LongList temp = shuffleTemp();
-        temp.clear();
+        LongList temp = shuffleTemp(intervals, null);
         temp.add(lo);
         temp.add(hi);
         intersectIntervals(temp);
     }
 
     public void intersectIntervals(CharSequence seq, int lo, int lim, int position) throws ParserException {
-        LongList temp = shuffleTemp();
-        temp.clear();
+        LongList temp = shuffleTemp(intervals, null);
         IntervalCompiler.parseIntervalEx(seq, lo, lim, position, temp);
         intersectIntervals(temp);
     }
 
     public void subtractIntervals(long lo, long hi) {
-        LongList temp = shuffleTemp();
-        temp.clear();
+        LongList temp = shuffleTemp(intervals, null);
         temp.add(lo);
         temp.add(hi);
         subtractIntervals(temp);
     }
 
     public void subtractIntervals(CharSequence seq, int lo, int lim, int position) throws ParserException {
-        LongList temp = shuffleTemp();
-        temp.clear();
+        LongList temp = shuffleTemp(intervals, null);
         IntervalCompiler.parseIntervalEx(seq, lo, lim, position, temp);
         subtractIntervals(temp);
     }
@@ -116,7 +112,7 @@ public class IntrinsicModel implements Mutable {
         if (this.intervals == null) {
             this.intervals = intervals;
         } else {
-            final LongList dest = shuffleDest();
+            final LongList dest = shuffleTemp(intervals, this.intervals);
             IntervalCompiler.intersect(intervals, this.intervals, dest);
             this.intervals = dest;
         }
@@ -126,34 +122,25 @@ public class IntrinsicModel implements Mutable {
         }
     }
 
-    private LongList shuffleDest() {
-        LongList result = shuffleDest0();
+    private LongList shuffleTemp(LongList src1, LongList src2) {
+        LongList result = shuffleTemp0(src1, src2);
         result.clear();
         return result;
     }
 
-    private LongList shuffleDest0() {
-        if (intervals == null || intervals == intervalsA) {
+    private LongList shuffleTemp0(LongList src1, LongList src2) {
+        if (src2 != null) {
+            if ((src1 == intervalsA && src2 == intervalsB) || (src1 == intervalsB && src2 == intervalsA)) {
+                return intervalsC;
+            }
+            // this is the ony possibility because we never return 'intervalsA' for two args
             return intervalsB;
         }
 
-        if (intervals == intervalsB) {
-            return intervalsC;
+        if (src1 == intervalsA) {
+            return intervalsB;
         }
-
         return intervalsA;
-    }
-
-    private LongList shuffleTemp() {
-        if (intervals == null || intervals == intervalsA) {
-            return intervalsC;
-        }
-
-        if (intervals == intervalsB) {
-            return intervalsA;
-        }
-
-        return intervalsB;
     }
 
     private void subtractIntervals(LongList temp) {
@@ -161,8 +148,7 @@ public class IntrinsicModel implements Mutable {
         if (this.intervals == null) {
             intervals = temp;
         } else {
-            final LongList dest = shuffleDest();
-            dest.clear();
+            final LongList dest = shuffleTemp(temp, this.intervals);
             IntervalCompiler.intersect(temp, this.intervals, dest);
             this.intervals = dest;
         }
