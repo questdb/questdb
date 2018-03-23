@@ -163,7 +163,7 @@ public class TableReaderTest extends AbstractCairoTest {
             exp.nextChars(blob, blobLen / 2);
         }
 
-        Assert.assertEquals(-1, r.getBinLen(9));
+        Assert.assertEquals(TableUtils.NULL_LEN, r.getBinLen(9));
         Assert.assertNull(r.getBin2(9));
 
         if (exp.nextBoolean()) {
@@ -503,7 +503,7 @@ public class TableReaderTest extends AbstractCairoTest {
         Assert.assertEquals(Numbers.LONG_NaN, r.getLong(19));
         Assert.assertEquals(Numbers.LONG_NaN, r.getDate(20));
         Assert.assertNull(r.getBin2(21));
-        Assert.assertEquals(-1L, r.getBinLen(21));
+        Assert.assertEquals(TableUtils.NULL_LEN, r.getBinLen(21));
     };
     private static final RecordAssert BATCH5_BEFORE_ASSERTER = (r, rnd, ts, blob) -> {
         Assert.assertEquals(0, r.getShort(13));
@@ -2770,7 +2770,7 @@ public class TableReaderTest extends AbstractCairoTest {
                 }
             }
         } else {
-            Assert.assertEquals(-1, r.getBinLen(index));
+            Assert.assertEquals(TableUtils.NULL_LEN, r.getBinLen(index));
         }
     }
 
@@ -2784,7 +2784,7 @@ public class TableReaderTest extends AbstractCairoTest {
     private static void assertNullStr(Record r, int index) {
         Assert.assertNull(r.getFlyweightStr(index));
         Assert.assertNull(r.getFlyweightStrB(index));
-        Assert.assertEquals(-1, r.getStrLen(index));
+        Assert.assertEquals(TableUtils.NULL_LEN, r.getStrLen(index));
     }
 
     private static void rmDir(CharSequence partitionName) {
@@ -3012,9 +3012,6 @@ public class TableReaderTest extends AbstractCairoTest {
             cursor.recordAt(rec, rows.getQuick(i));
             asserter.assertRecord(rec, rnd, timestamp += increment, blob);
         }
-
-        // courtesy call to no-op method
-        cursor.releaseCursor();
     }
 
     private long assertPartialCursor(RecordCursor cursor, Rnd rnd, long ts, long increment, long blob, long expectedSize, RecordAssert asserter) {

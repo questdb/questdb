@@ -23,10 +23,12 @@
 
 package com.questdb.cairo;
 
+import com.questdb.cairo.sql.CairoEngine;
 import com.questdb.cairo.sql.DataFrame;
 import com.questdb.cairo.sql.DataFrameCursor;
 import com.questdb.common.ColumnType;
 import com.questdb.common.PartitionBy;
+import com.questdb.common.RowCursor;
 import com.questdb.common.SymbolTable;
 import com.questdb.std.LongList;
 import com.questdb.std.Rnd;
@@ -168,11 +170,11 @@ public class IntervalFrameCursorTest extends AbstractCairoTest {
             }
 
             TableReader reader = new TableReader(configuration, "x");
-            IntervalFrameCursor cursor = new IntervalFrameCursor(reader.getMetadata(), intervals);
+            IntervalFrameCursor cursor = new IntervalFrameCursor(intervals, reader.getMetadata().getTimestampIndex());
             cursor.of(reader);
-            cursor.closeCursor();
+            cursor.close();
             Assert.assertFalse(reader.isOpen());
-            cursor.closeCursor();
+            cursor.close();
             Assert.assertFalse(reader.isOpen());
         });
     }
@@ -342,46 +344,49 @@ public class IntervalFrameCursorTest extends AbstractCairoTest {
             final Rnd rnd = new Rnd();
             long timestamp = DateFormatUtils.parseDateTime("1980-01-01T00:00:00.000Z");
 
-            try (TableReader reader = new TableReader(configuration, "x")) {
-                final TableReaderRecord record = new TableReaderRecord(reader);
-                IntervalFrameCursor cursor = new IntervalFrameCursor(reader.getMetadata(), intervals);
+            try (CairoEngine engine = new Engine(configuration)) {
+                final TableReaderRecord record = new TableReaderRecord();
+                final IntervalFrameCursorFactory factory = new IntervalFrameCursorFactory(engine, "x", intervals);
+                try (DataFrameCursor cursor = factory.getCursor()) {
 
-                // assert that there is nothing to start with
-                cursor.of(reader);
-                assertEquals("", record, cursor);
+                    // assert that there is nothing to start with
+                    record.of(cursor.getReader());
 
-                try (TableWriter writer = new TableWriter(configuration, "x")) {
-                    for (int i = 0; i < rowCount; i++) {
-                        TableWriter.Row row = writer.newRow(timestamp);
-                        row.putSym(0, rnd.nextChars(4));
-                        row.putSym(1, rnd.nextChars(4));
-                        row.append();
-                        timestamp += increment;
-                    }
-                    writer.commit();
+                    assertEquals("", record, cursor);
 
-                    Assert.assertTrue(cursor.reload());
-                    assertEquals(expected1, record, cursor);
+                    try (TableWriter writer = new TableWriter(configuration, "x")) {
+                        for (int i = 0; i < rowCount; i++) {
+                            TableWriter.Row row = writer.newRow(timestamp);
+                            row.putSym(0, rnd.nextChars(4));
+                            row.putSym(1, rnd.nextChars(4));
+                            row.append();
+                            timestamp += increment;
+                        }
+                        writer.commit();
 
-                    timestamp = Dates.addYear(timestamp, 3);
-
-                    for (int i = 0; i < rowCount; i++) {
-                        TableWriter.Row row = writer.newRow(timestamp);
-                        row.putSym(0, rnd.nextChars(4));
-                        row.putSym(1, rnd.nextChars(4));
-                        row.append();
-                        timestamp += increment;
-                    }
-                    writer.commit();
-
-                    Assert.assertTrue(cursor.reload());
-                    if (expected2 != null) {
-                        assertEquals(expected2, record, cursor);
-                    } else {
+                        Assert.assertTrue(cursor.reload());
                         assertEquals(expected1, record, cursor);
-                    }
 
-                    Assert.assertFalse(cursor.reload());
+                        timestamp = Dates.addYear(timestamp, 3);
+
+                        for (int i = 0; i < rowCount; i++) {
+                            TableWriter.Row row = writer.newRow(timestamp);
+                            row.putSym(0, rnd.nextChars(4));
+                            row.putSym(1, rnd.nextChars(4));
+                            row.append();
+                            timestamp += increment;
+                        }
+                        writer.commit();
+
+                        Assert.assertTrue(cursor.reload());
+                        if (expected2 != null) {
+                            assertEquals(expected2, record, cursor);
+                        } else {
+                            assertEquals(expected1, record, cursor);
+                        }
+
+                        Assert.assertFalse(cursor.reload());
+                    }
                 }
             }
         });
@@ -497,14 +502,14 @@ public class IntervalFrameCursorTest extends AbstractCairoTest {
 
             int keyCount = indexReader.getKeyCount();
             for (int i = 0; i < keyCount; i++) {
-                BitmapIndexCursor ic = indexReader.getCursor(i, limit - 1);
+                RowCursor ic = indexReader.getCursor(i, limit - 1);
                 CharSequence expected = symbolTable.value(i - 1);
                 while (ic.hasNext()) {
                     long row = ic.next();
                     if (row < low) {
                         break;
                     }
-                    record.jumpTo(frame.getPartitionIndex(), row);
+                    record.setRecordIndex(row);
                     TestUtils.assertEquals(expected, record.getSym(columnIndex));
                     rowCount++;
                 }
@@ -513,21 +518,22 @@ public class IntervalFrameCursorTest extends AbstractCairoTest {
         Assert.assertEquals(expectedCount, rowCount);
     }
 
-    private void assertEquals(CharSequence expected, TableReaderRecord record, IntervalFrameCursor cursor) {
+    private void assertEquals(CharSequence expected, TableReaderRecord record, DataFrameCursor cursor) {
         sink.clear();
         collectTimestamps(cursor, record, sink);
         TestUtils.assertEquals(expected, sink);
     }
 
     private void collectTimestamps(DataFrameCursor cursor, TableReaderRecord record, CharSink sink) {
-        int timestampIndex = cursor.getMetadata().getTimestampIndex();
+        int timestampIndex = cursor.getReader().getMetadata().getTimestampIndex();
         while (cursor.hasNext()) {
             DataFrame frame = cursor.next();
             record.jumpTo(frame.getPartitionIndex(), frame.getRowLo());
             long limit = frame.getRowHi();
-            while (record.getRecordIndex() < limit) {
+            long recordIndex;
+            while ((recordIndex = record.getRecordIndex()) < limit) {
                 sink.putISODate(record.getDate(timestampIndex)).put('\n');
-                record.incrementRecordIndex();
+                record.setRecordIndex(recordIndex + 1);
             }
         }
     }
@@ -569,9 +575,11 @@ public class IntervalFrameCursorTest extends AbstractCairoTest {
             }
 
             try (TableReader reader = new TableReader(configuration, "x")) {
-                final TableReaderRecord record = new TableReaderRecord(reader);
-                IntervalFrameCursor cursor = new IntervalFrameCursor(reader.getMetadata(), intervals);
+                final TableReaderRecord record = new TableReaderRecord();
+                IntervalFrameCursor cursor = new IntervalFrameCursor(intervals, reader.getMetadata().getTimestampIndex());
                 cursor.of(reader);
+                record.of(reader);
+
                 assertEquals(expected, record, cursor);
 
                 if (expected.length() > 0) {

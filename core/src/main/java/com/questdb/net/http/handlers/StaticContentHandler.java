@@ -30,7 +30,10 @@ import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.net.http.*;
 import com.questdb.std.*;
-import com.questdb.std.str.*;
+import com.questdb.std.str.CharSink;
+import com.questdb.std.str.FileNameExtractorCharSequence;
+import com.questdb.std.str.LPSZ;
+import com.questdb.std.str.PrefixedPath;
 
 import java.io.Closeable;
 import java.io.IOException;
@@ -44,7 +47,6 @@ public class StaticContentHandler implements ContextHandler {
     private final MimeTypes mimeTypes;
     private final ThreadLocal<PrefixedPath> tlPrefixedPath = new ThreadLocal<>();
     private final ThreadLocal<RangeParser> tlRangeParser = new ThreadLocal<>();
-    private final ThreadLocal<FlyweightCharSequence> tlExt = new ThreadLocal<>();
 
     private final LocalValue<FileDescriptorHolder> lvFd = new LocalValue<>();
     private final ServerConfiguration configuration;
@@ -112,7 +114,6 @@ public class StaticContentHandler implements ContextHandler {
     public void setupThread() {
         tlRangeParser.set(RangeParser.FACTORY.newInstance());
         tlPrefixedPath.set(new PrefixedPath(configuration.getHttpPublic().getAbsolutePath()));
-        tlExt.set(new FlyweightCharSequence());
     }
 
     private void send(IOContext context, LPSZ path, boolean asAttachment) throws IOException {
@@ -123,7 +124,7 @@ public class StaticContentHandler implements ContextHandler {
             return;
         }
 
-        CharSequence contentType = mimeTypes.get(tlExt.get().of(path, n + 1, path.length() - n - 1));
+        CharSequence contentType = mimeTypes.valueAt(mimeTypes.keyIndex(path, n + 1, path.length()));
         CharSequence val;
         if ((val = context.request.getHeader("Range")) != null) {
             sendRange(context, val, path, contentType, asAttachment);

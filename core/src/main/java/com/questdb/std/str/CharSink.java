@@ -38,6 +38,10 @@ public interface CharSink {
         throw new UnsupportedOperationException();
     }
 
+    default CharSink put(CharSequence cs, int start, int end) {
+        throw new UnsupportedOperationException();
+    }
+
     CharSink put(char c);
 
     CharSink put(int value);

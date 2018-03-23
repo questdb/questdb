@@ -49,7 +49,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public int getCutlassSymbolCapacity() {
-        return 64;
+        return 128;
     }
 
     @Override
@@ -75,6 +75,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public long getInactiveWriterTTL() {
         return -10000;
+    }
+
+    @Override
+    public int getIndexValueBlockSize() {
+        return 256;
     }
 
     @Override

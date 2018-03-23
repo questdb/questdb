@@ -88,6 +88,10 @@ public class IntHashSet implements Mutable {
         return keyIndex(key) < 0;
     }
 
+    public boolean excludes(int key) {
+        return keyIndex(key) > -1;
+    }
+
     public int get(int index) {
         return list.getQuick(index);
     }

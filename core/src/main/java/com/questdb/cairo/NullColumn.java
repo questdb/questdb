@@ -41,7 +41,7 @@ public class NullColumn implements ReadOnlyColumn {
 
     @Override
     public long getBinLen(long offset) {
-        return -1;
+        return TableUtils.NULL_LEN;
     }
 
     @Override
@@ -91,7 +91,7 @@ public class NullColumn implements ReadOnlyColumn {
 
     @Override
     public int getStrLen(long offset) {
-        return -1;
+        return TableUtils.NULL_LEN;
     }
 
     @Override

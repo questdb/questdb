@@ -34,10 +34,6 @@ public class TableReaderRecord implements Record {
     private long recordIndex = 0;
     private TableReader reader;
 
-    public TableReaderRecord(TableReader reader) {
-        this.reader = reader;
-    }
-
     @Override
     public byte getByte(int col) {
         long index = getIndex(col);
@@ -60,7 +56,7 @@ public class TableReaderRecord implements Record {
     public long getBinLen(int col) {
         long index = getIndex(col);
         if (index < 0) {
-            return -1;
+            return TableUtils.NULL_LEN;
         }
         return colA(col).getBinLen(colB(col).getLong(index * 8));
     }
@@ -152,7 +148,7 @@ public class TableReaderRecord implements Record {
     public int getStrLen(int col) {
         long index = getIndex(col);
         if (index < 0) {
-            return -1;
+            return TableUtils.NULL_LEN;
         }
         return colA(col).getStrLen(colB(col).getLong(index * 8));
     }
@@ -170,12 +166,20 @@ public class TableReaderRecord implements Record {
         return recordIndex;
     }
 
+    public void of(TableReader reader) {
+        this.reader = reader;
+    }
+
     public void incrementRecordIndex() {
         recordIndex++;
     }
 
     public void jumpTo(int parititonIndex, long recordIndex) {
         this.columnBase = reader.getColumnBase(parititonIndex);
+        this.recordIndex = recordIndex;
+    }
+
+    public void setRecordIndex(long recordIndex) {
         this.recordIndex = recordIndex;
     }
 

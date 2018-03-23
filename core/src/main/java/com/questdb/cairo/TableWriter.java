@@ -974,7 +974,6 @@ public class TableWriter implements Closeable {
                 // lets not leave half baked file sitting around
                 LOG.error().$("failed to create index [name=").utf8(path).$(']').$();
                 if (!ff.remove(path)) {
-                    //todo: not hit by test
                     LOG.error().$("failed to remove '").utf8(path).$("'. Please remove MANUALLY.").$();
                 }
                 throw e;
@@ -1307,7 +1306,7 @@ public class TableWriter implements Closeable {
         try {
             ff.iterateDir(path.$(), (file, type) -> {
                 nativeLPSZ.of(file);
-                if (type == Files.DT_DIR && !IGNORED_FILES.contains(nativeLPSZ)) {
+                if (type == Files.DT_DIR && IGNORED_FILES.excludes(nativeLPSZ)) {
                     path.trimTo(rootLen);
                     path.concat(nativeLPSZ);
                     int plen = path.length();
@@ -1392,7 +1391,7 @@ public class TableWriter implements Closeable {
                 path.trimTo(rootLen);
                 path.concat(name).$();
                 nativeLPSZ.of(name);
-                if (!IGNORED_FILES.contains(nativeLPSZ)) {
+                if (IGNORED_FILES.excludes(nativeLPSZ)) {
                     if (type == Files.DT_DIR && !ff.rmdir(path)) {
                         throw CairoException.instance(ff.errno()).put("Cannot remove directory: ").put(path);
                     }
@@ -1410,7 +1409,7 @@ public class TableWriter implements Closeable {
                 path.trimTo(rootLen);
                 path.concat(pName).$();
                 nativeLPSZ.of(pName);
-                if (!IGNORED_FILES.contains(nativeLPSZ)) {
+                if (IGNORED_FILES.excludes(nativeLPSZ)) {
                     if (type == Files.DT_DIR) {
                         try {
                             long dirTimestamp = partitionDirFmt.parse(nativeLPSZ, DateLocaleFactory.INSTANCE.getDefaultDateLocale());

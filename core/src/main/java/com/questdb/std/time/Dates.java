@@ -465,14 +465,14 @@ final public class Dates {
                         p++;
                         break;
                     case STATE_UTC:
-                        if (p > hi - 2 || !Chars.equalsIgnoreCase(in, p, p + 2, "tc", 0, 2)) {
+                        if (p > hi - 2 || Chars.noMatch(in, p, p + 2, "tc", 0, 2)) {
                             return Long.MIN_VALUE;
                         }
                         state = STATE_SIGN;
                         p += 2;
                         break;
                     case STATE_GMT:
-                        if (p > hi - 2 || !Chars.equalsIgnoreCase(in, p, p + 2, "mt", 0, 2)) {
+                        if (p > hi - 2 || Chars.noMatch(in, p, p + 2, "mt", 0, 2)) {
                             return Long.MIN_VALUE;
                         }
                         state = STATE_SIGN;

@@ -131,13 +131,13 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
         throw new UnsupportedOperationException();
     }
 
-    public Path concat(CharSequence str, int from, int len) {
+    public Path concat(CharSequence str, int from, int to) {
 //        if (len + this.len + OVERHEAD >= capacity) {
 //            extend(len + this.len + OVERHEAD);
 //        }
 
         ensureSeparator();
-        copy(str, from, len);
+        copy(str, from, to);
 
 //        this.wptr += len;
 //        this.len += len;
@@ -183,10 +183,10 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
         }
     }
 
-    public Path of(CharSequence str, int from, int len) {
+    public Path of(CharSequence str, int from, int to) {
         this.wptr = ptr;
         this.len = 0;
-        return concat(str, from, len);
+        return concat(str, from, to);
     }
 
     public Path of(long lpsz) {
@@ -210,12 +210,8 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
         return this;
     }
 
-    private void copy(CharSequence str, int from, int len) {
-        encodeUtf8(str, from, len);
-//        for (int i = 0; i < len; i++) {
-//            char c = str.charAt(i + from);
-//            Unsafe.getUnsafe().putByte(wptr + i, (byte) (c == '/' && Os.type == Os.WINDOWS ? '\\' : c));
-//        }
+    private void copy(CharSequence str, int from, int to) {
+        encodeUtf8(str, from, to);
     }
 
     @Override

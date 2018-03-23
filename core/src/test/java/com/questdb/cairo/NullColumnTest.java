@@ -41,7 +41,7 @@ public class NullColumnTest {
 
     @Test
     public void getBinLen() {
-        Assert.assertEquals(-1L, NullColumn.INSTANCE.getBinLen(1234));
+        Assert.assertEquals(TableUtils.NULL_LEN, NullColumn.INSTANCE.getBinLen(1234));
     }
 
     @Test
@@ -96,7 +96,7 @@ public class NullColumnTest {
 
     @Test
     public void getStrLen() {
-        Assert.assertEquals(-1, NullColumn.INSTANCE.getStrLen(1234));
+        Assert.assertEquals(TableUtils.NULL_LEN, NullColumn.INSTANCE.getStrLen(1234));
     }
 
     @Test

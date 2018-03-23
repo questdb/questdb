@@ -66,7 +66,7 @@ public class WriterPool extends AbstractPool implements ResourcePool<TableWriter
     private static final Log LOG = LogFactory.getLog(WriterPool.class);
 
     private final static long ENTRY_OWNER = Unsafe.getFieldOffset(Entry.class, "owner");
-    private final ConcurrentHashMap<CharSequence, Entry> entries = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<Entry> entries = new ConcurrentHashMap<>();
     private final CairoConfiguration configuration;
     private final Path path = new Path();
     private final MicrosecondClock clock;

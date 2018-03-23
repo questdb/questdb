@@ -23,6 +23,7 @@
 
 package com.questdb.cairo;
 
+import com.questdb.common.RowCursor;
 import com.questdb.common.SymbolTable;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
@@ -68,7 +69,7 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
         }
 
         int hash = Hash.boundedHash(symbol, maxHash);
-        BitmapIndexCursor cursor = indexReader.getCursor(hash, maxOffset);
+        RowCursor cursor = indexReader.getCursor(hash, maxOffset);
         while (cursor.hasNext()) {
             long offsetOffset = cursor.next();
             if (Chars.equals(symbol, charMem.getStr(offsetMem.getLong(offsetOffset)))) {

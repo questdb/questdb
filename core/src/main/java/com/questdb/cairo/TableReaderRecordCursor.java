@@ -30,17 +30,11 @@ import com.questdb.std.Rows;
 
 public class TableReaderRecordCursor implements RecordCursor {
 
-    private final TableReader reader;
-    private final TableReaderRecord record;
+    private final TableReaderRecord record = new TableReaderRecord();
+    private TableReader reader;
     private int partitionIndex = 0;
     private int partitionCount;
     private long maxRecordIndex = -1;
-
-
-    public TableReaderRecordCursor(TableReader reader) {
-        this.reader = reader;
-        this.record = new TableReaderRecord(reader);
-    }
 
     @Override
     public Record getRecord() {
@@ -49,7 +43,9 @@ public class TableReaderRecordCursor implements RecordCursor {
 
     @Override
     public Record newRecord() {
-        return new TableReaderRecord(reader);
+        TableReaderRecord record = new TableReaderRecord();
+        record.of(reader);
+        return record;
     }
 
     @Override
@@ -70,7 +66,7 @@ public class TableReaderRecordCursor implements RecordCursor {
 
     @Override
     public void releaseCursor() {
-        // nothing to do
+        reader.close();
     }
 
     @Override
@@ -90,6 +86,12 @@ public class TableReaderRecordCursor implements RecordCursor {
     public Record next() {
         record.incrementRecordIndex();
         return record;
+    }
+
+    void of(TableReader reader) {
+        this.reader = reader;
+        this.record.of(reader);
+        toTop();
     }
 
     private boolean switchPartition() {

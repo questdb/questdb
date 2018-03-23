@@ -99,6 +99,14 @@ public final class Chars {
 
     }
 
+    public static boolean endsWith(CharSequence cs, char c) {
+        if (cs == null) {
+            return false;
+        }
+        final int csl = cs.length();
+        return csl != 0 && c == cs.charAt(csl - 1);
+    }
+
     public static boolean equals(CharSequence l, CharSequence r) {
         if (l == r) {
             return true;
@@ -180,20 +188,21 @@ public final class Chars {
         return true;
     }
 
-    public static boolean equalsIgnoreCase(CharSequence l, int llo, int lhi, CharSequence r, int rlo, int rhi) {
-        int lp = llo;
-        int rp = rlo;
-        while (lp < lhi && rp < rhi) {
-            if (Character.toLowerCase(l.charAt(lp++)) != r.charAt(rp++)) {
-                return false;
-            }
-
-        }
-        return lp == lhi && rp == rhi;
-    }
-
     public static boolean equalsNc(CharSequence l, CharSequence r) {
         return r != null && equals(l, r);
+    }
+
+    public static int hashCode(CharSequence value, int lo, int hi) {
+
+        if (hi == lo) {
+            return 0;
+        }
+
+        int h = 0;
+        for (int p = lo; p < hi; p++) {
+            h = 31 * h + value.charAt(p);
+        }
+        return h;
     }
 
     public static int hashCode(CharSequence value) {
@@ -250,6 +259,18 @@ public final class Chars {
         return -1;
     }
 
+    public static boolean noMatch(CharSequence l, int llo, int lhi, CharSequence r, int rlo, int rhi) {
+        int lp = llo;
+        int rp = rlo;
+        while (lp < lhi && rp < rhi) {
+            if (Character.toLowerCase(l.charAt(lp++)) != r.charAt(rp++)) {
+                return true;
+            }
+
+        }
+        return lp != lhi || rp != rhi;
+    }
+
     public static void putCharsOnly(long address, CharSequence value) {
         strcpyw(value, value.length(), address);
     }
@@ -279,7 +300,7 @@ public final class Chars {
                         if (inQuote) {
                             lastLen++;
                         } else {
-                            paths.add(new Path().of(args, lastIndex, lastLen).$());
+                            paths.add(new Path().of(args, lastIndex, lastLen + lastIndex).$());
                             lastLen = 0;
                         }
                     }
@@ -298,7 +319,7 @@ public final class Chars {
         }
 
         if (lastLen > 0) {
-            paths.add(new Path().of(args, lastIndex, lastLen).$());
+            paths.add(new Path().of(args, lastIndex, lastLen + lastIndex).$());
         }
         return paths;
     }
@@ -346,9 +367,9 @@ public final class Chars {
         }
     }
 
-    public static CharSequence stringOf(CharSequence charSequence) {
+    public static String stringOf(CharSequence charSequence) {
         if (charSequence instanceof String) {
-            return charSequence;
+            return (String) charSequence;
         }
 
         if (charSequence == null) {

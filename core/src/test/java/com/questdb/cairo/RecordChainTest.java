@@ -226,7 +226,7 @@ public class RecordChainTest {
                     Assert.assertFalse(cs1 != null && cs1 == cs2);
                     TestUtils.assertEquals(e, cs2);
                     if (cs1 == null) {
-                        Assert.assertEquals(0, actual.getStrLen(i));
+                        Assert.assertEquals(TableUtils.NULL_LEN, actual.getStrLen(i));
                     } else {
                         Assert.assertEquals(cs1.length(), actual.getStrLen(i));
                     }

@@ -37,12 +37,14 @@ class TableReaderMetadata extends AbstractRecordMetadata implements Closeable {
     private final Path path;
     private final FilesFacade ff;
     private final CharSequenceIntHashMap tmpValidationMap = new CharSequenceIntHashMap();
+    private final String tableName;
     private int timestampIndex;
     private int columnCount;
     private ReadOnlyMemory transitionMeta;
 
-    public TableReaderMetadata(FilesFacade ff, Path path) {
+    public TableReaderMetadata(FilesFacade ff, String tableName, Path path) {
         this.ff = ff;
+        this.tableName = tableName;
         this.path = new Path().of(path).$();
         try {
             this.metaMem = new ReadOnlyMemory(ff, path, ff.getPageSize(), ff.length(path));
@@ -55,10 +57,10 @@ class TableReaderMetadata extends AbstractRecordMetadata implements Closeable {
             // don't create strings in this loop, we already have them in columnNameIndexMap
             for (int i = 0; i < columnCount; i++) {
                 CharSequence name = metaMem.getStr(offset);
-                int index = columnNameIndexMap.keyIndex(name);
+                assert name != null;
                 columnMetadata.add(
                         new TableColumnMetadata(
-                                columnNameIndexMap.keyAt(index).toString(),
+                                name.toString(),
                                 TableUtils.getColumnType(metaMem, i),
                                 TableUtils.isColumnIndexed(metaMem, i),
                                 TableUtils.getIndexBlockCapacity(metaMem, i)
@@ -66,7 +68,7 @@ class TableReaderMetadata extends AbstractRecordMetadata implements Closeable {
                 );
                 offset += ReadOnlyMemory.getStorageLength(name);
             }
-        } catch (AssertionError e) {
+        } catch (CairoException e) {
             close();
             throw e;
         }
@@ -255,7 +257,12 @@ class TableReaderMetadata extends AbstractRecordMetadata implements Closeable {
 
     @Override
     public int getColumnIndexQuiet(CharSequence name) {
-        return columnNameIndexMap.get(name);
+        int dot = Chars.indexOf(name, '.');
+        if (dot == -1) {
+            return columnNameIndexMap.get(name);
+        }
+
+        return getColumnIndexPrefixed(name, dot);
     }
 
     @Override
@@ -270,6 +277,17 @@ class TableReaderMetadata extends AbstractRecordMetadata implements Closeable {
 
     public int getPartitionBy() {
         return metaMem.getInt(TableUtils.META_OFFSET_PARTITION_BY);
+    }
+
+    private int getColumnIndexPrefixed(CharSequence name, int dot) {
+        if (Chars.equals(tableName, name, 0, dot)) {
+            int n = name.length();
+            int keyIndex = columnNameIndexMap.keyIndex(name, dot + 1, n);
+            if (keyIndex < 0) {
+                return columnNameIndexMap.valueAt(keyIndex);
+            }
+        }
+        return -1;
     }
 
     private TableColumnMetadata moveMetadata(int index, TableColumnMetadata metadata) {

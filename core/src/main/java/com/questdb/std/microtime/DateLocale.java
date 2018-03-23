@@ -123,10 +123,13 @@ public class DateLocale {
         }
 
         char c0 = Character.toUpperCase(token.charAt(0));
-        ObjList<CharSequence> l = map.get(c0);
-        if (l == null) {
+        int index = map.keyIndex(c0);
+        ObjList<CharSequence> l;
+        if (index > -1) {
             l = new ObjList<>();
-            map.put(c0, l);
+            map.putAt(index, c0, l);
+        } else {
+            l = map.valueAt(index);
         }
         l.add(((char) pos) + token.toUpperCase());
         l.sort(Lexer.COMPARATOR);

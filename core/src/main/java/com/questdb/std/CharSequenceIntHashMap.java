@@ -23,22 +23,13 @@
 
 package com.questdb.std;
 
-import com.questdb.std.str.NullCharSequence;
-
 import java.util.Arrays;
 
 
-public class CharSequenceIntHashMap implements Mutable {
-    private static final int MIN_INITIAL_CAPACITY = 16;
+public class CharSequenceIntHashMap extends AbstractCharSequenceHashSet {
     private static final int NO_ENTRY_VALUE = -1;
-    private static final CharSequence noEntryKey = NullCharSequence.INSTANCE;
     private final int noEntryValue;
-    private final double loadFactor;
-    private CharSequence[] keys;
     private int[] values;
-    private int free;
-    private int capacity;
-    private int mask;
 
     public CharSequenceIntHashMap() {
         this(8);
@@ -50,21 +41,29 @@ public class CharSequenceIntHashMap implements Mutable {
 
     @SuppressWarnings("unchecked")
     public CharSequenceIntHashMap(int initialCapacity, double loadFactor, int noEntryValue) {
+        super(initialCapacity, loadFactor, 0.3);
         this.noEntryValue = noEntryValue;
-        int capacity = Math.max(initialCapacity, (int) (initialCapacity / loadFactor));
-        capacity = capacity < MIN_INITIAL_CAPACITY ? MIN_INITIAL_CAPACITY : Numbers.ceilPow2(capacity);
-        this.loadFactor = loadFactor;
-        keys = new CharSequence[capacity];
         values = new int[capacity];
-        free = this.capacity = initialCapacity;
-        mask = capacity - 1;
         clear();
     }
 
     public final void clear() {
-        Arrays.fill(keys, noEntryKey);
+        super.clear();
         Arrays.fill(values, noEntryValue);
-        free = this.capacity;
+    }
+
+    public boolean removeAt(int index) {
+        if (index < 0) {
+            Unsafe.arrayPut(keys, -index - 1, noEntryKey);
+            Unsafe.arrayPut(values, -index - 1, noEntryValue);
+            free++;
+            return true;
+        }
+        return false;
+    }
+
+    public boolean contains(CharSequence key) {
+        return keyIndex(key) < 0;
     }
 
     public int get(CharSequence key) {
@@ -80,26 +79,18 @@ public class CharSequenceIntHashMap implements Mutable {
         }
     }
 
-    public CharSequence keyAt(int index) {
-        return index < 0 ? Unsafe.arrayGet(keys, -index - 1) : null;
-    }
-
-    public int keyIndex(CharSequence key) {
-        int index = Chars.hashCode(key) & mask;
-
-        if (Unsafe.arrayGet(keys, index) == noEntryKey) {
-            return index;
-        }
-
-        if (Chars.equals(key, Unsafe.arrayGet(keys, index))) {
-            return -index - 1;
-        }
-
-        return probe(key, index);
-    }
-
     public boolean put(CharSequence key, int value) {
         return putAt(keyIndex(key), key, value);
+    }
+
+    public void putAll(CharSequenceIntHashMap other) {
+        CharSequence[] otherKeys = other.keys;
+        int[] otherValues = other.values;
+        for (int i = 0, n = otherKeys.length; i < n; i++) {
+            if (Unsafe.arrayGet(otherKeys, i) != noEntryKey) {
+                put(Unsafe.arrayGet(otherKeys, i), Unsafe.arrayGet(otherValues, i));
+            }
+        }
     }
 
     public boolean putAt(int index, CharSequence key, int value) {
@@ -118,37 +109,8 @@ public class CharSequenceIntHashMap implements Mutable {
         }
     }
 
-    public boolean remove(CharSequence key) {
-        return removeAt(keyIndex(key));
-    }
-
-    public boolean removeAt(int index) {
-        if (index < 0) {
-            Unsafe.arrayPut(values, -index - 1, noEntryValue);
-            free++;
-            return true;
-        }
-        return false;
-    }
-
-    public int size() {
-        return capacity - free;
-    }
-
     public int valueAt(int index) {
         return index < 0 ? Unsafe.arrayGet(values, -index - 1) : noEntryValue;
-    }
-
-    private int probe(CharSequence key, int index) {
-        do {
-            index = (index + 1) & mask;
-            if (Unsafe.arrayGet(keys, index) == noEntryKey) {
-                return index;
-            }
-            if (Chars.equals(key, Unsafe.arrayGet(keys, index))) {
-                return -index - 1;
-            }
-        } while (true);
     }
 
     private void putAt0(int index, CharSequence key, int value) {

@@ -25,7 +25,6 @@ package com.questdb.cairo;
 
 import com.questdb.cairo.sql.DataFrame;
 import com.questdb.cairo.sql.DataFrameCursor;
-import com.questdb.common.RecordMetadata;
 import com.questdb.common.SymbolTable;
 
 public class FullTableFrameCursor implements DataFrameCursor {
@@ -79,7 +78,7 @@ public class FullTableFrameCursor implements DataFrameCursor {
     }
 
     @Override
-    public void closeCursor() {
+    public void close() {
         if (reader != null) {
             reader.close();
             reader = null;
@@ -87,8 +86,8 @@ public class FullTableFrameCursor implements DataFrameCursor {
     }
 
     @Override
-    public RecordMetadata getMetadata() {
-        return reader.getMetadata();
+    public TableReader getReader() {
+        return reader;
     }
 
     @Override

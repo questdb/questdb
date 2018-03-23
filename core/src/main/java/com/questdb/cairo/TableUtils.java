@@ -63,6 +63,7 @@ public final class TableUtils {
     static final long META_OFFSET_TIMESTAMP_INDEX = 8;
     private static final int META_COLUMN_DATA_SIZE = 16;
     private final static Log LOG = LogFactory.getLog(TableUtils.class);
+    public static int NULL_LEN = -1;
 
     public static void create(FilesFacade ff, Path path, AppendMemory memory, CharSequence root, JournalMetadata metadata, int mode) {
         path.of(root).concat(metadata.getName());
@@ -96,7 +97,11 @@ public final class TableUtils {
     }
 
     public static int exists(FilesFacade ff, Path path, CharSequence root, CharSequence name) {
-        path.of(root).concat(name).$();
+        return exists(ff, path, root, name, 0, name.length());
+    }
+
+    public static int exists(FilesFacade ff, Path path, CharSequence root, CharSequence name, int lo, int hi) {
+        path.of(root).concat(name, lo, hi).$();
         if (ff.exists(path)) {
             // prepare to replace trailing \0
             if (ff.exists(path.chopZ().concat(TXN_FILE_NAME).$())) {

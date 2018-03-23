@@ -406,8 +406,8 @@ public class BytecodeAssembler {
     }
 
     public int poolClass(Class clazz) {
-        int index = classCache.get(clazz);
-        if (index == -1) {
+        int index = classCache.keyIndex(clazz);
+        if (index > -1) {
             String name = clazz.getName();
             put(0x01);
             int n;
@@ -423,9 +423,11 @@ public class BytecodeAssembler {
                         break;
                 }
             }
-            classCache.put(clazz, index = poolClass(this.poolCount++));
+            int result = poolClass(this.poolCount++);
+            classCache.putAt(index, clazz, result);
+            return result;
         }
-        return index;
+        return classCache.valueAt(index);
     }
 
     public int poolField(int classIndex, int nameAndTypeIndex) {

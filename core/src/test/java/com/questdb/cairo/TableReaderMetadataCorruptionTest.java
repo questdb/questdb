@@ -192,9 +192,9 @@ public class TableReaderMetadataCorruptionTest extends AbstractCairoTest {
                 }
 
                 try {
-                    new TableReaderMetadata(FilesFacadeImpl.INSTANCE, path);
+                    new TableReaderMetadata(FilesFacadeImpl.INSTANCE, "x", path);
                     Assert.fail();
-                } catch (AssertionError e) {
+                } catch (CairoException e) {
                     TestUtils.assertContains(e.getMessage(), contains);
                 }
             }
@@ -211,7 +211,7 @@ public class TableReaderMetadataCorruptionTest extends AbstractCairoTest {
 
                 long len = FilesFacadeImpl.INSTANCE.length(path);
 
-                try (TableReaderMetadata metadata = new TableReaderMetadata(FilesFacadeImpl.INSTANCE, path)) {
+                try (TableReaderMetadata metadata = new TableReaderMetadata(FilesFacadeImpl.INSTANCE, "x", path)) {
                     try (AppendMemory mem = new AppendMemory()) {
                         mem.of(FilesFacadeImpl.INSTANCE, path, FilesFacadeImpl.INSTANCE.getPageSize());
                         mem.putInt(columnCount);

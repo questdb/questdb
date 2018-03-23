@@ -202,7 +202,7 @@ public class TableReaderMetadataTimestampTest extends AbstractCairoTest {
         int columnCount = 11;
         TestUtils.assertMemoryLeak(() -> {
             try (Path path = new Path().of(root).concat("all")) {
-                try (TableReaderMetadata metadata = new TableReaderMetadata(FilesFacadeImpl.INSTANCE, path.concat(TableUtils.META_FILE_NAME).$())) {
+                try (TableReaderMetadata metadata = new TableReaderMetadata(FilesFacadeImpl.INSTANCE, "all", path.concat(TableUtils.META_FILE_NAME).$())) {
 
                     Assert.assertEquals(12, metadata.getColumnCount());
                     Assert.assertEquals(expectedInitialTimestampIndex, metadata.getTimestampIndex());
@@ -237,7 +237,7 @@ public class TableReaderMetadataTimestampTest extends AbstractCairoTest {
                                             int expectedColumnCount) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (Path path = new Path().of(root).concat("all")) {
-                try (TableReaderMetadata metadata = new TableReaderMetadata(FilesFacadeImpl.INSTANCE, path.concat(TableUtils.META_FILE_NAME).$())) {
+                try (TableReaderMetadata metadata = new TableReaderMetadata(FilesFacadeImpl.INSTANCE, "all", path.concat(TableUtils.META_FILE_NAME).$())) {
 
                     Assert.assertEquals(12, metadata.getColumnCount());
                     Assert.assertEquals(expectedInitialTimestampIndex, metadata.getTimestampIndex());

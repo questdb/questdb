@@ -21,10 +21,37 @@
  *
  ******************************************************************************/
 
-package com.questdb.cairo;
+package com.questdb.griffin.engine.constants;
 
-public interface BitmapIndexCursor {
-    boolean hasNext();
+import com.questdb.common.ColumnType;
+import com.questdb.common.Record;
+import com.questdb.common.StorageFacade;
+import com.questdb.griffin.compiler.AbstractVirtualColumn;
 
-    long next();
+public class LongConstant extends AbstractVirtualColumn {
+    private final long value;
+
+    public LongConstant(long value, int position) {
+        super(ColumnType.LONG, position);
+        this.value = value;
+    }
+
+    @Override
+    public double getDouble(Record rec) {
+        return value;
+    }
+
+    @Override
+    public long getLong(Record rec) {
+        return value;
+    }
+
+    @Override
+    public boolean isConstant() {
+        return true;
+    }
+
+    @Override
+    public void prepare(StorageFacade facade) {
+    }
 }
