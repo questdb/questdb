@@ -101,6 +101,42 @@ public class ExprParserTest {
     }
 
     @Test
+    public void testCaseInArithmetic() throws ParserException {
+        x("w11+10='th1'w23*1>'th2'0case5*1+",
+                "case" +
+                        " when w1+1=10" +
+                        " then 'th1'" +
+                        " when w2*3>1" +
+                        " then 'th2'" +
+                        " else 0" +
+                        " end * 5 + 1");
+    }
+
+    @Test
+    public void testCaseMissingWhenArg() {
+        assertFail(
+                "case when then 1 else 2 end",
+                10,
+                "missing arguments"
+        );
+    }
+
+    @Test
+    public void testCaseNested() throws ParserException {
+        x("x0>y1='a''b'casex0<'c'case",
+                "case when x > 0 then case when y = 1 then 'a' else 'b' end when x < 0 then 'c' end");
+    }
+
+    @Test
+    public void testCaseUnbalanced() {
+        assertFail(
+                "case when x then y",
+                0,
+                "unbalanced 'case'"
+        );
+    }
+
+    @Test
     public void testCommaExit() throws Exception {
         x("abxybzc*+", "a + b * c(b(x,y),z),");
     }
@@ -151,27 +187,34 @@ public class ExprParserTest {
     }
 
     @Test
-    public void testCaseMissingWhenArg() {
-        assertFail(
-                "case when then 1 else 2 end",
-                10,
-                "missing arguments"
+    public void testCaseWhenOutsideOfCase() throws ParserException {
+        x("when1+10>",
+                "when + 1 > 10"
         );
     }
 
     @Test
-    public void testCaseNested() throws ParserException {
-        x("x0>y1='a''b'casex0<'c'case",
-                "case when x > 0 then case when y = 1 then 'a' else 'b' end when x < 0 then 'c' end");
+    public void testCaseWithArithmetic() throws ParserException {
+        x("w11+10='th1'w23*1>'th2'0case",
+                "case" +
+                        " when w1+1=10" +
+                        " then 'th1'" +
+                        " when w2*3>1" +
+                        " then 'th2'" +
+                        " else 0" +
+                        " end");
     }
 
     @Test
-    public void testCaseUnbalanced() {
-        assertFail(
-                "case when x then y",
-                0,
-                "unbalanced 'case'"
-        );
+    public void testCaseWithBraces() throws ParserException {
+        x("10w11+5*10='th1'1-w23*1>'th2'0case1+*",
+                "10*(case" +
+                        " when (w1+1)*5=10" +
+                        " then 'th1'-1" +
+                        " when w2*3>1" +
+                        " then 'th2'" +
+                        " else 0" +
+                        " end + 1)");
     }
 
     @Test
@@ -195,6 +238,23 @@ public class ExprParserTest {
     }
 
     @Test
+    public void testSimpleCase() throws ParserException {
+        x("w1th1w2th2elscase", "case when w1 then th1 when w2 then th2 else els end");
+    }
+
+    @Test
+    public void testCaseWithOuterBraces() throws ParserException {
+        x("10w11+10='th1'w23*1>'th2'0case1+*",
+                "10*(case" +
+                        " when w1+1=10" +
+                        " then 'th1'" +
+                        " when w2*3>1" +
+                        " then 'th2'" +
+                        " else 0" +
+                        " end + 1)");
+    }
+
+    @Test
     public void testMissingArgAtBraceError() {
         assertFail("x * 4 + c(x,y,)", 14, "missing arguments");
     }
@@ -210,23 +270,6 @@ public class ExprParserTest {
     }
 
     @Test
-    public void testSimpleCase() throws ParserException {
-        x("w1th1w2th2elscase", "case when w1 then th1 when w2 then th2 else els end");
-    }
-
-    @Test
-    public void testSimpleCaseInArithmetic() throws ParserException {
-        x("w11+10='th1'w23*1>'th2'0case5*1+",
-                "case" +
-                        " when w1+1=10" +
-                        " then 'th1'" +
-                        " when w2*3>1" +
-                        " then 'th2'" +
-                        " else 0" +
-                        " end * 5 + 1");
-    }
-
-    @Test
     public void testSimpleLiteralExit() throws Exception {
         x("a", "a lit");
     }
@@ -234,42 +277,6 @@ public class ExprParserTest {
     @Test
     public void testUnary() throws Exception {
         x("4c-*", "4 * -c");
-    }
-
-    @Test
-    public void testSimpleCaseWithArithmetic() throws ParserException {
-        x("w11+10='th1'w23*1>'th2'0case",
-                "case" +
-                        " when w1+1=10" +
-                        " then 'th1'" +
-                        " when w2*3>1" +
-                        " then 'th2'" +
-                        " else 0" +
-                        " end");
-    }
-
-    @Test
-    public void testSimpleCaseWithBraces() throws ParserException {
-        x("10w11+5*10='th1'1-w23*1>'th2'0case1+*",
-                "10*(case" +
-                        " when (w1+1)*5=10" +
-                        " then 'th1'-1" +
-                        " when w2*3>1" +
-                        " then 'th2'" +
-                        " else 0" +
-                        " end + 1)");
-    }
-
-    @Test
-    public void testSimpleCaseWithOuterBraces() throws ParserException {
-        x("10w11+10='th1'w23*1>'th2'0case1+*",
-                "10*(case" +
-                        " when w1+1=10" +
-                        " then 'th1'" +
-                        " when w2*3>1" +
-                        " then 'th2'" +
-                        " else 0" +
-                        " end + 1)");
     }
 
     @Test

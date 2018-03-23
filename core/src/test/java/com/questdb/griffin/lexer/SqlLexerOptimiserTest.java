@@ -240,6 +240,45 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCaseImpossibleRewrite1() throws ParserException {
+        // referenced columns in 'when' clauses are different
+        assertQuery(
+                "select-virtual case('C','B',2 = b,'A',a = 1) + 1 column, b from (tab)",
+                "select case when a = 1 then 'A' when 2 = b then 'B' else 'C' end+1, b from tab",
+                modelOf("tab").col("a", ColumnType.INT).col("b", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testCaseImpossibleRewrite2() throws ParserException {
+        // 'when' is non-constant
+        assertQuery(
+                "select-virtual case('C','B',2 + b = a,'A',a = 1) + 1 column, b from (tab)",
+                "select case when a = 1 then 'A' when 2 + b = a then 'B' else 'C' end+1, b from tab",
+                modelOf("tab").col("a", ColumnType.INT).col("b", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testCaseToSwitchExpression() throws ParserException {
+        assertQuery(
+                "select-virtual switch(a,'C',1,'A',2,'B') + 1 column, b from (tab)",
+                "select case when a = 1 then 'A' when a = 2 then 'B' else 'C' end+1, b from tab",
+                modelOf("tab").col("a", ColumnType.INT).col("b", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testCaseToSwitchExpression2() throws ParserException {
+        // this test has inverded '=' arguments but should still be rewritten to 'switch'
+        assertQuery(
+                "select-virtual switch(a,'C',1,'A',2,'B') + 1 column, b from (tab)",
+                "select case when a = 1 then 'A' when 2 = a then 'B' else 'C' end+1, b from tab",
+                modelOf("tab").col("a", ColumnType.INT).col("b", ColumnType.INT)
+        );
+    }
+
+    @Test
     public void testCount() throws Exception {
         assertQuery(
                 "select-group-by" +
