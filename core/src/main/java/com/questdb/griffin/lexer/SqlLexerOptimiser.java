@@ -92,6 +92,7 @@ public final class SqlLexerOptimiser {
     private final StringSink columnNameAssembly = new StringSink();
     private final LiteralCheckingVisitor literalCheckingVisitor = new LiteralCheckingVisitor();
     private final LiteralRewritingVisitor literalRewritingVisitor = new LiteralRewritingVisitor();
+    private final ObjList<ExprNode> tempExprNodes = new ObjList<>();
     private Lexer lexer = new Lexer();
     private ObjList<JoinContext> emittedJoinClauses;
     private int defaultAliasCount = 0;
@@ -914,7 +915,7 @@ public final class SqlLexerOptimiser {
     private ExprNode expr() throws ParserException {
         astBuilder.reset();
         exprParser.parseExpr(lexer, astBuilder);
-        return astBuilder.poll();
+        return rewriteCase(astBuilder.poll());
     }
 
     private CharSequence extractColumnName(CharSequence token, int dot) {
@@ -1949,9 +1950,8 @@ public final class SqlLexerOptimiser {
     }
 
     private void parseSelectClause(QueryModel model) throws ParserException {
-        CharSequence tok;
         while (true) {
-            tok = tok("column");
+            CharSequence tok = tok("column");
 
             final ExprNode expr;
             // this is quite dramatic workaround for lexer
@@ -2330,6 +2330,74 @@ public final class SqlLexerOptimiser {
         if (model.getNestedModel() != null) {
             resolveJoinColumns(model.getNestedModel());
         }
+    }
+
+    private ExprNode rewriteCase(ExprNode node) throws ParserException {
+        traversalAlgo.traverse(node, node1 -> {
+            if (node1.type == ExprNode.FUNCTION && Chars.equals("case", node1.token)) {
+                tempExprNodes.clear();
+                ExprNode literal = null;
+                ExprNode elseExpr;
+                boolean convertToSwitch = true;
+                final int paramCount = node1.paramCount;
+                final int lim;
+                if ((paramCount & 1) == 1) {
+                    elseExpr = node1.args.getQuick(0);
+                    lim = 0;
+                } else {
+                    elseExpr = null;
+                    lim = -1;
+                }
+
+                for (int i = paramCount - 1; i > lim; i--) {
+                    if ((i & 1) == 1) {
+                        // this is "then" clause, copy it as as
+                        tempExprNodes.add(node1.args.getQuick(i));
+                        continue;
+                    }
+                    ExprNode where = node1.args.getQuick(i);
+                    if (where.type == ExprNode.OPERATION && where.token.charAt(0) == '=') {
+                        ExprNode thisConstant;
+                        ExprNode thisLiteral;
+                        if (where.lhs.type == ExprNode.CONSTANT && where.rhs.type == ExprNode.LITERAL) {
+                            thisConstant = where.lhs;
+                            thisLiteral = where.rhs;
+                        } else if (where.lhs.type == ExprNode.LITERAL && where.rhs.type == ExprNode.CONSTANT) {
+                            thisConstant = where.rhs;
+                            thisLiteral = where.lhs;
+                        } else {
+                            convertToSwitch = false;
+                            // not supported
+                            break;
+                        }
+
+                        if (literal == null) {
+                            literal = thisLiteral;
+                            tempExprNodes.add(thisConstant);
+                        } else if (Chars.equals(literal.token, thisLiteral.token)) {
+                            tempExprNodes.add(thisConstant);
+                        } else {
+                            convertToSwitch = false;
+                            // not supported
+                            break;
+                        }
+                    } else {
+                        convertToSwitch = false;
+                        // not supported
+                        break;
+                    }
+                }
+
+                if (convertToSwitch) {
+                    node1.token = "switch";
+                    node1.args.clear();
+                    node1.args.add(literal);
+                    node1.args.add(elseExpr);
+                    node1.args.addAll(tempExprNodes);
+                }
+            }
+        });
+        return node;
     }
 
     /**
@@ -2817,6 +2885,8 @@ public final class SqlLexerOptimiser {
             this.nameTypeMap = nameTypeMap;
             return this;
         }
+
+
     }
 
     private static class LiteralRewritingVisitor implements PostOrderTreeTraversalAlgo.Visitor {

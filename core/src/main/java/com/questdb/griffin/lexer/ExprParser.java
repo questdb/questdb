@@ -250,77 +250,80 @@ public class ExprParser {
 
                         // here we handle literals, in case of "case" statement some of these literals
                         // are going to flush operation stack
-                        switch (thisChar) {
-                            case 'c':
-                                if (Chars.equals("case", tok)) {
-                                    caseCount++;
-                                    paramCountStack.push(paramCount);
-                                    paramCount = 0;
-                                    opStack.push(exprNodePool.next().of(ExprNode.FUNCTION, Chars.toString(tok), Integer.MAX_VALUE, lexer.position()));
-                                    continue;
-                                }
-                                break;
-                            case 'e':
-                                if (Chars.equals("end", tok)) {
-                                    if (prevBranch == BRANCH_CASE_CONTROL) {
-                                        throw missingArgs(lexer.position());
-                                    }
+                        if (thisChar == 'c' && Chars.equals("case", tok)) {
+                            caseCount++;
+                            paramCountStack.push(paramCount);
+                            paramCount = 0;
+                            opStack.push(exprNodePool.next().of(ExprNode.FUNCTION, Chars.toString(tok), Integer.MAX_VALUE, lexer.position()));
+                            continue;
+                        }
 
-                                    // If the token is a right parenthesis:
-                                    // Until the token at the top of the stack is a left parenthesis, pop operators off the stack onto the output queue.
-                                    // Pop the left parenthesis from the stack, but not onto the output queue.
-                                    //        If the token at the top of the stack is a function token, pop it onto the output queue.
-                                    //        If the stack runs out without finding a left parenthesis, then there are mismatched parentheses.
-                                    while ((node = opStack.poll()) != null && !Chars.equals("case", node.token)) {
+                        if (caseCount > 0) {
+                            switch (thisChar) {
+                                case 'e':
+                                    if (Chars.equals("end", tok)) {
+                                        if (prevBranch == BRANCH_CASE_CONTROL) {
+                                            throw missingArgs(lexer.position());
+                                        }
+
+                                        // If the token is a right parenthesis:
+                                        // Until the token at the top of the stack is a left parenthesis, pop operators off the stack onto the output queue.
+                                        // Pop the left parenthesis from the stack, but not onto the output queue.
+                                        //        If the token at the top of the stack is a function token, pop it onto the output queue.
+                                        //        If the stack runs out without finding a left parenthesis, then there are mismatched parentheses.
+                                        while ((node = opStack.poll()) != null && !Chars.equals("case", node.token)) {
+                                            listener.onNode(node);
+                                        }
+
+                                        node.paramCount = paramCount;
                                         listener.onNode(node);
+
+                                        // make sure we restore paramCount
+                                        if (paramCountStack.notEmpty()) {
+                                            paramCount = paramCountStack.pop();
+                                        }
+
+                                        caseCount--;
+                                        continue;
                                     }
+                                    // fall through
+                                case 'w':
+                                case 't':
+                                    int keywordIndex = caseKeywords.get(tok);
+                                    if (keywordIndex > -1) {
 
-                                    listener.onNode(node);
+                                        if (prevBranch == BRANCH_CASE_CONTROL) {
+                                            throw missingArgs(lexer.position());
+                                        }
 
-                                    // make sure we restore paramCount
-                                    if (paramCountStack.notEmpty()) {
-                                        paramCount = paramCountStack.pop();
+                                        switch (keywordIndex) {
+                                            case 0: // when
+                                            case 2: // else
+                                                if ((paramCount % 2) != 0) {
+                                                    throw ParserException.$(lexer.position(), "'then' expected");
+                                                }
+                                                break;
+                                            default: // then
+                                                if ((paramCount % 2) == 0) {
+                                                    throw ParserException.$(lexer.position(), "'when' expected");
+                                                }
+                                                break;
+                                        }
+
+                                        while ((node = opStack.poll()) != null && !Chars.equals("case", node.token)) {
+                                            listener.onNode(node);
+                                        }
+
+                                        if (node != null) {
+                                            opStack.push(node);
+                                        }
+
+                                        paramCount++;
+                                        thisBranch = BRANCH_CASE_CONTROL;
+                                        continue;
                                     }
-
-                                    caseCount--;
-                                    continue;
-                                }
-                                // fall through
-                            case 'w':
-                            case 't':
-                                int keywordIndex = caseKeywords.get(tok);
-                                if (keywordIndex > -1) {
-
-                                    if (prevBranch == BRANCH_CASE_CONTROL) {
-                                        throw missingArgs(lexer.position());
-                                    }
-
-                                    switch (keywordIndex) {
-                                        case 0: // when
-                                        case 2: // else
-                                            if ((paramCount % 2) != 0) {
-                                                throw ParserException.$(lexer.position(), "'then' expected");
-                                            }
-                                            break;
-                                        default: // then
-                                            if ((paramCount % 2) == 0) {
-                                                throw ParserException.$(lexer.position(), "'when' expected");
-                                            }
-                                            break;
-                                    }
-
-                                    while ((node = opStack.poll()) != null && !Chars.equals("case", node.token)) {
-                                        listener.onNode(node);
-                                    }
-                                    if (node != null) {
-                                        opStack.push(node);
-                                    }
-
-                                    paramCount++;
-                                    thisBranch = BRANCH_CASE_CONTROL;
-                                    continue;
-                                }
-                                break;
+                                    break;
+                            }
                         }
 
                         // If the token is a function token, then push it onto the stack.
