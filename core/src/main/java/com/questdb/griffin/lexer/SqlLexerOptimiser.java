@@ -1299,7 +1299,7 @@ public final class SqlLexerOptimiser {
         enumerateTableColumns(model);
         resolveJoinColumns(model);
         optimiseBooleanNot(model);
-        final QueryModel rewrittenModel = rewriteOrderBy(rewriteSelectClause(model));
+        final QueryModel rewrittenModel = rewriteOrderBy(rewriteSelectClause(model, true));
         optimiseOrderBy(rewrittenModel, ORDER_BY_UNKNOWN);
         createOrderHash(rewrittenModel);
         optimiseJoins(rewrittenModel);
@@ -2549,13 +2549,15 @@ public final class SqlLexerOptimiser {
         return result;
     }
 
-    private QueryModel rewriteSelectClause(QueryModel model) throws ParserException {
+    // flatParent = true means that parent model does not have selected columns
+    private QueryModel rewriteSelectClause(QueryModel model, boolean flatParent) throws ParserException {
         ObjList<QueryModel> models = model.getJoinModels();
         for (int i = 0, n = models.size(); i < n; i++) {
-            QueryModel m = models.getQuick(i);
-            QueryModel nestedModel = m.getNestedModel();
+            final QueryModel m = models.getQuick(i);
+            final boolean flatModel = m.getColumns().size() == 0;
+            final QueryModel nestedModel = m.getNestedModel();
             if (nestedModel != null) {
-                QueryModel rewritten = rewriteSelectClause(nestedModel);
+                QueryModel rewritten = rewriteSelectClause(nestedModel, flatModel);
                 if (rewritten != nestedModel) {
                     m.setNestedModel(rewritten);
                     // since we have rewritten nested model we also have to update column hash
@@ -2563,7 +2565,11 @@ public final class SqlLexerOptimiser {
                 }
             }
 
-            if (m.getColumns().size() > 0) {
+            if (flatModel) {
+                if (flatParent && m.getSampleBy() != null) {
+                    throw ParserException.$(m.getSampleBy().position, "'sample by' must be used with 'select' clause, which contains aggerate expression(s)");
+                }
+            } else {
                 model.replaceJoinModel(i, rewriteSelectClause0(m));
             }
         }
@@ -2754,7 +2760,7 @@ public final class SqlLexerOptimiser {
         }
 
         if (!useGroupByModel && groupByModel.getSampleBy() != null) {
-            throw ParserException.$(groupByModel.getSampleBy().position, "at least one aggregation function must be present");
+            throw ParserException.$(groupByModel.getSampleBy().position, "at least one aggregation function must be present in 'select' clause");
         }
 
         return root;

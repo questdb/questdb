@@ -2610,13 +2610,22 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @Test
     public void testOrderByWithSampleBy2() throws ParserException {
-        // todo: need another test to assert exception when sample by clause present without aggregation
-        // we are not looking to deal with 'sample by' outside of selected column context, clauses hidden
-        // deep inside of sub-queries need to be explicitly validated. This could be an easy win when we
-        // go about collapsing sub-queries
         assertQuery(
-                "select-group-by a, sum(b) sum from (((tab order by t) _xQdbA2 timestamp (t) sample by 10m) _xQdbA1) order by a",
+                "select-group-by a, sum(b) sum from ((select-group-by t, a, sum(b) b from ((tab order by t) _xQdbA3) timestamp (t) sample by 10m) _xQdbA1) order by a",
+                "select a, sum(b) from (select a,sum(b) b from (tab order by t) timestamp(t) sample by 10m order by t) order by a",
+                modelOf("tab")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.INT)
+                        .col("t", ColumnType.TIMESTAMP)
+        );
+    }
+
+    @Test
+    public void testSampleByIncorrectPlacement() {
+        assertSyntaxError(
                 "select a, sum(b) from ((tab order by t) timestamp(t) sample by 10m order by t) order by a",
+                63,
+                "'sample by' must be used with 'select'",
                 modelOf("tab")
                         .col("a", ColumnType.INT)
                         .col("b", ColumnType.INT)
