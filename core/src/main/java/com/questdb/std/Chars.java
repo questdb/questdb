@@ -250,6 +250,21 @@ public final class Chars {
         return -1;
     }
 
+    public static boolean isQuoted(CharSequence s) {
+        if (s == null || s.length() == 0) {
+            return false;
+        }
+
+        switch (s.charAt(0)) {
+            case '\'':
+            case '"':
+            case '`':
+                return true;
+            default:
+                return false;
+        }
+    }
+
     public static int lastIndexOf(CharSequence s, char c) {
         for (int i = s.length() - 1; i > -1; i--) {
             if (s.charAt(i) == c) {

@@ -111,7 +111,7 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
                         return r;
                     }
 
-                    LOG.info().$('\'').$(name).$("' is assigned [at=").$(e.index).$(':').$(i).$(", thread=").$(thread).$(']').$();
+                    LOG.debug().$('\'').$(name).$("' is assigned [at=").$(e.index).$(':').$(i).$(", thread=").$(thread).$(']').$();
                     return r;
                 }
             }
@@ -325,7 +325,7 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
                 return false;
             }
 
-            LOG.info().$('\'').$(name).$("' is back [at=").$(reader.entry.index).$(':').$(index).$(", thread=").$(thread).$(']').$();
+            LOG.debug().$('\'').$(name).$("' is back [at=").$(reader.entry.index).$(':').$(index).$(", thread=").$(thread).$(']').$();
             notifyListener(thread, name, PoolListener.EV_RETURN, reader.entry.index, index);
 
             Unsafe.arrayPut(reader.entry.releaseTimes, index, clock.getTicks());

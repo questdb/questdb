@@ -185,8 +185,8 @@ public final class SqlLexerOptimiser {
      */
     private void addColumnToTranslatingModel(QueryColumn column, QueryModel translatingModel, QueryModel validatingModel) throws ParserException {
         if (validatingModel != null) {
-            String refColumn = column.getAst().token;
-            getIndexOfTableForColumn(validatingModel, refColumn, refColumn.indexOf('.'), column.getAst().position);
+            CharSequence refColumn = column.getAst().token;
+            getIndexOfTableForColumn(validatingModel, refColumn, Chars.indexOf(refColumn, '.'), column.getAst().position);
         }
         translatingModel.addColumn(column);
     }

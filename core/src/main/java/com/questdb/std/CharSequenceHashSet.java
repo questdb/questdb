@@ -121,12 +121,40 @@ public class CharSequenceHashSet implements Mutable {
         return list.getLast();
     }
 
+    public int keyIndex(CharSequence key) {
+        int index = Chars.hashCode(key) & mask;
+        if (Unsafe.arrayGet(keys, index) == null) {
+            return index;
+        }
+        if (eq(index, key)) {
+            return -index - 1;
+        }
+
+        return probe(key, index);
+    }
+
+    public int keyIndex(CharSequence key, int lo, int hi) {
+        int index = Chars.hashCode(key, lo, hi) & mask;
+
+        if (Unsafe.arrayGet(keys, index) == null) {
+            return index;
+        }
+
+        CharSequence cs = Unsafe.arrayGet(keys, index);
+        if (Chars.equals(key, lo, hi, cs, 0, cs.length())) {
+            return -index - 1;
+        }
+        return probe(key, lo, hi, index);
+    }
+
     public int remove(CharSequence key) {
         if (key == null) {
             return removeNull();
         }
+        return removeAt(keyIndex(key));
+    }
 
-        int index = keyIndex(key);
+    public int removeAt(int index) {
         if (index < 0) {
             int result = list.remove(Unsafe.arrayGet(keys, -index - 1));
             Unsafe.arrayPut(keys, -index - 1, null);
@@ -135,6 +163,16 @@ public class CharSequenceHashSet implements Mutable {
             return result;
         }
 
+        return -1;
+    }
+
+    public int removeNull() {
+        if (hasNull) {
+            hasNull = false;
+            int index = list.remove(null);
+            free++;
+            return index;
+        }
         return -1;
     }
 
@@ -161,16 +199,17 @@ public class CharSequenceHashSet implements Mutable {
         return key == Unsafe.arrayGet(keys, index) || Chars.equals(key, Unsafe.arrayGet(keys, index));
     }
 
-    private int keyIndex(CharSequence key) {
-        int index = Chars.hashCode(key) & mask;
-        if (Unsafe.arrayGet(keys, index) == null) {
-            return index;
-        }
-        if (eq(index, key)) {
-            return -index - 1;
-        }
-
-        return probe(key, index);
+    private int probe(CharSequence key, int lo, int hi, int index) {
+        do {
+            index = (index + 1) & mask;
+            if (Unsafe.arrayGet(keys, index) == null) {
+                return index;
+            }
+            CharSequence cs = Unsafe.arrayGet(keys, index);
+            if (Chars.equals(key, lo, hi, cs, 0, cs.length())) {
+                return -index - 1;
+            }
+        } while (true);
     }
 
     private int probe(CharSequence key, int index) {
@@ -194,16 +233,6 @@ public class CharSequenceHashSet implements Mutable {
             CharSequence key = list.getQuick(i);
             Unsafe.arrayPut(keys, keyIndex(key), key);
         }
-    }
-
-    private int removeNull() {
-        if (hasNull) {
-            hasNull = false;
-            int index = list.remove(null);
-            free++;
-            return index;
-        }
-        return -1;
     }
 
     @SuppressWarnings({"unchecked"})
