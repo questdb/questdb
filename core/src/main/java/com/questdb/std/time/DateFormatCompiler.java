@@ -109,7 +109,7 @@ public class DateFormatCompiler {
     private static final int LOCAL_HOUR_TYPE = 18;
     private static final int LOCAL_ERA = 19;
     private static final int FORMAT_METHOD_STACK_START = 6;
-    private final Lexer lexer = new Lexer();
+    private final Lexer2 lexer = new Lexer2();
     private final BytecodeAssembler asm = new BytecodeAssembler();
     private final IntList ops = new IntList();
     private final ObjList<String> delimiters = new ObjList<>();

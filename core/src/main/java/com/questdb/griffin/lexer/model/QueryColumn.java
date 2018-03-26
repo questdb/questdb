@@ -29,7 +29,7 @@ import com.questdb.std.ObjectFactory;
 
 public class QueryColumn implements Mutable {
     public final static ObjectFactory<QueryColumn> FACTORY = QueryColumn::new;
-    private String alias;
+    private CharSequence alias;
     private ExprNode ast;
 
     protected QueryColumn() {
@@ -41,7 +41,7 @@ public class QueryColumn implements Mutable {
         ast = null;
     }
 
-    public String getAlias() {
+    public CharSequence getAlias() {
         return alias;
     }
 
@@ -49,11 +49,11 @@ public class QueryColumn implements Mutable {
         return ast;
     }
 
-    public String getName() {
+    public CharSequence getName() {
         return alias != null ? alias : ast.token;
     }
 
-    public QueryColumn of(String alias, ExprNode ast) {
+    public QueryColumn of(CharSequence alias, ExprNode ast) {
         this.alias = alias;
         this.ast = ast;
         return this;

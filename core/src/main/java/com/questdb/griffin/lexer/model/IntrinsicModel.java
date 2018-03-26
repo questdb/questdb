@@ -36,7 +36,7 @@ public class IntrinsicModel implements Mutable {
     private final LongList intervalsA = new LongList();
     private final LongList intervalsB = new LongList();
     private final LongList intervalsC = new LongList();
-    public String keyColumn;
+    public CharSequence keyColumn;
     public ExprNode filter;
     public LongList intervals;
     public int intrinsicValue = IntrinsicValue.UNDEFINED;

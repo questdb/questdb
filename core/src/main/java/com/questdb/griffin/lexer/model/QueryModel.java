@@ -54,7 +54,7 @@ public class QueryModel implements Mutable, ParsedModel, AliasTranslator, Sinkab
     public static final int SELECT_MODEL_GROUP_BY = 4;
     private final ObjList<QueryColumn> columns = new ObjList<>();
     private final CharSequenceObjHashMap<CharSequence> aliasToColumnMap = new CharSequenceObjHashMap<>();
-    private final CharSequenceObjHashMap<String> columnToAliasMap = new CharSequenceObjHashMap<>();
+    private final CharSequenceObjHashMap<CharSequence> columnToAliasMap = new CharSequenceObjHashMap<>();
     private final ObjList<QueryModel> joinModels = new ObjList<>();
     private final ObjList<ExprNode> orderBy = new ObjList<>();
     private final IntList orderByDirection = new IntList();
@@ -102,7 +102,7 @@ public class QueryModel implements Mutable, ParsedModel, AliasTranslator, Sinkab
 
     public void addColumn(QueryColumn column) {
         columns.add(column);
-        final String alias = column.getAlias();
+        final CharSequence alias = column.getAlias();
         final ExprNode ast = column.getAst();
         assert alias != null;
         aliasToColumnMap.put(alias, ast.token);
@@ -114,7 +114,7 @@ public class QueryModel implements Mutable, ParsedModel, AliasTranslator, Sinkab
         dependencies.add(index);
     }
 
-    public void addField(String name) {
+    public void addField(CharSequence name) {
         columnNameTypeMap.put(name, ExprNode.LITERAL);
         aliasToColumnMap.put(name, name);
     }
@@ -136,7 +136,7 @@ public class QueryModel implements Mutable, ParsedModel, AliasTranslator, Sinkab
         parsedWhere.add(node);
     }
 
-    public void addWithClause(String name, WithClauseModel model) {
+    public void addWithClause(CharSequence name, WithClauseModel model) {
         withClauses.put(name, model);
     }
 
@@ -216,7 +216,7 @@ public class QueryModel implements Mutable, ParsedModel, AliasTranslator, Sinkab
         return aliasToColumnMap.keys();
     }
 
-    public CharSequenceObjHashMap<String> getColumnToAliasMap() {
+    public CharSequenceObjHashMap<CharSequence> getColumnToAliasMap() {
         return columnToAliasMap;
     }
 
@@ -289,7 +289,7 @@ public class QueryModel implements Mutable, ParsedModel, AliasTranslator, Sinkab
         return ParsedModel.QUERY;
     }
 
-    public String getName() {
+    public CharSequence getName() {
         if (alias != null) {
             return alias.token;
         }
@@ -444,17 +444,15 @@ public class QueryModel implements Mutable, ParsedModel, AliasTranslator, Sinkab
         exprNodeStack.clear();
         while (!exprNodeStack.isEmpty() || n != null) {
             if (n != null) {
-                switch (n.token) {
-                    case "and":
-                        if (n.rhs != null) {
-                            exprNodeStack.push(n.rhs);
-                        }
-                        n = n.lhs;
-                        break;
-                    default:
-                        addParsedWhereNode(n);
-                        n = null;
-                        break;
+                if (Chars.equals("and", n.token)) {
+                    if (n.rhs != null) {
+                        exprNodeStack.push(n.rhs);
+                    }
+                    n = n.lhs;
+                } else {
+                    addParsedWhereNode(n);
+                    n = null;
+
                 }
             } else {
                 n = exprNodeStack.poll();
@@ -519,8 +517,8 @@ public class QueryModel implements Mutable, ParsedModel, AliasTranslator, Sinkab
                     sink.put(", ");
                 }
                 QueryColumn column = columns.getQuick(i);
-                String name = column.getName();
-                String alias = column.getAlias();
+                CharSequence name = column.getName();
+                CharSequence alias = column.getAlias();
                 ExprNode ast = column.getAst();
                 if (column instanceof AnalyticColumn || name == null) {
                     ast.toSink(sink);

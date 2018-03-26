@@ -211,6 +211,8 @@ public class JsonLexerTest {
             JsonParser listener = new NoOpParser();
             try {
                 long buf = Unsafe.malloc(l);
+                long bufA = Unsafe.malloc(l);
+                long bufB = Unsafe.malloc(l);
                 try {
                     Assert.assertEquals(l, Files.read(fd, buf, (int) l, 0));
                     JsonLexer lexer = new JsonLexer(1024);
@@ -219,8 +221,10 @@ public class JsonLexerTest {
                     for (int i = 0; i < l; i++) {
                         try {
                             lexer.clear();
-                            lexer.parse(buf, i, listener);
-                            lexer.parse(buf + i, l - i, listener);
+                            Unsafe.getUnsafe().copyMemory(buf, bufA, i);
+                            Unsafe.getUnsafe().copyMemory(buf + i, bufB, l - i);
+                            lexer.parse(bufA, i, listener);
+                            lexer.parse(bufB, l - i, listener);
                             lexer.parseLast();
                         } catch (JsonException e) {
                             System.out.println(i);
@@ -230,6 +234,8 @@ public class JsonLexerTest {
                     System.out.println((System.nanoTime() - t) / l);
                 } finally {
                     Unsafe.free(buf, l);
+                    Unsafe.free(bufA, l);
+                    Unsafe.free(bufB, l);
                 }
             } finally {
                 Files.close(fd);

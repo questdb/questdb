@@ -28,9 +28,6 @@ import com.questdb.common.Record;
 import com.questdb.common.StorageFacade;
 import com.questdb.ex.UndefinedParameterException;
 import com.questdb.ex.WrongParameterTypeException;
-import com.questdb.griffin.common.ExprNode;
-import com.questdb.griffin.common.VirtualColumn;
-import com.questdb.std.CharSequenceObjHashMap;
 
 public class Parameter extends AbstractVirtualColumn {
 
@@ -43,14 +40,6 @@ public class Parameter extends AbstractVirtualColumn {
         super(ColumnType.PARAMETER, position);
     }
 
-    public static VirtualColumn getOrCreate(ExprNode node, CharSequenceObjHashMap<Parameter> parameterMap) {
-        Parameter p = parameterMap.get(node.token);
-        if (p == null) {
-            parameterMap.put(node.token, p = new Parameter(node.position));
-            p.setName(node.token);
-        }
-        return p;
-    }
 
     @Override
     public byte get(Record rec) {

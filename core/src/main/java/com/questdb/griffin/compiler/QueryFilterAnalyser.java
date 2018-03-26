@@ -34,11 +34,21 @@ import com.questdb.griffin.lexer.model.IntrinsicModel;
 import com.questdb.griffin.lexer.model.IntrinsicValue;
 import com.questdb.std.*;
 import com.questdb.std.microtime.DateFormatUtils;
+import com.questdb.std.str.FlyweightCharSequence;
 
 import java.util.ArrayDeque;
 
 final class QueryFilterAnalyser {
 
+    private static final int INTRINCIC_OP_IN = 1;
+    private static final int INTRINCIC_OP_GREATER = 2;
+    private static final int INTRINCIC_OP_GREATER_EQ = 3;
+    private static final int INTRINCIC_OP_LESS = 4;
+    private static final int INTRINCIC_OP_LESS_EQ = 5;
+    private static final int INTRINCIC_OP_EQUAL = 6;
+    private static final int INTRINCIC_OP_NOT_EQ = 7;
+    private static final int INTRINCIC_OP_NOT = 8;
+    private static final CharSequenceIntHashMap intrinsicOps = new CharSequenceIntHashMap();
     private final ArrayDeque<ExprNode> stack = new ArrayDeque<>();
     private final ObjList<ExprNode> keyNodes = new ObjList<>();
     private final ObjList<ExprNode> keyExclNodes = new ObjList<>();
@@ -47,6 +57,7 @@ final class QueryFilterAnalyser {
     private final IntList tempPos = new IntList();
     private final CharSequenceHashSet tempK = new CharSequenceHashSet();
     private final IntList tempP = new IntList();
+    private final ObjectPool<FlyweightCharSequence> csPool = new ObjectPool<>(FlyweightCharSequence.FACTORY, 64);
     private String timestamp;
     private String preferredKeyColumn;
 
@@ -100,9 +111,9 @@ final class QueryFilterAnalyser {
                                 return false;
                             }
 
-                            String value = Chars.equals("null", b.token) ? null : Chars.stripQuotes(b.token);
+                            CharSequence value = Chars.equals("null", b.token) ? null : unquote(b.token);
                             if (newColumn) {
-                                model.keyColumn = column.toString();
+                                model.keyColumn = column;
                                 model.keyValues.clear();
                                 model.keyValuePositions.clear();
                                 model.keyValues.add(value);
@@ -196,7 +207,7 @@ final class QueryFilterAnalyser {
             throw ParserException.$(col.position, "Column name expected");
         }
 
-        String column = translator.translateAlias(col.token).toString();
+        CharSequence column = translator.translateAlias(col.token);
 
         if (metadata.getColumnIndexQuiet(column) == -1) {
             throw ParserException.invalidColumn(col.position, col.token);
@@ -245,7 +256,7 @@ final class QueryFilterAnalyser {
         return false;
     }
 
-    private boolean analyzeInLambda(IntrinsicModel model, String col, RecordMetadata meta, ExprNode node) throws ParserException {
+    private boolean analyzeInLambda(IntrinsicModel model, CharSequence col, RecordMetadata meta, ExprNode node) throws ParserException {
         RecordColumnMetadata colMeta = meta.getColumn(col);
         if (colMeta.isIndexed()) {
             if (preferredKeyColumn != null && !col.equals(preferredKeyColumn)) {
@@ -258,7 +269,7 @@ final class QueryFilterAnalyser {
 
             // check if we already have indexed column and it is of worse selectivity
             if (model.keyColumn != null
-                    && (!model.keyColumn.equals(col))
+                    && (!Chars.equals(model.keyColumn, col))
                     && colMeta.getBucketCount() <= meta.getColumn(model.keyColumn).getBucketCount()) {
                 return false;
             }
@@ -269,7 +280,7 @@ final class QueryFilterAnalyser {
 
             model.keyValues.clear();
             model.keyValuePositions.clear();
-            model.keyValues.add(Chars.stripQuotes(node.rhs.token));
+            model.keyValues.add(unquote(node.rhs.token));
             model.keyValuePositions.add(node.position);
             model.keyValuesIsLambda = true;
 
@@ -332,7 +343,7 @@ final class QueryFilterAnalyser {
         return false;
     }
 
-    private boolean analyzeListOfValues(IntrinsicModel model, String col, RecordMetadata meta, ExprNode node) {
+    private boolean analyzeListOfValues(IntrinsicModel model, CharSequence col, RecordMetadata meta, ExprNode node) {
         RecordColumnMetadata colMeta = meta.getColumn(col);
         if (colMeta.isIndexed()) {
             boolean newColumn = true;
@@ -343,7 +354,7 @@ final class QueryFilterAnalyser {
 
             // check if we already have indexed column and it is of worse selectivity
             if (model.keyColumn != null
-                    && (newColumn = !model.keyColumn.equals(col))
+                    && (newColumn = !Chars.equals(model.keyColumn, col))
                     && colMeta.getBucketCount() <= meta.getColumn(model.keyColumn).getBucketCount()) {
                 return false;
             }
@@ -359,7 +370,7 @@ final class QueryFilterAnalyser {
                 if (node.rhs == null || node.rhs.type != ExprNode.CONSTANT) {
                     return false;
                 }
-                if (tempKeys.add(Chars.stripQuotes(node.rhs.token))) {
+                if (tempKeys.add(unquote(node.rhs.token))) {
                     tempPos.add(node.position);
                 }
             } else {
@@ -368,7 +379,7 @@ final class QueryFilterAnalyser {
                     if (c.type != ExprNode.CONSTANT) {
                         return false;
                     }
-                    if (tempKeys.add(Chars.stripQuotes(c.token))) {
+                    if (tempKeys.add(unquote(c.token))) {
                         tempPos.add(c.position);
                     }
                 }
@@ -467,7 +478,7 @@ final class QueryFilterAnalyser {
             throw ParserException.$(col.position, "Column name expected");
         }
 
-        String column = translator.translateAlias(col.token).toString();
+        CharSequence column = translator.translateAlias(col.token);
 
         if (m.getColumnIndexQuiet(column) == -1) {
             throw ParserException.invalidColumn(col.position, col.token);
@@ -522,7 +533,7 @@ final class QueryFilterAnalyser {
         return false;
     }
 
-    private void analyzeNotListOfValues(String column, RecordMetadata m, ExprNode notNode) {
+    private void analyzeNotListOfValues(CharSequence column, RecordMetadata m, ExprNode notNode) {
         RecordColumnMetadata meta = m.getColumn(column);
 
         switch (meta.getType()) {
@@ -530,7 +541,7 @@ final class QueryFilterAnalyser {
             case ColumnType.STRING:
             case ColumnType.LONG:
             case ColumnType.INT:
-                if (meta.isIndexed() && (preferredKeyColumn == null || preferredKeyColumn.equals(column))) {
+                if (meta.isIndexed() && (preferredKeyColumn == null || Chars.equals(preferredKeyColumn, column))) {
                     keyExclNodes.add(notNode);
                 }
                 break;
@@ -546,7 +557,7 @@ final class QueryFilterAnalyser {
                 ExprNode parent = keyExclNodes.getQuick(i);
 
 
-                ExprNode node = "not".equals(parent.token) ? parent.rhs : parent;
+                ExprNode node = Chars.equals("not", parent.token) ? parent.rhs : parent;
                 // this could either be '=' or 'in'
 
                 if (node.paramCount == 2) {
@@ -561,8 +572,8 @@ final class QueryFilterAnalyser {
                         val = node.lhs;
                     }
 
-                    final String column = translator.translateAlias(col.token).toString();
-                    if (column.equals(model.keyColumn)) {
+                    final CharSequence column = translator.translateAlias(col.token);
+                    if (Chars.equals(column, model.keyColumn)) {
                         model.excludeValue(val);
                         parent.intrinsicValue = IntrinsicValue.TRUE;
                         if (model.intrinsicValue == IntrinsicValue.FALSE) {
@@ -573,8 +584,8 @@ final class QueryFilterAnalyser {
 
                 if (node.paramCount > 2) {
                     ExprNode col = node.args.getQuick(node.paramCount - 1);
-                    final String column = translator.translateAlias(col.token).toString();
-                    if (column.equals(model.keyColumn)) {
+                    final CharSequence column = translator.translateAlias(col.token);
+                    if (Chars.equals(column, model.keyColumn)) {
                         for (int j = node.paramCount - 2; j > -1; j--) {
                             ExprNode val = node.args.getQuick(j);
                             model.excludeValue(val);
@@ -604,7 +615,7 @@ final class QueryFilterAnalyser {
         if (node == null || node.intrinsicValue == IntrinsicValue.TRUE) {
             return null;
         }
-        if ("and".equals(node.token)) {
+        if (Chars.equals("and", node.token)) {
             if (node.lhs == null || node.lhs.intrinsicValue == IntrinsicValue.TRUE) {
                 return node.rhs;
             }
@@ -632,16 +643,13 @@ final class QueryFilterAnalyser {
 
         while (!stack.isEmpty() || node != null) {
             if (node != null) {
-                switch (node.token) {
-                    case "and":
-                        if (!removeAndIntrinsics(translator, model, node.rhs, m)) {
-                            stack.push(node.rhs);
-                        }
-                        node = removeAndIntrinsics(translator, model, node.lhs, m) ? null : node.lhs;
-                        break;
-                    default:
-                        node = stack.poll();
-                        break;
+                if (Chars.equals("and", node.token)) {
+                    if (!removeAndIntrinsics(translator, model, node.rhs, m)) {
+                        stack.push(node.rhs);
+                    }
+                    node = removeAndIntrinsics(translator, model, node.lhs, m) ? null : node.lhs;
+                } else {
+                    node = stack.poll();
                 }
             } else {
                 node = stack.poll();
@@ -653,27 +661,27 @@ final class QueryFilterAnalyser {
     }
 
     private boolean isTimestamp(ExprNode n) {
-        return timestamp != null && timestamp.equals(n.token);
+        return timestamp != null && Chars.equals(timestamp, n.token);
     }
 
     private boolean removeAndIntrinsics(AliasTranslator translator, IntrinsicModel model, ExprNode node, RecordMetadata m) throws ParserException {
-        switch (node.token) {
-            case "in":
+        switch (intrinsicOps.get(node.token)) {
+            case INTRINCIC_OP_IN:
                 return analyzeIn(translator, model, node, m);
-            case ">":
+            case INTRINCIC_OP_GREATER:
                 return analyzeGreater(model, node, 1);
-            case ">=":
+            case INTRINCIC_OP_GREATER_EQ:
                 return analyzeGreater(model, node, 0);
-            case "<":
+            case INTRINCIC_OP_LESS:
                 return analyzeLess(model, node, 1);
-            case "<=":
+            case INTRINCIC_OP_LESS_EQ:
                 return analyzeLess(model, node, 0);
-            case "=":
+            case INTRINCIC_OP_EQUAL:
                 return analyzeEquals(translator, model, node, m);
-            case "!=":
+            case INTRINCIC_OP_NOT_EQ:
                 return analyzeNotEquals(translator, model, node, m);
-            case "not":
-                return "in".equals(node.rhs.token) && analyzeNotIn(translator, model, node, m);
+            case INTRINCIC_OP_NOT:
+                return Chars.equals("in", node.rhs.token) && analyzeNotIn(translator, model, node, m);
             default:
                 return false;
         }
@@ -702,5 +710,34 @@ final class QueryFilterAnalyser {
         this.models.clear();
         this.stack.clear();
         this.keyNodes.clear();
+        this.csPool.clear();
+    }
+
+    /**
+     * Removes quotes and creates immutable char sequence. When value is not quated it is returned verbatim.
+     *
+     * @param value immutable character sequence.
+     * @return immutable character sequence without surrounding quote marks.
+     */
+    private CharSequence unquote(CharSequence value) {
+        if (Chars.isQuoted(value)) {
+            return csPool.next().of(value, 1, value.length() - 2);
+        }
+        return value;
+    }
+
+    static {
+        intrinsicOps.put("in", INTRINCIC_OP_IN);
+        intrinsicOps.put(">", INTRINCIC_OP_GREATER);
+        intrinsicOps.put(">=", INTRINCIC_OP_GREATER_EQ);
+        intrinsicOps.put("<", INTRINCIC_OP_LESS);
+        intrinsicOps.put("<=", INTRINCIC_OP_LESS_EQ);
+        intrinsicOps.put("=", INTRINCIC_OP_EQUAL);
+        intrinsicOps.put("!=", INTRINCIC_OP_NOT_EQ);
+        intrinsicOps.put("not", INTRINCIC_OP_NOT);
+    }
+
+    static {
+
     }
 }

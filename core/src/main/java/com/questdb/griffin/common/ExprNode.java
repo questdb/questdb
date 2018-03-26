@@ -42,7 +42,7 @@ public class ExprNode implements Mutable, Sinkable {
     public static final int LAMBDA = 65;
     public static final int UNKNOWN = 0;
     public final ObjList<ExprNode> args = new ObjList<>(4);
-    public String token;
+    public CharSequence token;
     public int precedence;
     public int position;
     public ExprNode lhs;
@@ -66,7 +66,7 @@ public class ExprNode implements Mutable, Sinkable {
         intrinsicValue = IntrinsicValue.UNDEFINED;
     }
 
-    public ExprNode of(int type, String token, int precedence, int position) {
+    public ExprNode of(int type, CharSequence token, int precedence, int position) {
         this.type = type;
         this.precedence = precedence;
         this.token = token;

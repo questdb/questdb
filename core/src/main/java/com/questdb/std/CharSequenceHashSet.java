@@ -69,11 +69,13 @@ public class CharSequenceHashSet implements Mutable {
         clear();
     }
 
+    /**
+     * Adds key to hash set preserving key uniqueness.
+     *
+     * @param key immutable sequence of characters.
+     * @return false if key is already in the set and true otherwise.
+     */
     public boolean add(CharSequence key) {
-        return add0(key);
-    }
-
-    public boolean add0(CharSequence key) {
         if (key == null) {
             return addNull();
         }
@@ -83,9 +85,8 @@ public class CharSequenceHashSet implements Mutable {
             return false;
         }
 
-        String s = key.toString();
-        Unsafe.arrayPut(keys, index, s);
-        list.add(s);
+        Unsafe.arrayPut(keys, index, key);
+        list.add(key);
         if (--free < 1) {
             resize();
         }

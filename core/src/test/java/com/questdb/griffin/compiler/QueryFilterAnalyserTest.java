@@ -35,7 +35,7 @@ import com.questdb.griffin.common.PostOrderTreeTraversalAlgo;
 import com.questdb.griffin.lexer.*;
 import com.questdb.griffin.lexer.model.IntrinsicModel;
 import com.questdb.griffin.lexer.model.IntrinsicValue;
-import com.questdb.std.Lexer;
+import com.questdb.std.Lexer2;
 import com.questdb.std.ObjectPool;
 import com.questdb.test.tools.TestUtils;
 import org.junit.*;
@@ -50,7 +50,7 @@ public class QueryFilterAnalyserTest extends AbstractCairoTest {
     private static RecordMetadata noTimestampmetadata;
     private final RpnBuilder rpn = new RpnBuilder();
     private final ObjectPool<ExprNode> exprNodeObjectPool = new ObjectPool<>(ExprNode.FACTORY, 128);
-    private final Lexer lexer = new Lexer();
+    private final Lexer2 lexer = new Lexer2();
     private final ExprParser p = new ExprParser(exprNodeObjectPool);
     private final ExprAstBuilder ast = new ExprAstBuilder();
     private final QueryFilterAnalyser e = new QueryFilterAnalyser();
@@ -259,9 +259,9 @@ public class QueryFilterAnalyserTest extends AbstractCairoTest {
     @Test
     public void testConstVsLambda() throws Exception {
         IntrinsicModel m = modelOf("ex in (1,2) and sym in (`xyz`)");
-        Assert.assertEquals("sym", m.keyColumn);
+        TestUtils.assertEquals("sym", m.keyColumn);
         Assert.assertEquals(1, m.keyValues.size());
-        Assert.assertEquals("xyz", m.keyValues.get(0));
+        TestUtils.assertEquals("xyz", m.keyValues.get(0));
         Assert.assertTrue(m.keyValuesIsLambda);
         Assert.assertNotNull(m.filter);
         Assert.assertEquals("ex12in", GriffinParserTestUtils.toRpn(m.filter));
@@ -270,9 +270,9 @@ public class QueryFilterAnalyserTest extends AbstractCairoTest {
     @Test
     public void testConstVsLambda2() throws Exception {
         IntrinsicModel m = modelOf("sym in (1,2) and sym in (`xyz`)");
-        Assert.assertEquals("sym", m.keyColumn);
+        TestUtils.assertEquals("sym", m.keyColumn);
         Assert.assertEquals(1, m.keyValues.size());
-        Assert.assertEquals("xyz", m.keyValues.get(0));
+        TestUtils.assertEquals("xyz", m.keyValues.get(0));
         Assert.assertTrue(m.keyValuesIsLambda);
         Assert.assertNotNull(m.filter);
         Assert.assertEquals("sym12in", GriffinParserTestUtils.toRpn(m.filter));
@@ -324,7 +324,7 @@ public class QueryFilterAnalyserTest extends AbstractCairoTest {
     public void testEqualsChoiceOfColumns() throws Exception {
         IntrinsicModel m = modelOf("sym = 'X' and ex = 'Y'");
         assertFilter(m, "'Y'ex=");
-        Assert.assertEquals("sym", m.keyColumn);
+        TestUtils.assertEquals("sym", m.keyColumn);
         Assert.assertEquals("[X]", m.keyValues.toString());
     }
 
@@ -332,7 +332,7 @@ public class QueryFilterAnalyserTest extends AbstractCairoTest {
     public void testEqualsChoiceOfColumns2() throws Exception {
         IntrinsicModel m = modelOf("ex = 'Y' and sym = 'X'");
         assertFilter(m, "'Y'ex=");
-        Assert.assertEquals("sym", m.keyColumn);
+        TestUtils.assertEquals("sym", m.keyColumn);
         Assert.assertEquals("[X]", m.keyValues.toString());
     }
 
@@ -340,7 +340,7 @@ public class QueryFilterAnalyserTest extends AbstractCairoTest {
     public void testEqualsIndexedSearch() throws Exception {
         IntrinsicModel m = modelOf("sym ='X' and bid > 100.05");
         assertFilter(m, "100.05bid>");
-        Assert.assertEquals("sym", m.keyColumn);
+        TestUtils.assertEquals("sym", m.keyColumn);
         Assert.assertEquals("[X]", m.keyValues.toString());
     }
 
@@ -357,7 +357,7 @@ public class QueryFilterAnalyserTest extends AbstractCairoTest {
     @Test
     public void testEqualsNull() throws Exception {
         IntrinsicModel m = modelOf("sym = null");
-        Assert.assertEquals("sym", m.keyColumn);
+        TestUtils.assertEquals("sym", m.keyColumn);
         Assert.assertEquals("[null]", m.keyValues.toString());
     }
 
@@ -421,7 +421,7 @@ public class QueryFilterAnalyserTest extends AbstractCairoTest {
     public void testFilterMultipleKeysAndInterval() throws Exception {
         IntrinsicModel m = modelOf("sym in (\"a\", \"b\", \"c\") and timestamp in (\"2014-01-01T12:30:00.000Z\", \"2014-01-02T12:30:00.000Z\")");
         TestUtils.assertEquals("[{lo=2014-01-01T12:30:00.000000Z, hi=2014-01-02T12:30:00.000000Z}]", intervalToString(m.intervals));
-        Assert.assertEquals("sym", m.keyColumn);
+        TestUtils.assertEquals("sym", m.keyColumn);
         Assert.assertEquals("[a,b,c]", m.keyValues.toString());
         Assert.assertEquals("[8,13,18]", m.keyValuePositions.toString());
         Assert.assertNull(m.filter);
@@ -431,7 +431,7 @@ public class QueryFilterAnalyserTest extends AbstractCairoTest {
     public void testFilterOnIndexedFieldAndInterval() throws Exception {
         IntrinsicModel m = modelOf("sym in ('a') and timestamp in (\"2014-01-01T12:30:00.000Z\", \"2014-01-02T12:30:00.000Z\")");
         TestUtils.assertEquals("[{lo=2014-01-01T12:30:00.000000Z, hi=2014-01-02T12:30:00.000000Z}]", intervalToString(m.intervals));
-        Assert.assertEquals("sym", m.keyColumn);
+        TestUtils.assertEquals("sym", m.keyColumn);
         Assert.assertEquals("[a]", m.keyValues.toString());
         Assert.assertNull(m.filter);
     }
@@ -446,7 +446,7 @@ public class QueryFilterAnalyserTest extends AbstractCairoTest {
     @Test
     public void testInNull() throws Exception {
         IntrinsicModel m = modelOf("sym in ('X', null, 'Y')");
-        Assert.assertEquals("sym", m.keyColumn);
+        TestUtils.assertEquals("sym", m.keyColumn);
         Assert.assertEquals("[X,null,Y]", m.keyValues.toString());
     }
 
@@ -651,9 +651,9 @@ public class QueryFilterAnalyserTest extends AbstractCairoTest {
     @Test
     public void testLambdaVsConst() throws Exception {
         IntrinsicModel m = modelOf("sym in (`xyz`) and ex in (1,2)");
-        Assert.assertEquals("sym", m.keyColumn);
+        TestUtils.assertEquals("sym", m.keyColumn);
         Assert.assertEquals(1, m.keyValues.size());
-        Assert.assertEquals("xyz", m.keyValues.get(0));
+        TestUtils.assertEquals("xyz", m.keyValues.get(0));
         Assert.assertTrue(m.keyValuesIsLambda);
         Assert.assertNotNull(m.filter);
         Assert.assertEquals("ex12in", GriffinParserTestUtils.toRpn(m.filter));
@@ -662,9 +662,9 @@ public class QueryFilterAnalyserTest extends AbstractCairoTest {
     @Test
     public void testLambdaVsLambda() throws Exception {
         IntrinsicModel m = modelOf("ex in (`abc`) and sym in (`xyz`)");
-        Assert.assertEquals("sym", m.keyColumn);
+        TestUtils.assertEquals("sym", m.keyColumn);
         Assert.assertEquals(1, m.keyValues.size());
-        Assert.assertEquals("xyz", m.keyValues.get(0));
+        TestUtils.assertEquals("xyz", m.keyValues.get(0));
         Assert.assertTrue(m.keyValuesIsLambda);
         Assert.assertNotNull(m.filter);
         Assert.assertEquals("ex`abc`in", GriffinParserTestUtils.toRpn(m.filter));
@@ -984,7 +984,7 @@ public class QueryFilterAnalyserTest extends AbstractCairoTest {
         IntrinsicModel m;
         m = modelOf("sym in ('a', 'b') and ex in ('c') and timestamp in ('2014-01-01T12:30:00.000Z', '2014-01-02T12:30:00.000Z') and bid > 100 and ask < 110", "ex");
         assertFilter(m, "110ask<100bid>'b''a'syminandand");
-        Assert.assertEquals("ex", m.keyColumn);
+        TestUtils.assertEquals("ex", m.keyColumn);
         Assert.assertEquals("[c]", m.keyValues.toString());
         TestUtils.assertEquals("[{lo=2014-01-01T12:30:00.000000Z, hi=2014-01-02T12:30:00.000000Z}]", intervalToString(m.intervals));
     }
@@ -994,7 +994,7 @@ public class QueryFilterAnalyserTest extends AbstractCairoTest {
         IntrinsicModel m;
         m = modelOf("ex in ('c') and sym in ('a', 'b') and timestamp in ('2014-01-01T12:30:00.000Z', '2014-01-02T12:30:00.000Z') and bid > 100 and ask < 110", "ex");
         assertFilter(m, "110ask<100bid>'b''a'syminandand");
-        Assert.assertEquals("ex", m.keyColumn);
+        TestUtils.assertEquals("ex", m.keyColumn);
         Assert.assertEquals("[c]", m.keyValues.toString());
         TestUtils.assertEquals("[{lo=2014-01-01T12:30:00.000000Z, hi=2014-01-02T12:30:00.000000Z}]", intervalToString(m.intervals));
     }
@@ -1018,7 +1018,7 @@ public class QueryFilterAnalyserTest extends AbstractCairoTest {
     @Test
     public void testSimpleLambda() throws Exception {
         IntrinsicModel m = modelOf("sym in (`xyz`)");
-        Assert.assertEquals("xyz", m.keyValues.get(0));
+        TestUtils.assertEquals("xyz", m.keyValues.get(0));
         Assert.assertTrue(m.keyValuesIsLambda);
     }
 
@@ -1034,7 +1034,7 @@ public class QueryFilterAnalyserTest extends AbstractCairoTest {
         IntrinsicModel m;
         m = modelOf("sym in ('a', 'b') and ex in ('c') and timestamp in ('2014-01-01T12:30:00.000Z', '2014-01-02T12:30:00.000Z') and bid > 100 and ask < 110");
         assertFilter(m, "110ask<100bid>'c'exinandand");
-        Assert.assertEquals("sym", m.keyColumn);
+        TestUtils.assertEquals("sym", m.keyColumn);
         Assert.assertEquals("[a,b]", m.keyValues.toString());
         TestUtils.assertEquals("[{lo=2014-01-01T12:30:00.000000Z, hi=2014-01-02T12:30:00.000000Z}]", intervalToString(m.intervals));
     }
@@ -1044,7 +1044,7 @@ public class QueryFilterAnalyserTest extends AbstractCairoTest {
         IntrinsicModel m;
         m = modelOf("ex in ('c') and sym in ('a', 'b') and timestamp in ('2014-01-01T12:30:00.000Z', '2014-01-02T12:30:00.000Z') and bid > 100 and ask < 110");
         assertFilter(m, "110ask<100bid>'c'exinandand");
-        Assert.assertEquals("sym", m.keyColumn);
+        TestUtils.assertEquals("sym", m.keyColumn);
         Assert.assertEquals("[a,b]", m.keyValues.toString());
         TestUtils.assertEquals("[{lo=2014-01-01T12:30:00.000000Z, hi=2014-01-02T12:30:00.000000Z}]", intervalToString(m.intervals));
     }
@@ -1052,9 +1052,9 @@ public class QueryFilterAnalyserTest extends AbstractCairoTest {
     @Test
     public void testTwoDiffColLambdas() throws Exception {
         IntrinsicModel m = modelOf("sym in (`xyz`) and ex in (`kkk`)");
-        Assert.assertEquals("sym", m.keyColumn);
+        TestUtils.assertEquals("sym", m.keyColumn);
         Assert.assertEquals(1, m.keyValues.size());
-        Assert.assertEquals("xyz", m.keyValues.get(0));
+        TestUtils.assertEquals("xyz", m.keyValues.get(0));
         Assert.assertTrue(m.keyValuesIsLambda);
         Assert.assertNotNull(m.filter);
         Assert.assertEquals(ExprNode.LAMBDA, m.filter.rhs.type);

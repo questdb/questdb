@@ -50,7 +50,7 @@ public class ExprParser {
         this.exprNodePool = exprNodePool;
     }
 
-    public static void configureLexer(Lexer lexer) {
+    public static void configureLexer(Lexer2 lexer) {
         lexer.defineSymbol("(");
         lexer.defineSymbol(")");
         lexer.defineSymbol(",");
@@ -66,7 +66,7 @@ public class ExprParser {
     }
 
     @SuppressWarnings("ConstantConditions")
-    public void parseExpr(Lexer lexer, ExprListener listener) throws ParserException {
+    public void parseExpr(Lexer2 lexer, ExprListener listener) throws ParserException {
 
         opStack.clear();
         paramCountStack.clear();
@@ -160,7 +160,7 @@ public class ExprParser {
                 case '`':
                     thisBranch = BRANCH_LAMBDA;
                     // If the token is a number, then add it to the output queue.
-                    listener.onNode(exprNodePool.next().of(ExprNode.LAMBDA, tok.toString(), 0, lexer.position()));
+                    listener.onNode(exprNodePool.next().of(ExprNode.LAMBDA, lexer.toImmutable(tok), 0, lexer.position()));
                     break;
                 case '0':
                 case '1':
@@ -179,7 +179,7 @@ public class ExprParser {
                     if ((thisChar != 'N' && thisChar != 'n') || Chars.equals("NaN", tok) || Chars.equals("null", tok)) {
                         thisBranch = BRANCH_CONSTANT;
                         // If the token is a number, then add it to the output queue.
-                        listener.onNode(exprNodePool.next().of(ExprNode.CONSTANT, tok.toString(), 0, lexer.position()));
+                        listener.onNode(exprNodePool.next().of(ExprNode.CONSTANT, lexer.toImmutable(tok), 0, lexer.position()));
                         break;
                     }
                 default:
@@ -254,7 +254,7 @@ public class ExprParser {
                             caseCount++;
                             paramCountStack.push(paramCount);
                             paramCount = 0;
-                            opStack.push(exprNodePool.next().of(ExprNode.FUNCTION, Chars.toString(tok), Integer.MAX_VALUE, lexer.position()));
+                            opStack.push(exprNodePool.next().of(ExprNode.FUNCTION, lexer.toImmutable(tok), Integer.MAX_VALUE, lexer.position()));
                             continue;
                         }
 
@@ -327,7 +327,7 @@ public class ExprParser {
                         }
 
                         // If the token is a function token, then push it onto the stack.
-                        opStack.push(exprNodePool.next().of(ExprNode.LITERAL, Chars.toString(tok), Integer.MIN_VALUE, lexer.position()));
+                        opStack.push(exprNodePool.next().of(ExprNode.LITERAL, lexer.toImmutable(tok), Integer.MIN_VALUE, lexer.position()));
                     } else {
                         // literal can be at start of input, after a bracket or part of an operator
                         // all other cases are illegal and will be considered end-of-input

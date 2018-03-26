@@ -68,6 +68,11 @@ public class LineProtoLexer implements Mutable {
         errorCode = 0;
     }
 
+    /**
+     * Parses line-protocol as UTF8-encoded sequence of bytes.
+     *
+     * @param bytes UTF8-encoded bytes
+     */
     public void parse(ByteSequence bytes) {
         int srcPos = 0;
         int len = bytes.length();

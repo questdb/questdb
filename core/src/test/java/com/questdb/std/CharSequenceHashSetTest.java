@@ -37,7 +37,7 @@ public class CharSequenceHashSetTest {
         int n = 1000;
 
         for (int i = 0; i < n; i++) {
-            set.add(next(rnd));
+            set.add(next(rnd).toString());
         }
 
         Assert.assertFalse(set.contains(null));
@@ -59,7 +59,7 @@ public class CharSequenceHashSetTest {
         int n = 10000;
 
         for (int i = 0; i < n; i++) {
-            set.add(next(rnd));
+            set.add(next(rnd).toString());
         }
 
         Assert.assertEquals(n, set.size());

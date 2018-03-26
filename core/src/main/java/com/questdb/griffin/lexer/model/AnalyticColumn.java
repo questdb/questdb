@@ -51,7 +51,7 @@ public final class AnalyticColumn extends QueryColumn {
     }
 
     @Override
-    public AnalyticColumn of(String alias, ExprNode ast) {
+    public AnalyticColumn of(CharSequence alias, ExprNode ast) {
         return (AnalyticColumn) super.of(alias, ast);
     }
 
