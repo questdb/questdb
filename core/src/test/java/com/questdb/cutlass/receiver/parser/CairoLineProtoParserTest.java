@@ -31,6 +31,7 @@ import com.questdb.common.PartitionBy;
 import com.questdb.std.Chars;
 import com.questdb.std.Files;
 import com.questdb.std.FilesFacade;
+import com.questdb.std.Unsafe;
 import com.questdb.std.microtime.DateFormatUtils;
 import com.questdb.std.microtime.MicrosecondClock;
 import com.questdb.std.str.LPSZ;
@@ -43,8 +44,6 @@ import org.junit.Test;
 import java.io.IOException;
 
 public class CairoLineProtoParserTest extends AbstractCairoTest {
-
-    private final LineProtoLexer lexer = new LineProtoLexer(4096);
 
     @Test
     public void testAddColumn() throws Exception {
@@ -514,10 +513,22 @@ public class CairoLineProtoParserTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             try (WriterPool pool = new WriterPool(configuration)) {
                 try (CairoLineProtoParser parser = new CairoLineProtoParser(configuration, pool)) {
-                    lexer.withParser(parser);
-                    lexer.parse(new ByteArrayByteSequence(lines.getBytes("UTF8")));
-                    lexer.parseLast();
-                    parser.commitAll();
+                    byte bytes[] = lines.getBytes("UTF8");
+                    int len = bytes.length;
+                    long mem = Unsafe.malloc(len);
+                    try {
+                        for (int i = 0; i < len; i++) {
+                            Unsafe.getUnsafe().putByte(mem + i, bytes[i]);
+                        }
+                        try (LineProtoLexer lexer = new LineProtoLexer(4096)) {
+                            lexer.withParser(parser);
+                            lexer.parse(mem, mem + len);
+                            lexer.parseLast();
+                            parser.commitAll();
+                        }
+                    } finally {
+                        Unsafe.free(mem, len);
+                    }
                 }
             }
             assertTable(expected, tableName);

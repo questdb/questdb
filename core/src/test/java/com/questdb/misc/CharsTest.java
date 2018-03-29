@@ -123,14 +123,12 @@ public class CharsTest {
         String in = expected.toString();
         long p = Unsafe.malloc(8 * 0xffff);
         try {
-            byte[] bytes = in.getBytes("UTF-8");
+            byte[] bytes = in.getBytes("UTF8");
             for (int i = 0, n = bytes.length; i < n; i++) {
                 Unsafe.getUnsafe().putByte(p + i, bytes[i]);
             }
-            DirectByteCharSequence cs = new DirectByteCharSequence();
-            cs.of(p, p + bytes.length);
             CharSink b = new StringSink();
-            Chars.utf8Decode(cs, b);
+            Chars.utf8Decode(p, p + bytes.length, b);
             TestUtils.assertEquals(in, b.toString());
         } finally {
             Unsafe.free(p, 8 * 0xffff);

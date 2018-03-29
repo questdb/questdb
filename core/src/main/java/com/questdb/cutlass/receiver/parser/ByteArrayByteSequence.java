@@ -26,7 +26,7 @@ package com.questdb.cutlass.receiver.parser;
 import com.questdb.std.str.AbstractCharSequence;
 import com.questdb.std.str.ByteSequence;
 
-class ByteArrayByteSequence extends AbstractCharSequence implements ByteSequence {
+public class ByteArrayByteSequence extends AbstractCharSequence implements ByteSequence {
 
     private final byte[] array;
     private int top = 0;

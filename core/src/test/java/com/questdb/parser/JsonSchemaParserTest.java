@@ -35,7 +35,7 @@ import com.questdb.test.tools.TestUtils;
 import org.junit.*;
 
 public class JsonSchemaParserTest {
-    private static final JsonLexer LEXER = new JsonLexer(1024);
+    private static final JsonLexer LEXER = new JsonLexer(1024, 4096);
     private static JsonSchemaParser jsonSchemaParser;
     private static String defaultLocaleId;
 

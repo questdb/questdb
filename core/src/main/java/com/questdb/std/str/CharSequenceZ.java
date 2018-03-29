@@ -25,7 +25,6 @@ package com.questdb.std.str;
 
 import com.questdb.std.Chars;
 import com.questdb.std.Unsafe;
-import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
 
@@ -81,11 +80,11 @@ public final class CharSequenceZ extends AbstractCharSequence implements Closeab
         return this;
     }
 
-    @NotNull
-    @Override
-    public String toString() {
-        return Chars.toUtf8String(this);
-    }
+//    @NotNull
+//    @Override
+//    public String toString() {
+//        return Chars.toUtf8String(this);
+//    }
 
     private void alloc(int len) {
         this.capacity = len;

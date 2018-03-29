@@ -498,7 +498,10 @@ public class ImportHandler extends AbstractMultipartHandler {
             this.importer = new PlainTextStoringParser(env);
             this.textParser = new PlainTextLexer(env);
             this.jsonSchemaParser = new JsonSchemaParser(env);
-            this.jsonLexer = new JsonLexer(env.configuration.getHttpImportMaxJsonStringLen());
+            this.jsonLexer = new JsonLexer(
+                    1024,
+                    env.configuration.getHttpImportMaxJsonStringLen()
+            );
         }
 
         @Override

@@ -94,7 +94,7 @@ public class DirectByteCharSequence extends AbstractCharSequence implements Muta
     @NotNull
     @Override
     public String toString() {
-        return Chars.toUtf8String(this);
+        return Chars.toUtf8String(lo, hi);
     }
 
     public static final class Factory implements ObjectFactory<DirectByteCharSequence> {

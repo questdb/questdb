@@ -32,10 +32,10 @@ import com.questdb.cutlass.receiver.parser.LineProtoLexer;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.mp.Job;
+import com.questdb.std.Misc;
 import com.questdb.std.Net;
 import com.questdb.std.NetFacade;
 import com.questdb.std.Os;
-import com.questdb.std.str.DirectByteCharSequence;
 
 import java.io.Closeable;
 
@@ -43,7 +43,6 @@ public class LinuxLineProtoReceiver implements Closeable, Job {
     private static final Log LOG = LogFactory.getLog(LinuxLineProtoReceiver.class);
 
     private final int msgCount;
-    private final DirectByteCharSequence byteSequence = new DirectByteCharSequence();
     private final LineProtoLexer lexer;
     private final CairoLineProtoParser parser;
     private final NetFacade nf;
@@ -106,6 +105,7 @@ public class LinuxLineProtoReceiver implements Closeable, Job {
                 parser.commitAll();
                 parser.close();
             }
+            Misc.free(lexer);
             LOG.info().$("closed [fd=").$(fd).$(']').$();
             fd = -1;
         }
@@ -119,8 +119,7 @@ public class LinuxLineProtoReceiver implements Closeable, Job {
             long p = msgVec;
             for (int i = 0; i < count; i++) {
                 long buf = nf.getMMsgBuf(p);
-                byteSequence.of(buf, buf + nf.getMMsgBufLen(p));
-                lexer.parse(byteSequence);
+                lexer.parse(buf, buf + nf.getMMsgBufLen(p));
                 lexer.parseLast();
                 p += Net.MMSGHDR_SIZE;
             }

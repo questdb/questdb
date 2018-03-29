@@ -148,11 +148,13 @@ public class PlainTextStoringParser implements MetadataAwareTextParser, Closeabl
                     continue;
                 }
                 try {
+                    DirectByteCharSequence charField;
                     ImportedColumnMetadata m = metadata.getQuick(i);
                     switch (m.importedColumnType) {
                         case ColumnType.STRING:
                             utf8Sink.clear();
-                            Chars.utf8Decode(values.getQuick(i), utf8Sink);
+                            charField = values.getQuick(i);
+                            Chars.utf8Decode(charField.getLo(), charField.getHi(), utf8Sink);
                             w.putStr(i, (DirectBytes) utf8Sink);
                             break;
                         case ColumnType.DOUBLE:
@@ -173,7 +175,8 @@ public class PlainTextStoringParser implements MetadataAwareTextParser, Closeabl
                             break;
                         case ColumnType.SYMBOL:
                             utf8Sink.clear();
-                            Chars.utf8Decode(values.getQuick(i), utf8Sink);
+                            charField = values.getQuick(i);
+                            Chars.utf8Decode(charField.getLo(), charField.getHi(), utf8Sink);
                             w.putSym(i, utf8Sink);
                             break;
                         case ColumnType.LONG:

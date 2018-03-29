@@ -169,7 +169,7 @@ public final class ImportManager {
             long addr = Unsafe.malloc(len);
             try {
                 Chars.strcpy(schema, len, addr);
-                try (JsonLexer lexer = new JsonLexer(1024)) {
+                try (JsonLexer lexer = new JsonLexer(1024, 4096)) {
                     lexer.parse(addr, len, jsonSchemaParser);
                     lexer.parseLast();
                 }

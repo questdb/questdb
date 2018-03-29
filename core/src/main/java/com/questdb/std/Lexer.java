@@ -25,7 +25,6 @@ package com.questdb.std;
 
 import com.questdb.std.str.AbstractCharSequence;
 import com.questdb.std.str.ByteSequence;
-import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.Comparator;
@@ -295,12 +294,6 @@ public class Lexer implements ImmutableIterator<CharSequence> {
         @Override
         public byte byteAt(int index) {
             return (byte) charAt(index);
-        }
-
-        @NotNull
-        @Override
-        public String toString() {
-            return Chars.toUtf8String(this);
         }
     }
 

@@ -23,6 +23,7 @@
 
 package com.questdb.cutlass.receiver.parser;
 
+import com.questdb.std.Unsafe;
 import com.questdb.std.str.StringSink;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -46,7 +47,10 @@ public class LineProtoLexerTest {
 
     @Test
     public void testCommaInTagName() throws Exception {
-        assertThat("measurement,t,ag=value,tag2=value field=10000i,field2=\"str\" 100000\n", "measurement,t\\,ag=value,tag2=value field=10000i,field2=\"str\" 100000\n");
+        assertThat(
+                "measurement,t,ag=value,tag2=value field=10000i,field2=\"str\" 100000\n",
+                "measurement,t\\,ag=value,tag2=value field=10000i,field2=\"str\" 100000\n"
+        );
     }
 
     @Test
@@ -274,18 +278,26 @@ public class LineProtoLexerTest {
     }
 
     private void assertError(CharSequence line, int state, int code, int position) throws LineProtoException, UnsupportedEncodingException {
-        ByteArrayByteSequence bs = new ByteArrayByteSequence(line.toString().getBytes("UTF8"));
-        final int len = bs.length();
-        for (int i = 0; i < len; i++) {
-            lineAssemblingParser.clear();
-            lexer.clear();
-            lexer.withParser(lineAssemblingParser);
-            lexer.parse(bs.limit(0, i));
-            lexer.parse(bs.limit(i, len - i));
-            lexer.parseLast();
-            Assert.assertEquals(state, lineAssemblingParser.errorState);
-            Assert.assertEquals(code, lineAssemblingParser.errorCode);
-            Assert.assertEquals(position, lineAssemblingParser.errorPosition);
+        byte[] bytes = line.toString().getBytes("UTF8");
+        long mem = Unsafe.malloc(bytes.length);
+        try {
+            final int len = bytes.length;
+            for (int i = 0; i < len; i++) {
+                Unsafe.getUnsafe().putByte(mem + i, bytes[i]);
+            }
+            for (int i = 0; i < len; i++) {
+                lineAssemblingParser.clear();
+                lexer.clear();
+                lexer.withParser(lineAssemblingParser);
+                lexer.parse(mem, mem + i);
+                lexer.parse(mem + i, mem + len);
+                lexer.parseLast();
+                Assert.assertEquals(state, lineAssemblingParser.errorState);
+                Assert.assertEquals(code, lineAssemblingParser.errorCode);
+                Assert.assertEquals(position, lineAssemblingParser.errorPosition);
+            }
+        } finally {
+            Unsafe.free(mem, bytes.length);
         }
     }
 
@@ -294,46 +306,54 @@ public class LineProtoLexerTest {
     }
 
     private void assertThat(CharSequence expected, byte[] line) throws LineProtoException {
-        ByteArrayByteSequence bs = new ByteArrayByteSequence(line);
-        final int len = bs.length();
-        if (len < 10) {
+        final int len = line.length;
+        long mem = Unsafe.malloc(line.length);
+        try {
             for (int i = 0; i < len; i++) {
-                lineAssemblingParser.clear();
-                lexer.clear();
-                lexer.withParser(lineAssemblingParser);
-                lexer.parse(bs.limit(0, i));
-                lexer.parse(bs.limit(i, len - i));
-                lexer.parseLast();
-                TestUtils.assertEquals(expected, sink);
+                Unsafe.getUnsafe().putByte(mem + i, line[i]);
             }
-        } else {
-            for (int i = 0; i < len - 10; i++) {
-                lineAssemblingParser.clear();
-                lexer.clear();
-                lexer.withParser(lineAssemblingParser);
-                lexer.parse(bs.limit(0, i));
-                lexer.parse(bs.limit(i, 10));
-                lexer.parse(bs.limit(i + 10, len - i - 10));
-                lexer.parseLast();
-                TestUtils.assertEquals(expected, sink);
-            }
-        }
 
-        // assert small buffer
-        LineProtoLexer smallBufLexer = new LineProtoLexer(64);
-        lineAssemblingParser.clear();
-        smallBufLexer.withParser(lineAssemblingParser);
-        smallBufLexer.parse(bs.limit(0, len));
-        smallBufLexer.parseLast();
-        TestUtils.assertEquals(expected, sink);
+            if (len < 10) {
+                for (int i = 0; i < len; i++) {
+                    lineAssemblingParser.clear();
+                    lexer.clear();
+                    lexer.withParser(lineAssemblingParser);
+                    lexer.parse(mem, mem + i);
+                    lexer.parse(mem + i, mem + len);
+                    lexer.parseLast();
+                    TestUtils.assertEquals(expected, sink);
+                }
+            } else {
+                for (int i = 0; i < len - 10; i++) {
+                    lineAssemblingParser.clear();
+                    lexer.clear();
+                    lexer.withParser(lineAssemblingParser);
+                    lexer.parse(mem, mem + i);
+                    lexer.parse(mem + i, mem + i + 10);
+                    lexer.parse(mem + i + 10, mem + len);
+                    lexer.parseLast();
+                    TestUtils.assertEquals(expected, sink);
+                }
+            }
+
+            // assert small buffer
+            LineProtoLexer smallBufLexer = new LineProtoLexer(64);
+            lineAssemblingParser.clear();
+            smallBufLexer.withParser(lineAssemblingParser);
+            smallBufLexer.parse(mem, mem + len);
+            smallBufLexer.parseLast();
+            TestUtils.assertEquals(expected, sink);
+        } finally {
+            Unsafe.free(mem, len);
+        }
     }
 
     private class TestLineProtoParser implements LineProtoParser {
+        final HashMap<Long, String> tokens = new HashMap<>();
         boolean fields = false;
         int errorState;
         int errorCode;
         int errorPosition;
-        final HashMap<Long, String> tokens = new HashMap<>();
 
         @Override
         public void onError(int position, int state, int code) {

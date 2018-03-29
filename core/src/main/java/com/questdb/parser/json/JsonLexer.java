@@ -24,11 +24,11 @@
 package com.questdb.parser.json;
 
 import com.questdb.std.*;
-import com.questdb.std.str.DirectByteCharSequence;
-import com.questdb.std.str.SplitByteSequence;
 import com.questdb.std.str.StringSink;
 
 import java.io.Closeable;
+
+import static com.questdb.std.Chars.utf8DecodeMultiByte;
 
 public class JsonLexer implements Mutable, Closeable {
     public static final int EVT_OBJ_START = 1;
@@ -48,9 +48,6 @@ public class JsonLexer implements Mutable, Closeable {
     private static final IntHashSet unquotedTerminators = new IntHashSet(256);
     private final IntStack objDepthStack = new IntStack();
     private final IntStack arrayDepthStack = new IntStack();
-    private final DirectByteCharSequence dbcs = new DirectByteCharSequence();
-    private final DirectByteCharSequence reserveDbcs = new DirectByteCharSequence();
-    private final SplitByteSequence splitCs = new SplitByteSequence();
     private final StringSink sink = new StringSink();
     private final int cacheSizeLimit;
     private int state = S_START;
@@ -58,13 +55,15 @@ public class JsonLexer implements Mutable, Closeable {
     private int arrayDepth = 0;
     private boolean ignoreNext = false;
     private boolean quoted = false;
-    private long cache = 0;
-    private int cacheCapacity = 0;
+    private long cache;
+    private int cacheCapacity;
     private int cacheSize = 0;
     private boolean useCache = false;
     private int position = 0;
 
-    public JsonLexer(int cacheSizeLimit) {
+    public JsonLexer(int cacheCapacity, int cacheSizeLimit) {
+        this.cacheCapacity = cacheCapacity;
+        this.cache = Unsafe.malloc(cacheCapacity);
         this.cacheSizeLimit = cacheSizeLimit;
     }
 
@@ -103,7 +102,6 @@ public class JsonLexer implements Mutable, Closeable {
         boolean quoted = this.quoted;
         boolean ignoreNext = this.ignoreNext;
         boolean useCache = this.useCache;
-        int cacheSize = this.cacheSize;
         int objDepth = this.objDepth;
         int arrayDepth = this.arrayDepth;
 
@@ -131,10 +129,10 @@ public class JsonLexer implements Mutable, Closeable {
 
                 int vp = (int) (posAtStart + valueStart - lo + 1 - cacheSize);
                 if (state == S_EXPECT_NAME || state == S_EXPECT_FIRST_NAME) {
-                    listener.onEvent(EVT_NAME, getCharSequence(valueStart, p, cacheSize), vp);
+                    listener.onEvent(EVT_NAME, getCharSequence(valueStart, p, vp), vp);
                     state = S_EXPECT_COLON;
                 } else {
-                    listener.onEvent(arrayDepth > 0 ? EVT_ARRAY_VALUE : EVT_VALUE, getCharSequence(valueStart, p, cacheSize), vp);
+                    listener.onEvent(arrayDepth > 0 ? EVT_ARRAY_VALUE : EVT_VALUE, getCharSequence(valueStart, p, vp), vp);
                     state = S_EXPECT_COMMA;
                 }
 
@@ -250,13 +248,12 @@ public class JsonLexer implements Mutable, Closeable {
         this.state = state;
         this.quoted = quoted;
         this.ignoreNext = ignoreNext;
-        this.cacheSize = cacheSize;
         this.objDepth = objDepth;
         this.arrayDepth = arrayDepth;
 
         if (valueStart > 0) {
             // stash
-            cacheIncompleteTag(valueStart, hi);
+            addToStash(valueStart, hi);
             useCache = true;
         }
         this.useCache = useCache;
@@ -280,35 +277,103 @@ public class JsonLexer implements Mutable, Closeable {
         return unquotedTerminators.excludes(c);
     }
 
-    private void cacheIncompleteTag(long valueStart, long hi) throws JsonException {
-        int n = ((int) (hi - valueStart)) + cacheSize;
+    private static JsonException unsupportedEncoding(int position) {
+        return JsonException.with("Unsupported encoding", position);
+    }
+
+    private void addToStash(long lo, long hi) throws JsonException {
+        final int len = (int) (hi - lo);
+        int n = len + cacheSize;
         if (n > cacheCapacity) {
-            if (n > cacheSizeLimit) {
-                throw JsonException.with("String is too long", position);
-            }
-            long ptr = Unsafe.malloc(n);
-            if (cacheCapacity > 0) {
-                Unsafe.getUnsafe().copyMemory(cache, ptr, cacheSize);
-                Unsafe.free(cache, cacheCapacity);
-            }
-            cacheCapacity = n;
-            cache = ptr;
+            extendCache(Numbers.ceilPow2(n));
         }
 
-        if (n > 0) {
-            Unsafe.getUnsafe().copyMemory(valueStart, cache + cacheSize, n);
-            cacheSize += n;
+        if (len > 0) {
+            Unsafe.getUnsafe().copyMemory(lo, cache + cacheSize, len);
+            cacheSize += len;
         }
     }
 
-    private CharSequence getCharSequence(long lo, long hi, int cacheSize) {
+    private void extendCache(int n) throws JsonException {
+        if (n > cacheSizeLimit) {
+            throw JsonException.with("String is too long", position);
+        }
+        long ptr = Unsafe.malloc(n);
+        if (cacheCapacity > 0) {
+            Unsafe.getUnsafe().copyMemory(cache, ptr, cacheSize);
+            Unsafe.free(cache, cacheCapacity);
+        }
+        cacheCapacity = n;
+        cache = ptr;
+    }
+
+    private CharSequence getCharSequence(long lo, long hi, int position) throws JsonException {
         sink.clear();
         if (cacheSize == 0) {
-            Chars.utf8Decode(dbcs.of(lo, hi - 1), sink);
+            if (!Chars.utf8Decode(lo, hi - 1, sink)) {
+                throw unsupportedEncoding(position);
+            }
         } else {
-            Chars.utf8Decode(splitCs.of(reserveDbcs.of(cache, cache + cacheSize), dbcs.of(lo, hi - 1)), sink);
+            utf8DecodeCacheAndBuffer(lo, hi - 1, position);
         }
         return sink;
+    }
+
+    private void utf8DecodeCacheAndBuffer(long lo, long hi, int position) throws JsonException {
+        long p = cache;
+        long lim = cache + cacheSize;
+        int loOffset = 0;
+        while (p < lim) {
+            byte b = Unsafe.getUnsafe().getByte(p);
+            if (b < 0) {
+                int len = utf8DecodeMultiByte(p, lim, b, sink);
+                if (len != -1) {
+                    p += len;
+                } else {
+                    // UTF8 error, check if we can switch to main buffer
+                    final int cacheRemaining = (int) (lim - p);
+                    if (cacheRemaining > 4) {
+                        throw unsupportedEncoding(position);
+                    } else {
+                        // add up to four bytes to stash and try again
+                        int n = (int) Math.max(4, hi - lo);
+
+                        // keep offset of 'p' in case stash re-sizes and updates pointers
+                        long offset = p - cache;
+                        addToStash(lo, lo + n);
+                        assert offset < cacheSize;
+                        assert cacheSize <= cacheCapacity;
+                        len = utf8DecodeMultiByte(cache + offset, cache + cacheSize, b, sink);
+                        if (len == -1) {
+                            // definitely UTF8 error
+                            throw unsupportedEncoding(position);
+                        }
+                        // right, decoding was a success, we must continue with decoding main buffer from
+                        // non-zero offset, because we used some of the bytes to decode cache
+                        loOffset = len - cacheRemaining;
+                        p += cacheRemaining;
+                    }
+                }
+            } else {
+                sink.put((char) b);
+                ++p;
+            }
+        }
+
+        p = lo + loOffset;
+        while (p < hi) {
+            byte b = Unsafe.getUnsafe().getByte(p);
+            if (b < 0) {
+                int len = utf8DecodeMultiByte(p, hi, b, sink);
+                if (len == -1) {
+                    throw unsupportedEncoding(position);
+                }
+                p += len;
+            } else {
+                sink.put((char) b);
+                ++p;
+            }
+        }
     }
 
     static {

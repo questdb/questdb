@@ -32,6 +32,7 @@ import com.questdb.cutlass.receiver.parser.LineProtoLexer;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.mp.Job;
+import com.questdb.std.Misc;
 import com.questdb.std.NetFacade;
 import com.questdb.std.Os;
 import com.questdb.std.Unsafe;
@@ -106,6 +107,8 @@ public class GenericLineProtoReceiver implements Closeable, Job {
                 parser.commitAll();
                 parser.close();
             }
+
+            Misc.free(lexer);
             LOG.info().$("closed [fd=").$(fd).$(']').$();
             fd = -1;
         }
@@ -117,7 +120,7 @@ public class GenericLineProtoReceiver implements Closeable, Job {
         int count;
         while ((count = nf.recv(fd, buf, bufLen)) > 0) {
             byteSequence.of(buf, buf + count);
-            lexer.parse(byteSequence);
+            lexer.parse(buf, buf + count);
             lexer.parseLast();
 
             totalCount++;

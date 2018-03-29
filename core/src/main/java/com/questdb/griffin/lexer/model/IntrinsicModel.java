@@ -29,7 +29,7 @@ import com.questdb.griffin.lexer.ParserException;
 import com.questdb.std.*;
 
 public class IntrinsicModel implements Mutable {
-    public static final IntrinsicModelFactory FACTORY = new IntrinsicModelFactory();
+    public static final ObjectFactory<IntrinsicModel> FACTORY = IntrinsicModel::new;
     private static final LongList INFINITE_INTERVAL;
     public final CharSequenceHashSet keyValues = new CharSequenceHashSet();
     public final IntList keyValuePositions = new IntList();
@@ -42,7 +42,7 @@ public class IntrinsicModel implements Mutable {
     public int intrinsicValue = IntrinsicValue.UNDEFINED;
     public boolean keyValuesIsLambda = false;
 
-    private IntrinsicModel() {
+    public IntrinsicModel() {
     }
 
     @Override
@@ -163,13 +163,6 @@ public class IntrinsicModel implements Mutable {
         }
         if (this.intervals.size() == 0) {
             intrinsicValue = IntrinsicValue.FALSE;
-        }
-    }
-
-    public static final class IntrinsicModelFactory implements ObjectFactory<IntrinsicModel> {
-        @Override
-        public IntrinsicModel newInstance() {
-            return new IntrinsicModel();
         }
     }
 

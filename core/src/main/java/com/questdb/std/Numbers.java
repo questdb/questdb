@@ -456,7 +456,11 @@ public final class Numbers {
     }
 
     public static void main(String[] args) {
-        System.out.println(ceilPow2(242342348882389213L));
+        int x = 1;
+        for (int i = 0; i < 128; i++) {
+            x = ceilPow2(x + 1);
+            System.out.println(x);
+        }
     }
 
     public static int msb(int value) {
