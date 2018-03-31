@@ -21,40 +21,26 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.engine.constants;
+package com.questdb.griffin.engine.functions;
 
 import com.questdb.common.ColumnType;
 import com.questdb.common.Record;
-import com.questdb.common.StorageFacade;
-import com.questdb.griffin.compiler.AbstractVirtualColumn;
-import com.questdb.std.str.CharSink;
 
-public class NullConstant extends AbstractVirtualColumn {
+public class FloatConstant extends AbstractConstant {
+    private final float value;
 
-    public NullConstant(int position) {
-        super(ColumnType.STRING, position);
+    public FloatConstant(float value, int position) {
+        super(ColumnType.FLOAT, position);
+        this.value = value;
     }
 
     @Override
-    public CharSequence getFlyweightStr(Record rec) {
-        return null;
+    public double getDouble(Record rec) {
+        return value;
     }
 
     @Override
-    public CharSequence getFlyweightStrB(Record rec) {
-        return null;
-    }
-
-    @Override
-    public void getStr(Record rec, CharSink sink) {
-    }
-
-    @Override
-    public boolean isConstant() {
-        return true;
-    }
-
-    @Override
-    public void prepare(StorageFacade facade) {
+    public float getFloat(Record rec) {
+        return value;
     }
 }

@@ -32,7 +32,6 @@ public class TableReaderRecordCursorFactory implements RecordCursorFactory {
     private final CairoEngine engine;
     private final String tableName;
 
-
     public TableReaderRecordCursorFactory(CairoEngine engine, String tableName) {
         this.engine = engine;
         this.tableName = tableName;

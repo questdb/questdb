@@ -21,52 +21,26 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.engine.columns;
+package com.questdb.griffin.engine.functions;
 
-import com.questdb.common.ColumnType;
-import com.questdb.common.Record;
-import com.questdb.common.StorageFacade;
-import com.questdb.griffin.compiler.AbstractVirtualColumn;
+import com.questdb.griffin.engine.Function;
 
-public class ByteRecordSourceColumn extends AbstractVirtualColumn {
-    private final int index;
+public abstract class AbstractFunction implements Function {
+    private final int type;
+    private final int position;
 
-    public ByteRecordSourceColumn(int index, int position) {
-        super(ColumnType.BYTE, position);
-        this.index = index;
+    protected AbstractFunction(int returnType, int position) {
+        this.type = returnType;
+        this.position = position;
     }
 
     @Override
-    public byte get(Record rec) {
-        return rec.getByte(index);
+    public int getPosition() {
+        return position;
     }
 
     @Override
-    public double getDouble(Record rec) {
-        return rec.getByte(index);
-    }
-
-    @Override
-    public float getFloat(Record rec) {
-        return rec.getByte(index);
-    }
-
-    @Override
-    public int getInt(Record rec) {
-        return rec.getByte(index);
-    }
-
-    @Override
-    public long getLong(Record rec) {
-        return rec.getByte(index);
-    }
-
-    @Override
-    public boolean isConstant() {
-        return false;
-    }
-
-    @Override
-    public void prepare(StorageFacade facade) {
+    public int getType() {
+        return type;
     }
 }

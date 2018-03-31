@@ -413,6 +413,13 @@ public final class Chars {
         return s == null ? null : s.toString();
     }
 
+    public static String toString(CharSequence cs, int start, int end) {
+        final CharSink b = Misc.getThreadLocalBuilder();
+        b.put(cs, start, end);
+        return b.toString();
+    }
+
+
     public static String toUtf8String(long lo, long hi) {
         if (hi == lo) {
             return "";

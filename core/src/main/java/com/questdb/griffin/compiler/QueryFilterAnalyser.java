@@ -59,7 +59,7 @@ final class QueryFilterAnalyser {
     private final IntList tempP = new IntList();
     private final ObjectPool<FlyweightCharSequence> csPool = new ObjectPool<>(FlyweightCharSequence.FACTORY, 64);
     private String timestamp;
-    private String preferredKeyColumn;
+    private CharSequence preferredKeyColumn;
 
     private static void checkNodeValid(ExprNode node) throws ParserException {
         if (node.lhs == null || node.rhs == null) {
@@ -626,7 +626,7 @@ final class QueryFilterAnalyser {
         return node;
     }
 
-    IntrinsicModel extract(AliasTranslator translator, ExprNode node, RecordMetadata m, String preferredKeyColumn, int timestampIndex) throws ParserException {
+    IntrinsicModel extract(AliasTranslator translator, ExprNode node, RecordMetadata m, CharSequence preferredKeyColumn, int timestampIndex) throws ParserException {
         reset();
         this.timestamp = timestampIndex < 0 ? null : m.getColumnName(timestampIndex);
         this.preferredKeyColumn = preferredKeyColumn;

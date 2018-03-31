@@ -21,32 +21,29 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.engine.columns;
+package com.questdb.griffin.engine.functions;
 
 import com.questdb.common.ColumnType;
 import com.questdb.common.Record;
-import com.questdb.common.StorageFacade;
-import com.questdb.griffin.compiler.AbstractVirtualColumn;
+import com.questdb.std.str.CharSink;
 
-public class BoolRecordSourceColumn extends AbstractVirtualColumn {
-    private final int index;
+public class NullConstant extends AbstractConstant {
 
-    public BoolRecordSourceColumn(int index, int position) {
-        super(ColumnType.BOOLEAN, position);
-        this.index = index;
+    public NullConstant(int position) {
+        super(ColumnType.STRING, position);
     }
 
     @Override
-    public boolean getBool(Record rec) {
-        return rec.getBool(index);
+    public CharSequence getStr(Record rec) {
+        return null;
     }
 
     @Override
-    public boolean isConstant() {
-        return false;
+    public void getStr(Record rec, CharSink sink) {
     }
 
     @Override
-    public void prepare(StorageFacade facade) {
+    public CharSequence getStrB(Record rec) {
+        return null;
     }
 }

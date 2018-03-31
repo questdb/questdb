@@ -21,32 +21,16 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.engine.constants;
+package com.questdb.griffin.engine.functions;
 
-import com.questdb.common.ColumnType;
-import com.questdb.common.Record;
-import com.questdb.common.StorageFacade;
-import com.questdb.griffin.compiler.AbstractVirtualColumn;
+public abstract class AbstractConstant extends AbstractFunction {
 
-public class DoubleConstant extends AbstractVirtualColumn {
-    private final double value;
-
-    public DoubleConstant(double value, int position) {
-        super(ColumnType.DOUBLE, position);
-        this.value = value;
-    }
-
-    @Override
-    public double getDouble(Record rec) {
-        return value;
+    public AbstractConstant(int type, int position) {
+        super(type, position);
     }
 
     @Override
     public boolean isConstant() {
         return true;
-    }
-
-    @Override
-    public void prepare(StorageFacade facade) {
     }
 }

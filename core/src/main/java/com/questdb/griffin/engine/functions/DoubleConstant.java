@@ -21,50 +21,21 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.engine.columns;
+package com.questdb.griffin.engine.functions;
 
 import com.questdb.common.ColumnType;
 import com.questdb.common.Record;
-import com.questdb.common.StorageFacade;
-import com.questdb.griffin.compiler.AbstractVirtualColumn;
 
-public class IntRecordSourceColumn extends AbstractVirtualColumn {
-    private final int index;
+public class DoubleConstant extends AbstractConstant {
+    private final double value;
 
-    public IntRecordSourceColumn(int index, int position) {
-        super(ColumnType.INT, position);
-        this.index = index;
+    public DoubleConstant(double value, int position) {
+        super(ColumnType.DOUBLE, position);
+        this.value = value;
     }
 
     @Override
     public double getDouble(Record rec) {
-        int v = rec.getInt(index);
-        return v != Integer.MIN_VALUE ? v : Double.NaN;
-    }
-
-    @Override
-    public float getFloat(Record rec) {
-        int v = rec.getInt(index);
-        return v != Integer.MIN_VALUE ? v : Float.NaN;
-    }
-
-    @Override
-    public int getInt(Record rec) {
-        return rec.getInt(index);
-    }
-
-    @Override
-    public long getLong(Record rec) {
-        int v = rec.getInt(index);
-        return v != Integer.MIN_VALUE ? v : Long.MIN_VALUE;
-    }
-
-    @Override
-    public boolean isConstant() {
-        return false;
-    }
-
-    @Override
-    public void prepare(StorageFacade facade) {
+        return value;
     }
 }

@@ -21,32 +21,12 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.engine.columns;
+package com.questdb.griffin.engine;
 
-import com.questdb.common.ColumnType;
-import com.questdb.common.Record;
-import com.questdb.common.StorageFacade;
-import com.questdb.griffin.compiler.AbstractVirtualColumn;
+import com.questdb.cairo.CairoConfiguration;
+import com.questdb.std.ObjList;
 
-public class DoubleRecordSourceColumn extends AbstractVirtualColumn {
-    private final int index;
-
-    public DoubleRecordSourceColumn(int index, int position) {
-        super(ColumnType.DOUBLE, position);
-        this.index = index;
-    }
-
-    @Override
-    public double getDouble(Record rec) {
-        return rec.getDouble(index);
-    }
-
-    @Override
-    public boolean isConstant() {
-        return false;
-    }
-
-    @Override
-    public void prepare(StorageFacade facade) {
-    }
+@FunctionalInterface
+public interface FunctionFactory<T extends Function> {
+    T newInstance(ObjList<Function> args, int position, CairoConfiguration configuration);
 }

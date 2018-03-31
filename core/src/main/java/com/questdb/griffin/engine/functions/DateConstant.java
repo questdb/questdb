@@ -21,38 +21,31 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.engine.columns;
+package com.questdb.griffin.engine.functions;
 
 import com.questdb.common.ColumnType;
 import com.questdb.common.Record;
-import com.questdb.common.StorageFacade;
-import com.questdb.griffin.compiler.AbstractVirtualColumn;
 
-public class FloatRecordSourceColumn extends AbstractVirtualColumn {
-    private final int index;
+public class DateConstant extends AbstractConstant {
+    private final long value;
 
-    public FloatRecordSourceColumn(int index, int position) {
-        super(ColumnType.FLOAT, position);
-        this.index = index;
+    public DateConstant(long value, int position) {
+        super(ColumnType.DATE, position);
+        this.value = value;
+    }
+
+    @Override
+    public long getDate(Record rec) {
+        return value;
     }
 
     @Override
     public double getDouble(Record rec) {
-        float v = rec.getFloat(index);
-        return v == v ? v : Float.NaN;
+        return value;
     }
 
     @Override
-    public float getFloat(Record rec) {
-        return rec.getFloat(index);
-    }
-
-    @Override
-    public boolean isConstant() {
-        return false;
-    }
-
-    @Override
-    public void prepare(StorageFacade facade) {
+    public long getLong(Record rec) {
+        return value;
     }
 }

@@ -21,37 +21,12 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.engine.constants;
+package com.questdb.griffin.engine;
 
-import com.questdb.common.ColumnType;
-import com.questdb.common.Record;
-import com.questdb.common.StorageFacade;
-import com.questdb.griffin.compiler.AbstractVirtualColumn;
+import com.questdb.std.ObjList;
 
-public class FloatConstant extends AbstractVirtualColumn {
-    private final float value;
-
-    public FloatConstant(float value, int position) {
-        super(ColumnType.FLOAT, position);
-        this.value = value;
-    }
-
-    @Override
-    public double getDouble(Record rec) {
-        return value;
-    }
-
-    @Override
-    public float getFloat(Record rec) {
-        return value;
-    }
-
-    @Override
-    public boolean isConstant() {
-        return true;
-    }
-
-    @Override
-    public void prepare(StorageFacade facade) {
+public class FunctionRepository {
+    public static FunctionFactory<Function> find(Signature sig, ObjList<Function> args) {
+        return null;
     }
 }

@@ -21,11 +21,26 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.common;
+package com.questdb.griffin.engine.functions;
 
+import com.questdb.common.ColumnType;
+import com.questdb.common.Record;
 
-import com.questdb.griffin.lexer.ParserException;
+public class LongConstant extends AbstractConstant {
+    private final long value;
 
-public interface Function extends VirtualColumn {
-    void setArg(int pos, VirtualColumn arg) throws ParserException;
+    public LongConstant(long value, int position) {
+        super(ColumnType.LONG, position);
+        this.value = value;
+    }
+
+    @Override
+    public double getDouble(Record rec) {
+        return value;
+    }
+
+    @Override
+    public long getLong(Record rec) {
+        return value;
+    }
 }

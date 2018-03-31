@@ -21,37 +21,22 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.engine.constants;
+package com.questdb.griffin.engine.functions;
 
 import com.questdb.common.ColumnType;
 import com.questdb.common.Record;
-import com.questdb.common.StorageFacade;
-import com.questdb.griffin.compiler.AbstractVirtualColumn;
 
-public class LongConstant extends AbstractVirtualColumn {
-    private final long value;
+public class BooleanConstant extends AbstractConstant {
 
-    public LongConstant(long value, int position) {
-        super(ColumnType.LONG, position);
+    private final boolean value;
+
+    public BooleanConstant(boolean value, int position) {
+        super(ColumnType.BOOLEAN, position);
         this.value = value;
     }
 
     @Override
-    public double getDouble(Record rec) {
+    public boolean getBool(Record rec) {
         return value;
-    }
-
-    @Override
-    public long getLong(Record rec) {
-        return value;
-    }
-
-    @Override
-    public boolean isConstant() {
-        return true;
-    }
-
-    @Override
-    public void prepare(StorageFacade facade) {
     }
 }

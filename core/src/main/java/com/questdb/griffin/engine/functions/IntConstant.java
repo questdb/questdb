@@ -21,15 +21,36 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.engine;
+package com.questdb.griffin.engine.functions;
 
-import com.questdb.griffin.common.Function;
-import com.questdb.griffin.common.VirtualColumn;
-import com.questdb.griffin.common.VirtualColumnFactory;
-import com.questdb.std.ObjList;
+import com.questdb.common.ColumnType;
+import com.questdb.common.Record;
 
-public class FunctionFactories {
-    public static VirtualColumnFactory<Function> find(Signature sig, ObjList<VirtualColumn> args) {
-        return null;
+public class IntConstant extends AbstractConstant {
+    private final int value;
+
+    public IntConstant(int value, int position) {
+        super(ColumnType.INT, position);
+        this.value = value;
+    }
+
+    @Override
+    public double getDouble(Record rec) {
+        return value;
+    }
+
+    @Override
+    public float getFloat(Record rec) {
+        return value;
+    }
+
+    @Override
+    public int getInt(Record rec) {
+        return value;
+    }
+
+    @Override
+    public long getLong(Record rec) {
+        return value;
     }
 }

@@ -21,25 +21,24 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.compiler;
+package com.questdb.griffin.engine.functions;
 
 import com.questdb.common.ColumnType;
 import com.questdb.common.Record;
-import com.questdb.common.StorageFacade;
 import com.questdb.ex.UndefinedParameterException;
 import com.questdb.ex.WrongParameterTypeException;
 
-public class Parameter extends AbstractVirtualColumn {
+public class Parameter extends AbstractFunction {
 
     private int valueType = ColumnType.PARAMETER;
     private long longValue;
     private double doubleValue;
     private String stringValue;
+    private String name;
 
-    private Parameter(int position) {
+    public Parameter(int position) {
         super(ColumnType.PARAMETER, position);
     }
-
 
     @Override
     public byte get(Record rec) {
@@ -74,21 +73,6 @@ public class Parameter extends AbstractVirtualColumn {
             default:
                 throw wrongType(ColumnType.DOUBLE);
         }
-    }
-
-    @Override
-    public CharSequence getFlyweightStr(Record rec) {
-        switch (valueType) {
-            case ColumnType.STRING:
-                return stringValue;
-            default:
-                throw wrongType(ColumnType.STRING);
-        }
-    }
-
-    @Override
-    public CharSequence getFlyweightStrB(Record rec) {
-        return getFlyweightStr(rec);
     }
 
     @Override
@@ -131,12 +115,23 @@ public class Parameter extends AbstractVirtualColumn {
     }
 
     @Override
-    public boolean isConstant() {
-        return true;
+    public CharSequence getStr(Record rec) {
+        switch (valueType) {
+            case ColumnType.STRING:
+                return stringValue;
+            default:
+                throw wrongType(ColumnType.STRING);
+        }
     }
 
     @Override
-    public void prepare(StorageFacade facade) {
+    public CharSequence getStrB(Record rec) {
+        return getStr(rec);
+    }
+
+    @Override
+    public boolean isConstant() {
+        return true;
     }
 
     public void set(int value) {
@@ -179,11 +174,15 @@ public class Parameter extends AbstractVirtualColumn {
         longValue = value;
     }
 
+    public void setName(String name) {
+        this.name = name;
+    }
+
     private RuntimeException wrongType(int expected) {
         if (valueType == ColumnType.PARAMETER) {
-            return new UndefinedParameterException(getName());
+            return new UndefinedParameterException(name);
         } else {
-            return new WrongParameterTypeException(getName(), expected, valueType);
+            return new WrongParameterTypeException(name, expected, valueType);
         }
     }
 }
