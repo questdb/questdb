@@ -23,11 +23,12 @@
 
 package com.questdb.cairo;
 
+import com.questdb.cairo.sql.MetadataContainer;
+import com.questdb.cairo.sql.RecordCursor;
 import com.questdb.cairo.sql.RecordCursorFactory;
 import com.questdb.common.ColumnType;
 import com.questdb.common.PartitionBy;
 import com.questdb.common.Record;
-import com.questdb.common.RecordCursor;
 import com.questdb.std.Rnd;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -48,6 +49,8 @@ public class TableReaderRecordCursorFactoryTest extends AbstractCairoTest {
             ) {
                 CairoTestUtils.create(model);
             }
+
+            final String expectedMetadata = "{\"columnCount\":5,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\"STRING\"},{\"index\":1,\"name\":\"b\",\"type\":\"SYMBOL\",\"indexed\":true},{\"index\":2,\"name\":\"i\",\"type\":\"INT\"},{\"index\":3,\"name\":\"c\",\"type\":\"SYMBOL\",\"indexed\":true},{\"index\":4,\"name\":\"timestamp\",\"type\":\"TIMESTAMP\"}]}";
 
             final Rnd rnd = new Rnd();
             final String symbols[] = new String[N];
@@ -77,9 +80,16 @@ public class TableReaderRecordCursorFactoryTest extends AbstractCairoTest {
 
             try (Engine engine = new Engine(configuration)) {
                 RecordCursorFactory factory = new TableReaderRecordCursorFactory(engine, "x");
+
+                sink.clear();
+                try (MetadataContainer container = factory.getMetadataContainer()) {
+                    container.getMetadata().toJson(sink);
+                    TestUtils.assertEquals(expectedMetadata, sink);
+                }
+
+
                 long count = 0;
-                RecordCursor cursor = factory.getCursor();
-                try {
+                try (RecordCursor cursor = factory.getCursor()) {
                     rnd.reset();
                     while (cursor.hasNext()) {
                         Record record = cursor.next();
@@ -89,9 +99,12 @@ public class TableReaderRecordCursorFactoryTest extends AbstractCairoTest {
                         TestUtils.assertEquals(symbols[rnd.nextPositiveInt() % N], record.getSym(3));
                         count++;
                     }
-                } finally {
-                    cursor.releaseCursor();
+                    sink.clear();
+                    cursor.getMetadata().toJson(sink);
+                    TestUtils.assertEquals(expectedMetadata, sink);
                 }
+
+
                 Assert.assertEquals(0, engine.getBusyReaderCount());
                 Assert.assertEquals(M, count);
             }

@@ -21,28 +21,23 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.engine.table;
+package com.questdb.cairo.sql;
 
-import com.questdb.cairo.sql.*;
+import com.questdb.common.Record;
+import com.questdb.common.StorageFacade;
+import com.questdb.std.ImmutableIterator;
 
-public class FilteredTableRecordCursorFactory implements RecordCursorFactory {
-    private final DataFrameCursorFactory dataFrameCursorFactory;
-    private final FilteredTableRecordCursor cursor;
+public interface RecordCursor extends ImmutableIterator<Record>, MetadataContainer {
 
-    public FilteredTableRecordCursorFactory(DataFrameCursorFactory dataFrameCursorFactory, RowCursorFactory rowCursorFactory) {
-        this.dataFrameCursorFactory = dataFrameCursorFactory;
-        this.cursor = new FilteredTableRecordCursor(rowCursorFactory);
-    }
+    Record getRecord();
 
-    @Override
-    public MetadataContainer getMetadataContainer() {
-        return getCursor();
-    }
+    StorageFacade getStorageFacade();
 
-    @Override
-    public RecordCursor getCursor() {
-        cursor.of(dataFrameCursorFactory.getCursor());
-        return cursor;
-    }
+    Record newRecord();
 
+    Record recordAt(long rowId);
+
+    void recordAt(Record record, long atRowId);
+
+    void toTop();
 }

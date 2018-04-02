@@ -93,6 +93,7 @@ public class SlidingWindowMemory extends VirtualMemory {
     private void invalidateCurrentPage() {
         this.pageAddress = 0;
         this.pageIndex = -1;
+        clearHotPage();
     }
 
     private long mapPage(int page) {

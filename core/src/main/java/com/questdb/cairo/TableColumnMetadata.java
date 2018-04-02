@@ -32,10 +32,10 @@ class TableColumnMetadata implements RecordColumnMetadata {
     private final boolean indexed;
     private final int indexValueBlockCapacity;
 
-    public TableColumnMetadata(String name, int type, boolean indexFlaf, int indexValueBlockCapacity) {
+    public TableColumnMetadata(String name, int type, boolean indexFlag, int indexValueBlockCapacity) {
         this.name = name;
         this.type = type;
-        this.indexed = indexFlaf;
+        this.indexed = indexFlag;
         this.indexValueBlockCapacity = indexValueBlockCapacity;
     }
 

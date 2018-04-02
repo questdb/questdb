@@ -26,9 +26,10 @@ package com.questdb.griffin.engine.table;
 import com.questdb.cairo.TableReaderRecord;
 import com.questdb.cairo.sql.DataFrame;
 import com.questdb.cairo.sql.DataFrameCursor;
+import com.questdb.cairo.sql.RecordCursor;
 import com.questdb.cairo.sql.RowCursorFactory;
 import com.questdb.common.Record;
-import com.questdb.common.RecordCursor;
+import com.questdb.common.RecordMetadata;
 import com.questdb.common.RowCursor;
 import com.questdb.common.StorageFacade;
 import com.questdb.std.Rows;
@@ -44,8 +45,26 @@ class FilteredTableRecordCursor implements RecordCursor {
     }
 
     @Override
+    public void close() {
+        if (dataFrameCursor != null) {
+            dataFrameCursor.close();
+            dataFrameCursor = null;
+        }
+    }
+
+    @Override
+    public RecordMetadata getMetadata() {
+        return dataFrameCursor.getReader().getMetadata();
+    }
+
+    @Override
     public Record getRecord() {
         return record;
+    }
+
+    @Override
+    public StorageFacade getStorageFacade() {
+        return null;
     }
 
     @Override
@@ -53,11 +72,6 @@ class FilteredTableRecordCursor implements RecordCursor {
         TableReaderRecord record = new TableReaderRecord();
         record.of(dataFrameCursor.getReader());
         return record;
-    }
-
-    @Override
-    public StorageFacade getStorageFacade() {
-        return null;
     }
 
     @Override
@@ -69,11 +83,6 @@ class FilteredTableRecordCursor implements RecordCursor {
     @Override
     public void recordAt(Record record, long atRowId) {
         ((TableReaderRecord) record).jumpTo(Rows.toPartitionIndex(atRowId), Rows.toLocalRowID(atRowId));
-    }
-
-    @Override
-    public void releaseCursor() {
-        dataFrameCursor.close();
     }
 
     @Override
@@ -96,6 +105,7 @@ class FilteredTableRecordCursor implements RecordCursor {
     }
 
     public void of(DataFrameCursor dataFrameCursor) {
+        close();
         this.dataFrameCursor = dataFrameCursor;
         this.record.of(dataFrameCursor.getReader());
         toTop();

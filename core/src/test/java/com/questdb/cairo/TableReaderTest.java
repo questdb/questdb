@@ -23,7 +23,11 @@
 
 package com.questdb.cairo;
 
-import com.questdb.common.*;
+import com.questdb.cairo.sql.RecordCursor;
+import com.questdb.common.ColumnType;
+import com.questdb.common.NumericException;
+import com.questdb.common.PartitionBy;
+import com.questdb.common.Record;
 import com.questdb.std.*;
 import com.questdb.std.microtime.DateFormatUtils;
 import com.questdb.std.microtime.Dates;
@@ -2383,7 +2387,7 @@ public class TableReaderTest extends AbstractCairoTest {
 
             // populate table and delete column
             try (TableWriter writer = new TableWriter(configuration, "x")) {
-                appendTwoSymbols(writer, N, rnd);
+                appendTwoSymbols(writer, rnd);
                 writer.commit();
 
                 try (TableReader reader = new TableReader(configuration, "x")) {
@@ -2414,7 +2418,7 @@ public class TableReaderTest extends AbstractCairoTest {
                     writer.addColumn("b", ColumnType.SYMBOL);
 
                     // SymbolMap must be cleared when we try do add values to new column
-                    appendTwoSymbols(writer, N, rnd);
+                    appendTwoSymbols(writer, rnd);
                     writer.commit();
 
                     // now assert what reader sees
@@ -2493,7 +2497,7 @@ public class TableReaderTest extends AbstractCairoTest {
 
             // populate table and delete column
             try (TableWriter writer = new TableWriter(configuration, "x")) {
-                appendTwoSymbols(writer, N, rnd);
+                appendTwoSymbols(writer, rnd);
                 writer.commit();
 
                 try (TableReader reader = new TableReader(configuration, "x")) {
@@ -2520,7 +2524,7 @@ public class TableReaderTest extends AbstractCairoTest {
                     writer.addColumn("b", ColumnType.SYMBOL);
 
                     // SymbolMap must be cleared when we try do add values to new column
-                    appendTwoSymbols(writer, N, rnd);
+                    appendTwoSymbols(writer, rnd);
                     writer.commit();
 
                     // now assert what reader sees
@@ -2599,7 +2603,7 @@ public class TableReaderTest extends AbstractCairoTest {
 
             // populate table and delete column
             try (TableWriter writer = new TableWriter(configuration, "x")) {
-                appendTwoSymbols(writer, N, rnd);
+                appendTwoSymbols(writer, rnd);
                 writer.commit();
 
                 try (TableReader reader = new TableReader(configuration, "x")) {
@@ -2626,7 +2630,7 @@ public class TableReaderTest extends AbstractCairoTest {
                     writer.addColumn("b", ColumnType.SYMBOL);
 
                     // SymbolMap must be cleared when we try do add values to new column
-                    appendTwoSymbols(writer, N, rnd);
+                    appendTwoSymbols(writer, rnd);
                     writer.commit();
 
                     // now assert what reader sees
@@ -2705,7 +2709,7 @@ public class TableReaderTest extends AbstractCairoTest {
 
             // populate table and delete column
             try (TableWriter writer = new TableWriter(configuration, "x")) {
-                appendTwoSymbols(writer, N, rnd);
+                appendTwoSymbols(writer, rnd);
                 writer.commit();
 
                 try (TableReader reader = new TableReader(configuration, "x")) {
@@ -2777,7 +2781,7 @@ public class TableReaderTest extends AbstractCairoTest {
     private static void assertStrColumn(CharSequence expected, Record r, int index) {
         TestUtils.assertEquals(expected, r.getFlyweightStr(index));
         TestUtils.assertEquals(expected, r.getFlyweightStrB(index));
-        Assert.assertFalse(r.getFlyweightStr(index) == r.getFlyweightStrB(index));
+        Assert.assertNotSame(r.getFlyweightStr(index), r.getFlyweightStrB(index));
         Assert.assertEquals(expected.length(), r.getStrLen(index));
     }
 
@@ -2795,8 +2799,8 @@ public class TableReaderTest extends AbstractCairoTest {
         }
     }
 
-    private void appendTwoSymbols(TableWriter writer, int n, Rnd rnd) {
-        for (int i = 0; i < n; i++) {
+    private void appendTwoSymbols(TableWriter writer, Rnd rnd) {
+        for (int i = 0; i < 1000; i++) {
             TableWriter.Row row = writer.newRow(0);
             row.putSym(0, rnd.nextChars(10));
             row.putSym(1, rnd.nextChars(15));
@@ -3047,9 +3051,9 @@ public class TableReaderTest extends AbstractCairoTest {
         return ts;
     }
 
-    private long testAppend(Rnd rnd, CairoConfiguration configuration, long ts, int count, long inc, long blob, int testPartitionSwitch, FieldGenerator generator) {
+    private long testAppend(Rnd rnd, CairoConfiguration configuration, long ts, int count, long inc, long blob, int testPartitionSwitch) {
         try (TableWriter writer = new TableWriter(configuration, "all")) {
-            return testAppend(writer, rnd, ts, count, inc, blob, testPartitionSwitch, generator);
+            return testAppend(writer, rnd, ts, count, inc, blob, testPartitionSwitch, TableReaderTest.BATCH1_GENERATOR);
         }
     }
 
@@ -3099,7 +3103,7 @@ public class TableReaderTest extends AbstractCairoTest {
                         return ff;
                     }
                 };
-                testAppend(rnd, configuration, ts, count, increment, blob, 0, BATCH1_GENERATOR);
+                testAppend(rnd, configuration, ts, count, increment, blob, 0);
 
                 try (TableReader reader = new TableReader(configuration, "all")) {
                     RecordCursor cursor = reader.getCursor();
@@ -3150,7 +3154,7 @@ public class TableReaderTest extends AbstractCairoTest {
                     Assert.assertFalse(reader.reload());
 
                     // create table with first batch populating all columns (there could be null values too)
-                    long nextTs = testAppend(rnd, configuration, ts, count, increment, blob, 0, BATCH1_GENERATOR);
+                    long nextTs = testAppend(rnd, configuration, ts, count, increment, blob, 0);
 
                     // can we reload from empty to first batch?
                     Assert.assertTrue(reader.reload());
@@ -3168,7 +3172,7 @@ public class TableReaderTest extends AbstractCairoTest {
                     Assert.assertFalse(reader.reload());
 
                     // add second batch to test if reload of open table will pick it up
-                    nextTs = testAppend(rnd, configuration, nextTs, count, increment, blob, testPartitionSwitch, BATCH1_GENERATOR);
+                    nextTs = testAppend(rnd, configuration, nextTs, count, increment, blob, testPartitionSwitch);
 
                     // if we don't reload reader it should still see first batch
                     // reader can see all the rows ?
@@ -3337,7 +3341,7 @@ public class TableReaderTest extends AbstractCairoTest {
                         return ff;
                     }
                 };
-                testAppend(rnd, configuration, ts, count, increment, blob, 0, BATCH1_GENERATOR);
+                testAppend(rnd, configuration, ts, count, increment, blob, 0);
 
                 try (TableReader reader = new TableReader(configuration, "all")) {
                     RecordCursor cursor = reader.getCursor();
@@ -3362,7 +3366,7 @@ public class TableReaderTest extends AbstractCairoTest {
         long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z") / 1000;
         long blob = allocBlob();
         try {
-            testAppend(rnd, configuration, ts, N, inc, blob, 0, BATCH1_GENERATOR);
+            testAppend(rnd, configuration, ts, N, inc, blob, 0);
             final LongList rows = new LongList();
             try (TableReader reader = new TableReader(configuration, "all")) {
                 Assert.assertEquals(N, reader.size());

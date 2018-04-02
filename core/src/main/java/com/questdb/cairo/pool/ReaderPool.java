@@ -193,7 +193,7 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
                     } else {
                         // right, failed to lock next entry
                         // are we failing to read what next entry is?
-                        if (e.next == null) {
+                        if (e.next == null && e.lockOwner != thread) {
                             // lost the race
                             LOG.info().$("'").$(name).$("' is busy [at=").$(e.index + 1).$(':').$(0).$(", owner=unknown").$(", thread=").$(thread).$(']').$();
                             e.lockOwner = -1L;
@@ -271,6 +271,7 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
                         if (deadline == Long.MAX_VALUE) {
                             R r = Unsafe.arrayGet(e.readers, i);
                             if (r != null) {
+                                r.goodby();
                                 LOG.info().$("shutting down. '").$(r.getTableName()).$("' is left behind").$();
                             }
                         }

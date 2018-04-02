@@ -56,6 +56,8 @@ class ColumnIndexerJob implements Job {
             TableWriter.indexAndCountDown(indexer, lo, hi, latch);
             return true;
         }
+        // This is hard to test. Condition occurs when main thread successfully steals
+        // work from under nose of this worker.
         return false;
     }
 }

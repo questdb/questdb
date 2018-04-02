@@ -23,11 +23,10 @@
 
 package com.questdb.cairo;
 
-import com.questdb.common.RecordCursor;
+import com.questdb.cairo.sql.RecordCursor;
 import com.questdb.common.RecordMetadata;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
-import com.questdb.ql.RecordSourcePrinter;
 import com.questdb.std.Files;
 import com.questdb.std.str.Path;
 import com.questdb.std.str.StringSink;
@@ -43,7 +42,7 @@ import java.io.IOException;
 public class AbstractCairoTest {
 
     protected static final StringSink sink = new StringSink();
-    protected static final RecordSourcePrinter printer = new RecordSourcePrinter(sink);
+    protected static final RecordCursorPrinter printer = new RecordCursorPrinter(sink);
     private final static Log LOG = LogFactory.getLog(AbstractCairoTest.class);
     @ClassRule
     public static TemporaryFolder temp = new TemporaryFolder();

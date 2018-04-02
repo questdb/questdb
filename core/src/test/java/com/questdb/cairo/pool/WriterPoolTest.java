@@ -131,7 +131,7 @@ public class WriterPoolTest extends AbstractCairoTest {
             sink.put("y");
 
             try (TableWriter writer2 = pool.get("x")) {
-                Assert.assertTrue(writer1 == writer2);
+                Assert.assertSame(writer1, writer2);
             }
         });
     }
@@ -241,7 +241,7 @@ public class WriterPoolTest extends AbstractCairoTest {
                 Assert.assertEquals(0, pool.countFreeWriters());
                 Assert.assertNotNull(x);
                 Assert.assertTrue(x.isOpen());
-                Assert.assertTrue(x == pool.get("z"));
+                Assert.assertSame(x, pool.get("z"));
                 pool.close();
             } finally {
                 x.close();
@@ -253,6 +253,57 @@ public class WriterPoolTest extends AbstractCairoTest {
                 Assert.fail();
             } catch (PoolClosedException ignored) {
             }
+        });
+    }
+
+    @Test
+    public void testGetAndCloseRace() throws Exception {
+
+        try (TableModel model = new TableModel(configuration, "xyz", PartitionBy.NONE).col("ts", ColumnType.DATE)) {
+            CairoTestUtils.create(model);
+        }
+
+        assertWithPool(pool -> {
+            AtomicInteger exceptionCount = new AtomicInteger();
+            CyclicBarrier barrier = new CyclicBarrier(2);
+            CountDownLatch stopLatch = new CountDownLatch(2);
+
+            // make sure writer exists in pool
+            try (TableWriter writer = pool.get("xyz")) {
+                Assert.assertNotNull(writer);
+            }
+
+            new Thread(() -> {
+                try {
+                    barrier.await();
+                    pool.close();
+                } catch (Exception e) {
+                    exceptionCount.incrementAndGet();
+                    e.printStackTrace();
+                } finally {
+                    stopLatch.countDown();
+                }
+            }).start();
+
+
+            new Thread(() -> {
+                try {
+                    barrier.await();
+                    try (TableWriter reader = pool.get("xyz")) {
+                        Assert.assertNotNull(reader);
+                    } catch (PoolClosedException ignore) {
+                        // this can also happen when this thread is delayed enough for pool close to complete
+                    }
+                } catch (Exception e) {
+                    exceptionCount.incrementAndGet();
+                    e.printStackTrace();
+                } finally {
+                    stopLatch.countDown();
+                }
+            }).start();
+
+            Assert.assertTrue(stopLatch.await(2, TimeUnit.SECONDS));
+            Assert.assertEquals(0, exceptionCount.get());
         });
     }
 
@@ -373,7 +424,7 @@ public class WriterPoolTest extends AbstractCairoTest {
                 Assert.assertEquals(0, pool.countFreeWriters());
                 Assert.assertNotNull(x);
                 Assert.assertTrue(x.isOpen());
-                Assert.assertTrue(x == pool.get("z"));
+                Assert.assertSame(x, pool.get("z"));
             } finally {
                 x.close();
             }
@@ -384,7 +435,7 @@ public class WriterPoolTest extends AbstractCairoTest {
             try {
                 Assert.assertNotNull(y);
                 Assert.assertTrue(y.isOpen());
-                Assert.assertTrue(y == x);
+                Assert.assertSame(y, x);
             } finally {
                 y.close();
             }
@@ -462,7 +513,7 @@ public class WriterPoolTest extends AbstractCairoTest {
                                 writerCount.incrementAndGet();
                                 populate(w);
 
-                                Assert.assertTrue(w == pool.get("z"));
+                                Assert.assertSame(w, pool.get("z"));
 
                             } catch (EntryUnavailableException ignored) {
                             }
@@ -530,7 +581,7 @@ public class WriterPoolTest extends AbstractCairoTest {
                 // available and threads execute sequentially rather than
                 // simultaneously. We should check that none of the threads
                 // receive error.
-                Assert.assertTrue(writerCount.get() == 0);
+                Assert.assertEquals(0, writerCount.get());
                 Assert.assertEquals(0, errors.get());
                 Assert.assertEquals(0, pool.countFreeWriters());
             }

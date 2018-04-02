@@ -171,7 +171,7 @@ public class PerformanceTest extends AbstractTest {
                     t = System.nanoTime();
                 }
 
-                RecordCursor cursor = reader.getCursor();
+                com.questdb.cairo.sql.RecordCursor cursor = reader.getCursor();
                 while (cursor.hasNext()) {
                     Record r = cursor.next();
                     r.getDate(0);

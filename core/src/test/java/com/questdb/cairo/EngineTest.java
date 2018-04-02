@@ -241,6 +241,8 @@ public class EngineTest extends AbstractCairoTest {
 
                 assertWriter(engine, "y");
                 assertReader(engine, "y");
+
+                Assert.assertTrue(engine.releaseAllReaders());
             }
         });
     }

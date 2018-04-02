@@ -692,6 +692,59 @@ public class FullTableFrameCursorTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSimpleSymbolIndex() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            int N = 1000000;
+            int S = 128;
+            Rnd rnd = new Rnd();
+            SymbolGroup sg = new SymbolGroup(rnd, S, N, PartitionBy.NONE, true);
+            RingQueue<ColumnIndexerEntry> queue = new RingQueue<>(ColumnIndexerEntry::new, 1024);
+            MPSequence pubSeq;
+            pubSeq = new MPSequence(queue.getCapacity()) {
+                private boolean flap = false;
+
+                @Override
+                public long next() {
+                    boolean flap = this.flap;
+                    this.flap = !this.flap;
+                    return flap ? -1 : -2;
+                }
+            };
+
+            long timestamp = 0;
+            try (TableWriter writer = new TableWriter(configuration, "ABC", queue, pubSeq)) {
+                for (int i = 0; i < N; i++) {
+                    TableWriter.Row r = writer.newRow(timestamp += (long) 0);
+                    r.putSym(0, sg.symA[rnd.nextPositiveInt() % S]);
+                    r.putSym(1, sg.symB[rnd.nextPositiveInt() % S]);
+                    r.putSym(2, sg.symC[rnd.nextPositiveInt() % S]);
+                    r.putDouble(3, rnd.nextDouble());
+                    r.append();
+                }
+                writer.commit();
+            }
+
+            try (TableReader reader = new TableReader(configuration, "ABC")) {
+
+                Assert.assertTrue(reader.getPartitionCount() > 0);
+
+                FullTableFrameCursor cursor = new FullTableFrameCursor();
+                TableReaderRecord record = new TableReaderRecord();
+
+                cursor.of(reader);
+                record.of(reader);
+
+                assertIndexRowsMatchSymbol(cursor, record, 0, N);
+                cursor.toTop();
+                assertIndexRowsMatchSymbol(cursor, record, 1, N);
+                cursor.toTop();
+                assertIndexRowsMatchSymbol(cursor, record, 2, N);
+            }
+
+        });
+    }
+
+    @Test
     public void testSymbolIndexReadByDay() throws Exception {
         testSymbolIndexRead(PartitionBy.DAY, 1000000 * 60 * 5, 3);
     }
@@ -831,11 +884,11 @@ public class FullTableFrameCursorTest extends AbstractCairoTest {
         Assert.assertEquals(M, count);
     }
 
-    private long populateTable(TableWriter writer, String[] symbols, Rnd rnd, long ts, long increment, int M, int N) {
+    private long populateTable(TableWriter writer, String[] symbols, Rnd rnd, long ts, long increment) {
         long timestamp = ts;
-        for (int i = 0; i < M; i++) {
+        for (int i = 0; i < 1000; i++) {
             TableWriter.Row row = writer.newRow(timestamp += increment);
-            row.putSym(0, symbols[rnd.nextPositiveInt() % N]);
+            row.putSym(0, symbols[rnd.nextPositiveInt() % 100]);
             row.append();
         }
         return timestamp;
@@ -875,7 +928,7 @@ public class FullTableFrameCursorTest extends AbstractCairoTest {
                 }
             };
 
-            SymbolGroup sg = new SymbolGroup(rnd, S, N, partitionBy);
+            SymbolGroup sg = new SymbolGroup(rnd, S, N, partitionBy, false);
 
             // align pseudo-random generators
             // we have to do this because asserting code will not be re-populating symbol group
@@ -971,7 +1024,7 @@ public class FullTableFrameCursorTest extends AbstractCairoTest {
                 }
             };
 
-            SymbolGroup sg = new SymbolGroup(rnd, S, N, partitionBy);
+            SymbolGroup sg = new SymbolGroup(rnd, S, N, partitionBy, false);
 
             // align pseudo-random generators
             // we have to do this because asserting code will not be re-populating symbol group
@@ -1117,7 +1170,7 @@ public class FullTableFrameCursorTest extends AbstractCairoTest {
                 }
             };
 
-            SymbolGroup sg = new SymbolGroup(rnd, S, N, partitionBy);
+            SymbolGroup sg = new SymbolGroup(rnd, S, N, partitionBy, false);
 
             long timestamp = 0;
             if (!empty) {
@@ -1141,7 +1194,7 @@ public class FullTableFrameCursorTest extends AbstractCairoTest {
             int S = 128;
             Rnd rnd = new Rnd();
 
-            SymbolGroup sg = new SymbolGroup(rnd, S, N, partitionBy);
+            SymbolGroup sg = new SymbolGroup(rnd, S, N, partitionBy, false);
 
             CountDownLatch workerHaltLatch = new CountDownLatch(nWorkers);
             Worker workers[] = null;
@@ -1311,7 +1364,7 @@ public class FullTableFrameCursorTest extends AbstractCairoTest {
                 }
             };
 
-            SymbolGroup sg = new SymbolGroup(rnd, S, N, partitionBy);
+            SymbolGroup sg = new SymbolGroup(rnd, S, N, partitionBy, false);
 
             // align pseudo-random generators
             // we have to do this because asserting code will not be re-populating symbol group
@@ -1521,7 +1574,7 @@ public class FullTableFrameCursorTest extends AbstractCairoTest {
             try (TableModel model = new TableModel(configuration, "x", partitionBy).
                     col("a", ColumnType.STRING).
                     col("b", ColumnType.SYMBOL).indexed(true, N / 4).
-                    col("i", ColumnType.INT).
+                    col("i", ColumnType.INT).indexed(false, 0).
                     col("c", ColumnType.SYMBOL).indexed(true, N / 4).
                     timestamp()
             ) {
@@ -1918,7 +1971,7 @@ public class FullTableFrameCursorTest extends AbstractCairoTest {
             // prepare the data
             long timestamp = 0;
             try (TableWriter writer = new TableWriter(configuration, "x")) {
-                populateTable(writer, symbols, rnd, timestamp, increment, M, N);
+                populateTable(writer, symbols, rnd, timestamp, increment);
                 writer.commit();
             }
 
@@ -1969,11 +2022,11 @@ public class FullTableFrameCursorTest extends AbstractCairoTest {
             long timestamp = 0;
 
             try (TableWriter writer = new TableWriter(configuration, "x")) {
-                timestamp = populateTable(writer, symbols, rnd, timestamp, increment, M, N);
+                timestamp = populateTable(writer, symbols, rnd, timestamp, increment);
                 writer.commit();
-                timestamp = populateTable(writer, symbols, rnd, timestamp, increment, M, N);
+                timestamp = populateTable(writer, symbols, rnd, timestamp, increment);
                 writer.rollback();
-                populateTable(writer, symbols, rnd, timestamp, increment, M, N);
+                populateTable(writer, symbols, rnd, timestamp, increment);
                 writer.commit();
             }
 
@@ -2009,7 +2062,7 @@ public class FullTableFrameCursorTest extends AbstractCairoTest {
         final String[] symC;
         final int S;
 
-        public SymbolGroup(Rnd rnd, int S, int N, int partitionBy) {
+        public SymbolGroup(Rnd rnd, int S, int N, int partitionBy, boolean useDefaultBlockSize) {
             this.S = S;
             symA = new String[S];
             symB = new String[S];
@@ -2021,10 +2074,17 @@ public class FullTableFrameCursorTest extends AbstractCairoTest {
                 symC[i] = rnd.nextChars(10).toString();
             }
 
+            int indexBlockSize;
+            if (useDefaultBlockSize) {
+                indexBlockSize = configuration.getIndexValueBlockSize();
+            } else {
+                indexBlockSize = N / S;
+            }
+
             try (TableModel model = new TableModel(configuration, "ABC", partitionBy)
-                    .col("a", ColumnType.SYMBOL).indexed(true, N / S)
-                    .col("b", ColumnType.SYMBOL).indexed(true, N / S)
-                    .col("c", ColumnType.SYMBOL).indexed(true, N / S)
+                    .col("a", ColumnType.SYMBOL).indexed(true, indexBlockSize)
+                    .col("b", ColumnType.SYMBOL).indexed(true, indexBlockSize)
+                    .col("c", ColumnType.SYMBOL).indexed(true, indexBlockSize)
                     .col("d", ColumnType.DOUBLE)
                     .timestamp()) {
                 CairoTestUtils.create(model);

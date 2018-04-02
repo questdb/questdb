@@ -30,7 +30,6 @@ import com.questdb.common.PartitionBy;
 import com.questdb.cutlass.client.LineProtoSender;
 import com.questdb.mp.Job;
 import com.questdb.mp.Worker;
-import com.questdb.ql.RecordSourcePrinter;
 import com.questdb.std.*;
 import com.questdb.std.str.StringSink;
 import com.questdb.test.tools.TestUtils;
@@ -289,7 +288,7 @@ public class LinuxLineProtoReceiverTest extends AbstractCairoTest {
                         Assert.assertTrue(workerHaltLatch.await(3, TimeUnit.SECONDS));
 
                         StringSink sink = new StringSink();
-                        RecordSourcePrinter printer = new RecordSourcePrinter(sink);
+                        RecordCursorPrinter printer = new RecordCursorPrinter(sink);
                         printer.print(reader.getCursor(), true, reader.getMetadata());
                         TestUtils.assertEquals(expected, sink);
                     }

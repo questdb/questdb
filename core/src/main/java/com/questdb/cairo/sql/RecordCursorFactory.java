@@ -23,8 +23,8 @@
 
 package com.questdb.cairo.sql;
 
-import com.questdb.common.RecordCursor;
-
 public interface RecordCursorFactory {
     RecordCursor getCursor();
+
+    MetadataContainer getMetadataContainer();
 }

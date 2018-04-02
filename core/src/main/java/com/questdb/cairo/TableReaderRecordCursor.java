@@ -23,8 +23,9 @@
 
 package com.questdb.cairo;
 
+import com.questdb.cairo.sql.RecordCursor;
 import com.questdb.common.Record;
-import com.questdb.common.RecordCursor;
+import com.questdb.common.RecordMetadata;
 import com.questdb.common.StorageFacade;
 import com.questdb.std.Rows;
 
@@ -37,8 +38,26 @@ public class TableReaderRecordCursor implements RecordCursor {
     private long maxRecordIndex = -1;
 
     @Override
+    public void close() {
+        if (reader != null) {
+            reader.close();
+            reader = null;
+        }
+    }
+
+    @Override
+    public RecordMetadata getMetadata() {
+        return reader.getMetadata();
+    }
+
+    @Override
     public Record getRecord() {
         return record;
+    }
+
+    @Override
+    public StorageFacade getStorageFacade() {
+        return null;
     }
 
     @Override
@@ -46,11 +65,6 @@ public class TableReaderRecordCursor implements RecordCursor {
         TableReaderRecord record = new TableReaderRecord();
         record.of(reader);
         return record;
-    }
-
-    @Override
-    public StorageFacade getStorageFacade() {
-        return null;
     }
 
     @Override
@@ -62,11 +76,6 @@ public class TableReaderRecordCursor implements RecordCursor {
     @Override
     public void recordAt(Record record, long rowId) {
         ((TableReaderRecord) record).jumpTo(Rows.toPartitionIndex(rowId), Rows.toLocalRowID(rowId));
-    }
-
-    @Override
-    public void releaseCursor() {
-        reader.close();
     }
 
     @Override
@@ -89,6 +98,7 @@ public class TableReaderRecordCursor implements RecordCursor {
     }
 
     void of(TableReader reader) {
+        close();
         this.reader = reader;
         this.record.of(reader);
         toTop();
@@ -96,12 +106,14 @@ public class TableReaderRecordCursor implements RecordCursor {
 
     private boolean switchPartition() {
         while (partitionIndex < partitionCount) {
-            final long partitionSize = reader.openPartition(partitionIndex++);
+            final long partitionSize = reader.openPartition(partitionIndex);
             if (partitionSize > 0) {
                 maxRecordIndex = partitionSize - 1;
-                record.jumpTo(partitionIndex - 1, -1);
+                record.jumpTo(partitionIndex, -1);
+                partitionIndex++;
                 return true;
             }
+            partitionIndex++;
         }
         return false;
     }

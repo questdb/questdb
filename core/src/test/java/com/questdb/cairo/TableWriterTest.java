@@ -23,7 +23,11 @@
 
 package com.questdb.cairo;
 
-import com.questdb.common.*;
+import com.questdb.cairo.sql.RecordCursor;
+import com.questdb.common.ColumnType;
+import com.questdb.common.NumericException;
+import com.questdb.common.PartitionBy;
+import com.questdb.common.Record;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.std.*;
@@ -632,6 +636,48 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAddUnsupportedIndexCapacity() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)
+                    .col("a", ColumnType.SYMBOL).cached(true)
+                    .col("b", ColumnType.STRING)
+                    .timestamp()) {
+                CairoTestUtils.create(model);
+            }
+
+            final int N = 1000;
+            try (TableWriter w = new TableWriter(configuration, "x")) {
+                final Rnd rnd = new Rnd();
+                for (int i = 0; i < N; i++) {
+                    TableWriter.Row r = w.newRow(0);
+                    r.putSym(0, rnd.nextChars(3));
+                    r.putStr(1, rnd.nextChars(10));
+                    r.append();
+                }
+                w.commit();
+
+                try {
+                    w.addColumn("c", ColumnType.SYMBOL, 0, false, true, 0);
+                    Assert.fail();
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getMessage(), "Invalid index value block capacity");
+                }
+
+                for (int i = 0; i < N; i++) {
+                    TableWriter.Row r = w.newRow(0);
+                    r.putSym(0, rnd.nextChars(3));
+                    r.putStr(1, rnd.nextChars(10));
+                    r.append();
+                }
+                w.commit();
+
+                // re-add column  with index flag switched off
+                w.addColumn("c", ColumnType.STRING, 0, false, false, 0);
+            }
+        });
+    }
+
+    @Test
     public void testAppendOutOfOrder() throws Exception {
         int N = 10000;
         create(FF, PartitionBy.NONE, N);
@@ -770,7 +816,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
                 writer.commit();
                 Assert.assertEquals(N, writer.size());
-                Assert.assertTrue(getDirCount() == 6);
+                Assert.assertEquals(6, getDirCount());
             }
         });
     }
@@ -805,7 +851,7 @@ public class TableWriterTest extends AbstractCairoTest {
                 r.cancel();
                 writer.commit();
                 Assert.assertEquals(0, writer.size());
-                Assert.assertTrue(getDirCount() == 2);
+                Assert.assertEquals(2, getDirCount());
             }
         });
     }
@@ -837,7 +883,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
                 writer.commit();
                 Assert.assertEquals(N, writer.size());
-                Assert.assertTrue(getDirCount() == 6);
+                Assert.assertEquals(6, getDirCount());
             }
         });
     }
@@ -878,7 +924,7 @@ public class TableWriterTest extends AbstractCairoTest {
                     writer.commit();
                     Assert.assertEquals(N, writer.size());
                     Assert.assertTrue(cancelCount > 0);
-                    verifyTimestampPartitions(vmem, N);
+                    verifyTimestampPartitions(vmem);
                 }
             }
         });
@@ -1020,7 +1066,7 @@ public class TableWriterTest extends AbstractCairoTest {
                     writer.commit();
                     Assert.assertEquals(N, writer.size());
                     Assert.assertTrue(cancelCount > 0);
-                    verifyTimestampPartitions(vmem, N);
+                    verifyTimestampPartitions(vmem);
                 }
             }
         });
@@ -1091,7 +1137,7 @@ public class TableWriterTest extends AbstractCairoTest {
                     Assert.assertEquals(N, writer.size());
                     Assert.assertTrue(cancelCount > 0);
                     Assert.assertTrue(failCount > 0);
-                    verifyTimestampPartitions(vmem, N);
+                    verifyTimestampPartitions(vmem);
                 }
             }
         });
@@ -1669,8 +1715,8 @@ public class TableWriterTest extends AbstractCairoTest {
             CairoTestUtils.createAllTable(configuration, PartitionBy.NONE);
             Rnd rnd = new Rnd();
             long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
-            ts = testAppendNulls(rnd, FF, ts);
-            testAppendNulls(rnd, FF, ts);
+            ts = testAppendNulls(rnd, ts);
+            testAppendNulls(rnd, ts);
         });
     }
 
@@ -1715,9 +1761,9 @@ public class TableWriterTest extends AbstractCairoTest {
             CairoTestUtils.createAllTable(configuration, PartitionBy.NONE);
             Rnd rnd = new Rnd();
             long ts = DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z");
-            testAppendNulls(rnd, FF, ts);
+            testAppendNulls(rnd, ts);
             try {
-                testAppendNulls(rnd, FF, ts);
+                testAppendNulls(rnd, ts);
                 Assert.fail();
             } catch (CairoException ignore) {
             }
@@ -2145,7 +2191,7 @@ public class TableWriterTest extends AbstractCairoTest {
             try (Path path = new Path()) {
                 // create random directory
                 path.of(configuration.getRoot()).concat(PRODUCT).concat("somethingortheother").put(Files.SEPARATOR).$();
-                Assert.assertTrue(0 == configuration.getFilesFacade().mkdirs(path, configuration.getMkDirMode()));
+                Assert.assertEquals(0, configuration.getFilesFacade().mkdirs(path, configuration.getMkDirMode()));
 
                 new TableWriter(configuration, PRODUCT).close();
 
@@ -2644,13 +2690,13 @@ public class TableWriterTest extends AbstractCairoTest {
         });
     }
 
-    private long testAppendNulls(Rnd rnd, FilesFacade ff, long ts) {
+    private long testAppendNulls(Rnd rnd, long ts) {
         final int blobLen = 64 * 1024;
         long blob = Unsafe.malloc(blobLen);
         try (TableWriter writer = new TableWriter(new DefaultCairoConfiguration(root) {
             @Override
             public FilesFacade getFilesFacade() {
-                return ff;
+                return TableWriterTest.FF;
             }
         }, "all")) {
             long size = writer.size();
@@ -2958,7 +3004,7 @@ public class TableWriterTest extends AbstractCairoTest {
                 }
             }
             final X ff = new X();
-            testAppendNulls(new Rnd(), FF, DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z"));
+            testAppendNulls(new Rnd(), DateFormatUtils.parseDateTime("2013-03-04T00:00:00.000Z"));
             try {
                 new TableWriter(new DefaultCairoConfiguration(root) {
                     @Override
@@ -3172,14 +3218,14 @@ public class TableWriterTest extends AbstractCairoTest {
         });
     }
 
-    void verifyTimestampPartitions(VirtualMemory vmem, int n) {
+    void verifyTimestampPartitions(VirtualMemory vmem) {
         int i;
         DateFormatCompiler compiler = new DateFormatCompiler();
         DateFormat fmt = compiler.compile("yyyy-MM-dd");
         DateLocale enGb = DateLocaleFactory.INSTANCE.getDateLocale("en-gb");
 
         try (Path vp = new Path()) {
-            for (i = 0; i < n; i++) {
+            for (i = 0; i < 10000; i++) {
                 vp.of(root).concat(PRODUCT).put(Files.SEPARATOR);
                 fmt.format(vmem.getLong(i * 8), enGb, "UTC", vp);
                 if (!FF.exists(vp.$())) {

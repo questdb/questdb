@@ -21,28 +21,16 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.engine.table;
+package com.questdb.cairo.sql;
 
-import com.questdb.cairo.sql.*;
+import com.questdb.common.RecordMetadata;
 
-public class FilteredTableRecordCursorFactory implements RecordCursorFactory {
-    private final DataFrameCursorFactory dataFrameCursorFactory;
-    private final FilteredTableRecordCursor cursor;
+import java.io.Closeable;
 
-    public FilteredTableRecordCursorFactory(DataFrameCursorFactory dataFrameCursorFactory, RowCursorFactory rowCursorFactory) {
-        this.dataFrameCursorFactory = dataFrameCursorFactory;
-        this.cursor = new FilteredTableRecordCursor(rowCursorFactory);
-    }
+public interface MetadataContainer extends Closeable {
 
     @Override
-    public MetadataContainer getMetadataContainer() {
-        return getCursor();
-    }
+    void close();
 
-    @Override
-    public RecordCursor getCursor() {
-        cursor.of(dataFrameCursorFactory.getCursor());
-        return cursor;
-    }
-
+    RecordMetadata getMetadata();
 }

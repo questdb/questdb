@@ -24,10 +24,10 @@
 package com.questdb.griffin.engine.table;
 
 import com.questdb.cairo.*;
+import com.questdb.cairo.sql.RecordCursor;
 import com.questdb.common.ColumnType;
 import com.questdb.common.PartitionBy;
 import com.questdb.common.Record;
-import com.questdb.common.RecordCursor;
 import com.questdb.std.Rnd;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Test;
@@ -79,12 +79,12 @@ public class FilteredTableRecordCursorFactoryTest extends AbstractCairoTest {
                 FullTableFrameCursorFactory dataFrameFactory = new FullTableFrameCursorFactory(engine, "x");
                 FilteredTableRecordCursorFactory factory = new FilteredTableRecordCursorFactory(dataFrameFactory, symbolIndexRowCursorFactory);
 
-                RecordCursor cursor = factory.getCursor();
-                while (cursor.hasNext()) {
-                    Record record = cursor.next();
-                    TestUtils.assertEquals(value, record.getSym(1));
+                try (RecordCursor cursor = factory.getCursor()) {
+                    while (cursor.hasNext()) {
+                        Record record = cursor.next();
+                        TestUtils.assertEquals(value, record.getSym(1));
+                    }
                 }
-                cursor.releaseCursor();
             }
         });
     }

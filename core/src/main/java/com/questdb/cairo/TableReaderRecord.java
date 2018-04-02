@@ -174,8 +174,8 @@ public class TableReaderRecord implements Record {
         recordIndex++;
     }
 
-    public void jumpTo(int parititonIndex, long recordIndex) {
-        this.columnBase = reader.getColumnBase(parititonIndex);
+    public void jumpTo(int partitionIndex, long recordIndex) {
+        this.columnBase = reader.getColumnBase(partitionIndex);
         this.recordIndex = recordIndex;
     }
 

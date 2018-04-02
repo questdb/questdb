@@ -24,8 +24,9 @@
 package com.questdb.cairo;
 
 import com.questdb.cairo.sql.CairoEngine;
+import com.questdb.cairo.sql.MetadataContainer;
+import com.questdb.cairo.sql.RecordCursor;
 import com.questdb.cairo.sql.RecordCursorFactory;
-import com.questdb.common.RecordCursor;
 
 public class TableReaderRecordCursorFactory implements RecordCursorFactory {
     private final TableReaderRecordCursor cursor = new TableReaderRecordCursor();
@@ -41,5 +42,10 @@ public class TableReaderRecordCursorFactory implements RecordCursorFactory {
     public RecordCursor getCursor() {
         cursor.of(engine.getReader(tableName));
         return cursor;
+    }
+
+    @Override
+    public MetadataContainer getMetadataContainer() {
+        return getCursor();
     }
 }

@@ -429,6 +429,71 @@ public class CairoMemoryTest {
                     try (SlidingWindowMemory mem2 = new SlidingWindowMemory()) {
                         mem2.of(mem);
 
+                        // try to read outside of original page bounds
+                        try {
+                            mem2.getLong(N * 16);
+                            Assert.fail();
+                        } catch (CairoException e) {
+                            TestUtils.assertContains(e.getMessage(), "Trying to map read-only page outside");
+                        }
+
+                        // make sure jump() is reported
+                        try {
+                            mem2.jumpTo(1024);
+                            Assert.fail();
+                        } catch (UnsupportedOperationException e) {
+                            TestUtils.assertContains(e.getMessage(), "Cannot jump() read-only memory");
+                        }
+
+                        rnd.reset();
+                        for (int i = 0; i < N; i++) {
+                            Assert.assertEquals(rnd.nextLong(), mem2.getLong(i * 8));
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testSlidingWindowMemoryCannotMap() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (Path path = new Path()) {
+                path.of(temp.getRoot().getAbsolutePath());
+                final int N = 100000;
+                final Rnd rnd = new Rnd();
+
+                FilesFacade ff = new FilesFacadeImpl() {
+                    int counter = 2;
+
+                    @Override
+                    public long mmap(long fd, long len, long offset, int mode) {
+                        if (mode == Files.MAP_RO && --counter == 0) {
+                            return -1;
+                        }
+                        return super.mmap(fd, len, offset, mode);
+                    }
+                };
+                try (AppendMemory mem = new AppendMemory()) {
+                    mem.of(ff, path.concat("x.dat").$(), ff.getPageSize());
+
+                    for (int i = 0; i < N; i++) {
+                        mem.putLong(rnd.nextLong());
+                    }
+
+                    try (SlidingWindowMemory mem2 = new SlidingWindowMemory()) {
+                        mem2.of(mem);
+
+                        try {
+                            rnd.reset();
+                            for (int i = 0; i < N; i++) {
+                                Assert.assertEquals(rnd.nextLong(), mem2.getLong(i * 8));
+                            }
+                            Assert.fail();
+                        } catch (CairoException e) {
+                            TestUtils.assertContains(e.getMessage(), "Cannot map read-only page");
+                        }
+
                         rnd.reset();
                         for (int i = 0; i < N; i++) {
                             Assert.assertEquals(rnd.nextLong(), mem2.getLong(i * 8));
