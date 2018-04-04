@@ -23,7 +23,6 @@
 
 package com.questdb.std;
 
-import com.questdb.common.NumericException;
 import com.questdb.std.ex.NetworkError;
 import com.questdb.std.str.CharSink;
 

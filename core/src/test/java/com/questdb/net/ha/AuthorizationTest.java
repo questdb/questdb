@@ -23,12 +23,12 @@
 
 package com.questdb.net.ha;
 
-import com.questdb.common.NumericException;
 import com.questdb.model.Quote;
 import com.questdb.net.ha.config.ClientConfig;
 import com.questdb.net.ha.config.ServerConfig;
 import com.questdb.net.ha.config.ServerNode;
 import com.questdb.net.ha.krb.SSOCredentialProvider;
+import com.questdb.std.NumericException;
 import com.questdb.std.ex.FatalError;
 import com.questdb.std.ex.JournalException;
 import com.questdb.std.ex.JournalNetworkException;

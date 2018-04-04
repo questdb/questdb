@@ -26,7 +26,6 @@ package com.questdb.parser.plaintext;
 import com.questdb.BootstrapEnv;
 import com.questdb.common.ColumnType;
 import com.questdb.common.JournalRuntimeException;
-import com.questdb.common.NumericException;
 import com.questdb.ex.ImportColumnCountException;
 import com.questdb.ex.ImportNameException;
 import com.questdb.log.Log;

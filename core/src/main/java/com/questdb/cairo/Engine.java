@@ -104,10 +104,6 @@ public class Engine implements Closeable, CairoEngine {
         return readerPool.releaseAll();
     }
 
-    public TableWriter getWriter(CharSequence tableName) {
-        return writerPool.get(tableName);
-    }
-
     @Override
     public boolean lock(CharSequence tableName) {
         if (writerPool.lock(tableName)) {
@@ -118,6 +114,17 @@ public class Engine implements Closeable, CairoEngine {
             writerPool.unlock(tableName);
         }
         return false;
+    }
+
+    @Override
+    public void unlock(CharSequence tableName) {
+        readerPool.unlock(tableName);
+        writerPool.unlock(tableName);
+    }
+
+    @Override
+    public TableWriter getWriter(CharSequence tableName) {
+        return writerPool.get(tableName);
     }
 
     public void remove(CharSequence tableName) {
@@ -148,12 +155,6 @@ public class Engine implements Closeable, CairoEngine {
             LOG.error().$("cannot lock and rename [from='").$(tableName).$("', to='").$(newName).$("']").$();
             throw CairoException.instance(0).put("Cannot lock [table=").put(tableName).put(']');
         }
-    }
-
-    @Override
-    public void unlock(CharSequence tableName) {
-        readerPool.unlock(tableName);
-        writerPool.unlock(tableName);
     }
 
     private void rename0(CharSequence tableName, CharSequence to) {

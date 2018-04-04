@@ -23,9 +23,9 @@
 
 package com.questdb.std.time;
 
-import com.questdb.common.NumericException;
 import com.questdb.std.CharSequenceHashSet;
 import com.questdb.std.IntHashSet;
+import com.questdb.std.NumericException;
 import com.questdb.std.ex.BytecodeException;
 import com.questdb.std.str.StringSink;
 import com.questdb.test.tools.TestUtils;

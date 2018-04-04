@@ -23,10 +23,10 @@
 
 package com.questdb.parser.sql;
 
-import com.questdb.common.NumericException;
 import com.questdb.ex.ParserException;
 import com.questdb.std.LongList;
 import com.questdb.std.Numbers;
+import com.questdb.std.NumericException;
 import com.questdb.std.time.DateFormatUtils;
 import com.questdb.std.time.Dates;
 
@@ -74,11 +74,7 @@ public class IntervalCompiler {
         int intervalA = 0;
         int intervalB = 0;
 
-        while (true) {
-
-            if (intervalA == sizeA || intervalB == sizeB) {
-                break;
-            }
+        while (intervalA != sizeA && intervalB != sizeB) {
 
             long aLo = getIntervalLo(a, intervalA);
             long aHi = getIntervalHi(a, intervalA);

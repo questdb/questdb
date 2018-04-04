@@ -23,7 +23,6 @@
 
 package com.questdb.std.time;
 
-import com.questdb.common.NumericException;
 import com.questdb.std.*;
 
 import java.text.DateFormatSymbols;

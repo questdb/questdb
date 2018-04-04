@@ -37,7 +37,7 @@ import com.questdb.std.str.FlyweightCharSequence;
 
 import java.util.ArrayDeque;
 
-public class QueryModel implements Mutable, ParsedModel, AliasTranslator, Sinkable {
+public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sinkable {
     public static final QueryModelFactory FACTORY = new QueryModelFactory();
     public static final int ORDER_DIRECTION_ASCENDING = 0;
     public static final int ORDER_DIRECTION_DESCENDING = 1;
@@ -286,7 +286,7 @@ public class QueryModel implements Mutable, ParsedModel, AliasTranslator, Sinkab
 
     @Override
     public int getModelType() {
-        return ParsedModel.QUERY;
+        return ExecutionModel.QUERY;
     }
 
     public CharSequence getName() {

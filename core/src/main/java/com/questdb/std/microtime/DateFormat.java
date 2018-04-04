@@ -23,7 +23,7 @@
 
 package com.questdb.std.microtime;
 
-import com.questdb.common.NumericException;
+import com.questdb.std.NumericException;
 import com.questdb.std.str.CharSink;
 
 public interface DateFormat {

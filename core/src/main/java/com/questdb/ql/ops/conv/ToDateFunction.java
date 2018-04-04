@@ -24,11 +24,11 @@
 package com.questdb.ql.ops.conv;
 
 import com.questdb.common.ColumnType;
-import com.questdb.common.NumericException;
 import com.questdb.common.Record;
 import com.questdb.ql.ops.AbstractUnaryOperator;
 import com.questdb.ql.ops.Function;
 import com.questdb.ql.ops.VirtualColumnFactory;
+import com.questdb.std.NumericException;
 import com.questdb.std.time.DateFormatUtils;
 
 public class ToDateFunction extends AbstractUnaryOperator {

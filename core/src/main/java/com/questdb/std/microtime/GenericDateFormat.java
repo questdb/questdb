@@ -23,9 +23,9 @@
 
 package com.questdb.std.microtime;
 
-import com.questdb.common.NumericException;
 import com.questdb.std.IntList;
 import com.questdb.std.Numbers;
+import com.questdb.std.NumericException;
 import com.questdb.std.ObjList;
 import com.questdb.std.str.CharSink;
 

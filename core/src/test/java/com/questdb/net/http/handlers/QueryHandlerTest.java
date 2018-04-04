@@ -26,12 +26,12 @@ package com.questdb.net.http.handlers;
 import com.google.gson.GsonBuilder;
 import com.questdb.BootstrapEnv;
 import com.questdb.ServerConfiguration;
-import com.questdb.common.NumericException;
 import com.questdb.net.http.HttpServer;
 import com.questdb.net.http.QueryResponse;
 import com.questdb.net.http.SimpleUrlMatcher;
 import com.questdb.parser.sql.AbstractOptimiserTest;
 import com.questdb.std.Files;
+import com.questdb.std.NumericException;
 import com.questdb.std.Rnd;
 import com.questdb.std.ex.JournalException;
 import com.questdb.std.time.DateFormatUtils;
@@ -189,7 +189,7 @@ public class QueryHandlerTest extends AbstractOptimiserTest {
         Assert.assertEquals("1970-01-01T00:00:00.010Z", queryResponse.dataset.get(0)[5]);
 
         Assert.assertEquals("id4", queryResponse.dataset.get(4)[0]);
-        Assert.assertEquals(null, queryResponse.dataset.get(4)[2]);
+        Assert.assertNull(queryResponse.dataset.get(4)[2]);
     }
 
     @Test

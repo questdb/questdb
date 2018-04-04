@@ -26,7 +26,6 @@ package com.questdb.parser.sql;
 import com.questdb.BootstrapEnv;
 import com.questdb.common.ColumnType;
 import com.questdb.common.NoSuchColumnException;
-import com.questdb.common.NumericException;
 import com.questdb.common.RecordMetadata;
 import com.questdb.ex.ParserException;
 import com.questdb.parser.sql.model.ExprNode;

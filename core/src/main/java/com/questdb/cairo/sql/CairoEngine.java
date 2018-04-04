@@ -24,6 +24,7 @@
 package com.questdb.cairo.sql;
 
 import com.questdb.cairo.TableReader;
+import com.questdb.cairo.TableWriter;
 
 import java.io.Closeable;
 
@@ -41,4 +42,6 @@ public interface CairoEngine extends Closeable {
     boolean lock(CharSequence tableName);
 
     void unlock(CharSequence tableName);
+
+    TableWriter getWriter(CharSequence tableName);
 }

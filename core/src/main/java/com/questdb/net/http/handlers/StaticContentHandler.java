@@ -25,7 +25,6 @@ package com.questdb.net.http.handlers;
 
 import com.questdb.BootstrapEnv;
 import com.questdb.ServerConfiguration;
-import com.questdb.common.NumericException;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.net.http.*;

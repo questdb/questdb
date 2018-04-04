@@ -23,8 +23,8 @@
 
 package com.questdb.std.time;
 
-import com.questdb.common.NumericException;
 import com.questdb.common.PartitionBy;
+import com.questdb.std.NumericException;
 import com.questdb.std.Sinkable;
 import com.questdb.std.ex.JournalUnsupportedTypeException;
 import com.questdb.std.str.CharSink;

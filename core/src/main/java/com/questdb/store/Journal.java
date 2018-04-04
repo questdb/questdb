@@ -25,7 +25,6 @@ package com.questdb.store;
 
 import com.questdb.common.ColumnType;
 import com.questdb.common.JournalRuntimeException;
-import com.questdb.common.NumericException;
 import com.questdb.common.PartitionBy;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
@@ -671,10 +670,7 @@ public class Journal<T> implements Iterable<T>, Closeable {
 
             Partition<T> result = getPartition(count - 1, true);
 
-            while (true) {
-                if (result.size() > 0) {
-                    return result;
-                }
+            while (result.size() <= 0) {
 
                 if (result.getPartitionIndex() == 0) {
                     break;

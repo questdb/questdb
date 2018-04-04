@@ -24,7 +24,6 @@
 package com.questdb.parser.sql;
 
 import com.questdb.common.ColumnType;
-import com.questdb.common.NumericException;
 import com.questdb.common.RecordColumnMetadata;
 import com.questdb.common.RecordMetadata;
 import com.questdb.ex.ParserException;

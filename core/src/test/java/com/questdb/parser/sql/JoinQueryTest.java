@@ -23,7 +23,6 @@
 
 package com.questdb.parser.sql;
 
-import com.questdb.common.NumericException;
 import com.questdb.ex.ParserException;
 import com.questdb.ql.NoRowIdRecordSource;
 import com.questdb.ql.RecordSource;

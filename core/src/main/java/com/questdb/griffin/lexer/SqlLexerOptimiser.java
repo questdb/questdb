@@ -26,7 +26,6 @@ package com.questdb.griffin.lexer;
 import com.questdb.cairo.CairoConfiguration;
 import com.questdb.cairo.sql.CairoEngine;
 import com.questdb.common.ColumnType;
-import com.questdb.common.NumericException;
 import com.questdb.common.PartitionBy;
 import com.questdb.common.RecordMetadata;
 import com.questdb.griffin.common.ExprNode;
@@ -160,7 +159,7 @@ public final class SqlLexerOptimiser {
         }
     }
 
-    public ParsedModel parse(CharSequence query) throws ParserException {
+    public ExecutionModel parse(CharSequence query) throws ParserException {
         clear();
         lexer.setContent(query);
         CharSequence tok = tok("'create', 'rename' or 'select'");
@@ -1510,12 +1509,12 @@ public final class SqlLexerOptimiser {
         }
     }
 
-    private ParsedModel parseCreateStatement() throws ParserException {
+    private ExecutionModel parseCreateStatement() throws ParserException {
         expectTok("table");
         return parseCreateTable();
     }
 
-    private ParsedModel parseCreateTable() throws ParserException {
+    private ExecutionModel parseCreateTable() throws ParserException {
         final CreateTableModel model = createTableModelPool.next();
         model.setName(nextLiteral(lexer.unquote(tok("table name")), lexer.position()));
 
@@ -1937,7 +1936,7 @@ public final class SqlLexerOptimiser {
         model.setLatestBy(expr());
     }
 
-    private ParsedModel parseRenameStatement() throws ParserException {
+    private ExecutionModel parseRenameStatement() throws ParserException {
         expectTok("table");
         RenameTableModel model = renameTableModelPool.next();
         ExprNode e = expectExpr();
@@ -1955,7 +1954,7 @@ public final class SqlLexerOptimiser {
         return model;
     }
 
-    private ParsedModel parseSelect() throws ParserException {
+    private ExecutionModel parseSelect() throws ParserException {
         lexer.unparse();
         final QueryModel model = parseDml();
         final CharSequence tok = optTok();

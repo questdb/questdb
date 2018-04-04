@@ -21,7 +21,7 @@
  *
  ******************************************************************************/
 
-package com.questdb.common;
+package com.questdb.std;
 
 @SuppressWarnings("ThrowableInstanceNeverThrown")
 public class NumericException extends Exception {

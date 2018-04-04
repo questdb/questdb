@@ -24,11 +24,11 @@
 package com.questdb.ql.ops.gt;
 
 import com.questdb.common.ColumnType;
-import com.questdb.common.NumericException;
 import com.questdb.ex.ParserException;
 import com.questdb.parser.sql.QueryError;
 import com.questdb.ql.ops.AbstractBinaryOperator;
 import com.questdb.ql.ops.VirtualColumn;
+import com.questdb.std.NumericException;
 import com.questdb.std.time.DateFormatUtils;
 
 public class DateToStrCmpBaseOperator extends AbstractBinaryOperator {

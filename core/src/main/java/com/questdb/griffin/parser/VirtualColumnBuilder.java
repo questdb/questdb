@@ -21,12 +21,11 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.compiler;
+package com.questdb.griffin.parser;
 
 import com.questdb.cairo.CairoConfiguration;
 import com.questdb.common.ColumnType;
 import com.questdb.common.NoSuchColumnException;
-import com.questdb.common.NumericException;
 import com.questdb.common.RecordMetadata;
 import com.questdb.griffin.common.ExprNode;
 import com.questdb.griffin.common.PostOrderTreeTraversalAlgo;
@@ -36,10 +35,7 @@ import com.questdb.griffin.engine.FunctionRepository;
 import com.questdb.griffin.engine.Signature;
 import com.questdb.griffin.engine.functions.*;
 import com.questdb.griffin.lexer.ParserException;
-import com.questdb.std.CharSequenceObjHashMap;
-import com.questdb.std.Chars;
-import com.questdb.std.Numbers;
-import com.questdb.std.ObjList;
+import com.questdb.std.*;
 
 import java.util.ArrayDeque;
 

@@ -24,7 +24,6 @@
 package com.questdb.ql.ops.conv;
 
 import com.questdb.common.ColumnType;
-import com.questdb.common.NumericException;
 import com.questdb.common.Record;
 import com.questdb.common.StorageFacade;
 import com.questdb.ex.ParserException;
@@ -33,6 +32,7 @@ import com.questdb.ql.ops.AbstractVirtualColumn;
 import com.questdb.ql.ops.Function;
 import com.questdb.ql.ops.VirtualColumn;
 import com.questdb.ql.ops.VirtualColumnFactory;
+import com.questdb.std.NumericException;
 import com.questdb.std.time.DateFormat;
 import com.questdb.std.time.DateFormatFactory;
 import com.questdb.std.time.DateLocale;

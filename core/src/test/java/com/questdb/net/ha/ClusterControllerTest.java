@@ -23,7 +23,6 @@
 
 package com.questdb.net.ha;
 
-import com.questdb.common.NumericException;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.model.Quote;
@@ -31,6 +30,7 @@ import com.questdb.model.configuration.ModelConfiguration;
 import com.questdb.net.ha.config.ClientConfig;
 import com.questdb.net.ha.config.ServerConfig;
 import com.questdb.net.ha.config.ServerNode;
+import com.questdb.std.NumericException;
 import com.questdb.std.ex.JournalException;
 import com.questdb.store.JournalWriter;
 import com.questdb.store.factory.Factory;

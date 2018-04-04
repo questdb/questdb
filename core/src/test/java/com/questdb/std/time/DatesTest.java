@@ -23,7 +23,7 @@
 
 package com.questdb.std.time;
 
-import com.questdb.common.NumericException;
+import com.questdb.std.NumericException;
 import com.questdb.std.str.StringSink;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;

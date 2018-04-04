@@ -23,9 +23,9 @@
 
 package com.questdb.net.http;
 
-import com.questdb.common.NumericException;
 import com.questdb.std.Chars;
 import com.questdb.std.Numbers;
+import com.questdb.std.NumericException;
 import com.questdb.std.ObjectFactory;
 
 public class RangeParser {

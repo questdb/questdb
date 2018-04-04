@@ -5,7 +5,7 @@
  *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
- *  Copyright (c) 2014-2017 Appsicle
+ *  Copyright (c) 2014-2018 Appsicle
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -23,7 +23,6 @@
 
 package org.questdb.examples.replication.cluster;
 
-import com.questdb.common.NumericException;
 import com.questdb.common.PartitionBy;
 import com.questdb.net.ha.ClusterController;
 import com.questdb.net.ha.ClusterStatusListener;
@@ -31,6 +30,7 @@ import com.questdb.net.ha.config.ClientConfig;
 import com.questdb.net.ha.config.ServerConfig;
 import com.questdb.net.ha.config.ServerNode;
 import com.questdb.std.Numbers;
+import com.questdb.std.NumericException;
 import com.questdb.std.ex.JournalException;
 import com.questdb.std.ex.JournalNetworkException;
 import com.questdb.store.JournalKey;
@@ -40,14 +40,13 @@ import com.questdb.store.factory.configuration.JournalConfiguration;
 import com.questdb.store.factory.configuration.JournalConfigurationBuilder;
 import org.questdb.examples.support.Price;
 
-import java.io.IOException;
 import java.util.ArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
 public class ClusteredProducerMain {
 
-    public static void main(String[] args) throws JournalException, IOException, JournalNetworkException, NumericException {
+    public static void main(String[] args) throws JournalException, JournalNetworkException, NumericException {
 
         final String pathToDatabase = args[0];
         final int instance = Numbers.parseInt(args[1]);

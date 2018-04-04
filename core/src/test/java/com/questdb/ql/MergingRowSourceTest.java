@@ -23,12 +23,12 @@
 
 package com.questdb.ql;
 
-import com.questdb.common.NumericException;
 import com.questdb.common.RecordCursor;
 import com.questdb.model.Quote;
 import com.questdb.ql.latest.HeapMergingRowSource;
 import com.questdb.ql.latest.KvIndexSymLookupRowSource;
 import com.questdb.ql.latest.MergingRowSource;
+import com.questdb.std.NumericException;
 import com.questdb.std.ex.JournalException;
 import com.questdb.std.time.DateFormatUtils;
 import com.questdb.store.JournalWriter;

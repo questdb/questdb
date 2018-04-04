@@ -28,7 +28,7 @@ import com.questdb.griffin.common.ExprNode;
 import com.questdb.std.*;
 import com.questdb.std.str.CharSink;
 
-public class CreateTableModel implements Mutable, ParsedModel, Sinkable {
+public class CreateTableModel implements Mutable, ExecutionModel, Sinkable {
     public static final ObjectFactory<CreateTableModel> FACTORY = CreateTableModel::new;
     private static final long COLUMN_FLAG_CHACHED = 1L;
     private static final long COLUMN_FLAG_INDEXED = 2L;
@@ -114,7 +114,7 @@ public class CreateTableModel implements Mutable, ParsedModel, Sinkable {
 
     @Override
     public int getModelType() {
-        return ParsedModel.CREATE_TABLE;
+        return ExecutionModel.CREATE_TABLE;
     }
 
     public ExprNode getName() {

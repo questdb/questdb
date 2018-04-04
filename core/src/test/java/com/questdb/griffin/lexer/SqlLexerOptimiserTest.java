@@ -28,7 +28,7 @@ import com.questdb.cairo.sql.CairoEngine;
 import com.questdb.common.ColumnType;
 import com.questdb.common.PartitionBy;
 import com.questdb.griffin.lexer.model.CreateTableModel;
-import com.questdb.griffin.lexer.model.ParsedModel;
+import com.questdb.griffin.lexer.model.ExecutionModel;
 import com.questdb.griffin.lexer.model.QueryModel;
 import com.questdb.std.Chars;
 import com.questdb.std.Files;
@@ -3258,8 +3258,8 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     private void assertCreateTable(String expected, String ddl, TableModel... tableModels) throws ParserException {
         createModelsAndRun(() -> {
-            ParsedModel model = parser.parse(ddl);
-            Assert.assertEquals(ParsedModel.CREATE_TABLE, model.getModelType());
+            ExecutionModel model = parser.parse(ddl);
+            Assert.assertEquals(ExecutionModel.CREATE_TABLE, model.getModelType());
             Assert.assertTrue(model instanceof CreateTableModel);
             sink.clear();
             ((CreateTableModel) model).toSink(sink);
@@ -3270,8 +3270,8 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     private void assertQuery(String expected, String query, TableModel... tableModels) throws ParserException {
         createModelsAndRun(() -> {
             sink.clear();
-            ParsedModel model = parser.parse(query);
-            Assert.assertEquals(model.getModelType(), ParsedModel.QUERY);
+            ExecutionModel model = parser.parse(query);
+            Assert.assertEquals(model.getModelType(), ExecutionModel.QUERY);
             ((QueryModel) model).toSink(sink);
             TestUtils.assertEquals(expected, sink);
         }, tableModels);

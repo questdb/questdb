@@ -26,7 +26,6 @@ package com.questdb.cutlass.receiver.parser;
 import com.questdb.cairo.*;
 import com.questdb.cairo.pool.ResourcePool;
 import com.questdb.common.ColumnType;
-import com.questdb.common.NumericException;
 import com.questdb.common.PartitionBy;
 import com.questdb.common.RecordMetadata;
 import com.questdb.log.Log;

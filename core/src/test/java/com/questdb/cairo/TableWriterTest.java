@@ -25,7 +25,6 @@ package com.questdb.cairo;
 
 import com.questdb.cairo.sql.RecordCursor;
 import com.questdb.common.ColumnType;
-import com.questdb.common.NumericException;
 import com.questdb.common.PartitionBy;
 import com.questdb.common.Record;
 import com.questdb.log.Log;

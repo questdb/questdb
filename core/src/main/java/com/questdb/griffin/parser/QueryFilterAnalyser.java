@@ -21,10 +21,9 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.compiler;
+package com.questdb.griffin.parser;
 
 import com.questdb.common.ColumnType;
-import com.questdb.common.NumericException;
 import com.questdb.common.RecordColumnMetadata;
 import com.questdb.common.RecordMetadata;
 import com.questdb.griffin.common.ExprNode;

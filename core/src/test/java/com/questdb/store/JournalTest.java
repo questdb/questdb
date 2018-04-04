@@ -23,12 +23,12 @@
 
 package com.questdb.store;
 
-import com.questdb.common.NumericException;
 import com.questdb.common.PartitionBy;
 import com.questdb.common.SymbolTable;
 import com.questdb.model.Quote;
 import com.questdb.model.TestEntity;
 import com.questdb.std.Files;
+import com.questdb.std.NumericException;
 import com.questdb.std.Rnd;
 import com.questdb.std.Rows;
 import com.questdb.std.ex.JournalException;
@@ -47,6 +47,9 @@ import java.io.File;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+
+import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertTrue;
 
 public class JournalTest extends AbstractTest {
 
@@ -117,8 +120,8 @@ public class JournalTest extends AbstractTest {
 
         getFactory().expire();
 
-        Assert.assertTrue(dir.exists());
-        Assert.assertTrue(Files.delete(dir));
+        assertTrue(dir.exists());
+        assertTrue(Files.delete(dir));
     }
 
     @Test
@@ -313,7 +316,7 @@ public class JournalTest extends AbstractTest {
     @Test
     public void testSingleWriterModel() throws Exception {
         try (JournalWriter<Quote> writer = getFactory().writer(Quote.class)) {
-            Assert.assertTrue(writer != null);
+            assertNotNull(writer);
 
             final CountDownLatch finished = new CountDownLatch(1);
             final AtomicInteger errors = new AtomicInteger();
@@ -327,17 +330,17 @@ public class JournalTest extends AbstractTest {
                 finished.countDown();
             }).start();
 
-            Assert.assertTrue(finished.await(1, TimeUnit.SECONDS));
+            assertTrue(finished.await(1, TimeUnit.SECONDS));
             Assert.assertEquals(0, errors.get());
 
             // check if we can open a reader
             try (Journal<Quote> r = getFactory().reader(Quote.class)) {
-                Assert.assertTrue(r != null);
+                assertNotNull(r);
             }
 
             // check if we can open writer in alt location
             try (JournalWriter w = getFactory().writer(Quote.class, "test-Quote")) {
-                Assert.assertTrue(w != null);
+                assertNotNull(w);
             }
         }
     }
@@ -354,7 +357,7 @@ public class JournalTest extends AbstractTest {
             long size = f.length();
             w.compact();
             sizeAfterCompaction = f.length();
-            Assert.assertTrue(sizeAfterCompaction < size);
+            assertTrue(sizeAfterCompaction < size);
         }
 
         try (Journal<Quote> r = getFactory().reader(Quote.class, "quote")) {
@@ -412,7 +415,7 @@ public class JournalTest extends AbstractTest {
                 w.setJournalListener(lsnr);
                 w.append(origin.query().all().asResultSet().subset(0, 1000));
                 w.commit();
-                Assert.assertTrue(lsnr.isNotifyAsyncNoWait());
+                assertTrue(lsnr.isNotifyAsyncNoWait());
             }
         }
     }

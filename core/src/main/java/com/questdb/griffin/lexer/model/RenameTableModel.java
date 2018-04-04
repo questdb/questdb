@@ -27,7 +27,7 @@ import com.questdb.griffin.common.ExprNode;
 import com.questdb.std.Mutable;
 import com.questdb.std.ObjectFactory;
 
-public class RenameTableModel implements Mutable, ParsedModel {
+public class RenameTableModel implements Mutable, ExecutionModel {
     public static final ObjectFactory<RenameTableModel> FACTORY = RenameTableModel::new;
 
     private ExprNode from;
@@ -48,7 +48,7 @@ public class RenameTableModel implements Mutable, ParsedModel {
 
     @Override
     public int getModelType() {
-        return ParsedModel.RENAME_TABLE;
+        return ExecutionModel.RENAME_TABLE;
     }
 
     public ExprNode getTo() {

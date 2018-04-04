@@ -24,7 +24,7 @@
 package com.questdb.parser.typeprobe;
 
 import com.questdb.common.ColumnType;
-import com.questdb.common.NumericException;
+import com.questdb.std.NumericException;
 import com.questdb.std.time.DateFormat;
 import com.questdb.std.time.DateFormatFactory;
 import com.questdb.std.time.DateLocale;

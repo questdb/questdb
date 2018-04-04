@@ -23,9 +23,9 @@
 
 package com.questdb;
 
-import com.questdb.common.NumericException;
 import com.questdb.net.SslConfig;
 import com.questdb.std.Numbers;
+import com.questdb.std.NumericException;
 
 import java.io.File;
 import java.io.FileInputStream;

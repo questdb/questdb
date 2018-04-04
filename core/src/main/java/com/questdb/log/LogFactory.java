@@ -23,7 +23,6 @@
 
 package com.questdb.log;
 
-import com.questdb.common.NumericException;
 import com.questdb.mp.*;
 import com.questdb.std.*;
 import com.questdb.std.microtime.MicrosecondClock;

@@ -23,7 +23,7 @@
 
 package com.questdb.griffin.lexer.model;
 
-public interface ParsedModel {
+public interface ExecutionModel {
     int QUERY = 1;
     int CREATE_TABLE = 2;
     int RENAME_TABLE = 3;
