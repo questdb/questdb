@@ -21,26 +21,25 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.engine.functions;
+package com.questdb.griffin.engine.functions.constants;
 
-import com.questdb.common.ColumnType;
 import com.questdb.common.Record;
+import com.questdb.griffin.engine.functions.LongFunction;
 
-public class FloatConstant extends AbstractConstant {
-    private final float value;
+public class LongConstant extends LongFunction {
+    private final long value;
 
-    public FloatConstant(float value, int position) {
-        super(ColumnType.FLOAT, position);
+    public LongConstant(long value) {
         this.value = value;
     }
 
     @Override
-    public double getDouble(Record rec) {
+    public long getLong(Record rec) {
         return value;
     }
 
     @Override
-    public float getFloat(Record rec) {
-        return value;
+    public boolean isConstant() {
+        return true;
     }
 }

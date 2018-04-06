@@ -1468,7 +1468,7 @@ public class FullTableFrameCursorTest extends AbstractCairoTest {
                 assertIndexRowsMatchSymbol(cursor, record, 2, empty ? 0 : N);
                 cursor.toTop();
                 assertData(cursor, record, eRnd, sg, empty ? 0 : N);
-                assertMetadataEquals(reader.getMetadata(), cursor.getReader().getMetadata());
+                assertMetadataEquals(reader.getMetadata(), cursor.getTableReader().getMetadata());
 
                 // we should be able to append more rows to new writer instance once the
                 // original problem is resolved, e.g. system can mmap again

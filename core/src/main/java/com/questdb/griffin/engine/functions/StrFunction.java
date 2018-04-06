@@ -23,34 +23,76 @@
 
 package com.questdb.griffin.engine.functions;
 
+
 import com.questdb.common.ColumnType;
 import com.questdb.common.Record;
+import com.questdb.griffin.Function;
+import com.questdb.std.BinarySequence;
+import com.questdb.std.str.CharSink;
 
-public class IntConstant extends AbstractConstant {
-    private final int value;
+public abstract class StrFunction implements Function {
+    @Override
+    public BinarySequence getBin(Record rec) {
+        throw new UnsupportedOperationException();
+    }
 
-    public IntConstant(int value, int position) {
-        super(ColumnType.INT, position);
-        this.value = value;
+    @Override
+    public boolean getBool(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public byte getByte(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public long getDate(Record rec) {
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public double getDouble(Record rec) {
-        return value;
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public float getFloat(Record rec) {
-        return value;
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public int getInt(Record rec) {
-        return value;
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public long getLong(Record rec) {
-        return value;
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public short getShort(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void getStr(Record rec, CharSink sink) {
+        sink.put(getStr(rec));
+    }
+
+    @Override
+    public int getStrLen(Record rec) {
+        return getStr(rec).length();
+    }
+
+    @Override
+    public CharSequence getSym(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public final int getType() {
+        return ColumnType.STRING;
     }
 }

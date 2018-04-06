@@ -21,31 +21,46 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.engine.functions;
+package com.questdb.griffin.engine.functions.lt;
 
-import com.questdb.common.ColumnType;
+import com.questdb.cairo.CairoConfiguration;
 import com.questdb.common.Record;
+import com.questdb.griffin.Function;
+import com.questdb.griffin.FunctionFactory;
+import com.questdb.griffin.engine.functions.BooleanFunction;
+import com.questdb.std.ObjList;
 
-public class DateConstant extends AbstractConstant {
-    private final long value;
+public class LtDoubleVVFunctionFactory implements FunctionFactory {
 
-    public DateConstant(long value, int position) {
-        super(ColumnType.DATE, position);
-        this.value = value;
+    static final LtDoubleVVFunctionFactory FACTORY = new LtDoubleVVFunctionFactory();
+
+    @Override
+    public String getName() {
+        return "<";
     }
 
     @Override
-    public long getDate(Record rec) {
-        return value;
+    public String getSignature() {
+        return "+D+D";
     }
 
     @Override
-    public double getDouble(Record rec) {
-        return value;
+    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
+        return new FuncVV(args.getQuick(0), args.getQuick(1));
     }
 
-    @Override
-    public long getLong(Record rec) {
-        return value;
+    private static class FuncVV extends BooleanFunction {
+        private final Function left;
+        private final Function right;
+
+        public FuncVV(Function left, Function right) {
+            this.left = left;
+            this.right = right;
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            return left.getDouble(rec) < right.getDouble(rec);
+        }
     }
 }

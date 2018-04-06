@@ -21,75 +21,84 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.engine;
+package com.questdb.griffin.engine.functions;
 
+
+import com.questdb.common.ColumnType;
 import com.questdb.common.Record;
+import com.questdb.griffin.Function;
 import com.questdb.std.BinarySequence;
 import com.questdb.std.str.CharSink;
 
-public interface Function {
+public abstract class DateFunction implements Function {
 
-    default byte get(Record rec) {
+    @Override
+    public final BinarySequence getBin(Record rec) {
         throw new UnsupportedOperationException();
     }
 
-    default BinarySequence getBin(Record rec) {
+    @Override
+    public final boolean getBool(Record rec) {
         throw new UnsupportedOperationException();
     }
 
-    default boolean getBool(Record rec) {
+    @Override
+    public final byte getByte(Record rec) {
         throw new UnsupportedOperationException();
     }
 
-    default long getDate(Record rec) {
+    @Override
+    public final double getDouble(Record rec) {
         throw new UnsupportedOperationException();
     }
 
-    default double getDouble(Record rec) {
+    @Override
+    public final float getFloat(Record rec) {
         throw new UnsupportedOperationException();
     }
 
-    default float getFloat(Record rec) {
+    @Override
+    public final int getInt(Record rec) {
         throw new UnsupportedOperationException();
     }
 
-    default int getInt(Record rec) {
+    @Override
+    public final long getLong(Record rec) {
         throw new UnsupportedOperationException();
     }
 
-    default long getLong(Record rec) {
+    @Override
+    public final short getShort(Record rec) {
         throw new UnsupportedOperationException();
     }
 
-    int getPosition();
-
-    default short getShort(Record rec) {
+    @Override
+    public final CharSequence getStr(Record rec) {
         throw new UnsupportedOperationException();
     }
 
-    default CharSequence getStr(Record rec) {
+    @Override
+    public final void getStr(Record rec, CharSink sink) {
         throw new UnsupportedOperationException();
     }
 
-    default void getStr(Record rec, CharSink sink) {
+    @Override
+    public final CharSequence getStrB(Record rec) {
         throw new UnsupportedOperationException();
     }
 
-    default CharSequence getStrB(Record rec) {
+    @Override
+    public final int getStrLen(Record rec) {
         throw new UnsupportedOperationException();
     }
 
-    default int getStrLen(Record rec) {
+    @Override
+    public final CharSequence getSym(Record rec) {
         throw new UnsupportedOperationException();
     }
 
-    default CharSequence getSym(Record rec) {
-        throw new UnsupportedOperationException();
-    }
-
-    int getType();
-
-    default boolean isConstant() {
-        return false;
+    @Override
+    public final int getType() {
+        return ColumnType.DATE;
     }
 }

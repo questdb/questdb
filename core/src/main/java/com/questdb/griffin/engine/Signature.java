@@ -30,18 +30,39 @@ import com.questdb.std.Mutable;
 import com.questdb.std.str.StringSink;
 
 public final class Signature implements Mutable {
-    public final IntList paramTypes = new IntList(2);
+    private final IntList paramTypes = new IntList(2);
     private final IntList constParams = new IntList(2);
-    public CharSequence name;
-    public int paramCount;
+    private CharSequence name;
+    private boolean derived = false;
 
     public void clear() {
         paramTypes.clear();
+        constParams.clear();
+        derived = false;
+    }
+
+    public Signature constant(int type) {
+        paramTypes.add(type);
+        constParams.add(1);
+        return this;
+    }
+
+    public Signature derived() {
+        this.derived = true;
+        return this;
+    }
+
+    public int getParamCount() {
+        return paramTypes.size();
+    }
+
+    public int getParamType(int index) {
+        return paramTypes.getQuick(index);
     }
 
     @Override
     public int hashCode() {
-        return typesHashCode(31 * name.hashCode() + paramCount);
+        return typesHashCode(31 * name.hashCode() + getParamCount());
     }
 
     @Override
@@ -49,24 +70,17 @@ public final class Signature implements Mutable {
         if (this == o) return true;
         if (!(o instanceof Signature)) return false;
         Signature that = (Signature) o;
-        return paramCount == that.paramCount && name.equals(that.name) && typesEqual(that);
+        return getParamCount() == that.getParamCount() && name.equals(that.name) && typesEqual(that);
     }
 
-    public Signature paramType(int pos, int columnType, boolean constant) {
-        paramTypes.setQuick(pos, columnType);
-        constParams.setQuick(pos, constant ? 1 : 0);
-        return this;
+    public boolean isDerived() {
+        return derived;
     }
 
-    public Signature setName(CharSequence name) {
+    public Signature of(CharSequence name) {
+        paramTypes.clear();
+        constParams.clear();
         this.name = name;
-        return this;
-    }
-
-    public Signature setParamCount(int paramCount) {
-        this.paramCount = paramCount;
-        this.paramTypes.ensureCapacity(paramCount);
-        this.constParams.ensureCapacity(paramCount);
         return this;
     }
 
@@ -76,7 +90,7 @@ public final class Signature implements Mutable {
         b.put(name);
         b.put('\'');
         b.put('(');
-        for (int i = 0, n = paramCount; i < n; i++) {
+        for (int i = 0, n = paramTypes.size(); i < n; i++) {
             if (i > 0) {
                 b.put(", ");
             }
@@ -88,6 +102,12 @@ public final class Signature implements Mutable {
         }
         b.put(')');
         return b;
+    }
+
+    public Signature var(int type) {
+        paramTypes.add(type);
+        constParams.add(0);
+        return this;
     }
 
     private boolean typesEqual(Signature that) {

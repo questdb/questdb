@@ -21,20 +21,45 @@
  *
  ******************************************************************************/
 
-package com.questdb.cairo.sql;
+package com.questdb.griffin;
 
-import com.questdb.cairo.BitmapIndexReader;
-import com.questdb.cairo.TableReader;
+import com.questdb.common.Record;
+import com.questdb.std.BinarySequence;
+import com.questdb.std.str.CharSink;
 
-public interface DataFrame {
-    BitmapIndexReader getBitmapIndexReader(int columnIndex);
+public interface Function {
 
-    int getPartitionIndex();
+    BinarySequence getBin(Record rec);
 
-    long getRowHi();
+    boolean getBool(Record rec);
 
-    long getRowLo();
+    byte getByte(Record rec);
 
-    // this is the same table reader as on parent cursor
-    TableReader getTableReader();
+    long getDate(Record rec);
+
+    double getDouble(Record rec);
+
+    float getFloat(Record rec);
+
+    int getInt(Record rec);
+
+    long getLong(Record rec);
+
+    short getShort(Record rec);
+
+    CharSequence getStr(Record rec);
+
+    void getStr(Record rec, CharSink sink);
+
+    CharSequence getStrB(Record rec);
+
+    int getStrLen(Record rec);
+
+    CharSequence getSym(Record rec);
+
+    int getType();
+
+    default boolean isConstant() {
+        return false;
+    }
 }

@@ -29,6 +29,7 @@ import com.questdb.cairo.sql.RecordCursor;
 import com.questdb.cairo.sql.RecordCursorFactory;
 import com.questdb.common.ColumnType;
 import com.questdb.common.PartitionBy;
+import com.questdb.griffin.engine.FunctionRepository;
 import com.questdb.griffin.lexer.ParserException;
 import com.questdb.std.Rnd;
 import org.junit.Test;
@@ -36,6 +37,7 @@ import org.junit.Test;
 import java.io.IOException;
 
 public class SqlParserTest extends AbstractCairoTest {
+
     @Test
     public void testFilterSingleKeyValue() throws ParserException, IOException {
         CairoEngine engine = new Engine(configuration);
@@ -61,9 +63,59 @@ public class SqlParserTest extends AbstractCairoTest {
             writer.commit();
         }
 
+        try (TableReader reader = engine.getReader("tab")) {
+            sink.clear();
+            printer.print(reader.getCursor(), true, reader.getMetadata());
+        }
+        System.out.println(sink);
+        System.out.println("----------------------");
+
 
         RecordCursorFactory rcf = parser.parseQuery("select * from tab where sym = 'ABC'");
         RecordCursor cursor = rcf.getCursor();
+        sink.clear();
+        printer.print(cursor, true, cursor.getMetadata());
+        System.out.println(sink);
+    }
+
+    @Test
+    public void testFilterSingleKeyValueAndFilter() throws ParserException, IOException {
+        CairoEngine engine = new Engine(configuration);
+        SqlParser parser = new SqlParser(engine, configuration);
+
+        try (TableModel model = new TableModel(configuration, "tab", PartitionBy.NONE)) {
+            model.col("sym", ColumnType.SYMBOL).indexed(true, 256);
+            model.col("value", ColumnType.DOUBLE);
+            CairoTestUtils.create(model);
+        }
+
+        FunctionRepository.load();
+
+        final int N = 20;
+        final String[] symbols = {"ABC", "CDE", "EFG"};
+        final Rnd rnd = new Rnd();
+
+        try (TableWriter writer = engine.getWriter("tab")) {
+            for (int i = 0; i < N; i++) {
+                TableWriter.Row row = writer.newRow(0);
+                row.putSym(0, symbols[rnd.nextPositiveInt() % symbols.length]);
+                row.putDouble(1, rnd.nextDouble());
+                row.append();
+            }
+            writer.commit();
+        }
+
+        try (TableReader reader = engine.getReader("tab")) {
+            sink.clear();
+            printer.print(reader.getCursor(), true, reader.getMetadata());
+        }
+        System.out.println(sink);
+        System.out.println("----------------------");
+
+
+        RecordCursorFactory rcf = parser.parseQuery("select * from tab where sym = 'ABC' and value < 1.0");
+        RecordCursor cursor = rcf.getCursor();
+        sink.clear();
         printer.print(cursor, true, cursor.getMetadata());
         System.out.println(sink);
     }

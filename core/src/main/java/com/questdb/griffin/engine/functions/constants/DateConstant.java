@@ -21,20 +21,26 @@
  *
  ******************************************************************************/
 
-package com.questdb.cairo.sql;
+package com.questdb.griffin.engine.functions.constants;
 
-import com.questdb.cairo.BitmapIndexReader;
-import com.questdb.cairo.TableReader;
+import com.questdb.common.Record;
+import com.questdb.griffin.engine.functions.DateFunction;
 
-public interface DataFrame {
-    BitmapIndexReader getBitmapIndexReader(int columnIndex);
+public class DateConstant extends DateFunction {
+    private final long value;
 
-    int getPartitionIndex();
+    public DateConstant(long value) {
+        this.value = value;
+    }
 
-    long getRowHi();
+    @Override
+    public long getDate(Record rec) {
+        return value;
+    }
 
-    long getRowLo();
+    @Override
+    public boolean isConstant() {
+        return true;
+    }
 
-    // this is the same table reader as on parent cursor
-    TableReader getTableReader();
 }

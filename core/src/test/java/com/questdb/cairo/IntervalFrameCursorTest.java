@@ -350,7 +350,7 @@ public class IntervalFrameCursorTest extends AbstractCairoTest {
                 try (DataFrameCursor cursor = factory.getCursor()) {
 
                     // assert that there is nothing to start with
-                    record.of(cursor.getReader());
+                    record.of(cursor.getTableReader());
 
                     assertEquals("", record, cursor);
 
@@ -525,7 +525,7 @@ public class IntervalFrameCursorTest extends AbstractCairoTest {
     }
 
     private void collectTimestamps(DataFrameCursor cursor, TableReaderRecord record, CharSink sink) {
-        int timestampIndex = cursor.getReader().getMetadata().getTimestampIndex();
+        int timestampIndex = cursor.getTableReader().getMetadata().getTimestampIndex();
         while (cursor.hasNext()) {
             DataFrame frame = cursor.next();
             record.jumpTo(frame.getPartitionIndex(), frame.getRowLo());

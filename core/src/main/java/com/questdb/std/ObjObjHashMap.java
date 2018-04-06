@@ -68,20 +68,6 @@ public class ObjObjHashMap<K, V> implements Iterable<ObjObjHashMap.Entry<K, V>>,
         return getAt(keyIndex(key));
     }
 
-    public int keyIndex(K key) {
-        final int index = key.hashCode() & mask;
-
-        if (Unsafe.arrayGet(keys, index) == noEntryValue) {
-            return index;
-        }
-
-        if (Unsafe.arrayGet(keys, index) == key || key.equals(Unsafe.arrayGet(keys, index))) {
-            return -index - 1;
-        }
-
-        return probe(key, index);
-    }
-
     public V getAt(int index) {
         return index < 0 ? Unsafe.arrayGet(values, -index - 1) : null;
     }
@@ -95,6 +81,20 @@ public class ObjObjHashMap<K, V> implements Iterable<ObjObjHashMap.Entry<K, V>>,
     public Iterator<Entry<K, V>> iterator() {
         iterator.index = 0;
         return iterator;
+    }
+
+    public int keyIndex(K key) {
+        final int index = key.hashCode() & mask;
+
+        if (Unsafe.arrayGet(keys, index) == noEntryValue) {
+            return index;
+        }
+
+        if (Unsafe.arrayGet(keys, index) == key || key.equals(Unsafe.arrayGet(keys, index))) {
+            return -index - 1;
+        }
+
+        return probe(key, index);
     }
 
     public void put(K key, V value) {

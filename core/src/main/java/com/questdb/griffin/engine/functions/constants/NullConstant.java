@@ -21,27 +21,41 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.engine.functions;
+package com.questdb.griffin.engine.functions.constants;
 
-import com.questdb.common.ColumnType;
 import com.questdb.common.Record;
-import com.questdb.std.Chars;
+import com.questdb.griffin.engine.functions.StrFunction;
+import com.questdb.std.str.CharSink;
 
-public class StrConstant extends AbstractConstant {
-    private final String value;
+public class NullConstant extends StrFunction {
 
-    public StrConstant(CharSequence value, int position) {
-        super(ColumnType.STRING, position);
-        this.value = Chars.toString(value, 1, value.length() - 1);
+    public static final NullConstant INSTANCE = new NullConstant();
+
+
+    private NullConstant() {
     }
 
     @Override
     public CharSequence getStr(Record rec) {
-        return value;
+        return null;
     }
 
     @Override
     public CharSequence getStrB(Record rec) {
-        return value;
+        return null;
+    }
+
+    @Override
+    public void getStr(Record rec, CharSink sink) {
+    }
+
+    @Override
+    public int getStrLen(Record rec) {
+        return -1;
+    }
+
+    @Override
+    public boolean isConstant() {
+        return true;
     }
 }

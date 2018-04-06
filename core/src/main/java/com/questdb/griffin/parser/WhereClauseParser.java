@@ -37,7 +37,7 @@ import com.questdb.std.str.FlyweightCharSequence;
 
 import java.util.ArrayDeque;
 
-final class QueryFilterAnalyser {
+final class WhereClauseParser {
 
     private static final int INTRINCIC_OP_IN = 1;
     private static final int INTRINCIC_OP_GREATER = 2;

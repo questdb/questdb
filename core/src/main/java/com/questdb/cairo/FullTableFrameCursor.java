@@ -86,7 +86,7 @@ public class FullTableFrameCursor implements DataFrameCursor {
     }
 
     @Override
-    public TableReader getReader() {
+    public TableReader getTableReader() {
         return reader;
     }
 
@@ -118,6 +118,11 @@ public class FullTableFrameCursor implements DataFrameCursor {
         @Override
         public long getRowLo() {
             return rowLo;
+        }
+
+        @Override
+        public TableReader getTableReader() {
+            return reader;
         }
     }
 }

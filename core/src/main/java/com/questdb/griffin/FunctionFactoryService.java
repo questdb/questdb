@@ -21,22 +21,15 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.engine.functions;
+package com.questdb.griffin;
 
-import com.questdb.common.ColumnType;
-import com.questdb.common.Record;
+import com.questdb.griffin.engine.Signature;
+import com.questdb.std.ObjList;
 
-public class BooleanConstant extends AbstractConstant {
+public interface FunctionFactoryService {
+    void export(ObjList<FunctionFactory> factories);
 
-    private final boolean value;
-
-    public BooleanConstant(boolean value, int position) {
-        super(ColumnType.BOOLEAN, position);
-        this.value = value;
-    }
-
-    @Override
-    public boolean getBool(Record rec) {
-        return value;
+    default Signature sig() {
+        return new Signature();
     }
 }

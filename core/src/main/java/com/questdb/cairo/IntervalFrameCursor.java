@@ -165,7 +165,7 @@ public class IntervalFrameCursor implements DataFrameCursor {
     }
 
     @Override
-    public TableReader getReader() {
+    public TableReader getTableReader() {
         return reader;
     }
 
@@ -263,6 +263,11 @@ public class IntervalFrameCursor implements DataFrameCursor {
         @Override
         public long getRowLo() {
             return rowLo;
+        }
+
+        @Override
+        public TableReader getTableReader() {
+            return IntervalFrameCursor.this.getTableReader();
         }
     }
 }

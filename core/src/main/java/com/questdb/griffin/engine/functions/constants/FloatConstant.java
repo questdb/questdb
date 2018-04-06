@@ -21,29 +21,25 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.engine.functions;
+package com.questdb.griffin.engine.functions.constants;
 
-import com.questdb.common.ColumnType;
 import com.questdb.common.Record;
-import com.questdb.std.str.CharSink;
+import com.questdb.griffin.engine.functions.FloatFunction;
 
-public class NullConstant extends AbstractConstant {
+public class FloatConstant extends FloatFunction {
+    private final float value;
 
-    public NullConstant(int position) {
-        super(ColumnType.STRING, position);
+    public FloatConstant(float value) {
+        this.value = value;
     }
 
     @Override
-    public CharSequence getStr(Record rec) {
-        return null;
+    public float getFloat(Record rec) {
+        return value;
     }
 
     @Override
-    public void getStr(Record rec, CharSink sink) {
-    }
-
-    @Override
-    public CharSequence getStrB(Record rec) {
-        return null;
+    public boolean isConstant() {
+        return true;
     }
 }

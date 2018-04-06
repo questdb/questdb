@@ -23,95 +23,82 @@
 
 package com.questdb.griffin.engine.functions;
 
+
+import com.questdb.common.ColumnType;
 import com.questdb.common.Record;
 import com.questdb.griffin.Function;
 import com.questdb.std.BinarySequence;
 import com.questdb.std.str.CharSink;
 
-public class Parameter implements Function {
-    private String name;
+public abstract class TimestampFunction implements Function {
 
     @Override
-    public BinarySequence getBin(Record rec) {
-        return null;
+    public final BinarySequence getBin(Record rec) {
+        throw new UnsupportedOperationException();
     }
 
     @Override
-    public boolean getBool(Record rec) {
-        return false;
+    public final boolean getBool(Record rec) {
+        throw new UnsupportedOperationException();
     }
 
     @Override
-    public byte getByte(Record rec) {
-        return 0;
+    public final byte getByte(Record rec) {
+        throw new UnsupportedOperationException();
     }
 
     @Override
-    public long getDate(Record rec) {
-        return 0;
+    public final double getDouble(Record rec) {
+        throw new UnsupportedOperationException();
     }
 
     @Override
-    public double getDouble(Record rec) {
-        return 0;
+    public final float getFloat(Record rec) {
+        throw new UnsupportedOperationException();
     }
 
     @Override
-    public float getFloat(Record rec) {
-        return 0;
+    public final int getInt(Record rec) {
+        throw new UnsupportedOperationException();
     }
 
     @Override
-    public int getInt(Record rec) {
-        return 0;
+    public final long getLong(Record rec) {
+        throw new UnsupportedOperationException();
     }
 
     @Override
-    public long getLong(Record rec) {
-        return 0;
+    public final short getShort(Record rec) {
+        throw new UnsupportedOperationException();
     }
 
     @Override
-    public short getShort(Record rec) {
-        return 0;
+    public final CharSequence getStr(Record rec) {
+        throw new UnsupportedOperationException();
     }
 
     @Override
-    public CharSequence getStr(Record rec) {
-        return null;
+    public final void getStr(Record rec, CharSink sink) {
+        throw new UnsupportedOperationException();
     }
 
     @Override
-    public void getStr(Record rec, CharSink sink) {
-
+    public final CharSequence getStrB(Record rec) {
+        throw new UnsupportedOperationException();
     }
 
     @Override
-    public CharSequence getStrB(Record rec) {
-        return null;
+    public final int getStrLen(Record rec) {
+        throw new UnsupportedOperationException();
     }
 
     @Override
-    public int getStrLen(Record rec) {
-        return 0;
+    public final CharSequence getSym(Record rec) {
+        throw new UnsupportedOperationException();
     }
 
     @Override
-    public CharSequence getSym(Record rec) {
-        return null;
-    }
-
-    @Override
-    public int getType() {
-        return 0;
-    }
-
-    @Override
-    public boolean isConstant() {
-        return false;
-    }
-
-    public void setName(String name) {
-        this.name = name;
+    public final int getType() {
+        return ColumnType.TIMESTAMP;
     }
 }

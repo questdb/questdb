@@ -21,12 +21,18 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.engine;
+package com.questdb.griffin.engine.functions.lt;
 
-import com.questdb.cairo.CairoConfiguration;
+import com.questdb.griffin.FunctionFactory;
+import com.questdb.griffin.FunctionFactoryService;
 import com.questdb.std.ObjList;
 
-@FunctionalInterface
-public interface FunctionFactory<T extends Function> {
-    T newInstance(ObjList<Function> args, int position, CairoConfiguration configuration);
+public class LtFunctionFactoryService implements FunctionFactoryService {
+    @Override
+    public void export(ObjList<FunctionFactory> m) {
+        m.add(LtDoubleVCFunctionFactory.FACTORY);
+        m.add(LtDoubleCVFunctionFactory.FACTORY);
+        m.add(LtDoubleVVFunctionFactory.FACTORY);
+        m.add(LtDoubleCCFunctionFactory.FACTORY);
+    }
 }

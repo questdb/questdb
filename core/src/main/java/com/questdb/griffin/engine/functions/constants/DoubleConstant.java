@@ -21,20 +21,25 @@
  *
  ******************************************************************************/
 
-package com.questdb.cairo.sql;
+package com.questdb.griffin.engine.functions.constants;
 
-import com.questdb.cairo.BitmapIndexReader;
-import com.questdb.cairo.TableReader;
+import com.questdb.common.Record;
+import com.questdb.griffin.engine.functions.DoubleFunction;
 
-public interface DataFrame {
-    BitmapIndexReader getBitmapIndexReader(int columnIndex);
+public class DoubleConstant extends DoubleFunction {
+    private final double value;
 
-    int getPartitionIndex();
+    public DoubleConstant(double value) {
+        this.value = value;
+    }
 
-    long getRowHi();
+    @Override
+    public double getDouble(Record rec) {
+        return value;
+    }
 
-    long getRowLo();
-
-    // this is the same table reader as on parent cursor
-    TableReader getTableReader();
+    @Override
+    public boolean isConstant() {
+        return true;
+    }
 }

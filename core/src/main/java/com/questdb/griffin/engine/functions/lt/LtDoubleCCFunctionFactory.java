@@ -21,23 +21,41 @@
  *
  ******************************************************************************/
 
-package com.questdb.cairo.sql;
+package com.questdb.griffin.engine.functions.lt;
 
-import com.questdb.cairo.TableReader;
-import com.questdb.common.StorageFacade;
-import com.questdb.std.ImmutableIterator;
+import com.questdb.cairo.CairoConfiguration;
+import com.questdb.griffin.Function;
+import com.questdb.griffin.FunctionFactory;
+import com.questdb.griffin.engine.functions.constants.BooleanConstant;
+import com.questdb.std.ObjList;
 
-import java.io.Closeable;
+public class LtDoubleCCFunctionFactory implements FunctionFactory {
 
-public interface DataFrameCursor extends ImmutableIterator<DataFrame>, StorageFacade, Closeable {
+    static final LtDoubleCCFunctionFactory FACTORY = new LtDoubleCCFunctionFactory();
 
     @Override
-    void close(); // we don't throw IOException
+    public String getName() {
+        return "<";
+    }
 
-    // same TableReader is available on each data frame
-    TableReader getTableReader();
+    @Override
+    public String getSignature() {
+        return "!D!D";
+    }
 
-    boolean reload();
+    @Override
+    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
 
-    void toTop();
+        final double left = args.getQuick(0).getDouble(null);
+        if (Double.isNaN(left)) {
+            return BooleanConstant.FALSE;
+        }
+
+        final double right = args.getQuick(1).getDouble(null);
+        if (Double.isNaN(right)) {
+            return BooleanConstant.FALSE;
+        }
+
+        return BooleanConstant.of(left < right);
+    }
 }

@@ -54,7 +54,7 @@ class FilteredTableRecordCursor implements RecordCursor {
 
     @Override
     public RecordMetadata getMetadata() {
-        return dataFrameCursor.getReader().getMetadata();
+        return dataFrameCursor.getTableReader().getMetadata();
     }
 
     @Override
@@ -70,7 +70,7 @@ class FilteredTableRecordCursor implements RecordCursor {
     @Override
     public Record newRecord() {
         TableReaderRecord record = new TableReaderRecord();
-        record.of(dataFrameCursor.getReader());
+        record.of(dataFrameCursor.getTableReader());
         return record;
     }
 
@@ -107,7 +107,7 @@ class FilteredTableRecordCursor implements RecordCursor {
     public void of(DataFrameCursor dataFrameCursor) {
         close();
         this.dataFrameCursor = dataFrameCursor;
-        this.record.of(dataFrameCursor.getReader());
+        this.record.of(dataFrameCursor.getTableReader());
         toTop();
     }
 

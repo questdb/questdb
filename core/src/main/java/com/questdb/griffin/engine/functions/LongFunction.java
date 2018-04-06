@@ -23,97 +23,81 @@
 
 package com.questdb.griffin.engine.functions;
 
+import com.questdb.common.ColumnType;
 import com.questdb.common.Record;
 import com.questdb.griffin.Function;
 import com.questdb.std.BinarySequence;
 import com.questdb.std.str.CharSink;
 
-public final class RecordColumn implements Function {
-    private final int columnIndex;
-    private final int type;
+public abstract class LongFunction implements Function {
 
-    public RecordColumn(int columnIndex, int type) {
-        this.type = type;
-        this.columnIndex = columnIndex;
+    @Override
+    public final BinarySequence getBin(Record rec) {
+        throw new UnsupportedOperationException();
     }
 
     @Override
-    public BinarySequence getBin(Record rec) {
-        return rec.getBin2(columnIndex);
+    public final boolean getBool(Record rec) {
+        throw new UnsupportedOperationException();
     }
 
     @Override
-    public boolean getBool(Record rec) {
-        return rec.getBool(columnIndex);
+    public final byte getByte(Record rec) {
+        throw new UnsupportedOperationException();
     }
 
     @Override
-    public byte getByte(Record rec) {
-        return rec.getByte(columnIndex);
-    }
-
-    @Override
-    public long getDate(Record rec) {
-        return rec.getDate(columnIndex);
+    public final long getDate(Record rec) {
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public double getDouble(Record rec) {
-        return rec.getDouble(columnIndex);
+        return getLong(rec);
     }
 
     @Override
     public float getFloat(Record rec) {
-        return rec.getFloat(columnIndex);
+        return getLong(rec);
     }
 
     @Override
-    public int getInt(Record rec) {
-        return rec.getInt(columnIndex);
+    public final int getInt(Record rec) {
+        throw new UnsupportedOperationException();
     }
 
     @Override
-    public long getLong(Record rec) {
-        return rec.getLong(columnIndex);
+    public final short getShort(Record rec) {
+        throw new UnsupportedOperationException();
     }
 
     @Override
-    public short getShort(Record rec) {
-        return rec.getShort(columnIndex);
+    public final CharSequence getStr(Record rec) {
+        throw new UnsupportedOperationException();
     }
 
     @Override
-    public CharSequence getStr(Record rec) {
-        return rec.getFlyweightStr(columnIndex);
+    public final void getStr(Record rec, CharSink sink) {
+        throw new UnsupportedOperationException();
     }
 
     @Override
-    public void getStr(Record rec, CharSink sink) {
-        rec.getStr(columnIndex, sink);
+    public final CharSequence getStrB(Record rec) {
+        throw new UnsupportedOperationException();
     }
 
     @Override
-    public CharSequence getStrB(Record rec) {
-        return rec.getFlyweightStrB(columnIndex);
+    public final int getStrLen(Record rec) {
+        throw new UnsupportedOperationException();
     }
 
     @Override
-    public int getStrLen(Record rec) {
-        return rec.getStrLen(columnIndex);
+    public final CharSequence getSym(Record rec) {
+        throw new UnsupportedOperationException();
     }
 
     @Override
-    public CharSequence getSym(Record rec) {
-        return rec.getSym(columnIndex);
-    }
-
-    @Override
-    public int getType() {
-        return type;
-    }
-
-    @Override
-    public boolean isConstant() {
-        return false;
+    public final int getType() {
+        return ColumnType.LONG;
     }
 }

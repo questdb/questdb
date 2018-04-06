@@ -21,12 +21,21 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.engine.functions;
+package com.questdb.griffin.engine.functions.constants;
 
-public abstract class AbstractConstant extends AbstractFunction {
+import com.questdb.common.Record;
+import com.questdb.griffin.engine.functions.IntFunction;
 
-    public AbstractConstant(int type, int position) {
-        super(type, position);
+public class IntConstant extends IntFunction {
+    private final int value;
+
+    public IntConstant(int value) {
+        this.value = value;
+    }
+
+    @Override
+    public int getInt(Record rec) {
+        return value;
     }
 
     @Override

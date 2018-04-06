@@ -42,7 +42,7 @@ import org.junit.*;
 
 import static com.questdb.griffin.lexer.GriffinParserTestUtils.intervalToString;
 
-public class QueryFilterAnalyserTest extends AbstractCairoTest {
+public class WhereClauseParserTest extends AbstractCairoTest {
 
     private static TableReader reader;
     private static TableReader noTimestampReader;
@@ -53,7 +53,7 @@ public class QueryFilterAnalyserTest extends AbstractCairoTest {
     private final Lexer2 lexer = new Lexer2();
     private final ExprParser p = new ExprParser(exprNodeObjectPool);
     private final ExprAstBuilder ast = new ExprAstBuilder();
-    private final QueryFilterAnalyser e = new QueryFilterAnalyser();
+    private final WhereClauseParser e = new WhereClauseParser();
     private final PostOrderTreeTraversalAlgo traversalAlgo = new PostOrderTreeTraversalAlgo();
     private final PostOrderTreeTraversalAlgo.Visitor rpnBuilderVisitor = rpn::onNode;
 

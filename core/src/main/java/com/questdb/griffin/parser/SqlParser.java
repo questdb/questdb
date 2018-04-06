@@ -34,11 +34,12 @@ import com.questdb.cairo.sql.RowCursorFactory;
 import com.questdb.common.ColumnType;
 import com.questdb.common.RecordColumnMetadata;
 import com.questdb.common.RecordMetadata;
+import com.questdb.griffin.Function;
 import com.questdb.griffin.common.ExprNode;
 import com.questdb.griffin.common.PostOrderTreeTraversalAlgo;
-import com.questdb.griffin.engine.Function;
 import com.questdb.griffin.engine.functions.Parameter;
 import com.questdb.griffin.engine.table.FilteredTableRecordCursorFactory;
+import com.questdb.griffin.engine.table.SymbolIndexFilteredRowCursorFactory;
 import com.questdb.griffin.engine.table.SymbolIndexRowCursorFactory;
 import com.questdb.griffin.lexer.ParserException;
 import com.questdb.griffin.lexer.SqlLexerOptimiser;
@@ -50,15 +51,15 @@ import com.questdb.std.CharSequenceObjHashMap;
 
 public class SqlParser {
     private final SqlLexerOptimiser sqlLexer;
-    private final QueryFilterAnalyser filterAnalyser = new QueryFilterAnalyser();
+    private final WhereClauseParser filterAnalyser = new WhereClauseParser();
     private final PostOrderTreeTraversalAlgo traversalAlgo = new PostOrderTreeTraversalAlgo();
-    private final VirtualColumnBuilder virtualColumnBuilder;
+    private final FunctionParser functionParser;
     private final CairoEngine engine;
 
     public SqlParser(CairoEngine engine, CairoConfiguration configuration) {
         this.engine = engine;
         this.sqlLexer = new SqlLexerOptimiser(engine, configuration);
-        this.virtualColumnBuilder = new VirtualColumnBuilder(traversalAlgo, configuration);
+        this.functionParser = new FunctionParser(traversalAlgo, configuration);
     }
 
     public RecordCursorFactory parseQuery(CharSequence query) throws ParserException {
@@ -153,7 +154,7 @@ public class SqlParser {
 
                 CharSequenceObjHashMap<Parameter> parameterMap = new CharSequenceObjHashMap<>();
                 if (intrinsicModel.filter != null) {
-                    filter = virtualColumnBuilder.buildFrom(intrinsicModel.filter, metadata, parameterMap);
+                    filter = functionParser.buildFrom(intrinsicModel.filter, metadata, parameterMap);
                 } else {
                     filter = null;
                 }
@@ -161,7 +162,7 @@ public class SqlParser {
                 // validate filter
                 if (filter != null) {
                     if (filter.getType() != ColumnType.BOOLEAN) {
-                        throw ParserException.$(filter.getPosition(), "Boolean expression expected");
+                        throw ParserException.$(intrinsicModel.filter.position, "Boolean expression expected");
                     }
 
                     if (filter.isConstant()) {
@@ -232,10 +233,9 @@ public class SqlParser {
                             // perform lambda based key lookup
                             assert intrinsicModel.keyValues.size() == 1;
                         } else {
-                            // perform lookup based on supplied key values
-                            if (filter == null) {
-                                assert intrinsicModel.keyValues.size() > 0;
-                                if (intrinsicModel.keyValues.size() == 1) {
+                            assert intrinsicModel.keyValues.size() > 0;
+                            if (intrinsicModel.keyValues.size() == 1) {
+                                if (filter == null) {
                                     RowCursorFactory rcf = new SymbolIndexRowCursorFactory(
                                             engine,
                                             model.getTableName().token,
@@ -243,7 +243,21 @@ public class SqlParser {
                                             intrinsicModel.keyValues.get(0));
                                     return new FilteredTableRecordCursorFactory(dfcFactory, rcf);
                                 } else {
-
+                                    RowCursorFactory rcf = new SymbolIndexFilteredRowCursorFactory(
+                                            engine,
+                                            model.getTableName().token,
+                                            intrinsicModel.keyColumn,
+                                            intrinsicModel.keyValues.get(0),
+                                            filter
+                                    );
+                                    return new FilteredTableRecordCursorFactory(dfcFactory, rcf);
+                                }
+                            } else {
+                                // multiple key values
+                                if (filter == null) {
+                                    // without filter
+                                } else {
+                                    // with filter
                                 }
                             }
                         }

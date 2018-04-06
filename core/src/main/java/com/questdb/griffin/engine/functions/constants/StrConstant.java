@@ -21,26 +21,31 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.engine.functions;
+package com.questdb.griffin.engine.functions.constants;
 
-import com.questdb.griffin.engine.Function;
+import com.questdb.common.Record;
+import com.questdb.griffin.engine.functions.StrFunction;
+import com.questdb.std.Chars;
 
-public abstract class AbstractFunction implements Function {
-    private final int type;
-    private final int position;
+public class StrConstant extends StrFunction {
+    private final String value;
 
-    protected AbstractFunction(int returnType, int position) {
-        this.type = returnType;
-        this.position = position;
+    public StrConstant(CharSequence value) {
+        this.value = Chars.toString(value, 1, value.length() - 1);
     }
 
     @Override
-    public int getPosition() {
-        return position;
+    public CharSequence getStr(Record rec) {
+        return value;
     }
 
     @Override
-    public int getType() {
-        return type;
+    public CharSequence getStrB(Record rec) {
+        return value;
+    }
+
+    @Override
+    public boolean isConstant() {
+        return true;
     }
 }

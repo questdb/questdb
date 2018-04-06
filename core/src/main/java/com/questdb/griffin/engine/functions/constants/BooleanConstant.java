@@ -21,26 +21,37 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.engine.functions;
+package com.questdb.griffin.engine.functions.constants;
 
-import com.questdb.common.ColumnType;
 import com.questdb.common.Record;
+import com.questdb.griffin.Function;
+import com.questdb.griffin.engine.functions.BooleanFunction;
 
-public class LongConstant extends AbstractConstant {
-    private final long value;
+public class BooleanConstant extends BooleanFunction {
 
-    public LongConstant(long value, int position) {
-        super(ColumnType.LONG, position);
+    public static final BooleanConstant TRUE = new BooleanConstant(true);
+    public static final BooleanConstant FALSE = new BooleanConstant(false);
+    private final boolean value;
+
+    private BooleanConstant(boolean value) {
         this.value = value;
     }
 
+    public static Function of(boolean value) {
+        if (value) {
+            return TRUE;
+        } else {
+            return FALSE;
+        }
+    }
+
     @Override
-    public double getDouble(Record rec) {
+    public boolean getBool(Record rec) {
         return value;
     }
 
     @Override
-    public long getLong(Record rec) {
-        return value;
+    public boolean isConstant() {
+        return true;
     }
 }
