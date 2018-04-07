@@ -21,34 +21,20 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.engine.functions.lt;
+package com.questdb.griffin.engine.functions.columns;
 
-import com.questdb.cairo.CairoConfiguration;
-import com.questdb.griffin.Function;
-import com.questdb.griffin.FunctionFactory;
-import com.questdb.griffin.engine.functions.constants.BooleanConstant;
-import com.questdb.std.ObjList;
+import com.questdb.common.Record;
+import com.questdb.griffin.engine.functions.DateFunction;
 
-public class LtDoubleCCFunctionFactory implements FunctionFactory {
+public class DateColumn extends DateFunction {
+    private final int columnIndex;
 
-    @Override
-    public String getSignature() {
-        return "<(!D!D)";
+    public DateColumn(int columnIndex) {
+        this.columnIndex = columnIndex;
     }
 
     @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
-
-        final double left = args.getQuick(0).getDouble(null);
-        if (Double.isNaN(left)) {
-            return BooleanConstant.FALSE;
-        }
-
-        final double right = args.getQuick(1).getDouble(null);
-        if (Double.isNaN(right)) {
-            return BooleanConstant.FALSE;
-        }
-
-        return BooleanConstant.of(left < right);
+    public long getDate(Record rec) {
+        return rec.getDate(columnIndex);
     }
 }

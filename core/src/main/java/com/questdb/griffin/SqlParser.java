@@ -21,7 +21,7 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.parser;
+package com.questdb.griffin;
 
 import com.questdb.cairo.CairoConfiguration;
 import com.questdb.cairo.FullTableFrameCursorFactory;
@@ -34,9 +34,7 @@ import com.questdb.cairo.sql.RowCursorFactory;
 import com.questdb.common.ColumnType;
 import com.questdb.common.RecordColumnMetadata;
 import com.questdb.common.RecordMetadata;
-import com.questdb.griffin.Function;
 import com.questdb.griffin.common.ExprNode;
-import com.questdb.griffin.common.PostOrderTreeTraversalAlgo;
 import com.questdb.griffin.engine.functions.Parameter;
 import com.questdb.griffin.engine.table.FilteredTableRecordCursorFactory;
 import com.questdb.griffin.engine.table.SymbolIndexFilteredRowCursorFactory;
@@ -49,17 +47,18 @@ import com.questdb.griffin.lexer.model.IntrinsicValue;
 import com.questdb.griffin.lexer.model.QueryModel;
 import com.questdb.std.CharSequenceObjHashMap;
 
+import java.util.ServiceLoader;
+
 public class SqlParser {
     private final SqlLexerOptimiser sqlLexer;
     private final WhereClauseParser filterAnalyser = new WhereClauseParser();
-    private final PostOrderTreeTraversalAlgo traversalAlgo = new PostOrderTreeTraversalAlgo();
     private final FunctionParser functionParser;
     private final CairoEngine engine;
 
     public SqlParser(CairoEngine engine, CairoConfiguration configuration) {
         this.engine = engine;
         this.sqlLexer = new SqlLexerOptimiser(engine, configuration);
-        this.functionParser = new FunctionParser(traversalAlgo, configuration);
+        this.functionParser = new FunctionParser(configuration, ServiceLoader.load(FunctionFactory.class));
     }
 
     public RecordCursorFactory parseQuery(CharSequence query) throws ParserException {
@@ -154,7 +153,7 @@ public class SqlParser {
 
                 CharSequenceObjHashMap<Parameter> parameterMap = new CharSequenceObjHashMap<>();
                 if (intrinsicModel.filter != null) {
-                    filter = functionParser.buildFrom(intrinsicModel.filter, metadata, parameterMap);
+                    filter = functionParser.parseFunction(intrinsicModel.filter, metadata, parameterMap);
                 } else {
                     filter = null;
                 }

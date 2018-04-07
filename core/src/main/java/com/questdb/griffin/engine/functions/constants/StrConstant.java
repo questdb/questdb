@@ -31,7 +31,11 @@ public class StrConstant extends StrFunction {
     private final String value;
 
     public StrConstant(CharSequence value) {
-        this.value = Chars.toString(value, 1, value.length() - 1);
+        if (Chars.startsWith(value, '\'')) {
+            this.value = Chars.toString(value, 1, value.length() - 1);
+        } else {
+            this.value = Chars.toString(value);
+        }
     }
 
     @Override

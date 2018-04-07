@@ -31,17 +31,9 @@ import com.questdb.griffin.engine.functions.BooleanFunction;
 import com.questdb.std.ObjList;
 
 public class LtDoubleVVFunctionFactory implements FunctionFactory {
-
-    static final LtDoubleVVFunctionFactory FACTORY = new LtDoubleVVFunctionFactory();
-
-    @Override
-    public String getName() {
-        return "<";
-    }
-
     @Override
     public String getSignature() {
-        return "+D+D";
+        return "<(+D+D)";
     }
 
     @Override

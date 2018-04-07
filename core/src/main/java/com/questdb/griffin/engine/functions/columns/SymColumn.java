@@ -21,34 +21,20 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.engine.functions.lt;
+package com.questdb.griffin.engine.functions.columns;
 
-import com.questdb.cairo.CairoConfiguration;
-import com.questdb.griffin.Function;
-import com.questdb.griffin.FunctionFactory;
-import com.questdb.griffin.engine.functions.constants.BooleanConstant;
-import com.questdb.std.ObjList;
+import com.questdb.common.Record;
+import com.questdb.griffin.engine.functions.SymFunction;
 
-public class LtDoubleCCFunctionFactory implements FunctionFactory {
+public class SymColumn extends SymFunction {
+    private final int columnIndex;
 
-    @Override
-    public String getSignature() {
-        return "<(!D!D)";
+    public SymColumn(int columnIndex) {
+        this.columnIndex = columnIndex;
     }
 
     @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
-
-        final double left = args.getQuick(0).getDouble(null);
-        if (Double.isNaN(left)) {
-            return BooleanConstant.FALSE;
-        }
-
-        final double right = args.getQuick(1).getDouble(null);
-        if (Double.isNaN(right)) {
-            return BooleanConstant.FALSE;
-        }
-
-        return BooleanConstant.of(left < right);
+    public CharSequence getSym(Record rec) {
+        return rec.getSym(columnIndex);
     }
 }

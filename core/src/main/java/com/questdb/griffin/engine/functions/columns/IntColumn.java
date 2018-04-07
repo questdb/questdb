@@ -21,15 +21,20 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin;
+package com.questdb.griffin.engine.functions.columns;
 
-import com.questdb.griffin.engine.Signature;
-import com.questdb.std.ObjList;
+import com.questdb.common.Record;
+import com.questdb.griffin.engine.functions.IntFunction;
 
-public interface FunctionFactoryService {
-    void export(ObjList<FunctionFactory> factories);
+public class IntColumn extends IntFunction {
+    private final int columnIndex;
 
-    default Signature sig() {
-        return new Signature();
+    public IntColumn(int columnIndex) {
+        this.columnIndex = columnIndex;
+    }
+
+    @Override
+    public int getInt(Record rec) {
+        return rec.getInt(columnIndex);
     }
 }

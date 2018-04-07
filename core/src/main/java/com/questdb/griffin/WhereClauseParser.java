@@ -21,7 +21,7 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.parser;
+package com.questdb.griffin;
 
 import com.questdb.common.ColumnType;
 import com.questdb.common.RecordColumnMetadata;

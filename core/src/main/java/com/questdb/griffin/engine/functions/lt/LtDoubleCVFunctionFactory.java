@@ -33,16 +33,9 @@ import com.questdb.std.ObjList;
 
 public class LtDoubleCVFunctionFactory implements FunctionFactory {
 
-    static final LtDoubleCVFunctionFactory FACTORY = new LtDoubleCVFunctionFactory();
-
-    @Override
-    public String getName() {
-        return "<";
-    }
-
     @Override
     public String getSignature() {
-        return "!D+D";
+        return "<(!D+D)";
     }
 
     @Override

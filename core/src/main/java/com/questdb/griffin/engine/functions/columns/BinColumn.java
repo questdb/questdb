@@ -21,18 +21,21 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.engine.functions.lt;
+package com.questdb.griffin.engine.functions.columns;
 
-import com.questdb.griffin.FunctionFactory;
-import com.questdb.griffin.FunctionFactoryService;
-import com.questdb.std.ObjList;
+import com.questdb.common.Record;
+import com.questdb.griffin.engine.functions.BinFunction;
+import com.questdb.std.BinarySequence;
 
-public class LtFunctionFactoryService implements FunctionFactoryService {
+public class BinColumn extends BinFunction {
+    private final int columnIndex;
+
+    public BinColumn(int columnIndex) {
+        this.columnIndex = columnIndex;
+    }
+
     @Override
-    public void export(ObjList<FunctionFactory> m) {
-        m.add(LtDoubleVCFunctionFactory.FACTORY);
-        m.add(LtDoubleCVFunctionFactory.FACTORY);
-        m.add(LtDoubleVVFunctionFactory.FACTORY);
-        m.add(LtDoubleCCFunctionFactory.FACTORY);
+    public BinarySequence getBin(Record rec) {
+        return rec.getBin2(columnIndex);
     }
 }

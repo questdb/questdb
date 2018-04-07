@@ -21,7 +21,7 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.parser;
+package com.questdb.griffin;
 
 import com.questdb.cairo.*;
 import com.questdb.cairo.sql.CairoEngine;
@@ -29,7 +29,6 @@ import com.questdb.cairo.sql.RecordCursor;
 import com.questdb.cairo.sql.RecordCursorFactory;
 import com.questdb.common.ColumnType;
 import com.questdb.common.PartitionBy;
-import com.questdb.griffin.engine.FunctionRepository;
 import com.questdb.griffin.lexer.ParserException;
 import com.questdb.std.Rnd;
 import org.junit.Test;
@@ -88,8 +87,6 @@ public class SqlParserTest extends AbstractCairoTest {
             model.col("value", ColumnType.DOUBLE);
             CairoTestUtils.create(model);
         }
-
-        FunctionRepository.load();
 
         final int N = 20;
         final String[] symbols = {"ABC", "CDE", "EFG"};

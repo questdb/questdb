@@ -21,7 +21,7 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.parser;
+package com.questdb.griffin;
 
 import com.questdb.cairo.AbstractCairoTest;
 import com.questdb.cairo.CairoTestUtils;

@@ -27,14 +27,6 @@ import com.questdb.cairo.CairoConfiguration;
 import com.questdb.std.ObjList;
 
 public interface FunctionFactory {
-    /**
-     * Name of function this factory implements. Like in Java itself functions can be overloaded, e.g.
-     * same name can support multiple signatures. Together with signature name has to be unique.
-     *
-     * @return name of function cannot contain "special" characters, such as ',' or '.' or brackets etc.
-     */
-    String getName();
-
     String getSignature();
 
     Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration);

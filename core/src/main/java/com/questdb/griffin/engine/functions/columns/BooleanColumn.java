@@ -21,44 +21,20 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.engine.functions.lt;
+package com.questdb.griffin.engine.functions.columns;
 
-import com.questdb.cairo.CairoConfiguration;
 import com.questdb.common.Record;
-import com.questdb.griffin.Function;
-import com.questdb.griffin.FunctionFactory;
 import com.questdb.griffin.engine.functions.BooleanFunction;
-import com.questdb.griffin.engine.functions.constants.BooleanConstant;
-import com.questdb.std.ObjList;
 
-public class LtDoubleVCFunctionFactory implements FunctionFactory {
+public class BooleanColumn extends BooleanFunction {
+    private final int columnIndex;
 
-    @Override
-    public String getSignature() {
-        return "<(+D!D)";
+    public BooleanColumn(int columnIndex) {
+        this.columnIndex = columnIndex;
     }
 
     @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
-        double right = args.getQuick(1).getDouble(null);
-        if (Double.isNaN(right)) {
-            return BooleanConstant.FALSE;
-        }
-        return new FuncVC(args.getQuick(0), right);
-    }
-
-    private static class FuncVC extends BooleanFunction {
-        private final Function left;
-        private final double right;
-
-        public FuncVC(Function left, double right) {
-            this.left = left;
-            this.right = right;
-        }
-
-        @Override
-        public boolean getBool(Record rec) {
-            return left.getDouble(rec) < right;
-        }
+    public boolean getBool(Record rec) {
+        return rec.getBool(columnIndex);
     }
 }
