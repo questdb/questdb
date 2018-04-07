@@ -23,7 +23,7 @@
 
 package com.questdb.griffin.engine.functions.constants;
 
-import com.questdb.common.Record;
+import com.questdb.cairo.sql.Record;
 import com.questdb.griffin.engine.functions.IntFunction;
 
 public class IntConstant extends IntFunction {

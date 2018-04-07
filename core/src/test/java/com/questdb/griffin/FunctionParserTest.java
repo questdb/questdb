@@ -25,8 +25,8 @@ package com.questdb.griffin;
 
 import com.questdb.cairo.AbstractCairoTest;
 import com.questdb.cairo.CairoConfiguration;
+import com.questdb.cairo.sql.Record;
 import com.questdb.common.ColumnType;
-import com.questdb.common.Record;
 import com.questdb.common.RecordColumnMetadata;
 import com.questdb.common.SymbolTable;
 import com.questdb.griffin.common.ExprNode;

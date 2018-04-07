@@ -23,7 +23,7 @@
 
 package com.questdb.griffin.engine.functions.constants;
 
-import com.questdb.common.Record;
+import com.questdb.cairo.sql.Record;
 import com.questdb.griffin.engine.functions.DoubleFunction;
 
 public class DoubleConstant extends DoubleFunction {

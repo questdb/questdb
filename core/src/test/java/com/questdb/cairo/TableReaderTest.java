@@ -23,10 +23,10 @@
 
 package com.questdb.cairo;
 
+import com.questdb.cairo.sql.Record;
 import com.questdb.cairo.sql.RecordCursor;
 import com.questdb.common.ColumnType;
 import com.questdb.common.PartitionBy;
-import com.questdb.common.Record;
 import com.questdb.std.*;
 import com.questdb.std.microtime.DateFormatUtils;
 import com.questdb.std.microtime.Dates;
@@ -167,7 +167,7 @@ public class TableReaderTest extends AbstractCairoTest {
         }
 
         Assert.assertEquals(TableUtils.NULL_LEN, r.getBinLen(9));
-        Assert.assertNull(r.getBin2(9));
+        Assert.assertNull(r.getBin(9));
 
         if (exp.nextBoolean()) {
             assertStrColumn(exp.nextChars(10), r, 6);
@@ -505,7 +505,7 @@ public class TableReaderTest extends AbstractCairoTest {
         Assert.assertNull(r.getSym(18));
         Assert.assertEquals(Numbers.LONG_NaN, r.getLong(19));
         Assert.assertEquals(Numbers.LONG_NaN, r.getDate(20));
-        Assert.assertNull(r.getBin2(21));
+        Assert.assertNull(r.getBin(21));
         Assert.assertEquals(TableUtils.NULL_LEN, r.getBinLen(21));
     };
     private static final RecordAssert BATCH5_BEFORE_ASSERTER = (r, rnd, ts, blob) -> {
@@ -2764,7 +2764,7 @@ public class TableReaderTest extends AbstractCairoTest {
         if (exp.nextBoolean()) {
             exp.nextChars(blob, blobLen / 2);
             Assert.assertEquals(blobLen, r.getBinLen(index));
-            BinarySequence sq = r.getBin2(index);
+            BinarySequence sq = r.getBin(index);
             for (int l = 0; l < blobLen; l++) {
                 byte b = sq.byteAt(l);
                 boolean result = Unsafe.getUnsafe().getByte(blob + l) != b;

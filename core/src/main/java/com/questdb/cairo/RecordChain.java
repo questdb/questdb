@@ -23,7 +23,11 @@
 
 package com.questdb.cairo;
 
-import com.questdb.common.*;
+import com.questdb.cairo.sql.Record;
+import com.questdb.cairo.sql.RecordCursor;
+import com.questdb.common.ColumnType;
+import com.questdb.common.RecordMetadata;
+import com.questdb.common.StorageFacade;
 import com.questdb.std.BinarySequence;
 import com.questdb.std.Mutable;
 import com.questdb.std.Unsafe;
@@ -101,8 +105,18 @@ public class RecordChain implements Closeable, RecordCursor, Mutable {
     }
 
     @Override
+    public RecordMetadata getMetadata() {
+        return metadata;
+    }
+
+    @Override
     public Record getRecord() {
         return record;
+    }
+
+    @Override
+    public StorageFacade getStorageFacade() {
+        return null;
     }
 
     @Override
@@ -111,8 +125,27 @@ public class RecordChain implements Closeable, RecordCursor, Mutable {
     }
 
     @Override
-    public StorageFacade getStorageFacade() {
-        return null;
+    public Record recordAt(long row) {
+        return record.of(rowToDataOffset(row));
+    }
+
+    @Override
+    public void recordAt(Record record, long row) {
+        ((RecordChainRecord) record).of(rowToDataOffset(row));
+    }
+
+    @Override
+    public void toTop() {
+        if (mem.getAppendOffset() == 0) {
+            nextRecordOffset = -1L;
+        } else {
+            nextRecordOffset = 0L;
+        }
+    }
+
+    @Override
+    public boolean hasNext() {
+        return nextRecordOffset != -1;
     }
 
     @Override
@@ -137,23 +170,18 @@ public class RecordChain implements Closeable, RecordCursor, Mutable {
         }
     }
 
-    @Override
-    public void releaseCursor() {
-        close();
+    public void putBool(boolean value) {
+        mem.putBool(value);
     }
 
-    @Override
-    public void toTop() {
-        if (mem.getAppendOffset() == 0) {
-            nextRecordOffset = -1L;
-        } else {
-            nextRecordOffset = 0L;
-        }
+    public void putInt(int value) {
+        mem.putInt(value);
     }
 
-    @Override
-    public boolean hasNext() {
-        return nextRecordOffset != -1;
+    public long putRecord(Record record, long prevRecordOffset) {
+        long offset = beginRecord(prevRecordOffset);
+        putRecord0(record);
+        return offset;
     }
 
     public void putStr(CharSequence value) {
@@ -169,30 +197,6 @@ public class RecordChain implements Closeable, RecordCursor, Mutable {
             varAppendOffset = mem.getAppendOffset();
             mem.jumpTo(offset);
         }
-    }
-
-    @Override
-    public Record recordAt(long row) {
-        return record.of(rowToDataOffset(row));
-    }
-
-    public void putBool(boolean value) {
-        mem.putBool(value);
-    }
-
-    public void putInt(int value) {
-        mem.putInt(value);
-    }
-
-    public long putRecord(Record record, long prevRecordOffset) {
-        long offset = beginRecord(prevRecordOffset);
-        putRecord0(record);
-        return offset;
-    }
-
-    @Override
-    public void recordAt(Record record, long row) {
-        ((RecordChainRecord) record).of(rowToDataOffset(row));
     }
 
     private static long rowToDataOffset(long row) {
@@ -245,8 +249,10 @@ public class RecordChain implements Closeable, RecordCursor, Mutable {
                     putDate(record.getLong(i));
                     break;
                 case ColumnType.DATE:
-                case ColumnType.TIMESTAMP:
                     putLong(record.getDate(i));
+                    break;
+                case ColumnType.TIMESTAMP:
+                    putLong(record.getTimestamp(i));
                     break;
                 case ColumnType.SHORT:
                     putShort(record.getShort(i));
@@ -261,7 +267,7 @@ public class RecordChain implements Closeable, RecordCursor, Mutable {
                     putStr(record.getFlyweightStr(i));
                     break;
                 case ColumnType.BINARY:
-                    putBin(record.getBin2(i));
+                    putBin(record.getBin(i));
                     break;
                 default:
                     throw CairoException.instance(0).put("Unsupported type: ").put(ColumnType.nameOf(metadata.getColumnQuick(i).getType())).put(" [").put(metadata.getColumnQuick(i).getType()).put(']');
@@ -278,12 +284,7 @@ public class RecordChain implements Closeable, RecordCursor, Mutable {
         long baseOffset;
 
         @Override
-        public byte getByte(int col) {
-            return mem.getByte(fixedWithColumnOffset(col));
-        }
-
-        @Override
-        public BinarySequence getBin2(int col) {
+        public BinarySequence getBin(int col) {
             long offset = varWidthColumnOffset(col);
             return offset == -1 ? null : mem.getBin(offset);
         }
@@ -300,8 +301,8 @@ public class RecordChain implements Closeable, RecordCursor, Mutable {
         }
 
         @Override
-        public long getDate(int col) {
-            return mem.getLong(fixedWithColumnOffset(col));
+        public byte getByte(int col) {
+            return mem.getByte(fixedWithColumnOffset(col));
         }
 
         @Override

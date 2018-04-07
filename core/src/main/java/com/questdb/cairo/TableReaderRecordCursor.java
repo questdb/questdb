@@ -23,8 +23,8 @@
 
 package com.questdb.cairo;
 
+import com.questdb.cairo.sql.Record;
 import com.questdb.cairo.sql.RecordCursor;
-import com.questdb.common.Record;
 import com.questdb.common.RecordMetadata;
 import com.questdb.common.StorageFacade;
 import com.questdb.std.Rows;

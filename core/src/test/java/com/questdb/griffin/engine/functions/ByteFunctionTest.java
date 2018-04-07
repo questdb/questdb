@@ -23,7 +23,7 @@
 
 package com.questdb.griffin.engine.functions;
 
-import com.questdb.common.Record;
+import com.questdb.cairo.sql.Record;
 import org.junit.Test;
 
 public class ByteFunctionTest {

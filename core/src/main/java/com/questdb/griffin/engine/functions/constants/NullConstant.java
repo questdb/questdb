@@ -23,7 +23,7 @@
 
 package com.questdb.griffin.engine.functions.constants;
 
-import com.questdb.common.Record;
+import com.questdb.cairo.sql.Record;
 import com.questdb.griffin.engine.functions.StrFunction;
 import com.questdb.std.str.CharSink;
 
@@ -46,16 +46,16 @@ public class NullConstant extends StrFunction {
     }
 
     @Override
+    public boolean isConstant() {
+        return true;
+    }
+
+    @Override
     public void getStr(Record rec, CharSink sink) {
     }
 
     @Override
     public int getStrLen(Record rec) {
         return -1;
-    }
-
-    @Override
-    public boolean isConstant() {
-        return true;
     }
 }

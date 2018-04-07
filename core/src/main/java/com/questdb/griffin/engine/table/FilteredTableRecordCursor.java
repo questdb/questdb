@@ -24,11 +24,7 @@
 package com.questdb.griffin.engine.table;
 
 import com.questdb.cairo.TableReaderRecord;
-import com.questdb.cairo.sql.DataFrame;
-import com.questdb.cairo.sql.DataFrameCursor;
-import com.questdb.cairo.sql.RecordCursor;
-import com.questdb.cairo.sql.RowCursorFactory;
-import com.questdb.common.Record;
+import com.questdb.cairo.sql.*;
 import com.questdb.common.RecordMetadata;
 import com.questdb.common.RowCursor;
 import com.questdb.common.StorageFacade;

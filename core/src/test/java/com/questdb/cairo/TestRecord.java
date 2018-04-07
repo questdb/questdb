@@ -23,7 +23,7 @@
 
 package com.questdb.cairo;
 
-import com.questdb.common.Record;
+import com.questdb.cairo.sql.Record;
 import com.questdb.std.BinarySequence;
 import com.questdb.std.Rnd;
 
@@ -32,12 +32,7 @@ public class TestRecord implements Record {
     final ArrayBinarySequence abs = new ArrayBinarySequence().of(new byte[1024]);
 
     @Override
-    public byte getByte(int col) {
-        return rnd.nextByte();
-    }
-
-    @Override
-    public BinarySequence getBin2(int col) {
+    public BinarySequence getBin(int col) {
         if (rnd.nextPositiveInt() % 32 == 0) {
             return null;
         }
@@ -50,6 +45,11 @@ public class TestRecord implements Record {
     @Override
     public boolean getBool(int col) {
         return rnd.nextBoolean();
+    }
+
+    @Override
+    public byte getByte(int col) {
+        return rnd.nextByte();
     }
 
     @Override
@@ -125,5 +125,4 @@ public class TestRecord implements Record {
             return this;
         }
     }
-
 }

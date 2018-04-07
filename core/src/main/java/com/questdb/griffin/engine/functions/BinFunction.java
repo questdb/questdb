@@ -24,13 +24,12 @@
 package com.questdb.griffin.engine.functions;
 
 
+import com.questdb.cairo.sql.Record;
 import com.questdb.common.ColumnType;
-import com.questdb.common.Record;
 import com.questdb.griffin.Function;
 import com.questdb.std.str.CharSink;
 
 public abstract class BinFunction implements Function {
-
     @Override
     public boolean getBool(Record rec) {
         throw new UnsupportedOperationException();
@@ -93,6 +92,11 @@ public abstract class BinFunction implements Function {
 
     @Override
     public CharSequence getSym(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public long getTimestamp(Record rec) {
         throw new UnsupportedOperationException();
     }
 

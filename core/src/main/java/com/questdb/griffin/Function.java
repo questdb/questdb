@@ -23,7 +23,7 @@
 
 package com.questdb.griffin;
 
-import com.questdb.common.Record;
+import com.questdb.cairo.sql.Record;
 import com.questdb.std.BinarySequence;
 import com.questdb.std.str.CharSink;
 
@@ -56,6 +56,8 @@ public interface Function {
     int getStrLen(Record rec);
 
     CharSequence getSym(Record rec);
+
+    long getTimestamp(Record rec);
 
     int getType();
 

@@ -23,7 +23,7 @@
 
 package com.questdb.cairo;
 
-import com.questdb.common.Record;
+import com.questdb.cairo.sql.Record;
 import com.questdb.std.BinarySequence;
 import com.questdb.std.Numbers;
 import com.questdb.std.Rows;
@@ -35,16 +35,7 @@ public class TableReaderRecord implements Record {
     private TableReader reader;
 
     @Override
-    public byte getByte(int col) {
-        long index = getIndex(col);
-        if (index < 0) {
-            return 0;
-        }
-        return colA(col).getByte(index);
-    }
-
-    @Override
-    public BinarySequence getBin2(int col) {
+    public BinarySequence getBin(int col) {
         long index = getIndex(col);
         if (index < 0) {
             return null;
@@ -68,12 +59,12 @@ public class TableReaderRecord implements Record {
     }
 
     @Override
-    public long getDate(int col) {
+    public byte getByte(int col) {
         long index = getIndex(col);
         if (index < 0) {
-            return Numbers.LONG_NaN;
+            return 0;
         }
-        return colA(col).getLong(index * 8);
+        return colA(col).getByte(index);
     }
 
     @Override

@@ -23,7 +23,7 @@
 
 package com.questdb.griffin.engine.functions.columns;
 
-import com.questdb.common.Record;
+import com.questdb.cairo.sql.Record;
 import com.questdb.griffin.engine.functions.SymFunction;
 
 public class SymColumn extends SymFunction {

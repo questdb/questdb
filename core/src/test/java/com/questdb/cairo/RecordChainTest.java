@@ -23,8 +23,8 @@
 
 package com.questdb.cairo;
 
+import com.questdb.cairo.sql.Record;
 import com.questdb.common.ColumnType;
-import com.questdb.common.Record;
 import com.questdb.ql.CollectionRecordMetadata;
 import com.questdb.ql.RecordColumnMetadataImpl;
 import com.questdb.std.BinarySequence;
@@ -33,7 +33,7 @@ import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class RecordChainTest {
+public class RecordChainTest extends AbstractCairoTest {
     public static final long SIZE_4M = 4 * 1024 * 1024L;
     private static final CollectionRecordMetadata metadata;
 
@@ -41,11 +41,10 @@ public class RecordChainTest {
     public void testClear() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             Record record = new TestRecord();
-            final int N = 10000;
             try (RecordChain chain = new RecordChain(metadata, SIZE_4M)) {
 
                 Assert.assertFalse(chain.hasNext());
-                populateChain(chain, record, N);
+                populateChain(chain, record);
                 chain.toTop();
                 Assert.assertTrue(chain.hasNext());
                 chain.clear();
@@ -114,14 +113,14 @@ public class RecordChainTest {
 
     @Test
     public void testReuseWithReleaseCursor() throws Exception {
-        testChainReuseWithClearFunction(RecordChain::releaseCursor);
+        testChainReuseWithClearFunction(RecordChain::close);
     }
 
     @Test
     public void testWriteAndRead() throws Exception {
         TestUtils.assertMemoryLeak(
                 () -> {
-                    final int N = 100000;
+                    final int N = 1000000;
                     Record record = new TestRecord();
 
 //        try (RecordList records = new RecordList(metadata, 1024 * 1024 * 1024)) {
@@ -168,9 +167,9 @@ public class RecordChainTest {
         });
     }
 
-    private static void populateChain(RecordChain chain, Record record, int count) {
+    private static void populateChain(RecordChain chain, Record record) {
         long o = -1L;
-        for (int i = 0; i < count; i++) {
+        for (int i = 0; i < 10000; i++) {
             o = chain.putRecord(record, o);
         }
     }
@@ -200,8 +199,10 @@ public class RecordChainTest {
                     Assert.assertEquals(expected.getLong(i), actual.getLong(i));
                     break;
                 case ColumnType.DATE:
-                case ColumnType.TIMESTAMP:
                     Assert.assertEquals(expected.getDate(i), actual.getDate(i));
+                    break;
+                case ColumnType.TIMESTAMP:
+                    Assert.assertEquals(expected.getTimestamp(i), actual.getTimestamp(i));
                     break;
                 case ColumnType.BOOLEAN:
                     Assert.assertEquals(expected.getBool(i), actual.getBool(i));
@@ -232,15 +233,15 @@ public class RecordChainTest {
                     }
                     break;
                 case ColumnType.BINARY:
-                    BinarySequence bs = expected.getBin2(i);
-                    BinarySequence actBs = actual.getBin2(i);
+                    BinarySequence bs = expected.getBin(i);
+                    BinarySequence actBs = actual.getBin(i);
                     if (bs == null) {
                         Assert.assertNull(actBs);
                     } else {
                         Assert.assertEquals(bs.length(), actBs.length());
                         Assert.assertEquals(bs.length(), actual.getBinLen(i));
                         for (long l = 0, z = bs.length(); l < z; l++) {
-                            Assert.assertTrue(bs.byteAt(l) == actBs.byteAt(l));
+                            Assert.assertEquals(bs.byteAt(l), actBs.byteAt(l));
                         }
                     }
                     break;
@@ -258,12 +259,12 @@ public class RecordChainTest {
             final int N = 10000;
             try (RecordChain chain = new RecordChain(metadata, 4 * 1024 * 1024L)) {
 
-                populateChain(chain, record, N);
+                populateChain(chain, record);
                 assertChain(chain, expected, N);
 
                 clear.clear(chain);
 
-                populateChain(chain, record, N);
+                populateChain(chain, record);
                 assertChain(chain, expected, N);
             }
         });

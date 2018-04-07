@@ -21,88 +21,78 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.engine.functions;
+package com.questdb.cairo.sql;
 
-import com.questdb.cairo.sql.Record;
-import com.questdb.common.ColumnType;
-import com.questdb.griffin.Function;
 import com.questdb.std.BinarySequence;
 import com.questdb.std.str.CharSink;
 
-public abstract class ByteFunction implements Function {
+public interface Record {
 
-    @Override
-    public final BinarySequence getBin(Record rec) {
+    default BinarySequence getBin(int col) {
         throw new UnsupportedOperationException();
     }
 
-    @Override
-    public final boolean getBool(Record rec) {
+    default long getBinLen(int col) {
         throw new UnsupportedOperationException();
     }
 
-    @Override
-    public final long getDate(Record rec) {
+    default boolean getBool(int col) {
         throw new UnsupportedOperationException();
     }
 
-    @Override
-    public double getDouble(Record rec) {
-        return getByte(rec);
-    }
-
-    @Override
-    public float getFloat(Record rec) {
-        return getByte(rec);
-    }
-
-    @Override
-    public int getInt(Record rec) {
-        return getByte(rec);
-    }
-
-    @Override
-    public long getLong(Record rec) {
-        return getByte(rec);
-    }
-
-    @Override
-    public short getShort(Record rec) {
-        return getByte(rec);
-    }
-
-    @Override
-    public final CharSequence getStr(Record rec) {
+    default byte getByte(int col) {
         throw new UnsupportedOperationException();
     }
 
-    @Override
-    public final void getStr(Record rec, CharSink sink) {
+    default long getDate(int col) {
+        return getLong(col);
+    }
+
+    default double getDouble(int col) {
         throw new UnsupportedOperationException();
     }
 
-    @Override
-    public final CharSequence getStrB(Record rec) {
+    default float getFloat(int col) {
         throw new UnsupportedOperationException();
     }
 
-    @Override
-    public final int getStrLen(Record rec) {
+    default CharSequence getFlyweightStr(int col) {
         throw new UnsupportedOperationException();
     }
 
-    @Override
-    public final CharSequence getSym(Record rec) {
+    default CharSequence getFlyweightStrB(int col) {
         throw new UnsupportedOperationException();
     }
 
-    @Override
-    public final long getTimestamp(Record rec) {
+    default int getInt(int col) {
         throw new UnsupportedOperationException();
     }
 
-    @Override
-    public final int getType() {
-        return ColumnType.BYTE;
+    default long getLong(int col) {
+        throw new UnsupportedOperationException();
+    }
+
+    default long getRowId() {
+        throw new UnsupportedOperationException();
+    }
+
+    default short getShort(int col) {
+        throw new UnsupportedOperationException();
+    }
+
+    default void getStr(int col, CharSink sink) {
+        sink.put(getFlyweightStr(col));
+    }
+
+    default int getStrLen(int col) {
+        throw new UnsupportedOperationException();
+    }
+
+    default CharSequence getSym(int col) {
+        throw new UnsupportedOperationException();
+    }
+
+    default long getTimestamp(int col) {
+        return getLong(col);
     }
 }

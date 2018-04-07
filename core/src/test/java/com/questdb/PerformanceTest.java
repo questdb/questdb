@@ -177,7 +177,7 @@ public class PerformanceTest extends AbstractTest {
 
                 com.questdb.cairo.sql.RecordCursor cursor = reader.getCursor();
                 while (cursor.hasNext()) {
-                    Record r = cursor.next();
+                    com.questdb.cairo.sql.Record r = cursor.next();
                     r.getDate(0);
                     r.getSym(1);
                     r.getDouble(2);

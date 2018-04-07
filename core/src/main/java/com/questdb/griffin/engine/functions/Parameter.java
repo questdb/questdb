@@ -23,7 +23,7 @@
 
 package com.questdb.griffin.engine.functions;
 
-import com.questdb.common.Record;
+import com.questdb.cairo.sql.Record;
 import com.questdb.griffin.Function;
 import com.questdb.std.BinarySequence;
 import com.questdb.std.str.CharSink;
@@ -99,6 +99,11 @@ public class Parameter implements Function {
     @Override
     public CharSequence getSym(Record rec) {
         return null;
+    }
+
+    @Override
+    public long getTimestamp(Record rec) {
+        return 0;
     }
 
     @Override

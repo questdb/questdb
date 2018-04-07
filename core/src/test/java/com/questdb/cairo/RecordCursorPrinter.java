@@ -23,9 +23,9 @@
 
 package com.questdb.cairo;
 
+import com.questdb.cairo.sql.Record;
 import com.questdb.cairo.sql.RecordCursor;
 import com.questdb.common.ColumnType;
-import com.questdb.common.Record;
 import com.questdb.common.RecordMetadata;
 import com.questdb.std.Numbers;
 import com.questdb.std.str.CharSink;
@@ -69,7 +69,7 @@ public class RecordCursorPrinter {
                 DateFormatUtils.appendDateTime(sink, r.getDate(i));
                 break;
             case ColumnType.TIMESTAMP:
-                com.questdb.std.microtime.DateFormatUtils.appendDateTime(sink, r.getDate(i));
+                com.questdb.std.microtime.DateFormatUtils.appendDateTime(sink, r.getTimestamp(i));
                 break;
             case ColumnType.DOUBLE:
                 Numbers.append(sink, r.getDouble(i), 12);
