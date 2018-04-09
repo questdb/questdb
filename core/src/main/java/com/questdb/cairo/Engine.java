@@ -188,7 +188,7 @@ public class Engine implements Closeable, CairoEngine {
         private long last = 0;
 
         public WriterMaintenanceJob(CairoConfiguration configuration) {
-            this.clock = configuration.getClock();
+            this.clock = configuration.getMicrosecondClock();
             this.checkInterval = configuration.getIdleCheckInterval() * 1000;
         }
 

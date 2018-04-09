@@ -28,6 +28,8 @@ import com.questdb.std.FilesFacade;
 import com.questdb.std.FilesFacadeImpl;
 import com.questdb.std.microtime.MicrosecondClock;
 import com.questdb.std.microtime.MicrosecondClockImpl;
+import com.questdb.std.time.MillisecondClock;
+import com.questdb.std.time.MillisecondClockImpl;
 
 public class DefaultCairoConfiguration implements CairoConfiguration {
 
@@ -38,8 +40,13 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public MicrosecondClock getClock() {
+    public MicrosecondClock getMicrosecondClock() {
         return MicrosecondClockImpl.INSTANCE;
+    }
+
+    @Override
+    public MillisecondClock getMillisecondClock() {
+        return MillisecondClockImpl.INSTANCE;
     }
 
     @Override

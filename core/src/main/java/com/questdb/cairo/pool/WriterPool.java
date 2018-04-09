@@ -80,7 +80,7 @@ public class WriterPool extends AbstractPool implements ResourcePool<TableWriter
     public WriterPool(CairoConfiguration configuration) {
         super(configuration, configuration.getInactiveWriterTTL());
         this.configuration = configuration;
-        this.clock = configuration.getClock();
+        this.clock = configuration.getMicrosecondClock();
         this.root = configuration.getRoot();
         notifyListener(Thread.currentThread().getId(), null, PoolListener.EV_POOL_OPEN);
     }
@@ -385,7 +385,7 @@ public class WriterPool extends AbstractPool implements ResourcePool<TableWriter
             }
 
             e.owner = UNALLOCATED;
-            e.lastReleaseTime = configuration.getClock().getTicks();
+            e.lastReleaseTime = configuration.getMicrosecondClock().getTicks();
             notifyListener(thread, name, PoolListener.EV_RETURN);
         } else {
             LOG.error().$('\'').$(name).$("' has no owner").$();

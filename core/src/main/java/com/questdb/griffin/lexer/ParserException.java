@@ -83,6 +83,11 @@ public class ParserException extends Exception implements Sinkable {
         return this;
     }
 
+    public ParserException put(int value) {
+        message.put(value);
+        return this;
+    }
+
     public ParserException put(Sinkable sinkable) {
         message.put(sinkable);
         return this;

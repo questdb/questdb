@@ -21,34 +21,25 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.engine.functions.lt;
+package com.questdb.griffin.engine.functions.constants;
 
-import com.questdb.cairo.CairoConfiguration;
-import com.questdb.griffin.Function;
-import com.questdb.griffin.FunctionFactory;
-import com.questdb.griffin.engine.functions.constants.BooleanConstant;
-import com.questdb.std.ObjList;
+import com.questdb.cairo.sql.Record;
+import com.questdb.griffin.engine.functions.ByteFunction;
 
-public class LtDoubleCCFunctionFactory implements FunctionFactory {
+public class ByteConstant extends ByteFunction {
+    private final byte value;
 
-    @Override
-    public String getSignature() {
-        return "<(dd)";
+    public ByteConstant(byte value) {
+        this.value = value;
     }
 
     @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
+    public byte getByte(Record rec) {
+        return value;
+    }
 
-        final double left = args.getQuick(0).getDouble(null);
-        if (Double.isNaN(left)) {
-            return BooleanConstant.FALSE;
-        }
-
-        final double right = args.getQuick(1).getDouble(null);
-        if (Double.isNaN(right)) {
-            return BooleanConstant.FALSE;
-        }
-
-        return BooleanConstant.of(left < right);
+    @Override
+    public boolean isConstant() {
+        return true;
     }
 }

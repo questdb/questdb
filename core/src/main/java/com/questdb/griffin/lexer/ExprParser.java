@@ -176,7 +176,15 @@ public class ExprParser {
                 case '\'':
                 case 'N':
                 case 'n':
-                    if ((thisChar != 'N' && thisChar != 'n') || Chars.equals("NaN", tok) || Chars.equals("null", tok)) {
+                case 't':
+                case 'T':
+                case 'f':
+                case 'F':
+                    if ((thisChar != 'N' && thisChar != 'n' && thisChar != 't' && thisChar != 'T' && thisChar != 'f' && thisChar != 'F')
+                            || Chars.equalsIgnoreCase(tok, "nan")
+                            || Chars.equalsIgnoreCase(tok, "null")
+                            || Chars.equalsIgnoreCase(tok, "true")
+                            || Chars.equalsIgnoreCase(tok, "false")) {
                         thisBranch = BRANCH_CONSTANT;
                         // If the token is a number, then add it to the output queue.
                         listener.onNode(exprNodePool.next().of(ExprNode.CONSTANT, lexer.toImmutable(tok), 0, lexer.position()));

@@ -24,22 +24,18 @@
 package com.questdb.griffin.engine.functions;
 
 import com.questdb.cairo.sql.Record;
+import com.questdb.std.BinarySequence;
 import org.junit.Test;
 
-public class ByteFunctionTest {
+public class BinFunctionTest {
     // assert that all type casts that are not possible will throw exception
 
-    private static final ByteFunction function = new ByteFunction() {
+    private static final BinFunction function = new BinFunction() {
         @Override
-        public byte getByte(Record rec) {
-            return 0;
+        public BinarySequence getBin(Record rec) {
+            return null;
         }
     };
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetBin() {
-        function.getBin(null);
-    }
 
     @Test(expected = UnsupportedOperationException.class)
     public void testGetBool() {
@@ -47,8 +43,38 @@ public class ByteFunctionTest {
     }
 
     @Test(expected = UnsupportedOperationException.class)
+    public void testGetByte() {
+        function.getByte(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
     public void testGetDate() {
         function.getDate(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetDouble() {
+        function.getDouble(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetFloat() {
+        function.getFloat(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetInt() {
+        function.getInt(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetLong() {
+        function.getLong(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetShort() {
+        function.getShort(null);
     }
 
     @Test(expected = UnsupportedOperationException.class)

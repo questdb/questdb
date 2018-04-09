@@ -98,7 +98,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
             for (int n = 0; n < argCount; n++) {
                 Function c = stack.poll();
                 if (c == null) {
-                    throw ParserException.$(node.position, "Too few arguments");
+                    throw ParserException.position(node.position).put("too few arguments [found=").put(n).put(",expected=").put(argCount).put(']');
                 }
                 mutableArgs.setQuick(n, c);
             }
@@ -112,36 +112,105 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
         ex.put(": ");
         ex.put(node.token);
         ex.put('(');
-        for (int i = 0, n = args.size(); i < n; i++) {
-            if (i > 0) {
-                ex.put(',');
+        if (args != null) {
+            for (int i = 0, n = args.size(); i < n; i++) {
+                if (i > 0) {
+                    ex.put(',');
+                }
+                ex.put(ColumnType.nameOf(args.getQuick(i).getType()));
             }
-            ex.put(ColumnType.nameOf(args.getQuick(i).getType()));
         }
         ex.put(')');
         return ex;
     }
 
-    private boolean functionNameIsValid(String sig, int end) {
-        int c = sig.charAt(0);
-        if (c >= '0' && c <= '9') {
-            return false;
+    private static int validateSignatureAndGetNameSeparator(String sig) throws ParserException {
+        int openBraceIndex = sig.indexOf('(');
+        if (openBraceIndex == -1) {
+            throw ParserException.$(0, "open brace expected");
         }
 
-        for (int i = 0; i < end; i++) {
-            if (invalidFunctionNameChars.contains(sig.charAt(i))) {
-                return false;
+        if (openBraceIndex == 0) {
+            throw ParserException.$(0, "empty function name");
+        }
+
+        if (sig.charAt(sig.length() - 1) != ')') {
+            throw ParserException.$(0, "close brace expected");
+        }
+
+        int c = sig.charAt(0);
+        if (c >= '0' && c <= '9') {
+            throw ParserException.$(0, "name must not start with digit");
+        }
+
+        for (int i = 0; i < openBraceIndex; i++) {
+            char cc = sig.charAt(i);
+            if (invalidFunctionNameChars.contains(cc)) {
+                throw ParserException.position(0).put("invalid character: ").put(cc);
             }
         }
-        return true;
+
+        // validate data types
+        for (int i = openBraceIndex + 1, n = sig.length() - 1; i < n; i++) {
+            char cc = sig.charAt(i);
+            if (getArgType(cc) == -1) {
+                throw ParserException.position(0).put("illegal argument type: ").put(cc);
+            }
+        }
+        return openBraceIndex;
+    }
+
+    private static int getArgType(char c) {
+        int sigArgType;
+        switch (Character.toUpperCase(c)) {
+            case 'D':
+                sigArgType = ColumnType.DOUBLE;
+                break;
+            case 'B':
+                sigArgType = ColumnType.BYTE;
+                break;
+            case 'E':
+                sigArgType = ColumnType.SHORT;
+                break;
+            case 'F':
+                sigArgType = ColumnType.FLOAT;
+                break;
+            case 'I':
+                sigArgType = ColumnType.INT;
+                break;
+            case 'L':
+                sigArgType = ColumnType.LONG;
+                break;
+            case 'S':
+                sigArgType = ColumnType.STRING;
+                break;
+            case 'T':
+                sigArgType = ColumnType.BOOLEAN;
+                break;
+            case 'K':
+                sigArgType = ColumnType.SYMBOL;
+                break;
+            case 'M':
+                sigArgType = ColumnType.DATE;
+                break;
+            case 'N':
+                sigArgType = ColumnType.TIMESTAMP;
+                break;
+            case 'U':
+                sigArgType = ColumnType.BINARY;
+                break;
+            default:
+                sigArgType = -1;
+                break;
+        }
+        return sigArgType;
     }
 
     private Function getFunction(ExprNode node, ObjList<Function> args) throws ParserException {
         if (node.type == ExprNode.LAMBDA) {
             throw ParserException.$(node.position, "Cannot use lambda in this context");
         }
-        final Function f = getFunction0(node, args);
-        return f.isConstant() ? toConstant(f) : f;
+        return getFunction0(node, args);
     }
 
     private Function getFunction0(ExprNode node, ObjList<Function> args) throws ParserException {
@@ -150,14 +219,14 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
             throw invalidFunction("unknown function name", node, args);
         }
 
-        final int argCount = args.size();
+        final int argCount = args == null ? 0 : args.size();
         FunctionFactory candidate = null;
         int matchCount = 0;
         for (int i = 0, n = overload.size(); i < n; i++) {
             final FunctionFactory factory = overload.getQuick(i);
             final String signature = factory.getSignature();
             final int sigArgOffset = signature.indexOf('(') + 1;
-            final int sigArgCount = (signature.length() - 1 - sigArgOffset) / 2;
+            final int sigArgCount = signature.length() - 1 - sigArgOffset;
 
             if (argCount == 0 && sigArgCount == 0) {
                 // this is no-arg function, match right away
@@ -170,52 +239,14 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
 
                 for (int k = 0; k < argCount; k++) {
                     final Function arg = args.getQuick(k);
-                    final boolean sigArgConst = signature.charAt(sigArgOffset + k * 2) == '!';
-                    final int sigArgType;
+                    final char c = signature.charAt(sigArgOffset + k);
 
-                    switch (signature.charAt(sigArgOffset + k * 2 + 1)) {
-                        case 'D':
-                            sigArgType = ColumnType.DOUBLE;
-                            break;
-                        case 'B':
-                            sigArgType = ColumnType.BYTE;
-                            break;
-                        case 'E':
-                            sigArgType = ColumnType.SHORT;
-                            break;
-                        case 'F':
-                            sigArgType = ColumnType.FLOAT;
-                            break;
-                        case 'I':
-                            sigArgType = ColumnType.INT;
-                            break;
-                        case 'L':
-                            sigArgType = ColumnType.LONG;
-                            break;
-                        case 'S':
-                            sigArgType = ColumnType.STRING;
-                            break;
-                        case 'T':
-                            sigArgType = ColumnType.BOOLEAN;
-                            break;
-                        case 'K':
-                            sigArgType = ColumnType.SYMBOL;
-                            break;
-                        case 'M':
-                            sigArgType = ColumnType.DATE;
-                            break;
-                        case 'N':
-                            sigArgType = ColumnType.TIMESTAMP;
-                            break;
-                        default:
-                            sigArgType = -1;
-                            break;
-                    }
-
-                    if (sigArgConst && !arg.isConstant()) {
+                    if (Character.isLowerCase(c) && !arg.isConstant()) {
                         match = 0; // no match
                         break;
                     }
+
+                    final int sigArgType = getArgType(c);
 
                     if (sigArgType == arg.getType()) {
                         continue;
@@ -260,40 +291,32 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
         return candidate.newInstance(args, node.position, configuration);
     }
 
+    int getFunctionCount() {
+        return factories.size();
+    }
+
     private void loadFunctionFactories(Iterable<FunctionFactory> functionFactories) {
         for (FunctionFactory factory : functionFactories) {
 
             final String sig = factory.getSignature();
-            int openBraceIndex = sig.indexOf('(');
-            if (openBraceIndex == -1) {
-                LOG.error().$("open brace expected [sig=").$(sig).$(", class=").$(factory.getClass().getName()).$();
+            final int openBraceIndex;
+            try {
+                openBraceIndex = validateSignatureAndGetNameSeparator(sig);
+            } catch (ParserException e) {
+                LOG.error().$("skipped: ").$(sig).$(" [class=").$(factory.getClass().getName()).$(']').$();
                 continue;
             }
 
-            if (openBraceIndex == 0) {
-                LOG.error().$("empty function name [sig=").$(sig).$(", class=").$(factory.getClass().getName()).$();
-                continue;
-            }
-
-            if (sig.charAt(sig.length() - 1) != ')') {
-                LOG.error().$("close brace expected [sig=").$(sig).$(", class=").$(factory.getClass().getName()).$();
-                continue;
-            }
-
-            if (functionNameIsValid(sig, openBraceIndex)) {
-                String name = sig.substring(0, openBraceIndex);
-                final int index = factories.keyIndex(name);
-                final ObjList<FunctionFactory> overload;
-                if (index < 0) {
-                    overload = factories.valueAt(index);
-                } else {
-                    overload = new ObjList<>(4);
-                    factories.putAt(index, name, overload);
-                }
-                overload.add(factory);
+            String name = sig.substring(0, openBraceIndex);
+            final int index = factories.keyIndex(name);
+            final ObjList<FunctionFactory> overload;
+            if (index < 0) {
+                overload = factories.valueAt(index);
             } else {
-                LOG.error().$("invalid function name sig=").$(sig).$(", class=").$(factory.getClass().getName()).$();
+                overload = new ObjList<>(4);
+                factories.putAt(index, name, overload);
             }
+            overload.add(factory);
         }
     }
 
@@ -334,12 +357,20 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
 
     private Function parseConstant(ExprNode node) throws ParserException {
 
-        if (Chars.equals("null", node.token)) {
+        if (Chars.equalsIgnoreCase(node.token, "null")) {
             return NullConstant.INSTANCE;
         }
 
         if (Chars.isQuoted(node.token)) {
             return new StrConstant(node.token);
+        }
+
+        if (Chars.equalsIgnoreCase(node.token, "true")) {
+            return BooleanConstant.TRUE;
+        }
+
+        if (Chars.equalsIgnoreCase(node.token, "false")) {
+            return BooleanConstant.FALSE;
         }
 
         try {
@@ -357,32 +388,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
         } catch (NumericException ignore) {
         }
 
-        throw ParserException.$(node.position, "Unknown value type: " + node.token);
-    }
-
-    private Function toConstant(Function f) {
-        switch (f.getType()) {
-            case ColumnType.INT:
-                return (f instanceof IntConstant) ? f : new IntConstant(f.getInt(null));
-            case ColumnType.DOUBLE:
-                return (f instanceof DoubleConstant) ? f : new DoubleConstant(f.getDouble(null));
-            case ColumnType.FLOAT:
-                return (f instanceof FloatConstant) ? f : new FloatConstant(f.getFloat(null));
-            case ColumnType.BOOLEAN:
-                return (f instanceof BooleanConstant) ? f : BooleanConstant.of(f.getBool(null));
-            case ColumnType.STRING:
-                if (f instanceof StrConstant) {
-                    return f;
-                }
-                CharSequence cs = f.getStr(null);
-                return cs == null ? NullConstant.INSTANCE : new StrConstant(cs);
-            case ColumnType.LONG:
-                return (f instanceof LongConstant) ? f : new LongConstant(f.getLong(null));
-            case ColumnType.DATE:
-                return (f instanceof DateConstant) ? f : new DateConstant(f.getDate(null));
-            default:
-                return f;
-        }
+        throw ParserException.position(node.position).put("invalid constant: ").put(node.token);
     }
 
     static {

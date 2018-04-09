@@ -81,7 +81,7 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
 
     public CairoLineProtoParser(CairoConfiguration configuration, ResourcePool<TableWriter> pool) {
         this.configuration = configuration;
-        this.clock = configuration.getClock();
+        this.clock = configuration.getMicrosecondClock();
         this.pool = pool;
     }
 

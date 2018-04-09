@@ -80,7 +80,7 @@ public class CairoLineProtoParserTest extends AbstractCairoTest {
 
         CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
             @Override
-            public MicrosecondClock getClock() {
+            public MicrosecondClock getMicrosecondClock() {
                 try {
                     return new TestMicroClock(DateFormatUtils.parseDateTime("2017-10-03T10:00:00.000Z"), 10);
                 } catch (NumericException e) {
@@ -239,7 +239,7 @@ public class CairoLineProtoParserTest extends AbstractCairoTest {
 
         CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
             @Override
-            public MicrosecondClock getClock() {
+            public MicrosecondClock getMicrosecondClock() {
                 try {
                     return new TestMicroClock(DateFormatUtils.parseDateTime("2017-10-03T10:00:00.000Z"), 10);
                 } catch (NumericException e) {
@@ -288,7 +288,7 @@ public class CairoLineProtoParserTest extends AbstractCairoTest {
             }
 
             @Override
-            public MicrosecondClock getClock() {
+            public MicrosecondClock getMicrosecondClock() {
                 try {
                     return new TestMicroClock(DateFormatUtils.parseDateTime("2017-10-03T10:00:00.000Z"), 10);
                 } catch (NumericException e) {
@@ -362,7 +362,7 @@ public class CairoLineProtoParserTest extends AbstractCairoTest {
 
         CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
             @Override
-            public MicrosecondClock getClock() {
+            public MicrosecondClock getMicrosecondClock() {
                 try {
                     return new TestMicroClock(DateFormatUtils.parseDateTime("2017-10-03T10:00:00.000Z"), 10);
                 } catch (NumericException e) {
@@ -486,7 +486,7 @@ public class CairoLineProtoParserTest extends AbstractCairoTest {
     private void assertMultiTable(String expected1, String expected2, String lines) throws Exception {
         CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
             @Override
-            public MicrosecondClock getClock() {
+            public MicrosecondClock getMicrosecondClock() {
                 try {
                     return new TestMicroClock(DateFormatUtils.parseDateTime("2017-10-03T10:00:00.000Z"), 10);
                 } catch (NumericException e) {

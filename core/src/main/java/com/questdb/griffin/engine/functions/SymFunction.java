@@ -103,6 +103,6 @@ public abstract class SymFunction implements Function {
 
     @Override
     public final int getType() {
-        return ColumnType.BYTE;
+        return ColumnType.SYMBOL;
     }
 }

@@ -21,44 +21,37 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.engine.functions.lt;
+package com.questdb.griffin.engine.functions.str;
 
 import com.questdb.cairo.CairoConfiguration;
 import com.questdb.cairo.sql.Record;
 import com.questdb.griffin.Function;
 import com.questdb.griffin.FunctionFactory;
-import com.questdb.griffin.engine.functions.BooleanFunction;
-import com.questdb.griffin.engine.functions.constants.BooleanConstant;
+import com.questdb.griffin.engine.functions.IntFunction;
 import com.questdb.std.ObjList;
 
-public class LtDoubleCVFunctionFactory implements FunctionFactory {
-
+public class LengthSymbolVFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "<(dD)";
+        return "length(K)";
     }
 
     @Override
     public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
-        final double left = args.getQuick(0).getDouble(null);
-        if (Double.isNaN(left)) {
-            return BooleanConstant.FALSE;
-        }
-        return new FuncCV(left, args.getQuick(1));
+        return new Func(args.getQuick(0));
     }
 
-    private static class FuncCV extends BooleanFunction {
-        private final double left;
-        private final Function right;
+    private static class Func extends IntFunction {
+        private final Function symbolFunc;
 
-        public FuncCV(double left, Function right) {
-            this.left = left;
-            this.right = right;
+        public Func(Function symbolFunc) {
+            this.symbolFunc = symbolFunc;
         }
 
         @Override
-        public boolean getBool(Record rec) {
-            return left < right.getDouble(rec);
+        public int getInt(Record rec) {
+            CharSequence symbol = symbolFunc.getSym(rec);
+            return symbol == null ? -1 : symbol.length();
         }
     }
 }

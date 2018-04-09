@@ -26,12 +26,12 @@ package com.questdb.griffin.engine.functions;
 import com.questdb.cairo.sql.Record;
 import org.junit.Test;
 
-public class ByteFunctionTest {
+public class DoubleFunctionTest {
     // assert that all type casts that are not possible will throw exception
 
-    private static final ByteFunction function = new ByteFunction() {
+    private static final DoubleFunction function = new DoubleFunction() {
         @Override
-        public byte getByte(Record rec) {
+        public double getDouble(Record rec) {
             return 0;
         }
     };
@@ -47,8 +47,33 @@ public class ByteFunctionTest {
     }
 
     @Test(expected = UnsupportedOperationException.class)
+    public void testGetByte() {
+        function.getByte(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
     public void testGetDate() {
         function.getDate(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetFloat() {
+        function.getFloat(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetInt() {
+        function.getInt(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetLong() {
+        function.getLong(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetShort() {
+        function.getShort(null);
     }
 
     @Test(expected = UnsupportedOperationException.class)

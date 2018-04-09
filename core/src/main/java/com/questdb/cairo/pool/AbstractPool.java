@@ -46,7 +46,7 @@ abstract class AbstractPool implements Closeable {
     public AbstractPool(CairoConfiguration configuration, long inactiveTtlMillis) {
         this.configuration = configuration;
         this.ff = configuration.getFilesFacade();
-        this.clock = configuration.getClock();
+        this.clock = configuration.getMicrosecondClock();
         this.inactiveTtlUs = inactiveTtlMillis * 1000;
     }
 

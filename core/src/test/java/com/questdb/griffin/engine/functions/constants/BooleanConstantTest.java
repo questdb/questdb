@@ -21,34 +21,21 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.engine.functions.lt;
+package com.questdb.griffin.engine.functions.constants;
 
-import com.questdb.cairo.CairoConfiguration;
-import com.questdb.griffin.Function;
-import com.questdb.griffin.FunctionFactory;
-import com.questdb.griffin.engine.functions.constants.BooleanConstant;
-import com.questdb.std.ObjList;
+import org.junit.Assert;
+import org.junit.Test;
 
-public class LtDoubleCCFunctionFactory implements FunctionFactory {
+public class BooleanConstantTest {
 
-    @Override
-    public String getSignature() {
-        return "<(dd)";
+    @Test
+    public void testIsConstant() {
+        Assert.assertTrue(BooleanConstant.of(true).isConstant());
     }
 
-    @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
-
-        final double left = args.getQuick(0).getDouble(null);
-        if (Double.isNaN(left)) {
-            return BooleanConstant.FALSE;
-        }
-
-        final double right = args.getQuick(1).getDouble(null);
-        if (Double.isNaN(right)) {
-            return BooleanConstant.FALSE;
-        }
-
-        return BooleanConstant.of(left < right);
+    @Test
+    public void testValueOf() {
+        Assert.assertTrue(BooleanConstant.of(true).getBool(null));
+        Assert.assertFalse(BooleanConstant.of(false).getBool(null));
     }
 }

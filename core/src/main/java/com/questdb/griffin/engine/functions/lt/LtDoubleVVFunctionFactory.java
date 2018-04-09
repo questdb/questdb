@@ -33,7 +33,7 @@ import com.questdb.std.ObjList;
 public class LtDoubleVVFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "<(+D+D)";
+        return "<(DD)";
     }
 
     @Override

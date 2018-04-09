@@ -25,9 +25,13 @@ package com.questdb.cairo;
 
 import com.questdb.std.FilesFacade;
 import com.questdb.std.microtime.MicrosecondClock;
+import com.questdb.std.time.MillisecondClock;
 
 public interface CairoConfiguration {
-    MicrosecondClock getClock();
+
+    MicrosecondClock getMicrosecondClock();
+
+    MillisecondClock getMillisecondClock();
 
     boolean getCutlassSymbolCacheFlag();
 

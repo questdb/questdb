@@ -21,34 +21,24 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.engine.functions.lt;
+package com.questdb.griffin.engine.functions.constants;
 
-import com.questdb.cairo.CairoConfiguration;
-import com.questdb.griffin.Function;
-import com.questdb.griffin.FunctionFactory;
-import com.questdb.griffin.engine.functions.constants.BooleanConstant;
-import com.questdb.std.ObjList;
+import com.questdb.std.str.CharSink;
+import com.questdb.std.str.StringSink;
+import org.junit.Assert;
+import org.junit.Test;
 
-public class LtDoubleCCFunctionFactory implements FunctionFactory {
+public class NullConstantTest {
+    @Test
+    public void testConstant() {
+        NullConstant constant = NullConstant.INSTANCE;
+        Assert.assertTrue(constant.isConstant());
+        Assert.assertNull(constant.getStr(null));
+        Assert.assertNull(constant.getStrB(null));
+        Assert.assertEquals(-1, constant.getStrLen(null));
 
-    @Override
-    public String getSignature() {
-        return "<(dd)";
-    }
-
-    @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
-
-        final double left = args.getQuick(0).getDouble(null);
-        if (Double.isNaN(left)) {
-            return BooleanConstant.FALSE;
-        }
-
-        final double right = args.getQuick(1).getDouble(null);
-        if (Double.isNaN(right)) {
-            return BooleanConstant.FALSE;
-        }
-
-        return BooleanConstant.of(left < right);
+        CharSink sink = new StringSink();
+        constant.getStr(null, sink);
+        Assert.assertEquals(0, ((StringSink) sink).length());
     }
 }

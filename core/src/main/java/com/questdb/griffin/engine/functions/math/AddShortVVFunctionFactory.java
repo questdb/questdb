@@ -21,44 +21,31 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.engine.functions.lt;
+package com.questdb.griffin.engine.functions.math;
 
 import com.questdb.cairo.CairoConfiguration;
 import com.questdb.cairo.sql.Record;
 import com.questdb.griffin.Function;
 import com.questdb.griffin.FunctionFactory;
-import com.questdb.griffin.engine.functions.BooleanFunction;
-import com.questdb.griffin.engine.functions.constants.BooleanConstant;
+import com.questdb.griffin.engine.functions.ShortFunction;
 import com.questdb.std.ObjList;
 
-public class LtDoubleCVFunctionFactory implements FunctionFactory {
-
+public class AddShortVVFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "<(dD)";
+        return "+(EE)";
     }
 
     @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
-        final double left = args.getQuick(0).getDouble(null);
-        if (Double.isNaN(left)) {
-            return BooleanConstant.FALSE;
-        }
-        return new FuncCV(left, args.getQuick(1));
-    }
+    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration1) {
+        return new ShortFunction() {
+            final Function left = args.getQuick(0);
+            final Function right = args.getQuick(1);
 
-    private static class FuncCV extends BooleanFunction {
-        private final double left;
-        private final Function right;
-
-        public FuncCV(double left, Function right) {
-            this.left = left;
-            this.right = right;
-        }
-
-        @Override
-        public boolean getBool(Record rec) {
-            return left < right.getDouble(rec);
-        }
+            @Override
+            public short getShort(Record rec) {
+                return (short) (left.getShort(rec) + right.getShort(rec));
+            }
+        };
     }
 }

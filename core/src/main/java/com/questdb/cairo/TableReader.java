@@ -758,7 +758,7 @@ public class TableReader implements Closeable {
 
     private boolean readTxn() {
         int count = 0;
-        final long deadline = configuration.getClock().getTicks() + configuration.getSpinLockTimeoutUs();
+        final long deadline = configuration.getMicrosecondClock().getTicks() + configuration.getSpinLockTimeoutUs();
         while (true) {
             long txn = txMem.getLong(TableUtils.TX_OFFSET_TXN);
 
@@ -806,7 +806,7 @@ public class TableReader implements Closeable {
                 // We must discard and try again
             }
             count++;
-            if (configuration.getClock().getTicks() > deadline) {
+            if (configuration.getMicrosecondClock().getTicks() > deadline) {
                 LOG.error().$("tx read timeout [timeout=").$(configuration.getSpinLockTimeoutUs()).utf8("μs]").$();
                 throw CairoException.instance(0).put("Transaction read timeout");
             }

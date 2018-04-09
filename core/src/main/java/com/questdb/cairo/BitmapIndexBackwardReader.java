@@ -102,7 +102,7 @@ public class BitmapIndexBackwardReader implements BitmapIndexReader {
         try {
             this.keyMem.of(configuration.getFilesFacade(), BitmapIndexUtils.keyFileName(path, name), pageSize, 0);
             this.keyMem.grow(configuration.getFilesFacade().length(this.keyMem.getFd()));
-            this.clock = configuration.getClock();
+            this.clock = configuration.getMicrosecondClock();
 
             // key file should already be created at least with header
             long keyMemSize = this.keyMem.size();

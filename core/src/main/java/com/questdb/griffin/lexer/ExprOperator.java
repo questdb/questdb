@@ -48,6 +48,7 @@ final class ExprOperator {
         add(new ExprOperator("in", 7, true, SET, false));
         add(new ExprOperator("and", 11, true, BINARY, false));
         add(new ExprOperator("or", 11, true, BINARY, false));
+        add(new ExprOperator("not", 11, true, UNARY, false));
     }};
 
     static final CharSequenceObjHashMap<ExprOperator> opMap = new CharSequenceObjHashMap<ExprOperator>() {{
