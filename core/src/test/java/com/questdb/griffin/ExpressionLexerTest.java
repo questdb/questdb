@@ -21,9 +21,8 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.lexer;
+package com.questdb.griffin;
 
-import com.questdb.griffin.common.ExprNode;
 import com.questdb.std.Chars;
 import com.questdb.std.Lexer2;
 import com.questdb.std.ObjectPool;
@@ -32,15 +31,15 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
-public class ExprParserTest {
-    private final ObjectPool<ExprNode> exprNodeObjectPool = new ObjectPool<>(ExprNode.FACTORY, 128);
+public class ExpressionLexerTest {
+    private final ObjectPool<SqlNode> exprNodeObjectPool = new ObjectPool<>(SqlNode.FACTORY, 128);
     private final Lexer2 lexer = new Lexer2();
-    private final ExprParser parser = new ExprParser(exprNodeObjectPool);
+    private final ExpressionLexer parser = new ExpressionLexer(exprNodeObjectPool);
 
     @Before
     public void setUp() {
         exprNodeObjectPool.clear();
-        ExprParser.configureLexer(lexer);
+        ExpressionLexer.configureLexer(lexer);
     }
 
     @Test
@@ -49,7 +48,7 @@ public class ExprParserTest {
     }
 
     @Test
-    public void testCaseInArithmetic() throws ParserException {
+    public void testCaseInArithmetic() throws SqlException {
         x("w11+10='th1'w23*1>'th2'0case5*1+",
                 "case" +
                         " when w1+1=10" +
@@ -61,7 +60,7 @@ public class ExprParserTest {
     }
 
     @Test
-    public void testCaseInFunction() throws ParserException {
+    public void testCaseInFunction() throws SqlException {
         x(
                 "xyab+10>'a'ab-3<'b'0case10+zf*",
                 "x*f(y,case when (a+b) > 10 then 'a' when (a-b)<3 then 'b' else 0 end + 10,z)");
@@ -122,7 +121,7 @@ public class ExprParserTest {
     }
 
     @Test
-    public void testCaseNested() throws ParserException {
+    public void testCaseNested() throws SqlException {
         x("x0>y1='a''b'casex0<'c'case",
                 "case when x > 0 then case when y = 1 then 'a' else 'b' end when x < 0 then 'c' end");
     }
@@ -137,14 +136,14 @@ public class ExprParserTest {
     }
 
     @Test
-    public void testCaseWhenOutsideOfCase() throws ParserException {
+    public void testCaseWhenOutsideOfCase() throws SqlException {
         x("when1+10>",
                 "when + 1 > 10"
         );
     }
 
     @Test
-    public void testCaseWithArithmetic() throws ParserException {
+    public void testCaseWithArithmetic() throws SqlException {
         x("w11+10='th1'w23*1>'th2'0case",
                 "case" +
                         " when w1+1=10" +
@@ -156,7 +155,7 @@ public class ExprParserTest {
     }
 
     @Test
-    public void testCaseWithBraces() throws ParserException {
+    public void testCaseWithBraces() throws SqlException {
         x("10w11+5*10='th1'1-w23*1>'th2'0case1+*",
                 "10*(case" +
                         " when (w1+1)*5=10" +
@@ -168,7 +167,7 @@ public class ExprParserTest {
     }
 
     @Test
-    public void testCaseWithOuterBraces() throws ParserException {
+    public void testCaseWithOuterBraces() throws SqlException {
         x("10w11+10='th1'w23*1>'th2'0case1+*",
                 "10*(case" +
                         " when w1+1=10" +
@@ -265,7 +264,7 @@ public class ExprParserTest {
     }
 
     @Test
-    public void testSimpleCase() throws ParserException {
+    public void testSimpleCase() throws SqlException {
         x("w1th1w2th2elscase", "case when w1 then th1 when w2 then th2 else els end");
     }
 
@@ -300,7 +299,7 @@ public class ExprParserTest {
             lexer.setContent(content);
             parser.parseExpr(lexer, r);
             Assert.fail("expected exception");
-        } catch (ParserException e) {
+        } catch (SqlException e) {
             Assert.assertEquals(pos, e.getPosition());
             if (!Chars.contains(e.getFlyweightMessage(), contains)) {
                 Assert.fail(e.getMessage() + " does not contain '" + contains + '\'');
@@ -308,7 +307,7 @@ public class ExprParserTest {
         }
     }
 
-    private void x(CharSequence expectedRpn, String content) throws ParserException {
+    private void x(CharSequence expectedRpn, String content) throws SqlException {
         RpnBuilder r = new RpnBuilder();
         lexer.setContent(content);
         parser.parseExpr(lexer, r);

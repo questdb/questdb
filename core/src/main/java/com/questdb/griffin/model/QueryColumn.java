@@ -21,12 +21,41 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.lexer.model;
+package com.questdb.griffin.model;
 
-public interface ExecutionModel {
-    int QUERY = 1;
-    int CREATE_TABLE = 2;
-    int RENAME_TABLE = 3;
+import com.questdb.griffin.SqlNode;
+import com.questdb.std.Mutable;
+import com.questdb.std.ObjectFactory;
 
-    int getModelType();
+public class QueryColumn implements Mutable {
+    public final static ObjectFactory<QueryColumn> FACTORY = QueryColumn::new;
+    private CharSequence alias;
+    private SqlNode ast;
+
+    protected QueryColumn() {
+    }
+
+    @Override
+    public void clear() {
+        alias = null;
+        ast = null;
+    }
+
+    public CharSequence getAlias() {
+        return alias;
+    }
+
+    public SqlNode getAst() {
+        return ast;
+    }
+
+    public CharSequence getName() {
+        return alias != null ? alias : ast.token;
+    }
+
+    public QueryColumn of(CharSequence alias, SqlNode ast) {
+        this.alias = alias;
+        this.ast = ast;
+        return this;
+    }
 }

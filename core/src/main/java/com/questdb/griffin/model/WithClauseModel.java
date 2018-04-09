@@ -21,7 +21,7 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.lexer.model;
+package com.questdb.griffin.model;
 
 import com.questdb.std.Mutable;
 import com.questdb.std.ObjectFactory;

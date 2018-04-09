@@ -21,10 +21,45 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.lexer;
+package com.questdb.griffin;
 
-import com.questdb.griffin.common.ExprNode;
+import java.util.ArrayDeque;
+import java.util.Deque;
 
-public interface ExprListener {
-    void onNode(ExprNode node);
+public final class ExpressionLinker implements ExpressionLexerListener {
+
+    private final Deque<SqlNode> stack = new ArrayDeque<>();
+
+    @Override
+    public void onNode(SqlNode node) {
+        switch (node.paramCount) {
+            case 0:
+                break;
+            case 1:
+                node.rhs = stack.poll();
+                break;
+            case 2:
+                node.rhs = stack.poll();
+                node.lhs = stack.poll();
+                break;
+            default:
+                for (int i = 0; i < node.paramCount; i++) {
+                    node.args.add(stack.poll());
+                }
+                break;
+        }
+        stack.push(node);
+    }
+
+    public SqlNode poll() {
+        return stack.poll();
+    }
+
+    public void reset() {
+        stack.clear();
+    }
+
+    public int size() {
+        return stack.size();
+    }
 }

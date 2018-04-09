@@ -21,18 +21,17 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.lexer;
+package com.questdb.griffin;
 
-import com.questdb.griffin.common.ExprNode;
 import com.questdb.std.IntStack;
 
 import java.util.ArrayDeque;
 
-final class PostOrderTreeTraversalAlgo {
-    private final ArrayDeque<ExprNode> stack = new ArrayDeque<>();
+final public class PostOrderTreeTraversalAlgo {
+    private final ArrayDeque<SqlNode> stack = new ArrayDeque<>();
     private final IntStack indexStack = new IntStack();
 
-    void traverse(ExprNode node, Visitor visitor) throws ParserException {
+    public void traverse(SqlNode node, Visitor visitor) throws SqlException {
 
         // post-order iterative tree traversal
         // see http://en.wikipedia.org/wiki/Tree_traversal
@@ -40,7 +39,7 @@ final class PostOrderTreeTraversalAlgo {
         stack.clear();
         indexStack.clear();
 
-        ExprNode lastVisited = null;
+        SqlNode lastVisited = null;
 
         while (!stack.isEmpty() || node != null) {
             if (node != null) {
@@ -48,7 +47,8 @@ final class PostOrderTreeTraversalAlgo {
                 indexStack.push(0);
                 node = node.rhs;
             } else {
-                ExprNode peek = stack.peek();
+                SqlNode peek = stack.peek();
+                assert peek != null;
                 if (peek.paramCount < 3) {
                     if (peek.lhs != null && lastVisited != peek.lhs) {
                         node = peek.lhs;
@@ -72,8 +72,7 @@ final class PostOrderTreeTraversalAlgo {
         }
     }
 
-    @FunctionalInterface
     public interface Visitor {
-        void visit(ExprNode node) throws ParserException;
+        void visit(SqlNode node) throws SqlException;
     }
 }

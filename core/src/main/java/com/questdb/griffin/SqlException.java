@@ -21,42 +21,42 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.lexer;
+package com.questdb.griffin;
 
 import com.questdb.std.Sinkable;
 import com.questdb.std.ThreadLocal;
 import com.questdb.std.str.CharSink;
 import com.questdb.std.str.StringSink;
 
-public class ParserException extends Exception implements Sinkable {
-    private static final ThreadLocal<ParserException> tlException = new ThreadLocal<>(ParserException::new);
+public class SqlException extends Exception implements Sinkable {
+    private static final ThreadLocal<SqlException> tlException = new ThreadLocal<>(SqlException::new);
     private final StringSink message = new StringSink();
     private int position;
 
-    public static ParserException $(int position, CharSequence message) {
+    public static SqlException $(int position, CharSequence message) {
         return position(position).put(message);
     }
 
-    public static ParserException ambiguousColumn(int position) {
+    public static SqlException ambiguousColumn(int position) {
         return position(position).put("Ambiguous column name");
     }
 
-    public static ParserException invalidColumn(int position, CharSequence column) {
+    public static SqlException invalidColumn(int position, CharSequence column) {
         return position(position).put("Invalid column: ").put(column);
     }
 
-    public static ParserException invalidDate(int position) {
+    public static SqlException invalidDate(int position) {
         return position(position).put("Invalid date");
     }
 
-    public static ParserException position(int position) {
-        ParserException ex = tlException.get();
+    public static SqlException position(int position) {
+        SqlException ex = tlException.get();
         ex.message.clear();
         ex.position = position;
         return ex;
     }
 
-    public static ParserException unexpectedToken(int position, CharSequence token) {
+    public static SqlException unexpectedToken(int position, CharSequence token) {
         return position(position).put("unexpected token: ").put(token);
     }
 
@@ -73,22 +73,22 @@ public class ParserException extends Exception implements Sinkable {
         return position;
     }
 
-    public ParserException put(CharSequence cs) {
+    public SqlException put(CharSequence cs) {
         message.put(cs);
         return this;
     }
 
-    public ParserException put(char c) {
+    public SqlException put(char c) {
         message.put(c);
         return this;
     }
 
-    public ParserException put(int value) {
+    public SqlException put(int value) {
         message.put(value);
         return this;
     }
 
-    public ParserException put(Sinkable sinkable) {
+    public SqlException put(Sinkable sinkable) {
         message.put(sinkable);
         return this;
     }

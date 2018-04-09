@@ -21,15 +21,14 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.lexer;
+package com.questdb.griffin;
 
-import com.questdb.griffin.common.ExprNode;
 import com.questdb.std.*;
 
 import java.util.ArrayDeque;
 import java.util.Deque;
 
-public class ExprParser {
+public class ExpressionLexer {
 
     private static final IntHashSet nonLiteralBranches = new IntHashSet();
     private static final int BRANCH_NONE = 0;
@@ -42,11 +41,11 @@ public class ExprParser {
     private static final int BRANCH_LAMBDA = 7;
     private static final int BRANCH_CASE_CONTROL = 9;
     private static final CharSequenceIntHashMap caseKeywords = new CharSequenceIntHashMap();
-    private final Deque<ExprNode> opStack = new ArrayDeque<>();
+    private final Deque<SqlNode> opStack = new ArrayDeque<>();
     private final IntStack paramCountStack = new IntStack();
-    private final ObjectPool<ExprNode> exprNodePool;
+    private final ObjectPool<SqlNode> exprNodePool;
 
-    public ExprParser(ObjectPool<ExprNode> exprNodePool) {
+    public ExpressionLexer(ObjectPool<SqlNode> exprNodePool) {
         this.exprNodePool = exprNodePool;
     }
 
@@ -57,8 +56,8 @@ public class ExprParser {
         lexer.defineSymbol("/*");
         lexer.defineSymbol("*/");
         lexer.defineSymbol("--");
-        for (int i = 0, k = ExprOperator.operators.size(); i < k; i++) {
-            ExprOperator op = ExprOperator.operators.getQuick(i);
+        for (int i = 0, k = OperatorExpression.operators.size(); i < k; i++) {
+            OperatorExpression op = OperatorExpression.operators.getQuick(i);
             if (op.symbol) {
                 lexer.defineSymbol(op.token);
             }
@@ -66,7 +65,7 @@ public class ExprParser {
     }
 
     @SuppressWarnings("ConstantConditions")
-    public void parseExpr(Lexer2 lexer, ExprListener listener) throws ParserException {
+    public void parseExpr(Lexer2 lexer, ExpressionLexerListener listener) throws SqlException {
 
         opStack.clear();
         paramCountStack.clear();
@@ -75,7 +74,7 @@ public class ExprParser {
         int braceCount = 0;
         int caseCount = 0;
 
-        ExprNode node;
+        SqlNode node;
         CharSequence tok;
         char thisChar;
         int prevBranch;
@@ -121,7 +120,7 @@ public class ExprParser {
                     // If the token is a left parenthesis, then push it onto the stack.
                     paramCountStack.push(paramCount);
                     paramCount = 0;
-                    opStack.push(exprNodePool.next().of(ExprNode.CONTROL, "(", Integer.MAX_VALUE, lexer.position()));
+                    opStack.push(exprNodePool.next().of(SqlNode.CONTROL, "(", Integer.MAX_VALUE, lexer.position()));
                     break;
 
                 case ')':
@@ -146,9 +145,9 @@ public class ExprParser {
                     }
 
                     // enable operation or literal absorb parameters
-                    if ((node = opStack.peek()) != null && (node.type == ExprNode.LITERAL || (node.type == ExprNode.SET_OPERATION))) {
+                    if ((node = opStack.peek()) != null && (node.type == SqlNode.LITERAL || (node.type == SqlNode.SET_OPERATION))) {
                         node.paramCount = (prevBranch == BRANCH_LEFT_BRACE ? 0 : paramCount + 1) + (node.paramCount == 2 ? 1 : 0);
-                        node.type = ExprNode.FUNCTION;
+                        node.type = SqlNode.FUNCTION;
                         listener.onNode(node);
                         opStack.poll();
                     }
@@ -160,7 +159,7 @@ public class ExprParser {
                 case '`':
                     thisBranch = BRANCH_LAMBDA;
                     // If the token is a number, then add it to the output queue.
-                    listener.onNode(exprNodePool.next().of(ExprNode.LAMBDA, lexer.toImmutable(tok), 0, lexer.position()));
+                    listener.onNode(exprNodePool.next().of(SqlNode.LAMBDA, lexer.toImmutable(tok), 0, lexer.position()));
                     break;
                 case '0':
                 case '1':
@@ -187,12 +186,12 @@ public class ExprParser {
                             || Chars.equalsIgnoreCase(tok, "false")) {
                         thisBranch = BRANCH_CONSTANT;
                         // If the token is a number, then add it to the output queue.
-                        listener.onNode(exprNodePool.next().of(ExprNode.CONSTANT, lexer.toImmutable(tok), 0, lexer.position()));
+                        listener.onNode(exprNodePool.next().of(SqlNode.CONSTANT, lexer.toImmutable(tok), 0, lexer.position()));
                         break;
                     }
                 default:
-                    ExprOperator op;
-                    if ((op = ExprOperator.opMap.get(tok)) != null) {
+                    OperatorExpression op;
+                    if ((op = OperatorExpression.opMap.get(tok)) != null) {
 
                         thisBranch = BRANCH_OPERATOR;
 
@@ -214,7 +213,7 @@ public class ExprParser {
                                     case BRANCH_COMMA:
                                     case BRANCH_NONE:
                                         // we have unary minus
-                                        operatorType = ExprOperator.UNARY;
+                                        operatorType = OperatorExpression.UNARY;
                                         break;
                                     default:
                                         break;
@@ -224,13 +223,13 @@ public class ExprParser {
                                 break;
                         }
 
-                        ExprNode other;
+                        SqlNode other;
                         // UNARY operators must never pop BINARY ones regardless of precedence
                         // this is to maintain correctness of -a^b
                         while ((other = opStack.peek()) != null) {
                             boolean greaterPrecedence = (op.leftAssociative && op.precedence >= other.precedence) || (!op.leftAssociative && op.precedence > other.precedence);
                             if (greaterPrecedence &&
-                                    (operatorType != ExprOperator.UNARY || (operatorType == ExprOperator.UNARY && other.paramCount == 1))) {
+                                    (operatorType != OperatorExpression.UNARY || (operatorType == OperatorExpression.UNARY && other.paramCount == 1))) {
                                 listener.onNode(other);
                                 opStack.poll();
                             } else {
@@ -238,13 +237,13 @@ public class ExprParser {
                             }
                         }
                         node = exprNodePool.next().of(
-                                op.type == ExprOperator.SET ? ExprNode.SET_OPERATION : ExprNode.OPERATION,
+                                op.type == OperatorExpression.SET ? SqlNode.SET_OPERATION : SqlNode.OPERATION,
                                 op.token,
                                 op.precedence,
                                 lexer.position()
                         );
                         switch (operatorType) {
-                            case ExprOperator.UNARY:
+                            case OperatorExpression.UNARY:
                                 node.paramCount = 1;
                                 break;
                             default:
@@ -262,7 +261,7 @@ public class ExprParser {
                             caseCount++;
                             paramCountStack.push(paramCount);
                             paramCount = 0;
-                            opStack.push(exprNodePool.next().of(ExprNode.FUNCTION, lexer.toImmutable(tok), Integer.MAX_VALUE, lexer.position()));
+                            opStack.push(exprNodePool.next().of(SqlNode.FUNCTION, lexer.toImmutable(tok), Integer.MAX_VALUE, lexer.position()));
                             continue;
                         }
 
@@ -308,12 +307,12 @@ public class ExprParser {
                                             case 0: // when
                                             case 2: // else
                                                 if ((paramCount % 2) != 0) {
-                                                    throw ParserException.$(lexer.position(), "'then' expected");
+                                                    throw SqlException.$(lexer.position(), "'then' expected");
                                                 }
                                                 break;
                                             default: // then
                                                 if ((paramCount % 2) == 0) {
-                                                    throw ParserException.$(lexer.position(), "'when' expected");
+                                                    throw SqlException.$(lexer.position(), "'when' expected");
                                                 }
                                                 break;
                                         }
@@ -335,7 +334,7 @@ public class ExprParser {
                         }
 
                         // If the token is a function token, then push it onto the stack.
-                        opStack.push(exprNodePool.next().of(ExprNode.LITERAL, lexer.toImmutable(tok), Integer.MIN_VALUE, lexer.position()));
+                        opStack.push(exprNodePool.next().of(SqlNode.LITERAL, lexer.toImmutable(tok), Integer.MIN_VALUE, lexer.position()));
                     } else {
                         // literal can be at start of input, after a bracket or part of an operator
                         // all other cases are illegal and will be considered end-of-input
@@ -347,19 +346,19 @@ public class ExprParser {
 
         while ((node = opStack.poll()) != null) {
             if (node.token.charAt(0) == '(') {
-                throw ParserException.$(node.position, "unbalanced (");
+                throw SqlException.$(node.position, "unbalanced (");
             }
 
             if (Chars.equals("case", node.token)) {
-                throw ParserException.$(node.position, "unbalanced 'case'");
+                throw SqlException.$(node.position, "unbalanced 'case'");
             }
 
             listener.onNode(node);
         }
     }
 
-    private static ParserException missingArgs(int position) {
-        return ParserException.$(position, "missing arguments");
+    private static SqlException missingArgs(int position) {
+        return SqlException.$(position, "missing arguments");
     }
 
     static {

@@ -21,13 +21,41 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.lexer.model;
+package com.questdb.griffin.model;
 
-public final class IntrinsicValue {
-    public static final int UNDEFINED = 0;
-    public static final int TRUE = 1;
-    public static final int FALSE = 2;
+import com.questdb.griffin.SqlNode;
+import com.questdb.std.Mutable;
+import com.questdb.std.ObjectFactory;
 
-    private IntrinsicValue() {
+public class RenameTableModel implements Mutable, ExecutionModel {
+    public static final ObjectFactory<RenameTableModel> FACTORY = RenameTableModel::new;
+
+    private SqlNode from;
+    private SqlNode to;
+
+    @Override
+    public void clear() {
+        from = to = null;
+    }
+
+    public SqlNode getFrom() {
+        return from;
+    }
+
+    public void setFrom(SqlNode from) {
+        this.from = from;
+    }
+
+    @Override
+    public int getModelType() {
+        return ExecutionModel.RENAME_TABLE;
+    }
+
+    public SqlNode getTo() {
+        return to;
+    }
+
+    public void setTo(SqlNode to) {
+        this.to = to;
     }
 }

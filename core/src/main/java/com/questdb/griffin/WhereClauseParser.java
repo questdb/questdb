@@ -26,11 +26,8 @@ package com.questdb.griffin;
 import com.questdb.common.ColumnType;
 import com.questdb.common.RecordColumnMetadata;
 import com.questdb.common.RecordMetadata;
-import com.questdb.griffin.common.ExprNode;
-import com.questdb.griffin.lexer.ParserException;
-import com.questdb.griffin.lexer.model.AliasTranslator;
-import com.questdb.griffin.lexer.model.IntrinsicModel;
-import com.questdb.griffin.lexer.model.IntrinsicValue;
+import com.questdb.griffin.model.AliasTranslator;
+import com.questdb.griffin.model.IntrinsicModel;
 import com.questdb.std.*;
 import com.questdb.std.microtime.DateFormatUtils;
 import com.questdb.std.str.FlyweightCharSequence;
@@ -48,9 +45,9 @@ final class WhereClauseParser {
     private static final int INTRINCIC_OP_NOT_EQ = 7;
     private static final int INTRINCIC_OP_NOT = 8;
     private static final CharSequenceIntHashMap intrinsicOps = new CharSequenceIntHashMap();
-    private final ArrayDeque<ExprNode> stack = new ArrayDeque<>();
-    private final ObjList<ExprNode> keyNodes = new ObjList<>();
-    private final ObjList<ExprNode> keyExclNodes = new ObjList<>();
+    private final ArrayDeque<SqlNode> stack = new ArrayDeque<>();
+    private final ObjList<SqlNode> keyNodes = new ObjList<>();
+    private final ObjList<SqlNode> keyExclNodes = new ObjList<>();
     private final ObjectPool<IntrinsicModel> models = new ObjectPool<>(IntrinsicModel.FACTORY, 8);
     private final CharSequenceHashSet tempKeys = new CharSequenceHashSet();
     private final IntList tempPos = new IntList();
@@ -60,33 +57,33 @@ final class WhereClauseParser {
     private String timestamp;
     private CharSequence preferredKeyColumn;
 
-    private static void checkNodeValid(ExprNode node) throws ParserException {
+    private static void checkNodeValid(SqlNode node) throws SqlException {
         if (node.lhs == null || node.rhs == null) {
-            throw ParserException.$(node.position, "Argument expected");
+            throw SqlException.$(node.position, "Argument expected");
         }
     }
 
-    private boolean analyzeEquals(AliasTranslator translator, IntrinsicModel model, ExprNode node, RecordMetadata m) throws ParserException {
+    private boolean analyzeEquals(AliasTranslator translator, IntrinsicModel model, SqlNode node, RecordMetadata m) throws SqlException {
         checkNodeValid(node);
         return analyzeEquals0(translator, model, node, node.lhs, node.rhs, m) || analyzeEquals0(translator, model, node, node.rhs, node.lhs, m);
     }
 
-    private boolean analyzeEquals0(AliasTranslator translator, IntrinsicModel model, ExprNode node, ExprNode a, ExprNode b, RecordMetadata m) throws ParserException {
+    private boolean analyzeEquals0(AliasTranslator translator, IntrinsicModel model, SqlNode node, SqlNode a, SqlNode b, RecordMetadata m) throws SqlException {
         if (Chars.equals(a.token, b.token)) {
-            node.intrinsicValue = IntrinsicValue.TRUE;
+            node.intrinsicValue = IntrinsicModel.TRUE;
             return true;
         }
 
-        if (a.type == ExprNode.LITERAL && b.type == ExprNode.CONSTANT) {
+        if (a.type == SqlNode.LITERAL && b.type == SqlNode.CONSTANT) {
             if (isTimestamp(a)) {
                 model.intersectIntervals(b.token, 1, b.token.length() - 1, b.position);
-                node.intrinsicValue = IntrinsicValue.TRUE;
+                node.intrinsicValue = IntrinsicModel.TRUE;
                 return true;
             } else {
                 CharSequence column = translator.translateAlias(a.token);
                 int index = m.getColumnIndexQuiet(column);
                 if (index == -1) {
-                    throw ParserException.invalidColumn(a.position, a.token);
+                    throw SqlException.invalidColumn(a.position, a.token);
                 }
                 RecordColumnMetadata meta = m.getColumnQuick(index);
 
@@ -118,7 +115,7 @@ final class WhereClauseParser {
                                 model.keyValues.add(value);
                                 model.keyValuePositions.add(b.position);
                                 for (int n = 0, k = keyNodes.size(); n < k; n++) {
-                                    keyNodes.getQuick(n).intrinsicValue = IntrinsicValue.UNDEFINED;
+                                    keyNodes.getQuick(n).intrinsicValue = IntrinsicModel.UNDEFINED;
                                 }
                                 keyNodes.clear();
                             } else {
@@ -131,13 +128,13 @@ final class WhereClauseParser {
                                     model.keyValues.add(value);
                                     model.keyValuePositions.add(b.position);
                                 } else {
-                                    model.intrinsicValue = IntrinsicValue.FALSE;
+                                    model.intrinsicValue = IntrinsicModel.FALSE;
                                     return false;
                                 }
                             }
 
                             keyNodes.add(node);
-                            node.intrinsicValue = IntrinsicValue.TRUE;
+                            node.intrinsicValue = IntrinsicModel.TRUE;
                             return true;
                         }
                         //fall through
@@ -151,11 +148,11 @@ final class WhereClauseParser {
         return false;
     }
 
-    private boolean analyzeGreater(IntrinsicModel model, ExprNode node, int increment) throws ParserException {
+    private boolean analyzeGreater(IntrinsicModel model, SqlNode node, int increment) throws SqlException {
         checkNodeValid(node);
 
         if (Chars.equals(node.lhs.token, node.rhs.token)) {
-            model.intrinsicValue = IntrinsicValue.FALSE;
+            model.intrinsicValue = IntrinsicModel.FALSE;
             return false;
         }
 
@@ -163,24 +160,24 @@ final class WhereClauseParser {
             return false;
         }
 
-        if (node.lhs.type == ExprNode.LITERAL && node.lhs.token.equals(timestamp)) {
+        if (node.lhs.type == SqlNode.LITERAL && node.lhs.token.equals(timestamp)) {
 
-            if (node.rhs.type != ExprNode.CONSTANT) {
+            if (node.rhs.type != SqlNode.CONSTANT) {
                 return false;
             }
 
             try {
                 model.intersectIntervals(DateFormatUtils.tryParse(node.rhs.token, 1, node.rhs.token.length() - 1) + increment, Long.MAX_VALUE);
-                node.intrinsicValue = IntrinsicValue.TRUE;
+                node.intrinsicValue = IntrinsicModel.TRUE;
                 return true;
             } catch (NumericException e) {
-                throw ParserException.invalidDate(node.rhs.position);
+                throw SqlException.invalidDate(node.rhs.position);
             }
         }
 
-        if (node.rhs.type == ExprNode.LITERAL && node.rhs.token.equals(timestamp)) {
+        if (node.rhs.type == SqlNode.LITERAL && node.rhs.token.equals(timestamp)) {
 
-            if (node.lhs.type != ExprNode.CONSTANT) {
+            if (node.lhs.type != SqlNode.CONSTANT) {
                 return false;
             }
 
@@ -188,81 +185,81 @@ final class WhereClauseParser {
                 model.intersectIntervals(Long.MIN_VALUE, DateFormatUtils.tryParse(node.lhs.token, 1, node.lhs.token.length() - 1) - increment);
                 return true;
             } catch (NumericException e) {
-                throw ParserException.invalidDate(node.lhs.position);
+                throw SqlException.invalidDate(node.lhs.position);
             }
         }
         return false;
     }
 
-    private boolean analyzeIn(AliasTranslator translator, IntrinsicModel model, ExprNode node, RecordMetadata metadata) throws ParserException {
+    private boolean analyzeIn(AliasTranslator translator, IntrinsicModel model, SqlNode node, RecordMetadata metadata) throws SqlException {
 
         if (node.paramCount < 2) {
-            throw ParserException.$(node.position, "Too few arguments for 'in'");
+            throw SqlException.$(node.position, "Too few arguments for 'in'");
         }
 
-        ExprNode col = node.paramCount < 3 ? node.lhs : node.args.getLast();
+        SqlNode col = node.paramCount < 3 ? node.lhs : node.args.getLast();
 
-        if (col.type != ExprNode.LITERAL) {
-            throw ParserException.$(col.position, "Column name expected");
+        if (col.type != SqlNode.LITERAL) {
+            throw SqlException.$(col.position, "Column name expected");
         }
 
         CharSequence column = translator.translateAlias(col.token);
 
         if (metadata.getColumnIndexQuiet(column) == -1) {
-            throw ParserException.invalidColumn(col.position, col.token);
+            throw SqlException.invalidColumn(col.position, col.token);
         }
         return analyzeInInterval(model, col, node)
                 || analyzeListOfValues(model, column, metadata, node)
                 || analyzeInLambda(model, column, metadata, node);
     }
 
-    private boolean analyzeInInterval(IntrinsicModel model, ExprNode col, ExprNode in) throws ParserException {
+    private boolean analyzeInInterval(IntrinsicModel model, SqlNode col, SqlNode in) throws SqlException {
         if (!isTimestamp(col)) {
             return false;
         }
 
         if (in.paramCount > 3) {
-            throw ParserException.$(in.args.getQuick(0).position, "Too many args");
+            throw SqlException.$(in.args.getQuick(0).position, "Too many args");
         }
 
         if (in.paramCount < 3) {
-            throw ParserException.$(in.position, "Too few args");
+            throw SqlException.$(in.position, "Too few args");
         }
 
-        ExprNode lo = in.args.getQuick(1);
-        ExprNode hi = in.args.getQuick(0);
+        SqlNode lo = in.args.getQuick(1);
+        SqlNode hi = in.args.getQuick(0);
 
-        if (lo.type == ExprNode.CONSTANT && hi.type == ExprNode.CONSTANT) {
+        if (lo.type == SqlNode.CONSTANT && hi.type == SqlNode.CONSTANT) {
             long loMillis;
             long hiMillis;
 
             try {
                 loMillis = DateFormatUtils.tryParse(lo.token, 1, lo.token.length() - 1);
             } catch (NumericException ignore) {
-                throw ParserException.invalidDate(lo.position);
+                throw SqlException.invalidDate(lo.position);
             }
 
             try {
                 hiMillis = DateFormatUtils.tryParse(hi.token, 1, hi.token.length() - 1);
             } catch (NumericException ignore) {
-                throw ParserException.invalidDate(hi.position);
+                throw SqlException.invalidDate(hi.position);
             }
 
             model.intersectIntervals(loMillis, hiMillis);
-            in.intrinsicValue = IntrinsicValue.TRUE;
+            in.intrinsicValue = IntrinsicModel.TRUE;
             return true;
         }
         return false;
     }
 
-    private boolean analyzeInLambda(IntrinsicModel model, CharSequence col, RecordMetadata meta, ExprNode node) throws ParserException {
+    private boolean analyzeInLambda(IntrinsicModel model, CharSequence col, RecordMetadata meta, SqlNode node) throws SqlException {
         RecordColumnMetadata colMeta = meta.getColumn(col);
         if (colMeta.isIndexed()) {
             if (preferredKeyColumn != null && !col.equals(preferredKeyColumn)) {
                 return false;
             }
 
-            if (node.rhs == null || node.rhs.type != ExprNode.LAMBDA) {
+            if (node.rhs == null || node.rhs.type != SqlNode.LAMBDA) {
                 return false;
             }
 
@@ -274,7 +271,7 @@ final class WhereClauseParser {
             }
 
             if ((col.equals(model.keyColumn) && model.keyValuesIsLambda) || node.paramCount > 2) {
-                throw ParserException.$(node.position, "Multiple lambda expressions not supported");
+                throw SqlException.$(node.position, "Multiple lambda expressions not supported");
             }
 
             model.keyValues.clear();
@@ -285,23 +282,23 @@ final class WhereClauseParser {
 
             // revert previously processed nodes
             for (int n = 0, k = keyNodes.size(); n < k; n++) {
-                keyNodes.getQuick(n).intrinsicValue = IntrinsicValue.UNDEFINED;
+                keyNodes.getQuick(n).intrinsicValue = IntrinsicModel.UNDEFINED;
             }
             keyNodes.clear();
             model.keyColumn = col;
             keyNodes.add(node);
-            node.intrinsicValue = IntrinsicValue.TRUE;
+            node.intrinsicValue = IntrinsicModel.TRUE;
             return true;
         }
         return false;
     }
 
-    private boolean analyzeLess(IntrinsicModel model, ExprNode node, int inc) throws ParserException {
+    private boolean analyzeLess(IntrinsicModel model, SqlNode node, int inc) throws SqlException {
 
         checkNodeValid(node);
 
         if (Chars.equals(node.lhs.token, node.rhs.token)) {
-            model.intrinsicValue = IntrinsicValue.FALSE;
+            model.intrinsicValue = IntrinsicModel.FALSE;
             return false;
         }
 
@@ -309,40 +306,40 @@ final class WhereClauseParser {
             return false;
         }
 
-        if (node.lhs.type == ExprNode.LITERAL && node.lhs.token.equals(timestamp)) {
+        if (node.lhs.type == SqlNode.LITERAL && node.lhs.token.equals(timestamp)) {
             try {
 
-                if (node.rhs.type != ExprNode.CONSTANT) {
+                if (node.rhs.type != SqlNode.CONSTANT) {
                     return false;
                 }
 
                 long hi = DateFormatUtils.tryParse(node.rhs.token, 1, node.rhs.token.length() - 1) - inc;
                 model.intersectIntervals(Long.MIN_VALUE, hi);
-                node.intrinsicValue = IntrinsicValue.TRUE;
+                node.intrinsicValue = IntrinsicModel.TRUE;
                 return true;
             } catch (NumericException e) {
-                throw ParserException.invalidDate(node.rhs.position);
+                throw SqlException.invalidDate(node.rhs.position);
             }
         }
 
-        if (node.rhs.type == ExprNode.LITERAL && node.rhs.token.equals(timestamp)) {
+        if (node.rhs.type == SqlNode.LITERAL && node.rhs.token.equals(timestamp)) {
             try {
-                if (node.lhs.type != ExprNode.CONSTANT) {
+                if (node.lhs.type != SqlNode.CONSTANT) {
                     return false;
                 }
 
                 long lo = DateFormatUtils.tryParse(node.lhs.token, 1, node.lhs.token.length() - 1) + inc;
                 model.intersectIntervals(lo, Long.MAX_VALUE);
-                node.intrinsicValue = IntrinsicValue.TRUE;
+                node.intrinsicValue = IntrinsicModel.TRUE;
                 return true;
             } catch (NumericException e) {
-                throw ParserException.invalidDate(node.lhs.position);
+                throw SqlException.invalidDate(node.lhs.position);
             }
         }
         return false;
     }
 
-    private boolean analyzeListOfValues(IntrinsicModel model, CharSequence col, RecordMetadata meta, ExprNode node) {
+    private boolean analyzeListOfValues(IntrinsicModel model, CharSequence col, RecordMetadata meta, SqlNode node) {
         RecordColumnMetadata colMeta = meta.getColumn(col);
         if (colMeta.isIndexed()) {
             boolean newColumn = true;
@@ -366,7 +363,7 @@ final class WhereClauseParser {
             // collect and analyze values of indexed field
             // if any of values is not an indexed constant - bail out
             if (i == 1) {
-                if (node.rhs == null || node.rhs.type != ExprNode.CONSTANT) {
+                if (node.rhs == null || node.rhs.type != SqlNode.CONSTANT) {
                     return false;
                 }
                 if (tempKeys.add(unquote(node.rhs.token))) {
@@ -374,8 +371,8 @@ final class WhereClauseParser {
                 }
             } else {
                 for (i--; i > -1; i--) {
-                    ExprNode c = node.args.getQuick(i);
-                    if (c.type != ExprNode.CONSTANT) {
+                    SqlNode c = node.args.getQuick(i);
+                    if (c.type != SqlNode.CONSTANT) {
                         return false;
                     }
                     if (tempKeys.add(unquote(c.token))) {
@@ -392,12 +389,12 @@ final class WhereClauseParser {
                 model.keyValues.addAll(tempKeys);
                 model.keyValuePositions.addAll(tempPos);
                 for (int n = 0, k = keyNodes.size(); n < k; n++) {
-                    keyNodes.getQuick(n).intrinsicValue = IntrinsicValue.UNDEFINED;
+                    keyNodes.getQuick(n).intrinsicValue = IntrinsicModel.UNDEFINED;
                 }
                 keyNodes.clear();
                 model.keyColumn = col;
                 keyNodes.add(node);
-                node.intrinsicValue = IntrinsicValue.TRUE;
+                node.intrinsicValue = IntrinsicModel.TRUE;
                 return true;
 
             } else if (!model.keyValuesIsLambda) {
@@ -405,36 +402,36 @@ final class WhereClauseParser {
                 replaceAllWithOverlap(model);
 
                 keyNodes.add(node);
-                node.intrinsicValue = IntrinsicValue.TRUE;
+                node.intrinsicValue = IntrinsicModel.TRUE;
                 return true;
             }
         }
         return false;
     }
 
-    private boolean analyzeNotEquals(AliasTranslator translator, IntrinsicModel model, ExprNode node, RecordMetadata m) throws ParserException {
+    private boolean analyzeNotEquals(AliasTranslator translator, IntrinsicModel model, SqlNode node, RecordMetadata m) throws SqlException {
         checkNodeValid(node);
         return analyzeNotEquals0(translator, model, node, node.lhs, node.rhs, m)
                 || analyzeNotEquals0(translator, model, node, node.rhs, node.lhs, m);
     }
 
-    private boolean analyzeNotEquals0(AliasTranslator translator, IntrinsicModel model, ExprNode node, ExprNode a, ExprNode b, RecordMetadata m) throws ParserException {
+    private boolean analyzeNotEquals0(AliasTranslator translator, IntrinsicModel model, SqlNode node, SqlNode a, SqlNode b, RecordMetadata m) throws SqlException {
 
         if (Chars.equals(a.token, b.token)) {
-            model.intrinsicValue = IntrinsicValue.FALSE;
+            model.intrinsicValue = IntrinsicModel.FALSE;
             return true;
         }
 
-        if (a.type == ExprNode.LITERAL && b.type == ExprNode.CONSTANT) {
+        if (a.type == SqlNode.LITERAL && b.type == SqlNode.CONSTANT) {
             if (isTimestamp(a)) {
                 model.subtractIntervals(b.token, 1, b.token.length() - 1, b.position);
-                node.intrinsicValue = IntrinsicValue.TRUE;
+                node.intrinsicValue = IntrinsicModel.TRUE;
                 return true;
             } else {
                 CharSequence column = translator.translateAlias(a.token);
                 int index = m.getColumnIndexQuiet(column);
                 if (index == -1) {
-                    throw ParserException.invalidColumn(a.position, a.token);
+                    throw SqlException.invalidColumn(a.position, a.token);
                 }
                 RecordColumnMetadata meta = m.getColumnQuick(index);
 
@@ -463,29 +460,29 @@ final class WhereClauseParser {
         return false;
     }
 
-    private boolean analyzeNotIn(AliasTranslator translator, IntrinsicModel model, ExprNode notNode, RecordMetadata m) throws ParserException {
+    private boolean analyzeNotIn(AliasTranslator translator, IntrinsicModel model, SqlNode notNode, RecordMetadata m) throws SqlException {
 
-        ExprNode node = notNode.rhs;
+        SqlNode node = notNode.rhs;
 
         if (node.paramCount < 2) {
-            throw ParserException.$(node.position, "Too few arguments for 'in'");
+            throw SqlException.$(node.position, "Too few arguments for 'in'");
         }
 
-        ExprNode col = node.paramCount < 3 ? node.lhs : node.args.getLast();
+        SqlNode col = node.paramCount < 3 ? node.lhs : node.args.getLast();
 
-        if (col.type != ExprNode.LITERAL) {
-            throw ParserException.$(col.position, "Column name expected");
+        if (col.type != SqlNode.LITERAL) {
+            throw SqlException.$(col.position, "Column name expected");
         }
 
         CharSequence column = translator.translateAlias(col.token);
 
         if (m.getColumnIndexQuiet(column) == -1) {
-            throw ParserException.invalidColumn(col.position, col.token);
+            throw SqlException.invalidColumn(col.position, col.token);
         }
 
         boolean ok = analyzeNotInInterval(model, col, node);
         if (ok) {
-            notNode.intrinsicValue = IntrinsicValue.TRUE;
+            notNode.intrinsicValue = IntrinsicModel.TRUE;
         } else {
             analyzeNotListOfValues(column, m, notNode);
         }
@@ -493,46 +490,46 @@ final class WhereClauseParser {
         return ok;
     }
 
-    private boolean analyzeNotInInterval(IntrinsicModel model, ExprNode col, ExprNode in) throws ParserException {
+    private boolean analyzeNotInInterval(IntrinsicModel model, SqlNode col, SqlNode in) throws SqlException {
         if (!isTimestamp(col)) {
             return false;
         }
 
         if (in.paramCount > 3) {
-            throw ParserException.$(in.args.getQuick(0).position, "Too many args");
+            throw SqlException.$(in.args.getQuick(0).position, "Too many args");
         }
 
         if (in.paramCount < 3) {
-            throw ParserException.$(in.position, "Too few args");
+            throw SqlException.$(in.position, "Too few args");
         }
 
-        ExprNode lo = in.args.getQuick(1);
-        ExprNode hi = in.args.getQuick(0);
+        SqlNode lo = in.args.getQuick(1);
+        SqlNode hi = in.args.getQuick(0);
 
-        if (lo.type == ExprNode.CONSTANT && hi.type == ExprNode.CONSTANT) {
+        if (lo.type == SqlNode.CONSTANT && hi.type == SqlNode.CONSTANT) {
             long loMillis;
             long hiMillis;
 
             try {
                 loMillis = DateFormatUtils.tryParse(lo.token, 1, lo.token.length() - 1);
             } catch (NumericException ignore) {
-                throw ParserException.invalidDate(lo.position);
+                throw SqlException.invalidDate(lo.position);
             }
 
             try {
                 hiMillis = DateFormatUtils.tryParse(hi.token, 1, hi.token.length() - 1);
             } catch (NumericException ignore) {
-                throw ParserException.invalidDate(hi.position);
+                throw SqlException.invalidDate(hi.position);
             }
 
             model.subtractIntervals(loMillis, hiMillis);
-            in.intrinsicValue = IntrinsicValue.TRUE;
+            in.intrinsicValue = IntrinsicModel.TRUE;
             return true;
         }
         return false;
     }
 
-    private void analyzeNotListOfValues(CharSequence column, RecordMetadata m, ExprNode notNode) {
+    private void analyzeNotListOfValues(CharSequence column, RecordMetadata m, SqlNode notNode) {
         RecordColumnMetadata meta = m.getColumn(column);
 
         switch (meta.getType()) {
@@ -553,17 +550,17 @@ final class WhereClauseParser {
         if (model.keyColumn != null && keyExclNodes.size() > 0) {
             OUT:
             for (int i = 0, n = keyExclNodes.size(); i < n; i++) {
-                ExprNode parent = keyExclNodes.getQuick(i);
+                SqlNode parent = keyExclNodes.getQuick(i);
 
 
-                ExprNode node = Chars.equals("not", parent.token) ? parent.rhs : parent;
+                SqlNode node = Chars.equals("not", parent.token) ? parent.rhs : parent;
                 // this could either be '=' or 'in'
 
                 if (node.paramCount == 2) {
-                    ExprNode col;
-                    ExprNode val;
+                    SqlNode col;
+                    SqlNode val;
 
-                    if (node.lhs.type == ExprNode.LITERAL) {
+                    if (node.lhs.type == SqlNode.LITERAL) {
                         col = node.lhs;
                         val = node.rhs;
                     } else {
@@ -574,25 +571,25 @@ final class WhereClauseParser {
                     final CharSequence column = translator.translateAlias(col.token);
                     if (Chars.equals(column, model.keyColumn)) {
                         model.excludeValue(val);
-                        parent.intrinsicValue = IntrinsicValue.TRUE;
-                        if (model.intrinsicValue == IntrinsicValue.FALSE) {
+                        parent.intrinsicValue = IntrinsicModel.TRUE;
+                        if (model.intrinsicValue == IntrinsicModel.FALSE) {
                             break;
                         }
                     }
                 }
 
                 if (node.paramCount > 2) {
-                    ExprNode col = node.args.getQuick(node.paramCount - 1);
+                    SqlNode col = node.args.getQuick(node.paramCount - 1);
                     final CharSequence column = translator.translateAlias(col.token);
                     if (Chars.equals(column, model.keyColumn)) {
                         for (int j = node.paramCount - 2; j > -1; j--) {
-                            ExprNode val = node.args.getQuick(j);
+                            SqlNode val = node.args.getQuick(j);
                             model.excludeValue(val);
-                            if (model.intrinsicValue == IntrinsicValue.FALSE) {
+                            if (model.intrinsicValue == IntrinsicModel.FALSE) {
                                 break OUT;
                             }
                         }
-                        parent.intrinsicValue = IntrinsicValue.TRUE;
+                        parent.intrinsicValue = IntrinsicModel.TRUE;
                     }
 
                 }
@@ -601,8 +598,8 @@ final class WhereClauseParser {
         keyExclNodes.clear();
     }
 
-    private ExprNode collapseIntrinsicNodes(ExprNode node) {
-        if (node == null || node.intrinsicValue == IntrinsicValue.TRUE) {
+    private SqlNode collapseIntrinsicNodes(SqlNode node) {
+        if (node == null || node.intrinsicValue == IntrinsicModel.TRUE) {
             return null;
         }
         node.lhs = collapseIntrinsicNodes(collapseNulls0(node.lhs));
@@ -610,22 +607,22 @@ final class WhereClauseParser {
         return collapseNulls0(node);
     }
 
-    private ExprNode collapseNulls0(ExprNode node) {
-        if (node == null || node.intrinsicValue == IntrinsicValue.TRUE) {
+    private SqlNode collapseNulls0(SqlNode node) {
+        if (node == null || node.intrinsicValue == IntrinsicModel.TRUE) {
             return null;
         }
         if (Chars.equals("and", node.token)) {
-            if (node.lhs == null || node.lhs.intrinsicValue == IntrinsicValue.TRUE) {
+            if (node.lhs == null || node.lhs.intrinsicValue == IntrinsicModel.TRUE) {
                 return node.rhs;
             }
-            if (node.rhs == null || node.rhs.intrinsicValue == IntrinsicValue.TRUE) {
+            if (node.rhs == null || node.rhs.intrinsicValue == IntrinsicModel.TRUE) {
                 return node.lhs;
             }
         }
         return node;
     }
 
-    IntrinsicModel extract(AliasTranslator translator, ExprNode node, RecordMetadata m, CharSequence preferredKeyColumn, int timestampIndex) throws ParserException {
+    IntrinsicModel extract(AliasTranslator translator, SqlNode node, RecordMetadata m, CharSequence preferredKeyColumn, int timestampIndex) throws SqlException {
         reset();
         this.timestamp = timestampIndex < 0 ? null : m.getColumnName(timestampIndex);
         this.preferredKeyColumn = preferredKeyColumn;
@@ -638,7 +635,7 @@ final class WhereClauseParser {
         if (removeAndIntrinsics(translator, model, node, m)) {
             return model;
         }
-        ExprNode root = node;
+        SqlNode root = node;
 
         while (!stack.isEmpty() || node != null) {
             if (node != null) {
@@ -659,11 +656,11 @@ final class WhereClauseParser {
         return model;
     }
 
-    private boolean isTimestamp(ExprNode n) {
+    private boolean isTimestamp(SqlNode n) {
         return timestamp != null && Chars.equals(timestamp, n.token);
     }
 
-    private boolean removeAndIntrinsics(AliasTranslator translator, IntrinsicModel model, ExprNode node, RecordMetadata m) throws ParserException {
+    private boolean removeAndIntrinsics(AliasTranslator translator, IntrinsicModel model, SqlNode node, RecordMetadata m) throws SqlException {
         switch (intrinsicOps.get(node.token)) {
             case INTRINCIC_OP_IN:
                 return analyzeIn(translator, model, node, m);
@@ -701,7 +698,7 @@ final class WhereClauseParser {
             model.keyValues.addAll(tempK);
             model.keyValuePositions.addAll(tempP);
         } else {
-            model.intrinsicValue = IntrinsicValue.FALSE;
+            model.intrinsicValue = IntrinsicModel.FALSE;
         }
     }
 

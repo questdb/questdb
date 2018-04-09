@@ -21,8 +21,9 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.lexer;
+package com.questdb.griffin.model;
 
+import com.questdb.griffin.SqlException;
 import com.questdb.std.LongList;
 import com.questdb.std.microtime.DateFormatUtils;
 import com.questdb.test.tools.TestUtils;
@@ -30,9 +31,9 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
-import static com.questdb.griffin.lexer.GriffinParserTestUtils.intervalToString;
+import static com.questdb.griffin.GriffinParserTestUtils.intervalToString;
 
-public class IntervalCompilerTest {
+public class IntrinsicModelTest {
 
     private final LongList a = new LongList();
     private final LongList b = new LongList();
@@ -119,11 +120,11 @@ public class IntervalCompilerTest {
     }
 
     @Test
-    public void testInvert() throws ParserException {
+    public void testInvert() throws SqlException {
         final String intervalStr = "2018-01-10T10:30:00.000Z;30m;2d;2";
         LongList out = new LongList();
-        IntervalCompiler.parseIntervalEx(intervalStr, 0, intervalStr.length(), 0, out);
-        IntervalCompiler.invert(out);
+        IntrinsicModel.parseIntervalEx(intervalStr, 0, intervalStr.length(), 0, out);
+        IntrinsicModel.invert(out);
         TestUtils.assertEquals("[{lo=, hi=2018-01-10T10:29:59.999999Z},{lo=2018-01-10T11:00:00.000001Z, hi=2018-01-12T10:29:59.999999Z},{lo=2018-01-12T11:00:00.000001Z, hi=294247-01-10T04:00:54.775807Z}]",
                 intervalToString(out));
     }
@@ -249,87 +250,22 @@ public class IntervalCompilerTest {
         assertIntervalError("201");
     }
 
-    @Test
-    public void testSubtractClipNone() throws Exception {
-        a.add(DateFormatUtils.parseDateTime("2016-03-10T10:00:00.000Z"));
-        a.add(DateFormatUtils.parseDateTime("2016-03-10T12:00:00.000Z"));
-
-        a.add(DateFormatUtils.parseDateTime("2016-03-10T14:00:00.000Z"));
-        a.add(DateFormatUtils.parseDateTime("2016-03-10T15:00:00.000Z"));
-
-        b.add(DateFormatUtils.parseDateTime("2016-03-10T13:00:00.000Z"));
-        b.add(DateFormatUtils.parseDateTime("2016-03-10T13:30:00.000Z"));
-
-        IntervalCompiler.subtract(a, b, out);
-        TestUtils.assertEquals("[{lo=2016-03-10T10:00:00.000000Z, hi=2016-03-10T12:00:00.000000Z},{lo=2016-03-10T14:00:00.000000Z, hi=2016-03-10T15:00:00.000000Z}]",
-                intervalToString(out));
-    }
-
-    @Test
-    public void testSubtractClipTwo() throws Exception {
-        a.add(DateFormatUtils.parseDateTime("2016-03-10T10:00:00.000Z"));
-        a.add(DateFormatUtils.parseDateTime("2016-03-10T12:00:00.000Z"));
-
-        a.add(DateFormatUtils.parseDateTime("2016-03-10T14:00:00.000Z"));
-        a.add(DateFormatUtils.parseDateTime("2016-03-10T15:00:00.000Z"));
-
-        b.add(DateFormatUtils.parseDateTime("2016-03-10T11:00:00.000Z"));
-        b.add(DateFormatUtils.parseDateTime("2016-03-10T14:30:00.000Z"));
-
-        IntervalCompiler.subtract(a, b, out);
-        TestUtils.assertEquals("[{lo=2016-03-10T10:00:00.000000Z, hi=2016-03-10T10:59:59.999999Z},{lo=2016-03-10T14:30:00.000001Z, hi=2016-03-10T15:00:00.000000Z}]", intervalToString(out));
-    }
-
-    @Test
-    public void testSubtractConsume() throws Exception {
-        a.add(DateFormatUtils.parseDateTime("2016-03-10T11:00:00.000Z"));
-        a.add(DateFormatUtils.parseDateTime("2016-03-10T12:00:00.000Z"));
-
-        b.add(DateFormatUtils.parseDateTime("2016-03-10T10:00:00.000Z"));
-        b.add(DateFormatUtils.parseDateTime("2016-03-10T14:00:00.000Z"));
-
-        IntervalCompiler.subtract(a, b, out);
-        TestUtils.assertEquals("[]", intervalToString(out));
-    }
-
-    @Test
-    public void testSubtractMakeHole() throws Exception {
-        a.add(DateFormatUtils.parseDateTime("2016-03-10T10:00:00.000Z"));
-        a.add(DateFormatUtils.parseDateTime("2016-03-10T12:00:00.000Z"));
-        b.add(DateFormatUtils.parseDateTime("2016-03-10T10:30:00.000Z"));
-        b.add(DateFormatUtils.parseDateTime("2016-03-10T11:30:00.000Z"));
-
-        IntervalCompiler.subtract(a, b, out);
-        TestUtils.assertEquals("[{lo=2016-03-10T10:00:00.000000Z, hi=2016-03-10T10:29:59.999999Z},{lo=2016-03-10T11:30:00.000001Z, hi=2016-03-10T12:00:00.000000Z}]", intervalToString(out));
-    }
-
-    @Test
-    public void testSubtractSame() throws Exception {
-        a.add(DateFormatUtils.parseDateTime("2016-03-10T10:00:00.000Z"));
-        a.add(DateFormatUtils.parseDateTime("2016-03-10T12:00:00.000Z"));
-        b.add(DateFormatUtils.parseDateTime("2016-03-10T10:00:00.000Z"));
-        b.add(DateFormatUtils.parseDateTime("2016-03-10T12:00:00.000Z"));
-
-        IntervalCompiler.subtract(a, b, out);
-        TestUtils.assertEquals("[]", intervalToString(out));
-    }
-
-    private static void assertShortInterval(String expected, String interval) throws ParserException {
+    private static void assertShortInterval(String expected, String interval) throws SqlException {
         LongList out = new LongList();
-        IntervalCompiler.parseIntervalEx(interval, 0, interval.length(), 0, out);
+        IntrinsicModel.parseIntervalEx(interval, 0, interval.length(), 0, out);
         TestUtils.assertEquals(expected, intervalToString(out));
     }
 
     private void assertIntersect(String expected) {
-        IntervalCompiler.intersect(a, b, out);
+        IntrinsicModel.intersect(a, b, out);
         TestUtils.assertEquals(expected, intervalToString(out));
     }
 
     private void assertIntervalError(String interval) {
         try {
-            IntervalCompiler.parseIntervalEx(interval, 0, interval.length(), 0, out);
+            IntrinsicModel.parseIntervalEx(interval, 0, interval.length(), 0, out);
             Assert.fail();
-        } catch (ParserException ignore) {
+        } catch (SqlException ignore) {
         }
     }
 

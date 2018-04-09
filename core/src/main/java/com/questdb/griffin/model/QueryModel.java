@@ -21,7 +21,7 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.lexer.model;
+package com.questdb.griffin.model;
 
 import com.questdb.cairo.CairoException;
 import com.questdb.cairo.TableReader;
@@ -29,8 +29,8 @@ import com.questdb.cairo.TableUtils;
 import com.questdb.cairo.pool.ex.EntryLockedException;
 import com.questdb.cairo.sql.CairoEngine;
 import com.questdb.common.RecordMetadata;
-import com.questdb.griffin.common.ExprNode;
-import com.questdb.griffin.lexer.ParserException;
+import com.questdb.griffin.SqlException;
+import com.questdb.griffin.SqlNode;
 import com.questdb.std.*;
 import com.questdb.std.str.CharSink;
 import com.questdb.std.str.FlyweightCharSequence;
@@ -56,7 +56,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private final CharSequenceObjHashMap<CharSequence> aliasToColumnMap = new CharSequenceObjHashMap<>();
     private final CharSequenceObjHashMap<CharSequence> columnToAliasMap = new CharSequenceObjHashMap<>();
     private final ObjList<QueryModel> joinModels = new ObjList<>();
-    private final ObjList<ExprNode> orderBy = new ObjList<>();
+    private final ObjList<SqlNode> orderBy = new ObjList<>();
     private final IntList orderByDirection = new IntList();
     private final IntHashSet dependencies = new IntHashSet();
     private final IntList orderedJoinModels1 = new IntList();
@@ -68,27 +68,27 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     // column name frequency of 0 corresponds to map value -1
     private final CharSequenceIntHashMap columnNameTypeMap = new CharSequenceIntHashMap();
     // list of "and" concatenated expressions
-    private final ObjList<ExprNode> parsedWhere = new ObjList<>();
+    private final ObjList<SqlNode> parsedWhere = new ObjList<>();
     private final IntHashSet parsedWhereConsts = new IntHashSet();
-    private final ArrayDeque<ExprNode> exprNodeStack = new ArrayDeque<>();
+    private final ArrayDeque<SqlNode> sqlNodeStack = new ArrayDeque<>();
     private final CharSequenceIntHashMap orderHash = new CharSequenceIntHashMap(4, 0.5, -1);
-    private final ObjList<ExprNode> joinColumns = new ObjList<>(4);
+    private final ObjList<SqlNode> joinColumns = new ObjList<>(4);
     private final CharSequenceObjHashMap<WithClauseModel> withClauses = new CharSequenceObjHashMap<>();
-    private ExprNode whereClause;
-    private ExprNode postJoinWhereClause;
-    private ExprNode constWhereClause;
+    private SqlNode whereClause;
+    private SqlNode postJoinWhereClause;
+    private SqlNode constWhereClause;
     private QueryModel nestedModel;
-    private ExprNode tableName;
-    private ExprNode alias;
-    private ExprNode latestBy;
-    private ExprNode timestamp;
-    private ExprNode sampleBy;
+    private SqlNode tableName;
+    private SqlNode alias;
+    private SqlNode latestBy;
+    private SqlNode timestamp;
+    private SqlNode sampleBy;
     private JoinContext context;
-    private ExprNode joinCriteria;
+    private SqlNode joinCriteria;
     private int joinType;
     private IntList orderedJoinModels = orderedJoinModels2;
-    private ExprNode limitLo;
-    private ExprNode limitHi;
+    private SqlNode limitLo;
+    private SqlNode limitHi;
     private int selectModelType = SELECT_MODEL_NONE;
 
 
@@ -96,14 +96,14 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         joinModels.add(this);
     }
 
-    public boolean addAliasIndex(ExprNode node, int index) {
+    public boolean addAliasIndex(SqlNode node, int index) {
         return aliasIndexes.put(node.token, index);
     }
 
     public void addColumn(QueryColumn column) {
         columns.add(column);
         final CharSequence alias = column.getAlias();
-        final ExprNode ast = column.getAst();
+        final SqlNode ast = column.getAst();
         assert alias != null;
         aliasToColumnMap.put(alias, ast.token);
         columnToAliasMap.put(ast.token, alias);
@@ -115,11 +115,11 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     }
 
     public void addField(CharSequence name) {
-        columnNameTypeMap.put(name, ExprNode.LITERAL);
+        columnNameTypeMap.put(name, SqlNode.LITERAL);
         aliasToColumnMap.put(name, name);
     }
 
-    public void addJoinColumn(ExprNode node) {
+    public void addJoinColumn(SqlNode node) {
         joinColumns.add(node);
     }
 
@@ -127,12 +127,12 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         joinModels.add(model);
     }
 
-    public void addOrderBy(ExprNode node, int direction) {
+    public void addOrderBy(SqlNode node, int direction) {
         orderBy.add(node);
         orderByDirection.add(direction);
     }
 
-    public void addParsedWhereNode(ExprNode node) {
+    public void addParsedWhereNode(SqlNode node) {
         parsedWhere.add(node);
     }
 
@@ -169,7 +169,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         limitLo = null;
         columnNameTypeMap.clear();
         timestamp = null;
-        exprNodeStack.clear();
+        sqlNodeStack.clear();
         joinColumns.clear();
         withClauses.clear();
         selectModelType = SELECT_MODEL_NONE;
@@ -188,11 +188,11 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         this.aliasToColumnMap.putAll(other.aliasToColumnMap);
     }
 
-    public ExprNode getAlias() {
+    public SqlNode getAlias() {
         return alias;
     }
 
-    public void setAlias(ExprNode alias) {
+    public void setAlias(SqlNode alias) {
         this.alias = alias;
     }
 
@@ -224,11 +224,11 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return columns;
     }
 
-    public ExprNode getConstWhereClause() {
+    public SqlNode getConstWhereClause() {
         return constWhereClause;
     }
 
-    public void setConstWhereClause(ExprNode constWhereClause) {
+    public void setConstWhereClause(SqlNode constWhereClause) {
         this.constWhereClause = constWhereClause;
     }
 
@@ -244,15 +244,15 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return dependencies;
     }
 
-    public ObjList<ExprNode> getJoinColumns() {
+    public ObjList<SqlNode> getJoinColumns() {
         return joinColumns;
     }
 
-    public ExprNode getJoinCriteria() {
+    public SqlNode getJoinCriteria() {
         return joinCriteria;
     }
 
-    public void setJoinCriteria(ExprNode joinCriteria) {
+    public void setJoinCriteria(SqlNode joinCriteria) {
         this.joinCriteria = joinCriteria;
     }
 
@@ -268,19 +268,19 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         this.joinType = joinType;
     }
 
-    public ExprNode getLatestBy() {
+    public SqlNode getLatestBy() {
         return latestBy;
     }
 
-    public void setLatestBy(ExprNode latestBy) {
+    public void setLatestBy(SqlNode latestBy) {
         this.latestBy = latestBy;
     }
 
-    public ExprNode getLimitHi() {
+    public SqlNode getLimitHi() {
         return limitHi;
     }
 
-    public ExprNode getLimitLo() {
+    public SqlNode getLimitLo() {
         return limitLo;
     }
 
@@ -309,7 +309,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         this.nestedModel = nestedModel;
     }
 
-    public ObjList<ExprNode> getOrderBy() {
+    public ObjList<SqlNode> getOrderBy() {
         return orderBy;
     }
 
@@ -330,23 +330,23 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         this.orderedJoinModels = that;
     }
 
-    public ObjList<ExprNode> getParsedWhere() {
+    public ObjList<SqlNode> getParsedWhere() {
         return parsedWhere;
     }
 
-    public ExprNode getPostJoinWhereClause() {
+    public SqlNode getPostJoinWhereClause() {
         return postJoinWhereClause;
     }
 
-    public void setPostJoinWhereClause(ExprNode postJoinWhereClause) {
+    public void setPostJoinWhereClause(SqlNode postJoinWhereClause) {
         this.postJoinWhereClause = postJoinWhereClause;
     }
 
-    public ExprNode getSampleBy() {
+    public SqlNode getSampleBy() {
         return sampleBy;
     }
 
-    public void setSampleBy(ExprNode sampleBy) {
+    public void setSampleBy(SqlNode sampleBy) {
         this.sampleBy = sampleBy;
     }
 
@@ -358,9 +358,9 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         this.selectModelType = selectModelType;
     }
 
-    public RecordMetadata getTableMetadata(CairoEngine engine, FlyweightCharSequence charSequence) throws ParserException {
+    public RecordMetadata getTableMetadata(CairoEngine engine, FlyweightCharSequence charSequence) throws SqlException {
         // table name must not contain quotes by now
-        ExprNode readerNode = getTableName();
+        SqlNode readerNode = getTableName();
 
         int lo = 0;
         int hi = readerNode.token.length();
@@ -369,49 +369,49 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         }
 
         if (lo == hi) {
-            throw ParserException.$(readerNode.position, "come on, where is table name?");
+            throw SqlException.$(readerNode.position, "come on, where is table name?");
         }
 
         int status = engine.getStatus(readerNode.token, lo, hi);
 
         if (status == TableUtils.TABLE_DOES_NOT_EXIST) {
-            throw ParserException.$(readerNode.position, "table does not exist");
+            throw SqlException.$(readerNode.position, "table does not exist");
         }
 
         if (status == TableUtils.TABLE_RESERVED) {
-            throw ParserException.$(readerNode.position, "table directory is of unknown format");
+            throw SqlException.$(readerNode.position, "table directory is of unknown format");
         }
 
         try (TableReader r = engine.getReader(charSequence.of(readerNode.token, lo, hi - lo))) {
             return r.getMetadata();
         } catch (EntryLockedException e) {
-            throw ParserException.position(readerNode.position).put("table is locked: ").put(charSequence);
+            throw SqlException.position(readerNode.position).put("table is locked: ").put(charSequence);
         } catch (CairoException e) {
-            throw ParserException.position(readerNode.position).put(e);
+            throw SqlException.position(readerNode.position).put(e);
         }
     }
 
-    public ExprNode getTableName() {
+    public SqlNode getTableName() {
         return tableName;
     }
 
-    public void setTableName(ExprNode tableName) {
+    public void setTableName(SqlNode tableName) {
         this.tableName = tableName;
     }
 
-    public ExprNode getTimestamp() {
+    public SqlNode getTimestamp() {
         return timestamp;
     }
 
-    public void setTimestamp(ExprNode timestamp) {
+    public void setTimestamp(SqlNode timestamp) {
         this.timestamp = timestamp;
     }
 
-    public ExprNode getWhereClause() {
+    public SqlNode getWhereClause() {
         return whereClause;
     }
 
-    public void setWhereClause(ExprNode whereClause) {
+    public void setWhereClause(SqlNode whereClause) {
         this.whereClause = whereClause;
     }
 
@@ -438,15 +438,15 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     /*
      * Splits "where" clauses into "and" chunks
      */
-    public ObjList<ExprNode> parseWhereClause() {
-        ExprNode n = getWhereClause();
+    public ObjList<SqlNode> parseWhereClause() {
+        SqlNode n = getWhereClause();
         // pre-order traversal
-        exprNodeStack.clear();
-        while (!exprNodeStack.isEmpty() || n != null) {
+        sqlNodeStack.clear();
+        while (!sqlNodeStack.isEmpty() || n != null) {
             if (n != null) {
                 if (Chars.equals("and", n.token)) {
                     if (n.rhs != null) {
-                        exprNodeStack.push(n.rhs);
+                        sqlNodeStack.push(n.rhs);
                     }
                     n = n.lhs;
                 } else {
@@ -455,7 +455,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
                 }
             } else {
-                n = exprNodeStack.poll();
+                n = sqlNodeStack.poll();
             }
         }
         return getParsedWhere();
@@ -469,7 +469,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         joinModels.setQuick(pos, model);
     }
 
-    public void setLimit(ExprNode lo, ExprNode hi) {
+    public void setLimit(SqlNode lo, SqlNode hi) {
         this.limitLo = lo;
         this.limitHi = hi;
     }
@@ -519,7 +519,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                 QueryColumn column = columns.getQuick(i);
                 CharSequence name = column.getName();
                 CharSequence alias = column.getAlias();
-                ExprNode ast = column.getAst();
+                SqlNode ast = column.getAst();
                 if (column instanceof AnalyticColumn || name == null) {
                     ast.toSink(sink);
 
@@ -531,7 +531,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                     if (name != null) {
                         AnalyticColumn ac = (AnalyticColumn) column;
                         sink.put(" over (");
-                        final ObjList<ExprNode> partitionBy = ac.getPartitionBy();
+                        final ObjList<SqlNode> partitionBy = ac.getPartitionBy();
                         if (partitionBy.size() > 0) {
                             sink.put("partition by ");
                             for (int k = 0, z = partitionBy.size(); k < z; k++) {
@@ -542,7 +542,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                             }
                         }
 
-                        final ObjList<ExprNode> orderBy = ac.getOrderBy();
+                        final ObjList<SqlNode> orderBy = ac.getOrderBy();
                         if (orderBy.size() > 0) {
                             if (partitionBy.size() > 0) {
                                 sink.put(' ');
@@ -563,7 +563,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                 } else {
                     ast.toSink(sink);
                     // do not repeat alias when it is the same as AST token, provided AST is a literal
-                    if (alias != null && (ast.type != ExprNode.LITERAL || !ast.token.equals(alias))) {
+                    if (alias != null && (ast.type != SqlNode.LITERAL || !ast.token.equals(alias))) {
                         aliasToSink(alias, sink);
                     }
                 }

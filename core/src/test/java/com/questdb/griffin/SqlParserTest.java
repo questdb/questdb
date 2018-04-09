@@ -29,7 +29,6 @@ import com.questdb.cairo.sql.RecordCursor;
 import com.questdb.cairo.sql.RecordCursorFactory;
 import com.questdb.common.ColumnType;
 import com.questdb.common.PartitionBy;
-import com.questdb.griffin.lexer.ParserException;
 import com.questdb.std.Rnd;
 import org.junit.Test;
 
@@ -38,7 +37,7 @@ import java.io.IOException;
 public class SqlParserTest extends AbstractCairoTest {
 
     @Test
-    public void testFilterSingleKeyValue() throws ParserException, IOException {
+    public void testFilterSingleKeyValue() throws SqlException, IOException {
         CairoEngine engine = new Engine(configuration);
         SqlParser parser = new SqlParser(engine, configuration);
 
@@ -78,7 +77,7 @@ public class SqlParserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testFilterSingleKeyValueAndFilter() throws ParserException, IOException {
+    public void testFilterSingleKeyValueAndFilter() throws SqlException, IOException {
         CairoEngine engine = new Engine(configuration);
         SqlParser parser = new SqlParser(engine, configuration);
 

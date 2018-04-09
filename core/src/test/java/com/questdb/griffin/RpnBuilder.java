@@ -21,8 +21,23 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.lexer.model;
+package com.questdb.griffin;
 
-public interface AliasTranslator {
-    CharSequence translateAlias(CharSequence column);
+import com.questdb.std.str.StringSink;
+
+public class RpnBuilder implements ExpressionLexerListener {
+    private final StringSink sink = new StringSink();
+
+    @Override
+    public void onNode(SqlNode node) {
+        sink.put(node.token);
+    }
+
+    public void reset() {
+        sink.clear();
+    }
+
+    public final CharSequence rpn() {
+        return sink;
+    }
 }

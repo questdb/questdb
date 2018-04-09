@@ -21,39 +21,39 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.lexer;
+package com.questdb.griffin;
 
 import com.questdb.std.CharSequenceObjHashMap;
 import com.questdb.std.ObjList;
 
-final class ExprOperator {
+final class OperatorExpression {
 
     public static final int UNARY = 1;
     public static final int BINARY = 2;
     public static final int SET = 3;
-    static final ObjList<ExprOperator> operators = new ObjList<ExprOperator>() {{
-        add(new ExprOperator("^", 2, false, BINARY));
-        add(new ExprOperator("*", 3, true, BINARY));
-        add(new ExprOperator("/", 3, true, BINARY));
-        add(new ExprOperator("%", 3, true, BINARY));
-        add(new ExprOperator("+", 4, true, BINARY));
-        add(new ExprOperator("-", 4, true, BINARY));
-        add(new ExprOperator("<", 6, true, BINARY));
-        add(new ExprOperator("<=", 6, true, BINARY));
-        add(new ExprOperator(">", 6, true, BINARY));
-        add(new ExprOperator(">=", 6, true, BINARY));
-        add(new ExprOperator("=", 7, true, BINARY));
-        add(new ExprOperator("~", 7, true, BINARY));
-        add(new ExprOperator("!=", 7, true, BINARY));
-        add(new ExprOperator("in", 7, true, SET, false));
-        add(new ExprOperator("and", 11, true, BINARY, false));
-        add(new ExprOperator("or", 11, true, BINARY, false));
-        add(new ExprOperator("not", 11, true, UNARY, false));
+    static final ObjList<OperatorExpression> operators = new ObjList<OperatorExpression>() {{
+        add(new OperatorExpression("^", 2, false, BINARY));
+        add(new OperatorExpression("*", 3, true, BINARY));
+        add(new OperatorExpression("/", 3, true, BINARY));
+        add(new OperatorExpression("%", 3, true, BINARY));
+        add(new OperatorExpression("+", 4, true, BINARY));
+        add(new OperatorExpression("-", 4, true, BINARY));
+        add(new OperatorExpression("<", 6, true, BINARY));
+        add(new OperatorExpression("<=", 6, true, BINARY));
+        add(new OperatorExpression(">", 6, true, BINARY));
+        add(new OperatorExpression(">=", 6, true, BINARY));
+        add(new OperatorExpression("=", 7, true, BINARY));
+        add(new OperatorExpression("~", 7, true, BINARY));
+        add(new OperatorExpression("!=", 7, true, BINARY));
+        add(new OperatorExpression("in", 7, true, SET, false));
+        add(new OperatorExpression("and", 11, true, BINARY, false));
+        add(new OperatorExpression("or", 11, true, BINARY, false));
+        add(new OperatorExpression("not", 11, true, UNARY, false));
     }};
 
-    static final CharSequenceObjHashMap<ExprOperator> opMap = new CharSequenceObjHashMap<ExprOperator>() {{
+    static final CharSequenceObjHashMap<OperatorExpression> opMap = new CharSequenceObjHashMap<OperatorExpression>() {{
         for (int i = 0, k = operators.size(); i < k; i++) {
-            ExprOperator op = operators.getQuick(i);
+            OperatorExpression op = operators.getQuick(i);
             put(op.token, op);
         }
     }};
@@ -64,7 +64,7 @@ final class ExprOperator {
     final int type;
     final boolean symbol;
 
-    private ExprOperator(String token, int precedence, boolean leftAssociative, int type, boolean symbol) {
+    private OperatorExpression(String token, int precedence, boolean leftAssociative, int type, boolean symbol) {
         this.token = token;
         this.precedence = precedence;
         this.leftAssociative = leftAssociative;
@@ -72,7 +72,7 @@ final class ExprOperator {
         this.symbol = symbol;
     }
 
-    private ExprOperator(String token, int precedence, boolean leftAssociative, int type) {
+    private OperatorExpression(String token, int precedence, boolean leftAssociative, int type) {
         this.token = token;
         this.precedence = precedence;
         this.leftAssociative = leftAssociative;

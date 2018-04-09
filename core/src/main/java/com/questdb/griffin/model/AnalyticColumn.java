@@ -21,23 +21,23 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.lexer.model;
+package com.questdb.griffin.model;
 
-import com.questdb.griffin.common.ExprNode;
+import com.questdb.griffin.SqlNode;
 import com.questdb.std.IntList;
 import com.questdb.std.ObjList;
 import com.questdb.std.ObjectFactory;
 
 public final class AnalyticColumn extends QueryColumn {
     public final static ObjectFactory<AnalyticColumn> FACTORY = AnalyticColumn::new;
-    private final ObjList<ExprNode> partitionBy = new ObjList<>(2);
-    private final ObjList<ExprNode> orderBy = new ObjList<>(2);
+    private final ObjList<SqlNode> partitionBy = new ObjList<>(2);
+    private final ObjList<SqlNode> orderBy = new ObjList<>(2);
     private final IntList orderByDirection = new IntList(2);
 
     private AnalyticColumn() {
     }
 
-    public void addOrderBy(ExprNode node, int direction) {
+    public void addOrderBy(SqlNode node, int direction) {
         orderBy.add(node);
         orderByDirection.add(direction);
     }
@@ -50,20 +50,20 @@ public final class AnalyticColumn extends QueryColumn {
         orderByDirection.clear();
     }
 
-    @Override
-    public AnalyticColumn of(CharSequence alias, ExprNode ast) {
-        return (AnalyticColumn) super.of(alias, ast);
+    public ObjList<SqlNode> getOrderBy() {
+        return orderBy;
     }
 
-    public ObjList<ExprNode> getOrderBy() {
-        return orderBy;
+    public ObjList<SqlNode> getPartitionBy() {
+        return partitionBy;
     }
 
     public IntList getOrderByDirection() {
         return orderByDirection;
     }
 
-    public ObjList<ExprNode> getPartitionBy() {
-        return partitionBy;
+    @Override
+    public AnalyticColumn of(CharSequence alias, SqlNode ast) {
+        return (AnalyticColumn) super.of(alias, ast);
     }
 }

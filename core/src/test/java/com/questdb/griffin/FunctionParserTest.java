@@ -31,16 +31,12 @@ import com.questdb.cairo.sql.Record;
 import com.questdb.common.ColumnType;
 import com.questdb.common.RecordColumnMetadata;
 import com.questdb.common.SymbolTable;
-import com.questdb.griffin.common.ExprNode;
 import com.questdb.griffin.engine.functions.Parameter;
 import com.questdb.griffin.engine.functions.bool.NotVFunctionFactory;
 import com.questdb.griffin.engine.functions.bool.OrVVFunctionFactory;
 import com.questdb.griffin.engine.functions.date.SysdateFunctionFactory;
 import com.questdb.griffin.engine.functions.math.*;
 import com.questdb.griffin.engine.functions.str.*;
-import com.questdb.griffin.lexer.ExprAstBuilder;
-import com.questdb.griffin.lexer.ExprParser;
-import com.questdb.griffin.lexer.ParserException;
 import com.questdb.ql.CollectionRecordMetadata;
 import com.questdb.std.*;
 import com.questdb.std.time.DateFormatUtils;
@@ -54,10 +50,10 @@ import org.junit.Test;
 import java.util.ArrayList;
 
 public class FunctionParserTest extends AbstractCairoTest {
-    private static final ObjectPool<ExprNode> exprNodeObjectPool = new ObjectPool<>(ExprNode.FACTORY, 128);
+    private static final ObjectPool<SqlNode> exprNodeObjectPool = new ObjectPool<>(SqlNode.FACTORY, 128);
     private static final Lexer2 lexer = new Lexer2();
-    private static final ExprParser parser = new ExprParser(exprNodeObjectPool);
-    private static final ExprAstBuilder astBuilder = new ExprAstBuilder();
+    private static final ExpressionLexer parser = new ExpressionLexer(exprNodeObjectPool);
+    private static final ExpressionLinker astBuilder = new ExpressionLinker();
     private static final CharSequenceObjHashMap<Parameter> params = new CharSequenceObjHashMap<>();
     private static final ArrayList<FunctionFactory> functions = new ArrayList<>();
 
@@ -66,7 +62,7 @@ public class FunctionParserTest extends AbstractCairoTest {
         params.clear();
         exprNodeObjectPool.clear();
         functions.clear();
-        ExprParser.configureLexer(lexer);
+        ExpressionLexer.configureLexer(lexer);
     }
 
     @Test
@@ -80,7 +76,7 @@ public class FunctionParserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testBooleanConstants() throws ParserException {
+    public void testBooleanConstants() throws SqlException {
         functions.add(new NotVFunctionFactory());
         functions.add(new OrVVFunctionFactory());
 
@@ -104,7 +100,7 @@ public class FunctionParserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testBooleanFunctions() throws ParserException {
+    public void testBooleanFunctions() throws SqlException {
 
         functions.add(new NotVFunctionFactory());
         functions.add(new OrVVFunctionFactory());
@@ -128,7 +124,7 @@ public class FunctionParserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testByteAndLongToFloatCast() throws ParserException {
+    public void testByteAndLongToFloatCast() throws SqlException {
         assertCastToFloat(363, ColumnType.BYTE, ColumnType.LONG, new Record() {
 
             @Override
@@ -144,7 +140,7 @@ public class FunctionParserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testByteAndShortToIntCast() throws ParserException {
+    public void testByteAndShortToIntCast() throws SqlException {
         functions.add(new AddIntVVFunctionFactory());
         final CollectionRecordMetadata metadata = new CollectionRecordMetadata();
         metadata.add(new TestColumnMetadata("a", ColumnType.BYTE));
@@ -166,7 +162,7 @@ public class FunctionParserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testByteToDoubleCast() throws ParserException {
+    public void testByteToDoubleCast() throws SqlException {
         assertCastToDouble(131, ColumnType.BYTE, ColumnType.BYTE, new Record() {
             @Override
             public byte getByte(int col) {
@@ -179,7 +175,7 @@ public class FunctionParserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testByteToLongCast() throws ParserException {
+    public void testByteToLongCast() throws SqlException {
         assertCastToLong(131, ColumnType.BYTE, ColumnType.BYTE, new Record() {
             @Override
             public byte getByte(int col) {
@@ -192,7 +188,7 @@ public class FunctionParserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testByteToShortCast() throws ParserException {
+    public void testByteToShortCast() throws SqlException {
         functions.add(new AddShortVVFunctionFactory());
         final CollectionRecordMetadata metadata = new CollectionRecordMetadata();
         metadata.add(new TestColumnMetadata("a", ColumnType.BYTE));
@@ -212,7 +208,7 @@ public class FunctionParserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testFloatAndLongToDoubleCast() throws ParserException {
+    public void testFloatAndLongToDoubleCast() throws SqlException {
         assertCastToDouble(468.3, ColumnType.FLOAT, ColumnType.LONG, new Record() {
             @Override
             public float getFloat(int col) {
@@ -235,7 +231,7 @@ public class FunctionParserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testFunctionOverload() throws ParserException {
+    public void testFunctionOverload() throws SqlException {
         functions.add(new ToCharDateVCFunctionFactory());
         functions.add(new ToCharTimestampVCFunctionFactory());
         functions.add(new ToCharBinVFunctionFactory());
@@ -327,7 +323,7 @@ public class FunctionParserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testIntAndShortToDoubleCast() throws ParserException {
+    public void testIntAndShortToDoubleCast() throws SqlException {
         assertCastToDouble(33, ColumnType.INT, ColumnType.SHORT, new Record() {
             @Override
             public int getInt(int col) {
@@ -342,7 +338,7 @@ public class FunctionParserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testIntAndShortToFloatCast() throws ParserException {
+    public void testIntAndShortToFloatCast() throws SqlException {
         assertCastToFloat(33, ColumnType.INT, ColumnType.SHORT, new Record() {
             @Override
             public int getInt(int col) {
@@ -357,7 +353,7 @@ public class FunctionParserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testIntAndShortToLongCast() throws ParserException {
+    public void testIntAndShortToLongCast() throws SqlException {
         assertCastToLong(33, ColumnType.INT, ColumnType.SHORT, new Record() {
             @Override
             public int getInt(int col) {
@@ -388,7 +384,7 @@ public class FunctionParserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testNoArgFunction() throws ParserException {
+    public void testNoArgFunction() throws SqlException {
         functions.add(new SysdateFunctionFactory());
         functions.add(new ToCharDateVCFunctionFactory());
         FunctionParser functionParser = new FunctionParser(
@@ -430,37 +426,37 @@ public class FunctionParserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSignatureBeginsWithDigit() throws ParserException {
+    public void testSignatureBeginsWithDigit() throws SqlException {
         assertSignatureFailure("1x()");
     }
 
     @Test
-    public void testSignatureEmptyFunctionName() throws ParserException {
+    public void testSignatureEmptyFunctionName() throws SqlException {
         assertSignatureFailure("(B)");
     }
 
     @Test
-    public void testSignatureIllegalArgumentType() throws ParserException {
+    public void testSignatureIllegalArgumentType() throws SqlException {
         assertSignatureFailure("x(Bz)");
     }
 
     @Test
-    public void testSignatureIllegalCharacter() throws ParserException {
+    public void testSignatureIllegalCharacter() throws SqlException {
         assertSignatureFailure("x'x()");
     }
 
     @Test
-    public void testSignatureMissingCloseBrace() throws ParserException {
+    public void testSignatureMissingCloseBrace() throws SqlException {
         assertSignatureFailure("a(");
     }
 
     @Test
-    public void testSignatureMissingOpenBrace() throws ParserException {
+    public void testSignatureMissingOpenBrace() throws SqlException {
         assertSignatureFailure("x");
     }
 
     @Test
-    public void testSimpleFunction() throws ParserException {
+    public void testSimpleFunction() throws SqlException {
         assertCastToDouble(13.1, ColumnType.DOUBLE, ColumnType.DOUBLE, new Record() {
             @Override
             public double getDouble(int col) {
@@ -473,7 +469,7 @@ public class FunctionParserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSymbolFunction() throws ParserException {
+    public void testSymbolFunction() throws SqlException {
         functions.add(new LengthStrVFunctionFactory());
         functions.add(new LengthSymbolVFunctionFactory());
         functions.add(new SubtractIntVVFunctionFactory());
@@ -521,7 +517,7 @@ public class FunctionParserTest extends AbstractCairoTest {
         assertFail(2, "too few arguments [found=1,expected=2]", "a + ", metadata);
     }
 
-    private void assertCastToDouble(double expected, int type1, int type2, Record record) throws ParserException {
+    private void assertCastToDouble(double expected, int type1, int type2, Record record) throws SqlException {
         functions.add(new AddDoubleVVFunctionFactory());
         final CollectionRecordMetadata metadata = new CollectionRecordMetadata();
         metadata.add(new TestColumnMetadata("a", type1));
@@ -532,7 +528,7 @@ public class FunctionParserTest extends AbstractCairoTest {
         Assert.assertEquals(expected, function.getDouble(record), 0.00001);
     }
 
-    private void assertCastToFloat(float expected, int type1, int type2, Record record) throws ParserException {
+    private void assertCastToFloat(float expected, int type1, int type2, Record record) throws SqlException {
         functions.add(new AddFloatVVFunctionFactory());
         final CollectionRecordMetadata metadata = new CollectionRecordMetadata();
         metadata.add(new TestColumnMetadata("a", type1));
@@ -543,7 +539,7 @@ public class FunctionParserTest extends AbstractCairoTest {
         Assert.assertEquals(expected, function.getFloat(record), 0.00001);
     }
 
-    private void assertCastToLong(long expected, int type1, int type2, Record record) throws ParserException {
+    private void assertCastToLong(long expected, int type1, int type2, Record record) throws SqlException {
         functions.add(new AddLongVVFunctionFactory());
         final CollectionRecordMetadata metadata = new CollectionRecordMetadata();
         metadata.add(new TestColumnMetadata("a", type1));
@@ -559,13 +555,13 @@ public class FunctionParserTest extends AbstractCairoTest {
         try {
             parseFunction(expression, metadata, functionParser);
             Assert.fail();
-        } catch (ParserException e) {
+        } catch (SqlException e) {
             Assert.assertEquals(expectedPos, e.getPosition());
             TestUtils.assertContains(e.getMessage(), expectedMessage);
         }
     }
 
-    private void assertSignatureFailure(String signature) throws ParserException {
+    private void assertSignatureFailure(String signature) throws SqlException {
         functions.add(new OrVVFunctionFactory());
         functions.add(new FunctionFactory() {
             @Override
@@ -592,14 +588,14 @@ public class FunctionParserTest extends AbstractCairoTest {
         return new FunctionParser(configuration, functions);
     }
 
-    private ExprNode expr(CharSequence expression) throws ParserException {
+    private SqlNode expr(CharSequence expression) throws SqlException {
         lexer.setContent(expression);
         astBuilder.reset();
         parser.parseExpr(lexer, astBuilder);
         return astBuilder.poll();
     }
 
-    private Function parseFunction(CharSequence expression, CollectionRecordMetadata metadata, FunctionParser functionParser) throws ParserException {
+    private Function parseFunction(CharSequence expression, CollectionRecordMetadata metadata, FunctionParser functionParser) throws SqlException {
         return functionParser.parseFunction(expr(expression), metadata, params);
     }
 

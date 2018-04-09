@@ -21,16 +21,16 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.common;
+package com.questdb.griffin;
 
-import com.questdb.griffin.lexer.model.IntrinsicValue;
+import com.questdb.griffin.model.IntrinsicModel;
 import com.questdb.std.Mutable;
 import com.questdb.std.ObjList;
 import com.questdb.std.ObjectFactory;
 import com.questdb.std.Sinkable;
 import com.questdb.std.str.CharSink;
 
-public class ExprNode implements Mutable, Sinkable {
+public class SqlNode implements Mutable, Sinkable {
 
     public final static ExprNodeFactory FACTORY = new ExprNodeFactory();
     public static final int OPERATION = 1;
@@ -41,17 +41,17 @@ public class ExprNode implements Mutable, Sinkable {
     public static final int SET_OPERATION = 32;
     public static final int LAMBDA = 65;
     public static final int UNKNOWN = 0;
-    public final ObjList<ExprNode> args = new ObjList<>(4);
+    public final ObjList<SqlNode> args = new ObjList<>(4);
     public CharSequence token;
     public int precedence;
     public int position;
-    public ExprNode lhs;
-    public ExprNode rhs;
+    public SqlNode lhs;
+    public SqlNode rhs;
     public int type;
     public int paramCount;
-    public int intrinsicValue = IntrinsicValue.UNDEFINED;
+    public int intrinsicValue = IntrinsicModel.UNDEFINED;
 
-    private ExprNode() {
+    private SqlNode() {
     }
 
     public void clear() {
@@ -63,10 +63,10 @@ public class ExprNode implements Mutable, Sinkable {
         rhs = null;
         type = UNKNOWN;
         paramCount = 0;
-        intrinsicValue = IntrinsicValue.UNDEFINED;
+        intrinsicValue = IntrinsicModel.UNDEFINED;
     }
 
-    public ExprNode of(int type, CharSequence token, int precedence, int position) {
+    public SqlNode of(int type, CharSequence token, int precedence, int position) {
         this.type = type;
         this.precedence = precedence;
         this.token = token;
@@ -110,10 +110,10 @@ public class ExprNode implements Mutable, Sinkable {
         }
     }
 
-    private static final class ExprNodeFactory implements ObjectFactory<ExprNode> {
+    private static final class ExprNodeFactory implements ObjectFactory<SqlNode> {
         @Override
-        public ExprNode newInstance() {
-            return new ExprNode();
+        public SqlNode newInstance() {
+            return new SqlNode();
         }
     }
 }

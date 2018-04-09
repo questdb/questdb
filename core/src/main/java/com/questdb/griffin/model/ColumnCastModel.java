@@ -21,16 +21,16 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.lexer.model;
+package com.questdb.griffin.model;
 
-import com.questdb.griffin.common.ExprNode;
+import com.questdb.griffin.SqlNode;
 import com.questdb.std.Mutable;
 import com.questdb.std.ObjectFactory;
 
 public class ColumnCastModel implements Mutable {
     public static final ObjectFactory<ColumnCastModel> FACTORY = ColumnCastModel::new;
 
-    private ExprNode name;
+    private SqlNode name;
     private int columnType;
     private int columnTypePos;
     private int symbolCapacity;
@@ -48,20 +48,20 @@ public class ColumnCastModel implements Mutable {
         return columnTypePos;
     }
 
+    public SqlNode getName() {
+        return name;
+    }
+
+    public void setName(SqlNode name) {
+        this.name = name;
+    }
+
     public int getSymbolCapacity() {
         return symbolCapacity;
     }
 
     public void setSymbolCapacity(int symbolCapacity) {
         this.symbolCapacity = symbolCapacity;
-    }
-
-    public ExprNode getName() {
-        return name;
-    }
-
-    public void setName(ExprNode name) {
-        this.name = name;
     }
 
     public void setType(int columnType, int columnTypePos) {

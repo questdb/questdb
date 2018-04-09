@@ -34,34 +34,30 @@ import com.questdb.cairo.sql.RowCursorFactory;
 import com.questdb.common.ColumnType;
 import com.questdb.common.RecordColumnMetadata;
 import com.questdb.common.RecordMetadata;
-import com.questdb.griffin.common.ExprNode;
 import com.questdb.griffin.engine.functions.Parameter;
 import com.questdb.griffin.engine.table.FilteredTableRecordCursorFactory;
 import com.questdb.griffin.engine.table.SymbolIndexFilteredRowCursorFactory;
 import com.questdb.griffin.engine.table.SymbolIndexRowCursorFactory;
-import com.questdb.griffin.lexer.ParserException;
-import com.questdb.griffin.lexer.SqlLexerOptimiser;
-import com.questdb.griffin.lexer.model.ExecutionModel;
-import com.questdb.griffin.lexer.model.IntrinsicModel;
-import com.questdb.griffin.lexer.model.IntrinsicValue;
-import com.questdb.griffin.lexer.model.QueryModel;
+import com.questdb.griffin.model.ExecutionModel;
+import com.questdb.griffin.model.IntrinsicModel;
+import com.questdb.griffin.model.QueryModel;
 import com.questdb.std.CharSequenceObjHashMap;
 
 import java.util.ServiceLoader;
 
 public class SqlParser {
-    private final SqlLexerOptimiser sqlLexer;
+    private final SqlLexer sqlLexer;
     private final WhereClauseParser filterAnalyser = new WhereClauseParser();
     private final FunctionParser functionParser;
     private final CairoEngine engine;
 
     public SqlParser(CairoEngine engine, CairoConfiguration configuration) {
         this.engine = engine;
-        this.sqlLexer = new SqlLexerOptimiser(engine, configuration);
+        this.sqlLexer = new SqlLexer(engine, configuration);
         this.functionParser = new FunctionParser(configuration, ServiceLoader.load(FunctionFactory.class));
     }
 
-    public RecordCursorFactory parseQuery(CharSequence query) throws ParserException {
+    public RecordCursorFactory parseQuery(CharSequence query) throws SqlException {
         return parse(sqlLexer.parse(query));
     }
 
@@ -69,7 +65,7 @@ public class SqlParser {
         // todo: clear
     }
 
-    private RecordCursorFactory parse(ExecutionModel model) throws ParserException {
+    private RecordCursorFactory parse(ExecutionModel model) throws SqlException {
         if (model.getModelType() == ExecutionModel.QUERY) {
             clearState();
             return parseQuery((QueryModel) model);
@@ -77,7 +73,7 @@ public class SqlParser {
         throw new IllegalArgumentException("QueryModel expected");
     }
 
-    private RecordCursorFactory parseNoSelect(QueryModel model) throws ParserException {
+    private RecordCursorFactory parseNoSelect(QueryModel model) throws SqlException {
         if (model.getTableName() != null) {
             return parseTableQuery(model);
 
@@ -86,7 +82,7 @@ public class SqlParser {
         return parseQuery(model.getNestedModel());
     }
 
-    private RecordCursorFactory parseQuery(QueryModel model) throws ParserException {
+    private RecordCursorFactory parseQuery(QueryModel model) throws SqlException {
         switch (model.getSelectModelType()) {
             case QueryModel.SELECT_MODEL_CHOOSE:
                 return parseSelectChoose(model);
@@ -101,33 +97,33 @@ public class SqlParser {
         }
     }
 
-    private RecordCursorFactory parseSelectAnalytic(QueryModel model) throws ParserException {
+    private RecordCursorFactory parseSelectAnalytic(QueryModel model) throws SqlException {
         assert model.getNestedModel() != null;
         return parseQuery(model.getNestedModel());
     }
 
-    private RecordCursorFactory parseSelectChoose(QueryModel model) throws ParserException {
+    private RecordCursorFactory parseSelectChoose(QueryModel model) throws SqlException {
         assert model.getNestedModel() != null;
         return parseQuery(model.getNestedModel());
     }
 
-    private RecordCursorFactory parseSelectGroupBy(QueryModel model) throws ParserException {
+    private RecordCursorFactory parseSelectGroupBy(QueryModel model) throws SqlException {
         assert model.getNestedModel() != null;
         return parseQuery(model.getNestedModel());
     }
 
-    private RecordCursorFactory parseSelectVirtual(QueryModel model) throws ParserException {
+    private RecordCursorFactory parseSelectVirtual(QueryModel model) throws SqlException {
         assert model.getNestedModel() != null;
         return parseQuery(model.getNestedModel());
     }
 
     @SuppressWarnings("ConstantConditions")
-    private RecordCursorFactory parseTableQuery(QueryModel model) throws ParserException {
+    private RecordCursorFactory parseTableQuery(QueryModel model) throws SqlException {
 
 //        applyLimit(model);
 
-        final ExprNode latestBy = model.getLatestBy();
-        final ExprNode whereClause = model.getWhereClause();
+        final SqlNode latestBy = model.getLatestBy();
+        final SqlNode whereClause = model.getWhereClause();
 
         try (TableReader reader = engine.getReader(model.getTableName().token)) {
             if (whereClause != null) {
@@ -135,7 +131,7 @@ public class SqlParser {
                 final RecordMetadata metadata = reader.getMetadata();
                 final int timestampIndex;
 
-                ExprNode timestamp = model.getTimestamp();
+                SqlNode timestamp = model.getTimestamp();
                 if (timestamp != null) {
                     timestampIndex = metadata.getColumnIndex(timestamp.token);
                 } else {
@@ -144,7 +140,7 @@ public class SqlParser {
 
                 final IntrinsicModel intrinsicModel = filterAnalyser.extract(model, whereClause, reader.getMetadata(), latestBy != null ? latestBy.token : null, timestampIndex);
 
-                if (intrinsicModel.intrinsicValue == IntrinsicValue.FALSE) {
+                if (intrinsicModel.intrinsicValue == IntrinsicModel.FALSE) {
                     // todo: return empty factory
                     return null;
                 }
@@ -161,7 +157,7 @@ public class SqlParser {
                 // validate filter
                 if (filter != null) {
                     if (filter.getType() != ColumnType.BOOLEAN) {
-                        throw ParserException.$(intrinsicModel.filter.position, "Boolean expression expected");
+                        throw SqlException.$(intrinsicModel.filter.position, "Boolean expression expected");
                     }
 
                     if (filter.isConstant()) {
@@ -190,7 +186,7 @@ public class SqlParser {
                     int latestByIndex = metadata.getColumnIndex(latestBy.token);
                     RecordColumnMetadata latestByMeta = metadata.getColumnQuick(latestByIndex);
                     if (latestByMeta.getType() != ColumnType.SYMBOL) {
-                        throw ParserException.$(latestBy.position, "has to be SYMBOL");
+                        throw SqlException.$(latestBy.position, "has to be SYMBOL");
                     }
 
                     if (intrinsicModel.keyColumn != null) {

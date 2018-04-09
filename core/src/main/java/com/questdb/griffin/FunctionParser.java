@@ -27,12 +27,9 @@ import com.questdb.cairo.CairoConfiguration;
 import com.questdb.common.ColumnType;
 import com.questdb.common.NoSuchColumnException;
 import com.questdb.common.RecordMetadata;
-import com.questdb.griffin.common.ExprNode;
-import com.questdb.griffin.common.PostOrderTreeTraversalAlgo;
 import com.questdb.griffin.engine.functions.Parameter;
 import com.questdb.griffin.engine.functions.columns.*;
 import com.questdb.griffin.engine.functions.constants.*;
-import com.questdb.griffin.lexer.ParserException;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.std.*;
@@ -55,7 +52,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
         loadFunctionFactories(functionFactories);
     }
 
-    public static Function getOrCreate(ExprNode node, CharSequenceObjHashMap<Parameter> parameterMap) {
+    public static Function getOrCreate(SqlNode node, CharSequenceObjHashMap<Parameter> parameterMap) {
         Parameter p = parameterMap.get(node.token);
         if (p == null) {
             parameterMap.put(node.token, p = new Parameter());
@@ -64,7 +61,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
         return p;
     }
 
-    public Function parseFunction(ExprNode node, RecordMetadata metadata, CharSequenceObjHashMap<Parameter> parameterMap) throws ParserException {
+    public Function parseFunction(SqlNode node, RecordMetadata metadata, CharSequenceObjHashMap<Parameter> parameterMap) throws SqlException {
         this.parameterMap = parameterMap;
         this.metadata = metadata;
         algo.traverse(node, this);
@@ -72,11 +69,11 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
     }
 
     @Override
-    public void visit(ExprNode node) throws ParserException {
+    public void visit(SqlNode node) throws SqlException {
         int argCount = node.paramCount;
         if (argCount == 0) {
             switch (node.type) {
-                case ExprNode.LITERAL:
+                case SqlNode.LITERAL:
                     if (Chars.startsWith(node.token, ':')) {
                         stack.push(getOrCreate(node, parameterMap));
                     } else {
@@ -84,7 +81,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
                         stack.push(lookupColumn(node));
                     }
                     break;
-                case ExprNode.CONSTANT:
+                case SqlNode.CONSTANT:
                     stack.push(parseConstant(node));
                     break;
                 default:
@@ -98,7 +95,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
             for (int n = 0; n < argCount; n++) {
                 Function c = stack.poll();
                 if (c == null) {
-                    throw ParserException.position(node.position).put("too few arguments [found=").put(n).put(",expected=").put(argCount).put(']');
+                    throw SqlException.position(node.position).put("too few arguments [found=").put(n).put(",expected=").put(argCount).put(']');
                 }
                 mutableArgs.setQuick(n, c);
             }
@@ -106,8 +103,8 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
         }
     }
 
-    private static ParserException invalidFunction(CharSequence message, ExprNode node, ObjList<Function> args) {
-        ParserException ex = ParserException.position(node.position);
+    private static SqlException invalidFunction(CharSequence message, SqlNode node, ObjList<Function> args) {
+        SqlException ex = SqlException.position(node.position);
         ex.put(message);
         ex.put(": ");
         ex.put(node.token);
@@ -124,29 +121,29 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
         return ex;
     }
 
-    private static int validateSignatureAndGetNameSeparator(String sig) throws ParserException {
+    private static int validateSignatureAndGetNameSeparator(String sig) throws SqlException {
         int openBraceIndex = sig.indexOf('(');
         if (openBraceIndex == -1) {
-            throw ParserException.$(0, "open brace expected");
+            throw SqlException.$(0, "open brace expected");
         }
 
         if (openBraceIndex == 0) {
-            throw ParserException.$(0, "empty function name");
+            throw SqlException.$(0, "empty function name");
         }
 
         if (sig.charAt(sig.length() - 1) != ')') {
-            throw ParserException.$(0, "close brace expected");
+            throw SqlException.$(0, "close brace expected");
         }
 
         int c = sig.charAt(0);
         if (c >= '0' && c <= '9') {
-            throw ParserException.$(0, "name must not start with digit");
+            throw SqlException.$(0, "name must not start with digit");
         }
 
         for (int i = 0; i < openBraceIndex; i++) {
             char cc = sig.charAt(i);
             if (invalidFunctionNameChars.contains(cc)) {
-                throw ParserException.position(0).put("invalid character: ").put(cc);
+                throw SqlException.position(0).put("invalid character: ").put(cc);
             }
         }
 
@@ -154,7 +151,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
         for (int i = openBraceIndex + 1, n = sig.length() - 1; i < n; i++) {
             char cc = sig.charAt(i);
             if (getArgType(cc) == -1) {
-                throw ParserException.position(0).put("illegal argument type: ").put(cc);
+                throw SqlException.position(0).put("illegal argument type: ").put(cc);
             }
         }
         return openBraceIndex;
@@ -206,14 +203,14 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
         return sigArgType;
     }
 
-    private Function getFunction(ExprNode node, ObjList<Function> args) throws ParserException {
-        if (node.type == ExprNode.LAMBDA) {
-            throw ParserException.$(node.position, "Cannot use lambda in this context");
+    private Function getFunction(SqlNode node, ObjList<Function> args) throws SqlException {
+        if (node.type == SqlNode.LAMBDA) {
+            throw SqlException.$(node.position, "Cannot use lambda in this context");
         }
         return getFunction0(node, args);
     }
 
-    private Function getFunction0(ExprNode node, ObjList<Function> args) throws ParserException {
+    private Function getFunction0(SqlNode node, ObjList<Function> args) throws SqlException {
         ObjList<FunctionFactory> overload = factories.get(node.token);
         if (overload == null) {
             throw invalidFunction("unknown function name", node, args);
@@ -302,7 +299,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
             final int openBraceIndex;
             try {
                 openBraceIndex = validateSignatureAndGetNameSeparator(sig);
-            } catch (ParserException e) {
+            } catch (SqlException e) {
                 LOG.error().$("skipped: ").$(sig).$(" [class=").$(factory.getClass().getName()).$(']').$();
                 continue;
             }
@@ -320,7 +317,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
         }
     }
 
-    private Function lookupColumn(ExprNode node) throws ParserException {
+    private Function lookupColumn(SqlNode node) throws SqlException {
         try {
             final int index = metadata.getColumnIndex(node.token);
             switch (metadata.getColumnQuick(index).getType()) {
@@ -351,11 +348,11 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
 
             }
         } catch (NoSuchColumnException e) {
-            throw ParserException.invalidColumn(node.position, node.token);
+            throw SqlException.invalidColumn(node.position, node.token);
         }
     }
 
-    private Function parseConstant(ExprNode node) throws ParserException {
+    private Function parseConstant(SqlNode node) throws SqlException {
 
         if (Chars.equalsIgnoreCase(node.token, "null")) {
             return NullConstant.INSTANCE;
@@ -388,7 +385,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
         } catch (NumericException ignore) {
         }
 
-        throw ParserException.position(node.position).put("invalid constant: ").put(node.token);
+        throw SqlException.position(node.position).put("invalid constant: ").put(node.token);
     }
 
     static {

@@ -21,15 +21,33 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.lexer;
+package com.questdb.griffin.model;
 
-import com.questdb.std.LongList;
-import com.questdb.std.Numbers;
-import com.questdb.std.NumericException;
+import com.questdb.griffin.SqlException;
+import com.questdb.griffin.SqlNode;
+import com.questdb.std.*;
 import com.questdb.std.microtime.DateFormatUtils;
 import com.questdb.std.microtime.Dates;
 
-public class IntervalCompiler {
+public class IntrinsicModel implements Mutable {
+    public static final ObjectFactory<IntrinsicModel> FACTORY = IntrinsicModel::new;
+    public static final int TRUE = 1;
+    public static final int FALSE = 2;
+    public static final int UNDEFINED = 0;
+    private static final LongList INFINITE_INTERVAL;
+    public final CharSequenceHashSet keyValues = new CharSequenceHashSet();
+    public final IntList keyValuePositions = new IntList();
+    private final LongList intervalsA = new LongList();
+    private final LongList intervalsB = new LongList();
+    private final LongList intervalsC = new LongList();
+    public CharSequence keyColumn;
+    public SqlNode filter;
+    public LongList intervals;
+    public int intrinsicValue = UNDEFINED;
+    public boolean keyValuesIsLambda = false;
+
+    public IntrinsicModel() {
+    }
 
     public static long getIntervalHi(LongList intervals, int pos) {
         return intervals.getQuick((pos << 1) + 1);
@@ -37,6 +55,78 @@ public class IntervalCompiler {
 
     public static long getIntervalLo(LongList intervals, int pos) {
         return intervals.getQuick(pos << 1);
+    }
+
+    @Override
+    public void clear() {
+        keyColumn = null;
+        keyValues.clear();
+        keyValuePositions.clear();
+        clearInterval();
+        filter = null;
+        intervals = null;
+        intrinsicValue = UNDEFINED;
+        keyValuesIsLambda = false;
+    }
+
+    public void clearInterval() {
+        this.intervals = null;
+    }
+
+    public void excludeValue(SqlNode val) {
+
+        final int index;
+        if (Chars.equals("null", val.token)) {
+            index = keyValues.removeNull();
+            if (index > -1) {
+                keyValuePositions.removeIndex(index);
+            }
+        } else {
+            index = keyValues.removeAt(Chars.isQuoted(val.token) ? keyValues.keyIndex(val.token, 1, val.token.length() - 1) : keyValues.keyIndex(val.token));
+        }
+
+        if (index > -1) {
+            keyValuePositions.removeIndex(index);
+        }
+
+        if (keyValues.size() == 0) {
+            intrinsicValue = FALSE;
+        }
+    }
+
+    public void intersectIntervals(long lo, long hi) {
+        LongList temp = shuffleTemp(intervals, null);
+        temp.add(lo);
+        temp.add(hi);
+        intersectIntervals(temp);
+    }
+
+    public void intersectIntervals(CharSequence seq, int lo, int lim, int position) throws SqlException {
+        LongList temp = shuffleTemp(intervals, null);
+        parseIntervalEx(seq, lo, lim, position, temp);
+        intersectIntervals(temp);
+    }
+
+    public void subtractIntervals(long lo, long hi) {
+        LongList temp = shuffleTemp(intervals, null);
+        temp.add(lo);
+        temp.add(hi);
+        subtractIntervals(temp);
+    }
+
+    public void subtractIntervals(CharSequence seq, int lo, int lim, int position) throws SqlException {
+        LongList temp = shuffleTemp(intervals, null);
+        parseIntervalEx(seq, lo, lim, position, temp);
+        subtractIntervals(temp);
+    }
+
+    @Override
+    public String toString() {
+        return "IntrinsicModel{" +
+                "keyValues=" + keyValues +
+                ", keyColumn='" + keyColumn + '\'' +
+                ", filter=" + filter +
+                '}';
     }
 
     /**
@@ -47,7 +137,7 @@ public class IntervalCompiler {
      * @param b   list of intervals
      * @param out intersection target
      */
-    public static void intersect(LongList a, LongList b, LongList out) {
+    static void intersect(LongList a, LongList b, LongList out) {
 
         final int sizeA = a.size() / 2;
         final int sizeB = b.size() / 2;
@@ -92,7 +182,7 @@ public class IntervalCompiler {
      *
      * @param intervals collection of intervals
      */
-    public static void invert(LongList intervals) {
+    static void invert(LongList intervals) {
         long last = Long.MIN_VALUE;
         int n = intervals.size();
         for (int i = 0; i < n; i += 2) {
@@ -106,13 +196,13 @@ public class IntervalCompiler {
         intervals.extendAndSet(n, last);
     }
 
-    public static void parseIntervalEx(CharSequence seq, int lo, int lim, int position, LongList out) throws ParserException {
+    static void parseIntervalEx(CharSequence seq, int lo, int lim, int position, LongList out) throws SqlException {
         int pos[] = new int[3];
         int p = -1;
         for (int i = lo; i < lim; i++) {
             if (seq.charAt(i) == ';') {
                 if (p > 1) {
-                    throw ParserException.$(position, "Invalid interval format");
+                    throw SqlException.$(position, "Invalid interval format");
                 }
                 pos[++p] = i;
             }
@@ -133,7 +223,7 @@ public class IntervalCompiler {
                     append(out, millis, millis);
                     break;
                 } catch (NumericException e) {
-                    throw ParserException.$(position, "Not a date");
+                    throw SqlException.$(position, "Not a date");
                 }
             case 0:
                 // single semicolon, expect period format after date
@@ -144,13 +234,13 @@ public class IntervalCompiler {
                 try {
                     period = Numbers.parseInt(seq, pos[1] + 1, pos[2] - 1);
                 } catch (NumericException e) {
-                    throw ParserException.$(position, "Period not a number");
+                    throw SqlException.$(position, "Period not a number");
                 }
                 int count;
                 try {
                     count = Numbers.parseInt(seq, pos[2] + 1, lim);
                 } catch (NumericException e) {
-                    throw ParserException.$(position, "Count not a number");
+                    throw SqlException.$(position, "Count not a number");
                 }
 
                 parseRange(seq, lo, pos[0], pos[1], position, out);
@@ -175,82 +265,15 @@ public class IntervalCompiler {
                         addMillisInterval(period * Dates.DAY_MICROS, count, out);
                         break;
                     default:
-                        throw ParserException.$(position, "Unknown period: " + type + " at " + (p - 1));
+                        throw SqlException.$(position, "Unknown period: " + type + " at " + (p - 1));
                 }
                 break;
             default:
-                throw ParserException.$(position, "Invalid interval format");
+                throw SqlException.$(position, "Invalid interval format");
         }
     }
 
-    /**
-     * Performs set subtraction on two lists of intervals. Subtracts b from a, e.g. result = a - b.
-     * Both sets are expected to be ordered chronologically.
-     *
-     * @param a   list of intervals
-     * @param b   list of intervals
-     * @param out result of subtraction
-     */
-    public static void subtract(LongList a, LongList b, LongList out) {
-
-        final int sizeA = a.size() / 2;
-        final int sizeB = b.size() / 2;
-        int intervalA = 0;
-        int intervalB = 0;
-        boolean fetchA = true;
-
-        if (intervalA < sizeA) {
-
-            long aLo = 0;// = getIntervalLo(a, intervalA);
-            long aHi = 0;// = getIntervalHi(a, intervalA);
-
-            while (intervalA < sizeA) {
-
-
-                if (fetchA) {
-                    aLo = getIntervalLo(a, intervalA);
-                    aHi = getIntervalHi(a, intervalA);
-                    fetchA = true;
-                }
-
-                if (intervalB == sizeB) {
-                    append(out, aLo, aHi);
-                    intervalA++;
-                    continue;
-                }
-
-                long bLo = getIntervalLo(b, intervalB);
-                long bHi = getIntervalHi(b, intervalB);
-
-                // a fully above b
-                if (aHi < bLo) {
-                    // a loses
-                    append(out, aLo, aHi);
-                    intervalA++;
-                } else if (aLo > bHi) {
-                    // a fully below b
-                    // b loses
-                    intervalB++;
-                } else {
-
-                    if (aLo < bLo) {
-                        // top part of a is above b
-                        append(out, aLo, bLo - 1);
-                    }
-
-                    if (aHi > bHi) {
-                        aLo = bHi + 1;
-                        fetchA = false;
-                        intervalB++;
-                    } else {
-                        intervalA++;
-                    }
-                }
-            }
-        }
-    }
-
-    private static void parseInterval(CharSequence seq, final int pos, int lim, LongList out) throws NumericException {
+    static void parseInterval(CharSequence seq, final int pos, int lim, LongList out) throws NumericException {
         if (lim - pos < 4) {
             throw NumericException.INSTANCE;
         }
@@ -361,7 +384,7 @@ public class IntervalCompiler {
         }
     }
 
-    private static void append(LongList list, long lo, long hi) {
+    static void append(LongList list, long lo, long hi) {
         int n = list.size();
         if (n > 0) {
             long prevHi = list.getQuick(n - 1) + 1;
@@ -375,13 +398,13 @@ public class IntervalCompiler {
         list.add(hi);
     }
 
-    private static void parseRange(CharSequence seq, int lo, int p, int lim, int position, LongList out) throws ParserException {
+    private static void parseRange(CharSequence seq, int lo, int p, int lim, int position, LongList out) throws SqlException {
         char type = seq.charAt(lim - 1);
         int period;
         try {
             period = Numbers.parseInt(seq, p + 1, lim - 1);
         } catch (NumericException e) {
-            throw ParserException.$(position, "Range not a number");
+            throw SqlException.$(position, "Range not a number");
         }
         try {
             parseInterval(seq, lo, p, out);
@@ -395,7 +418,7 @@ public class IntervalCompiler {
             long loMillis = DateFormatUtils.tryParse(seq, lo, p);
             append(out, loMillis, Dates.addPeriod(loMillis, type, period));
         } catch (NumericException e) {
-            throw ParserException.invalidDate(position);
+            throw SqlException.invalidDate(position);
         }
     }
 
@@ -457,4 +480,60 @@ public class IntervalCompiler {
             throw NumericException.INSTANCE;
         }
     }
+
+    private void intersectIntervals(LongList intervals) {
+        if (this.intervals == null) {
+            this.intervals = intervals;
+        } else {
+            final LongList dest = shuffleTemp(intervals, this.intervals);
+            intersect(intervals, this.intervals, dest);
+            this.intervals = dest;
+        }
+
+        if (this.intervals.size() == 0) {
+            intrinsicValue = FALSE;
+        }
+    }
+
+    private LongList shuffleTemp(LongList src1, LongList src2) {
+        LongList result = shuffleTemp0(src1, src2);
+        result.clear();
+        return result;
+    }
+
+    private LongList shuffleTemp0(LongList src1, LongList src2) {
+        if (src2 != null) {
+            if ((src1 == intervalsA && src2 == intervalsB) || (src1 == intervalsB && src2 == intervalsA)) {
+                return intervalsC;
+            }
+            // this is the ony possibility because we never return 'intervalsA' for two args
+            return intervalsB;
+        }
+
+        if (src1 == intervalsA) {
+            return intervalsB;
+        }
+        return intervalsA;
+    }
+
+    private void subtractIntervals(LongList temp) {
+        invert(temp);
+        if (this.intervals == null) {
+            intervals = temp;
+        } else {
+            final LongList dest = shuffleTemp(temp, this.intervals);
+            intersect(temp, this.intervals, dest);
+            this.intervals = dest;
+        }
+        if (this.intervals.size() == 0) {
+            intrinsicValue = FALSE;
+        }
+    }
+
+    static {
+        INFINITE_INTERVAL = new LongList();
+        INFINITE_INTERVAL.add(Long.MIN_VALUE);
+        INFINITE_INTERVAL.add(Long.MAX_VALUE);
+    }
+
 }

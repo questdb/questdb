@@ -21,15 +21,15 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.lexer;
+package com.questdb.griffin;
 
 import com.questdb.cairo.*;
 import com.questdb.cairo.sql.CairoEngine;
 import com.questdb.common.ColumnType;
 import com.questdb.common.PartitionBy;
-import com.questdb.griffin.lexer.model.CreateTableModel;
-import com.questdb.griffin.lexer.model.ExecutionModel;
-import com.questdb.griffin.lexer.model.QueryModel;
+import com.questdb.griffin.model.CreateTableModel;
+import com.questdb.griffin.model.ExecutionModel;
+import com.questdb.griffin.model.QueryModel;
 import com.questdb.std.Chars;
 import com.questdb.std.Files;
 import com.questdb.std.FilesFacade;
@@ -43,9 +43,9 @@ import org.junit.Test;
 
 import java.io.IOException;
 
-public class SqlLexerOptimiserTest extends AbstractCairoTest {
+public class SqlLexerTest extends AbstractCairoTest {
     private final static CairoEngine engine = new Engine(configuration);
-    private final static SqlLexerOptimiser parser = new SqlLexerOptimiser(engine, configuration);
+    private final static SqlLexer parser = new SqlLexer(engine, configuration);
 
     @AfterClass
     public static void tearDown() throws IOException {
@@ -97,7 +97,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testAsOfJoin() throws ParserException {
+    public void testAsOfJoin() throws SqlException {
         assertQuery(
                 "select-choose" +
                         " t.timestamp timestamp," +
@@ -240,7 +240,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCaseImpossibleRewrite1() throws ParserException {
+    public void testCaseImpossibleRewrite1() throws SqlException {
         // referenced columns in 'when' clauses are different
         assertQuery(
                 "select-virtual case('C','B',2 = b,'A',a = 1) + 1 column, b from (tab)",
@@ -250,7 +250,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCaseImpossibleRewrite2() throws ParserException {
+    public void testCaseImpossibleRewrite2() throws SqlException {
         // 'when' is non-constant
         assertQuery(
                 "select-virtual case('C','B',2 + b = a,'A',a = 1) + 1 column, b from (tab)",
@@ -260,7 +260,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCaseToSwitchExpression() throws ParserException {
+    public void testCaseToSwitchExpression() throws SqlException {
         assertQuery(
                 "select-virtual switch(a,'C',1,'A',2,'B') + 1 column, b from (tab)",
                 "select case when a = 1 then 'A' when a = 2 then 'B' else 'C' end+1, b from tab",
@@ -269,7 +269,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCaseToSwitchExpression2() throws ParserException {
+    public void testCaseToSwitchExpression2() throws SqlException {
         // this test has inverded '=' arguments but should still be rewritten to 'switch'
         assertQuery(
                 "select-virtual switch(a,'C',1,'A',2,'B') + 1 column, b from (tab)",
@@ -308,7 +308,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCreateTable() throws ParserException {
+    public void testCreateTable() throws SqlException {
         assertCreateTable(
                 "create table x (" +
                         "a INT," +
@@ -341,7 +341,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCreateTableAsSelect() throws ParserException {
+    public void testCreateTableAsSelect() throws SqlException {
         assertCreateTable(
                 "create table X as (select-choose a, b, c from (tab))",
                 "create table X as ( select a, b, c from tab )",
@@ -353,7 +353,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCreateTableAsSelectIndex() throws ParserException {
+    public void testCreateTableAsSelectIndex() throws SqlException {
         assertCreateTable(
                 "create table X as (select-choose a, b, c from (tab)), index(b capacity 256)",
                 "create table X as ( select a, b, c from tab ), index(b)",
@@ -366,7 +366,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCreateTableAsSelectIndexCapacity() throws ParserException {
+    public void testCreateTableAsSelectIndexCapacity() throws SqlException {
         assertCreateTable(
                 "create table X as (select-choose a, b, c from (tab)), index(b capacity 64)",
                 "create table X as ( select a, b, c from tab ), index(b capacity 64)",
@@ -379,7 +379,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCreateTableAsSelectTimestamp() throws ParserException {
+    public void testCreateTableAsSelectTimestamp() throws SqlException {
         assertCreateTable(
                 "create table X as (select-choose a, b, c from (tab)) timestamp(b)",
                 "create table X as ( select a, b, c from tab ) timestamp(b)",
@@ -411,7 +411,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCreateTableCacheCapacity() throws ParserException {
+    public void testCreateTableCacheCapacity() throws SqlException {
         assertCreateTable("create table x (" +
                         "a INT," +
                         " b BYTE," +
@@ -445,7 +445,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCreateTableCastCapacityDef() throws ParserException {
+    public void testCreateTableCastCapacityDef() throws SqlException {
         assertCreateTable(
                 "create table x as (select-choose a, b, c from (tab)), cast(a as DOUBLE:35), cast(c as SYMBOL:54 capacity 16)",
                 "create table x as (tab), cast(a as double), cast(c as symbol capacity 16)",
@@ -458,7 +458,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCreateTableCastDef() throws ParserException {
+    public void testCreateTableCastDef() throws SqlException {
         assertCreateTable(
                 "create table x as (select-choose a, b, c from (tab)), cast(a as DOUBLE:35), cast(c as SYMBOL:54 capacity 128)",
                 "create table x as (tab), cast(a as double), cast(c as symbol)",
@@ -520,7 +520,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCreateTableInPlaceIndex() throws ParserException {
+    public void testCreateTableInPlaceIndex() throws SqlException {
         assertCreateTable("create table x (" +
                         "a INT," +
                         " b BYTE," +
@@ -554,7 +554,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCreateTableInPlaceIndexAndBlockSize() throws ParserException {
+    public void testCreateTableInPlaceIndexAndBlockSize() throws SqlException {
         assertCreateTable(
                 "create table x (" +
                         "a INT," +
@@ -714,7 +714,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCreateTableNoCache() throws ParserException {
+    public void testCreateTableNoCache() throws SqlException {
         assertCreateTable("create table x (" +
                         "a INT," +
                         " b BYTE," +
@@ -748,7 +748,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCreateTableNoCacheIndex() throws ParserException {
+    public void testCreateTableNoCacheIndex() throws SqlException {
         assertCreateTable("create table x (" +
                         "a INT," +
                         " b BYTE," +
@@ -782,7 +782,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCreateTableOutOfPlaceIndex() throws ParserException {
+    public void testCreateTableOutOfPlaceIndex() throws SqlException {
         assertCreateTable(
                 "create table x (" +
                         "a INT index capacity 256," +
@@ -819,7 +819,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCreateTableOutOfPlaceIndexAndCapacity() throws ParserException {
+    public void testCreateTableOutOfPlaceIndexAndCapacity() throws SqlException {
         assertCreateTable(
                 "create table x (" +
                         "a INT index capacity 16," +
@@ -955,7 +955,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCrossJoinWithClause() throws ParserException {
+    public void testCrossJoinWithClause() throws SqlException {
         assertQuery(
                 "select-choose" +
                         " c.name name," +
@@ -986,7 +986,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testDisallowedColumnAliases() throws ParserException {
+    public void testDisallowedColumnAliases() throws SqlException {
         assertQuery(
                 "select-virtual x + z column, x - z column1, x * z column2, x / z column3, x % z column4, x ^ z column5 from (tab1)",
                 "select x+z, x-z, x*z, x/z, x%z, x^z from tab1",
@@ -1380,7 +1380,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testJoinColumnResolutionOnSubQuery() throws ParserException {
+    public void testJoinColumnResolutionOnSubQuery() throws SqlException {
         assertQuery(
                 "select-group-by sum(timestamp) sum from ((y) _xQdbA1 cross join (x) _xQdbA2)",
                 "select sum(timestamp) from (y) cross join (x)",
@@ -1390,7 +1390,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testJoinColumnResolutionOnSubQuery2() throws ParserException {
+    public void testJoinColumnResolutionOnSubQuery2() throws SqlException {
         assertQuery(
                 "select-group-by sum(timestamp) sum from ((y) _xQdbA1 join (x) _xQdbA2 on _xQdbA2.ccy = _xQdbA1.ccy and _xQdbA2.sym = _xQdbA1.sym)",
                 "select sum(timestamp) from (y) join (x) on (ccy, sym)",
@@ -1400,7 +1400,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testJoinColumnResolutionOnSubQuery3() throws ParserException {
+    public void testJoinColumnResolutionOnSubQuery3() throws SqlException {
         assertQuery(
                 "select-group-by sum(timestamp) sum from ((y) _xQdbA1 cross join x)",
                 "select sum(timestamp) from (y) cross join x",
@@ -1487,7 +1487,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testJoinFunction() throws ParserException {
+    public void testJoinFunction() throws SqlException {
         assertQuery(
                 "select-choose" +
                         " tab.x x," +
@@ -1610,7 +1610,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testJoinOfJoin() throws ParserException {
+    public void testJoinOfJoin() throws SqlException {
         assertQuery(
                 "select-choose" +
                         " tt.x x," +
@@ -1643,7 +1643,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testJoinOnColumns() throws ParserException {
+    public void testJoinOnColumns() throws SqlException {
         assertQuery(
                 "select-choose a.x x, b.y y from (tab1 a join tab2 b on b.z = a.z)",
                 "select a.x, b.y from tab1 a join tab2 b on (z)",
@@ -1670,7 +1670,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testJoinOnExpression2() throws ParserException {
+    public void testJoinOnExpression2() throws SqlException {
         assertQuery("select-choose" +
                         " a.x x," +
                         " b.x x1" +
@@ -1750,7 +1750,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testJoinOrder4() throws ParserException {
+    public void testJoinOrder4() throws SqlException {
         assertQuery(
                 "select-choose" +
                         " b.id id," +
@@ -1976,7 +1976,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testJoinWith() throws ParserException {
+    public void testJoinWith() throws SqlException {
         assertQuery(
                 "select-choose" +
                         " x.y y," +
@@ -1994,7 +1994,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testJoinWithClausesDefaultAlias() throws ParserException {
+    public void testJoinWithClausesDefaultAlias() throws SqlException {
         assertQuery(
                 "select-choose" +
                         " cust.customerId customerId," +
@@ -2016,7 +2016,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testJoinWithClausesExplicitAlias() throws ParserException {
+    public void testJoinWithClausesExplicitAlias() throws SqlException {
         assertQuery(
                 "select-choose" +
                         " c.name name," +
@@ -2099,7 +2099,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
                         "from acc(Date) sample by 1d\n" +
                         "-- where x = 10\n");
                 Assert.fail();
-            } catch (ParserException e) {
+            } catch (SqlException e) {
                 TestUtils.assertEquals("unexpected token: Date", e.getFlyweightMessage());
             }
         }
@@ -2139,7 +2139,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
         try {
             parser.parse("select id, x + 10, x from tab id ~ 'HBRO'");
             Assert.fail("Exception expected");
-        } catch (ParserException e) {
+        } catch (SqlException e) {
             Assert.assertEquals(33, e.getPosition());
         }
     }
@@ -2240,7 +2240,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testOptimiseNotAnd() throws ParserException {
+    public void testOptimiseNotAnd() throws SqlException {
         assertQuery(
                 "select-choose a, b from (tab where a != b or b != a)",
                 "select a, b from tab where not (a = b and b = a)",
@@ -2250,7 +2250,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testOptimiseNotEqual() throws ParserException {
+    public void testOptimiseNotEqual() throws SqlException {
         assertQuery(
                 "select-choose a, b from (tab where a != b)",
                 "select a, b from tab where not (a = b)",
@@ -2260,7 +2260,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testOptimiseNotGreater() throws ParserException {
+    public void testOptimiseNotGreater() throws SqlException {
         assertQuery(
                 "select-choose a, b from (tab where a <= b)",
                 "select a, b from tab where not (a > b)",
@@ -2270,7 +2270,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testOptimiseNotGreaterOrEqual() throws ParserException {
+    public void testOptimiseNotGreaterOrEqual() throws SqlException {
         assertQuery(
                 "select-choose a, b from (tab where a < b)",
                 "select a, b from tab where not (a >= b)",
@@ -2280,7 +2280,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testOptimiseNotLess() throws ParserException {
+    public void testOptimiseNotLess() throws SqlException {
         assertQuery(
                 "select-choose a, b from (tab where a >= b)",
                 "select a, b from tab where not (a < b)",
@@ -2290,7 +2290,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testOptimiseNotLessOrEqual() throws ParserException {
+    public void testOptimiseNotLessOrEqual() throws SqlException {
         assertQuery(
                 "select-choose a, b from (tab where a > b)",
                 "select a, b from tab where not (a <= b)",
@@ -2300,7 +2300,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testOptimiseNotLiteral() throws ParserException {
+    public void testOptimiseNotLiteral() throws SqlException {
         assertQuery(
                 "select-choose a, b from (tab where not(a))",
                 "select a, b from tab where not (a)",
@@ -2310,7 +2310,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testOptimiseNotLiteralOr() throws ParserException {
+    public void testOptimiseNotLiteralOr() throws SqlException {
         assertQuery(
                 "select-choose a, b from (tab where not(a) and b != a)",
                 "select a, b from tab where not (a or b = a)",
@@ -2320,7 +2320,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testOptimiseNotNotEqual() throws ParserException {
+    public void testOptimiseNotNotEqual() throws SqlException {
         assertQuery(
                 "select-choose a, b from (tab where a = b)",
                 "select a, b from tab where not (a != b)",
@@ -2330,7 +2330,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testOptimiseNotNotNotEqual() throws ParserException {
+    public void testOptimiseNotNotNotEqual() throws SqlException {
         assertQuery(
                 "select-choose a, b from (tab where a != b)",
                 "select a, b from tab where not(not (a != b))",
@@ -2340,7 +2340,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testOptimiseNotOr() throws ParserException {
+    public void testOptimiseNotOr() throws SqlException {
         assertQuery(
                 "select-choose a, b from (tab where a != b and b != a)",
                 "select a, b from tab where not (a = b or b = a)",
@@ -2350,7 +2350,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testOptimiseNotOrLiterals() throws ParserException {
+    public void testOptimiseNotOrLiterals() throws SqlException {
         assertQuery(
                 "select-choose a, b from (tab where not(a) and not(b))",
                 "select a, b from tab where not (a or b)",
@@ -2397,7 +2397,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testOrderByGroupByCol() throws ParserException {
+    public void testOrderByGroupByCol() throws SqlException {
         assertQuery(
                 "select-group-by a, sum(b) b from (tab) order by b",
                 "select a, sum(b) b from tab order by b",
@@ -2406,7 +2406,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testOrderByGroupByColPrefixed() throws ParserException {
+    public void testOrderByGroupByColPrefixed() throws SqlException {
         assertQuery(
                 "select-group-by a, sum(b) b from (tab)",
                 "select a, sum(b) b from tab order by tab.b, a",
@@ -2415,7 +2415,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testOrderByGroupByColPrefixed2() throws ParserException {
+    public void testOrderByGroupByColPrefixed2() throws SqlException {
         assertQuery(
                 "select-group-by a, sum(b) b from (tab) order by a",
                 "select a, sum(b) b from tab order by a, tab.b",
@@ -2424,7 +2424,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testOrderByGroupByColPrefixed3() throws ParserException {
+    public void testOrderByGroupByColPrefixed3() throws SqlException {
         assertQuery(
                 "select-group-by a, sum(b) b from (tab) order by a",
                 "select a, sum(b) b from tab order by tab.a, tab.b",
@@ -2433,7 +2433,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testOrderByOnAliasedColumn() throws ParserException {
+    public void testOrderByOnAliasedColumn() throws SqlException {
         assertQuery(
                 "select-choose y from (select-choose y, tab.x x from (tab) order by x)",
                 "select y from tab order by tab.x",
@@ -2444,7 +2444,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testOrderByOnExpression() throws ParserException {
+    public void testOrderByOnExpression() throws SqlException {
         assertQuery(
                 "select-virtual y + x z from (tab) order by z",
                 "select y+x z from tab order by z",
@@ -2455,7 +2455,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testOrderByOnJoinSubQuery() throws ParserException {
+    public void testOrderByOnJoinSubQuery() throws SqlException {
         assertQuery(
                 "select-choose x, y from (select-choose a.x x, b.y y, b.s s from ((select-choose x, z from (tab1 where x = 'Z')) a join (tab2 where s ~ 'K') b on b.z = a.z) order by s)",
                 "select a.x, b.y from (select x,z from tab1 where x = 'Z' order by x) a join (tab2 where s ~ 'K') b on a.z=b.z order by b.s",
@@ -2471,7 +2471,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testOrderByOnJoinSubQuery2() throws ParserException {
+    public void testOrderByOnJoinSubQuery2() throws SqlException {
         assertQuery(
                 "select-choose a.x x, b.y y from ((select-choose x, z from (select-choose x, z, p from (tab1 where x = 'Z') order by p)) a join (tab2 where s ~ 'K') b on b.z = a.z)",
                 "select a.x, b.y from (select x,z from tab1 where x = 'Z' order by p) a join (tab2 where s ~ 'K') b on a.z=b.z",
@@ -2488,7 +2488,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testOrderByOnJoinSubQuery3() throws ParserException {
+    public void testOrderByOnJoinSubQuery3() throws SqlException {
         assertQuery(
                 "select-choose a.x x, b.y y from ((select-choose x from (select-choose x, z from (tab1 where x = 'Z') order by z)) a asof join (select-choose y, z from (select-choose y, z, s from (tab2 where s ~ 'K') order by s)) b on b.z = a.x)",
                 "select a.x, b.y from (select x from tab1 where x = 'Z' order by z) a asof join (select y,z from tab2 where s ~ 'K' order by s) b where a.x = b.z",
@@ -2504,7 +2504,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testOrderByOnJoinTableReference() throws ParserException {
+    public void testOrderByOnJoinTableReference() throws SqlException {
         assertQuery(
                 "select-choose x, y from (select-choose a.x x, b.y y, b.s s from (tab1 a join tab2 b on b.z = a.z) order by s)",
                 "select a.x, b.y from tab1 a join tab2 b on a.z = b.z order by b.s",
@@ -2520,7 +2520,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testOrderByOnMultipleColumns() throws ParserException {
+    public void testOrderByOnMultipleColumns() throws SqlException {
         assertQuery(
                 "select-choose z from (select-choose y z, x from (tab) order by z desc, x)",
                 "select y z from tab order by z desc, x",
@@ -2531,7 +2531,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testOrderByOnNonSelectedColumn() throws ParserException {
+    public void testOrderByOnNonSelectedColumn() throws SqlException {
         assertQuery(
                 "select-choose y from (select-choose y, x from (tab) order by x)",
                 "select y from tab order by x",
@@ -2542,7 +2542,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testOrderByOnNonSelectedColumn2() throws ParserException {
+    public void testOrderByOnNonSelectedColumn2() throws SqlException {
         assertQuery(
                 "select-choose column from (select-virtual 2 * y + x column, x from (select-choose 2 * y + x column, x from (tab)) order by x)",
                 "select 2*y+x from tab order by x",
@@ -2553,7 +2553,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testOrderByOnNonSelectedColumn3() throws ParserException {
+    public void testOrderByOnNonSelectedColumn3() throws SqlException {
         assertQuery(
                 "select-choose" +
                         " column," +
@@ -2575,7 +2575,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testOrderByOnOuterResult() throws ParserException {
+    public void testOrderByOnOuterResult() throws SqlException {
         assertQuery(
                 "select-virtual x, sum1 + sum z from (select-group-by x, sum(3 / x) sum, sum(2 * y + x) sum1 from (tab)) order by z",
                 "select x, sum(2*y+x) + sum(3/x) z from tab order by z asc, tab.y desc",
@@ -2586,7 +2586,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testOrderByOnSelectedAlias() throws ParserException {
+    public void testOrderByOnSelectedAlias() throws SqlException {
         assertQuery(
                 "select-choose y z from (tab) order by z",
                 "select y z from tab order by z",
@@ -2597,7 +2597,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testOrderByWithSampleBy() throws ParserException {
+    public void testOrderByWithSampleBy() throws SqlException {
         assertQuery(
                 "select-group-by t, a, sum(b) sum from ((tab order by t) _xQdbA1) timestamp (t) sample by 2m order by a",
                 "select a, sum(b) from (tab order by t) timestamp(t) sample by 2m order by a",
@@ -2609,7 +2609,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testOrderByWithSampleBy2() throws ParserException {
+    public void testOrderByWithSampleBy2() throws SqlException {
         assertQuery(
                 "select-group-by a, sum(b) sum from ((select-group-by t, a, sum(b) b from ((tab order by t) _xQdbA3) timestamp (t) sample by 10m) _xQdbA1) order by a",
                 "select a, sum(b) from (select a,sum(b) b from (tab order by t) timestamp(t) sample by 10m order by t) order by a",
@@ -2744,7 +2744,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSelectFromSubQuery() throws ParserException {
+    public void testSelectFromSubQuery() throws SqlException {
         assertQuery(
                 "select-choose a.x x from ((tab where y > 10) a)",
                 "select a.x from (tab where y > 10) a",
@@ -2805,7 +2805,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSelectWildcard() throws ParserException {
+    public void testSelectWildcard() throws SqlException {
         assertQuery(
                 "select-choose" +
                         " tab1.x x," +
@@ -2820,7 +2820,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSelectWildcardAndExpr() throws ParserException {
+    public void testSelectWildcardAndExpr() throws SqlException {
         // todo: Y column is selected twice, code should be able to tell that y and tab1.y is the same column
         assertQuery(
                 "select-virtual" +
@@ -2877,7 +2877,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSelectWildcardPrefixed() throws ParserException {
+    public void testSelectWildcardPrefixed() throws SqlException {
         assertQuery(
                 "select-choose" +
                         " tab2.x x," +
@@ -2892,7 +2892,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSelectWildcardPrefixed2() throws ParserException {
+    public void testSelectWildcardPrefixed2() throws SqlException {
         assertQuery(
                 "select-choose" +
                         " tab2.x x," +
@@ -3022,7 +3022,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
         };
 
         CairoEngine engine = new Engine(configuration);
-        SqlLexerOptimiser lexer = new SqlLexerOptimiser(engine, configuration);
+        SqlLexer lexer = new SqlLexer(engine, configuration);
 
         assertSyntaxError(
                 lexer,
@@ -3072,7 +3072,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testTableNameWithNoRowidMarker() throws ParserException {
+    public void testTableNameWithNoRowidMarker() throws SqlException {
         assertQuery(
                 "select-choose x from (*!*tab)",
                 "select * from '*!*tab'",
@@ -3100,7 +3100,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     @Test
     public void testTooManyColumnsEdgeInOrderBy() throws Exception {
         try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)) {
-            for (int i = 0; i < SqlLexerOptimiser.MAX_ORDER_BY_COLUMNS - 1; i++) {
+            for (int i = 0; i < SqlLexer.MAX_ORDER_BY_COLUMNS - 1; i++) {
                 model.col("f" + i, ColumnType.INT);
             }
             CairoTestUtils.create(model);
@@ -3108,21 +3108,21 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
         StringBuilder b = new StringBuilder();
         b.append("x order by ");
-        for (int i = 0; i < SqlLexerOptimiser.MAX_ORDER_BY_COLUMNS - 1; i++) {
+        for (int i = 0; i < SqlLexer.MAX_ORDER_BY_COLUMNS - 1; i++) {
             if (i > 0) {
                 b.append(',');
             }
             b.append('f').append(i);
         }
         QueryModel st = (QueryModel) parser.parse(b);
-        Assert.assertEquals(SqlLexerOptimiser.MAX_ORDER_BY_COLUMNS - 1, st.getOrderBy().size());
+        Assert.assertEquals(SqlLexer.MAX_ORDER_BY_COLUMNS - 1, st.getOrderBy().size());
     }
 
     @Test
     public void testTooManyColumnsInOrderBy() {
         StringBuilder b = new StringBuilder();
         b.append("x order by ");
-        for (int i = 0; i < SqlLexerOptimiser.MAX_ORDER_BY_COLUMNS; i++) {
+        for (int i = 0; i < SqlLexer.MAX_ORDER_BY_COLUMNS; i++) {
             if (i > 0) {
                 b.append(',');
             }
@@ -3130,7 +3130,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
         }
         try {
             parser.parse(b);
-        } catch (ParserException e) {
+        } catch (SqlException e) {
             TestUtils.assertEquals("Too many columns", e.getFlyweightMessage());
         }
     }
@@ -3191,7 +3191,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testWithSelectFrom() throws ParserException {
+    public void testWithSelectFrom() throws SqlException {
         assertQuery(
                 "select-choose a from ((select-choose a from (tab)) x)",
                 "with x as (" +
@@ -3202,7 +3202,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testWithSelectFrom2() throws ParserException {
+    public void testWithSelectFrom2() throws SqlException {
         assertQuery(
                 "select-choose a from ((select-choose a from (tab)) x)",
                 "with x as (" +
@@ -3230,7 +3230,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
     }
 
     private static void assertSyntaxError(
-            SqlLexerOptimiser parser,
+            SqlLexer parser,
             CairoEngine engine,
             String query,
             int position,
@@ -3242,7 +3242,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
             }
             parser.parse(query);
             Assert.fail("Exception expected");
-        } catch (ParserException e) {
+        } catch (SqlException e) {
             Assert.assertEquals(position, e.getPosition());
             TestUtils.assertContains(e.getMessage(), contains);
         } finally {
@@ -3256,7 +3256,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
         }
     }
 
-    private void assertCreateTable(String expected, String ddl, TableModel... tableModels) throws ParserException {
+    private void assertCreateTable(String expected, String ddl, TableModel... tableModels) throws SqlException {
         createModelsAndRun(() -> {
             ExecutionModel model = parser.parse(ddl);
             Assert.assertEquals(ExecutionModel.CREATE_TABLE, model.getModelType());
@@ -3267,7 +3267,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
         }, tableModels);
     }
 
-    private void assertQuery(String expected, String query, TableModel... tableModels) throws ParserException {
+    private void assertQuery(String expected, String query, TableModel... tableModels) throws SqlException {
         createModelsAndRun(() -> {
             sink.clear();
             ExecutionModel model = parser.parse(query);
@@ -3277,7 +3277,7 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
         }, tableModels);
     }
 
-    private void createModelsAndRun(CairoAware runnable, TableModel... tableModels) throws ParserException {
+    private void createModelsAndRun(CairoAware runnable, TableModel... tableModels) throws SqlException {
         try {
             for (int i = 0, n = tableModels.length; i < n; i++) {
                 CairoTestUtils.create(tableModels[i]);
@@ -3300,6 +3300,6 @@ public class SqlLexerOptimiserTest extends AbstractCairoTest {
 
     @FunctionalInterface
     private interface CairoAware {
-        void run() throws ParserException;
+        void run() throws SqlException;
     }
 }

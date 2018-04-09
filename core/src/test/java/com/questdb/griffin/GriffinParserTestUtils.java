@@ -21,9 +21,8 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.lexer;
+package com.questdb.griffin;
 
-import com.questdb.griffin.common.ExprNode;
 import com.questdb.std.LongList;
 import com.questdb.std.microtime.DateFormatUtils;
 import com.questdb.std.str.StringSink;
@@ -50,7 +49,7 @@ public class GriffinParserTestUtils {
         return sink;
     }
 
-    public static String toRpn(ExprNode node) {
+    public static String toRpn(SqlNode node) {
         switch (node.paramCount) {
             case 0:
                 return node.token.toString();
