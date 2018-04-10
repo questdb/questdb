@@ -29,7 +29,8 @@ import com.questdb.griffin.engine.functions.ShortFunction;
 public class ShortColumn extends ShortFunction {
     private final int columnIndex;
 
-    public ShortColumn(int columnIndex) {
+    public ShortColumn(int position, int columnIndex) {
+        super(position);
         this.columnIndex = columnIndex;
     }
 

@@ -29,7 +29,8 @@ import com.questdb.griffin.engine.functions.IntFunction;
 public class IntConstant extends IntFunction {
     private final int value;
 
-    public IntConstant(int value) {
+    public IntConstant(int position, int value) {
+        super(position);
         this.value = value;
     }
 

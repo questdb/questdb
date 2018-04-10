@@ -29,7 +29,8 @@ import com.questdb.griffin.engine.functions.DateFunction;
 public class DateConstant extends DateFunction {
     private final long value;
 
-    public DateConstant(long value) {
+    public DateConstant(int position, long value) {
+        super(position);
         this.value = value;
     }
 

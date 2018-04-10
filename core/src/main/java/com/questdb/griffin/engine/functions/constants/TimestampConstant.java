@@ -29,7 +29,8 @@ import com.questdb.griffin.engine.functions.TimestampFunction;
 public class TimestampConstant extends TimestampFunction {
     private final long value;
 
-    public TimestampConstant(long value) {
+    public TimestampConstant(int position, long value) {
+        super(position);
         this.value = value;
     }
 

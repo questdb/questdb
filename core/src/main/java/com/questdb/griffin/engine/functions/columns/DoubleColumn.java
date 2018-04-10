@@ -29,7 +29,8 @@ import com.questdb.griffin.engine.functions.DoubleFunction;
 public class DoubleColumn extends DoubleFunction {
     private final int columnIndex;
 
-    public DoubleColumn(int columnIndex) {
+    public DoubleColumn(int position, int columnIndex) {
+        super(position);
         this.columnIndex = columnIndex;
     }
 

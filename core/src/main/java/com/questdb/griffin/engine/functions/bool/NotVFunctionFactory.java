@@ -38,13 +38,20 @@ public class NotVFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
-        return new BooleanFunction() {
-            final Function left = args.getQuick(0);
+        return new Func(position, args.getQuick(0));
+    }
 
-            @Override
-            public boolean getBool(Record rec) {
-                return !left.getBool(rec);
-            }
-        };
+    private static class Func extends BooleanFunction {
+        private final Function var;
+
+        public Func(int position, Function var) {
+            super(position);
+            this.var = var;
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            return !var.getBool(rec);
+        }
     }
 }

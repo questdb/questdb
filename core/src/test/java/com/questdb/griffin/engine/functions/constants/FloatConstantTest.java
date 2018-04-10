@@ -29,7 +29,7 @@ import org.junit.Test;
 public class FloatConstantTest {
     @Test
     public void testConstant() {
-        FloatConstant constant = new FloatConstant(123.45f);
+        FloatConstant constant = new FloatConstant(0, 123.45f);
         Assert.assertTrue(constant.isConstant());
         Assert.assertEquals(123.45f, constant.getFloat(null), 0.00001);
     }

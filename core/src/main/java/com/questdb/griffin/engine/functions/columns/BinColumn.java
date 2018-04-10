@@ -30,7 +30,8 @@ import com.questdb.std.BinarySequence;
 public class BinColumn extends BinFunction {
     private final int columnIndex;
 
-    public BinColumn(int columnIndex) {
+    public BinColumn(int position, int columnIndex) {
+        super(position);
         this.columnIndex = columnIndex;
     }
 

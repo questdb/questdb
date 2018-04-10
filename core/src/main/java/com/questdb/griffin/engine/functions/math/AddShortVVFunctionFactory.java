@@ -38,14 +38,22 @@ public class AddShortVVFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration1) {
-        return new ShortFunction() {
-            final Function left = args.getQuick(0);
-            final Function right = args.getQuick(1);
+        return new AddShortVVFunc(position, args.getQuick(0), args.getQuick(1));
+    }
 
-            @Override
-            public short getShort(Record rec) {
-                return (short) (left.getShort(rec) + right.getShort(rec));
-            }
-        };
+    private static class AddShortVVFunc extends ShortFunction {
+        final Function left;
+        final Function right;
+
+        public AddShortVVFunc(int position, Function left, Function right) {
+            super(position);
+            this.left = left;
+            this.right = right;
+        }
+
+        @Override
+        public short getShort(Record rec) {
+            return (short) (left.getShort(rec) + right.getShort(rec));
+        }
     }
 }

@@ -31,7 +31,7 @@ import org.junit.Test;
 public class NullConstantTest {
     @Test
     public void testConstant() {
-        NullConstant constant = NullConstant.INSTANCE;
+        NullConstant constant = new NullConstant(0);
         Assert.assertTrue(constant.isConstant());
         Assert.assertNull(constant.getStr(null));
         Assert.assertNull(constant.getStrB(null));

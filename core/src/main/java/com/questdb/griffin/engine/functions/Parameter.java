@@ -29,7 +29,12 @@ import com.questdb.std.BinarySequence;
 import com.questdb.std.str.CharSink;
 
 public class Parameter implements Function {
+    private final int position;
     private String name;
+
+    public Parameter(int position) {
+        this.position = position;
+    }
 
     @Override
     public BinarySequence getBin(Record rec) {
@@ -97,8 +102,8 @@ public class Parameter implements Function {
     }
 
     @Override
-    public CharSequence getSym(Record rec) {
-        return null;
+    public int getPosition() {
+        return position;
     }
 
     @Override
@@ -114,6 +119,11 @@ public class Parameter implements Function {
     @Override
     public boolean isConstant() {
         return false;
+    }
+
+    @Override
+    public CharSequence getSymbol(Record rec) {
+        return null;
     }
 
     public void setName(String name) {

@@ -29,7 +29,8 @@ import com.questdb.griffin.engine.functions.TimestampFunction;
 public class TimestampColumn extends TimestampFunction {
     private final int columnIndex;
 
-    public TimestampColumn(int columnIndex) {
+    public TimestampColumn(int position, int columnIndex) {
+        super(position);
         this.columnIndex = columnIndex;
     }
 

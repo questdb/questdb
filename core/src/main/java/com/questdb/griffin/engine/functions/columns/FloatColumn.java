@@ -29,7 +29,8 @@ import com.questdb.griffin.engine.functions.FloatFunction;
 public class FloatColumn extends FloatFunction {
     private final int columnIndex;
 
-    public FloatColumn(int columnIndex) {
+    public FloatColumn(int position, int columnIndex) {
+        super(position);
         this.columnIndex = columnIndex;
     }
 

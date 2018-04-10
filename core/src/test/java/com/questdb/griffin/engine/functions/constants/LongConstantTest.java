@@ -29,7 +29,7 @@ import org.junit.Test;
 public class LongConstantTest {
     @Test
     public void testConstant() {
-        LongConstant constant = new LongConstant(923123123123123123L);
+        LongConstant constant = new LongConstant(0, 923123123123123123L);
         Assert.assertTrue(constant.isConstant());
         Assert.assertEquals(923123123123123123L, constant.getLong(null));
     }

@@ -31,6 +31,12 @@ import com.questdb.std.str.CharSink;
 
 public abstract class IntFunction implements Function {
 
+    private final int position;
+
+    public IntFunction(int position) {
+        this.position = position;
+    }
+
     @Override
     public final BinarySequence getBin(Record rec) {
         throw new UnsupportedOperationException();
@@ -92,8 +98,8 @@ public abstract class IntFunction implements Function {
     }
 
     @Override
-    public final CharSequence getSym(Record rec) {
-        throw new UnsupportedOperationException();
+    public int getPosition() {
+        return position;
     }
 
     @Override
@@ -104,5 +110,10 @@ public abstract class IntFunction implements Function {
     @Override
     public final int getType() {
         return ColumnType.INT;
+    }
+
+    @Override
+    public final CharSequence getSymbol(Record rec) {
+        throw new UnsupportedOperationException();
     }
 }

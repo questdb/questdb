@@ -52,7 +52,7 @@ public class CopyHelperCompiler {
         int rGetBool = asm.poolInterfaceMethod(Record.class, "getBool", "(I)Z");
         int rGetFloat = asm.poolInterfaceMethod(Record.class, "getFloat", "(I)F");
         int rGetDouble = asm.poolInterfaceMethod(Record.class, "getDouble", "(I)D");
-        int rGetSym = asm.poolInterfaceMethod(Record.class, "getSym", "(I)Ljava/lang/CharSequence;");
+        int rGetSym = asm.poolInterfaceMethod(Record.class, "getSymbol", "(I)Ljava/lang/CharSequence;");
         int rGetStr = asm.poolInterfaceMethod(Record.class, "getFlyweightStr", "(I)Ljava/lang/CharSequence;");
         int rGetBin = asm.poolInterfaceMethod(Record.class, "getBin", "(I)Lcom/questdb/std/DirectInputStream;");
         //

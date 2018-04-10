@@ -29,7 +29,7 @@ import org.junit.Test;
 public class ShortFunctionTest {
     // assert that all type casts that are not possible will throw exception
 
-    private static final ShortFunction function = new ShortFunction() {
+    private static final ShortFunction function = new ShortFunction(0) {
         @Override
         public short getShort(Record rec) {
             return 0;
@@ -78,7 +78,7 @@ public class ShortFunctionTest {
 
     @Test(expected = UnsupportedOperationException.class)
     public void testGetSym() {
-        function.getSym(null);
+        function.getSymbol(null);
     }
 
     @Test(expected = UnsupportedOperationException.class)

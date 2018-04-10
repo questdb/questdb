@@ -30,6 +30,13 @@ import com.questdb.griffin.Function;
 import com.questdb.std.str.CharSink;
 
 public abstract class BinFunction implements Function {
+
+    private final int position;
+
+    public BinFunction(int position) {
+        this.position = position;
+    }
+
     @Override
     public final boolean getBool(Record rec) {
         throw new UnsupportedOperationException();
@@ -91,8 +98,8 @@ public abstract class BinFunction implements Function {
     }
 
     @Override
-    public final CharSequence getSym(Record rec) {
-        throw new UnsupportedOperationException();
+    public int getPosition() {
+        return position;
     }
 
     @Override
@@ -103,5 +110,10 @@ public abstract class BinFunction implements Function {
     @Override
     public final int getType() {
         return ColumnType.BINARY;
+    }
+
+    @Override
+    public final CharSequence getSymbol(Record rec) {
+        throw new UnsupportedOperationException();
     }
 }

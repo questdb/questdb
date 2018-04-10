@@ -29,7 +29,7 @@ import org.junit.Test;
 public class TimestampConstantTest {
     @Test
     public void testConstant() {
-        TimestampConstant constant = new TimestampConstant(909120909900L);
+        TimestampConstant constant = new TimestampConstant(0, 909120909900L);
         Assert.assertTrue(constant.isConstant());
         Assert.assertEquals(909120909900L, constant.getTimestamp(null));
     }

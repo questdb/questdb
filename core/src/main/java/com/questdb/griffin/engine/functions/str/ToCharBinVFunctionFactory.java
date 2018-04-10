@@ -44,15 +44,16 @@ public class ToCharBinVFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
-        return new Func(args.getQuick(0));
+        return new ToCharBinVFunc(position, args.getQuick(0));
     }
 
-    private static class Func extends StrFunction {
+    private static class ToCharBinVFunc extends StrFunction {
         private final Function func;
         private final StringSink sink1 = new StringSink();
         private final StringSink sink2 = new StringSink();
 
-        public Func(Function func) {
+        public ToCharBinVFunc(int position, Function func) {
+            super(position);
             this.func = func;
         }
 

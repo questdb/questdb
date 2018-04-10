@@ -29,7 +29,7 @@ import org.junit.Test;
 public class DateFunctionTest {
     // assert that all type casts that are not possible will throw exception
 
-    private static final DateFunction function = new DateFunction() {
+    private static final DateFunction function = new DateFunction(0) {
         @Override
         public long getDate(Record rec) {
             return 0;
@@ -98,7 +98,7 @@ public class DateFunctionTest {
 
     @Test(expected = UnsupportedOperationException.class)
     public void testGetSym() {
-        function.getSym(null);
+        function.getSymbol(null);
     }
 
     @Test(expected = UnsupportedOperationException.class)

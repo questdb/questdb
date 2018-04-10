@@ -29,7 +29,8 @@ import com.questdb.griffin.engine.functions.FloatFunction;
 public class FloatConstant extends FloatFunction {
     private final float value;
 
-    public FloatConstant(float value) {
+    public FloatConstant(int position, float value) {
+        super(position);
         this.value = value;
     }
 

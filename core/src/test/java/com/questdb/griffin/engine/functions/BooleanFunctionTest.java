@@ -29,7 +29,7 @@ import org.junit.Test;
 public class BooleanFunctionTest {
     // assert that all type casts that are not possible will throw exception
 
-    private static final BooleanFunction function = new BooleanFunction() {
+    private static final BooleanFunction function = new BooleanFunction(0) {
         @Override
         public boolean getBool(Record rec) {
             return false;
@@ -98,7 +98,7 @@ public class BooleanFunctionTest {
 
     @Test(expected = UnsupportedOperationException.class)
     public void testGetSym() {
-        function.getSym(null);
+        function.getSymbol(null);
     }
 
     @Test(expected = UnsupportedOperationException.class)

@@ -30,7 +30,7 @@ import org.junit.Test;
 public class BinFunctionTest {
     // assert that all type casts that are not possible will throw exception
 
-    private static final BinFunction function = new BinFunction() {
+    private static final BinFunction function = new BinFunction(0) {
         @Override
         public BinarySequence getBin(Record rec) {
             return null;
@@ -99,7 +99,7 @@ public class BinFunctionTest {
 
     @Test(expected = UnsupportedOperationException.class)
     public void testGetSym() {
-        function.getSym(null);
+        function.getSymbol(null);
     }
 
     @Test(expected = UnsupportedOperationException.class)

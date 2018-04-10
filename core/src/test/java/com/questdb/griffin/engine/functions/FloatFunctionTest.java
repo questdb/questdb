@@ -29,7 +29,7 @@ import org.junit.Test;
 public class FloatFunctionTest {
     // assert that all type casts that are not possible will throw exception
 
-    private static final FloatFunction function = new FloatFunction() {
+    private static final FloatFunction function = new FloatFunction(0) {
         @Override
         public float getFloat(Record rec) {
             return 0;
@@ -93,7 +93,7 @@ public class FloatFunctionTest {
 
     @Test(expected = UnsupportedOperationException.class)
     public void testGetSym() {
-        function.getSym(null);
+        function.getSymbol(null);
     }
 
     @Test(expected = UnsupportedOperationException.class)

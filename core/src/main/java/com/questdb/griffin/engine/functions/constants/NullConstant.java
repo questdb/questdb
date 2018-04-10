@@ -29,10 +29,8 @@ import com.questdb.std.str.CharSink;
 
 public class NullConstant extends StrFunction {
 
-    public static final NullConstant INSTANCE = new NullConstant();
-
-
-    private NullConstant() {
+    public NullConstant(int position) {
+        super(position);
     }
 
     @Override

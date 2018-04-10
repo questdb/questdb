@@ -38,19 +38,20 @@ public class LengthSymbolVFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
-        return new Func(args.getQuick(0));
+        return new LengthSymbolVFunc(position, args.getQuick(0));
     }
 
-    private static class Func extends IntFunction {
-        private final Function symbolFunc;
+    private static class LengthSymbolVFunc extends IntFunction {
+        private final Function var;
 
-        public Func(Function symbolFunc) {
-            this.symbolFunc = symbolFunc;
+        public LengthSymbolVFunc(int position, Function var) {
+            super(position);
+            this.var = var;
         }
 
         @Override
         public int getInt(Record rec) {
-            CharSequence symbol = symbolFunc.getSym(rec);
+            CharSequence symbol = var.getSymbol(rec);
             return symbol == null ? -1 : symbol.length();
         }
     }

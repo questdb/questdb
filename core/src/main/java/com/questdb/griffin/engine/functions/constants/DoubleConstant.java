@@ -29,7 +29,8 @@ import com.questdb.griffin.engine.functions.DoubleFunction;
 public class DoubleConstant extends DoubleFunction {
     private final double value;
 
-    public DoubleConstant(double value) {
+    public DoubleConstant(int position, double value) {
+        super(position);
         this.value = value;
     }
 

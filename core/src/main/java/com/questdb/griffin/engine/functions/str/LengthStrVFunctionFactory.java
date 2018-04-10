@@ -38,19 +38,20 @@ public class LengthStrVFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
-        return new Func(args.getQuick(0));
+        return new LengthStrVFunc(position, args.getQuick(0));
     }
 
-    private static class Func extends IntFunction {
-        private final Function stringFunc;
+    private static class LengthStrVFunc extends IntFunction {
+        private final Function var;
 
-        public Func(Function stringFunc) {
-            this.stringFunc = stringFunc;
+        public LengthStrVFunc(int position, Function var) {
+            super(position);
+            this.var = var;
         }
 
         @Override
         public int getInt(Record rec) {
-            return stringFunc.getStrLen(rec);
+            return var.getStrLen(rec);
         }
     }
 }

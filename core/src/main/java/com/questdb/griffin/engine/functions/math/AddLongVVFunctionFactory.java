@@ -38,14 +38,22 @@ public class AddLongVVFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
-        return new LongFunction() {
-            final Function left = args.getQuick(0);
-            final Function right = args.getQuick(1);
+        return new AddLongVVFunc(position, args.getQuick(0), args.getQuick(1));
+    }
 
-            @Override
-            public long getLong(Record rec) {
-                return left.getLong(rec) + right.getLong(rec);
-            }
-        };
+    private static class AddLongVVFunc extends LongFunction {
+        final Function left;
+        final Function right;
+
+        public AddLongVVFunc(int position, Function left, Function right) {
+            super(position);
+            this.left = left;
+            this.right = right;
+        }
+
+        @Override
+        public long getLong(Record rec) {
+            return left.getLong(rec) + right.getLong(rec);
+        }
     }
 }

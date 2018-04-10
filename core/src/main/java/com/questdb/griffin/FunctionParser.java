@@ -55,7 +55,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
     public static Function getOrCreate(SqlNode node, CharSequenceObjHashMap<Parameter> parameterMap) {
         Parameter p = parameterMap.get(node.token);
         if (p == null) {
-            parameterMap.put(node.token, p = new Parameter());
+            parameterMap.put(node.token, p = new Parameter(node.position));
             p.setName(node.token.toString());
         }
         return p;
@@ -196,6 +196,9 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
             case 'U':
                 sigArgType = ColumnType.BINARY;
                 break;
+            case 'V':
+                sigArgType = 100; // vararg
+                break;
             default:
                 sigArgType = -1;
                 break;
@@ -223,7 +226,13 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
             final FunctionFactory factory = overload.getQuick(i);
             final String signature = factory.getSignature();
             final int sigArgOffset = signature.indexOf('(') + 1;
-            final int sigArgCount = signature.length() - 1 - sigArgOffset;
+            int sigArgCount = signature.length() - 1 - sigArgOffset;
+
+            final boolean sigVarArg = sigArgCount > 0 && getArgType(signature.charAt(sigArgOffset + sigArgCount - 1)) == 100;
+
+            if (sigVarArg) {
+                sigArgCount--;
+            }
 
             if (argCount == 0 && sigArgCount == 0) {
                 // this is no-arg function, match right away
@@ -231,10 +240,11 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
             }
 
             // otherwise, is number of arguments the same?
-            if (sigArgCount == argCount) {
+            if (sigArgCount == argCount || (sigVarArg && argCount >= sigArgCount)) {
                 int match = 2; // match
 
-                for (int k = 0; k < argCount; k++) {
+
+                for (int k = 0; k < sigArgCount; k++) {
                     final Function arg = args.getQuick(k);
                     final char c = signature.charAt(sigArgOffset + k);
 
@@ -322,29 +332,29 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
             final int index = metadata.getColumnIndex(node.token);
             switch (metadata.getColumnQuick(index).getType()) {
                 case ColumnType.BOOLEAN:
-                    return new BooleanColumn(index);
+                    return new BooleanColumn(node.position, index);
                 case ColumnType.BYTE:
-                    return new ByteColumn(index);
+                    return new ByteColumn(node.position, index);
                 case ColumnType.SHORT:
-                    return new ShortColumn(index);
+                    return new ShortColumn(node.position, index);
                 case ColumnType.INT:
-                    return new IntColumn(index);
+                    return new IntColumn(node.position, index);
                 case ColumnType.LONG:
-                    return new LongColumn(index);
+                    return new LongColumn(node.position, index);
                 case ColumnType.FLOAT:
-                    return new FloatColumn(index);
+                    return new FloatColumn(node.position, index);
                 case ColumnType.DOUBLE:
-                    return new DoubleColumn(index);
+                    return new DoubleColumn(node.position, index);
                 case ColumnType.STRING:
-                    return new StrColumn(index);
+                    return new StrColumn(node.position, index);
                 case ColumnType.SYMBOL:
-                    return new SymColumn(index);
+                    return new SymColumn(node.position, index);
                 case ColumnType.BINARY:
-                    return new BinColumn(index);
+                    return new BinColumn(node.position, index);
                 case ColumnType.DATE:
-                    return new DateColumn(index);
+                    return new DateColumn(node.position, index);
                 default:
-                    return new TimestampColumn(index);
+                    return new TimestampColumn(node.position, index);
 
             }
         } catch (NoSuchColumnException e) {
@@ -355,33 +365,33 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
     private Function parseConstant(SqlNode node) throws SqlException {
 
         if (Chars.equalsIgnoreCase(node.token, "null")) {
-            return NullConstant.INSTANCE;
+            return new NullConstant(node.position);
         }
 
         if (Chars.isQuoted(node.token)) {
-            return new StrConstant(node.token);
+            return new StrConstant(node.position, node.token);
         }
 
         if (Chars.equalsIgnoreCase(node.token, "true")) {
-            return BooleanConstant.TRUE;
+            return new BooleanConstant(node.position, true);
         }
 
         if (Chars.equalsIgnoreCase(node.token, "false")) {
-            return BooleanConstant.FALSE;
+            return new BooleanConstant(node.position, false);
         }
 
         try {
-            return new IntConstant(Numbers.parseInt(node.token));
+            return new IntConstant(node.position, Numbers.parseInt(node.token));
         } catch (NumericException ignore) {
         }
 
         try {
-            return new LongConstant(Numbers.parseLong(node.token));
+            return new LongConstant(node.position, Numbers.parseLong(node.token));
         } catch (NumericException ignore) {
         }
 
         try {
-            return new DoubleConstant(Numbers.parseDouble(node.token));
+            return new DoubleConstant(node.position, Numbers.parseDouble(node.token));
         } catch (NumericException ignore) {
         }
 

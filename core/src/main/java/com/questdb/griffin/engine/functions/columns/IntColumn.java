@@ -29,7 +29,8 @@ import com.questdb.griffin.engine.functions.IntFunction;
 public class IntColumn extends IntFunction {
     private final int columnIndex;
 
-    public IntColumn(int columnIndex) {
+    public IntColumn(int position, int columnIndex) {
+        super(position);
         this.columnIndex = columnIndex;
     }
 

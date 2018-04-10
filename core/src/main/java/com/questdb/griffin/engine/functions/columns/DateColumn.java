@@ -29,7 +29,8 @@ import com.questdb.griffin.engine.functions.DateFunction;
 public class DateColumn extends DateFunction {
     private final int columnIndex;
 
-    public DateColumn(int columnIndex) {
+    public DateColumn(int position, int columnIndex) {
+        super(position);
         this.columnIndex = columnIndex;
     }
 

@@ -32,6 +32,7 @@ import com.questdb.common.ColumnType;
 import com.questdb.common.RecordColumnMetadata;
 import com.questdb.common.SymbolTable;
 import com.questdb.griffin.engine.functions.Parameter;
+import com.questdb.griffin.engine.functions.bool.InFunctionFactory;
 import com.questdb.griffin.engine.functions.bool.NotVFunctionFactory;
 import com.questdb.griffin.engine.functions.bool.OrVVFunctionFactory;
 import com.questdb.griffin.engine.functions.date.SysdateFunctionFactory;
@@ -515,6 +516,46 @@ public class FunctionParserTest extends AbstractCairoTest {
         final CollectionRecordMetadata metadata = new CollectionRecordMetadata();
         metadata.add(new TestColumnMetadata("a", ColumnType.SHORT));
         assertFail(2, "too few arguments [found=1,expected=2]", "a + ", metadata);
+    }
+
+    @Test
+    public void testVarArgFunction() throws SqlException {
+        functions.add(new InFunctionFactory());
+
+        final CollectionRecordMetadata metadata = new CollectionRecordMetadata();
+        metadata.add(new TestColumnMetadata("a", ColumnType.STRING));
+
+        FunctionParser functionParser = createFunctionParser();
+        Record record = new Record() {
+            @Override
+            public CharSequence getFlyweightStr(int col) {
+                return "Y";
+            }
+        };
+
+        Function function = parseFunction("a in ('X', 'Y')", metadata, functionParser);
+        Assert.assertEquals(ColumnType.BOOLEAN, function.getType());
+        Assert.assertTrue(function.getBool(record));
+    }
+
+    @Test
+    public void testVarArgFunctionNoArg() throws SqlException {
+        functions.add(new InFunctionFactory());
+
+        final CollectionRecordMetadata metadata = new CollectionRecordMetadata();
+        metadata.add(new TestColumnMetadata("a", ColumnType.STRING));
+
+        FunctionParser functionParser = createFunctionParser();
+        Record record = new Record() {
+            @Override
+            public CharSequence getFlyweightStr(int col) {
+                return "Y";
+            }
+        };
+
+        Function function = parseFunction("a in ()", metadata, functionParser);
+        Assert.assertEquals(ColumnType.BOOLEAN, function.getType());
+        Assert.assertFalse(function.getBool(record));
     }
 
     private void assertCastToDouble(double expected, int type1, int type2, Record record) throws SqlException {

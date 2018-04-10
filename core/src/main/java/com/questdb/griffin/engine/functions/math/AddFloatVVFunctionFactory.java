@@ -38,14 +38,22 @@ public class AddFloatVVFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
-        return new FloatFunction() {
-            final Function left = args.getQuick(0);
-            final Function right = args.getQuick(1);
+        return new Func(position, args.getQuick(0), args.getQuick(1));
+    }
 
-            @Override
-            public float getFloat(Record rec) {
-                return left.getFloat(rec) + right.getFloat(rec);
-            }
-        };
+    private static class Func extends FloatFunction {
+        final Function left;
+        final Function right;
+
+        public Func(int position, Function left, Function right) {
+            super(position);
+            this.left = left;
+            this.right = right;
+        }
+
+        @Override
+        public float getFloat(Record rec) {
+            return left.getFloat(rec) + right.getFloat(rec);
+        }
     }
 }

@@ -31,6 +31,12 @@ import com.questdb.std.str.CharSink;
 
 public abstract class SymFunction implements Function {
 
+    private final int position;
+
+    public SymFunction(int position) {
+        this.position = position;
+    }
+
     @Override
     public final BinarySequence getBin(Record rec) {
         throw new UnsupportedOperationException();
@@ -104,5 +110,10 @@ public abstract class SymFunction implements Function {
     @Override
     public final int getType() {
         return ColumnType.SYMBOL;
+    }
+
+    @Override
+    public int getPosition() {
+        return position;
     }
 }

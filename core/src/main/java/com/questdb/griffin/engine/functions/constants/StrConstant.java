@@ -30,7 +30,8 @@ import com.questdb.std.Chars;
 public class StrConstant extends StrFunction {
     private final String value;
 
-    public StrConstant(CharSequence value) {
+    public StrConstant(int positiom, CharSequence value) {
+        super(positiom);
         if (Chars.startsWith(value, '\'')) {
             this.value = Chars.toString(value, 1, value.length() - 1);
         } else {

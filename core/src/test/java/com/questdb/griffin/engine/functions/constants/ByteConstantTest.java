@@ -29,7 +29,7 @@ import org.junit.Test;
 public class ByteConstantTest {
     @Test
     public void testConstant() {
-        ByteConstant constant = new ByteConstant((byte) 45);
+        ByteConstant constant = new ByteConstant(0, (byte) 45);
         Assert.assertTrue(constant.isConstant());
         Assert.assertEquals(45, constant.getByte(null));
     }

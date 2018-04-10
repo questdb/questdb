@@ -48,14 +48,13 @@ public interface Function {
     short getShort(Record rec);
 
     CharSequence getStr(Record rec);
-
     void getStr(Record rec, CharSink sink);
 
     CharSequence getStrB(Record rec);
 
     int getStrLen(Record rec);
 
-    CharSequence getSym(Record rec);
+    int getPosition();
 
     long getTimestamp(Record rec);
 
@@ -64,4 +63,6 @@ public interface Function {
     default boolean isConstant() {
         return false;
     }
+
+    CharSequence getSymbol(Record rec);
 }

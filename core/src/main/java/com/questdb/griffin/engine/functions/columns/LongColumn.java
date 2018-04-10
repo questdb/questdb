@@ -29,7 +29,8 @@ import com.questdb.griffin.engine.functions.LongFunction;
 public class LongColumn extends LongFunction {
     private final int columnIndex;
 
-    public LongColumn(int columnIndex) {
+    public LongColumn(int position, int columnIndex) {
+        super(position);
         this.columnIndex = columnIndex;
     }
 

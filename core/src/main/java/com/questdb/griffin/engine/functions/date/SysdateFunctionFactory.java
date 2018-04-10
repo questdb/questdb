@@ -29,6 +29,7 @@ import com.questdb.griffin.Function;
 import com.questdb.griffin.FunctionFactory;
 import com.questdb.griffin.engine.functions.DateFunction;
 import com.questdb.std.ObjList;
+import com.questdb.std.time.MillisecondClock;
 
 public class SysdateFunctionFactory implements FunctionFactory {
     @Override
@@ -38,11 +39,21 @@ public class SysdateFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
-        return new DateFunction() {
-            @Override
-            public long getDate(Record rec) {
-                return configuration.getMillisecondClock().getTicks();
-            }
-        };
+        return new Func(position, configuration.getMillisecondClock());
+    }
+
+    private static class Func extends DateFunction {
+
+        private final MillisecondClock clock;
+
+        public Func(int position, MillisecondClock clock) {
+            super(position);
+            this.clock = clock;
+        }
+
+        @Override
+        public long getDate(Record rec) {
+            return clock.getTicks();
+        }
     }
 }

@@ -29,7 +29,7 @@ import org.junit.Test;
 public class TimestampFunctionTest {
     // assert that all type casts that are not possible will throw exception
 
-    private static final TimestampFunction function = new TimestampFunction() {
+    private static final TimestampFunction function = new TimestampFunction(0) {
         @Override
         public long getTimestamp(Record rec) {
             return 0;
@@ -103,6 +103,6 @@ public class TimestampFunctionTest {
 
     @Test(expected = UnsupportedOperationException.class)
     public void testGetSym() {
-        function.getSym(null);
+        function.getSymbol(null);
     }
 }

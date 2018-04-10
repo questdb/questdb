@@ -29,7 +29,8 @@ import com.questdb.griffin.engine.functions.ByteFunction;
 public class ByteColumn extends ByteFunction {
     private final int columnIndex;
 
-    public ByteColumn(int columnIndex) {
+    public ByteColumn(int position, int columnIndex) {
+        super(position);
         this.columnIndex = columnIndex;
     }
 

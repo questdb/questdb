@@ -38,14 +38,15 @@ public class LtDoubleVVFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
-        return new FuncVV(args.getQuick(0), args.getQuick(1));
+        return new FuncVV(position, args.getQuick(0), args.getQuick(1));
     }
 
     private static class FuncVV extends BooleanFunction {
         private final Function left;
         private final Function right;
 
-        public FuncVV(Function left, Function right) {
+        public FuncVV(int posititon, Function left, Function right) {
+            super(posititon);
             this.left = left;
             this.right = right;
         }

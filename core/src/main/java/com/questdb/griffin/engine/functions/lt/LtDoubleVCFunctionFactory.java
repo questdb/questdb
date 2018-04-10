@@ -42,16 +42,17 @@ public class LtDoubleVCFunctionFactory implements FunctionFactory {
     public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
         double right = args.getQuick(1).getDouble(null);
         if (Double.isNaN(right)) {
-            return BooleanConstant.FALSE;
+            return new BooleanConstant(position, false);
         }
-        return new FuncVC(args.getQuick(0), right);
+        return new FuncVC(position, args.getQuick(0), right);
     }
 
     private static class FuncVC extends BooleanFunction {
         private final Function left;
         private final double right;
 
-        public FuncVC(Function left, double right) {
+        public FuncVC(int position, Function left, double right) {
+            super(position);
             this.left = left;
             this.right = right;
         }

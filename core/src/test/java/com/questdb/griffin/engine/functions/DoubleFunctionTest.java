@@ -29,7 +29,7 @@ import org.junit.Test;
 public class DoubleFunctionTest {
     // assert that all type casts that are not possible will throw exception
 
-    private static final DoubleFunction function = new DoubleFunction() {
+    private static final DoubleFunction function = new DoubleFunction(0) {
         @Override
         public double getDouble(Record rec) {
             return 0;
@@ -98,7 +98,7 @@ public class DoubleFunctionTest {
 
     @Test(expected = UnsupportedOperationException.class)
     public void testGetSym() {
-        function.getSym(null);
+        function.getSymbol(null);
     }
 
     @Test(expected = UnsupportedOperationException.class)

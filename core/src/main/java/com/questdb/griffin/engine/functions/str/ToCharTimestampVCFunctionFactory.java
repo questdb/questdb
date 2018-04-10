@@ -47,17 +47,18 @@ public class ToCharTimestampVCFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
-        return new MyStrFunction(args.getQuick(0), args.getQuick(1));
+        return new ToCharTimestampVCFunc(position, args.getQuick(0), args.getQuick(1));
     }
 
-    private static class MyStrFunction extends StrFunction {
+    private static class ToCharTimestampVCFunc extends StrFunction {
         final Function date;
         final DateFormat format;
         final DateLocale locale;
         final StringSink sink1;
         final StringSink sink2;
 
-        public MyStrFunction(Function date, Function fmt) {
+        public ToCharTimestampVCFunc(int position, Function date, Function fmt) {
+            super(position);
             this.date = date;
             format = tlCompiler.get().compile(fmt.getStr(null));
             locale = DateLocaleFactory.INSTANCE.getDefaultDateLocale();

@@ -29,7 +29,8 @@ import com.questdb.griffin.engine.functions.BooleanFunction;
 public class BooleanColumn extends BooleanFunction {
     private final int columnIndex;
 
-    public BooleanColumn(int columnIndex) {
+    public BooleanColumn(int position, int columnIndex) {
+        super(position);
         this.columnIndex = columnIndex;
     }
 

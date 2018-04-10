@@ -30,7 +30,8 @@ import com.questdb.std.str.CharSink;
 public class StrColumn extends StrFunction {
     private final int columnIndex;
 
-    public StrColumn(int columnIndex) {
+    public StrColumn(int position, int columnIndex) {
+        super(position);
         this.columnIndex = columnIndex;
     }
 

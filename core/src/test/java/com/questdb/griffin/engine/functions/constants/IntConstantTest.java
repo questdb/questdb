@@ -29,7 +29,7 @@ import org.junit.Test;
 public class IntConstantTest {
     @Test
     public void testConstant() {
-        IntConstant constant = new IntConstant(200);
+        IntConstant constant = new IntConstant(10, 200);
         Assert.assertTrue(constant.isConstant());
         Assert.assertEquals(200, constant.getInt(null));
     }

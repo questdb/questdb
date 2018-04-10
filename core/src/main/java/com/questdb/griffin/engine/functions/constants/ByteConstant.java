@@ -29,7 +29,8 @@ import com.questdb.griffin.engine.functions.ByteFunction;
 public class ByteConstant extends ByteFunction {
     private final byte value;
 
-    public ByteConstant(byte value) {
+    public ByteConstant(int position, byte value) {
+        super(position);
         this.value = value;
     }
 

@@ -29,7 +29,7 @@ import org.junit.Test;
 public class StrFunctionTest {
     // assert that all type casts that are not possible will throw exception
 
-    private static final StrFunction function = new StrFunction() {
+    private static final StrFunction function = new StrFunction(0) {
         @Override
         public CharSequence getStr(Record rec) {
             return "a";
@@ -88,7 +88,7 @@ public class StrFunctionTest {
 
     @Test(expected = UnsupportedOperationException.class)
     public void testGetSym() {
-        function.getSym(null);
+        function.getSymbol(null);
     }
 
     @Test(expected = UnsupportedOperationException.class)

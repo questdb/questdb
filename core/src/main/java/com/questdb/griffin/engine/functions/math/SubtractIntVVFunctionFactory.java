@@ -38,14 +38,22 @@ public class SubtractIntVVFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration1) {
-        return new IntFunction() {
-            final Function left = args.getQuick(0);
-            final Function right = args.getQuick(1);
+        return new SubtractIntVVFunc(position, args.getQuick(0), args.getQuick(1));
+    }
 
-            @Override
-            public int getInt(Record rec) {
-                return left.getInt(rec) - right.getInt(rec);
-            }
-        };
+    private static class SubtractIntVVFunc extends IntFunction {
+        final Function left;
+        final Function right;
+
+        public SubtractIntVVFunc(int position, Function left, Function right) {
+            super(position);
+            this.left = left;
+            this.right = right;
+        }
+
+        @Override
+        public int getInt(Record rec) {
+            return left.getInt(rec) - right.getInt(rec);
+        }
     }
 }

@@ -38,14 +38,22 @@ public class OrVVFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
-        return new BooleanFunction() {
-            final Function left = args.getQuick(0);
-            final Function right = args.getQuick(1);
+        return new MyBooleanFunction(position, args.getQuick(0), args.getQuick(1));
+    }
 
-            @Override
-            public boolean getBool(Record rec) {
-                return left.getBool(rec) || right.getBool(rec);
-            }
-        };
+    private static class MyBooleanFunction extends BooleanFunction {
+        final Function left;
+        final Function right;
+
+        public MyBooleanFunction(int position, Function left, Function right) {
+            super(position);
+            this.left = left;
+            this.right = right;
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            return left.getBool(rec) || right.getBool(rec);
+        }
     }
 }

@@ -30,12 +30,12 @@ public class BooleanConstantTest {
 
     @Test
     public void testIsConstant() {
-        Assert.assertTrue(BooleanConstant.of(true).isConstant());
+        Assert.assertTrue(new BooleanConstant(0, true).isConstant());
     }
 
     @Test
     public void testValueOf() {
-        Assert.assertTrue(BooleanConstant.of(true).getBool(null));
-        Assert.assertFalse(BooleanConstant.of(false).getBool(null));
+        Assert.assertTrue(new BooleanConstant(0, true).getBool(null));
+        Assert.assertFalse(new BooleanConstant(0, false).getBool(null));
     }
 }

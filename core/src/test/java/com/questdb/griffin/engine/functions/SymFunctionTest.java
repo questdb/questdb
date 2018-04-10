@@ -29,9 +29,9 @@ import org.junit.Test;
 public class SymFunctionTest {
     // assert that all type casts that are not possible will throw exception
 
-    private static final SymFunction function = new SymFunction() {
+    private static final SymFunction function = new SymFunction(0) {
         @Override
-        public CharSequence getSym(Record rec) {
+        public CharSequence getSymbol(Record rec) {
             return null;
         }
     };

@@ -29,7 +29,8 @@ import com.questdb.griffin.engine.functions.LongFunction;
 public class LongConstant extends LongFunction {
     private final long value;
 
-    public LongConstant(long value) {
+    public LongConstant(int position, long value) {
+        super(position);
         this.value = value;
     }
 

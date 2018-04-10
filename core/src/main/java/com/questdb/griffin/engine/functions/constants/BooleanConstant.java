@@ -24,25 +24,15 @@
 package com.questdb.griffin.engine.functions.constants;
 
 import com.questdb.cairo.sql.Record;
-import com.questdb.griffin.Function;
 import com.questdb.griffin.engine.functions.BooleanFunction;
 
 public class BooleanConstant extends BooleanFunction {
 
-    public static final BooleanConstant TRUE = new BooleanConstant(true);
-    public static final BooleanConstant FALSE = new BooleanConstant(false);
     private final boolean value;
 
-    private BooleanConstant(boolean value) {
+    public BooleanConstant(int position, boolean value) {
+        super(position);
         this.value = value;
-    }
-
-    public static Function of(boolean value) {
-        if (value) {
-            return TRUE;
-        } else {
-            return FALSE;
-        }
     }
 
     @Override

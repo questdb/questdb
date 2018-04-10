@@ -29,12 +29,13 @@ import com.questdb.griffin.engine.functions.SymFunction;
 public class SymColumn extends SymFunction {
     private final int columnIndex;
 
-    public SymColumn(int columnIndex) {
+    public SymColumn(int position, int columnIndex) {
+        super(position);
         this.columnIndex = columnIndex;
     }
 
     @Override
-    public CharSequence getSym(Record rec) {
+    public CharSequence getSymbol(Record rec) {
         return rec.getSym(columnIndex);
     }
 }

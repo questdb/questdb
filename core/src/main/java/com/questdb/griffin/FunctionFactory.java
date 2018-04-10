@@ -29,5 +29,5 @@ import com.questdb.std.ObjList;
 public interface FunctionFactory {
     String getSignature();
 
-    Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration);
+    Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) throws SqlException;
 }
