@@ -21,58 +21,42 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.engine.functions.math;
+package com.questdb.griffin.engine.functions.date;
 
 import com.questdb.cairo.CairoConfiguration;
 import com.questdb.cairo.sql.Record;
 import com.questdb.griffin.Function;
 import com.questdb.griffin.FunctionFactory;
-import com.questdb.griffin.engine.functions.IntFunction;
-import com.questdb.griffin.engine.functions.constants.IntConstant;
-import com.questdb.std.Numbers;
+import com.questdb.griffin.engine.functions.DateFunction;
+import com.questdb.griffin.engine.functions.constants.DateConstant;
 import com.questdb.std.ObjList;
 
-public class AddIntVVFunctionFactory implements FunctionFactory {
+public class ToDateLongFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "+(II)";
+        return "to_date(L)";
     }
 
     @Override
     public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
-        Function left = args.getQuick(0);
-        Function right = args.getQuick(1);
-        if (left.isConstant() && right.isConstant()) {
-            int l = left.getInt(null);
-            int r = right.getInt(null);
-            if (l == Numbers.INT_NaN || r == Numbers.INT_NaN) {
-                return new IntConstant(position, Numbers.INT_NaN);
-            }
-            return new IntConstant(position, l + r);
+        Function var = args.getQuick(0);
+        if (var.isConstant()) {
+            return new DateConstant(position, var.getLong(null));
         }
-        return new AddIntVVFunc(position, args.getQuick(0), args.getQuick(1));
+        return new Func(position, var);
     }
 
-    private static class AddIntVVFunc extends IntFunction {
-        final Function left;
-        final Function right;
+    private static class Func extends DateFunction {
+        private final Function var;
 
-        public AddIntVVFunc(int position, Function left, Function right) {
+        public Func(int position, Function var) {
             super(position);
-            this.left = left;
-            this.right = right;
+            this.var = var;
         }
 
         @Override
-        public int getInt(Record rec) {
-            final int left = this.left.getInt(rec);
-            final int right = this.right.getInt(rec);
-
-            if (left == Numbers.INT_NaN || right == Numbers.INT_NaN) {
-                return Numbers.INT_NaN;
-            }
-
-            return left + right;
+        public long getDate(Record rec) {
+            return var.getLong(rec);
         }
     }
 }

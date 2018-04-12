@@ -24,12 +24,13 @@
 package com.questdb.griffin.engine.functions;
 
 import com.questdb.cairo.sql.Record;
+import org.junit.Assert;
 import org.junit.Test;
 
 public class BooleanFunctionTest {
     // assert that all type casts that are not possible will throw exception
 
-    private static final BooleanFunction function = new BooleanFunction(0) {
+    private static final BooleanFunction function = new BooleanFunction(25) {
         @Override
         public boolean getBool(Record rec) {
             return false;
@@ -69,6 +70,11 @@ public class BooleanFunctionTest {
     @Test(expected = UnsupportedOperationException.class)
     public void testGetLong() {
         function.getLong(null);
+    }
+
+    @Test
+    public void testGetPosition() {
+        Assert.assertEquals(25, function.getPosition());
     }
 
     @Test(expected = UnsupportedOperationException.class)

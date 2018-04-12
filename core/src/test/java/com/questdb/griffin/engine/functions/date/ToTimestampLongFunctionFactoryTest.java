@@ -21,49 +21,27 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin;
+package com.questdb.griffin.engine.functions.date;
 
-import com.questdb.cairo.sql.Record;
-import com.questdb.std.BinarySequence;
-import com.questdb.std.str.CharSink;
+import com.questdb.griffin.FunctionFactory;
+import com.questdb.griffin.SqlException;
+import com.questdb.griffin.engine.AbstractFunctionFactoryTest;
+import com.questdb.std.Numbers;
+import org.junit.Test;
 
-public interface Function {
+public class ToTimestampLongFunctionFactoryTest extends AbstractFunctionFactoryTest {
+    @Test
+    public void testNotNull() throws SqlException {
+        call(0L).andAssertTimestamp(0L);
+    }
 
-    BinarySequence getBin(Record rec);
+    @Test
+    public void testNull() throws SqlException {
+        call(Numbers.LONG_NaN).andAssertTimestamp(Numbers.LONG_NaN);
+    }
 
-    boolean getBool(Record rec);
-
-    byte getByte(Record rec);
-
-    long getDate(Record rec);
-
-    double getDouble(Record rec);
-
-    float getFloat(Record rec);
-
-    int getInt(Record rec);
-
-    long getLong(Record rec);
-
-    int getPosition();
-
-    short getShort(Record rec);
-
-    CharSequence getStr(Record rec);
-
-    void getStr(Record rec, CharSink sink);
-
-    CharSequence getStrB(Record rec);
-
-    int getStrLen(Record rec);
-
-    CharSequence getSymbol(Record rec);
-
-    long getTimestamp(Record rec);
-
-    int getType();
-
-    default boolean isConstant() {
-        return false;
+    @Override
+    protected FunctionFactory getFunctionFactory() {
+        return new ToTimestampLongFunctionFactory();
     }
 }

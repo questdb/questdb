@@ -24,12 +24,13 @@
 package com.questdb.griffin.engine.functions;
 
 import com.questdb.cairo.sql.Record;
+import org.junit.Assert;
 import org.junit.Test;
 
 public class DateFunctionTest {
     // assert that all type casts that are not possible will throw exception
 
-    private static final DateFunction function = new DateFunction(0) {
+    private static final DateFunction function = new DateFunction(25) {
         @Override
         public long getDate(Record rec) {
             return 0;
@@ -69,6 +70,11 @@ public class DateFunctionTest {
     @Test(expected = UnsupportedOperationException.class)
     public void testGetLong() {
         function.getLong(null);
+    }
+
+    @Test
+    public void testGetPosition() {
+        Assert.assertEquals(25, function.getPosition());
     }
 
     @Test(expected = UnsupportedOperationException.class)

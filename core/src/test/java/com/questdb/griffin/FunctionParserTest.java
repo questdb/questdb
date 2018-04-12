@@ -23,7 +23,6 @@
 
 package com.questdb.griffin;
 
-import com.questdb.cairo.AbstractCairoTest;
 import com.questdb.cairo.CairoConfiguration;
 import com.questdb.cairo.DefaultCairoConfiguration;
 import com.questdb.cairo.TestRecord;
@@ -31,7 +30,6 @@ import com.questdb.cairo.sql.Record;
 import com.questdb.common.ColumnType;
 import com.questdb.common.RecordColumnMetadata;
 import com.questdb.common.SymbolTable;
-import com.questdb.griffin.engine.functions.Parameter;
 import com.questdb.griffin.engine.functions.bool.InFunctionFactory;
 import com.questdb.griffin.engine.functions.bool.NotVFunctionFactory;
 import com.questdb.griffin.engine.functions.bool.OrVVFunctionFactory;
@@ -39,32 +37,16 @@ import com.questdb.griffin.engine.functions.date.SysdateFunctionFactory;
 import com.questdb.griffin.engine.functions.math.*;
 import com.questdb.griffin.engine.functions.str.*;
 import com.questdb.ql.CollectionRecordMetadata;
-import com.questdb.std.*;
+import com.questdb.std.NumericException;
+import com.questdb.std.ObjList;
 import com.questdb.std.time.DateFormatUtils;
 import com.questdb.std.time.MillisecondClock;
 import com.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
-import org.junit.Before;
 import org.junit.Test;
 
-import java.util.ArrayList;
-
-public class FunctionParserTest extends AbstractCairoTest {
-    private static final ObjectPool<SqlNode> exprNodeObjectPool = new ObjectPool<>(SqlNode.FACTORY, 128);
-    private static final Lexer2 lexer = new Lexer2();
-    private static final ExpressionLexer parser = new ExpressionLexer(exprNodeObjectPool);
-    private static final ExpressionLinker astBuilder = new ExpressionLinker();
-    private static final CharSequenceObjHashMap<Parameter> params = new CharSequenceObjHashMap<>();
-    private static final ArrayList<FunctionFactory> functions = new ArrayList<>();
-
-    @Before
-    public void setUp2() {
-        params.clear();
-        exprNodeObjectPool.clear();
-        functions.clear();
-        ExpressionLexer.configureLexer(lexer);
-    }
+public class FunctionParserTest extends BaseFunctionFactoryTest {
 
     @Test
     public void testAmbiguousFunctionInvocation() {
@@ -204,6 +186,22 @@ public class FunctionParserTest extends AbstractCairoTest {
                     return 41;
                 }
                 return 90;
+            }
+        }));
+    }
+
+    @Test
+    public void testConstVarArgFunction() throws SqlException {
+        functions.add(new InFunctionFactory());
+        final CollectionRecordMetadata metadata = new CollectionRecordMetadata();
+        metadata.add(new TestColumnMetadata("a", ColumnType.STRING));
+        FunctionParser functionParser = createFunctionParser();
+        Function function = parseFunction("a in ('x', 'y')", metadata, functionParser);
+        Assert.assertEquals(ColumnType.BOOLEAN, function.getType());
+        Assert.assertTrue(function.getBool(new Record() {
+            @Override
+            public CharSequence getFlyweightStr(int col) {
+                return "y";
             }
         }));
     }
@@ -427,6 +425,65 @@ public class FunctionParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPassColumnToConstVarArgFunction() {
+        functions.add(new InFunctionFactory());
+        final CollectionRecordMetadata metadata = new CollectionRecordMetadata();
+        metadata.add(new TestColumnMetadata("a", ColumnType.STRING));
+        metadata.add(new TestColumnMetadata("b", ColumnType.STRING));
+        assertFail(6, "constant expected", "a in (b, 'y')", metadata);
+    }
+
+    @Test
+    public void testPassNaNAsShort() {
+        functions.add(new FunctionFactory() {
+            @Override
+            public String getSignature() {
+                return "x(E)";
+            }
+
+            @Override
+            public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
+                return null;
+            }
+        });
+
+        final CollectionRecordMetadata metadata = new CollectionRecordMetadata();
+        metadata.add(new TestColumnMetadata("a", ColumnType.SHORT));
+        try {
+            parseFunction("x(NaN)", metadata, createFunctionParser());
+            Assert.fail();
+        } catch (SqlException e) {
+            Assert.assertEquals(0, e.getPosition());
+            TestUtils.assertContains(e.getMessage(), "no signature match");
+        }
+    }
+
+    @Test
+    public void testPassVarToConstArg() {
+        functions.add(new FunctionFactory() {
+            @Override
+            public String getSignature() {
+                return "x(i)";
+            }
+
+            @Override
+            public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
+                return null;
+            }
+        });
+
+        final CollectionRecordMetadata metadata = new CollectionRecordMetadata();
+        metadata.add(new TestColumnMetadata("a", ColumnType.INT));
+        try {
+            parseFunction("x(a)", metadata, createFunctionParser());
+            Assert.fail();
+        } catch (SqlException e) {
+            Assert.assertEquals(0, e.getPosition());
+            TestUtils.assertContains(e.getMessage(), "no signature match");
+        }
+    }
+
+    @Test
     public void testSignatureBeginsWithDigit() throws SqlException {
         assertSignatureFailure("1x()");
     }
@@ -627,17 +684,6 @@ public class FunctionParserTest extends AbstractCairoTest {
     @NotNull
     private FunctionParser createFunctionParser() {
         return new FunctionParser(configuration, functions);
-    }
-
-    private SqlNode expr(CharSequence expression) throws SqlException {
-        lexer.setContent(expression);
-        astBuilder.reset();
-        parser.parseExpr(lexer, astBuilder);
-        return astBuilder.poll();
-    }
-
-    private Function parseFunction(CharSequence expression, CollectionRecordMetadata metadata, FunctionParser functionParser) throws SqlException {
-        return functionParser.parseFunction(expr(expression), metadata, params);
     }
 
     private class TestColumnMetadata implements RecordColumnMetadata {

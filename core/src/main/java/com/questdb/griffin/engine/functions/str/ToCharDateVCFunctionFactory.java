@@ -27,7 +27,11 @@ import com.questdb.cairo.CairoConfiguration;
 import com.questdb.cairo.sql.Record;
 import com.questdb.griffin.Function;
 import com.questdb.griffin.FunctionFactory;
+import com.questdb.griffin.SqlException;
 import com.questdb.griffin.engine.functions.StrFunction;
+import com.questdb.griffin.engine.functions.constants.NullConstant;
+import com.questdb.griffin.engine.functions.constants.StrConstant;
+import com.questdb.std.Numbers;
 import com.questdb.std.ObjList;
 import com.questdb.std.str.CharSink;
 import com.questdb.std.str.StringSink;
@@ -35,10 +39,12 @@ import com.questdb.std.time.DateFormat;
 import com.questdb.std.time.DateFormatCompiler;
 import com.questdb.std.time.DateLocale;
 import com.questdb.std.time.DateLocaleFactory;
+import org.jetbrains.annotations.Nullable;
 
 public class ToCharDateVCFunctionFactory implements FunctionFactory {
 
     private static final ThreadLocal<DateFormatCompiler> tlCompiler = ThreadLocal.withInitial(DateFormatCompiler::new);
+    private static final ThreadLocal<StringSink> tlSink = ThreadLocal.withInitial(StringSink::new);
 
     @Override
     public String getSignature() {
@@ -46,21 +52,41 @@ public class ToCharDateVCFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
-        return new ToCharDateVCFFunc(position, args.getQuick(0), args.getQuick(1));
+    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) throws SqlException {
+        Function fmt = args.getQuick(1);
+        CharSequence format = fmt.getStr(null);
+        if (format == null) {
+            throw SqlException.$(fmt.getPosition(), "format must not be null");
+        }
+
+        DateFormat dateFormat = tlCompiler.get().compile(fmt.getStr(null));
+        Function var = args.getQuick(0);
+        if (var.isConstant()) {
+            long value = var.getDate(null);
+            if (value == Numbers.LONG_NaN) {
+                return new NullConstant(position);
+            }
+
+            StringSink sink = tlSink.get();
+            sink.clear();
+            dateFormat.format(value, DateLocaleFactory.INSTANCE.getDefaultDateLocale(), "Z", sink);
+            return new StrConstant(position, sink);
+        }
+
+        return new ToCharDateVCFFunc(position, args.getQuick(0), tlCompiler.get().compile(format));
     }
 
     private static class ToCharDateVCFFunc extends StrFunction {
-        final Function date;
+        final Function var;
         final DateFormat format;
         final DateLocale locale;
         final StringSink sink1;
         final StringSink sink2;
 
-        public ToCharDateVCFFunc(int position, Function date, Function fmt) {
+        public ToCharDateVCFFunc(int position, Function var, DateFormat format) {
             super(position);
-            this.date = date;
-            format = tlCompiler.get().compile(fmt.getStr(null));
+            this.var = var;
+            this.format = format;
             locale = DateLocaleFactory.INSTANCE.getDefaultDateLocale();
             sink1 = new StringSink();
             sink2 = new StringSink();
@@ -78,13 +104,37 @@ public class ToCharDateVCFunctionFactory implements FunctionFactory {
 
         @Override
         public void getStr(Record rec, CharSink sink) {
-            format.format(date.getDate(rec), locale, "Z", sink);
+            long value = var.getDate(rec);
+            if (value == Numbers.LONG_NaN) {
+                return;
+            }
+            toSink(value, sink);
         }
 
-        private CharSequence toSink(Record record, StringSink sink) {
+        @Override
+        public int getStrLen(Record rec) {
+            long value = var.getDate(rec);
+            if (value == Numbers.LONG_NaN) {
+                return -1;
+            }
+            sink1.clear();
+            toSink(value, sink1);
+            return sink1.length();
+        }
+
+        @Nullable
+        private CharSequence toSink(Record rec, StringSink sink) {
+            final long value = var.getDate(rec);
+            if (value == Numbers.LONG_NaN) {
+                return null;
+            }
             sink.clear();
-            getStr(record, sink);
+            toSink(value, sink);
             return sink;
+        }
+
+        private void toSink(long value, CharSink sink) {
+            format.format(value, locale, "Z", sink);
         }
     }
 }

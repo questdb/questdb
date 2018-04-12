@@ -33,6 +33,7 @@ import com.questdb.std.Numbers;
 import com.questdb.std.ObjList;
 import com.questdb.std.str.CharSink;
 import com.questdb.std.str.StringSink;
+import org.jetbrains.annotations.Nullable;
 
 import static com.questdb.std.Numbers.hexDigits;
 
@@ -69,7 +70,44 @@ public class ToCharBinVFunctionFactory implements FunctionFactory {
 
         @Override
         public void getStr(Record rec, CharSink sink) {
+            final BinarySequence sequence = func.getBin(rec);
+            if (sequence == null) {
+                return;
+            }
+            toSink(sequence, sink);
+        }
+
+        @Override
+        public int getStrLen(Record rec) {
             BinarySequence sequence = func.getBin(rec);
+            if (sequence == null) {
+                return -1;
+            }
+
+            int len = (int) sequence.length();
+            // number of lines
+            int incompleteLine = len % 16;
+            int count = len / 16 * 57;
+            if (incompleteLine > 0) {
+                count += incompleteLine * 2 + incompleteLine + 8;
+            } else {
+                count--; // subtract extra line end we took into account
+            }
+            return count;
+        }
+
+        @Nullable
+        private CharSequence toSink(Record rec, StringSink sink) {
+            final BinarySequence sequence = func.getBin(rec);
+            if (sequence == null) {
+                return null;
+            }
+            sink.clear();
+            toSink(sequence, sink);
+            return sink;
+        }
+
+        private void toSink(BinarySequence sequence, CharSink sink) {
             // limit what we print
             int len = (int) sequence.length();
             for (int i = 0; i < len; i++) {
@@ -99,12 +137,6 @@ public class ToCharBinVFunctionFactory implements FunctionFactory {
                     sink.put(hexDigits[v % 0x10]);
                 }
             }
-        }
-
-        private CharSequence toSink(Record rec, StringSink sink) {
-            sink.clear();
-            getStr(rec, sink);
-            return sink;
         }
     }
 }

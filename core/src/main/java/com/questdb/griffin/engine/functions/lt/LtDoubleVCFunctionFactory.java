@@ -35,7 +35,7 @@ public class LtDoubleVCFunctionFactory implements FunctionFactory {
 
     @Override
     public String getSignature() {
-        return "<(+Dd)";
+        return "<(Dd)";
     }
 
     @Override

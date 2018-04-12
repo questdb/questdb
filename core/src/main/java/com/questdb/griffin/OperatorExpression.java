@@ -26,7 +26,7 @@ package com.questdb.griffin;
 import com.questdb.std.CharSequenceObjHashMap;
 import com.questdb.std.ObjList;
 
-final class OperatorExpression {
+public final class OperatorExpression {
 
     public static final int UNARY = 1;
     public static final int BINARY = 2;
@@ -57,7 +57,6 @@ final class OperatorExpression {
             put(op.token, op);
         }
     }};
-
     final String token;
     final int precedence;
     final boolean leftAssociative;
@@ -78,5 +77,13 @@ final class OperatorExpression {
         this.leftAssociative = leftAssociative;
         this.type = type;
         this.symbol = true;
+    }
+
+    public static int getOperatorType(CharSequence name) {
+        int index = opMap.keyIndex(name);
+        if (index < 0) {
+            return opMap.valueAt(index).type;
+        }
+        return 0;
     }
 }

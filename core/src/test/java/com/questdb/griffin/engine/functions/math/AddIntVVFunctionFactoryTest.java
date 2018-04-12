@@ -21,49 +21,39 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin;
+package com.questdb.griffin.engine.functions.math;
 
-import com.questdb.cairo.sql.Record;
-import com.questdb.std.BinarySequence;
-import com.questdb.std.str.CharSink;
+import com.questdb.griffin.FunctionFactory;
+import com.questdb.griffin.SqlException;
+import com.questdb.griffin.engine.AbstractFunctionFactoryTest;
+import com.questdb.std.Numbers;
+import org.junit.Test;
 
-public interface Function {
+public class AddIntVVFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
-    BinarySequence getBin(Record rec);
+    @Test
+    public void testLeftNull() throws SqlException {
+        call(Numbers.INT_NaN, 10).andAssert(Numbers.INT_NaN);
 
-    boolean getBool(Record rec);
+    }
 
-    byte getByte(Record rec);
+    @Test
+    public void testOverflow() throws SqlException {
+        call(5, Integer.MAX_VALUE).andAssert(-2147483644);
+    }
 
-    long getDate(Record rec);
+    @Test
+    public void testRightNull() throws SqlException {
+        call(4, Numbers.INT_NaN).andAssert(Numbers.INT_NaN);
+    }
 
-    double getDouble(Record rec);
+    @Test
+    public void testSimple() throws SqlException {
+        call(5, 8).andAssert(13);
+    }
 
-    float getFloat(Record rec);
-
-    int getInt(Record rec);
-
-    long getLong(Record rec);
-
-    int getPosition();
-
-    short getShort(Record rec);
-
-    CharSequence getStr(Record rec);
-
-    void getStr(Record rec, CharSink sink);
-
-    CharSequence getStrB(Record rec);
-
-    int getStrLen(Record rec);
-
-    CharSequence getSymbol(Record rec);
-
-    long getTimestamp(Record rec);
-
-    int getType();
-
-    default boolean isConstant() {
-        return false;
+    @Override
+    protected FunctionFactory getFunctionFactory() {
+        return new AddIntVVFunctionFactory();
     }
 }

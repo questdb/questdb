@@ -21,49 +21,33 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin;
+package com.questdb.griffin.engine.functions.str;
 
-import com.questdb.cairo.sql.Record;
-import com.questdb.std.BinarySequence;
-import com.questdb.std.str.CharSink;
+import com.questdb.griffin.FunctionFactory;
+import com.questdb.griffin.SqlException;
+import com.questdb.griffin.engine.AbstractFunctionFactoryTest;
+import org.junit.Test;
 
-public interface Function {
+public class LengthSymbolVFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
-    BinarySequence getBin(Record rec);
-
-    boolean getBool(Record rec);
-
-    byte getByte(Record rec);
-
-    long getDate(Record rec);
-
-    double getDouble(Record rec);
-
-    float getFloat(Record rec);
-
-    int getInt(Record rec);
-
-    long getLong(Record rec);
-
-    int getPosition();
-
-    short getShort(Record rec);
-
-    CharSequence getStr(Record rec);
-
-    void getStr(Record rec, CharSink sink);
-
-    CharSequence getStrB(Record rec);
-
-    int getStrLen(Record rec);
-
-    CharSequence getSymbol(Record rec);
-
-    long getTimestamp(Record rec);
-
-    int getType();
-
-    default boolean isConstant() {
-        return false;
+    @Test
+    public void testEmpty() throws SqlException {
+        call("").andAssert(0);
     }
+
+    @Test
+    public void testNull() throws SqlException {
+        call((Object) null).andAssert(-1);
+    }
+
+    @Test
+    public void testSimple() throws SqlException {
+        call("xyz").andAssert(3);
+    }
+
+    @Override
+    protected FunctionFactory getFunctionFactory() {
+        return new LengthSymbolVFunctionFactory();
+    }
+
 }

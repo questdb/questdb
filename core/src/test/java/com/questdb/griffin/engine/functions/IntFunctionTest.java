@@ -24,12 +24,13 @@
 package com.questdb.griffin.engine.functions;
 
 import com.questdb.cairo.sql.Record;
+import org.junit.Assert;
 import org.junit.Test;
 
 public class IntFunctionTest {
     // assert that all type casts that are not possible will throw exception
 
-    private static final IntFunction function = new IntFunction(0) {
+    private static final IntFunction function = new IntFunction(25) {
         @Override
         public int getInt(Record rec) {
             return 0;
@@ -54,6 +55,11 @@ public class IntFunctionTest {
     @Test(expected = UnsupportedOperationException.class)
     public void testGetDate() {
         function.getDate(null);
+    }
+
+    @Test
+    public void testGetPosition() {
+        Assert.assertEquals(25, function.getPosition());
     }
 
     @Test(expected = UnsupportedOperationException.class)

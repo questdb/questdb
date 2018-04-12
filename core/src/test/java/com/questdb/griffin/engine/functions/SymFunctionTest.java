@@ -24,12 +24,13 @@
 package com.questdb.griffin.engine.functions;
 
 import com.questdb.cairo.sql.Record;
+import org.junit.Assert;
 import org.junit.Test;
 
 public class SymFunctionTest {
     // assert that all type casts that are not possible will throw exception
 
-    private static final SymFunction function = new SymFunction(0) {
+    private static final SymFunction function = new SymFunction(25) {
         @Override
         public CharSequence getSymbol(Record rec) {
             return null;
@@ -74,6 +75,11 @@ public class SymFunctionTest {
     @Test(expected = UnsupportedOperationException.class)
     public void testGetLong() {
         function.getLong(null);
+    }
+
+    @Test
+    public void testGetPosition() {
+        Assert.assertEquals(25, function.getPosition());
     }
 
     @Test(expected = UnsupportedOperationException.class)

@@ -21,49 +21,24 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin;
+package com.questdb.griffin.engine.functions.bool;
 
-import com.questdb.cairo.sql.Record;
-import com.questdb.std.BinarySequence;
-import com.questdb.std.str.CharSink;
+import com.questdb.griffin.FunctionFactory;
+import com.questdb.griffin.SqlException;
+import com.questdb.griffin.engine.AbstractFunctionFactoryTest;
+import org.junit.Test;
 
-public interface Function {
+public class OrVVFunctionFactoryTest extends AbstractFunctionFactoryTest {
+    @Test
+    public void testAll() throws SqlException {
+        call(true, true).andAssert(true);
+        call(true, false).andAssert(true);
+        call(false, true).andAssert(true);
+        call(false, false).andAssert(false);
+    }
 
-    BinarySequence getBin(Record rec);
-
-    boolean getBool(Record rec);
-
-    byte getByte(Record rec);
-
-    long getDate(Record rec);
-
-    double getDouble(Record rec);
-
-    float getFloat(Record rec);
-
-    int getInt(Record rec);
-
-    long getLong(Record rec);
-
-    int getPosition();
-
-    short getShort(Record rec);
-
-    CharSequence getStr(Record rec);
-
-    void getStr(Record rec, CharSink sink);
-
-    CharSequence getStrB(Record rec);
-
-    int getStrLen(Record rec);
-
-    CharSequence getSymbol(Record rec);
-
-    long getTimestamp(Record rec);
-
-    int getType();
-
-    default boolean isConstant() {
-        return false;
+    @Override
+    protected FunctionFactory getFunctionFactory() {
+        return new OrVVFunctionFactory();
     }
 }

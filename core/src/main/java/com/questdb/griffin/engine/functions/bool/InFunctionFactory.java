@@ -32,13 +32,12 @@ import com.questdb.griffin.SqlException;
 import com.questdb.griffin.engine.functions.BooleanFunction;
 import com.questdb.griffin.engine.functions.constants.BooleanConstant;
 import com.questdb.std.CharSequenceHashSet;
-import com.questdb.std.Chars;
 import com.questdb.std.ObjList;
 
 public class InFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "in(SV)";
+        return "in(Sv)";
     }
 
     @Override
@@ -52,28 +51,23 @@ public class InFunctionFactory implements FunctionFactory {
         }
 
         for (int i = 1; i < n; i++) {
+
             Function func = args.getQuick(i);
-            if (func.isConstant()) {
-                String value;
-                switch (func.getType()) {
-                    case ColumnType.STRING:
-                        value = Chars.toString(func.getStr(null));
-                        break;
-                    case ColumnType.SYMBOL:
-                        value = Chars.toString(func.getSymbol(null));
-                        break;
-                    default:
-                        throw SqlException.$(func.getPosition(), "STRING or SYMBOL expected");
-                }
-                if (value == null) {
-                    throw SqlException.$(func.getPosition(), "NULL is not allowed");
-                }
-                set.add(value);
-            } else {
-                throw SqlException.$(func.getPosition(), "constant expected");
+            if (func.getType() != ColumnType.STRING) {
+                throw SqlException.$(func.getPosition(), "STRING constant expected");
             }
+            CharSequence value = func.getStr(null);
+            if (value == null) {
+                throw SqlException.$(func.getPosition(), "NULL is not allowed");
+            }
+
+            set.add(value.toString());
         }
-        return new Func(position, args.getQuick(0), set);
+        Function var = args.getQuick(0);
+        if (var.isConstant()) {
+            return new BooleanConstant(position, set.contains(var.getStr(null)));
+        }
+        return new Func(position, var, set);
     }
 
     private class Func extends BooleanFunction {

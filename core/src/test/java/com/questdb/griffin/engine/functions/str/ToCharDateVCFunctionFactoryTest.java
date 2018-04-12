@@ -21,49 +21,35 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin;
+package com.questdb.griffin.engine.functions.str;
 
-import com.questdb.cairo.sql.Record;
-import com.questdb.std.BinarySequence;
-import com.questdb.std.str.CharSink;
+import com.questdb.griffin.FunctionFactory;
+import com.questdb.griffin.SqlException;
+import com.questdb.griffin.engine.AbstractFunctionFactoryTest;
+import com.questdb.std.Numbers;
+import com.questdb.std.NumericException;
+import com.questdb.std.time.DateFormatUtils;
+import org.junit.Test;
 
-public interface Function {
+public class ToCharDateVCFunctionFactoryTest extends AbstractFunctionFactoryTest {
+    @Test
+    public void testNaN() throws SqlException {
+        call(Numbers.LONG_NaN, "dd/MM/yyyy hh:mm:ss").andAssert(null);
+    }
 
-    BinarySequence getBin(Record rec);
+    @Test
+    public void testNullFormat() {
+        assertFailure(11, "format must not be null", 0L, null);
+    }
 
-    boolean getBool(Record rec);
+    @Test
+    public void testSimple() throws SqlException, NumericException {
+        call(DateFormatUtils.parseDateTime("2018-03-10T11:03:33.123Z"),
+                "dd/MM/yyyy hh:mm:ss").andAssert("10/03/2018 12:03:33");
+    }
 
-    byte getByte(Record rec);
-
-    long getDate(Record rec);
-
-    double getDouble(Record rec);
-
-    float getFloat(Record rec);
-
-    int getInt(Record rec);
-
-    long getLong(Record rec);
-
-    int getPosition();
-
-    short getShort(Record rec);
-
-    CharSequence getStr(Record rec);
-
-    void getStr(Record rec, CharSink sink);
-
-    CharSequence getStrB(Record rec);
-
-    int getStrLen(Record rec);
-
-    CharSequence getSymbol(Record rec);
-
-    long getTimestamp(Record rec);
-
-    int getType();
-
-    default boolean isConstant() {
-        return false;
+    @Override
+    protected FunctionFactory getFunctionFactory() {
+        return new ToCharDateVCFunctionFactory();
     }
 }

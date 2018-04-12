@@ -37,6 +37,7 @@ import com.questdb.std.*;
 import java.util.ArrayDeque;
 
 public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
+    public static final int VAR_ARG = 100;
     private static final Log LOG = LogFactory.getLog(FunctionParser.class);
     private static IntHashSet invalidFunctionNameChars = new IntHashSet();
     private final ObjList<Function> mutableArgs = new ObjList<>();
@@ -47,9 +48,58 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
     private RecordMetadata metadata;
     private CharSequenceObjHashMap<Parameter> parameterMap;
 
-    FunctionParser(CairoConfiguration configuration, Iterable<FunctionFactory> functionFactories) {
+    public FunctionParser(CairoConfiguration configuration, Iterable<FunctionFactory> functionFactories) {
         this.configuration = configuration;
         loadFunctionFactories(functionFactories);
+    }
+
+    public static int getArgType(char c) {
+        int sigArgType;
+        switch (Character.toUpperCase(c)) {
+            case 'D':
+                sigArgType = ColumnType.DOUBLE;
+                break;
+            case 'B':
+                sigArgType = ColumnType.BYTE;
+                break;
+            case 'E':
+                sigArgType = ColumnType.SHORT;
+                break;
+            case 'F':
+                sigArgType = ColumnType.FLOAT;
+                break;
+            case 'I':
+                sigArgType = ColumnType.INT;
+                break;
+            case 'L':
+                sigArgType = ColumnType.LONG;
+                break;
+            case 'S':
+                sigArgType = ColumnType.STRING;
+                break;
+            case 'T':
+                sigArgType = ColumnType.BOOLEAN;
+                break;
+            case 'K':
+                sigArgType = ColumnType.SYMBOL;
+                break;
+            case 'M':
+                sigArgType = ColumnType.DATE;
+                break;
+            case 'N':
+                sigArgType = ColumnType.TIMESTAMP;
+                break;
+            case 'U':
+                sigArgType = ColumnType.BINARY;
+                break;
+            case 'V':
+                sigArgType = VAR_ARG;
+                break;
+            default:
+                sigArgType = -1;
+                break;
+        }
+        return sigArgType;
     }
 
     public static Function getOrCreate(SqlNode node, CharSequenceObjHashMap<Parameter> parameterMap) {
@@ -59,6 +109,42 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
             p.setName(node.token.toString());
         }
         return p;
+    }
+
+    public static int validateSignatureAndGetNameSeparator(String sig) throws SqlException {
+        int openBraceIndex = sig.indexOf('(');
+        if (openBraceIndex == -1) {
+            throw SqlException.$(0, "open brace expected");
+        }
+
+        if (openBraceIndex == 0) {
+            throw SqlException.$(0, "empty function name");
+        }
+
+        if (sig.charAt(sig.length() - 1) != ')') {
+            throw SqlException.$(0, "close brace expected");
+        }
+
+        int c = sig.charAt(0);
+        if (c >= '0' && c <= '9') {
+            throw SqlException.$(0, "name must not start with digit");
+        }
+
+        for (int i = 0; i < openBraceIndex; i++) {
+            char cc = sig.charAt(i);
+            if (invalidFunctionNameChars.contains(cc)) {
+                throw SqlException.position(0).put("invalid character: ").put(cc);
+            }
+        }
+
+        // validate data types
+        for (int i = openBraceIndex + 1, n = sig.length() - 1; i < n; i++) {
+            char cc = sig.charAt(i);
+            if (getArgType(cc) == -1) {
+                throw SqlException.position(0).put("illegal argument type: ").put(cc);
+            }
+        }
+        return openBraceIndex;
     }
 
     public Function parseFunction(SqlNode node, RecordMetadata metadata, CharSequenceObjHashMap<Parameter> parameterMap) throws SqlException {
@@ -121,91 +207,6 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
         return ex;
     }
 
-    private static int validateSignatureAndGetNameSeparator(String sig) throws SqlException {
-        int openBraceIndex = sig.indexOf('(');
-        if (openBraceIndex == -1) {
-            throw SqlException.$(0, "open brace expected");
-        }
-
-        if (openBraceIndex == 0) {
-            throw SqlException.$(0, "empty function name");
-        }
-
-        if (sig.charAt(sig.length() - 1) != ')') {
-            throw SqlException.$(0, "close brace expected");
-        }
-
-        int c = sig.charAt(0);
-        if (c >= '0' && c <= '9') {
-            throw SqlException.$(0, "name must not start with digit");
-        }
-
-        for (int i = 0; i < openBraceIndex; i++) {
-            char cc = sig.charAt(i);
-            if (invalidFunctionNameChars.contains(cc)) {
-                throw SqlException.position(0).put("invalid character: ").put(cc);
-            }
-        }
-
-        // validate data types
-        for (int i = openBraceIndex + 1, n = sig.length() - 1; i < n; i++) {
-            char cc = sig.charAt(i);
-            if (getArgType(cc) == -1) {
-                throw SqlException.position(0).put("illegal argument type: ").put(cc);
-            }
-        }
-        return openBraceIndex;
-    }
-
-    private static int getArgType(char c) {
-        int sigArgType;
-        switch (Character.toUpperCase(c)) {
-            case 'D':
-                sigArgType = ColumnType.DOUBLE;
-                break;
-            case 'B':
-                sigArgType = ColumnType.BYTE;
-                break;
-            case 'E':
-                sigArgType = ColumnType.SHORT;
-                break;
-            case 'F':
-                sigArgType = ColumnType.FLOAT;
-                break;
-            case 'I':
-                sigArgType = ColumnType.INT;
-                break;
-            case 'L':
-                sigArgType = ColumnType.LONG;
-                break;
-            case 'S':
-                sigArgType = ColumnType.STRING;
-                break;
-            case 'T':
-                sigArgType = ColumnType.BOOLEAN;
-                break;
-            case 'K':
-                sigArgType = ColumnType.SYMBOL;
-                break;
-            case 'M':
-                sigArgType = ColumnType.DATE;
-                break;
-            case 'N':
-                sigArgType = ColumnType.TIMESTAMP;
-                break;
-            case 'U':
-                sigArgType = ColumnType.BINARY;
-                break;
-            case 'V':
-                sigArgType = 100; // vararg
-                break;
-            default:
-                sigArgType = -1;
-                break;
-        }
-        return sigArgType;
-    }
-
     private Function getFunction(SqlNode node, ObjList<Function> args) throws SqlException {
         if (node.type == SqlNode.LAMBDA) {
             throw SqlException.$(node.position, "Cannot use lambda in this context");
@@ -228,7 +229,17 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
             final int sigArgOffset = signature.indexOf('(') + 1;
             int sigArgCount = signature.length() - 1 - sigArgOffset;
 
-            final boolean sigVarArg = sigArgCount > 0 && getArgType(signature.charAt(sigArgOffset + sigArgCount - 1)) == 100;
+            final boolean sigVarArg;
+            final boolean sigVarArgConst;
+
+            if (sigArgCount > 0) {
+                char c = signature.charAt(sigArgOffset + sigArgCount - 1);
+                sigVarArg = getArgType(Character.toUpperCase(c)) == VAR_ARG;
+                sigVarArgConst = Character.isLowerCase(c);
+            } else {
+                sigVarArg = false;
+                sigVarArgConst = false;
+            }
 
             if (sigVarArg) {
                 sigArgCount--;
@@ -244,6 +255,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
                 int match = 2; // match
 
 
+                OUT:
                 for (int k = 0; k < sigArgCount; k++) {
                     final Function arg = args.getQuick(k);
                     final char c = signature.charAt(sigArgOffset + k);
@@ -266,6 +278,25 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
                             && sigArgType <= ColumnType.DOUBLE
                             && arg.getType() < sigArgType) {
                         match = 1; // fuzzy match
+                    } else if (arg.getType() == ColumnType.DOUBLE && arg.isConstant() && Double.isNaN(arg.getDouble(null))) {
+                        // special case for NaN handling.
+                        // NaN should be assignable to LONG and INT, but we need to make sure type of constant is
+                        // correct for function call.
+
+                        // replace constant inline! It is hacky but better than creating new arg list.
+                        switch (sigArgType) {
+                            case ColumnType.LONG:
+                                args.setQuick(k, new LongConstant(arg.getPosition(), Numbers.LONG_NaN));
+                                match = 1;
+                                break;
+                            case ColumnType.INT:
+                                args.setQuick(k, new IntConstant(arg.getPosition(), Numbers.INT_NaN));
+                                match = 1;
+                                break;
+                            default:
+                                match = 0;
+                                break OUT;
+                        }
                     } else {
                         // types mismatch
                         match = 0;
@@ -275,6 +306,18 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
 
                 if (match == 2) {
                     // exact match?
+                    // special case - if signature enforces constant vararg we
+                    // have to ensure all args are indeed constant
+
+                    if (sigVarArgConst && args != null) {
+                        for (int k = sigArgCount; k < argCount; k++) {
+                            Function func = args.getQuick(k);
+                            if (!func.isConstant()) {
+                                throw SqlException.$(func.getPosition(), "constant expected");
+                            }
+                        }
+                    }
+
                     return factory.newInstance(args, node.position, configuration);
                 } else if (match == 1) {
                     // fuzzy match
