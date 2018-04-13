@@ -120,7 +120,7 @@ public class RecordChainTest extends AbstractCairoTest {
     public void testWriteAndRead() throws Exception {
         TestUtils.assertMemoryLeak(
                 () -> {
-                    final int N = 1000000;
+                    final int N = 10000;
                     Record record = new TestRecord();
 
 //        try (RecordList records = new RecordList(metadata, 1024 * 1024 * 1024)) {
