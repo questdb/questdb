@@ -28,8 +28,6 @@ import com.questdb.cairo.DefaultCairoConfiguration;
 import com.questdb.cairo.TestRecord;
 import com.questdb.cairo.sql.Record;
 import com.questdb.common.ColumnType;
-import com.questdb.common.RecordColumnMetadata;
-import com.questdb.common.SymbolTable;
 import com.questdb.griffin.engine.functions.bool.InFunctionFactory;
 import com.questdb.griffin.engine.functions.bool.NotVFunctionFactory;
 import com.questdb.griffin.engine.functions.bool.OrVVFunctionFactory;
@@ -42,7 +40,6 @@ import com.questdb.std.ObjList;
 import com.questdb.std.time.DateFormatUtils;
 import com.questdb.std.time.MillisecondClock;
 import com.questdb.test.tools.TestUtils;
-import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -679,45 +676,5 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         FunctionParser functionParser = createFunctionParser();
         Assert.assertNotNull(parseFunction("a or not b", metadata, functionParser));
         Assert.assertEquals(2, functionParser.getFunctionCount());
-    }
-
-    @NotNull
-    private FunctionParser createFunctionParser() {
-        return new FunctionParser(configuration, functions);
-    }
-
-    private class TestColumnMetadata implements RecordColumnMetadata {
-        private final String name;
-        private final int type;
-
-        public TestColumnMetadata(String name, int type) {
-            this.name = name;
-            this.type = type;
-        }
-
-        @Override
-        public int getBucketCount() {
-            return 0;
-        }
-
-        @Override
-        public String getName() {
-            return name;
-        }
-
-        @Override
-        public SymbolTable getSymbolTable() {
-            return null;
-        }
-
-        @Override
-        public int getType() {
-            return type;
-        }
-
-        @Override
-        public boolean isIndexed() {
-            return false;
-        }
     }
 }

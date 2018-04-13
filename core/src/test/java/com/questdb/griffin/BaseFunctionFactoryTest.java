@@ -24,11 +24,14 @@
 package com.questdb.griffin;
 
 import com.questdb.cairo.AbstractCairoTest;
+import com.questdb.common.RecordColumnMetadata;
+import com.questdb.common.SymbolTable;
 import com.questdb.griffin.engine.functions.Parameter;
 import com.questdb.ql.CollectionRecordMetadata;
 import com.questdb.std.CharSequenceObjHashMap;
 import com.questdb.std.Lexer2;
 import com.questdb.std.ObjectPool;
+import org.jetbrains.annotations.NotNull;
 import org.junit.Before;
 
 import java.util.ArrayList;
@@ -58,6 +61,46 @@ public class BaseFunctionFactoryTest extends AbstractCairoTest {
         linker.reset();
         parser.parseExpr(lexer, linker);
         return linker.poll();
+    }
+
+    @NotNull
+    protected FunctionParser createFunctionParser() {
+        return new FunctionParser(configuration, functions);
+    }
+
+    protected class TestColumnMetadata implements RecordColumnMetadata {
+        private final String name;
+        private final int type;
+
+        public TestColumnMetadata(String name, int type) {
+            this.name = name;
+            this.type = type;
+        }
+
+        @Override
+        public int getBucketCount() {
+            return 0;
+        }
+
+        @Override
+        public String getName() {
+            return name;
+        }
+
+        @Override
+        public SymbolTable getSymbolTable() {
+            return null;
+        }
+
+        @Override
+        public int getType() {
+            return type;
+        }
+
+        @Override
+        public boolean isIndexed() {
+            return false;
+        }
     }
 
 }

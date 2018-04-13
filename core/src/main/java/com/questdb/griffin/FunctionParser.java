@@ -103,12 +103,13 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
     }
 
     public static Function getOrCreate(SqlNode node, CharSequenceObjHashMap<Parameter> parameterMap) {
-        Parameter p = parameterMap.get(node.token);
-        if (p == null) {
-            parameterMap.put(node.token, p = new Parameter(node.position));
-            p.setName(node.token.toString());
+        int index = parameterMap.keyIndex(node.token);
+        if (index > -1) {
+            Parameter p = new Parameter(node.position);
+            parameterMap.putAt(index, node.token.toString(), p);
+            return p;
         }
-        return p;
+        return parameterMap.valueAt(index);
     }
 
     public static int validateSignatureAndGetNameSeparator(String sig) throws SqlException {
@@ -297,6 +298,8 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
                                 match = 0;
                                 break OUT;
                         }
+                    } else if (arg.getType() == ColumnType.PARAMETER) {
+                        match = 1;
                     } else {
                         // types mismatch
                         match = 0;

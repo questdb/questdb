@@ -24,13 +24,14 @@
 package com.questdb.griffin.engine.functions;
 
 import com.questdb.cairo.sql.Record;
+import com.questdb.common.ColumnType;
 import com.questdb.griffin.Function;
 import com.questdb.std.BinarySequence;
 import com.questdb.std.str.CharSink;
 
 public class Parameter implements Function {
     private final int position;
-    private String name;
+    private Function var;
 
     public Parameter(int position) {
         this.position = position;
@@ -38,67 +39,95 @@ public class Parameter implements Function {
 
     @Override
     public BinarySequence getBin(Record rec) {
-        return null;
+        return var.getBin(rec);
     }
 
     @Override
     public boolean getBool(Record rec) {
-        return false;
+        return var.getBool(rec);
     }
 
     @Override
     public byte getByte(Record rec) {
-        return 0;
+        return var.getByte(rec);
     }
 
     @Override
     public long getDate(Record rec) {
-        return 0;
+        return var.getDate(rec);
     }
 
     @Override
     public double getDouble(Record rec) {
-        return 0;
+        return var.getDouble(rec);
     }
 
     @Override
     public float getFloat(Record rec) {
-        return 0;
+        return var.getFloat(rec);
     }
 
     @Override
     public int getInt(Record rec) {
-        return 0;
+        return var.getInt(rec);
+    }
+
+    public int getValueType() {
+        if (var != null) {
+            return var.getType();
+        }
+        return getType();
+    }
+
+    public void setInt(int value) {
+        if (var instanceof IntVar) {
+            ((IntVar) var).value = value;
+        } else {
+            var = new IntVar(position, value);
+        }
+    }
+
+    public void setLong(long value) {
+        if (var instanceof LongVar) {
+            ((LongVar) var).value = value;
+        } else {
+            var = new LongVar(position, value);
+        }
+
+    }
+
+    private static class IntVar extends IntFunction {
+        private int value;
+
+        public IntVar(int position, int value) {
+            super(position);
+            this.value = value;
+        }
+
+        @Override
+        public int getInt(Record rec) {
+            return value;
+        }
+    }
+
+    private static class LongVar extends LongFunction {
+        private long value;
+
+
+        public LongVar(int position, long value) {
+            super(position);
+            this.value = value;
+        }
+
+        @Override
+        public long getLong(Record rec) {
+            return value;
+        }
     }
 
     @Override
     public long getLong(Record rec) {
-        return 0;
-    }
-
-    @Override
-    public short getShort(Record rec) {
-        return 0;
-    }
-
-    @Override
-    public CharSequence getStr(Record rec) {
-        return null;
-    }
-
-    @Override
-    public void getStr(Record rec, CharSink sink) {
-
-    }
-
-    @Override
-    public CharSequence getStrB(Record rec) {
-        return null;
-    }
-
-    @Override
-    public int getStrLen(Record rec) {
-        return 0;
+        return var.getLong(rec);
     }
 
     @Override
@@ -107,13 +136,43 @@ public class Parameter implements Function {
     }
 
     @Override
+    public short getShort(Record rec) {
+        return var.getShort(rec);
+    }
+
+    @Override
+    public CharSequence getStr(Record rec) {
+        return var.getStr(rec);
+    }
+
+    @Override
+    public void getStr(Record rec, CharSink sink) {
+        var.getStr(rec, sink);
+    }
+
+    @Override
+    public CharSequence getStrB(Record rec) {
+        return var.getStrB(rec);
+    }
+
+    @Override
+    public int getStrLen(Record rec) {
+        return var.getStrLen(rec);
+    }
+
+    @Override
+    public CharSequence getSymbol(Record rec) {
+        return var.getSymbol(rec);
+    }
+
+    @Override
     public long getTimestamp(Record rec) {
-        return 0;
+        return var.getTimestamp(rec);
     }
 
     @Override
     public int getType() {
-        return 0;
+        return ColumnType.PARAMETER;
     }
 
     @Override
@@ -121,12 +180,5 @@ public class Parameter implements Function {
         return false;
     }
 
-    @Override
-    public CharSequence getSymbol(Record rec) {
-        return null;
-    }
 
-    public void setName(String name) {
-        this.name = name;
-    }
 }

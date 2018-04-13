@@ -25,8 +25,6 @@ package com.questdb.griffin.engine;
 
 import com.questdb.cairo.sql.Record;
 import com.questdb.common.ColumnType;
-import com.questdb.common.RecordColumnMetadata;
-import com.questdb.common.SymbolTable;
 import com.questdb.griffin.*;
 import com.questdb.griffin.engine.functions.date.ToDateLongFunctionFactory;
 import com.questdb.griffin.engine.functions.date.ToTimestampLongFunctionFactory;
@@ -285,7 +283,7 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
             } else {
                 CharSequence a = func.getStr(record);
                 CharSequence b = func.getStrB(record);
-                if (!func.isConstant()) {
+                if (!func.isConstant() && (!(a instanceof String) || !(b instanceof String))) {
                     Assert.assertNotSame(a, b);
                 }
                 TestUtils.assertEquals(expected, a);
@@ -336,6 +334,11 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
         }
 
         @Override
+        public CharSequence getFlyweightStrB(int col) {
+            return (CharSequence) args[col];
+        }
+
+        @Override
         public int getInt(int col) {
             return (int) args[col];
         }
@@ -343,6 +346,11 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
         @Override
         public long getLong(int col) {
             return (long) args[col];
+        }
+
+        @Override
+        public int getStrLen(int col) {
+            return ((CharSequence) args[col]).length();
         }
 
         @Override
@@ -369,40 +377,4 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
             return this;
         }
     }
-
-    private class TestColumnMetadata implements RecordColumnMetadata {
-        private final String name;
-        private final int type;
-
-        public TestColumnMetadata(String name, int type) {
-            this.name = name;
-            this.type = type;
-        }
-
-        @Override
-        public int getBucketCount() {
-            return 0;
-        }
-
-        @Override
-        public String getName() {
-            return name;
-        }
-
-        @Override
-        public SymbolTable getSymbolTable() {
-            return null;
-        }
-
-        @Override
-        public int getType() {
-            return type;
-        }
-
-        @Override
-        public boolean isIndexed() {
-            return false;
-        }
-    }
-
 }
