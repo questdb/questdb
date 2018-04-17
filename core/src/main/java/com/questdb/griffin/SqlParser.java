@@ -34,7 +34,7 @@ import com.questdb.cairo.sql.RowCursorFactory;
 import com.questdb.common.ColumnType;
 import com.questdb.common.RecordColumnMetadata;
 import com.questdb.common.RecordMetadata;
-import com.questdb.griffin.engine.functions.Parameter;
+import com.questdb.griffin.engine.params.Parameter;
 import com.questdb.griffin.engine.table.FilteredTableRecordCursorFactory;
 import com.questdb.griffin.engine.table.SymbolIndexFilteredRowCursorFactory;
 import com.questdb.griffin.engine.table.SymbolIndexRowCursorFactory;

@@ -21,37 +21,18 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.engine.functions.constants;
+package com.questdb.griffin.engine.params;
 
-import com.questdb.cairo.sql.Record;
-import com.questdb.griffin.engine.functions.StrFunction;
-import com.questdb.std.Chars;
+import com.questdb.cairo.AbstractCairoTest;
+import com.questdb.std.Sinkable;
+import com.questdb.test.tools.TestUtils;
+import org.junit.Test;
 
-public class StrConstant extends StrFunction {
-    private final String value;
-
-    public StrConstant(int position, CharSequence value) {
-        super(position);
-        assert value != null;
-        if (Chars.startsWith(value, '\'')) {
-            this.value = Chars.toString(value, 1, value.length() - 1);
-        } else {
-            this.value = Chars.toString(value);
-        }
-    }
-
-    @Override
-    public CharSequence getStr(Record rec) {
-        return value;
-    }
-
-    @Override
-    public CharSequence getStrB(Record rec) {
-        return value;
-    }
-
-    @Override
-    public boolean isConstant() {
-        return true;
+public class ParameterExceptionTest extends AbstractCairoTest {
+    @Test
+    public void testSinkable() {
+        sink.clear();
+        sink.put((Sinkable) ParameterException.position(124).put("hello"));
+        TestUtils.assertEquals("[124]: hello", sink);
     }
 }

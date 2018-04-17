@@ -21,21 +21,21 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.engine.functions.columns;
+package com.questdb.griffin.engine.functions.math;
 
-import com.questdb.cairo.sql.Record;
-import com.questdb.griffin.engine.functions.SymFunction;
+import com.questdb.griffin.FunctionFactory;
+import com.questdb.griffin.SqlException;
+import com.questdb.griffin.engine.AbstractFunctionFactoryTest;
+import org.junit.Test;
 
-public class SymColumn extends SymFunction {
-    private final int columnIndex;
-
-    public SymColumn(int position, int columnIndex) {
-        super(position);
-        this.columnIndex = columnIndex;
+public class AddShortVVFunctionFactoryTest extends AbstractFunctionFactoryTest {
+    @Test
+    public void testSimple() throws SqlException {
+        call(45, 51).andAssert((short) 96);
     }
 
     @Override
-    public CharSequence getSymbol(Record rec) {
-        return rec.getSym(columnIndex);
+    protected FunctionFactory getFunctionFactory() {
+        return new AddShortVVFunctionFactory();
     }
 }

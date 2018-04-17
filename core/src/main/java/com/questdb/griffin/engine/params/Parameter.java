@@ -21,7 +21,7 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.engine.functions;
+package com.questdb.griffin.engine.params;
 
 import com.questdb.cairo.sql.Record;
 import com.questdb.common.ColumnType;
@@ -70,59 +70,6 @@ public class Parameter implements Function {
     @Override
     public int getInt(Record rec) {
         return var.getInt(rec);
-    }
-
-    public int getValueType() {
-        if (var != null) {
-            return var.getType();
-        }
-        return getType();
-    }
-
-    public void setInt(int value) {
-        if (var instanceof IntVar) {
-            ((IntVar) var).value = value;
-        } else {
-            var = new IntVar(position, value);
-        }
-    }
-
-    public void setLong(long value) {
-        if (var instanceof LongVar) {
-            ((LongVar) var).value = value;
-        } else {
-            var = new LongVar(position, value);
-        }
-
-    }
-
-    private static class IntVar extends IntFunction {
-        private int value;
-
-        public IntVar(int position, int value) {
-            super(position);
-            this.value = value;
-        }
-
-        @Override
-        public int getInt(Record rec) {
-            return value;
-        }
-    }
-
-    private static class LongVar extends LongFunction {
-        private long value;
-
-
-        public LongVar(int position, long value) {
-            super(position);
-            this.value = value;
-        }
-
-        @Override
-        public long getLong(Record rec) {
-            return value;
-        }
     }
 
     @Override
@@ -180,5 +127,66 @@ public class Parameter implements Function {
         return false;
     }
 
+    public int getValueType() {
+        if (var != null) {
+            return var.getType();
+        }
+        return getType();
+    }
 
+    public void setByte(byte value) {
+        if (var instanceof ByteParameterFunction) {
+            ((ByteParameterFunction) var).value = value;
+        } else {
+            var = new ByteParameterFunction(position, value);
+        }
+    }
+
+    public void setDouble(double value) {
+        if (var instanceof DoubleParameterFunction) {
+            ((DoubleParameterFunction) var).value = value;
+        } else {
+            var = new DoubleParameterFunction(position, value);
+        }
+    }
+
+    public void setFloat(float value) {
+        if (var instanceof FloatParameterFunction) {
+            ((FloatParameterFunction) var).value = value;
+        } else {
+            var = new FloatParameterFunction(position, value);
+        }
+    }
+
+    public void setInt(int value) {
+        if (var instanceof IntParameterFunction) {
+            ((IntParameterFunction) var).value = value;
+        } else {
+            var = new IntParameterFunction(position, value);
+        }
+    }
+
+    public void setLong(long value) {
+        if (var instanceof LongParameterFunction) {
+            ((LongParameterFunction) var).value = value;
+        } else {
+            var = new LongParameterFunction(position, value);
+        }
+    }
+
+    public void setShort(short value) {
+        if (var instanceof ShortParameterFunction) {
+            ((ShortParameterFunction) var).value = value;
+        } else {
+            var = new ShortParameterFunction(position, value);
+        }
+    }
+
+    public void setStr(CharSequence value) {
+        if (var instanceof StrParameterFunction) {
+            ((StrParameterFunction) var).value = value;
+        } else {
+            var = new StrParameterFunction(position, value);
+        }
+    }
 }

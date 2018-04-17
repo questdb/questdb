@@ -27,38 +27,36 @@ import com.questdb.cairo.CairoConfiguration;
 import com.questdb.cairo.sql.Record;
 import com.questdb.griffin.Function;
 import com.questdb.griffin.FunctionFactory;
-import com.questdb.griffin.engine.functions.DoubleFunction;
+import com.questdb.griffin.engine.functions.ShortFunction;
 import com.questdb.std.ObjList;
 
-public class AddDoubleVVFunctionFactory implements FunctionFactory {
+public class ToShortIntFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "+(DD)";
+        return "to_short(I)";
     }
 
     @Override
     public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
-        return new Func(position, args.getQuick(0), args.getQuick(1));
+        return new Func(position, args.getQuick(0));
     }
 
-    private static class Func extends DoubleFunction {
-        private final Function left;
-        private final Function right;
+    private static class Func extends ShortFunction {
+        private final Function var;
 
-        public Func(int position, Function left, Function right) {
+        public Func(int position, Function var) {
             super(position);
-            this.left = left;
-            this.right = right;
+            this.var = var;
         }
 
         @Override
-        public double getDouble(Record rec) {
-            return left.getDouble(rec) + right.getDouble(rec);
+        public short getShort(Record rec) {
+            return (short) var.getInt(rec);
         }
 
         @Override
         public boolean isConstant() {
-            return left.isConstant() && right.isConstant();
+            return var.isConstant();
         }
     }
 }

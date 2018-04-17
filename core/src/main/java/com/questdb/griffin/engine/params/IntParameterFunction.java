@@ -21,37 +21,41 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.engine.functions.constants;
+package com.questdb.griffin.engine.params;
 
 import com.questdb.cairo.sql.Record;
-import com.questdb.griffin.engine.functions.StrFunction;
-import com.questdb.std.Chars;
+import com.questdb.common.ColumnType;
 
-public class StrConstant extends StrFunction {
-    private final String value;
+class IntParameterFunction extends AbstractParameterFunction {
+    int value;
 
-    public StrConstant(int position, CharSequence value) {
+    public IntParameterFunction(int position, int value) {
         super(position);
-        assert value != null;
-        if (Chars.startsWith(value, '\'')) {
-            this.value = Chars.toString(value, 1, value.length() - 1);
-        } else {
-            this.value = Chars.toString(value);
-        }
+        this.value = value;
     }
 
     @Override
-    public CharSequence getStr(Record rec) {
+    public double getDouble(Record rec) {
         return value;
     }
 
     @Override
-    public CharSequence getStrB(Record rec) {
+    public float getFloat(Record rec) {
         return value;
     }
 
     @Override
-    public boolean isConstant() {
-        return true;
+    public int getInt(Record rec) {
+        return value;
+    }
+
+    @Override
+    public long getLong(Record rec) {
+        return value;
+    }
+
+    @Override
+    public int getType() {
+        return ColumnType.INT;
     }
 }

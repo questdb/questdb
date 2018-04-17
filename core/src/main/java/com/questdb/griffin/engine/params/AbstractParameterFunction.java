@@ -21,7 +21,8 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.engine.functions;
+package com.questdb.griffin.engine.params;
+
 
 import com.questdb.cairo.sql.Record;
 import com.questdb.common.ColumnType;
@@ -29,91 +30,94 @@ import com.questdb.griffin.Function;
 import com.questdb.std.BinarySequence;
 import com.questdb.std.str.CharSink;
 
-public abstract class SymFunction implements Function {
-
+public abstract class AbstractParameterFunction implements Function {
     private final int position;
 
-    public SymFunction(int position) {
+    public AbstractParameterFunction(int position) {
         this.position = position;
     }
 
     @Override
-    public final BinarySequence getBin(Record rec) {
-        throw new UnsupportedOperationException();
+    public BinarySequence getBin(Record rec) {
+        throw error(ColumnType.BINARY);
     }
 
     @Override
-    public final boolean getBool(Record rec) {
-        throw new UnsupportedOperationException();
+    public boolean getBool(Record rec) {
+        throw error(ColumnType.BOOLEAN);
     }
 
     @Override
     public byte getByte(Record rec) {
-        throw new UnsupportedOperationException();
+        throw error(ColumnType.BYTE);
     }
 
     @Override
-    public final long getDate(Record rec) {
-        throw new UnsupportedOperationException();
+    public long getDate(Record rec) {
+        throw error(ColumnType.DATE);
     }
 
     @Override
     public double getDouble(Record rec) {
-        return getByte(rec);
+        throw error(ColumnType.DOUBLE);
     }
 
     @Override
     public float getFloat(Record rec) {
-        return getByte(rec);
+        throw error(ColumnType.FLOAT);
     }
 
     @Override
     public int getInt(Record rec) {
-        return getByte(rec);
+        throw error(ColumnType.INT);
     }
 
     @Override
     public long getLong(Record rec) {
-        return getByte(rec);
-    }
-
-    @Override
-    public short getShort(Record rec) {
-        return getByte(rec);
-    }
-
-    @Override
-    public final CharSequence getStr(Record rec) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public final void getStr(Record rec, CharSink sink) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public final CharSequence getStrB(Record rec) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public final int getStrLen(Record rec) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public final long getTimestamp(Record rec) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public final int getType() {
-        return ColumnType.SYMBOL;
+        throw error(ColumnType.LONG);
     }
 
     @Override
     public int getPosition() {
         return position;
+    }
+
+    @Override
+    public short getShort(Record rec) {
+        throw error(ColumnType.SHORT);
+    }
+
+    @Override
+    public CharSequence getStr(Record rec) {
+        throw error(ColumnType.STRING);
+    }
+
+    @Override
+    public void getStr(Record rec, CharSink sink) {
+        throw error(ColumnType.STRING);
+    }
+
+    @Override
+    public CharSequence getStrB(Record rec) {
+        throw error(ColumnType.STRING);
+    }
+
+    @Override
+    public int getStrLen(Record rec) {
+        throw error(ColumnType.STRING);
+    }
+
+    @Override
+    public CharSequence getSymbol(Record rec) {
+        throw error(ColumnType.SYMBOL);
+    }
+
+    @Override
+    public long getTimestamp(Record rec) {
+        throw error(ColumnType.TIMESTAMP);
+    }
+
+    private ParameterException error(int requiredType) {
+        return ParameterException.position(position).put("invalid parameter type [required=").put(ColumnType.nameOf(requiredType)).put(", actual=").put(ColumnType.nameOf(getType())).put(']');
     }
 }

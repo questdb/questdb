@@ -23,42 +23,19 @@
 
 package com.questdb.griffin.engine.functions.math;
 
-import com.questdb.cairo.CairoConfiguration;
-import com.questdb.cairo.sql.Record;
-import com.questdb.griffin.Function;
 import com.questdb.griffin.FunctionFactory;
-import com.questdb.griffin.engine.functions.DoubleFunction;
-import com.questdb.std.ObjList;
+import com.questdb.griffin.SqlException;
+import com.questdb.griffin.engine.AbstractFunctionFactoryTest;
+import org.junit.Test;
 
-public class AddDoubleVVFunctionFactory implements FunctionFactory {
-    @Override
-    public String getSignature() {
-        return "+(DD)";
+public class ToShortIntFunctionFactoryTest extends AbstractFunctionFactoryTest {
+    @Test
+    public void testSimple() throws SqlException {
+        call(123).andAssert((short) 123);
     }
 
     @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
-        return new Func(position, args.getQuick(0), args.getQuick(1));
-    }
-
-    private static class Func extends DoubleFunction {
-        private final Function left;
-        private final Function right;
-
-        public Func(int position, Function left, Function right) {
-            super(position);
-            this.left = left;
-            this.right = right;
-        }
-
-        @Override
-        public double getDouble(Record rec) {
-            return left.getDouble(rec) + right.getDouble(rec);
-        }
-
-        @Override
-        public boolean isConstant() {
-            return left.isConstant() && right.isConstant();
-        }
+    protected FunctionFactory getFunctionFactory() {
+        return new ToShortIntFunctionFactory();
     }
 }

@@ -26,7 +26,7 @@ package com.questdb.griffin;
 import com.questdb.cairo.AbstractCairoTest;
 import com.questdb.common.RecordColumnMetadata;
 import com.questdb.common.SymbolTable;
-import com.questdb.griffin.engine.functions.Parameter;
+import com.questdb.griffin.engine.params.Parameter;
 import com.questdb.ql.CollectionRecordMetadata;
 import com.questdb.std.CharSequenceObjHashMap;
 import com.questdb.std.Lexer2;
@@ -68,7 +68,7 @@ public class BaseFunctionFactoryTest extends AbstractCairoTest {
         return new FunctionParser(configuration, functions);
     }
 
-    protected class TestColumnMetadata implements RecordColumnMetadata {
+    protected static class TestColumnMetadata implements RecordColumnMetadata {
         private final String name;
         private final int type;
 

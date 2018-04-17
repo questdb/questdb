@@ -23,35 +23,14 @@
 
 package com.questdb.griffin.engine.functions.constants;
 
-import com.questdb.cairo.sql.Record;
-import com.questdb.griffin.engine.functions.StrFunction;
-import com.questdb.std.Chars;
+import org.junit.Assert;
+import org.junit.Test;
 
-public class StrConstant extends StrFunction {
-    private final String value;
-
-    public StrConstant(int position, CharSequence value) {
-        super(position);
-        assert value != null;
-        if (Chars.startsWith(value, '\'')) {
-            this.value = Chars.toString(value, 1, value.length() - 1);
-        } else {
-            this.value = Chars.toString(value);
-        }
-    }
-
-    @Override
-    public CharSequence getStr(Record rec) {
-        return value;
-    }
-
-    @Override
-    public CharSequence getStrB(Record rec) {
-        return value;
-    }
-
-    @Override
-    public boolean isConstant() {
-        return true;
+public class ShortConstantTest {
+    @Test
+    public void testConstant() {
+        ShortConstant constant = new ShortConstant(22, (short) 143);
+        Assert.assertEquals(143, constant.getShort(null));
+        Assert.assertTrue(constant.isConstant());
     }
 }

@@ -28,13 +28,16 @@ import com.questdb.cairo.DefaultCairoConfiguration;
 import com.questdb.cairo.TestRecord;
 import com.questdb.cairo.sql.Record;
 import com.questdb.common.ColumnType;
+import com.questdb.griffin.engine.functions.*;
 import com.questdb.griffin.engine.functions.bool.InFunctionFactory;
 import com.questdb.griffin.engine.functions.bool.NotVFunctionFactory;
 import com.questdb.griffin.engine.functions.bool.OrVVFunctionFactory;
+import com.questdb.griffin.engine.functions.constants.*;
 import com.questdb.griffin.engine.functions.date.SysdateFunctionFactory;
 import com.questdb.griffin.engine.functions.math.*;
 import com.questdb.griffin.engine.functions.str.*;
 import com.questdb.ql.CollectionRecordMetadata;
+import com.questdb.std.BinarySequence;
 import com.questdb.std.NumericException;
 import com.questdb.std.ObjList;
 import com.questdb.std.time.DateFormatUtils;
@@ -204,6 +207,61 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
     }
 
     @Test
+    public void testExplicitConstantBoolean() throws SqlException {
+        testConstantPassThru(new BooleanConstant(0, true));
+    }
+
+    @Test
+    public void testExplicitConstantByte() throws SqlException {
+        testConstantPassThru(new ByteConstant(0, (byte) 200));
+    }
+
+    @Test
+    public void testExplicitConstantDate() throws SqlException {
+        testConstantPassThru(new DateConstant(0, 123));
+    }
+
+    @Test
+    public void testExplicitConstantDouble() throws SqlException {
+        testConstantPassThru(new DoubleConstant(0, 200));
+    }
+
+    @Test
+    public void testExplicitConstantFloat() throws SqlException {
+        testConstantPassThru(new FloatConstant(0, 200));
+    }
+
+    @Test
+    public void testExplicitConstantInt() throws SqlException {
+        testConstantPassThru(new IntConstant(0, 200));
+    }
+
+    @Test
+    public void testExplicitConstantLong() throws SqlException {
+        testConstantPassThru(new LongConstant(0, 200));
+    }
+
+    @Test
+    public void testExplicitConstantNull() throws SqlException {
+        testConstantPassThru(new NullConstant(0));
+    }
+
+    @Test
+    public void testExplicitConstantShort() throws SqlException {
+        testConstantPassThru(new ShortConstant(0, (short) 200));
+    }
+
+    @Test
+    public void testExplicitConstantStr() throws SqlException {
+        testConstantPassThru(new StrConstant(0, "abc"));
+    }
+
+    @Test
+    public void testExplicitConstantTimestamp() throws SqlException {
+        testConstantPassThru(new TimestampConstant(0, 123));
+    }
+
+    @Test
     public void testFloatAndLongToDoubleCast() throws SqlException {
         assertCastToDouble(468.3, ColumnType.FLOAT, ColumnType.LONG, new Record() {
             @Override
@@ -224,6 +282,57 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         metadata.add(new TestColumnMetadata("a", ColumnType.BOOLEAN));
         metadata.add(new TestColumnMetadata("c", ColumnType.SYMBOL));
         assertFail(5, "unknown function name: xyz(BOOLEAN,SYMBOL)", "a or xyz(a,c)", metadata);
+    }
+
+    @Test
+    public void testFunctionFactoryException() {
+        functions.add(new FunctionFactory() {
+            @Override
+            public String getSignature() {
+                return "x()";
+            }
+
+            @Override
+            public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
+                throw new RuntimeException("oops");
+            }
+        });
+        final CollectionRecordMetadata metadata = new CollectionRecordMetadata();
+        assertFail(0, "exception in function factory", "x()", metadata);
+    }
+
+    @Test
+    public void testFunctionFactoryNullFunction() {
+        functions.add(new FunctionFactory() {
+            @Override
+            public String getSignature() {
+                return "x()";
+            }
+
+            @Override
+            public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
+                return null;
+            }
+        });
+        final CollectionRecordMetadata metadata = new CollectionRecordMetadata();
+        assertFail(0, "bad function factory (NULL), check log", "x()", metadata);
+    }
+
+    @Test
+    public void testFunctionFactoryNullSignature() {
+        functions.add(new FunctionFactory() {
+            @Override
+            public String getSignature() {
+                return null;
+            }
+
+            @Override
+            public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
+                return new IntConstant(position, 0);
+            }
+        });
+        FunctionParser parser = createFunctionParser();
+        Assert.assertEquals(0, parser.getFunctionCount());
     }
 
     @Test
@@ -316,6 +425,412 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
                 "000003f0 20 13 51 c0 e0 b7 a4 24 40 4d 50 b1 8c 4d 66 e8";
 
         TestUtils.assertEquals(expectedBin, function3.getStr(record));
+    }
+
+    @Test
+    public void testImplicitConstantBin() throws SqlException {
+        BinFunction function = new BinFunction(0) {
+            @Override
+            public BinarySequence getBin(Record rec) {
+                return null;
+            }
+
+            @Override
+            public boolean isConstant() {
+                return true;
+            }
+        };
+
+        functions.add(new FunctionFactory() {
+            @Override
+            public String getSignature() {
+                return "x()";
+            }
+
+            @Override
+            public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration1) {
+                return function;
+            }
+        });
+
+        Assert.assertSame(function, parseFunction("x()", new CollectionRecordMetadata(), createFunctionParser()));
+        Assert.assertTrue(function.isConstant());
+    }
+
+    @Test
+    public void testImplicitConstantBoolean() throws SqlException {
+        functions.add(new FunctionFactory() {
+            @Override
+            public String getSignature() {
+                return "x()";
+            }
+
+            @Override
+            public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration1) {
+                return new BooleanFunction(position) {
+                    @Override
+                    public boolean getBool(Record rec) {
+                        return false;
+                    }
+
+                    @Override
+                    public boolean isConstant() {
+                        return true;
+                    }
+                };
+            }
+        });
+
+        Function function = parseFunction("x()", new CollectionRecordMetadata(), createFunctionParser());
+        Assert.assertTrue(function instanceof BooleanConstant);
+    }
+
+    @Test
+    public void testImplicitConstantByte() throws SqlException {
+        functions.add(new FunctionFactory() {
+            @Override
+            public String getSignature() {
+                return "x()";
+            }
+
+            @Override
+            public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration1) {
+                return new ByteFunction(position) {
+                    @Override
+                    public byte getByte(Record rec) {
+                        return 0;
+                    }
+
+                    @Override
+                    public boolean isConstant() {
+                        return true;
+                    }
+                };
+            }
+        });
+
+        Function function = parseFunction("x()", new CollectionRecordMetadata(), createFunctionParser());
+        Assert.assertTrue(function instanceof ByteConstant);
+    }
+
+    @Test
+    public void testImplicitConstantDate() throws SqlException {
+        functions.add(new FunctionFactory() {
+            @Override
+            public String getSignature() {
+                return "x()";
+            }
+
+            @Override
+            public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration1) {
+                return new DateFunction(position) {
+                    @Override
+                    public long getDate(Record rec) {
+                        return 0;
+                    }
+
+                    @Override
+                    public boolean isConstant() {
+                        return true;
+                    }
+                };
+            }
+        });
+
+        Function function = parseFunction("x()", new CollectionRecordMetadata(), createFunctionParser());
+        Assert.assertTrue(function instanceof DateConstant);
+    }
+
+    @Test
+    public void testImplicitConstantDouble() throws SqlException {
+        functions.add(new FunctionFactory() {
+            @Override
+            public String getSignature() {
+                return "x()";
+            }
+
+            @Override
+            public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration1) {
+                return new DoubleFunction(position) {
+                    @Override
+                    public double getDouble(Record rec) {
+                        return 0;
+                    }
+
+                    @Override
+                    public boolean isConstant() {
+                        return true;
+                    }
+                };
+            }
+        });
+
+        Function function = parseFunction("x()", new CollectionRecordMetadata(), createFunctionParser());
+        Assert.assertTrue(function instanceof DoubleConstant);
+    }
+
+    @Test
+    public void testImplicitConstantFloat() throws SqlException {
+        functions.add(new FunctionFactory() {
+            @Override
+            public String getSignature() {
+                return "x()";
+            }
+
+            @Override
+            public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration1) {
+                return new FloatFunction(position) {
+                    @Override
+                    public float getFloat(Record rec) {
+                        return 0;
+                    }
+
+                    @Override
+                    public boolean isConstant() {
+                        return true;
+                    }
+                };
+            }
+        });
+
+        Function function = parseFunction("x()", new CollectionRecordMetadata(), createFunctionParser());
+        Assert.assertTrue(function instanceof FloatConstant);
+    }
+
+    @Test
+    public void testImplicitConstantInt() throws SqlException {
+        functions.add(new FunctionFactory() {
+            @Override
+            public String getSignature() {
+                return "x()";
+            }
+
+            @Override
+            public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration1) {
+                return new IntFunction(position) {
+                    @Override
+                    public int getInt(Record rec) {
+                        return 0;
+                    }
+
+                    @Override
+                    public boolean isConstant() {
+                        return true;
+                    }
+                };
+            }
+        });
+
+        Function function = parseFunction("x()", new CollectionRecordMetadata(), createFunctionParser());
+        Assert.assertTrue(function instanceof IntConstant);
+    }
+
+    @Test
+    public void testImplicitConstantLong() throws SqlException {
+        functions.add(new FunctionFactory() {
+            @Override
+            public String getSignature() {
+                return "x()";
+            }
+
+            @Override
+            public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration1) {
+                return new LongFunction(position) {
+                    @Override
+                    public long getLong(Record rec) {
+                        return 0;
+                    }
+
+                    @Override
+                    public boolean isConstant() {
+                        return true;
+                    }
+                };
+            }
+        });
+
+        Function function = parseFunction("x()", new CollectionRecordMetadata(), createFunctionParser());
+        Assert.assertTrue(function instanceof LongConstant);
+    }
+
+    @Test
+    public void testImplicitConstantNull() throws SqlException {
+        functions.add(new FunctionFactory() {
+            @Override
+            public String getSignature() {
+                return "x()";
+            }
+
+            @Override
+            public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration1) {
+                return new StrFunction(position) {
+                    @Override
+                    public CharSequence getStr(Record rec) {
+                        return null;
+                    }
+
+                    @Override
+                    public CharSequence getStrB(Record rec) {
+                        return null;
+                    }
+
+                    @Override
+                    public boolean isConstant() {
+                        return true;
+                    }
+                };
+            }
+        });
+
+        Function function = parseFunction("x()", new CollectionRecordMetadata(), createFunctionParser());
+        Assert.assertTrue(function instanceof NullConstant);
+    }
+
+    @Test
+    public void testImplicitConstantNullSymbol() throws SqlException {
+        functions.add(new FunctionFactory() {
+            @Override
+            public String getSignature() {
+                return "x()";
+            }
+
+            @Override
+            public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration1) {
+                return new SymbolFunction(position) {
+                    @Override
+                    public CharSequence getSymbol(Record rec) {
+                        return null;
+                    }
+
+                    @Override
+                    public boolean isConstant() {
+                        return true;
+                    }
+                };
+            }
+        });
+
+        Function function = parseFunction("x()", new CollectionRecordMetadata(), createFunctionParser());
+        Assert.assertTrue(function instanceof NullConstant);
+    }
+
+    @Test
+    public void testImplicitConstantShort() throws SqlException {
+        functions.add(new FunctionFactory() {
+            @Override
+            public String getSignature() {
+                return "x()";
+            }
+
+            @Override
+            public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration1) {
+                return new ShortFunction(position) {
+                    @Override
+                    public short getShort(Record rec) {
+                        return 0;
+                    }
+
+                    @Override
+                    public boolean isConstant() {
+                        return true;
+                    }
+                };
+            }
+        });
+
+        Function function = parseFunction("x()", new CollectionRecordMetadata(), createFunctionParser());
+        Assert.assertTrue(function instanceof ShortConstant);
+    }
+
+    @Test
+    public void testImplicitConstantStr() throws SqlException {
+        functions.add(new FunctionFactory() {
+            @Override
+            public String getSignature() {
+                return "x()";
+            }
+
+            @Override
+            public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration1) {
+                return new StrFunction(position) {
+                    private final String x = "abc";
+
+                    @Override
+                    public CharSequence getStr(Record rec) {
+                        return x;
+                    }
+
+                    @Override
+                    public CharSequence getStrB(Record rec) {
+                        return x;
+                    }
+
+                    @Override
+                    public boolean isConstant() {
+                        return true;
+                    }
+                };
+            }
+        });
+
+        Function function = parseFunction("x()", new CollectionRecordMetadata(), createFunctionParser());
+        Assert.assertTrue(function instanceof StrConstant);
+    }
+
+    @Test
+    public void testImplicitConstantSymbol() throws SqlException {
+        functions.add(new FunctionFactory() {
+            @Override
+            public String getSignature() {
+                return "x()";
+            }
+
+            @Override
+            public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration1) {
+                return new SymbolFunction(position) {
+                    @Override
+                    public CharSequence getSymbol(Record rec) {
+                        return "xyz";
+                    }
+
+                    @Override
+                    public boolean isConstant() {
+                        return true;
+                    }
+                };
+            }
+        });
+
+        Function function = parseFunction("x()", new CollectionRecordMetadata(), createFunctionParser());
+        Assert.assertTrue(function instanceof StrConstant);
+    }
+
+    @Test
+    public void testImplicitConstantTimestamp() throws SqlException {
+        functions.add(new FunctionFactory() {
+            @Override
+            public String getSignature() {
+                return "x()";
+            }
+
+            @Override
+            public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration1) {
+                return new TimestampFunction(position) {
+                    @Override
+                    public long getTimestamp(Record rec) {
+                        return 0;
+                    }
+
+                    @Override
+                    public boolean isConstant() {
+                        return true;
+                    }
+                };
+            }
+        });
+
+        Function function = parseFunction("x()", new CollectionRecordMetadata(), createFunctionParser());
+        Assert.assertTrue(function instanceof TimestampConstant);
     }
 
     @Test
@@ -676,5 +1191,20 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         FunctionParser functionParser = createFunctionParser();
         Assert.assertNotNull(parseFunction("a or not b", metadata, functionParser));
         Assert.assertEquals(2, functionParser.getFunctionCount());
+    }
+
+    private void testConstantPassThru(Function constant) throws SqlException {
+        functions.add(new FunctionFactory() {
+            @Override
+            public String getSignature() {
+                return "x()";
+            }
+
+            @Override
+            public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
+                return constant;
+            }
+        });
+        Assert.assertSame(constant, parseFunction("x()", new CollectionRecordMetadata(), createFunctionParser()));
     }
 }

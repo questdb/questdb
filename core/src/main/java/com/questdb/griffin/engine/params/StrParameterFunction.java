@@ -21,44 +21,45 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.engine.functions.math;
+package com.questdb.griffin.engine.params;
 
-import com.questdb.cairo.CairoConfiguration;
 import com.questdb.cairo.sql.Record;
-import com.questdb.griffin.Function;
-import com.questdb.griffin.FunctionFactory;
-import com.questdb.griffin.engine.functions.DoubleFunction;
-import com.questdb.std.ObjList;
+import com.questdb.common.ColumnType;
+import com.questdb.std.str.CharSink;
 
-public class AddDoubleVVFunctionFactory implements FunctionFactory {
-    @Override
-    public String getSignature() {
-        return "+(DD)";
+class StrParameterFunction extends AbstractParameterFunction {
+    CharSequence value;
+
+    public StrParameterFunction(int position, CharSequence value) {
+        super(position);
+        this.value = value;
     }
 
     @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
-        return new Func(position, args.getQuick(0), args.getQuick(1));
+    public CharSequence getStr(Record rec) {
+        return value;
     }
 
-    private static class Func extends DoubleFunction {
-        private final Function left;
-        private final Function right;
+    @Override
+    public void getStr(Record rec, CharSink sink) {
+        sink.put(value);
+    }
 
-        public Func(int position, Function left, Function right) {
-            super(position);
-            this.left = left;
-            this.right = right;
-        }
+    @Override
+    public CharSequence getStrB(Record rec) {
+        return value;
+    }
 
-        @Override
-        public double getDouble(Record rec) {
-            return left.getDouble(rec) + right.getDouble(rec);
+    @Override
+    public int getStrLen(Record rec) {
+        if (value == null) {
+            return -1;
         }
+        return value.length();
+    }
 
-        @Override
-        public boolean isConstant() {
-            return left.isConstant() && right.isConstant();
-        }
+    @Override
+    public int getType() {
+        return ColumnType.STRING;
     }
 }

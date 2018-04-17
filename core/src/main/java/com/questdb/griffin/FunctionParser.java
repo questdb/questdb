@@ -27,12 +27,13 @@ import com.questdb.cairo.CairoConfiguration;
 import com.questdb.common.ColumnType;
 import com.questdb.common.NoSuchColumnException;
 import com.questdb.common.RecordMetadata;
-import com.questdb.griffin.engine.functions.Parameter;
 import com.questdb.griffin.engine.functions.columns.*;
 import com.questdb.griffin.engine.functions.constants.*;
+import com.questdb.griffin.engine.params.Parameter;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.std.*;
+import org.jetbrains.annotations.NotNull;
 
 import java.util.ArrayDeque;
 
@@ -51,6 +52,16 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
     public FunctionParser(CairoConfiguration configuration, Iterable<FunctionFactory> functionFactories) {
         this.configuration = configuration;
         loadFunctionFactories(functionFactories);
+    }
+
+    public static Function createParameter(SqlNode node, CharSequenceObjHashMap<Parameter> parameterMap) {
+        int index = parameterMap.keyIndex(node.token);
+        if (index > -1) {
+            Parameter p = new Parameter(node.position);
+            parameterMap.putAt(index, node.token.toString(), p);
+            return p;
+        }
+        return parameterMap.valueAt(index);
     }
 
     public static int getArgType(char c) {
@@ -102,17 +113,11 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
         return sigArgType;
     }
 
-    public static Function getOrCreate(SqlNode node, CharSequenceObjHashMap<Parameter> parameterMap) {
-        int index = parameterMap.keyIndex(node.token);
-        if (index > -1) {
-            Parameter p = new Parameter(node.position);
-            parameterMap.putAt(index, node.token.toString(), p);
-            return p;
-        }
-        return parameterMap.valueAt(index);
-    }
-
     public static int validateSignatureAndGetNameSeparator(String sig) throws SqlException {
+        if (sig == null) {
+            throw SqlException.$(0, "NULL signature");
+        }
+
         int openBraceIndex = sig.indexOf('(');
         if (openBraceIndex == -1) {
             throw SqlException.$(0, "open brace expected");
@@ -162,18 +167,18 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
             switch (node.type) {
                 case SqlNode.LITERAL:
                     if (Chars.startsWith(node.token, ':')) {
-                        stack.push(getOrCreate(node, parameterMap));
+                        stack.push(createParameter(node, parameterMap));
                     } else {
                         // lookup column
-                        stack.push(lookupColumn(node));
+                        stack.push(createColumn(node));
                     }
                     break;
                 case SqlNode.CONSTANT:
-                    stack.push(parseConstant(node));
+                    stack.push(createConstant(node));
                     break;
                 default:
                     // lookup zero arg function from symbol table
-                    stack.push(getFunction(node, null));
+                    stack.push(createFunction(node, null));
                     break;
             }
         } else {
@@ -186,7 +191,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
                 }
                 mutableArgs.setQuick(n, c);
             }
-            stack.push(getFunction(node, mutableArgs));
+            stack.push(createFunction(node, mutableArgs));
         }
     }
 
@@ -208,20 +213,113 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
         return ex;
     }
 
-    private Function getFunction(SqlNode node, ObjList<Function> args) throws SqlException {
+    private Function checkAndCreateFunction(FunctionFactory factory, ObjList<Function> args, int position, CairoConfiguration configuration) throws SqlException {
+        Function function;
+        try {
+            function = factory.newInstance(args, position, configuration);
+        } catch (SqlException e) {
+            throw e;
+        } catch (Throwable e) {
+            throw SqlException.position(position).put("exception in function factory");
+        }
+
+        if (function == null) {
+            LOG.error().$("NULL function").$(" [signature=").$(factory.getSignature()).$(",class=").$(factory.getClass().getName()).$(']').$();
+            throw SqlException.position(position).put("bad function factory (NULL), check log");
+        }
+
+        if (function.isConstant()) {
+            return functionToConstant(position, function);
+        }
+        return function;
+    }
+
+    private Function createColumn(SqlNode node) throws SqlException {
+        try {
+            final int index = metadata.getColumnIndex(node.token);
+            switch (metadata.getColumnQuick(index).getType()) {
+                case ColumnType.BOOLEAN:
+                    return new BooleanColumn(node.position, index);
+                case ColumnType.BYTE:
+                    return new ByteColumn(node.position, index);
+                case ColumnType.SHORT:
+                    return new ShortColumn(node.position, index);
+                case ColumnType.INT:
+                    return new IntColumn(node.position, index);
+                case ColumnType.LONG:
+                    return new LongColumn(node.position, index);
+                case ColumnType.FLOAT:
+                    return new FloatColumn(node.position, index);
+                case ColumnType.DOUBLE:
+                    return new DoubleColumn(node.position, index);
+                case ColumnType.STRING:
+                    return new StrColumn(node.position, index);
+                case ColumnType.SYMBOL:
+                    return new SymbolColumn(node.position, index);
+                case ColumnType.BINARY:
+                    return new BinColumn(node.position, index);
+                case ColumnType.DATE:
+                    return new DateColumn(node.position, index);
+                default:
+                    return new TimestampColumn(node.position, index);
+
+            }
+        } catch (NoSuchColumnException e) {
+            throw SqlException.invalidColumn(node.position, node.token);
+        }
+    }
+
+    private Function createConstant(SqlNode node) throws SqlException {
+
+        if (Chars.equalsIgnoreCase(node.token, "null")) {
+            return new NullConstant(node.position);
+        }
+
+        if (Chars.isQuoted(node.token)) {
+            return new StrConstant(node.position, node.token);
+        }
+
+        if (Chars.equalsIgnoreCase(node.token, "true")) {
+            return new BooleanConstant(node.position, true);
+        }
+
+        if (Chars.equalsIgnoreCase(node.token, "false")) {
+            return new BooleanConstant(node.position, false);
+        }
+
+        try {
+            return new IntConstant(node.position, Numbers.parseInt(node.token));
+        } catch (NumericException ignore) {
+        }
+
+        try {
+            return new LongConstant(node.position, Numbers.parseLong(node.token));
+        } catch (NumericException ignore) {
+        }
+
+        try {
+            return new DoubleConstant(node.position, Numbers.parseDouble(node.token));
+        } catch (NumericException ignore) {
+        }
+
+        throw SqlException.position(node.position).put("invalid constant: ").put(node.token);
+    }
+
+    private Function createFunction(SqlNode node, ObjList<Function> args) throws SqlException {
         if (node.type == SqlNode.LAMBDA) {
             throw SqlException.$(node.position, "Cannot use lambda in this context");
         }
-        return getFunction0(node, args);
-    }
-
-    private Function getFunction0(SqlNode node, ObjList<Function> args) throws SqlException {
         ObjList<FunctionFactory> overload = factories.get(node.token);
         if (overload == null) {
             throw invalidFunction("unknown function name", node, args);
         }
 
-        final int argCount = args == null ? 0 : args.size();
+        final int argCount;
+        if (args == null) {
+            argCount = 0;
+        } else {
+            argCount = args.size();
+        }
         FunctionFactory candidate = null;
         int matchCount = 0;
         for (int i = 0, n = overload.size(); i < n; i++) {
@@ -248,7 +346,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
 
             if (argCount == 0 && sigArgCount == 0) {
                 // this is no-arg function, match right away
-                return factory.newInstance(args, node.position, configuration);
+                return checkAndCreateFunction(factory, args, node.position, configuration);
             }
 
             // otherwise, is number of arguments the same?
@@ -321,7 +419,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
                         }
                     }
 
-                    return factory.newInstance(args, node.position, configuration);
+                    return checkAndCreateFunction(factory, args, node.position, configuration);
                 } else if (match == 1) {
                     // fuzzy match
                     if (candidate == null) {
@@ -341,7 +439,85 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
             throw invalidFunction("no signature match", node, args);
         }
 
-        return candidate.newInstance(args, node.position, configuration);
+        return checkAndCreateFunction(candidate, args, node.position, configuration);
+    }
+
+    @NotNull
+    private Function functionToConstant(int position, Function function) {
+        switch (function.getType()) {
+            case ColumnType.INT:
+                if (function instanceof IntConstant) {
+                    return function;
+                } else {
+                    return new IntConstant(position, function.getInt(null));
+                }
+            case ColumnType.BOOLEAN:
+                if (function instanceof BooleanConstant) {
+                    return function;
+                } else {
+                    return new BooleanConstant(position, function.getBool(null));
+                }
+            case ColumnType.BYTE:
+                if (function instanceof ByteConstant) {
+                    return function;
+                } else {
+                    return new ByteConstant(position, function.getByte(null));
+                }
+            case ColumnType.SHORT:
+                if (function instanceof ShortConstant) {
+                    return function;
+                } else {
+                    return new ShortConstant(position, function.getShort(null));
+                }
+            case ColumnType.FLOAT:
+                if (function instanceof FloatConstant) {
+                    return function;
+                } else {
+                    return new FloatConstant(position, function.getFloat(null));
+                }
+            case ColumnType.DOUBLE:
+                if (function instanceof DoubleConstant) {
+                    return function;
+                } else {
+                    return new DoubleConstant(position, function.getDouble(null));
+                }
+            case ColumnType.LONG:
+                if (function instanceof LongConstant) {
+                    return function;
+                } else {
+                    return new LongConstant(position, function.getLong(null));
+                }
+            case ColumnType.DATE:
+                if (function instanceof DateConstant) {
+                    return function;
+                } else {
+                    return new DateConstant(position, function.getDate(null));
+                }
+            case ColumnType.STRING:
+                if (function instanceof StrConstant || function instanceof NullConstant) {
+                    return function;
+                } else {
+                    final CharSequence value = function.getStr(null);
+                    if (value == null) {
+                        return new NullConstant(position);
+                    }
+                    return new StrConstant(position, value);
+                }
+            case ColumnType.SYMBOL:
+                CharSequence value = function.getSymbol(null);
+                if (value == null) {
+                    return new NullConstant(position);
+                }
+                return new StrConstant(position, value);
+            case ColumnType.TIMESTAMP:
+                if (function instanceof TimestampConstant) {
+                    return function;
+                } else {
+                    return new TimestampConstant(position, function.getTimestamp(null));
+                }
+            default:
+                return function;
+        }
     }
 
     int getFunctionCount() {
@@ -356,7 +532,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
             try {
                 openBraceIndex = validateSignatureAndGetNameSeparator(sig);
             } catch (SqlException e) {
-                LOG.error().$("skipped: ").$(sig).$(" [class=").$(factory.getClass().getName()).$(']').$();
+                LOG.error().$((Sinkable) e).$(" [signature=").$(factory.getSignature()).$(",class=").$(factory.getClass().getName()).$(']').$();
                 continue;
             }
 
@@ -371,77 +547,6 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
             }
             overload.add(factory);
         }
-    }
-
-    private Function lookupColumn(SqlNode node) throws SqlException {
-        try {
-            final int index = metadata.getColumnIndex(node.token);
-            switch (metadata.getColumnQuick(index).getType()) {
-                case ColumnType.BOOLEAN:
-                    return new BooleanColumn(node.position, index);
-                case ColumnType.BYTE:
-                    return new ByteColumn(node.position, index);
-                case ColumnType.SHORT:
-                    return new ShortColumn(node.position, index);
-                case ColumnType.INT:
-                    return new IntColumn(node.position, index);
-                case ColumnType.LONG:
-                    return new LongColumn(node.position, index);
-                case ColumnType.FLOAT:
-                    return new FloatColumn(node.position, index);
-                case ColumnType.DOUBLE:
-                    return new DoubleColumn(node.position, index);
-                case ColumnType.STRING:
-                    return new StrColumn(node.position, index);
-                case ColumnType.SYMBOL:
-                    return new SymColumn(node.position, index);
-                case ColumnType.BINARY:
-                    return new BinColumn(node.position, index);
-                case ColumnType.DATE:
-                    return new DateColumn(node.position, index);
-                default:
-                    return new TimestampColumn(node.position, index);
-
-            }
-        } catch (NoSuchColumnException e) {
-            throw SqlException.invalidColumn(node.position, node.token);
-        }
-    }
-
-    private Function parseConstant(SqlNode node) throws SqlException {
-
-        if (Chars.equalsIgnoreCase(node.token, "null")) {
-            return new NullConstant(node.position);
-        }
-
-        if (Chars.isQuoted(node.token)) {
-            return new StrConstant(node.position, node.token);
-        }
-
-        if (Chars.equalsIgnoreCase(node.token, "true")) {
-            return new BooleanConstant(node.position, true);
-        }
-
-        if (Chars.equalsIgnoreCase(node.token, "false")) {
-            return new BooleanConstant(node.position, false);
-        }
-
-        try {
-            return new IntConstant(node.position, Numbers.parseInt(node.token));
-        } catch (NumericException ignore) {
-        }
-
-        try {
-            return new LongConstant(node.position, Numbers.parseLong(node.token));
-        } catch (NumericException ignore) {
-        }
-
-        try {
-            return new DoubleConstant(node.position, Numbers.parseDouble(node.token));
-        } catch (NumericException ignore) {
-        }
-
-        throw SqlException.position(node.position).put("invalid constant: ").put(node.token);
     }
 
     static {

@@ -21,80 +21,99 @@
  *
  ******************************************************************************/
 
-package com.questdb.common;
+package com.questdb.griffin.engine.functions;
 
-import com.questdb.std.DirectInputStream;
+import com.questdb.cairo.sql.Record;
+import com.questdb.common.ColumnType;
+import com.questdb.griffin.Function;
+import com.questdb.std.BinarySequence;
 import com.questdb.std.str.CharSink;
 
-import java.io.OutputStream;
+public abstract class SymbolFunction implements Function {
 
-public interface Record {
+    private final int position;
 
-    default void getBin(int col, OutputStream s) {
+    public SymbolFunction(int position) {
+        this.position = position;
+    }
+
+    @Override
+    public final BinarySequence getBin(Record rec) {
         throw new UnsupportedOperationException();
     }
 
-    default DirectInputStream getBin(int col) {
+    @Override
+    public final boolean getBool(Record rec) {
         throw new UnsupportedOperationException();
     }
 
-    default long getBinLen(int col) {
+    @Override
+    public final byte getByte(Record rec) {
         throw new UnsupportedOperationException();
     }
 
-    default boolean getBool(int col) {
+    @Override
+    public final long getDate(Record rec) {
         throw new UnsupportedOperationException();
     }
 
-    default byte getByte(int col) {
+    @Override
+    public final double getDouble(Record rec) {
         throw new UnsupportedOperationException();
     }
 
-    default long getDate(int col) {
+    @Override
+    public final float getFloat(Record rec) {
         throw new UnsupportedOperationException();
     }
 
-    default double getDouble(int col) {
+    @Override
+    public final int getInt(Record rec) {
         throw new UnsupportedOperationException();
     }
 
-    default float getFloat(int col) {
+    @Override
+    public final long getLong(Record rec) {
         throw new UnsupportedOperationException();
     }
 
-    default CharSequence getFlyweightStr(int col) {
+    @Override
+    public int getPosition() {
+        return position;
+    }
+
+    @Override
+    public final short getShort(Record rec) {
         throw new UnsupportedOperationException();
     }
 
-    default CharSequence getFlyweightStrB(int col) {
+    @Override
+    public final CharSequence getStr(Record rec) {
         throw new UnsupportedOperationException();
     }
 
-    default int getInt(int col) {
+    @Override
+    public final void getStr(Record rec, CharSink sink) {
         throw new UnsupportedOperationException();
     }
 
-    default long getLong(int col) {
+    @Override
+    public final CharSequence getStrB(Record rec) {
         throw new UnsupportedOperationException();
     }
 
-    default long getRowId() {
+    @Override
+    public final int getStrLen(Record rec) {
         throw new UnsupportedOperationException();
     }
 
-    default short getShort(int col) {
+    @Override
+    public final long getTimestamp(Record rec) {
         throw new UnsupportedOperationException();
     }
 
-    default void getStr(int col, CharSink sink) {
-        sink.put(getFlyweightStr(col));
-    }
-
-    default int getStrLen(int col) {
-        throw new UnsupportedOperationException();
-    }
-
-    default CharSequence getSym(int col) {
-        throw new UnsupportedOperationException();
+    @Override
+    public final int getType() {
+        return ColumnType.SYMBOL;
     }
 }

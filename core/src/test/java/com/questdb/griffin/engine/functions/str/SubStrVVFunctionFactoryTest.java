@@ -21,7 +21,7 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.engine.functions.math;
+package com.questdb.griffin.engine.functions.str;
 
 import com.questdb.griffin.FunctionFactory;
 import com.questdb.griffin.SqlException;
@@ -29,30 +29,39 @@ import com.questdb.griffin.engine.AbstractFunctionFactoryTest;
 import com.questdb.std.Numbers;
 import org.junit.Test;
 
-public class AddIntVVFunctionFactoryTest extends AbstractFunctionFactoryTest {
-
+public class SubStrVVFunctionFactoryTest extends AbstractFunctionFactoryTest {
     @Test
-    public void testLeftNull() throws SqlException {
-        call(Numbers.INT_NaN, 10).andAssert(Numbers.INT_NaN);
+    public void testNaN() throws SqlException {
+        call("abc", Numbers.INT_NaN).andAssert(null);
     }
 
     @Test
-    public void testOverflow() throws SqlException {
-        call(5, Integer.MAX_VALUE).andAssert(-2147483644);
+    public void testNegativeStart() throws SqlException {
+        call("abcd", -2).andAssert("");
     }
 
     @Test
-    public void testRightNull() throws SqlException {
-        call(4, Numbers.INT_NaN).andAssert(Numbers.INT_NaN);
+    public void testNull() throws SqlException {
+        call(null, 2).andAssert(null);
     }
 
     @Test
     public void testSimple() throws SqlException {
-        call(5, 8).andAssert(13);
+        call("xyz", 2).andAssert("z");
+    }
+
+    @Test
+    public void testStartOutOfBounds() throws SqlException {
+        call("abc", 3).andAssert("");
+    }
+
+    @Test
+    public void testStartOutOfBounds2() throws SqlException {
+        call("abc", 5).andAssert("");
     }
 
     @Override
     protected FunctionFactory getFunctionFactory() {
-        return new AddIntVVFunctionFactory();
+        return new SubStrVVFunctionFactory();
     }
 }

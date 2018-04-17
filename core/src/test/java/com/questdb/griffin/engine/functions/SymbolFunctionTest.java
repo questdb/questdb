@@ -27,10 +27,10 @@ import com.questdb.cairo.sql.Record;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class SymFunctionTest {
+public class SymbolFunctionTest {
     // assert that all type casts that are not possible will throw exception
 
-    private static final SymFunction function = new SymFunction(25) {
+    private static final SymbolFunction function = new SymbolFunction(25) {
         @Override
         public CharSequence getSymbol(Record rec) {
             return null;

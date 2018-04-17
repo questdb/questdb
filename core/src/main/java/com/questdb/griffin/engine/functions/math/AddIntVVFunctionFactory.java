@@ -28,7 +28,6 @@ import com.questdb.cairo.sql.Record;
 import com.questdb.griffin.Function;
 import com.questdb.griffin.FunctionFactory;
 import com.questdb.griffin.engine.functions.IntFunction;
-import com.questdb.griffin.engine.functions.constants.IntConstant;
 import com.questdb.std.Numbers;
 import com.questdb.std.ObjList;
 
@@ -40,16 +39,6 @@ public class AddIntVVFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
-        Function left = args.getQuick(0);
-        Function right = args.getQuick(1);
-        if (left.isConstant() && right.isConstant()) {
-            int l = left.getInt(null);
-            int r = right.getInt(null);
-            if (l == Numbers.INT_NaN || r == Numbers.INT_NaN) {
-                return new IntConstant(position, Numbers.INT_NaN);
-            }
-            return new IntConstant(position, l + r);
-        }
         return new AddIntVVFunc(position, args.getQuick(0), args.getQuick(1));
     }
 
@@ -73,6 +62,13 @@ public class AddIntVVFunctionFactory implements FunctionFactory {
             }
 
             return left + right;
+        }
+
+        @Override
+        public boolean isConstant() {
+            return left.isConstant() && right.isConstant()
+                    || (left.isConstant() && left.getInt(null) == Numbers.INT_NaN)
+                    || (right.isConstant() && right.getInt(null) == Numbers.INT_NaN);
         }
     }
 }

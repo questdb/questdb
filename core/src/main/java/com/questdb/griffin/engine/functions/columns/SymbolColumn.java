@@ -21,37 +21,21 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.engine.functions.constants;
+package com.questdb.griffin.engine.functions.columns;
 
 import com.questdb.cairo.sql.Record;
-import com.questdb.griffin.engine.functions.StrFunction;
-import com.questdb.std.Chars;
+import com.questdb.griffin.engine.functions.SymbolFunction;
 
-public class StrConstant extends StrFunction {
-    private final String value;
+public class SymbolColumn extends SymbolFunction {
+    private final int columnIndex;
 
-    public StrConstant(int position, CharSequence value) {
+    public SymbolColumn(int position, int columnIndex) {
         super(position);
-        assert value != null;
-        if (Chars.startsWith(value, '\'')) {
-            this.value = Chars.toString(value, 1, value.length() - 1);
-        } else {
-            this.value = Chars.toString(value);
-        }
+        this.columnIndex = columnIndex;
     }
 
     @Override
-    public CharSequence getStr(Record rec) {
-        return value;
-    }
-
-    @Override
-    public CharSequence getStrB(Record rec) {
-        return value;
-    }
-
-    @Override
-    public boolean isConstant() {
-        return true;
+    public CharSequence getSymbol(Record rec) {
+        return rec.getSym(columnIndex);
     }
 }

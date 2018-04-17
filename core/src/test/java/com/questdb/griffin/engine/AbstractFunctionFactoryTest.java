@@ -28,8 +28,11 @@ import com.questdb.common.ColumnType;
 import com.questdb.griffin.*;
 import com.questdb.griffin.engine.functions.date.ToDateLongFunctionFactory;
 import com.questdb.griffin.engine.functions.date.ToTimestampLongFunctionFactory;
+import com.questdb.griffin.engine.functions.math.ToByteIntFunctionFactory;
+import com.questdb.griffin.engine.functions.math.ToShortIntFunctionFactory;
 import com.questdb.ql.CollectionRecordMetadata;
 import com.questdb.std.BinarySequence;
+import com.questdb.std.Numbers;
 import com.questdb.std.str.StringSink;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -127,7 +130,7 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
                 printConstant(argType, expression2, arg);
             } else {
                 expression1.put(columnName);
-                if (argType == ColumnType.SYMBOL || argType == ColumnType.BINARY) {
+                if (argType == ColumnType.SYMBOL || argType == ColumnType.BINARY || isNegative(argType, arg)) {
                     // above types cannot be expressed as constant in SQL
                     expression2.put(columnName);
                 } else {
@@ -149,6 +152,14 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
         }
         if (toDateRefs > 0) {
             functions.add(new ToDateLongFunctionFactory());
+        }
+
+        if (toShortRefs > 0) {
+            functions.add(new ToShortIntFunctionFactory());
+        }
+
+        if (toByteRefs > 0) {
+            functions.add(new ToByteIntFunctionFactory());
         }
         FunctionParser functionParser = new FunctionParser(configuration, functions);
         return new Invocation(
@@ -186,6 +197,27 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
     }
 
     protected abstract FunctionFactory getFunctionFactory();
+
+    private boolean isNegative(int argType, Object arg) {
+        switch (argType) {
+            case ColumnType.INT:
+                return (int) arg < 0 && (int) arg != Numbers.INT_NaN;
+            case ColumnType.LONG:
+                return (long) arg < 0 && (long) arg != Numbers.LONG_NaN;
+            case ColumnType.SHORT:
+                // short is passed as int
+                return (int) arg < 0;
+            case ColumnType.BYTE:
+                // byte is passed as int
+                return (int) arg < 0;
+            case ColumnType.DOUBLE:
+                return (double) arg < 0;
+            case ColumnType.FLOAT:
+                return (float) arg < 0;
+            default:
+                return false;
+        }
+    }
 
     private void printConstant(int type, StringSink sink, Object value) {
         switch (type) {
@@ -262,6 +294,16 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
             Assert.assertEquals(expected, function2.getInt(record));
         }
 
+        public void andAssert(byte expected) {
+            Assert.assertEquals(expected, function1.getByte(record));
+            Assert.assertEquals(expected, function2.getByte(record));
+        }
+
+        public void andAssert(short expected) {
+            Assert.assertEquals(expected, function1.getShort(record));
+            Assert.assertEquals(expected, function2.getShort(record));
+        }
+
         public void andAssertDate(long expected) {
             Assert.assertEquals(expected, function1.getDate(record));
             Assert.assertEquals(expected, function2.getDate(record));
@@ -324,6 +366,11 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
         }
 
         @Override
+        public byte getByte(int col) {
+            return (byte) (int) args[col];
+        }
+
+        @Override
         public double getDouble(int col) {
             return (double) args[col];
         }
@@ -349,8 +396,14 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
         }
 
         @Override
+        public short getShort(int col) {
+            return (short) (int) args[col];
+        }
+
+        @Override
         public int getStrLen(int col) {
-            return ((CharSequence) args[col]).length();
+            final Object o = args[col];
+            return o != null ? ((CharSequence) o).length() : -1;
         }
 
         @Override

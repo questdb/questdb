@@ -44,6 +44,11 @@ public class CollectionRecordMetadata extends AbstractRecordMetadata {
         }
     }
 
+    public void clear() {
+        columns.clear();
+        nameIndexLookup.clear();
+    }
+
     @Override
     public int getColumnCount() {
         return columns.size();

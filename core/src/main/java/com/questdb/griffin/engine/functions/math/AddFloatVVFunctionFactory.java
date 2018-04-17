@@ -55,5 +55,10 @@ public class AddFloatVVFunctionFactory implements FunctionFactory {
         public float getFloat(Record rec) {
             return left.getFloat(rec) + right.getFloat(rec);
         }
+
+        @Override
+        public boolean isConstant() {
+            return left.isConstant() && right.isConstant();
+        }
     }
 }

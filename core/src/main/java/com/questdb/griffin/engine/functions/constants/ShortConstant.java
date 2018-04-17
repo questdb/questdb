@@ -24,29 +24,18 @@
 package com.questdb.griffin.engine.functions.constants;
 
 import com.questdb.cairo.sql.Record;
-import com.questdb.griffin.engine.functions.StrFunction;
-import com.questdb.std.Chars;
+import com.questdb.griffin.engine.functions.ShortFunction;
 
-public class StrConstant extends StrFunction {
-    private final String value;
+public class ShortConstant extends ShortFunction {
+    private final short value;
 
-    public StrConstant(int position, CharSequence value) {
+    public ShortConstant(int position, short value) {
         super(position);
-        assert value != null;
-        if (Chars.startsWith(value, '\'')) {
-            this.value = Chars.toString(value, 1, value.length() - 1);
-        } else {
-            this.value = Chars.toString(value);
-        }
+        this.value = value;
     }
 
     @Override
-    public CharSequence getStr(Record rec) {
-        return value;
-    }
-
-    @Override
-    public CharSequence getStrB(Record rec) {
+    public short getShort(Record rec) {
         return value;
     }
 
