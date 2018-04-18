@@ -29,8 +29,8 @@ import com.questdb.griffin.engine.functions.LongFunction;
 class LongBindVariable extends LongFunction {
     long value;
 
-    public LongBindVariable(int position, long value) {
-        super(position);
+    public LongBindVariable(long value) {
+        super(0);
         this.value = value;
     }
 

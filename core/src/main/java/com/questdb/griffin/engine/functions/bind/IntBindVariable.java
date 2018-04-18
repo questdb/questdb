@@ -29,8 +29,8 @@ import com.questdb.griffin.engine.functions.IntFunction;
 class IntBindVariable extends IntFunction {
     int value;
 
-    IntBindVariable(int position, int value) {
-        super(position);
+    IntBindVariable(int value) {
+        super(0);
         this.value = value;
     }
 

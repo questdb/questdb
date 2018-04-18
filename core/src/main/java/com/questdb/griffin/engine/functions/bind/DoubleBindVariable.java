@@ -29,8 +29,8 @@ import com.questdb.griffin.engine.functions.DoubleFunction;
 class DoubleBindVariable extends DoubleFunction {
     double value;
 
-    public DoubleBindVariable(int position, double value) {
-        super(position);
+    public DoubleBindVariable(double value) {
+        super(0);
         this.value = value;
     }
 

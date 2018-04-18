@@ -29,8 +29,8 @@ import com.questdb.griffin.engine.functions.TimestampFunction;
 class TimestampBindVariable extends TimestampFunction {
     long value;
 
-    public TimestampBindVariable(int position, long value) {
-        super(position);
+    public TimestampBindVariable(long value) {
+        super(0);
         this.value = value;
     }
 

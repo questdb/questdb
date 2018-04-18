@@ -31,7 +31,7 @@ import org.junit.Test;
 public class StrBindVariableTest {
     @Test
     public void testNull() {
-        StrBindVariable variable = new StrBindVariable(0, null);
+        StrBindVariable variable = new StrBindVariable(null);
         Assert.assertNull(variable.getStr(null));
         Assert.assertNull(variable.getStrB(null));
         Assert.assertEquals(-1, variable.getStrLen(null));
@@ -44,7 +44,7 @@ public class StrBindVariableTest {
     @Test
     public void testSimple() {
         String expected = "xyz";
-        StrBindVariable variable = new StrBindVariable(0, expected);
+        StrBindVariable variable = new StrBindVariable(expected);
         Assert.assertEquals(expected, variable.getStr(null));
         Assert.assertEquals(expected, variable.getStrB(null));
         Assert.assertEquals(expected.length(), variable.getStrLen(null));

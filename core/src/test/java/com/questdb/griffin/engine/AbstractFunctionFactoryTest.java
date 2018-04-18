@@ -411,23 +411,4 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
             return (CharSequence) args[col];
         }
     }
-
-    private static class TestBinarySequence implements BinarySequence {
-        private byte[] array;
-
-        @Override
-        public byte byteAt(long index) {
-            return array[(int) index];
-        }
-
-        @Override
-        public long length() {
-            return array.length;
-        }
-
-        TestBinarySequence of(byte[] array) {
-            this.array = array;
-            return this;
-        }
-    }
 }

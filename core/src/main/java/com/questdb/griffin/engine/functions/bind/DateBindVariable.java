@@ -29,8 +29,8 @@ import com.questdb.griffin.engine.functions.DateFunction;
 class DateBindVariable extends DateFunction {
     long value;
 
-    public DateBindVariable(int position, long value) {
-        super(position);
+    public DateBindVariable(long value) {
+        super(0);
         this.value = value;
     }
 

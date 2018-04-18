@@ -29,8 +29,8 @@ import com.questdb.griffin.engine.functions.FloatFunction;
 class FloatBindVariable extends FloatFunction {
     float value;
 
-    public FloatBindVariable(int position, float value) {
-        super(position);
+    public FloatBindVariable(float value) {
+        super(0);
         this.value = value;
     }
 

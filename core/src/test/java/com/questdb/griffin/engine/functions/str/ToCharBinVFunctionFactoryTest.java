@@ -47,7 +47,7 @@ public class ToCharBinVFunctionFactoryTest extends AbstractFunctionFactoryTest {
     }
 
     @Test
-    public void testExcactLines() throws SqlException {
+    public void testExactLines() throws SqlException {
         Rnd rnd = new Rnd();
         call((Object) rnd.nextBytes(256))
                 .andAssert("00000000 56 54 4a 57 43 50 53 57 48 59 52 58 50 45 48 4e\n" +

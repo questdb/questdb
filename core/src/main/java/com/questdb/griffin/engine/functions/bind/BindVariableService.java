@@ -26,6 +26,7 @@ package com.questdb.griffin.engine.functions.bind;
 import com.questdb.common.ColumnType;
 import com.questdb.griffin.Function;
 import com.questdb.griffin.SqlException;
+import com.questdb.std.BinarySequence;
 import com.questdb.std.CharSequenceObjHashMap;
 import com.questdb.std.Chars;
 
@@ -47,10 +48,24 @@ public class BindVariableService {
         return variables.valueAt(index);
     }
 
+    public void setBin(CharSequence name, BinarySequence value) throws SqlException {
+        int index = variables.keyIndex(name);
+        if (index > -1) {
+            variables.putAt(index, name, new BinBindVariable(value));
+        } else {
+            Function function = variables.valueAt(index);
+            if (function instanceof BinBindVariable) {
+                ((BinBindVariable) function).value = value;
+            } else {
+                throw SqlException.position(0).put("bind variable '").put(name).put("' is already defined as ").put(ColumnType.nameOf(function.getType()));
+            }
+        }
+    }
+
     public void setBoolean(CharSequence name, boolean value) throws SqlException {
         int index = variables.keyIndex(name);
         if (index > -1) {
-            variables.putAt(index, name, new BooleanBindVariable(0, value));
+            variables.putAt(index, name, new BooleanBindVariable(value));
         } else {
             Function function = variables.valueAt(index);
             if (function instanceof BooleanBindVariable) {
@@ -64,7 +79,7 @@ public class BindVariableService {
     public void setByte(CharSequence name, byte value) throws SqlException {
         int index = variables.keyIndex(name);
         if (index > -1) {
-            variables.putAt(index, name, new ByteBindVariable(0, value));
+            variables.putAt(index, name, new ByteBindVariable(value));
         } else {
             Function function = variables.valueAt(index);
             if (function instanceof ByteBindVariable) {
@@ -78,7 +93,7 @@ public class BindVariableService {
     public void setDate(CharSequence name, long value) throws SqlException {
         int index = variables.keyIndex(name);
         if (index > -1) {
-            variables.putAt(index, name, new DateBindVariable(0, value));
+            variables.putAt(index, name, new DateBindVariable(value));
         } else {
             Function function = variables.valueAt(index);
             if (function instanceof DateBindVariable) {
@@ -92,7 +107,7 @@ public class BindVariableService {
     public void setDouble(CharSequence name, double value) throws SqlException {
         int index = variables.keyIndex(name);
         if (index > -1) {
-            variables.putAt(index, name, new DoubleBindVariable(0, value));
+            variables.putAt(index, name, new DoubleBindVariable(value));
         } else {
             Function function = variables.valueAt(index);
             if (function instanceof DoubleBindVariable) {
@@ -106,7 +121,7 @@ public class BindVariableService {
     public void setFloat(CharSequence name, float value) throws SqlException {
         int index = variables.keyIndex(name);
         if (index > -1) {
-            variables.putAt(index, name, new FloatBindVariable(0, value));
+            variables.putAt(index, name, new FloatBindVariable(value));
         } else {
             Function function = variables.valueAt(index);
             if (function instanceof FloatBindVariable) {
@@ -120,7 +135,7 @@ public class BindVariableService {
     public void setInt(CharSequence name, int value) throws SqlException {
         int index = variables.keyIndex(name);
         if (index > -1) {
-            variables.putAt(index, name, new IntBindVariable(0, value));
+            variables.putAt(index, name, new IntBindVariable(value));
         } else {
             Function function = variables.valueAt(index);
             if (function instanceof IntBindVariable) {
@@ -134,7 +149,7 @@ public class BindVariableService {
     public void setLong(CharSequence name, long value) throws SqlException {
         int index = variables.keyIndex(name);
         if (index > -1) {
-            variables.putAt(index, name, new LongBindVariable(0, value));
+            variables.putAt(index, name, new LongBindVariable(value));
         } else {
             Function function = variables.valueAt(index);
             if (function instanceof LongBindVariable) {
@@ -148,7 +163,7 @@ public class BindVariableService {
     public void setShort(CharSequence name, short value) throws SqlException {
         int index = variables.keyIndex(name);
         if (index > -1) {
-            variables.putAt(index, name, new ShortBindVariable(0, value));
+            variables.putAt(index, name, new ShortBindVariable(value));
         } else {
             Function function = variables.valueAt(index);
             if (function instanceof ShortBindVariable) {
@@ -162,7 +177,7 @@ public class BindVariableService {
     public void setStr(CharSequence name, CharSequence value) throws SqlException {
         int index = variables.keyIndex(name);
         if (index > -1) {
-            variables.putAt(index, name, new StrBindVariable(0, value));
+            variables.putAt(index, name, new StrBindVariable(value));
         } else {
             Function function = variables.valueAt(index);
             if (function instanceof StrBindVariable) {
@@ -176,7 +191,7 @@ public class BindVariableService {
     public void setTimestamp(CharSequence name, long value) throws SqlException {
         int index = variables.keyIndex(name);
         if (index > -1) {
-            variables.putAt(index, name, new TimestampBindVariable(0, value));
+            variables.putAt(index, name, new TimestampBindVariable(value));
         } else {
             Function function = variables.valueAt(index);
             if (function instanceof TimestampBindVariable) {

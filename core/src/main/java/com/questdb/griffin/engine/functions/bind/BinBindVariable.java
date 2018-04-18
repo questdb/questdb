@@ -24,18 +24,19 @@
 package com.questdb.griffin.engine.functions.bind;
 
 import com.questdb.cairo.sql.Record;
-import com.questdb.griffin.engine.functions.BooleanFunction;
+import com.questdb.griffin.engine.functions.BinFunction;
+import com.questdb.std.BinarySequence;
 
-public class BooleanBindVariable extends BooleanFunction {
-    boolean value;
+public class BinBindVariable extends BinFunction {
+    BinarySequence value;
 
-    public BooleanBindVariable(boolean value) {
+    public BinBindVariable(BinarySequence value) {
         super(0);
         this.value = value;
     }
 
     @Override
-    public boolean getBool(Record rec) {
+    public BinarySequence getBin(Record rec) {
         return value;
     }
 }

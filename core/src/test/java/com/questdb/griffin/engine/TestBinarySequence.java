@@ -21,21 +21,25 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.engine.functions.bind;
+package com.questdb.griffin.engine;
 
-import com.questdb.cairo.sql.Record;
-import com.questdb.griffin.engine.functions.BooleanFunction;
+import com.questdb.std.BinarySequence;
 
-public class BooleanBindVariable extends BooleanFunction {
-    boolean value;
+public class TestBinarySequence implements BinarySequence {
+    private byte[] array;
 
-    public BooleanBindVariable(boolean value) {
-        super(0);
-        this.value = value;
+    @Override
+    public byte byteAt(long index) {
+        return array[(int) index];
     }
 
     @Override
-    public boolean getBool(Record rec) {
-        return value;
+    public long length() {
+        return array.length;
+    }
+
+    public TestBinarySequence of(byte[] array) {
+        this.array = array;
+        return this;
     }
 }

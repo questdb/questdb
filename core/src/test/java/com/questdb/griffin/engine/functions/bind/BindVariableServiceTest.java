@@ -37,6 +37,16 @@ public class BindVariableServiceTest {
     }
 
     @Test
+    public void testBinOverride() throws SqlException {
+        bindVariableService.setLong("a", 10);
+        try {
+            bindVariableService.setBin("a", null);
+        } catch (SqlException e) {
+            TestUtils.assertContains(e.getMessage(), "bind variable 'a' is already defined as LONG");
+        }
+    }
+
+    @Test
     public void testBooleanOverride() throws SqlException {
         bindVariableService.setLong("a", 10);
         try {

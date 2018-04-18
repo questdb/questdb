@@ -29,8 +29,8 @@ import com.questdb.griffin.engine.functions.ShortFunction;
 class ShortBindVariable extends ShortFunction {
     short value;
 
-    public ShortBindVariable(int position, short value) {
-        super(position);
+    public ShortBindVariable(short value) {
+        super(0);
         this.value = value;
     }
 

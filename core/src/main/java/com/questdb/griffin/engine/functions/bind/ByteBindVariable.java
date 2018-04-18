@@ -29,8 +29,8 @@ import com.questdb.griffin.engine.functions.ByteFunction;
 class ByteBindVariable extends ByteFunction {
     byte value;
 
-    public ByteBindVariable(int position, byte value) {
-        super(position);
+    public ByteBindVariable(byte value) {
+        super(0);
         this.value = value;
     }
 

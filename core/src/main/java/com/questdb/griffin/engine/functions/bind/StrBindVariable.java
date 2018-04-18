@@ -30,8 +30,8 @@ import com.questdb.std.str.CharSink;
 class StrBindVariable extends StrFunction {
     CharSequence value;
 
-    public StrBindVariable(int position, CharSequence value) {
-        super(position);
+    public StrBindVariable(CharSequence value) {
+        super(0);
         this.value = value;
     }
 
