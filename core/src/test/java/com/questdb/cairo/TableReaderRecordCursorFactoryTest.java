@@ -93,7 +93,7 @@ public class TableReaderRecordCursorFactoryTest extends AbstractCairoTest {
                     rnd.reset();
                     while (cursor.hasNext()) {
                         Record record = cursor.next();
-                        TestUtils.assertEquals(rnd.nextChars(20), record.getFlyweightStr(0));
+                        TestUtils.assertEquals(rnd.nextChars(20), record.getStr(0));
                         TestUtils.assertEquals(symbols[rnd.nextPositiveInt() % N], record.getSym(1));
                         Assert.assertEquals(rnd.nextInt(), record.getInt(2));
                         TestUtils.assertEquals(symbols[rnd.nextPositiveInt() % N], record.getSym(3));

@@ -220,9 +220,9 @@ public class RecordChainTest extends AbstractCairoTest {
                     Assert.assertEquals(expected.getFloat(i), actual.getFloat(i), 0.00000001f);
                     break;
                 case ColumnType.STRING:
-                    CharSequence e = expected.getFlyweightStr(i);
-                    CharSequence cs1 = actual.getFlyweightStr(i);
-                    CharSequence cs2 = actual.getFlyweightStrB(i);
+                    CharSequence e = expected.getStr(i);
+                    CharSequence cs1 = actual.getStr(i);
+                    CharSequence cs2 = actual.getStrB(i);
                     TestUtils.assertEquals(e, cs1);
                     Assert.assertFalse(cs1 != null && cs1 == cs2);
                     TestUtils.assertEquals(e, cs2);

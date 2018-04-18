@@ -21,37 +21,26 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.engine.functions.columns;
+package com.questdb.griffin.engine.params;
 
 import com.questdb.cairo.sql.Record;
-import com.questdb.griffin.engine.functions.StrFunction;
-import com.questdb.std.str.CharSink;
+import com.questdb.common.ColumnType;
 
-public class StrColumn extends StrFunction {
-    private final int columnIndex;
+class TimestampParameterFunction extends AbstractParameterFunction {
+    long value;
 
-    public StrColumn(int position, int columnIndex) {
+    public TimestampParameterFunction(int position, long value) {
         super(position);
-        this.columnIndex = columnIndex;
+        this.value = value;
     }
 
     @Override
-    public CharSequence getStr(Record rec) {
-        return rec.getStr(columnIndex);
+    public long getTimestamp(Record rec) {
+        return value;
     }
 
     @Override
-    public CharSequence getStrB(Record rec) {
-        return rec.getStrB(columnIndex);
-    }
-
-    @Override
-    public void getStr(Record rec, CharSink sink) {
-        rec.getStr(columnIndex, sink);
-    }
-
-    @Override
-    public int getStrLen(Record rec) {
-        return rec.getStrLen(columnIndex);
+    public int getType() {
+        return ColumnType.TIMESTAMP;
     }
 }

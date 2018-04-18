@@ -376,12 +376,12 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
         }
 
         @Override
-        public CharSequence getFlyweightStr(int col) {
+        public CharSequence getStr(int col) {
             return (CharSequence) args[col];
         }
 
         @Override
-        public CharSequence getFlyweightStrB(int col) {
+        public CharSequence getStrB(int col) {
             return (CharSequence) args[col];
         }
 

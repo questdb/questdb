@@ -2310,7 +2310,7 @@ public class TableWriterTest extends AbstractCairoTest {
             RecordCursor cursor = reader.getCursor();
             while (cursor.hasNext()) {
                 Record r = cursor.next();
-                TestUtils.assertEquals(rnd.nextChars(5), r.getFlyweightStr(col));
+                TestUtils.assertEquals(rnd.nextChars(5), r.getStr(col));
             }
         }
     }
@@ -3049,7 +3049,7 @@ public class TableWriterTest extends AbstractCairoTest {
             while (cursor.hasNext()) {
                 Record record = cursor.next();
                 TestUtils.assertEquals(rnd.nextChars(5), record.getSym(0));
-                TestUtils.assertEquals(rnd.nextChars(10), record.getFlyweightStr(1));
+                TestUtils.assertEquals(rnd.nextChars(10), record.getStr(1));
                 count++;
             }
 

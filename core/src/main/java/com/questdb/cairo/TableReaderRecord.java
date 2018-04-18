@@ -86,7 +86,7 @@ public class TableReaderRecord implements Record {
     }
 
     @Override
-    public CharSequence getFlyweightStr(int col) {
+    public CharSequence getStr(int col) {
         long index = getIndex(col);
         if (index < 0) {
             return null;
@@ -95,7 +95,7 @@ public class TableReaderRecord implements Record {
     }
 
     @Override
-    public CharSequence getFlyweightStrB(int col) {
+    public CharSequence getStrB(int col) {
         long index = getIndex(col);
         if (index < 0) {
             return null;

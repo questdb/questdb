@@ -502,10 +502,8 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                 return "select-virtual";
             case SELECT_MODEL_ANALYTIC:
                 return "select-analytic";
-            case SELECT_MODEL_GROUP_BY:
-                return "select-group-by";
             default:
-                return "select";
+                return "select-group-by";
         }
     }
 

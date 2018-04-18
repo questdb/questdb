@@ -200,7 +200,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         Assert.assertEquals(ColumnType.BOOLEAN, function.getType());
         Assert.assertTrue(function.getBool(new Record() {
             @Override
-            public CharSequence getFlyweightStr(int col) {
+            public CharSequence getStr(int col) {
                 return "y";
             }
         }));
@@ -1056,13 +1056,13 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
 
         Record record = new Record() {
             @Override
-            public CharSequence getFlyweightStr(int col) {
+            public CharSequence getStr(int col) {
                 return "ABC";
             }
 
             @Override
             public int getStrLen(int col) {
-                return getFlyweightStr(col).length();
+                return getStr(col).length();
             }
 
             @Override
@@ -1097,7 +1097,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         FunctionParser functionParser = createFunctionParser();
         Record record = new Record() {
             @Override
-            public CharSequence getFlyweightStr(int col) {
+            public CharSequence getStr(int col) {
                 return "Y";
             }
         };
@@ -1117,7 +1117,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         FunctionParser functionParser = createFunctionParser();
         Record record = new Record() {
             @Override
-            public CharSequence getFlyweightStr(int col) {
+            public CharSequence getStr(int col) {
                 return "Y";
             }
         };

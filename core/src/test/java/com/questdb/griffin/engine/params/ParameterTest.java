@@ -26,18 +26,58 @@ package com.questdb.griffin.engine.params;
 import com.questdb.cairo.sql.Record;
 import com.questdb.common.ColumnType;
 import com.questdb.griffin.*;
+import com.questdb.griffin.engine.functions.bool.NotVFunctionFactory;
 import com.questdb.griffin.engine.functions.math.*;
 import com.questdb.griffin.engine.functions.str.LengthStrVFunctionFactory;
 import com.questdb.griffin.engine.functions.str.SubStrVVFunctionFactory;
+import com.questdb.griffin.engine.functions.str.ToCharDateVCFunctionFactory;
+import com.questdb.griffin.engine.functions.str.ToCharTimestampVCFunctionFactory;
 import com.questdb.ql.CollectionRecordMetadata;
+import com.questdb.std.NumericException;
 import com.questdb.std.ObjList;
+import com.questdb.std.time.DateFormatUtils;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Ignore;
 import org.junit.Test;
 
 public class ParameterTest extends BaseFunctionFactoryTest {
 
     private static FunctionBuilder builder = new FunctionBuilder();
+
+    @Test
+    @Ignore
+    public void testAmbiguousCall() throws SqlException {
+        Function func = expr("to_char(:xyz, 'yyyy-MM')")
+                .withFunction(new ToCharDateVCFunctionFactory())
+                .withFunction(new ToCharTimestampVCFunctionFactory())
+                .$();
+
+        param(":xyz").setDate(0);
+        func.getStr(builder.getRecord());
+    }
+
+    @Test
+    public void testBoolean() throws SqlException {
+        Function func = expr("not :xyz")
+                .withFunction(new NotVFunctionFactory())
+                .$();
+
+        param(":xyz").setBoolean(false);
+        Assert.assertTrue(func.getBool(builder.getRecord()));
+
+        param(":xyz").setBoolean(true);
+        Assert.assertFalse(func.getBool(builder.getRecord()));
+
+        param(":xyz").setInt(10);
+        try {
+            func.getBool(builder.getRecord());
+            Assert.fail();
+        } catch (ParameterException e) {
+            Assert.assertEquals(4, e.getPosition());
+            TestUtils.assertContains(e.getMessage(), "invalid parameter type [required=BOOLEAN, actual=INT]");
+        }
+    }
 
     @Test
     public void testByte() throws SqlException {
@@ -69,6 +109,27 @@ public class ParameterTest extends BaseFunctionFactoryTest {
         } catch (ParameterException e) {
             Assert.assertEquals(4, e.getPosition());
             TestUtils.assertContains(e.getMessage(), "[required=BYTE, actual=STRING]");
+        }
+    }
+
+    @Test
+    public void testDate() throws SqlException, NumericException {
+        Function func = expr("to_char(:xyz, 'yyyy-MM')")
+                .withFunction(new ToCharDateVCFunctionFactory())
+                .$();
+
+        param(":xyz").setDate(DateFormatUtils.parseDateTime("2015-04-10T10:00:00.000Z"));
+        TestUtils.assertEquals("2015-04", func.getStr(builder.getRecord()));
+
+        param(":xyz").setDate(DateFormatUtils.parseDateTime("2015-08-10T10:00:00.000Z"));
+        TestUtils.assertEquals("2015-08", func.getStr(builder.getRecord()));
+
+        param(":xyz").setTimestamp(0);
+        try {
+            func.getStrLen(builder.getRecord());
+        } catch (ParameterException e) {
+            Assert.assertEquals(8, e.getPosition());
+            TestUtils.assertContains(e.getMessage(), "invalid parameter type [required=DATE, actual=TIMESTAMP]");
         }
     }
 
@@ -135,13 +196,22 @@ public class ParameterTest extends BaseFunctionFactoryTest {
         param(":xyz").setFloat(0.78f);
         Assert.assertEquals(25.88f, func.getFloat(builder.getRecord()), 0.001f);
 
+        param(":xyz").setDouble(0.78);
         try {
-            param(":xyz").setDouble(0.78);
             func.getFloat(builder.getRecord());
             Assert.fail();
         } catch (ParameterException e) {
             Assert.assertEquals(4, e.getPosition());
             TestUtils.assertContains(e.getMessage(), "invalid parameter type [required=FLOAT, actual=DOUBLE]");
+        }
+
+        param(":xyz").setBoolean(false);
+        try {
+            func.getFloat(builder.getRecord());
+            Assert.fail();
+        } catch (ParameterException e) {
+            Assert.assertEquals(4, e.getPosition());
+            TestUtils.assertContains(e.getMessage(), "invalid parameter type [required=FLOAT, actual=BOOLEAN]");
         }
     }
 
@@ -306,8 +376,27 @@ public class ParameterTest extends BaseFunctionFactoryTest {
             Assert.assertEquals(7, e.getPosition());
             TestUtils.assertContains(e.getMessage(), "invalid parameter type [required=STRING, actual=INT]");
         }
+    }
 
+    @Test
+    public void testTimestamp() throws SqlException, NumericException {
+        Function func = expr("to_char(:xyz, 'yyyy-MM')")
+                .withFunction(new ToCharTimestampVCFunctionFactory())
+                .$();
 
+        param(":xyz").setTimestamp(com.questdb.std.microtime.DateFormatUtils.parseDateTime("2015-04-10T10:00:00.000Z"));
+        TestUtils.assertEquals("2015-04", func.getStr(builder.getRecord()));
+
+        param(":xyz").setTimestamp(com.questdb.std.microtime.DateFormatUtils.parseDateTime("2015-08-10T10:00:00.000Z"));
+        TestUtils.assertEquals("2015-08", func.getStr(builder.getRecord()));
+
+        param(":xyz").setDate(0);
+        try {
+            func.getStrLen(builder.getRecord());
+        } catch (ParameterException e) {
+            Assert.assertEquals(8, e.getPosition());
+            TestUtils.assertContains(e.getMessage(), "invalid parameter type [required=TIMESTAMP, actual=DATE]");
+        }
     }
 
     private void assertStrParam(String expected, Parameter param) {

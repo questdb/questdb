@@ -264,7 +264,7 @@ public class RecordChain implements Closeable, RecordCursor, Mutable {
                     putFloat(record.getFloat(i));
                     break;
                 case ColumnType.STRING:
-                    putStr(record.getFlyweightStr(i));
+                    putStr(record.getStr(i));
                     break;
                 case ColumnType.BINARY:
                     putBin(record.getBin(i));
@@ -316,13 +316,13 @@ public class RecordChain implements Closeable, RecordCursor, Mutable {
         }
 
         @Override
-        public CharSequence getFlyweightStr(int col) {
+        public CharSequence getStr(int col) {
             long offset = varWidthColumnOffset(col);
             return offset == -1 ? null : mem.getStr(offset);
         }
 
         @Override
-        public CharSequence getFlyweightStrB(int col) {
+        public CharSequence getStrB(int col) {
             long offset = varWidthColumnOffset(col);
             return offset == -1 ? null : mem.getStr2(offset);
         }
@@ -358,7 +358,7 @@ public class RecordChain implements Closeable, RecordCursor, Mutable {
 
         @Override
         public CharSequence getSym(int col) {
-            return getFlyweightStr(col);
+            return getStr(col);
         }
 
         private long fixedWithColumnOffset(int index) {

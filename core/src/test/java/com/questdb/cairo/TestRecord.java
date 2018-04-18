@@ -68,12 +68,12 @@ public class TestRecord implements Record {
     }
 
     @Override
-    public CharSequence getFlyweightStr(int col) {
+    public CharSequence getStr(int col) {
         return rnd.nextInt() % 16 == 0 ? null : rnd.nextChars(15);
     }
 
     @Override
-    public CharSequence getFlyweightStrB(int col) {
+    public CharSequence getStrB(int col) {
         return rnd.nextInt() % 16 == 0 ? null : rnd.nextChars(15);
     }
 

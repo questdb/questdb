@@ -56,12 +56,12 @@ public interface Record {
         throw new UnsupportedOperationException();
     }
 
-    default CharSequence getFlyweightStr(int col) {
+    default CharSequence getStr(int col) {
         throw new UnsupportedOperationException();
     }
 
-    default CharSequence getFlyweightStrB(int col) {
-        throw new UnsupportedOperationException();
+    default void getStr(int col, CharSink sink) {
+        sink.put(getStr(col));
     }
 
     default int getInt(int col) {
@@ -80,8 +80,8 @@ public interface Record {
         throw new UnsupportedOperationException();
     }
 
-    default void getStr(int col, CharSink sink) {
-        sink.put(getFlyweightStr(col));
+    default CharSequence getStrB(int col) {
+        throw new UnsupportedOperationException();
     }
 
     default int getStrLen(int col) {

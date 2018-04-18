@@ -134,11 +134,27 @@ public class Parameter implements Function {
         return getType();
     }
 
+    public void setBoolean(boolean value) {
+        if (var instanceof BooleanParameterFunction) {
+            ((BooleanParameterFunction) var).value = value;
+        } else {
+            var = new BooleanParameterFunction(position, value);
+        }
+    }
+
     public void setByte(byte value) {
         if (var instanceof ByteParameterFunction) {
             ((ByteParameterFunction) var).value = value;
         } else {
             var = new ByteParameterFunction(position, value);
+        }
+    }
+
+    public void setDate(long value) {
+        if (var instanceof DateParameterFunction) {
+            ((DateParameterFunction) var).value = value;
+        } else {
+            var = new DateParameterFunction(position, value);
         }
     }
 
@@ -187,6 +203,14 @@ public class Parameter implements Function {
             ((StrParameterFunction) var).value = value;
         } else {
             var = new StrParameterFunction(position, value);
+        }
+    }
+
+    public void setTimestamp(long value) {
+        if (var instanceof TimestampParameterFunction) {
+            ((TimestampParameterFunction) var).value = value;
+        } else {
+            var = new TimestampParameterFunction(position, value);
         }
     }
 }
