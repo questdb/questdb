@@ -26,9 +26,8 @@ package com.questdb.griffin;
 import com.questdb.cairo.AbstractCairoTest;
 import com.questdb.common.RecordColumnMetadata;
 import com.questdb.common.SymbolTable;
-import com.questdb.griffin.engine.params.Parameter;
+import com.questdb.griffin.engine.functions.bind.BindVariableService;
 import com.questdb.ql.CollectionRecordMetadata;
-import com.questdb.std.CharSequenceObjHashMap;
 import com.questdb.std.Lexer2;
 import com.questdb.std.ObjectPool;
 import org.jetbrains.annotations.NotNull;
@@ -37,8 +36,8 @@ import org.junit.Before;
 import java.util.ArrayList;
 
 public class BaseFunctionFactoryTest extends AbstractCairoTest {
-    protected static final CharSequenceObjHashMap<Parameter> params = new CharSequenceObjHashMap<>();
     protected static final ArrayList<FunctionFactory> functions = new ArrayList<>();
+    protected static final BindVariableService bindVariableService = new BindVariableService();
     private static final ExpressionLinker linker = new ExpressionLinker();
     private static final ObjectPool<SqlNode> nodePool = new ObjectPool<>(SqlNode.FACTORY, 128);
     private static final Lexer2 lexer = new Lexer2();
@@ -46,14 +45,14 @@ public class BaseFunctionFactoryTest extends AbstractCairoTest {
 
     @Before
     public void setUp2() {
-        params.clear();
+        bindVariableService.clear();
         nodePool.clear();
         ExpressionLexer.configureLexer(lexer);
         functions.clear();
     }
 
     protected static Function parseFunction(CharSequence expression, CollectionRecordMetadata metadata, FunctionParser functionParser) throws SqlException {
-        return functionParser.parseFunction(expr(expression), metadata, params);
+        return functionParser.parseFunction(expr(expression), metadata, bindVariableService);
     }
 
     protected static SqlNode expr(CharSequence expression) throws SqlException {

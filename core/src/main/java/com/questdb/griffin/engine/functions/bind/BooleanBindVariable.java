@@ -21,15 +21,15 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.engine.params;
+package com.questdb.griffin.engine.functions.bind;
 
 import com.questdb.cairo.sql.Record;
-import com.questdb.common.ColumnType;
+import com.questdb.griffin.engine.functions.BooleanFunction;
 
-class BooleanParameterFunction extends AbstractParameterFunction {
+public class BooleanBindVariable extends BooleanFunction {
     boolean value;
 
-    public BooleanParameterFunction(int position, boolean value) {
+    public BooleanBindVariable(int position, boolean value) {
         super(position);
         this.value = value;
     }
@@ -37,10 +37,5 @@ class BooleanParameterFunction extends AbstractParameterFunction {
     @Override
     public boolean getBool(Record rec) {
         return value;
-    }
-
-    @Override
-    public int getType() {
-        return ColumnType.BOOLEAN;
     }
 }

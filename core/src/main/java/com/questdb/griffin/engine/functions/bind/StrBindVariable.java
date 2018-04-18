@@ -21,16 +21,16 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.engine.params;
+package com.questdb.griffin.engine.functions.bind;
 
 import com.questdb.cairo.sql.Record;
-import com.questdb.common.ColumnType;
+import com.questdb.griffin.engine.functions.StrFunction;
 import com.questdb.std.str.CharSink;
 
-class StrParameterFunction extends AbstractParameterFunction {
+class StrBindVariable extends StrFunction {
     CharSequence value;
 
-    public StrParameterFunction(int position, CharSequence value) {
+    public StrBindVariable(int position, CharSequence value) {
         super(position);
         this.value = value;
     }
@@ -41,13 +41,13 @@ class StrParameterFunction extends AbstractParameterFunction {
     }
 
     @Override
-    public void getStr(Record rec, CharSink sink) {
-        sink.put(value);
+    public CharSequence getStrB(Record rec) {
+        return value;
     }
 
     @Override
-    public CharSequence getStrB(Record rec) {
-        return value;
+    public void getStr(Record rec, CharSink sink) {
+        sink.put(value);
     }
 
     @Override
@@ -56,10 +56,5 @@ class StrParameterFunction extends AbstractParameterFunction {
             return -1;
         }
         return value.length();
-    }
-
-    @Override
-    public int getType() {
-        return ColumnType.STRING;
     }
 }

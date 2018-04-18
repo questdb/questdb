@@ -21,15 +21,15 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.engine.params;
+package com.questdb.griffin.engine.functions.bind;
 
 import com.questdb.cairo.sql.Record;
-import com.questdb.common.ColumnType;
+import com.questdb.griffin.engine.functions.DoubleFunction;
 
-class IntParameterFunction extends AbstractParameterFunction {
-    int value;
+class DoubleBindVariable extends DoubleFunction {
+    double value;
 
-    public IntParameterFunction(int position, int value) {
+    public DoubleBindVariable(int position, double value) {
         super(position);
         this.value = value;
     }
@@ -37,25 +37,5 @@ class IntParameterFunction extends AbstractParameterFunction {
     @Override
     public double getDouble(Record rec) {
         return value;
-    }
-
-    @Override
-    public float getFloat(Record rec) {
-        return value;
-    }
-
-    @Override
-    public int getInt(Record rec) {
-        return value;
-    }
-
-    @Override
-    public long getLong(Record rec) {
-        return value;
-    }
-
-    @Override
-    public int getType() {
-        return ColumnType.INT;
     }
 }

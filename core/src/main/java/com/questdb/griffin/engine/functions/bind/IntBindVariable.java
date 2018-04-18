@@ -21,18 +21,21 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.engine.params;
+package com.questdb.griffin.engine.functions.bind;
 
-import com.questdb.cairo.AbstractCairoTest;
-import com.questdb.std.Sinkable;
-import com.questdb.test.tools.TestUtils;
-import org.junit.Test;
+import com.questdb.cairo.sql.Record;
+import com.questdb.griffin.engine.functions.IntFunction;
 
-public class ParameterExceptionTest extends AbstractCairoTest {
-    @Test
-    public void testSinkable() {
-        sink.clear();
-        sink.put((Sinkable) ParameterException.position(124).put("hello"));
-        TestUtils.assertEquals("[124]: hello", sink);
+class IntBindVariable extends IntFunction {
+    int value;
+
+    IntBindVariable(int position, int value) {
+        super(position);
+        this.value = value;
+    }
+
+    @Override
+    public int getInt(Record rec) {
+        return value;
     }
 }

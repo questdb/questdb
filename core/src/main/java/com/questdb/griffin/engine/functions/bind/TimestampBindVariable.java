@@ -21,26 +21,21 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.engine.params;
+package com.questdb.griffin.engine.functions.bind;
 
 import com.questdb.cairo.sql.Record;
-import com.questdb.common.ColumnType;
+import com.questdb.griffin.engine.functions.TimestampFunction;
 
-class DoubleParameterFunction extends AbstractParameterFunction {
-    double value;
+class TimestampBindVariable extends TimestampFunction {
+    long value;
 
-    public DoubleParameterFunction(int position, double value) {
+    public TimestampBindVariable(int position, long value) {
         super(position);
         this.value = value;
     }
 
     @Override
-    public double getDouble(Record rec) {
+    public long getTimestamp(Record rec) {
         return value;
-    }
-
-    @Override
-    public int getType() {
-        return ColumnType.DOUBLE;
     }
 }

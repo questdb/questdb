@@ -21,31 +21,21 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.engine.params;
+package com.questdb.griffin.engine.functions.bind;
 
 import com.questdb.cairo.sql.Record;
-import com.questdb.common.ColumnType;
+import com.questdb.griffin.engine.functions.ShortFunction;
 
-class FloatParameterFunction extends AbstractParameterFunction {
-    float value;
+class ShortBindVariable extends ShortFunction {
+    short value;
 
-    public FloatParameterFunction(int position, float value) {
+    public ShortBindVariable(int position, short value) {
         super(position);
         this.value = value;
     }
 
     @Override
-    public double getDouble(Record rec) {
+    public short getShort(Record rec) {
         return value;
-    }
-
-    @Override
-    public float getFloat(Record rec) {
-        return value;
-    }
-
-    @Override
-    public int getType() {
-        return ColumnType.FLOAT;
     }
 }

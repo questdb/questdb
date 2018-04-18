@@ -34,14 +34,13 @@ import com.questdb.cairo.sql.RowCursorFactory;
 import com.questdb.common.ColumnType;
 import com.questdb.common.RecordColumnMetadata;
 import com.questdb.common.RecordMetadata;
-import com.questdb.griffin.engine.params.Parameter;
+import com.questdb.griffin.engine.functions.bind.BindVariableService;
 import com.questdb.griffin.engine.table.FilteredTableRecordCursorFactory;
 import com.questdb.griffin.engine.table.SymbolIndexFilteredRowCursorFactory;
 import com.questdb.griffin.engine.table.SymbolIndexRowCursorFactory;
 import com.questdb.griffin.model.ExecutionModel;
 import com.questdb.griffin.model.IntrinsicModel;
 import com.questdb.griffin.model.QueryModel;
-import com.questdb.std.CharSequenceObjHashMap;
 
 import java.util.ServiceLoader;
 
@@ -147,9 +146,11 @@ public class SqlParser {
 
                 Function filter;
 
-                CharSequenceObjHashMap<Parameter> parameterMap = new CharSequenceObjHashMap<>();
+                // todo: design this properly
+                BindVariableService bindVariableService = new BindVariableService();
+
                 if (intrinsicModel.filter != null) {
-                    filter = functionParser.parseFunction(intrinsicModel.filter, metadata, parameterMap);
+                    filter = functionParser.parseFunction(intrinsicModel.filter, metadata, bindVariableService);
                 } else {
                     filter = null;
                 }

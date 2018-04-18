@@ -21,46 +21,21 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.engine.params;
+package com.questdb.griffin.engine.functions.bind;
 
 import com.questdb.cairo.sql.Record;
-import com.questdb.common.ColumnType;
+import com.questdb.griffin.engine.functions.ByteFunction;
 
-class ShortParameterFunction extends AbstractParameterFunction {
-    short value;
+class ByteBindVariable extends ByteFunction {
+    byte value;
 
-    public ShortParameterFunction(int position, short value) {
+    public ByteBindVariable(int position, byte value) {
         super(position);
         this.value = value;
     }
 
     @Override
-    public double getDouble(Record rec) {
+    public byte getByte(Record rec) {
         return value;
-    }
-
-    @Override
-    public float getFloat(Record rec) {
-        return value;
-    }
-
-    @Override
-    public int getInt(Record rec) {
-        return value;
-    }
-
-    @Override
-    public long getLong(Record rec) {
-        return value;
-    }
-
-    @Override
-    public short getShort(Record rec) {
-        return value;
-    }
-
-    @Override
-    public int getType() {
-        return ColumnType.SHORT;
     }
 }

@@ -21,26 +21,21 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.engine.params;
+package com.questdb.griffin.engine.functions.bind;
 
 import com.questdb.cairo.sql.Record;
-import com.questdb.common.ColumnType;
+import com.questdb.griffin.engine.functions.LongFunction;
 
-class DateParameterFunction extends AbstractParameterFunction {
+class LongBindVariable extends LongFunction {
     long value;
 
-    public DateParameterFunction(int position, long value) {
+    public LongBindVariable(int position, long value) {
         super(position);
         this.value = value;
     }
 
     @Override
-    public long getDate(Record rec) {
+    public long getLong(Record rec) {
         return value;
-    }
-
-    @Override
-    public int getType() {
-        return ColumnType.DATE;
     }
 }

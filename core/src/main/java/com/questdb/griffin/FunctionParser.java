@@ -27,9 +27,9 @@ import com.questdb.cairo.CairoConfiguration;
 import com.questdb.common.ColumnType;
 import com.questdb.common.NoSuchColumnException;
 import com.questdb.common.RecordMetadata;
+import com.questdb.griffin.engine.functions.bind.BindVariableService;
 import com.questdb.griffin.engine.functions.columns.*;
 import com.questdb.griffin.engine.functions.constants.*;
-import com.questdb.griffin.engine.params.Parameter;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.std.*;
@@ -47,21 +47,11 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
     private final CairoConfiguration configuration;
     private final CharSequenceObjHashMap<ObjList<FunctionFactory>> factories = new CharSequenceObjHashMap<>();
     private RecordMetadata metadata;
-    private CharSequenceObjHashMap<Parameter> parameterMap;
+    private BindVariableService bindVariableService;
 
     public FunctionParser(CairoConfiguration configuration, Iterable<FunctionFactory> functionFactories) {
         this.configuration = configuration;
         loadFunctionFactories(functionFactories);
-    }
-
-    public static Function createParameter(SqlNode node, CharSequenceObjHashMap<Parameter> parameterMap) {
-        int index = parameterMap.keyIndex(node.token);
-        if (index > -1) {
-            Parameter p = new Parameter(node.position);
-            parameterMap.putAt(index, node.token.toString(), p);
-            return p;
-        }
-        return parameterMap.valueAt(index);
     }
 
     public static int getArgType(char c) {
@@ -153,8 +143,16 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
         return openBraceIndex;
     }
 
-    public Function parseFunction(SqlNode node, RecordMetadata metadata, CharSequenceObjHashMap<Parameter> parameterMap) throws SqlException {
-        this.parameterMap = parameterMap;
+    public Function createParameter(SqlNode node) throws SqlException {
+        Function function = bindVariableService.getFunction(node.token);
+        if (function == null) {
+            throw SqlException.position(node.position).put("undefined bind variable: ").put(node.token);
+        }
+        return function;
+    }
+
+    public Function parseFunction(SqlNode node, RecordMetadata metadata, BindVariableService bindVariableService) throws SqlException {
+        this.bindVariableService = bindVariableService;
         this.metadata = metadata;
         algo.traverse(node, this);
         return stack.poll();
@@ -167,7 +165,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
             switch (node.type) {
                 case SqlNode.LITERAL:
                     if (Chars.startsWith(node.token, ':')) {
-                        stack.push(createParameter(node, parameterMap));
+                        stack.push(createParameter(node));
                     } else {
                         // lookup column
                         stack.push(createColumn(node));
@@ -396,8 +394,6 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
                                 match = 0;
                                 break OUT;
                         }
-                    } else if (arg.getType() == ColumnType.PARAMETER) {
-                        match = 1;
                     } else {
                         // types mismatch
                         match = 0;
