@@ -33,11 +33,11 @@ import org.junit.Test;
 
 import java.util.Iterator;
 
-public class Lexer2Test {
+public class GenericLexerTest {
 
     @Test
     public void testBlockComments() {
-        Lexer2 lex = new Lexer2();
+        GenericLexer lex = new GenericLexer();
         lex.defineSymbol("+");
         lex.defineSymbol("++");
         lex.defineSymbol("*");
@@ -57,7 +57,7 @@ public class Lexer2Test {
 
     @Test
     public void testEdgeSymbol() {
-        Lexer2 ts = new Lexer2();
+        GenericLexer ts = new GenericLexer();
         ts.defineSymbol(" ");
         ts.defineSymbol("+");
         ts.defineSymbol("(");
@@ -75,7 +75,7 @@ public class Lexer2Test {
 
     @Test
     public void testLineComment() {
-        Lexer2 lex = new Lexer2();
+        GenericLexer lex = new GenericLexer();
         lex.defineSymbol("+");
         lex.defineSymbol("++");
         lex.defineSymbol("*");
@@ -96,7 +96,7 @@ public class Lexer2Test {
 
     @Test
     public void testNullContent() {
-        Lexer2 ts = new Lexer2();
+        GenericLexer ts = new GenericLexer();
         ts.defineSymbol(" ");
         ts.of(null);
         Assert.assertFalse(ts.iterator().hasNext());
@@ -104,7 +104,7 @@ public class Lexer2Test {
 
     @Test
     public void testQuotedToken() {
-        Lexer2 ts = new Lexer2();
+        GenericLexer ts = new GenericLexer();
         ts.defineSymbol("+");
         ts.defineSymbol("++");
         ts.defineSymbol("*");
@@ -121,7 +121,7 @@ public class Lexer2Test {
 
     @Test
     public void testSingleQuotedToken() {
-        Lexer2 ts = new Lexer2();
+        GenericLexer ts = new GenericLexer();
         ts.defineSymbol("+");
         ts.defineSymbol("++");
         ts.defineSymbol("*");
@@ -138,7 +138,7 @@ public class Lexer2Test {
 
     @Test
     public void testSymbolLookup() {
-        Lexer2 ts = new Lexer2();
+        GenericLexer ts = new GenericLexer();
         ts.defineSymbol("+");
         ts.defineSymbol("++");
         ts.defineSymbol("*");
@@ -156,7 +156,7 @@ public class Lexer2Test {
     @Test
     @Ignore
     public void testUnicode() throws Exception {
-        Lexer2 lex = new Lexer2();
+        GenericLexer lex = new GenericLexer();
         lex.defineSymbol("+");
         lex.defineSymbol("++");
         lex.defineSymbol("*");
@@ -185,7 +185,7 @@ public class Lexer2Test {
 
     @Test
     public void testUnparse() {
-        Lexer2 ts = new Lexer2();
+        GenericLexer ts = new GenericLexer();
         ts.defineSymbol("+");
         ts.defineSymbol("++");
         ts.defineSymbol("*");

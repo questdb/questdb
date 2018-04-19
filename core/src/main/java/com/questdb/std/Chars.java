@@ -23,7 +23,6 @@
 
 package com.questdb.std;
 
-import com.questdb.std.str.ByteSequence;
 import com.questdb.std.str.CharSink;
 import com.questdb.std.str.DirectBytes;
 import com.questdb.std.str.Path;
@@ -360,12 +359,6 @@ public final class Chars {
     public static void strcpy(final CharSequence value, final int len, final long address) {
         for (int i = 0; i < len; i++) {
             Unsafe.getUnsafe().putByte(address + i, (byte) value.charAt(i));
-        }
-    }
-
-    public static void strcpy(final ByteSequence value, final int len, final long address) {
-        for (int i = 0; i < len; i++) {
-            Unsafe.getUnsafe().putByte(address + i, value.byteAt(i));
         }
     }
 

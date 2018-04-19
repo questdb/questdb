@@ -128,7 +128,7 @@ public class DateLocale {
             map.put(c0, l);
         }
         l.add(((char) pos) + token.toUpperCase());
-        l.sort(Lexer2.COMPARATOR);
+        l.sort(GenericLexer.COMPARATOR);
     }
 
     private static long findToken(CharSequence content, int lo, int hi, IntObjHashMap<ObjList<CharSequence>> map) throws NumericException {

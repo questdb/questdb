@@ -49,7 +49,7 @@ public class ExpressionLexer {
         this.exprNodePool = exprNodePool;
     }
 
-    public static void configureLexer(Lexer2 lexer) {
+    public static void configureLexer(GenericLexer lexer) {
         lexer.defineSymbol("(");
         lexer.defineSymbol(")");
         lexer.defineSymbol(",");
@@ -65,7 +65,7 @@ public class ExpressionLexer {
     }
 
     @SuppressWarnings("ConstantConditions")
-    public void parseExpr(Lexer2 lexer, ExpressionLexerListener listener) throws SqlException {
+    public void parseExpr(GenericLexer lexer, ExpressionLexerListener listener) throws SqlException {
 
         opStack.clear();
         paramCountStack.clear();
@@ -159,7 +159,7 @@ public class ExpressionLexer {
                 case '`':
                     thisBranch = BRANCH_LAMBDA;
                     // If the token is a number, then add it to the output queue.
-                    listener.onNode(exprNodePool.next().of(SqlNode.LAMBDA, lexer.toImmutable(tok), 0, lexer.lastTokenPosition()));
+                    listener.onNode(exprNodePool.next().of(SqlNode.LAMBDA, GenericLexer.immutableOf(tok), 0, lexer.lastTokenPosition()));
                     break;
                 case '0':
                 case '1':
@@ -186,7 +186,7 @@ public class ExpressionLexer {
                             || Chars.equalsIgnoreCase(tok, "false")) {
                         thisBranch = BRANCH_CONSTANT;
                         // If the token is a number, then add it to the output queue.
-                        listener.onNode(exprNodePool.next().of(SqlNode.CONSTANT, lexer.toImmutable(tok), 0, lexer.lastTokenPosition()));
+                        listener.onNode(exprNodePool.next().of(SqlNode.CONSTANT, GenericLexer.immutableOf(tok), 0, lexer.lastTokenPosition()));
                         break;
                     }
                 default:
@@ -261,7 +261,7 @@ public class ExpressionLexer {
                             caseCount++;
                             paramCountStack.push(paramCount);
                             paramCount = 0;
-                            opStack.push(exprNodePool.next().of(SqlNode.FUNCTION, lexer.toImmutable(tok), Integer.MAX_VALUE, lexer.lastTokenPosition()));
+                            opStack.push(exprNodePool.next().of(SqlNode.FUNCTION, GenericLexer.immutableOf(tok), Integer.MAX_VALUE, lexer.lastTokenPosition()));
                             continue;
                         }
 
@@ -334,7 +334,7 @@ public class ExpressionLexer {
                         }
 
                         // If the token is a function token, then push it onto the stack.
-                        opStack.push(exprNodePool.next().of(SqlNode.LITERAL, lexer.toImmutable(tok), Integer.MIN_VALUE, lexer.lastTokenPosition()));
+                        opStack.push(exprNodePool.next().of(SqlNode.LITERAL, GenericLexer.immutableOf(tok), Integer.MIN_VALUE, lexer.lastTokenPosition()));
                     } else {
                         // literal can be at start of input, after a bracket or part of an operator
                         // all other cases are illegal and will be considered end-of-input

@@ -31,7 +31,7 @@ import com.questdb.common.ColumnType;
 import com.questdb.common.PartitionBy;
 import com.questdb.common.RecordMetadata;
 import com.questdb.griffin.model.IntrinsicModel;
-import com.questdb.std.Lexer2;
+import com.questdb.std.GenericLexer;
 import com.questdb.std.ObjectPool;
 import com.questdb.test.tools.TestUtils;
 import org.junit.*;
@@ -46,7 +46,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     private static RecordMetadata noTimestampmetadata;
     private final RpnBuilder rpn = new RpnBuilder();
     private final ObjectPool<SqlNode> exprNodeObjectPool = new ObjectPool<>(SqlNode.FACTORY, 128);
-    private final Lexer2 lexer = new Lexer2();
+    private final GenericLexer lexer = new GenericLexer();
     private final ExpressionLexer p = new ExpressionLexer(exprNodeObjectPool);
     private final ExpressionLinker ast = new ExpressionLinker();
     private final WhereClauseParser e = new WhereClauseParser();

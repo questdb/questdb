@@ -24,11 +24,11 @@
 package com.questdb.griffin;
 
 import com.questdb.std.Chars;
-import com.questdb.std.Lexer2;
+import com.questdb.std.GenericLexer;
 
 public class SqlUtil {
 
-    public static CharSequence fetchNext(Lexer2 lexer) {
+    public static CharSequence fetchNext(GenericLexer lexer) {
         int blockCount = 0;
         boolean lineComment = false;
         while (lexer.hasNext()) {
@@ -56,7 +56,7 @@ public class SqlUtil {
                 continue;
             }
 
-            if (blockCount == 0 && Lexer2.WHITESPACE.excludes(cs)) {
+            if (blockCount == 0 && GenericLexer.WHITESPACE.excludes(cs)) {
                 return cs;
             }
         }

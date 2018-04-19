@@ -28,7 +28,7 @@ import com.questdb.common.RecordColumnMetadata;
 import com.questdb.common.SymbolTable;
 import com.questdb.griffin.engine.functions.bind.BindVariableService;
 import com.questdb.ql.CollectionRecordMetadata;
-import com.questdb.std.Lexer2;
+import com.questdb.std.GenericLexer;
 import com.questdb.std.ObjectPool;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Before;
@@ -40,7 +40,7 @@ public class BaseFunctionFactoryTest extends AbstractCairoTest {
     protected static final BindVariableService bindVariableService = new BindVariableService();
     private static final ExpressionLinker linker = new ExpressionLinker();
     private static final ObjectPool<SqlNode> nodePool = new ObjectPool<>(SqlNode.FACTORY, 128);
-    private static final Lexer2 lexer = new Lexer2();
+    private static final GenericLexer lexer = new GenericLexer();
     private static final ExpressionLexer parser = new ExpressionLexer(nodePool);
 
     @Before

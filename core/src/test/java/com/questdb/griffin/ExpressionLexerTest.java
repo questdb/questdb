@@ -24,7 +24,7 @@
 package com.questdb.griffin;
 
 import com.questdb.std.Chars;
-import com.questdb.std.Lexer2;
+import com.questdb.std.GenericLexer;
 import com.questdb.std.ObjectPool;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -33,7 +33,7 @@ import org.junit.Test;
 
 public class ExpressionLexerTest {
     private final ObjectPool<SqlNode> exprNodeObjectPool = new ObjectPool<>(SqlNode.FACTORY, 128);
-    private final Lexer2 lexer = new Lexer2();
+    private final GenericLexer lexer = new GenericLexer();
     private final ExpressionLexer parser = new ExpressionLexer(exprNodeObjectPool);
 
     @Before

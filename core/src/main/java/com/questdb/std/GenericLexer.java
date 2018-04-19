@@ -30,7 +30,7 @@ import org.jetbrains.annotations.Nullable;
 
 import java.util.Comparator;
 
-public class Lexer2 implements ImmutableIterator<CharSequence> {
+public class GenericLexer implements ImmutableIterator<CharSequence> {
     public static final LenComparator COMPARATOR = new LenComparator();
     public static final CharSequenceHashSet WHITESPACE = new CharSequenceHashSet();
     private final IntObjHashMap<ObjList<CharSequence>> symbols = new IntObjHashMap<>();
@@ -46,10 +46,27 @@ public class Lexer2 implements ImmutableIterator<CharSequence> {
     private CharSequence unparsed;
     private CharSequence last;
 
-    public Lexer2() {
+    public GenericLexer() {
         for (int i = 0, n = WHITESPACE.size(); i < n; i++) {
             defineSymbol(WHITESPACE.get(i).toString());
         }
+    }
+
+    public static CharSequence immutableOf(CharSequence value) {
+        if (value instanceof InternalFloatingSequence) {
+            GenericLexer lexer = ((InternalFloatingSequence) value).getParent();
+            FloatingSequence that = lexer.csPool.next();
+            that.lo = lexer._lo;
+            that.hi = lexer._hi;
+            assert that.lo < that.hi;
+            return that;
+        }
+
+        if (value instanceof String) {
+            return value;
+        }
+
+        throw new RuntimeException("!!!");
     }
 
     public final void defineSymbol(String token) {
@@ -201,59 +218,15 @@ public class Lexer2 implements ImmutableIterator<CharSequence> {
         this.unparsed = null;
     }
 
-    public CharSequence toImmutable(CharSequence value) {
-        if (value instanceof InternalFloatingSequence) {
-            FloatingSequence that = csPool.next();
-            that.lo = _lo;
-            that.hi = _hi;
-            assert that.lo < that.hi;
-            return that;
-        }
-
-        if (value instanceof String) {
-            return value;
-        }
-
-        throw new RuntimeException("!!!");
-    }
-
-    public CharSequence toImmutable(CharSequence value, int lo, int hi) {
-        if (value instanceof InternalFloatingSequence) {
-            FloatingSequence that = csPool.next();
-            that.lo = _lo + lo;
-            that.hi = _lo + hi;
-            assert that.lo < that.hi;
-            return that;
-        }
-
-        if (value instanceof FloatingSequence) {
-            FloatingSequence that = csPool.next();
-            that.lo = ((FloatingSequence) value).lo + lo;
-            that.hi = ((FloatingSequence) value).lo + hi;
-            assert that.lo < that.hi;
-            return that;
-        }
-
-        if (value instanceof NameAssemblerImpl.NameAssemblerCharSequence) {
-            NameAssemblerImpl.NameAssemblerCharSequence that = nameAssembler.csPool.next();
-            that.lo = ((NameAssemblerImpl.NameAssemblerCharSequence) value).lo + lo;
-            that.hi = ((NameAssemblerImpl.NameAssemblerCharSequence) value).lo + hi;
-            assert that.lo < that.hi;
-            return that;
-        }
-
-        throw new RuntimeException("!!!");
-    }
-
     public void unparse() {
         unparsed = last;
     }
 
     public CharSequence unquote(CharSequence value) {
         if (Chars.isQuoted(value)) {
-            return toImmutable(value, 1, value.length() - 1);
+            return value.subSequence(1, value.length() - 1);
         }
-        return toImmutable(value);
+        return immutableOf(value);
     }
 
     private static CharSequence findToken0(char c, CharSequence content, int _pos, int _len, IntObjHashMap<ObjList<CharSequence>> symbols) {
@@ -300,11 +273,11 @@ public class Lexer2 implements ImmutableIterator<CharSequence> {
     }
 
     public interface NameAssembler extends CharSink {
-        void setSize(int size);
-
-        int size();
+        int length();
 
         CharSequence toImmutable();
+
+        void trimTo(int size);
     }
 
     private static class LenComparator implements Comparator<CharSequence> {
@@ -314,43 +287,27 @@ public class Lexer2 implements ImmutableIterator<CharSequence> {
         }
     }
 
-    public class InternalFloatingSequence extends AbstractCharSequence {
-        @Override
-        public int length() {
-            return _hi - _lo;
-        }
-
-        @Override
-        public char charAt(int index) {
-            return content.charAt(_lo + index);
-        }
-    }
-
-    public class FloatingSequence extends AbstractCharSequence implements Mutable {
-        int lo;
-        int hi;
-
-        @Override
-        public void clear() {
-        }
-
-        @Override
-        public int length() {
-            return hi - lo;
-        }
-
-        @Override
-        public char charAt(int index) {
-            return content.charAt(lo + index);
-        }
-    }
-
-    private class NameAssemblerImpl extends AbstractCharSink implements NameAssembler, Mutable {
+    private static class NameAssemblerImpl extends AbstractCharSink implements NameAssembler, Mutable {
         private final ObjectPool<NameAssemblerCharSequence> csPool = new ObjectPool<>(NameAssemblerCharSequence::new, 64);
         private int capacity = 1024;
         private char[] chars = new char[capacity];
         private int size = 0;
         private NameAssemblerCharSequence next = null;
+
+        @Override
+        public int length() {
+            return size;
+        }
+
+        @Override
+        public CharSequence toImmutable() {
+            next.hi = size;
+            return next;
+        }
+
+        public void trimTo(int size) {
+            this.size = size;
+        }
 
         public NameAssembler next() {
             this.next = csPool.next();
@@ -382,21 +339,6 @@ public class Lexer2 implements ImmutableIterator<CharSequence> {
             return this;
         }
 
-        public void setSize(int size) {
-            this.size = size;
-        }
-
-        @Override
-        public int size() {
-            return size;
-        }
-
-        @Override
-        public CharSequence toImmutable() {
-            next.hi = size;
-            return next;
-        }
-
         private void resizeAndPut(char c) {
             char[] next = new char[capacity * 2];
             System.arraycopy(chars, 0, next, 0, capacity);
@@ -419,9 +361,20 @@ public class Lexer2 implements ImmutableIterator<CharSequence> {
             }
 
             @Override
+            public CharSequence subSequence(int start, int end) {
+                NameAssemblerCharSequence that = csPool.next();
+                that.lo = lo + start;
+                that.hi = lo + end;
+                assert that.lo < that.hi;
+                return that;
+            }
+
+            @Override
             public char charAt(int index) {
                 return Unsafe.arrayGet(chars, lo + index);
             }
+
+
         }
 
         @Override
@@ -432,6 +385,60 @@ public class Lexer2 implements ImmutableIterator<CharSequence> {
         }
     }
 
+    public class InternalFloatingSequence extends AbstractCharSequence {
+
+        GenericLexer getParent() {
+            return GenericLexer.this;
+        }
+
+        @Override
+        public int length() {
+            return _hi - _lo;
+        }
+
+        @Override
+        public CharSequence subSequence(int start, int end) {
+            FloatingSequence next = csPool.next();
+            next.lo = _lo + start;
+            next.hi = _lo + end;
+            assert next.lo < next.hi;
+            return next;
+        }
+
+
+        @Override
+        public char charAt(int index) {
+            return content.charAt(_lo + index);
+        }
+    }
+
+    public class FloatingSequence extends AbstractCharSequence implements Mutable {
+        int lo;
+        int hi;
+
+        @Override
+        public void clear() {
+        }
+
+        @Override
+        public int length() {
+            return hi - lo;
+        }
+
+        @Override
+        public char charAt(int index) {
+            return content.charAt(lo + index);
+        }
+
+        @Override
+        public CharSequence subSequence(int start, int end) {
+            FloatingSequence that = csPool.next();
+            that.lo = lo + start;
+            that.hi = lo + end;
+            assert that.lo < that.hi;
+            return that;
+        }
+    }
 
     static {
         WHITESPACE.add(" ");
