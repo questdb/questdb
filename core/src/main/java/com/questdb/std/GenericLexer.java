@@ -24,8 +24,6 @@
 package com.questdb.std;
 
 import com.questdb.std.str.AbstractCharSequence;
-import com.questdb.std.str.AbstractCharSink;
-import com.questdb.std.str.CharSink;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.Comparator;
@@ -36,7 +34,6 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
     private final IntObjHashMap<ObjList<CharSequence>> symbols = new IntObjHashMap<>();
     private final CharSequence flyweightSequence = new InternalFloatingSequence();
     private final ObjectPool<FloatingSequence> csPool = new ObjectPool<>(FloatingSequence::new, 64);
-    private final NameAssemblerImpl nameAssembler = new NameAssemblerImpl();
     private CharSequence next = null;
     private int _lo;
     private int _hi;
@@ -69,6 +66,13 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
         throw new RuntimeException("!!!");
     }
 
+    public static CharSequence unquote(CharSequence value) {
+        if (Chars.isQuoted(value)) {
+            return value.subSequence(1, value.length() - 1);
+        }
+        return immutableOf(value);
+    }
+
     public final void defineSymbol(String token) {
         char c0 = token.charAt(0);
         ObjList<CharSequence> l;
@@ -85,10 +89,6 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
 
     public CharSequence getContent() {
         return content;
-    }
-
-    public NameAssembler getNameAssembler() {
-        return nameAssembler.next();
     }
 
     public int getPosition() {
@@ -222,13 +222,6 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
         unparsed = last;
     }
 
-    public CharSequence unquote(CharSequence value) {
-        if (Chars.isQuoted(value)) {
-            return value.subSequence(1, value.length() - 1);
-        }
-        return immutableOf(value);
-    }
-
     private static CharSequence findToken0(char c, CharSequence content, int _pos, int _len, IntObjHashMap<ObjList<CharSequence>> symbols) {
         final int index = symbols.keyIndex(c);
         return index > -1 ? null : findToken00(content, _pos, _len, symbols, index);
@@ -272,14 +265,6 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
         }
     }
 
-    public interface NameAssembler extends CharSink {
-        int length();
-
-        CharSequence toImmutable();
-
-        void trimTo(int size);
-    }
-
     private static class LenComparator implements Comparator<CharSequence> {
         @Override
         public int compare(CharSequence o1, CharSequence o2) {
@@ -287,109 +272,7 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
         }
     }
 
-    private static class NameAssemblerImpl extends AbstractCharSink implements NameAssembler, Mutable {
-        private final ObjectPool<NameAssemblerCharSequence> csPool = new ObjectPool<>(NameAssemblerCharSequence::new, 64);
-        private int capacity = 1024;
-        private char[] chars = new char[capacity];
-        private int size = 0;
-        private NameAssemblerCharSequence next = null;
-
-        @Override
-        public int length() {
-            return size;
-        }
-
-        @Override
-        public CharSequence toImmutable() {
-            next.hi = size;
-            return next;
-        }
-
-        public void trimTo(int size) {
-            this.size = size;
-        }
-
-        public NameAssembler next() {
-            this.next = csPool.next();
-            this.next.lo = size;
-            return this;
-        }
-
-        @Override
-        public CharSink put(CharSequence cs) {
-            assert cs != null;
-            return put(cs, 0, cs.length());
-        }
-
-        @Override
-        public CharSink put(CharSequence cs, int start, int end) {
-            for (int i = start; i < end; i++) {
-                put(cs.charAt(i));
-            }
-            return this;
-        }
-
-        @Override
-        public CharSink put(char c) {
-            if (size < capacity) {
-                Unsafe.arrayPut(chars, size++, c);
-            } else {
-                resizeAndPut(c);
-            }
-            return this;
-        }
-
-        private void resizeAndPut(char c) {
-            char[] next = new char[capacity * 2];
-            System.arraycopy(chars, 0, next, 0, capacity);
-            chars = next;
-            capacity *= 2;
-            Unsafe.arrayPut(chars, size++, c);
-        }
-
-        private class NameAssemblerCharSequence extends AbstractCharSequence implements Mutable {
-            int lo;
-            int hi;
-
-            @Override
-            public void clear() {
-            }
-
-            @Override
-            public int length() {
-                return hi - lo;
-            }
-
-            @Override
-            public CharSequence subSequence(int start, int end) {
-                NameAssemblerCharSequence that = csPool.next();
-                that.lo = lo + start;
-                that.hi = lo + end;
-                assert that.lo < that.hi;
-                return that;
-            }
-
-            @Override
-            public char charAt(int index) {
-                return Unsafe.arrayGet(chars, lo + index);
-            }
-
-
-        }
-
-        @Override
-        public void clear() {
-            csPool.clear();
-            size = 0;
-            next = null;
-        }
-    }
-
     public class InternalFloatingSequence extends AbstractCharSequence {
-
-        GenericLexer getParent() {
-            return GenericLexer.this;
-        }
 
         @Override
         public int length() {
@@ -403,6 +286,10 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
             next.hi = _lo + end;
             assert next.lo < next.hi;
             return next;
+        }
+
+        GenericLexer getParent() {
+            return GenericLexer.this;
         }
 
 

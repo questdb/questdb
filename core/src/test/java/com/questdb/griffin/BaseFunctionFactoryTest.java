@@ -41,13 +41,13 @@ public class BaseFunctionFactoryTest extends AbstractCairoTest {
     private static final ExpressionLinker linker = new ExpressionLinker();
     private static final ObjectPool<SqlNode> nodePool = new ObjectPool<>(SqlNode.FACTORY, 128);
     private static final GenericLexer lexer = new GenericLexer();
-    private static final ExpressionLexer parser = new ExpressionLexer(nodePool);
+    private static final ExpressionParser parser = new ExpressionParser(nodePool);
 
     @Before
     public void setUp2() {
         bindVariableService.clear();
         nodePool.clear();
-        ExpressionLexer.configureLexer(lexer);
+        ExpressionParser.configureLexer(lexer);
         functions.clear();
     }
 

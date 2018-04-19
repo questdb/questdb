@@ -31,15 +31,15 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
-public class ExpressionLexerTest {
+public class ExpressionParserTest {
     private final ObjectPool<SqlNode> exprNodeObjectPool = new ObjectPool<>(SqlNode.FACTORY, 128);
     private final GenericLexer lexer = new GenericLexer();
-    private final ExpressionLexer parser = new ExpressionLexer(exprNodeObjectPool);
+    private final ExpressionParser parser = new ExpressionParser(exprNodeObjectPool);
 
     @Before
     public void setUp() {
         exprNodeObjectPool.clear();
-        ExpressionLexer.configureLexer(lexer);
+        ExpressionParser.configureLexer(lexer);
     }
 
     @Test

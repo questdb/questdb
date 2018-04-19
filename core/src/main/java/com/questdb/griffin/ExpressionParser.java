@@ -28,7 +28,7 @@ import com.questdb.std.*;
 import java.util.ArrayDeque;
 import java.util.Deque;
 
-public class ExpressionLexer {
+public class ExpressionParser {
 
     private static final IntHashSet nonLiteralBranches = new IntHashSet();
     private static final int BRANCH_NONE = 0;
@@ -45,7 +45,7 @@ public class ExpressionLexer {
     private final IntStack paramCountStack = new IntStack();
     private final ObjectPool<SqlNode> exprNodePool;
 
-    public ExpressionLexer(ObjectPool<SqlNode> exprNodePool) {
+    public ExpressionParser(ObjectPool<SqlNode> exprNodePool) {
         this.exprNodePool = exprNodePool;
     }
 
