@@ -1986,9 +1986,7 @@ public class SqlLexerTest extends AbstractCairoTest {
                         " ((select-choose y from (tab)) x" +
                         " cross join (select-choose y from (tab)) x1" +
                         " cross join (select-choose y from (tab)) x2)",
-                "with x as (" +
-                        "select * from tab" +
-                        ") x cross join x x1 cross join x x2",
+                "with x as (select * from tab) x cross join x x1 cross join x x2",
                 modelOf("tab").col("y", ColumnType.INT)
         );
     }

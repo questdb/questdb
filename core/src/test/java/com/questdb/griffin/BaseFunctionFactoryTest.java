@@ -56,7 +56,7 @@ public class BaseFunctionFactoryTest extends AbstractCairoTest {
     }
 
     protected static SqlNode expr(CharSequence expression) throws SqlException {
-        lexer.setContent(expression);
+        lexer.of(expression);
         linker.reset();
         parser.parseExpr(lexer, linker);
         return linker.poll();

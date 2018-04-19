@@ -132,7 +132,7 @@ public class DateFormatCompiler {
     }
 
     public DateFormat compile(CharSequence pattern, int lo, int hi, boolean generic) {
-        this.lexer.setContent(pattern, lo, hi);
+        this.lexer.of(pattern, lo, hi);
 
         IntList ops;
         ObjList<String> delimiters;

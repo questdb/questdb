@@ -1105,13 +1105,13 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     }
 
     private IntrinsicModel modelOf(CharSequence seq, String preferredColumn) throws SqlException {
-        lexer.setContent(seq);
+        lexer.of(seq);
         p.parseExpr(lexer, ast);
         return e.extract(column -> column, ast.poll(), metadata, preferredColumn, metadata.getTimestampIndex());
     }
 
     private IntrinsicModel noTimestampModelOf(CharSequence seq) throws SqlException {
-        lexer.setContent(seq);
+        lexer.of(seq);
         p.parseExpr(lexer, ast);
         return e.extract(column -> column, ast.poll(), noTimestampmetadata, null, noTimestampmetadata.getTimestampIndex());
     }

@@ -23,6 +23,7 @@
 
 package com.questdb.std;
 
+import com.questdb.griffin.SqlUtil;
 import com.questdb.std.str.DirectByteCharSequence;
 import com.questdb.std.str.StringSink;
 import com.questdb.test.tools.TestUtils;
@@ -43,11 +44,12 @@ public class Lexer2Test {
         lex.defineSymbol("/*");
         lex.defineSymbol("*/");
 
-        lex.setContent("a + /* ok, this /* is a */ comment */ 'b' * abc");
+        lex.of("a + /* ok, this /* is a */ comment */ 'b' * abc");
 
         StringSink sink = new StringSink();
-        while (lex.hasNext()) {
-            sink.put(lex.optionTok());
+        CharSequence token;
+        while ((token = SqlUtil.fetchNext(lex)) != null) {
+            sink.put(token);
         }
 
         TestUtils.assertEquals("a+'b'*abc", sink);
@@ -63,7 +65,7 @@ public class Lexer2Test {
         ts.defineSymbol(",");
 
         CharSequence content;
-        ts.setContent(content = "create journal xyz(a int, b int)");
+        ts.of(content = "create journal xyz(a int, b int)");
         StringSink sink = new StringSink();
         for (CharSequence cs : ts) {
             sink.put(cs);
@@ -81,11 +83,12 @@ public class Lexer2Test {
         lex.defineSymbol("*/");
         lex.defineSymbol("--");
 
-        lex.setContent("a + -- ok, this is a comment \n 'b' * abc");
+        lex.of("a + -- ok, this is a comment \n 'b' * abc");
 
         StringSink sink = new StringSink();
-        while (lex.hasNext()) {
-            sink.put(lex.optionTok());
+        CharSequence token;
+        while ((token = SqlUtil.fetchNext(lex)) != null) {
+            sink.put(token);
         }
 
         TestUtils.assertEquals("a+'b'*abc", sink);
@@ -95,7 +98,7 @@ public class Lexer2Test {
     public void testNullContent() {
         Lexer2 ts = new Lexer2();
         ts.defineSymbol(" ");
-        ts.setContent(null);
+        ts.of(null);
         Assert.assertFalse(ts.iterator().hasNext());
     }
 
@@ -106,7 +109,7 @@ public class Lexer2Test {
         ts.defineSymbol("++");
         ts.defineSymbol("*");
 
-        ts.setContent("a+\"b\"*abc");
+        ts.of("a+\"b\"*abc");
 
         StringSink sink = new StringSink();
         for (CharSequence cs : ts) {
@@ -123,7 +126,7 @@ public class Lexer2Test {
         ts.defineSymbol("++");
         ts.defineSymbol("*");
 
-        ts.setContent("a+'b'*abc");
+        ts.of("a+'b'*abc");
 
         StringSink sink = new StringSink();
         for (CharSequence cs : ts) {
@@ -141,7 +144,7 @@ public class Lexer2Test {
         ts.defineSymbol("*");
 
         CharSequence content;
-        ts.setContent(content = "+*a+b++blah-");
+        ts.of(content = "+*a+b++blah-");
 
         StringSink sink = new StringSink();
         for (CharSequence cs : ts) {
@@ -168,11 +171,12 @@ public class Lexer2Test {
         DirectByteCharSequence cs = new DirectByteCharSequence();
         cs.of(mem, mem + bb.length);
 
-        lex.setContent(cs);
+        lex.of(cs);
 
         StringSink sink = new StringSink();
-        while (lex.hasNext()) {
-            sink.put(lex.optionTok());
+        CharSequence token;
+        while ((token = SqlUtil.fetchNext(lex)) != null) {
+            sink.put(token);
         }
 
         TestUtils.assertEquals("a+'b'*abc", sink);
@@ -185,7 +189,7 @@ public class Lexer2Test {
         ts.defineSymbol("+");
         ts.defineSymbol("++");
         ts.defineSymbol("*");
-        ts.setContent("+*a+b++blah-");
+        ts.of("+*a+b++blah-");
 
         Iterator<CharSequence> it = ts.iterator();
 

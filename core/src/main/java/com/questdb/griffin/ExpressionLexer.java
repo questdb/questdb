@@ -81,14 +81,14 @@ public class ExpressionLexer {
         int thisBranch = BRANCH_NONE;
 
         OUT:
-        while ((tok = lexer.optionTok()) != null) {
+        while ((tok = SqlUtil.fetchNext(lexer)) != null) {
             thisChar = tok.charAt(0);
             prevBranch = thisBranch;
 
             switch (thisChar) {
                 case ',':
                     if (prevBranch == BRANCH_COMMA || prevBranch == BRANCH_LEFT_BRACE) {
-                        throw missingArgs(lexer.position());
+                        throw missingArgs(lexer.lastTokenPosition());
                     }
                     thisBranch = BRANCH_COMMA;
 
@@ -120,12 +120,12 @@ public class ExpressionLexer {
                     // If the token is a left parenthesis, then push it onto the stack.
                     paramCountStack.push(paramCount);
                     paramCount = 0;
-                    opStack.push(exprNodePool.next().of(SqlNode.CONTROL, "(", Integer.MAX_VALUE, lexer.position()));
+                    opStack.push(exprNodePool.next().of(SqlNode.CONTROL, "(", Integer.MAX_VALUE, lexer.lastTokenPosition()));
                     break;
 
                 case ')':
                     if (prevBranch == BRANCH_COMMA) {
-                        throw missingArgs(lexer.position());
+                        throw missingArgs(lexer.lastTokenPosition());
                     }
 
                     if (braceCount == 0) {
@@ -159,7 +159,7 @@ public class ExpressionLexer {
                 case '`':
                     thisBranch = BRANCH_LAMBDA;
                     // If the token is a number, then add it to the output queue.
-                    listener.onNode(exprNodePool.next().of(SqlNode.LAMBDA, lexer.toImmutable(tok), 0, lexer.position()));
+                    listener.onNode(exprNodePool.next().of(SqlNode.LAMBDA, lexer.toImmutable(tok), 0, lexer.lastTokenPosition()));
                     break;
                 case '0':
                 case '1':
@@ -186,7 +186,7 @@ public class ExpressionLexer {
                             || Chars.equalsIgnoreCase(tok, "false")) {
                         thisBranch = BRANCH_CONSTANT;
                         // If the token is a number, then add it to the output queue.
-                        listener.onNode(exprNodePool.next().of(SqlNode.CONSTANT, lexer.toImmutable(tok), 0, lexer.position()));
+                        listener.onNode(exprNodePool.next().of(SqlNode.CONSTANT, lexer.toImmutable(tok), 0, lexer.lastTokenPosition()));
                         break;
                     }
                 default:
@@ -240,7 +240,7 @@ public class ExpressionLexer {
                                 op.type == OperatorExpression.SET ? SqlNode.SET_OPERATION : SqlNode.OPERATION,
                                 op.token,
                                 op.precedence,
-                                lexer.position()
+                                lexer.lastTokenPosition()
                         );
                         switch (operatorType) {
                             case OperatorExpression.UNARY:
@@ -261,7 +261,7 @@ public class ExpressionLexer {
                             caseCount++;
                             paramCountStack.push(paramCount);
                             paramCount = 0;
-                            opStack.push(exprNodePool.next().of(SqlNode.FUNCTION, lexer.toImmutable(tok), Integer.MAX_VALUE, lexer.position()));
+                            opStack.push(exprNodePool.next().of(SqlNode.FUNCTION, lexer.toImmutable(tok), Integer.MAX_VALUE, lexer.lastTokenPosition()));
                             continue;
                         }
 
@@ -270,7 +270,7 @@ public class ExpressionLexer {
                                 case 'e':
                                     if (Chars.equals("end", tok)) {
                                         if (prevBranch == BRANCH_CASE_CONTROL) {
-                                            throw missingArgs(lexer.position());
+                                            throw missingArgs(lexer.lastTokenPosition());
                                         }
 
                                         // If the token is a right parenthesis:
@@ -300,19 +300,19 @@ public class ExpressionLexer {
                                     if (keywordIndex > -1) {
 
                                         if (prevBranch == BRANCH_CASE_CONTROL) {
-                                            throw missingArgs(lexer.position());
+                                            throw missingArgs(lexer.lastTokenPosition());
                                         }
 
                                         switch (keywordIndex) {
                                             case 0: // when
                                             case 2: // else
                                                 if ((paramCount % 2) != 0) {
-                                                    throw SqlException.$(lexer.position(), "'then' expected");
+                                                    throw SqlException.$(lexer.lastTokenPosition(), "'then' expected");
                                                 }
                                                 break;
                                             default: // then
                                                 if ((paramCount % 2) == 0) {
-                                                    throw SqlException.$(lexer.position(), "'when' expected");
+                                                    throw SqlException.$(lexer.lastTokenPosition(), "'when' expected");
                                                 }
                                                 break;
                                         }
@@ -334,7 +334,7 @@ public class ExpressionLexer {
                         }
 
                         // If the token is a function token, then push it onto the stack.
-                        opStack.push(exprNodePool.next().of(SqlNode.LITERAL, lexer.toImmutable(tok), Integer.MIN_VALUE, lexer.position()));
+                        opStack.push(exprNodePool.next().of(SqlNode.LITERAL, lexer.toImmutable(tok), Integer.MIN_VALUE, lexer.lastTokenPosition()));
                     } else {
                         // literal can be at start of input, after a bracket or part of an operator
                         // all other cases are illegal and will be considered end-of-input

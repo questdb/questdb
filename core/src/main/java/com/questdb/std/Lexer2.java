@@ -32,7 +32,7 @@ import java.util.Comparator;
 
 public class Lexer2 implements ImmutableIterator<CharSequence> {
     public static final LenComparator COMPARATOR = new LenComparator();
-    private static final CharSequenceHashSet whitespace = new CharSequenceHashSet();
+    public static final CharSequenceHashSet WHITESPACE = new CharSequenceHashSet();
     private final IntObjHashMap<ObjList<CharSequence>> symbols = new IntObjHashMap<>();
     private final CharSequence flyweightSequence = new InternalFloatingSequence();
     private final ObjectPool<FloatingSequence> csPool = new ObjectPool<>(FloatingSequence::new, 64);
@@ -47,8 +47,8 @@ public class Lexer2 implements ImmutableIterator<CharSequence> {
     private CharSequence last;
 
     public Lexer2() {
-        for (int i = 0, n = whitespace.size(); i < n; i++) {
-            defineSymbol(whitespace.get(i).toString());
+        for (int i = 0, n = WHITESPACE.size(); i < n; i++) {
+            defineSymbol(WHITESPACE.get(i).toString());
         }
     }
 
@@ -70,12 +70,19 @@ public class Lexer2 implements ImmutableIterator<CharSequence> {
         return content;
     }
 
-    public void setContent(CharSequence cs) {
-        setContent(cs, 0, cs == null ? 0 : cs.length());
-    }
-
     public NameAssembler getNameAssembler() {
         return nameAssembler.next();
+    }
+
+    public int getPosition() {
+        return _pos;
+    }
+
+    public void goToPosition(int position) {
+        assert position < this._len;
+        this._pos = position;
+        next = null;
+        unparsed = null;
     }
 
     @Override
@@ -177,46 +184,15 @@ public class Lexer2 implements ImmutableIterator<CharSequence> {
         return last = flyweightSequence;
     }
 
-    public CharSequence optionTok() {
-        int blockCount = 0;
-        boolean lineComment = false;
-        while (hasNext()) {
-            CharSequence cs = next();
-
-            if (lineComment) {
-                if (Chars.equals(cs, '\n') || Chars.equals(cs, '\r')) {
-                    lineComment = false;
-                }
-                continue;
-            }
-
-            if (Chars.equals("--", cs)) {
-                lineComment = true;
-                continue;
-            }
-
-            if (Chars.equals("/*", cs)) {
-                blockCount++;
-                continue;
-            }
-
-            if (Chars.equals("*/", cs) && blockCount > 0) {
-                blockCount--;
-                continue;
-            }
-
-            if (blockCount == 0 && whitespace.excludes(cs)) {
-                return cs;
-            }
-        }
-        return null;
-    }
-
-    public int position() {
+    public int lastTokenPosition() {
         return _lo;
     }
 
-    public void setContent(CharSequence cs, int lo, int hi) {
+    public void of(CharSequence cs) {
+        of(cs, 0, cs == null ? 0 : cs.length());
+    }
+
+    public void of(CharSequence cs, int lo, int hi) {
         this.csPool.clear();
         this.content = cs;
         this._pos = lo;
@@ -458,9 +434,9 @@ public class Lexer2 implements ImmutableIterator<CharSequence> {
 
 
     static {
-        whitespace.add(" ");
-        whitespace.add("\t");
-        whitespace.add("\n");
-        whitespace.add("\r");
+        WHITESPACE.add(" ");
+        WHITESPACE.add("\t");
+        WHITESPACE.add("\n");
+        WHITESPACE.add("\r");
     }
 }

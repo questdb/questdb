@@ -296,7 +296,7 @@ public class ExpressionLexerTest {
     private void assertFail(String content, int pos, String contains) {
         try {
             RpnBuilder r = new RpnBuilder();
-            lexer.setContent(content);
+            lexer.of(content);
             parser.parseExpr(lexer, r);
             Assert.fail("expected exception");
         } catch (SqlException e) {
@@ -309,7 +309,7 @@ public class ExpressionLexerTest {
 
     private void x(CharSequence expectedRpn, String content) throws SqlException {
         RpnBuilder r = new RpnBuilder();
-        lexer.setContent(content);
+        lexer.of(content);
         parser.parseExpr(lexer, r);
         TestUtils.assertEquals(expectedRpn, r.rpn());
     }
