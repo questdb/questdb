@@ -58,60 +58,60 @@ public class SqlCodeGenerator {
         // todo: clear
     }
 
-    RecordCursorFactory parse(ExecutionModel model) throws SqlException {
+    RecordCursorFactory generate(ExecutionModel model) throws SqlException {
         if (model.getModelType() == ExecutionModel.QUERY) {
             clearState();
-            return parseQuery((QueryModel) model);
+            return generateQuery((QueryModel) model);
         }
         throw new IllegalArgumentException("QueryModel expected");
     }
 
-    private RecordCursorFactory parseNoSelect(QueryModel model) throws SqlException {
+    private RecordCursorFactory generateNoSelect(QueryModel model) throws SqlException {
         if (model.getTableName() != null) {
-            return parseTableQuery(model);
+            return generateTableQuery(model);
 
         }
         assert model.getNestedModel() != null;
-        return parseQuery(model.getNestedModel());
+        return generateQuery(model.getNestedModel());
     }
 
-    private RecordCursorFactory parseQuery(QueryModel model) throws SqlException {
+    private RecordCursorFactory generateQuery(QueryModel model) throws SqlException {
         switch (model.getSelectModelType()) {
             case QueryModel.SELECT_MODEL_CHOOSE:
-                return parseSelectChoose(model);
+                return generateSelectChoose(model);
             case QueryModel.SELECT_MODEL_GROUP_BY:
-                return parseSelectGroupBy(model);
+                return generateSelectGroupBy(model);
             case QueryModel.SELECT_MODEL_VIRTUAL:
-                return parseSelectVirtual(model);
+                return generateSelectVirtual(model);
             case QueryModel.SELECT_MODEL_ANALYTIC:
-                return parseSelectAnalytic(model);
+                return generateSelectAnalytic(model);
             default:
-                return parseNoSelect(model);
+                return generateNoSelect(model);
         }
     }
 
-    private RecordCursorFactory parseSelectAnalytic(QueryModel model) throws SqlException {
+    private RecordCursorFactory generateSelectAnalytic(QueryModel model) throws SqlException {
         assert model.getNestedModel() != null;
-        return parseQuery(model.getNestedModel());
+        return generateQuery(model.getNestedModel());
     }
 
-    private RecordCursorFactory parseSelectChoose(QueryModel model) throws SqlException {
+    private RecordCursorFactory generateSelectChoose(QueryModel model) throws SqlException {
         assert model.getNestedModel() != null;
-        return parseQuery(model.getNestedModel());
+        return generateQuery(model.getNestedModel());
     }
 
-    private RecordCursorFactory parseSelectGroupBy(QueryModel model) throws SqlException {
+    private RecordCursorFactory generateSelectGroupBy(QueryModel model) throws SqlException {
         assert model.getNestedModel() != null;
-        return parseQuery(model.getNestedModel());
+        return generateQuery(model.getNestedModel());
     }
 
-    private RecordCursorFactory parseSelectVirtual(QueryModel model) throws SqlException {
+    private RecordCursorFactory generateSelectVirtual(QueryModel model) throws SqlException {
         assert model.getNestedModel() != null;
-        return parseQuery(model.getNestedModel());
+        return generateQuery(model.getNestedModel());
     }
 
     @SuppressWarnings("ConstantConditions")
-    private RecordCursorFactory parseTableQuery(QueryModel model) throws SqlException {
+    private RecordCursorFactory generateTableQuery(QueryModel model) throws SqlException {
 
 //        applyLimit(model);
 

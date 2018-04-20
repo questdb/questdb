@@ -64,7 +64,7 @@ final class SqlParser {
         this.traversalAlgo = traversalAlgo;
         this.characterStore = characterStore;
         this.optimiser = optimiser;
-        this.expressionParser = new ExpressionParser(sqlNodePool, optimiser);
+        this.expressionParser = new ExpressionParser(sqlNodePool);
     }
 
     private static SqlException err(GenericLexer lexer, String msg) {
@@ -75,7 +75,7 @@ final class SqlParser {
         return SqlException.unexpectedToken(lexer.lastTokenPosition(), token);
     }
 
-    private void clear() {
+    void clear() {
         queryModelPool.clear();
         queryColumnPool.clear();
         sqlNodePool.clear();
@@ -197,7 +197,6 @@ final class SqlParser {
     }
 
     ExecutionModel parse(GenericLexer lexer) throws SqlException {
-        clear();
         CharSequence tok = tok(lexer, "'create', 'rename' or 'select'");
 
         if (Chars.equals(tok, "select")) {

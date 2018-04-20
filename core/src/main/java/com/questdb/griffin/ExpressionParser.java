@@ -44,11 +44,9 @@ class ExpressionParser {
     private final Deque<SqlNode> opStack = new ArrayDeque<>();
     private final IntStack paramCountStack = new IntStack();
     private final ObjectPool<SqlNode> sqlNodePool;
-    private final SqlOptimiser optimiser;
 
-    ExpressionParser(ObjectPool<SqlNode> sqlNodePool, SqlOptimiser optimiser) {
+    ExpressionParser(ObjectPool<SqlNode> sqlNodePool) {
         this.sqlNodePool = sqlNodePool;
-        this.optimiser = optimiser;
     }
 
     private static SqlException missingArgs(int position) {

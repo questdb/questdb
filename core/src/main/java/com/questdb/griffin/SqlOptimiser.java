@@ -109,7 +109,6 @@ class SqlOptimiser {
     }
 
     QueryModel optimise(QueryModel model) throws SqlException {
-        clear();
         enumerateTableColumns(model);
         resolveJoinColumns(model);
         optimiseBooleanNot(model);

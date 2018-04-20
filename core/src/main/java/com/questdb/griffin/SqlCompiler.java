@@ -86,7 +86,7 @@ public class SqlCompiler {
     }
 
     public RecordCursorFactory compile(CharSequence query) throws SqlException {
-        return compile02(compile01(query));
+        return generate(compileExecutionModel(query));
     }
 
     private void clear() {
@@ -94,11 +94,11 @@ public class SqlCompiler {
         characterStore.clear();
         queryColumnPool.clear();
         queryModelPool.clear();
+        optimiser.clear();
+        parser.clear();
     }
 
-    ExecutionModel compile01(CharSequence query) throws SqlException {
-        clear();
-        lexer.of(query);
+    ExecutionModel compileExecutionModel(GenericLexer lexer) throws SqlException {
         ExecutionModel model = parser.parse(lexer);
         if (model instanceof QueryModel) {
             return optimiser.optimise((QueryModel) model);
@@ -106,8 +106,14 @@ public class SqlCompiler {
         return model;
     }
 
-    RecordCursorFactory compile02(ExecutionModel executionModel) throws SqlException {
-        return codeGenerator.parse(executionModel);
+    ExecutionModel compileExecutionModel(CharSequence query) throws SqlException {
+        clear();
+        lexer.of(query);
+        return compileExecutionModel(lexer);
+    }
+
+    RecordCursorFactory generate(ExecutionModel executionModel) throws SqlException {
+        return codeGenerator.generate(executionModel);
     }
 
     // this exposed for testing only
@@ -123,5 +129,4 @@ public class SqlCompiler {
         lexer.of(expression);
         parser.expr(lexer, listener);
     }
-
 }

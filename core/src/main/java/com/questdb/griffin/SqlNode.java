@@ -24,6 +24,7 @@
 package com.questdb.griffin;
 
 import com.questdb.griffin.model.IntrinsicModel;
+import com.questdb.griffin.model.QueryModel;
 import com.questdb.std.Mutable;
 import com.questdb.std.ObjList;
 import com.questdb.std.ObjectFactory;
@@ -43,6 +44,7 @@ public class SqlNode implements Mutable, Sinkable {
     public static final int UNKNOWN = 0;
     public final ObjList<SqlNode> args = new ObjList<>(4);
     public CharSequence token;
+    public QueryModel queryModel;
     public int precedence;
     public int position;
     public SqlNode lhs;
