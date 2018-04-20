@@ -32,7 +32,7 @@ import com.questdb.std.str.CharSink;
 
 public class CharacterStore extends AbstractCharSink implements CharacterStoreEntry, Mutable {
     private final ObjectPool<NameAssemblerCharSequence> csPool = new ObjectPool<>(NameAssemblerCharSequence::new, 64);
-    private int capacity = 1024;
+    private int capacity = 64;
     private char[] chars = new char[capacity];
     private int size = 0;
     private NameAssemblerCharSequence next = null;

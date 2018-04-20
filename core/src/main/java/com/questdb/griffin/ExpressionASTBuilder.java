@@ -26,7 +26,7 @@ package com.questdb.griffin;
 import java.util.ArrayDeque;
 import java.util.Deque;
 
-public final class ExpressionLinker implements ExpressionLexerListener {
+public final class ExpressionASTBuilder implements ExpressionParserListener {
 
     private final Deque<SqlNode> stack = new ArrayDeque<>();
 

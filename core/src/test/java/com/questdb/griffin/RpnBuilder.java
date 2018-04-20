@@ -25,7 +25,7 @@ package com.questdb.griffin;
 
 import com.questdb.std.str.StringSink;
 
-public class RpnBuilder implements ExpressionLexerListener {
+public class RpnBuilder implements ExpressionParserListener {
     private final StringSink sink = new StringSink();
 
     @Override

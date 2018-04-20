@@ -23,6 +23,6 @@
 
 package com.questdb.griffin;
 
-public interface ExpressionLexerListener {
+public interface ExpressionParserListener {
     void onNode(SqlNode node);
 }

@@ -39,7 +39,7 @@ public class ExpressionParserTest {
     @Before
     public void setUp() {
         exprNodeObjectPool.clear();
-        ExpressionParser.configureLexer(lexer);
+        SqlCompiler.configureLexer(lexer);
     }
 
     @Test

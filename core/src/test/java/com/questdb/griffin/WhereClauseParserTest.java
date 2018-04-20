@@ -48,7 +48,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     private final ObjectPool<SqlNode> exprNodeObjectPool = new ObjectPool<>(SqlNode.FACTORY, 128);
     private final GenericLexer lexer = new GenericLexer();
     private final ExpressionParser p = new ExpressionParser(exprNodeObjectPool);
-    private final ExpressionLinker ast = new ExpressionLinker();
+    private final ExpressionASTBuilder ast = new ExpressionASTBuilder();
     private final WhereClauseParser e = new WhereClauseParser();
     private final PostOrderTreeTraversalAlgo traversalAlgo = new PostOrderTreeTraversalAlgo();
     private final PostOrderTreeTraversalAlgo.Visitor rpnBuilderVisitor = rpn::onNode;
@@ -94,7 +94,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     @Before
     public void setUp3() {
         exprNodeObjectPool.clear();
-        ExpressionParser.configureLexer(lexer);
+        SqlCompiler.configureLexer(lexer);
     }
 
     @Test

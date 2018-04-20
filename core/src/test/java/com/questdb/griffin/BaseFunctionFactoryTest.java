@@ -38,7 +38,7 @@ import java.util.ArrayList;
 public class BaseFunctionFactoryTest extends AbstractCairoTest {
     protected static final ArrayList<FunctionFactory> functions = new ArrayList<>();
     protected static final BindVariableService bindVariableService = new BindVariableService();
-    private static final ExpressionLinker linker = new ExpressionLinker();
+    private static final ExpressionASTBuilder linker = new ExpressionASTBuilder();
     private static final ObjectPool<SqlNode> nodePool = new ObjectPool<>(SqlNode.FACTORY, 128);
     private static final GenericLexer lexer = new GenericLexer();
     private static final ExpressionParser parser = new ExpressionParser(nodePool);
@@ -47,7 +47,7 @@ public class BaseFunctionFactoryTest extends AbstractCairoTest {
     public void setUp2() {
         bindVariableService.clear();
         nodePool.clear();
-        ExpressionParser.configureLexer(lexer);
+        SqlCompiler.configureLexer(lexer);
         functions.clear();
     }
 

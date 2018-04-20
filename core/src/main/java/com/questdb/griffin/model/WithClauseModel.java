@@ -29,8 +29,7 @@ import com.questdb.std.ObjectFactory;
 public class WithClauseModel implements Mutable {
 
     public static final ObjectFactory<WithClauseModel> FACTORY = WithClauseModel::new;
-    private int lo;
-    private int hi;
+    private int position;
     private QueryModel model;
 
     private WithClauseModel() {
@@ -38,21 +37,16 @@ public class WithClauseModel implements Mutable {
 
     @Override
     public void clear() {
-        this.lo = this.hi = 0;
+        this.position = 0;
         this.model = null;
     }
 
-    public int getHi() {
-        return hi;
+    public int getPosition() {
+        return position;
     }
 
-    public int getLo() {
-        return lo;
-    }
-
-    public void of(int lo, int hi, QueryModel model) {
-        this.lo = lo;
-        this.hi = hi;
+    public void of(int position, QueryModel model) {
+        this.position = position;
         this.model = model;
     }
 
