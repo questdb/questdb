@@ -24,12 +24,11 @@
 package com.questdb.griffin;
 
 import com.questdb.cairo.AbstractCairoTest;
+import com.questdb.cairo.Engine;
 import com.questdb.common.RecordColumnMetadata;
 import com.questdb.common.SymbolTable;
 import com.questdb.griffin.engine.functions.bind.BindVariableService;
 import com.questdb.ql.CollectionRecordMetadata;
-import com.questdb.std.GenericLexer;
-import com.questdb.std.ObjectPool;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Before;
 
@@ -38,16 +37,11 @@ import java.util.ArrayList;
 public class BaseFunctionFactoryTest extends AbstractCairoTest {
     protected static final ArrayList<FunctionFactory> functions = new ArrayList<>();
     protected static final BindVariableService bindVariableService = new BindVariableService();
-    private static final ExpressionASTBuilder linker = new ExpressionASTBuilder();
-    private static final ObjectPool<SqlNode> nodePool = new ObjectPool<>(SqlNode.FACTORY, 128);
-    private static final GenericLexer lexer = new GenericLexer();
-    private static final ExpressionParser parser = new ExpressionParser(nodePool);
+    private static final SqlCompiler compiler = new SqlCompiler(new Engine(configuration), configuration);
 
     @Before
     public void setUp2() {
         bindVariableService.clear();
-        nodePool.clear();
-        SqlCompiler.configureLexer(lexer);
         functions.clear();
     }
 
@@ -56,10 +50,7 @@ public class BaseFunctionFactoryTest extends AbstractCairoTest {
     }
 
     protected static SqlNode expr(CharSequence expression) throws SqlException {
-        lexer.of(expression);
-        linker.reset();
-        parser.parseExpr(lexer, linker);
-        return linker.poll();
+        return compiler.parseExpression(expression);
     }
 
     @NotNull

@@ -23,32 +23,27 @@
 
 package com.questdb.griffin;
 
-import com.questdb.cairo.AbstractCairoTest;
-import com.questdb.cairo.CairoTestUtils;
-import com.questdb.cairo.TableModel;
-import com.questdb.cairo.TableReader;
+import com.questdb.cairo.*;
 import com.questdb.common.ColumnType;
 import com.questdb.common.PartitionBy;
 import com.questdb.common.RecordMetadata;
 import com.questdb.griffin.model.IntrinsicModel;
-import com.questdb.std.GenericLexer;
-import com.questdb.std.ObjectPool;
 import com.questdb.test.tools.TestUtils;
-import org.junit.*;
+import org.junit.AfterClass;
+import org.junit.Assert;
+import org.junit.BeforeClass;
+import org.junit.Test;
 
 import static com.questdb.griffin.GriffinParserTestUtils.intervalToString;
 
 public class WhereClauseParserTest extends AbstractCairoTest {
 
+    private final static SqlCompiler compiler = new SqlCompiler(new Engine(configuration), configuration);
     private static TableReader reader;
     private static TableReader noTimestampReader;
     private static RecordMetadata metadata;
-    private static RecordMetadata noTimestampmetadata;
+    private static RecordMetadata noTimestampMetadata;
     private final RpnBuilder rpn = new RpnBuilder();
-    private final ObjectPool<SqlNode> exprNodeObjectPool = new ObjectPool<>(SqlNode.FACTORY, 128);
-    private final GenericLexer lexer = new GenericLexer();
-    private final ExpressionParser p = new ExpressionParser(exprNodeObjectPool);
-    private final ExpressionASTBuilder ast = new ExpressionASTBuilder();
     private final WhereClauseParser e = new WhereClauseParser();
     private final PostOrderTreeTraversalAlgo traversalAlgo = new PostOrderTreeTraversalAlgo();
     private final PostOrderTreeTraversalAlgo.Visitor rpnBuilderVisitor = rpn::onNode;
@@ -82,19 +77,13 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         metadata = reader.getMetadata();
 
         noTimestampReader = new TableReader(configuration, "y");
-        noTimestampmetadata = noTimestampReader.getMetadata();
+        noTimestampMetadata = noTimestampReader.getMetadata();
     }
 
     @AfterClass
     public static void tearDown2() {
         reader.close();
         noTimestampReader.close();
-    }
-
-    @Before
-    public void setUp3() {
-        exprNodeObjectPool.clear();
-        SqlCompiler.configureLexer(lexer);
     }
 
     @Test
@@ -1105,15 +1094,11 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     }
 
     private IntrinsicModel modelOf(CharSequence seq, String preferredColumn) throws SqlException {
-        lexer.of(seq);
-        p.parseExpr(lexer, ast);
-        return e.extract(column -> column, ast.poll(), metadata, preferredColumn, metadata.getTimestampIndex());
+        return e.extract(column -> column, compiler.parseExpression(seq), metadata, preferredColumn, metadata.getTimestampIndex());
     }
 
     private IntrinsicModel noTimestampModelOf(CharSequence seq) throws SqlException {
-        lexer.of(seq);
-        p.parseExpr(lexer, ast);
-        return e.extract(column -> column, ast.poll(), noTimestampmetadata, null, noTimestampmetadata.getTimestampIndex());
+        return e.extract(column -> column, compiler.parseExpression(seq), noTimestampMetadata, null, noTimestampMetadata.getTimestampIndex());
     }
 
 

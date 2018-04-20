@@ -26,7 +26,7 @@ package com.questdb.griffin;
 import java.util.ArrayDeque;
 import java.util.Deque;
 
-public final class ExpressionASTBuilder implements ExpressionParserListener {
+final class ExpressionASTBuilder implements ExpressionParserListener {
 
     private final Deque<SqlNode> stack = new ArrayDeque<>();
 
@@ -51,15 +51,15 @@ public final class ExpressionASTBuilder implements ExpressionParserListener {
         stack.push(node);
     }
 
-    public SqlNode poll() {
+    SqlNode poll() {
         return stack.poll();
     }
 
-    public void reset() {
+    void reset() {
         stack.clear();
     }
 
-    public int size() {
+    int size() {
         return stack.size();
     }
 }

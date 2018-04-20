@@ -28,7 +28,7 @@ import com.questdb.std.*;
 import java.util.ArrayDeque;
 import java.util.Deque;
 
-public class ExpressionParser {
+class ExpressionParser {
 
     private static final IntHashSet nonLiteralBranches = new IntHashSet();
     private static final int BRANCH_NONE = 0;
@@ -44,13 +44,19 @@ public class ExpressionParser {
     private final Deque<SqlNode> opStack = new ArrayDeque<>();
     private final IntStack paramCountStack = new IntStack();
     private final ObjectPool<SqlNode> sqlNodePool;
+    private final SqlOptimiser optimiser;
 
-    public ExpressionParser(ObjectPool<SqlNode> sqlNodePool) {
+    ExpressionParser(ObjectPool<SqlNode> sqlNodePool, SqlOptimiser optimiser) {
         this.sqlNodePool = sqlNodePool;
+        this.optimiser = optimiser;
+    }
+
+    private static SqlException missingArgs(int position) {
+        return SqlException.$(position, "missing arguments");
     }
 
     @SuppressWarnings("ConstantConditions")
-    public void parseExpr(GenericLexer lexer, ExpressionParserListener listener) throws SqlException {
+    void parseExpr(GenericLexer lexer, ExpressionParserListener listener) throws SqlException {
 
         opStack.clear();
         paramCountStack.clear();
@@ -340,10 +346,6 @@ public class ExpressionParser {
 
             listener.onNode(node);
         }
-    }
-
-    private static SqlException missingArgs(int position) {
-        return SqlException.$(position, "missing arguments");
     }
 
     static {

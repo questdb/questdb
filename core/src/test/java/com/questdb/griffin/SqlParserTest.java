@@ -3073,26 +3073,6 @@ public class SqlParserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSubQueryMissingBrace() {
-        assertSyntaxError(
-                "select * from (select * from tab1 a join tab2 on (x)",
-                51,
-                "')' expected",
-                modelOf("tab1").col("x", ColumnType.INT).col("y", ColumnType.INT),
-                modelOf("tab2").col("x", ColumnType.INT).col("z", ColumnType.INT)
-        );
-    }
-
-    @Test
-    public void testSubQueryUnclosed() {
-        assertSyntaxError(
-                "select x from (tab where x > 10",
-                29,
-                "')' expected"
-        );
-    }
-
-    @Test
     public void testTableNameAsArithmetic() {
         assertSyntaxError(
                 "select x from 'tab' + 1",
@@ -3246,6 +3226,11 @@ public class SqlParserTest extends AbstractCairoTest {
     @Test
     public void testUnbalancedBracketInSubQuery() {
         assertSyntaxError("select x from (tab where x > 10 t1", 32, "expected");
+    }
+
+    @Test
+    public void testSubQuerySyntaxError() {
+        assertSyntaxError("select x from (select tab. tab where x > 10 t1)", 26, "'*' expected");
     }
 
     @Test

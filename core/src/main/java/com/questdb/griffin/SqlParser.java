@@ -29,9 +29,9 @@ import com.questdb.common.PartitionBy;
 import com.questdb.griffin.model.*;
 import com.questdb.std.*;
 
-public final class SqlParser {
+final class SqlParser {
 
-    public static final int MAX_ORDER_BY_COLUMNS = 1560;
+    static final int MAX_ORDER_BY_COLUMNS = 1560;
     private static final CharSequenceHashSet tableAliasStop = new CharSequenceHashSet();
     private static final CharSequenceHashSet columnAliasStop = new CharSequenceHashSet();
     private static final CharSequenceHashSet groupByStopSet = new CharSequenceHashSet();
@@ -53,7 +53,7 @@ public final class SqlParser {
     private final SqlOptimiser optimiser;
     private boolean subQueryMode = false;
 
-    public SqlParser(
+    SqlParser(
             CairoConfiguration configuration, SqlOptimiser optimiser, CharacterStore characterStore, ObjectPool<SqlNode> sqlNodePool,
             ObjectPool<QueryColumn> queryColumnPool, ObjectPool<QueryModel> queryModelPool,
             PostOrderTreeTraversalAlgo traversalAlgo) {
@@ -64,28 +64,8 @@ public final class SqlParser {
         this.traversalAlgo = traversalAlgo;
         this.characterStore = characterStore;
         this.optimiser = optimiser;
-        this.expressionParser = new ExpressionParser(sqlNodePool);
+        this.expressionParser = new ExpressionParser(sqlNodePool, optimiser);
     }
-
-    public ExecutionModel parse(GenericLexer lexer) throws SqlException {
-        clear();
-        CharSequence tok = tok(lexer, "'create', 'rename' or 'select'");
-
-        if (Chars.equals(tok, "select")) {
-            return parseSelect(lexer);
-        }
-
-        if (Chars.equals(tok, "create")) {
-            return parseCreateStatement(lexer);
-        }
-
-        if (Chars.equals(tok, "rename")) {
-            return parseRenameStatement(lexer);
-        }
-
-        return parseSelect(lexer);
-    }
-
 
     private static SqlException err(GenericLexer lexer, String msg) {
         return SqlException.$(lexer.lastTokenPosition(), msg);
@@ -107,7 +87,6 @@ public final class SqlParser {
         subQueryMode = false;
         characterStore.clear();
     }
-
 
     private CharSequence createColumnAlias(SqlNode node, QueryModel model) {
         return SqlUtil.createColumnAlias(characterStore, node.token, Chars.indexOf(node.token, '.'), model.getColumnNameTypeMap());
@@ -168,10 +147,15 @@ public final class SqlParser {
         }
     }
 
-    private SqlNode expr(GenericLexer lexer) throws SqlException {
+    SqlNode expr(GenericLexer lexer) throws SqlException {
         expressionASTBuilder.reset();
         expressionParser.parseExpr(lexer, expressionASTBuilder);
         return rewriteCase(expressionASTBuilder.poll());
+    }
+
+    // test only
+    void expr(GenericLexer lexer, ExpressionParserListener listener) throws SqlException {
+        expressionParser.parseExpr(lexer, listener);
     }
 
     private int getCreateTableColumnIndex(CreateTableModel model, CharSequence columnName, int position) throws SqlException {
@@ -210,6 +194,25 @@ public final class SqlParser {
             return null;
         }
         return tok;
+    }
+
+    ExecutionModel parse(GenericLexer lexer) throws SqlException {
+        clear();
+        CharSequence tok = tok(lexer, "'create', 'rename' or 'select'");
+
+        if (Chars.equals(tok, "select")) {
+            return parseSelect(lexer);
+        }
+
+        if (Chars.equals(tok, "create")) {
+            return parseCreateStatement(lexer);
+        }
+
+        if (Chars.equals(tok, "rename")) {
+            return parseRenameStatement(lexer);
+        }
+
+        return parseSelect(lexer);
     }
 
     private ExecutionModel parseCreateStatement(GenericLexer lexer) throws SqlException {
@@ -807,13 +810,13 @@ public final class SqlParser {
             return m;
         }
 
-        int pos = lexer.getPosition();
+        final int pos = lexer.getPosition();
         lexer.goToPosition(wcm.getPosition());
-        try {
-            return parseSubQuery(lexer);
-        } finally {
-            lexer.goToPosition(pos);
-        }
+        // this will not throw exception because this is second pass over the same sub-query
+        // we wouldn't be here is syntax was wrong
+        m = parseSubQuery(lexer);
+        lexer.goToPosition(pos);
+        return m;
     }
 
     private void parseWithClauses(GenericLexer lexer, QueryModel model) throws SqlException {
@@ -924,7 +927,6 @@ public final class SqlParser {
         return tok;
     }
 
-
     private void validateLiteral(int pos, CharSequence tok) throws SqlException {
         switch (tok.charAt(0)) {
             case '(':
@@ -939,7 +941,6 @@ public final class SqlParser {
 
         }
     }
-
 
     static {
         tableAliasStop.add("where");

@@ -23,24 +23,17 @@
 
 package com.questdb.griffin;
 
+import com.questdb.cairo.AbstractCairoTest;
+import com.questdb.cairo.Engine;
 import com.questdb.std.Chars;
-import com.questdb.std.GenericLexer;
-import com.questdb.std.ObjectPool;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
-import org.junit.Before;
 import org.junit.Test;
 
-public class ExpressionParserTest {
-    private final ObjectPool<SqlNode> exprNodeObjectPool = new ObjectPool<>(SqlNode.FACTORY, 128);
-    private final GenericLexer lexer = new GenericLexer();
-    private final ExpressionParser parser = new ExpressionParser(exprNodeObjectPool);
+public class ExpressionParserTest extends AbstractCairoTest {
+    private final static SqlCompiler compiler = new SqlCompiler(new Engine(configuration), configuration);
+    private final static RpnBuilder rpnBuilder = new RpnBuilder();
 
-    @Before
-    public void setUp() {
-        exprNodeObjectPool.clear();
-        SqlCompiler.configureLexer(lexer);
-    }
 
     @Test
     public void testBinaryMinus() throws Exception {
@@ -295,9 +288,7 @@ public class ExpressionParserTest {
 
     private void assertFail(String content, int pos, String contains) {
         try {
-            RpnBuilder r = new RpnBuilder();
-            lexer.of(content);
-            parser.parseExpr(lexer, r);
+            compiler.parseExpression(content, rpnBuilder);
             Assert.fail("expected exception");
         } catch (SqlException e) {
             Assert.assertEquals(pos, e.getPosition());
@@ -308,10 +299,9 @@ public class ExpressionParserTest {
     }
 
     private void x(CharSequence expectedRpn, String content) throws SqlException {
-        RpnBuilder r = new RpnBuilder();
-        lexer.of(content);
-        parser.parseExpr(lexer, r);
-        TestUtils.assertEquals(expectedRpn, r.rpn());
+        rpnBuilder.reset();
+        compiler.parseExpression(content, rpnBuilder);
+        TestUtils.assertEquals(expectedRpn, rpnBuilder.rpn());
     }
 
 }

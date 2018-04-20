@@ -109,4 +109,19 @@ public class SqlCompiler {
     RecordCursorFactory compile02(ExecutionModel executionModel) throws SqlException {
         return codeGenerator.parse(executionModel);
     }
+
+    // this exposed for testing only
+    SqlNode parseExpression(CharSequence expression) throws SqlException {
+        clear();
+        lexer.of(expression);
+        return parser.expr(lexer);
+    }
+
+    // test only
+    void parseExpression(CharSequence expression, ExpressionParserListener listener) throws SqlException {
+        clear();
+        lexer.of(expression);
+        parser.expr(lexer, listener);
+    }
+
 }

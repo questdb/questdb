@@ -37,7 +37,7 @@ import org.jetbrains.annotations.NotNull;
 
 import java.util.ArrayDeque;
 
-public class SqlOptimiser {
+class SqlOptimiser {
 
     private static final CharSequenceIntHashMap notOps = new CharSequenceIntHashMap();
     private static final int NOT_OP_NOT = 1;
@@ -93,7 +93,7 @@ public class SqlOptimiser {
     private int defaultAliasCount = 0;
     private ObjList<JoinContext> emittedJoinClauses;
 
-    public SqlOptimiser(
+    SqlOptimiser(
             CairoEngine engine,
             CharacterStore characterStore,
             ObjectPool<SqlNode> exprNodePool,
@@ -108,7 +108,7 @@ public class SqlOptimiser {
         this.queryColumnPool = queryColumnPool;
     }
 
-    public QueryModel optimise(QueryModel model) throws SqlException {
+    QueryModel optimise(QueryModel model) throws SqlException {
         clear();
         enumerateTableColumns(model);
         resolveJoinColumns(model);
@@ -2000,7 +2000,7 @@ public class SqlOptimiser {
     private static class LiteralRewritingVisitor implements PostOrderTreeTraversalAlgo.Visitor {
         private CharSequenceObjHashMap<CharSequence> nameTypeMap;
 
-        public PostOrderTreeTraversalAlgo.Visitor of(CharSequenceObjHashMap<CharSequence> aliasToColumnMap) {
+        PostOrderTreeTraversalAlgo.Visitor of(CharSequenceObjHashMap<CharSequence> aliasToColumnMap) {
             this.nameTypeMap = aliasToColumnMap;
             return this;
         }
