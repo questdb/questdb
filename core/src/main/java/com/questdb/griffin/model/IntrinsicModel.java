@@ -44,7 +44,7 @@ public class IntrinsicModel implements Mutable {
     public SqlNode filter;
     public LongList intervals;
     public int intrinsicValue = UNDEFINED;
-    public boolean keyValuesIsLambda = false;
+    public QueryModel keySubQuery;
 
     public IntrinsicModel() {
     }
@@ -66,7 +66,7 @@ public class IntrinsicModel implements Mutable {
         filter = null;
         intervals = null;
         intrinsicValue = UNDEFINED;
-        keyValuesIsLambda = false;
+        keySubQuery = null;
     }
 
     public void clearInterval() {

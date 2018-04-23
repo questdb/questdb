@@ -49,21 +49,10 @@ public class GriffinParserTestUtils {
         return sink;
     }
 
-    public static String toRpn(SqlNode node) {
-        switch (node.paramCount) {
-            case 0:
-                return node.token.toString();
-            case 1:
-                return toRpn(node.rhs) + node.token.toString();
-            case 2:
-                return toRpn(node.lhs) + toRpn(node.rhs) + node.token.toString();
-            default:
-                StringBuilder result = new StringBuilder();
-                for (int i = 0; i < node.paramCount; i++) {
-                    result.insert(0, toRpn(node.args.getQuick(i)));
-                }
-                return result.append(node.token).toString();
-        }
+    public static CharSequence toRpn(SqlNode node) {
+        sink.clear();
+        sink.put(node);
+        return sink;
     }
 
 }

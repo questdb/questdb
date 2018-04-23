@@ -270,15 +270,14 @@ final class WhereClauseParser {
                 return false;
             }
 
-            if ((col.equals(model.keyColumn) && model.keyValuesIsLambda) || node.paramCount > 2) {
+            if ((col.equals(model.keyColumn) && model.keySubQuery != null) || node.paramCount > 2) {
                 throw SqlException.$(node.position, "Multiple lambda expressions not supported");
             }
 
             model.keyValues.clear();
             model.keyValuePositions.clear();
-            model.keyValues.add(unquote(node.rhs.token));
             model.keyValuePositions.add(node.position);
-            model.keyValuesIsLambda = true;
+            model.keySubQuery = node.rhs.queryModel;
 
             // revert previously processed nodes
             for (int n = 0, k = keyNodes.size(); n < k; n++) {
@@ -397,7 +396,7 @@ final class WhereClauseParser {
                 node.intrinsicValue = IntrinsicModel.TRUE;
                 return true;
 
-            } else if (!model.keyValuesIsLambda) {
+            } else if (model.keySubQuery == null) {
                 // calculate overlap of values
                 replaceAllWithOverlap(model);
 
@@ -611,7 +610,7 @@ final class WhereClauseParser {
         if (node == null || node.intrinsicValue == IntrinsicModel.TRUE) {
             return null;
         }
-        if (Chars.equals("and", node.token)) {
+        if (node.queryModel == null && Chars.equals("and", node.token)) {
             if (node.lhs == null || node.lhs.intrinsicValue == IntrinsicModel.TRUE) {
                 return node.rhs;
             }

@@ -243,24 +243,20 @@ public class WhereClauseParserTest extends AbstractCairoTest {
 
     @Test
     public void testConstVsLambda() throws Exception {
-        IntrinsicModel m = modelOf("ex in (1,2) and sym in (`xyz`)");
+        IntrinsicModel m = modelOf("ex in (1,2) and sym in (select * from xyz)");
         TestUtils.assertEquals("sym", m.keyColumn);
-        Assert.assertEquals(1, m.keyValues.size());
-        TestUtils.assertEquals("xyz", m.keyValues.get(0));
-        Assert.assertTrue(m.keyValuesIsLambda);
+        Assert.assertNotNull(m.keySubQuery);
         Assert.assertNotNull(m.filter);
-        Assert.assertEquals("ex12in", GriffinParserTestUtils.toRpn(m.filter));
+        TestUtils.assertEquals("in(2,1,ex)", GriffinParserTestUtils.toRpn(m.filter));
     }
 
     @Test
     public void testConstVsLambda2() throws Exception {
-        IntrinsicModel m = modelOf("sym in (1,2) and sym in (`xyz`)");
+        IntrinsicModel m = modelOf("sym in (1,2) and sym in (select * from xyz)");
         TestUtils.assertEquals("sym", m.keyColumn);
-        Assert.assertEquals(1, m.keyValues.size());
-        TestUtils.assertEquals("xyz", m.keyValues.get(0));
-        Assert.assertTrue(m.keyValuesIsLambda);
+        Assert.assertNotNull(m.keySubQuery);
         Assert.assertNotNull(m.filter);
-        Assert.assertEquals("sym12in", GriffinParserTestUtils.toRpn(m.filter));
+        TestUtils.assertEquals("in(2,1,sym)", GriffinParserTestUtils.toRpn(m.filter));
     }
 
     @Test
@@ -635,24 +631,20 @@ public class WhereClauseParserTest extends AbstractCairoTest {
 
     @Test
     public void testLambdaVsConst() throws Exception {
-        IntrinsicModel m = modelOf("sym in (`xyz`) and ex in (1,2)");
+        IntrinsicModel m = modelOf("sym in (select a from xyz) and ex in (1,2)");
         TestUtils.assertEquals("sym", m.keyColumn);
-        Assert.assertEquals(1, m.keyValues.size());
-        TestUtils.assertEquals("xyz", m.keyValues.get(0));
-        Assert.assertTrue(m.keyValuesIsLambda);
+        Assert.assertNotNull(m.keySubQuery);
         Assert.assertNotNull(m.filter);
-        Assert.assertEquals("ex12in", GriffinParserTestUtils.toRpn(m.filter));
+        TestUtils.assertEquals("in(2,1,ex)", GriffinParserTestUtils.toRpn(m.filter));
     }
 
     @Test
     public void testLambdaVsLambda() throws Exception {
-        IntrinsicModel m = modelOf("ex in (`abc`) and sym in (`xyz`)");
+        IntrinsicModel m = modelOf("ex in (select * from abc) and sym in (select * from xyz)");
         TestUtils.assertEquals("sym", m.keyColumn);
-        Assert.assertEquals(1, m.keyValues.size());
-        TestUtils.assertEquals("xyz", m.keyValues.get(0));
-        Assert.assertTrue(m.keyValuesIsLambda);
+        Assert.assertNotNull(m.keySubQuery);
         Assert.assertNotNull(m.filter);
-        Assert.assertEquals("ex`abc`in", GriffinParserTestUtils.toRpn(m.filter));
+        TestUtils.assertEquals("ex in (select-choose * column from (abc))", GriffinParserTestUtils.toRpn(m.filter));
     }
 
     @Test
@@ -1002,9 +994,8 @@ public class WhereClauseParserTest extends AbstractCairoTest {
 
     @Test
     public void testSimpleLambda() throws Exception {
-        IntrinsicModel m = modelOf("sym in (`xyz`)");
-        TestUtils.assertEquals("xyz", m.keyValues.get(0));
-        Assert.assertTrue(m.keyValuesIsLambda);
+        IntrinsicModel m = modelOf("sym in (select * from xyz)");
+        Assert.assertNotNull(m.keySubQuery);
     }
 
     @Test
@@ -1036,11 +1027,9 @@ public class WhereClauseParserTest extends AbstractCairoTest {
 
     @Test
     public void testTwoDiffColLambdas() throws Exception {
-        IntrinsicModel m = modelOf("sym in (`xyz`) and ex in (`kkk`)");
+        IntrinsicModel m = modelOf("sym in (select * from xyz) and ex in (select  * from kkk)");
         TestUtils.assertEquals("sym", m.keyColumn);
-        Assert.assertEquals(1, m.keyValues.size());
-        TestUtils.assertEquals("xyz", m.keyValues.get(0));
-        Assert.assertTrue(m.keyValuesIsLambda);
+        Assert.assertNotNull(m.keySubQuery);
         Assert.assertNotNull(m.filter);
         Assert.assertEquals(SqlNode.LAMBDA, m.filter.rhs.type);
     }
@@ -1076,7 +1065,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     @Test
     public void testTwoSameColLambdas() {
         try {
-            modelOf("sym in (`xyz`) and sym in (`kkk`)");
+            modelOf("sym in (select * from xyz) and sym in (select * from kkk)");
             Assert.fail("exception expected");
         } catch (SqlException e) {
             Assert.assertEquals(4, e.getPosition());

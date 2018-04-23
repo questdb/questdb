@@ -146,10 +146,6 @@ class ExpressionParser {
                             paramCount = paramCountStack.pop();
                         }
                         break;
-                    case '`':
-                        thisBranch = BRANCH_LAMBDA;
-                        listener.onNode(sqlNodePool.next().of(SqlNode.LAMBDA, GenericLexer.immutableOf(tok), 0, lexer.lastTokenPosition()));
-                        break;
                     case 's':
                     case 'S':
                         if (Chars.equalsIgnoreCase(tok, "select")) {

@@ -191,7 +191,7 @@ public class SqlCodeGenerator {
 
                         if (keyColumnIndex == latestByIndex) {
                             // we somewhat in luck
-                            if (intrinsicModel.keyValuesIsLambda) {
+                            if (intrinsicModel.keySubQuery != null) {
                                 // treat key values as lambda
                                 // 1. get lambda cursor
                                 // 2. for each value of first column of lambda: resolve to "int" of symbol, find first row in index
@@ -206,8 +206,8 @@ public class SqlCodeGenerator {
                             // this could only happen when "latest by" is not indexed
                             // this is because "latest by" is preferred key column for filter analyzer
                             // and filter analyzer always picks indexed column as key
-                            if (intrinsicModel.keyValuesIsLambda) {
-                                assert intrinsicModel.keyValues.size() == 1;
+                            if (intrinsicModel.keySubQuery != null) {
+//                                assert intrinsicModel.keyValues.size() == 1;
                             } else {
                                 assert intrinsicModel.keyValues.size() > 0;
                             }
@@ -219,7 +219,7 @@ public class SqlCodeGenerator {
                 } else {
                     // no "latest by" clause
                     if (intrinsicModel.keyColumn != null) {
-                        if (intrinsicModel.keyValuesIsLambda) {
+                        if (intrinsicModel.keySubQuery != null) {
                             // perform lambda based key lookup
                             assert intrinsicModel.keyValues.size() == 1;
                         } else {

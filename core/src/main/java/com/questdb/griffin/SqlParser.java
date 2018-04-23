@@ -148,9 +148,13 @@ final class SqlParser {
     }
 
     SqlNode expr(GenericLexer lexer) throws SqlException {
-        expressionASTBuilder.reset();
-        expressionParser.parseExpr(lexer, expressionASTBuilder);
-        return rewriteCase(expressionASTBuilder.poll());
+        try {
+            expressionParser.parseExpr(lexer, expressionASTBuilder);
+            return rewriteCase(expressionASTBuilder.poll());
+        } catch (SqlException e) {
+            expressionASTBuilder.reset();
+            throw e;
+        }
     }
 
     // test only
@@ -598,31 +602,35 @@ final class SqlParser {
             case QueryModel.JOIN_INNER:
             case QueryModel.JOIN_OUTER:
                 expectTok(lexer, tok, "on");
-                expressionASTBuilder.reset();
-                expressionParser.parseExpr(lexer, expressionASTBuilder);
-                SqlNode expr;
-                switch (expressionASTBuilder.size()) {
-                    case 0:
-                        throw SqlException.$(lexer.lastTokenPosition(), "Expression expected");
-                    case 1:
-                        expr = expressionASTBuilder.poll();
-                        if (expr.type == SqlNode.LITERAL) {
-                            do {
-                                joinModel.addJoinColumn(expr);
-                            } while ((expr = expressionASTBuilder.poll()) != null);
-                        } else {
-                            joinModel.setJoinCriteria(expr);
-                        }
-                        break;
-                    default:
-                        // this code handles "join on (a,b,c)", e.g. list of columns
-                        while ((expr = expressionASTBuilder.poll()) != null) {
-                            if (expr.type != SqlNode.LITERAL) {
-                                throw SqlException.$(lexer.lastTokenPosition(), "Column name expected");
+                try {
+                    expressionParser.parseExpr(lexer, expressionASTBuilder);
+                    SqlNode expr;
+                    switch (expressionASTBuilder.size()) {
+                        case 0:
+                            throw SqlException.$(lexer.lastTokenPosition(), "Expression expected");
+                        case 1:
+                            expr = expressionASTBuilder.poll();
+                            if (expr.type == SqlNode.LITERAL) {
+                                do {
+                                    joinModel.addJoinColumn(expr);
+                                } while ((expr = expressionASTBuilder.poll()) != null);
+                            } else {
+                                joinModel.setJoinCriteria(rewriteCase(expr));
                             }
-                            joinModel.addJoinColumn(expr);
-                        }
-                        break;
+                            break;
+                        default:
+                            // this code handles "join on (a,b,c)", e.g. list of columns
+                            while ((expr = expressionASTBuilder.poll()) != null) {
+                                if (expr.type != SqlNode.LITERAL) {
+                                    throw SqlException.$(lexer.lastTokenPosition(), "Column name expected");
+                                }
+                                joinModel.addJoinColumn(expr);
+                            }
+                            break;
+                    }
+                } catch (SqlException e) {
+                    expressionASTBuilder.reset();
+                    throw e;
                 }
                 break;
             default:

@@ -240,6 +240,45 @@ public class SqlParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testBlockCommentAtMiddle() throws Exception {
+        assertQuery(
+                "select-choose" +
+                        " a, x" +
+                        " from (" +
+                        "(x where a > 1 and x > 1) 'b a')",
+                "(x where /*this is a random comment */a > 1) 'b a' where x > 1",
+                modelOf("x")
+                        .col("x", ColumnType.INT)
+                        .col("a", ColumnType.INT));
+    }
+
+    @Test
+    public void testBlockCommentNested() throws Exception {
+        assertQuery(
+                "select-choose" +
+                        " a, x" +
+                        " from (" +
+                        "(x where a > 1 and x > 1) 'b a')",
+                "(x where a > 1) /* comment /* ok */  whatever */'b a' where x > 1",
+                modelOf("x")
+                        .col("x", ColumnType.INT)
+                        .col("a", ColumnType.INT));
+    }
+
+    @Test
+    public void testBlockCommentUnclosed() throws Exception {
+        assertQuery(
+                "select-choose" +
+                        " a, x" +
+                        " from (" +
+                        "(x where a > 1 and x > 1) 'b a')",
+                "(x where a > 1) 'b a' where x > 1 /* this block comment",
+                modelOf("x")
+                        .col("x", ColumnType.INT)
+                        .col("a", ColumnType.INT));
+    }
+
+    @Test
     public void testCaseImpossibleRewrite1() throws SqlException {
         // referenced columns in 'when' clauses are different
         assertQuery(
@@ -260,16 +299,13 @@ public class SqlParserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testBlockCommentAtMiddle() throws Exception {
+    public void testCaseNoElseClause() throws SqlException {
+        // referenced columns in 'when' clauses are different
         assertQuery(
-                "select-choose" +
-                        " a, x" +
-                        " from (" +
-                        "(x where a > 1 and x > 1) 'b a')",
-                "(x where /*this is a random comment */a > 1) 'b a' where x > 1",
-                modelOf("x")
-                        .col("x", ColumnType.INT)
-                        .col("a", ColumnType.INT));
+                "select-virtual case('B',2 = b,'A',a = 1) + 1 column, b from (tab)",
+                "select case when a = 1 then 'A' when 2 = b then 'B' end+1, b from tab",
+                modelOf("tab").col("a", ColumnType.INT).col("b", ColumnType.INT)
+        );
     }
 
     @Test
@@ -1077,6 +1113,17 @@ public class SqlParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testExpressionSyntaxError() {
+        assertSyntaxError("select x from a where a + b(c,) > 10", 30, "missing argument");
+
+        // when AST cache is not cleared below query will pickup "garbage" and will misrepresent error
+        assertSyntaxError("orders join customers on orders.customerId = c.customerId", 45, "alias",
+                modelOf("customers").col("customerId", ColumnType.INT),
+                modelOf("orders").col("customerId", ColumnType.INT).col("productName", ColumnType.STRING).col("productId", ColumnType.INT)
+        );
+    }
+
+    @Test
     public void testExtraComma2OrderByInAnalyticFunction() {
         assertSyntaxError("select a,b, f(c) my over (partition by b order by ts,) from xyz", 53, "literal expected");
     }
@@ -1656,6 +1703,15 @@ public class SqlParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testJoinOnCase() throws Exception {
+        assertQuery(
+                "select-choose a.x x from (a a cross join b where switch(a.x,15,1,10))",
+                "select a.x from a a join b on (case when a.x = 1 then 10 else 15 end)",
+                modelOf("a").col("x", ColumnType.INT),
+                modelOf("b").col("x", ColumnType.INT));
+    }
+
+    @Test
     public void testJoinOnColumns() throws SqlException {
         assertQuery(
                 "select-choose a.x x, b.y y from (tab1 a join tab2 b on b.z = a.z)",
@@ -1980,6 +2036,16 @@ public class SqlParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testJoinSyntaxError() {
+        assertSyntaxError(
+                "select a.x from a a join b on (a + case when a.x = 1 then 10 else end)",
+                66,
+                "missing argument",
+                modelOf("a").col("x", ColumnType.INT),
+                modelOf("b").col("x", ColumnType.INT));
+    }
+
+    @Test
     public void testJoinTableMissing() {
         assertSyntaxError(
                 "select a from tab join",
@@ -2114,42 +2180,6 @@ public class SqlParserTest extends AbstractCairoTest {
                 TestUtils.assertEquals("unexpected token: Date", e.getFlyweightMessage());
             }
         }
-    }
-
-    @Test
-    public void testBlockCommentNested() throws Exception {
-        assertQuery(
-                "select-choose" +
-                        " a, x" +
-                        " from (" +
-                        "(x where a > 1 and x > 1) 'b a')",
-                "(x where a > 1) /* comment /* ok */  whatever */'b a' where x > 1",
-                modelOf("x")
-                        .col("x", ColumnType.INT)
-                        .col("a", ColumnType.INT));
-    }
-
-    @Test
-    public void testBlockCommentUnclosed() throws Exception {
-        assertQuery(
-                "select-choose" +
-                        " a, x" +
-                        " from (" +
-                        "(x where a > 1 and x > 1) 'b a')",
-                "(x where a > 1) 'b a' where x > 1 /* this block comment",
-                modelOf("x")
-                        .col("x", ColumnType.INT)
-                        .col("a", ColumnType.INT));
-    }
-
-    @Test
-    public void testCaseNoElseClause() throws SqlException {
-        // referenced columns in 'when' clauses are different
-        assertQuery(
-                "select-virtual case('B',2 = b,'A',a = 1) + 1 column, b from (tab)",
-                "select case when a = 1 then 'A' when 2 = b then 'B' end+1, b from tab",
-                modelOf("tab").col("a", ColumnType.INT).col("b", ColumnType.INT)
-        );
     }
 
     @Test
@@ -3073,6 +3103,11 @@ public class SqlParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSubQuerySyntaxError() {
+        assertSyntaxError("select x from (select tab. tab where x > 10 t1)", 26, "'*' expected");
+    }
+
+    @Test
     public void testTableNameAsArithmetic() {
         assertSyntaxError(
                 "select x from 'tab' + 1",
@@ -3226,11 +3261,6 @@ public class SqlParserTest extends AbstractCairoTest {
     @Test
     public void testUnbalancedBracketInSubQuery() {
         assertSyntaxError("select x from (tab where x > 10 t1", 32, "expected");
-    }
-
-    @Test
-    public void testSubQuerySyntaxError() {
-        assertSyntaxError("select x from (select tab. tab where x > 10 t1)", 26, "'*' expected");
     }
 
     @Test
