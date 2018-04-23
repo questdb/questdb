@@ -64,7 +64,7 @@ final class SqlParser {
         this.traversalAlgo = traversalAlgo;
         this.characterStore = characterStore;
         this.optimiser = optimiser;
-        this.expressionParser = new ExpressionParser(sqlNodePool);
+        this.expressionParser = new ExpressionParser(sqlNodePool, this);
     }
 
     private static SqlException err(GenericLexer lexer, String msg) {
@@ -136,7 +136,7 @@ final class SqlParser {
     private void expectTok(GenericLexer lexer, char expected) throws SqlException {
         CharSequence tok = optTok(lexer);
         if (tok == null) {
-            throw SqlException.position(lexer.lastTokenPosition()).put('\'').put(expected).put("' expected");
+            throw SqlException.position(lexer.getPosition()).put('\'').put(expected).put("' expected");
         }
         expectTok(tok, lexer.lastTokenPosition(), expected);
     }
@@ -781,7 +781,7 @@ final class SqlParser {
         }
     }
 
-    private QueryModel parseSubQuery(GenericLexer lexer) throws SqlException {
+    QueryModel parseSubQuery(GenericLexer lexer) throws SqlException {
         QueryModel model;
         this.subQueryMode = true;
         try {

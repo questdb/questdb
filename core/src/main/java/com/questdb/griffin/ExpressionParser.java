@@ -44,9 +44,11 @@ class ExpressionParser {
     private final Deque<SqlNode> opStack = new ArrayDeque<>();
     private final IntStack paramCountStack = new IntStack();
     private final ObjectPool<SqlNode> sqlNodePool;
+    private final SqlParser sqlParser;
 
-    ExpressionParser(ObjectPool<SqlNode> sqlNodePool) {
+    ExpressionParser(ObjectPool<SqlNode> sqlNodePool, SqlParser sqlParser) {
         this.sqlNodePool = sqlNodePool;
+        this.sqlParser = sqlParser;
     }
 
     private static SqlException missingArgs(int position) {
@@ -55,130 +57,167 @@ class ExpressionParser {
 
     @SuppressWarnings("ConstantConditions")
     void parseExpr(GenericLexer lexer, ExpressionParserListener listener) throws SqlException {
+        try {
+            int paramCount = 0;
+            int braceCount = 0;
+            int caseCount = 0;
 
-        opStack.clear();
-        paramCountStack.clear();
+            SqlNode node;
+            CharSequence tok;
+            char thisChar;
+            int prevBranch;
+            int thisBranch = BRANCH_NONE;
 
-        int paramCount = 0;
-        int braceCount = 0;
-        int caseCount = 0;
+            OUT:
+            while ((tok = SqlUtil.fetchNext(lexer)) != null) {
+                thisChar = tok.charAt(0);
+                prevBranch = thisBranch;
+                boolean processDefaultBranch = false;
+                switch (thisChar) {
+                    case ',':
+                        if (prevBranch == BRANCH_COMMA || prevBranch == BRANCH_LEFT_BRACE) {
+                            throw missingArgs(lexer.lastTokenPosition());
+                        }
+                        thisBranch = BRANCH_COMMA;
 
-        SqlNode node;
-        CharSequence tok;
-        char thisChar;
-        int prevBranch;
-        int thisBranch = BRANCH_NONE;
+                        if (braceCount == 0) {
+                            // comma outside of braces
+                            lexer.unparse();
+                            break OUT;
+                        }
 
-        OUT:
-        while ((tok = SqlUtil.fetchNext(lexer)) != null) {
-            thisChar = tok.charAt(0);
-            prevBranch = thisBranch;
+                        // If the token is a function argument separator (e.g., a comma):
+                        // Until the token at the top of the stack is a left parenthesis,
+                        // pop operators off the stack onto the output queue. If no left
+                        // parentheses are encountered, either the separator was misplaced or
+                        // parentheses were mismatched.
+                        while ((node = opStack.poll()) != null && node.token.charAt(0) != '(') {
+                            listener.onNode(node);
+                        }
 
-            switch (thisChar) {
-                case ',':
-                    if (prevBranch == BRANCH_COMMA || prevBranch == BRANCH_LEFT_BRACE) {
-                        throw missingArgs(lexer.lastTokenPosition());
-                    }
-                    thisBranch = BRANCH_COMMA;
+                        if (node != null) {
+                            opStack.push(node);
+                        }
 
-                    if (braceCount == 0) {
-                        // comma outside of braces
-                        lexer.unparse();
-                        break OUT;
-                    }
+                        paramCount++;
+                        break;
 
-                    // If the token is a function argument separator (e.g., a comma):
-                    // Until the token at the top of the stack is a left parenthesis,
-                    // pop operators off the stack onto the output queue. If no left
-                    // parentheses are encountered, either the separator was misplaced or
-                    // parentheses were mismatched.
-                    while ((node = opStack.poll()) != null && node.token.charAt(0) != '(') {
-                        listener.onNode(node);
-                    }
+                    case '(':
+                        thisBranch = BRANCH_LEFT_BRACE;
+                        braceCount++;
+                        // If the token is a left parenthesis, then push it onto the stack.
+                        paramCountStack.push(paramCount);
+                        paramCount = 0;
+                        // precedence must be max value to make sure control node isn't
+                        // consumed as parameter to a greedy function
+                        opStack.push(sqlNodePool.next().of(SqlNode.CONTROL, "(", Integer.MAX_VALUE, lexer.lastTokenPosition()));
+                        break;
 
-                    if (node != null) {
-                        opStack.push(node);
-                    }
+                    case ')':
+                        if (prevBranch == BRANCH_COMMA) {
+                            throw missingArgs(lexer.lastTokenPosition());
+                        }
 
-                    paramCount++;
-                    break;
+                        if (braceCount == 0) {
+                            lexer.unparse();
+                            break OUT;
+                        }
 
-                case '(':
-                    thisBranch = BRANCH_LEFT_BRACE;
-                    braceCount++;
-                    // If the token is a left parenthesis, then push it onto the stack.
-                    paramCountStack.push(paramCount);
-                    paramCount = 0;
-                    opStack.push(sqlNodePool.next().of(SqlNode.CONTROL, "(", Integer.MAX_VALUE, lexer.lastTokenPosition()));
-                    break;
+                        thisBranch = BRANCH_RIGHT_BRACE;
+                        braceCount--;
+                        // If the token is a right parenthesis:
+                        // Until the token at the top of the stack is a left parenthesis, pop operators off the stack onto the output queue.
+                        // Pop the left parenthesis from the stack, but not onto the output queue.
+                        //        If the token at the top of the stack is a function token, pop it onto the output queue.
+                        //        If the stack runs out without finding a left parenthesis, then there are mismatched parentheses.
+                        while ((node = opStack.poll()) != null && node.token.charAt(0) != '(') {
+                            listener.onNode(node);
+                        }
 
-                case ')':
-                    if (prevBranch == BRANCH_COMMA) {
-                        throw missingArgs(lexer.lastTokenPosition());
-                    }
+                        // enable operation or literal absorb parameters
+                        if ((node = opStack.peek()) != null && (node.type == SqlNode.LITERAL || (node.type == SqlNode.SET_OPERATION))) {
+                            node.paramCount = (prevBranch == BRANCH_LEFT_BRACE ? 0 : paramCount + 1) + (node.paramCount == 2 ? 1 : 0);
+                            node.type = SqlNode.FUNCTION;
+                            listener.onNode(node);
+                            opStack.poll();
+                        }
 
-                    if (braceCount == 0) {
-                        lexer.unparse();
-                        break OUT;
-                    }
+                        if (paramCountStack.notEmpty()) {
+                            paramCount = paramCountStack.pop();
+                        }
+                        break;
+                    case '`':
+                        thisBranch = BRANCH_LAMBDA;
+                        listener.onNode(sqlNodePool.next().of(SqlNode.LAMBDA, GenericLexer.immutableOf(tok), 0, lexer.lastTokenPosition()));
+                        break;
+                    case 's':
+                    case 'S':
+                        if (Chars.equalsIgnoreCase(tok, "select")) {
+                            thisBranch = BRANCH_LAMBDA;
+                            // It is highly likely this expression parser will be re-entered when
+                            // parsing sub-query. To prevent sub-query consuming operation stack we must add a
+                            // control node, which would prevent such consumption
 
-                    thisBranch = BRANCH_RIGHT_BRACE;
-                    braceCount--;
-                    // If the token is a right parenthesis:
-                    // Until the token at the top of the stack is a left parenthesis, pop operators off the stack onto the output queue.
-                    // Pop the left parenthesis from the stack, but not onto the output queue.
-                    //        If the token at the top of the stack is a function token, pop it onto the output queue.
-                    //        If the stack runs out without finding a left parenthesis, then there are mismatched parentheses.
-                    while ((node = opStack.poll()) != null && node.token.charAt(0) != '(') {
-                        listener.onNode(node);
-                    }
+                            // precedence must be max value to make sure control node isn't
+                            // consumed as parameter to a greedy function
+                            opStack.push(sqlNodePool.next().of(SqlNode.CONTROL, "|", Integer.MAX_VALUE, lexer.lastTokenPosition()));
 
-                    // enable operation or literal absorb parameters
-                    if ((node = opStack.peek()) != null && (node.type == SqlNode.LITERAL || (node.type == SqlNode.SET_OPERATION))) {
-                        node.paramCount = (prevBranch == BRANCH_LEFT_BRACE ? 0 : paramCount + 1) + (node.paramCount == 2 ? 1 : 0);
-                        node.type = SqlNode.FUNCTION;
-                        listener.onNode(node);
-                        opStack.poll();
-                    }
 
-                    if (paramCountStack.notEmpty()) {
-                        paramCount = paramCountStack.pop();
-                    }
-                    break;
-                case '`':
-                    thisBranch = BRANCH_LAMBDA;
-                    // If the token is a number, then add it to the output queue.
-                    listener.onNode(sqlNodePool.next().of(SqlNode.LAMBDA, GenericLexer.immutableOf(tok), 0, lexer.lastTokenPosition()));
-                    break;
-                case '0':
-                case '1':
-                case '2':
-                case '3':
-                case '4':
-                case '5':
-                case '6':
-                case '7':
-                case '8':
-                case '9':
-                case '"':
-                case '\'':
-                case 'N':
-                case 'n':
-                case 't':
-                case 'T':
-                case 'f':
-                case 'F':
-                    if ((thisChar != 'N' && thisChar != 'n' && thisChar != 't' && thisChar != 'T' && thisChar != 'f' && thisChar != 'F')
-                            || Chars.equalsIgnoreCase(tok, "nan")
-                            || Chars.equalsIgnoreCase(tok, "null")
-                            || Chars.equalsIgnoreCase(tok, "true")
-                            || Chars.equalsIgnoreCase(tok, "false")) {
+                            int pos = lexer.lastTokenPosition();
+                            // allow sub-query to parse "select" keyword
+                            lexer.unparse();
+
+                            SqlNode n = sqlNodePool.next().of(SqlNode.LAMBDA, null, 0, pos);
+                            n.queryModel = sqlParser.parseSubQuery(lexer);
+                            listener.onNode(n);
+
+                            // pop our control node if sub-query hasn't done it
+                            SqlNode control = opStack.peek();
+                            if (control != null && control.type == SqlNode.CONTROL && Chars.equals(control.token, '|')) {
+                                opStack.poll();
+                            }
+
+                            // re-introduce closing brace to this loop
+                            lexer.unparse();
+                        } else {
+                            processDefaultBranch = true;
+                        }
+                        break;
+                    case '0':
+                    case '1':
+                    case '2':
+                    case '3':
+                    case '4':
+                    case '5':
+                    case '6':
+                    case '7':
+                    case '8':
+                    case '9':
+                    case '"':
+                    case '\'':
                         thisBranch = BRANCH_CONSTANT;
                         // If the token is a number, then add it to the output queue.
                         listener.onNode(sqlNodePool.next().of(SqlNode.CONSTANT, GenericLexer.immutableOf(tok), 0, lexer.lastTokenPosition()));
                         break;
-                    }
-                default:
+                    case 'N':
+                    case 'n':
+                    case 't':
+                    case 'T':
+                    case 'f':
+                    case 'F':
+                        if (Chars.equalsIgnoreCase(tok, "nan") || Chars.equalsIgnoreCase(tok, "null")
+                                || Chars.equalsIgnoreCase(tok, "true") || Chars.equalsIgnoreCase(tok, "false")) {
+                            thisBranch = BRANCH_CONSTANT;
+                            // If the token is a number, then add it to the output queue.
+                            listener.onNode(sqlNodePool.next().of(SqlNode.CONSTANT, GenericLexer.immutableOf(tok), 0, lexer.lastTokenPosition()));
+                            break;
+                        }
+                    default:
+                        processDefaultBranch = true;
+                        break;
+                }
+
+                if (processDefaultBranch) {
                     OperatorExpression op;
                     if ((op = OperatorExpression.opMap.get(tok)) != null) {
 
@@ -328,21 +367,35 @@ class ExpressionParser {
                         // literal can be at start of input, after a bracket or part of an operator
                         // all other cases are illegal and will be considered end-of-input
                         lexer.unparse();
-                        break OUT;
+                        break;
                     }
-            }
-        }
-
-        while ((node = opStack.poll()) != null) {
-            if (node.token.charAt(0) == '(') {
-                throw SqlException.$(node.position, "unbalanced (");
+                }
             }
 
-            if (Chars.equals("case", node.token)) {
-                throw SqlException.$(node.position, "unbalanced 'case'");
+            while ((node = opStack.poll()) != null) {
+
+                if (node.token.charAt(0) == '(') {
+                    throw SqlException.$(node.position, "unbalanced (");
+                }
+
+                if (Chars.equals("case", node.token)) {
+                    throw SqlException.$(node.position, "unbalanced 'case'");
+                }
+
+                if (node.type == SqlNode.CONTROL) {
+                    // break on any other control node to allow parser to be reenterable
+                    // put control node back on stack because we don't own it
+                    opStack.push(node);
+                    break;
+                }
+
+                listener.onNode(node);
             }
 
-            listener.onNode(node);
+        } catch (SqlException e) {
+            paramCountStack.clear();
+            opStack.clear();
+            throw e;
         }
     }
 
@@ -355,6 +408,5 @@ class ExpressionParser {
         caseKeywords.put("when", 0);
         caseKeywords.put("then", 1);
         caseKeywords.put("else", 2);
-
     }
 }

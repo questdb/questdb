@@ -66,6 +66,7 @@ public class SqlNode implements Mutable, Sinkable {
         type = UNKNOWN;
         paramCount = 0;
         intrinsicValue = IntrinsicModel.UNDEFINED;
+        queryModel = null;
     }
 
     public SqlNode of(int type, CharSequence token, int precedence, int position) {
@@ -80,9 +81,13 @@ public class SqlNode implements Mutable, Sinkable {
     public void toSink(CharSink sink) {
         switch (paramCount) {
             case 0:
-                sink.put(token);
-                if (type == FUNCTION) {
-                    sink.put("()");
+                if (queryModel != null) {
+                    sink.put('(').put(queryModel).put(')');
+                } else {
+                    sink.put(token);
+                    if (type == FUNCTION) {
+                        sink.put("()");
+                    }
                 }
                 break;
             case 1:

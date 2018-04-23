@@ -30,7 +30,11 @@ public class RpnBuilder implements ExpressionParserListener {
 
     @Override
     public void onNode(SqlNode node) {
-        sink.put(node.token);
+        if (node.queryModel != null) {
+            sink.put('(').put(node.queryModel).put(')');
+        } else {
+            sink.put(node.token);
+        }
     }
 
     public void reset() {

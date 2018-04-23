@@ -34,7 +34,6 @@ public class ExpressionParserTest extends AbstractCairoTest {
     private final static SqlCompiler compiler = new SqlCompiler(new Engine(configuration), configuration);
     private final static RpnBuilder rpnBuilder = new RpnBuilder();
 
-
     @Test
     public void testBinaryMinus() throws Exception {
         x("4c-", "4-c");
@@ -244,6 +243,31 @@ public class ExpressionParserTest extends AbstractCairoTest {
     @Test
     public void testNestedOperator() throws Exception {
         x("ac4*db+", "a + b( c * 4, d)");
+    }
+
+    @Test
+    public void testNewLambda() throws SqlException {
+        x("x(select-choose a from (tab))in", "x in (select a from tab)");
+    }
+
+    @Test
+    public void testNewLambdaMultipleExpressions() throws SqlException {
+        x("x(select-choose a from (tab))iny(select-choose * column from (X))inandk10>and", "x in (select a from tab) and y in (select * from X) and k > 10");
+    }
+
+    @Test
+    public void testNewLambdaNested() throws SqlException {
+        x("x(select-choose a, b from (T where c in (select-choose * column from (Y)) and a = b))in", "x in (select a,b from T where c in (select * from Y) and a=b)");
+    }
+
+    @Test
+    public void testNewLambdaQuerySyntax() {
+        assertFail("x in (select a,b, from T)", 24, "',', 'from' or 'over' expected");
+    }
+
+    @Test
+    public void testNewLambdaUnbalancedBrace() {
+        assertFail("x in (select a,b from T", 23, "')' expected");
     }
 
     @Test
