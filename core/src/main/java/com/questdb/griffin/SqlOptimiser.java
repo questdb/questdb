@@ -23,9 +23,14 @@
 
 package com.questdb.griffin;
 
+import com.questdb.cairo.CairoException;
+import com.questdb.cairo.TableReader;
+import com.questdb.cairo.TableUtils;
+import com.questdb.cairo.pool.ex.EntryLockedException;
 import com.questdb.cairo.sql.CairoEngine;
 import com.questdb.common.ColumnType;
 import com.questdb.common.RecordMetadata;
+import com.questdb.griffin.engine.functions.bind.BindVariableService;
 import com.questdb.griffin.model.AnalyticColumn;
 import com.questdb.griffin.model.JoinContext;
 import com.questdb.griffin.model.QueryColumn;
@@ -90,6 +95,7 @@ class SqlOptimiser {
     private final ObjectPool<QueryModel> queryModelPool;
     private final IntPriorityQueue orderingStack = new IntPriorityQueue();
     private final ObjectPool<QueryColumn> queryColumnPool;
+    private final FunctionParser functionParser;
     private int defaultAliasCount = 0;
     private ObjList<JoinContext> emittedJoinClauses;
 
@@ -99,25 +105,15 @@ class SqlOptimiser {
             ObjectPool<SqlNode> exprNodePool,
             ObjectPool<QueryColumn> queryColumnPool,
             ObjectPool<QueryModel> queryModelPool,
-            PostOrderTreeTraversalAlgo traversalAlgo) {
+            PostOrderTreeTraversalAlgo traversalAlgo,
+            FunctionParser functionParser) {
         this.engine = engine;
         this.exprNodePool = exprNodePool;
         this.characterStore = characterStore;
         this.traversalAlgo = traversalAlgo;
         this.queryModelPool = queryModelPool;
         this.queryColumnPool = queryColumnPool;
-    }
-
-    QueryModel optimise(QueryModel model) throws SqlException {
-        enumerateTableColumns(model);
-        resolveJoinColumns(model);
-        optimiseBooleanNot(model);
-        final QueryModel rewrittenModel = rewriteOrderBy(rewriteSelectClause(model, true));
-        optimiseOrderBy(rewrittenModel, ORDER_BY_UNKNOWN);
-        createOrderHash(rewrittenModel);
-        optimiseJoins(rewrittenModel);
-        moveWhereInsideSubQueries(rewrittenModel);
-        return rewrittenModel;
+        this.functionParser = functionParser;
     }
 
     private static void assertNotNull(SqlNode node, int position, String message) throws SqlException {
@@ -759,13 +755,13 @@ class SqlOptimiser {
         }
     }
 
-    private void enumerateTableColumns(QueryModel model) throws SqlException {
+    private void enumerateTableColumns(QueryModel model, BindVariableService bindVariableService) throws SqlException {
         final ObjList<QueryModel> jm = model.getJoinModels();
 
         // we have plain tables and possibly joins
         // deal with _this_ model first, it will always be the first element in join model list
         if (model.getTableName() != null) {
-            RecordMetadata m = model.getTableMetadata(engine, tableLookupSequence);
+            RecordMetadata m = getTableMetadata(model.getTableName(), bindVariableService);
             // column names are not allowed to have dot
             // todo: test that this is the case
             for (int i = 0, k = m.getColumnCount(); i < k; i++) {
@@ -788,14 +784,14 @@ class SqlOptimiser {
             }
         } else {
             if (model.getNestedModel() != null) {
-                enumerateTableColumns(model.getNestedModel());
+                enumerateTableColumns(model.getNestedModel(), bindVariableService);
                 // copy columns of nested model onto parent one
                 // we must treat sub-query just like we do a table
                 model.copyColumnsFrom(model.getNestedModel());
             }
         }
         for (int i = 1, n = jm.size(); i < n; i++) {
-            enumerateTableColumns(jm.getQuick(i));
+            enumerateTableColumns(jm.getQuick(i), bindVariableService);
         }
     }
 
@@ -832,6 +828,45 @@ class SqlOptimiser {
             }
 
             return index;
+        }
+    }
+
+    private RecordMetadata getTableMetadata(SqlNode tableName, BindVariableService bindVariableService) throws SqlException {
+
+        if (tableName.type == SqlNode.FUNCTION) {
+            // todo: hold on to function
+            Function function = functionParser.parseFunction(tableName, EmptyRecordMetadata.INSTANCE, bindVariableService);
+            return function.getRecordCursorFactory(null).getMetadataContainer().getMetadata();
+        }
+
+
+        // table name must not contain quotes by now
+        int lo = 0;
+        int hi = tableName.token.length();
+        if (Chars.startsWith(tableName.token, QueryModel.NO_ROWID_MARKER)) {
+            lo += QueryModel.NO_ROWID_MARKER.length();
+        }
+
+        if (lo == hi) {
+            throw SqlException.$(tableName.position, "come on, where is table name?");
+        }
+
+        int status = engine.getStatus(tableName.token, lo, hi);
+
+        if (status == TableUtils.TABLE_DOES_NOT_EXIST) {
+            throw SqlException.$(tableName.position, "table does not exist");
+        }
+
+        if (status == TableUtils.TABLE_RESERVED) {
+            throw SqlException.$(tableName.position, "table directory is of unknown format");
+        }
+
+        try (TableReader r = engine.getReader(tableLookupSequence.of(tableName.token, lo, hi - lo))) {
+            return r.getMetadata();
+        } catch (EntryLockedException e) {
+            throw SqlException.position(tableName.position).put("table is locked: ").put(tableLookupSequence);
+        } catch (CairoException e) {
+            throw SqlException.position(tableName.position).put(e);
         }
     }
 
@@ -1064,7 +1099,12 @@ class SqlOptimiser {
                 traversalAlgo.traverse(node, literalCollector.lhs());
 
                 // at this point we must not have constant conditions in where clause
-                assert literalCollectorAIndexes.size() > 0;
+                // this could be either referencing constant of a sub-query
+                if (literalCollectorAIndexes.size() == 0) {
+                    // keep condition with this model
+                    addWhereNode(model, node);
+                    continue;
+                }
 
                 // by now all where clause must reference single table only and all column references have to be valid
                 // they would have been rewritten and validated as join analysis stage
@@ -1136,6 +1176,18 @@ class SqlOptimiser {
 
     private SqlNode nextLiteral(CharSequence token) {
         return nextLiteral(token, 0);
+    }
+
+    QueryModel optimise(QueryModel model, BindVariableService bindVariableService) throws SqlException {
+        enumerateTableColumns(model, bindVariableService);
+        resolveJoinColumns(model);
+        optimiseBooleanNot(model);
+        final QueryModel rewrittenModel = rewriteOrderBy(rewriteSelectClause(model, true));
+        optimiseOrderBy(rewrittenModel, ORDER_BY_UNKNOWN);
+        createOrderHash(rewrittenModel);
+        optimiseJoins(rewrittenModel);
+        moveWhereInsideSubQueries(rewrittenModel);
+        return rewrittenModel;
     }
 
     private SqlNode optimiseBooleanNot(final SqlNode node, boolean reverse) throws SqlException {

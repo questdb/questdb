@@ -23,17 +23,9 @@
 
 package com.questdb.griffin.model;
 
-import com.questdb.cairo.CairoException;
-import com.questdb.cairo.TableReader;
-import com.questdb.cairo.TableUtils;
-import com.questdb.cairo.pool.ex.EntryLockedException;
-import com.questdb.cairo.sql.CairoEngine;
-import com.questdb.common.RecordMetadata;
-import com.questdb.griffin.SqlException;
 import com.questdb.griffin.SqlNode;
 import com.questdb.std.*;
 import com.questdb.std.str.CharSink;
-import com.questdb.std.str.FlyweightCharSequence;
 
 import java.util.ArrayDeque;
 
@@ -356,39 +348,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public void setSelectModelType(int selectModelType) {
         this.selectModelType = selectModelType;
-    }
-
-    public RecordMetadata getTableMetadata(CairoEngine engine, FlyweightCharSequence charSequence) throws SqlException {
-        // table name must not contain quotes by now
-        SqlNode readerNode = getTableName();
-
-        int lo = 0;
-        int hi = readerNode.token.length();
-        if (Chars.startsWith(readerNode.token, NO_ROWID_MARKER)) {
-            lo += NO_ROWID_MARKER.length();
-        }
-
-        if (lo == hi) {
-            throw SqlException.$(readerNode.position, "come on, where is table name?");
-        }
-
-        int status = engine.getStatus(readerNode.token, lo, hi);
-
-        if (status == TableUtils.TABLE_DOES_NOT_EXIST) {
-            throw SqlException.$(readerNode.position, "table does not exist");
-        }
-
-        if (status == TableUtils.TABLE_RESERVED) {
-            throw SqlException.$(readerNode.position, "table directory is of unknown format");
-        }
-
-        try (TableReader r = engine.getReader(charSequence.of(readerNode.token, lo, hi - lo))) {
-            return r.getMetadata();
-        } catch (EntryLockedException e) {
-            throw SqlException.position(readerNode.position).put("table is locked: ").put(charSequence);
-        } catch (CairoException e) {
-            throw SqlException.position(readerNode.position).put(e);
-        }
     }
 
     public SqlNode getTableName() {

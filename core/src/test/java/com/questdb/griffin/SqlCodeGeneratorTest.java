@@ -29,12 +29,15 @@ import com.questdb.cairo.sql.RecordCursor;
 import com.questdb.cairo.sql.RecordCursorFactory;
 import com.questdb.common.ColumnType;
 import com.questdb.common.PartitionBy;
+import com.questdb.griffin.engine.functions.bind.BindVariableService;
 import com.questdb.std.Rnd;
 import org.junit.Test;
 
 import java.io.IOException;
 
 public class SqlCodeGeneratorTest extends AbstractCairoTest {
+
+    private static final BindVariableService bindVariableService = new BindVariableService();
 
     @Test
     public void testFilterSingleKeyValue() throws SqlException, IOException {
@@ -69,7 +72,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
         System.out.println("----------------------");
 
 
-        RecordCursorFactory rcf = parser.compile("select * from tab where sym = 'ABC'");
+        RecordCursorFactory rcf = parser.compile("select * from tab where sym = 'ABC'", bindVariableService);
         RecordCursor cursor = rcf.getCursor();
         sink.clear();
         printer.print(cursor, true, cursor.getMetadata());
@@ -109,7 +112,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
         System.out.println("----------------------");
 
 
-        RecordCursorFactory rcf = compiler.compile("select * from tab where sym = 'ABC' and value < 1.0");
+        RecordCursorFactory rcf = compiler.compile("select * from tab where sym = 'ABC' and value < 1.0", bindVariableService);
         RecordCursor cursor = rcf.getCursor();
         sink.clear();
         printer.print(cursor, true, cursor.getMetadata());

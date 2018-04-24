@@ -23,50 +23,7 @@
 
 package com.questdb.griffin;
 
-import com.questdb.cairo.sql.Record;
-import com.questdb.cairo.sql.RecordCursorFactory;
-import com.questdb.std.BinarySequence;
-import com.questdb.std.str.CharSink;
-
-public interface Function {
-
-    BinarySequence getBin(Record rec);
-
-    boolean getBool(Record rec);
-
-    byte getByte(Record rec);
-
-    long getDate(Record rec);
-
-    double getDouble(Record rec);
-
-    float getFloat(Record rec);
-
-    int getInt(Record rec);
-
-    long getLong(Record rec);
-
-    int getPosition();
-
-    short getShort(Record rec);
-
-    CharSequence getStr(Record rec);
-
-    void getStr(Record rec, CharSink sink);
-
-    CharSequence getStrB(Record rec);
-
-    int getStrLen(Record rec);
-
-    CharSequence getSymbol(Record rec);
-
-    long getTimestamp(Record rec);
-
-    int getType();
-
-    default boolean isConstant() {
-        return false;
-    }
-
-    RecordCursorFactory getRecordCursorFactory(Record record);
+public class TypeEx {
+    public static final int VAR_ARG = 100;
+    public static final int CURSOR = 101;
 }

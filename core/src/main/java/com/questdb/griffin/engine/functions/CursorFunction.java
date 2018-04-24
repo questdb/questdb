@@ -23,78 +23,56 @@
 
 package com.questdb.griffin.engine.functions;
 
-
 import com.questdb.cairo.sql.Record;
-import com.questdb.cairo.sql.RecordCursorFactory;
-import com.questdb.common.ColumnType;
 import com.questdb.griffin.Function;
+import com.questdb.griffin.TypeEx;
+import com.questdb.std.BinarySequence;
 import com.questdb.std.str.CharSink;
 
-public abstract class BinFunction implements Function {
-
+public abstract class CursorFunction implements Function {
     private final int position;
 
-    public BinFunction(int position) {
+    public CursorFunction(int position) {
         this.position = position;
     }
 
     @Override
-    public final boolean getBool(Record rec) {
+    public BinarySequence getBin(Record rec) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public final byte getByte(Record rec) {
+    public boolean getBool(Record rec) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public final long getDate(Record rec) {
+    public byte getByte(Record rec) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public final double getDouble(Record rec) {
+    public long getDate(Record rec) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public final float getFloat(Record rec) {
+    public double getDouble(Record rec) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public final int getInt(Record rec) {
+    public float getFloat(Record rec) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public final long getLong(Record rec) {
+    public int getInt(Record rec) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public final short getShort(Record rec) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public final CharSequence getStr(Record rec) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public final void getStr(Record rec, CharSink sink) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public final CharSequence getStrB(Record rec) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public final int getStrLen(Record rec) {
+    public long getLong(Record rec) {
         throw new UnsupportedOperationException();
     }
 
@@ -104,22 +82,42 @@ public abstract class BinFunction implements Function {
     }
 
     @Override
-    public final long getTimestamp(Record rec) {
+    public short getShort(Record rec) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public final int getType() {
-        return ColumnType.BINARY;
-    }
-
-    @Override
-    public final CharSequence getSymbol(Record rec) {
+    public CharSequence getStr(Record rec) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public RecordCursorFactory getRecordCursorFactory(Record record) {
+    public void getStr(Record rec, CharSink sink) {
         throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public CharSequence getStrB(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public int getStrLen(Record rec) {
+        return 0;
+    }
+
+    @Override
+    public CharSequence getSymbol(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public long getTimestamp(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public int getType() {
+        return TypeEx.CURSOR;
     }
 }

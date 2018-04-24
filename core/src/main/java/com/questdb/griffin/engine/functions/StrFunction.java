@@ -25,6 +25,7 @@ package com.questdb.griffin.engine.functions;
 
 
 import com.questdb.cairo.sql.Record;
+import com.questdb.cairo.sql.RecordCursorFactory;
 import com.questdb.common.ColumnType;
 import com.questdb.griffin.Function;
 import com.questdb.std.BinarySequence;
@@ -78,6 +79,11 @@ public abstract class StrFunction implements Function {
     }
 
     @Override
+    public int getPosition() {
+        return position;
+    }
+
+    @Override
     public final short getShort(Record rec) {
         throw new UnsupportedOperationException();
     }
@@ -93,8 +99,8 @@ public abstract class StrFunction implements Function {
     }
 
     @Override
-    public int getPosition() {
-        return position;
+    public final CharSequence getSymbol(Record rec) {
+        throw new UnsupportedOperationException();
     }
 
     @Override
@@ -108,7 +114,7 @@ public abstract class StrFunction implements Function {
     }
 
     @Override
-    public final CharSequence getSymbol(Record rec) {
+    public RecordCursorFactory getRecordCursorFactory(Record record) {
         throw new UnsupportedOperationException();
     }
 }

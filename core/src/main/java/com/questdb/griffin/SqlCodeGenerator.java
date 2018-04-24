@@ -23,7 +23,6 @@
 
 package com.questdb.griffin;
 
-import com.questdb.cairo.CairoConfiguration;
 import com.questdb.cairo.FullTableFrameCursorFactory;
 import com.questdb.cairo.IntervalFrameCursorFactory;
 import com.questdb.cairo.TableReader;
@@ -42,76 +41,74 @@ import com.questdb.griffin.model.ExecutionModel;
 import com.questdb.griffin.model.IntrinsicModel;
 import com.questdb.griffin.model.QueryModel;
 
-import java.util.ServiceLoader;
-
 public class SqlCodeGenerator {
     private final WhereClauseParser filterAnalyser = new WhereClauseParser();
     private final FunctionParser functionParser;
     private final CairoEngine engine;
 
-    public SqlCodeGenerator(CairoEngine engine, CairoConfiguration configuration) {
+    public SqlCodeGenerator(CairoEngine engine, FunctionParser functionParser) {
         this.engine = engine;
-        this.functionParser = new FunctionParser(configuration, ServiceLoader.load(FunctionFactory.class));
+        this.functionParser = functionParser;
     }
 
     private void clearState() {
         // todo: clear
     }
 
-    RecordCursorFactory generate(ExecutionModel model) throws SqlException {
+    RecordCursorFactory generate(ExecutionModel model, BindVariableService bindVariableService) throws SqlException {
         if (model.getModelType() == ExecutionModel.QUERY) {
             clearState();
-            return generateQuery((QueryModel) model);
+            return generateQuery((QueryModel) model, bindVariableService);
         }
         throw new IllegalArgumentException("QueryModel expected");
     }
 
-    private RecordCursorFactory generateNoSelect(QueryModel model) throws SqlException {
+    private RecordCursorFactory generateNoSelect(QueryModel model, BindVariableService bindVariableService) throws SqlException {
         if (model.getTableName() != null) {
-            return generateTableQuery(model);
+            return generateTableQuery(model, bindVariableService);
 
         }
         assert model.getNestedModel() != null;
-        return generateQuery(model.getNestedModel());
+        return generateQuery(model.getNestedModel(), bindVariableService);
     }
 
-    private RecordCursorFactory generateQuery(QueryModel model) throws SqlException {
+    private RecordCursorFactory generateQuery(QueryModel model, BindVariableService bindVariableService) throws SqlException {
         switch (model.getSelectModelType()) {
             case QueryModel.SELECT_MODEL_CHOOSE:
-                return generateSelectChoose(model);
+                return generateSelectChoose(model, bindVariableService);
             case QueryModel.SELECT_MODEL_GROUP_BY:
-                return generateSelectGroupBy(model);
+                return generateSelectGroupBy(model, bindVariableService);
             case QueryModel.SELECT_MODEL_VIRTUAL:
-                return generateSelectVirtual(model);
+                return generateSelectVirtual(model, bindVariableService);
             case QueryModel.SELECT_MODEL_ANALYTIC:
-                return generateSelectAnalytic(model);
+                return generateSelectAnalytic(model, bindVariableService);
             default:
-                return generateNoSelect(model);
+                return generateNoSelect(model, bindVariableService);
         }
     }
 
-    private RecordCursorFactory generateSelectAnalytic(QueryModel model) throws SqlException {
+    private RecordCursorFactory generateSelectAnalytic(QueryModel model, BindVariableService bindVariableService) throws SqlException {
         assert model.getNestedModel() != null;
-        return generateQuery(model.getNestedModel());
+        return generateQuery(model.getNestedModel(), bindVariableService);
     }
 
-    private RecordCursorFactory generateSelectChoose(QueryModel model) throws SqlException {
+    private RecordCursorFactory generateSelectChoose(QueryModel model, BindVariableService bindVariableService) throws SqlException {
         assert model.getNestedModel() != null;
-        return generateQuery(model.getNestedModel());
+        return generateQuery(model.getNestedModel(), bindVariableService);
     }
 
-    private RecordCursorFactory generateSelectGroupBy(QueryModel model) throws SqlException {
+    private RecordCursorFactory generateSelectGroupBy(QueryModel model, BindVariableService bindVariableService) throws SqlException {
         assert model.getNestedModel() != null;
-        return generateQuery(model.getNestedModel());
+        return generateQuery(model.getNestedModel(), bindVariableService);
     }
 
-    private RecordCursorFactory generateSelectVirtual(QueryModel model) throws SqlException {
+    private RecordCursorFactory generateSelectVirtual(QueryModel model, BindVariableService bindVariableService) throws SqlException {
         assert model.getNestedModel() != null;
-        return generateQuery(model.getNestedModel());
+        return generateQuery(model.getNestedModel(), bindVariableService);
     }
 
     @SuppressWarnings("ConstantConditions")
-    private RecordCursorFactory generateTableQuery(QueryModel model) throws SqlException {
+    private RecordCursorFactory generateTableQuery(QueryModel model, BindVariableService bindVariableService) throws SqlException {
 
 //        applyLimit(model);
 
@@ -139,9 +136,6 @@ public class SqlCodeGenerator {
                 }
 
                 Function filter;
-
-                // todo: design this properly
-                BindVariableService bindVariableService = new BindVariableService();
 
                 if (intrinsicModel.filter != null) {
                     filter = functionParser.parseFunction(intrinsicModel.filter, metadata, bindVariableService);

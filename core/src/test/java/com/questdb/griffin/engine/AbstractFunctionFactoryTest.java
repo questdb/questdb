@@ -55,6 +55,10 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
     }
 
     protected Invocation call(Object... args) throws SqlException {
+        return callCustomised(false, args);
+    }
+
+    protected Invocation callCustomised(boolean forceConstant, Object... args) throws SqlException {
         setUp2();
         toShortRefs = 0;
         toByteRefs = 0;
@@ -125,7 +129,7 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
 
             metadata.add(new TestColumnMetadata(columnName, argType));
 
-            if (constantArg) {
+            if (constantArg || forceConstant) {
                 printConstant(argType, expression1, arg);
                 printConstant(argType, expression2, arg);
             } else {
@@ -282,6 +286,7 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
             Assert.assertEquals(expected, function2.getBool(record));
         }
 
+
         public void andAssert(CharSequence expected) {
             if (function1.getType() == ColumnType.STRING) {
                 assertString(function1, expected);
@@ -312,6 +317,18 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
         public void andAssertTimestamp(long expected) {
             Assert.assertEquals(expected, function1.getTimestamp(record));
             Assert.assertEquals(expected, function2.getTimestamp(record));
+        }
+
+        public Function getFunction1() {
+            return function1;
+        }
+
+        public Function getFunction2() {
+            return function2;
+        }
+
+        public Record getRecord() {
+            return record;
         }
 
         private void assertString(Function func, CharSequence expected) {
@@ -381,11 +398,6 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
         }
 
         @Override
-        public CharSequence getStrB(int col) {
-            return (CharSequence) args[col];
-        }
-
-        @Override
         public int getInt(int col) {
             return (int) args[col];
         }
@@ -398,6 +410,11 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
         @Override
         public short getShort(int col) {
             return (short) (int) args[col];
+        }
+
+        @Override
+        public CharSequence getStrB(int col) {
+            return (CharSequence) args[col];
         }
 
         @Override

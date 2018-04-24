@@ -59,7 +59,7 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
             return that;
         }
 
-        if (value instanceof String) {
+        if (value instanceof FloatingSequence || value instanceof String) {
             return value;
         }
 
@@ -95,11 +95,15 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
         return _pos;
     }
 
-    public void goToPosition(int position) {
-        assert position < this._len;
+    public CharSequence getUnparsed() {
+        return unparsed == null ? null : immutableOf(unparsed);
+    }
+
+    public void goToPosition(int position, CharSequence unparsed) {
+        assert position <= this._len;
         this._pos = position;
         next = null;
-        unparsed = null;
+        this.unparsed = unparsed;
     }
 
     @Override

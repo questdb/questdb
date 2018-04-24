@@ -38,7 +38,6 @@ import org.jetbrains.annotations.NotNull;
 import java.util.ArrayDeque;
 
 public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
-    public static final int VAR_ARG = 100;
     private static final Log LOG = LogFactory.getLog(FunctionParser.class);
     private static IntHashSet invalidFunctionNameChars = new IntHashSet();
     private final ObjList<Function> mutableArgs = new ObjList<>();
@@ -94,7 +93,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
                 sigArgType = ColumnType.BINARY;
                 break;
             case 'V':
-                sigArgType = VAR_ARG;
+                sigArgType = TypeEx.VAR_ARG;
                 break;
             default:
                 sigArgType = -1;
@@ -331,7 +330,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
 
             if (sigArgCount > 0) {
                 char c = signature.charAt(sigArgOffset + sigArgCount - 1);
-                sigVarArg = getArgType(Character.toUpperCase(c)) == VAR_ARG;
+                sigVarArg = getArgType(Character.toUpperCase(c)) == TypeEx.VAR_ARG;
                 sigVarArgConst = Character.isLowerCase(c);
             } else {
                 sigVarArg = false;

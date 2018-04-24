@@ -212,7 +212,9 @@ public class ExpressionParserTest extends AbstractCairoTest {
 
     @Test
     public void testLiteralAndConstant() throws Exception {
-        x("'a b'x", "x 'a b'");
+        // expect that expression parser will stop after literal, because litral followed by constant does not
+        // make sense
+        x("x", "x 'a b'");
     }
 
     @Test

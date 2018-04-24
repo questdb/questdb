@@ -26,6 +26,7 @@ package com.questdb.griffin;
 import com.questdb.cairo.CairoConfiguration;
 import com.questdb.common.ColumnType;
 import com.questdb.common.PartitionBy;
+import com.questdb.griffin.engine.functions.bind.BindVariableService;
 import com.questdb.griffin.model.*;
 import com.questdb.std.*;
 
@@ -175,9 +176,13 @@ final class SqlParser {
     }
 
     private SqlNode literal(GenericLexer lexer, CharSequence name) {
+        return literal(name, lexer.lastTokenPosition());
+    }
+
+    private SqlNode literal(CharSequence name, int position) {
         // this can never be null in its current contexts
         // every time this function is called is after lexer.unparse(), which ensures non-null token.
-        return sqlNodePool.next().of(SqlNode.LITERAL, GenericLexer.unquote(name), 0, lexer.lastTokenPosition());
+        return sqlNodePool.next().of(SqlNode.LITERAL, GenericLexer.unquote(name), 0, position);
     }
 
     private SqlNode nextLiteral(CharSequence token, int position) {
@@ -200,7 +205,7 @@ final class SqlParser {
         return tok;
     }
 
-    ExecutionModel parse(GenericLexer lexer) throws SqlException {
+    ExecutionModel parse(GenericLexer lexer, BindVariableService bindVariableService) throws SqlException {
         CharSequence tok = tok(lexer, "'create', 'rename' or 'select'");
 
         if (Chars.equals(tok, "select")) {
@@ -208,7 +213,7 @@ final class SqlParser {
         }
 
         if (Chars.equals(tok, "create")) {
-            return parseCreateStatement(lexer);
+            return parseCreateStatement(lexer, bindVariableService);
         }
 
         if (Chars.equals(tok, "rename")) {
@@ -218,12 +223,12 @@ final class SqlParser {
         return parseSelect(lexer);
     }
 
-    private ExecutionModel parseCreateStatement(GenericLexer lexer) throws SqlException {
+    private ExecutionModel parseCreateStatement(GenericLexer lexer, BindVariableService bindVariableService) throws SqlException {
         expectTok(lexer, "table");
-        return parseCreateTable(lexer);
+        return parseCreateTable(lexer, bindVariableService);
     }
 
-    private ExecutionModel parseCreateTable(GenericLexer lexer) throws SqlException {
+    private ExecutionModel parseCreateTable(GenericLexer lexer, BindVariableService bindVariableService) throws SqlException {
         final CreateTableModel model = createTableModelPool.next();
         model.setName(nextLiteral(GenericLexer.unquote(tok(lexer, "table name")), lexer.lastTokenPosition()));
 
@@ -233,7 +238,7 @@ final class SqlParser {
             lexer.unparse();
             parseCreateTableColumns(lexer, model);
         } else if (Chars.equals(tok, "as")) {
-            parseCreateTableAsSelect(lexer, model);
+            parseCreateTableAsSelect(lexer, model, bindVariableService);
         } else {
             throw errUnexpected(lexer, tok);
         }
@@ -272,9 +277,9 @@ final class SqlParser {
         return model;
     }
 
-    private void parseCreateTableAsSelect(GenericLexer lexer, CreateTableModel model) throws SqlException {
+    private void parseCreateTableAsSelect(GenericLexer lexer, CreateTableModel model, BindVariableService bindVariableService) throws SqlException {
         expectTok(lexer, '(');
-        QueryModel queryModel = optimiser.optimise(parseDml(lexer));
+        QueryModel queryModel = optimiser.optimise(parseDml(lexer), bindVariableService);
         ObjList<QueryColumn> columns = queryModel.getColumns();
         assert columns.size() > 0;
 
@@ -466,7 +471,8 @@ final class SqlParser {
             }
         } else {
 
-            parseSelectFrom(lexer, model, tok, masterModel);
+            lexer.unparse();
+            parseSelectFrom(lexer, model, masterModel);
 
             tok = optTok(lexer);
 
@@ -574,14 +580,15 @@ final class SqlParser {
         if (Chars.equals(tok, '(')) {
             joinModel.setNestedModel(parseSubQuery(lexer));
         } else {
-            parseSelectFrom(lexer, joinModel, tok, parent);
+            lexer.unparse();
+            parseSelectFrom(lexer, joinModel, parent);
         }
 
         tok = optTok(lexer);
 
         if (tok != null && tableAliasStop.excludes(tok)) {
             lexer.unparse();
-            joinModel.setAlias(expr(lexer));
+            joinModel.setAlias(literal(lexer, optTok(lexer)));
         } else {
             lexer.unparse();
         }
@@ -778,14 +785,27 @@ final class SqlParser {
         }
     }
 
-    private void parseSelectFrom(GenericLexer lexer, QueryModel model, CharSequence name, QueryModel masterModel) throws SqlException {
-        final SqlNode literal = literal(lexer, name);
-        final WithClauseModel withClause = masterModel.getWithClause(name);
-        if (withClause != null) {
-            model.setNestedModel(parseWith(lexer, withClause));
-            model.setAlias(literal);
-        } else {
-            model.setTableName(literal);
+    private void parseSelectFrom(GenericLexer lexer, QueryModel model, QueryModel masterModel) throws SqlException {
+        SqlNode expr = expr(lexer);
+        CharSequence name = expr.token;
+
+        switch (expr.type) {
+            case SqlNode.LITERAL:
+            case SqlNode.CONSTANT:
+                final SqlNode literal = literal(name, expr.position);
+                final WithClauseModel withClause = masterModel.getWithClause(name);
+                if (withClause != null) {
+                    model.setNestedModel(parseWith(lexer, withClause));
+                    model.setAlias(literal);
+                } else {
+                    model.setTableName(literal);
+                }
+                break;
+            case SqlNode.FUNCTION:
+                model.setTableName(expr);
+                break;
+            default:
+                throw SqlException.$(expr.position, "function, literal or constant is expected");
         }
     }
 
@@ -818,11 +838,12 @@ final class SqlParser {
         }
 
         final int pos = lexer.getPosition();
-        lexer.goToPosition(wcm.getPosition());
+        final CharSequence unparsed = lexer.getUnparsed();
+        lexer.goToPosition(wcm.getPosition(), null);
         // this will not throw exception because this is second pass over the same sub-query
         // we wouldn't be here is syntax was wrong
         m = parseSubQuery(lexer);
-        lexer.goToPosition(pos);
+        lexer.goToPosition(pos, unparsed);
         return m;
     }
 

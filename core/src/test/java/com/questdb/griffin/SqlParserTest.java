@@ -27,6 +27,7 @@ import com.questdb.cairo.*;
 import com.questdb.cairo.sql.CairoEngine;
 import com.questdb.common.ColumnType;
 import com.questdb.common.PartitionBy;
+import com.questdb.griffin.engine.functions.bind.BindVariableService;
 import com.questdb.griffin.model.CreateTableModel;
 import com.questdb.griffin.model.ExecutionModel;
 import com.questdb.griffin.model.QueryModel;
@@ -39,6 +40,7 @@ import com.questdb.std.str.Path;
 import com.questdb.test.tools.TestUtils;
 import org.junit.AfterClass;
 import org.junit.Assert;
+import org.junit.Ignore;
 import org.junit.Test;
 
 import java.io.IOException;
@@ -46,6 +48,7 @@ import java.io.IOException;
 public class SqlParserTest extends AbstractCairoTest {
     private final static CairoEngine engine = new Engine(configuration);
     private final static SqlCompiler sqlCompiler = new SqlCompiler(engine, configuration);
+    private final static BindVariableService bindVariableService = new BindVariableService();
 
     @AfterClass
     public static void tearDown() throws IOException {
@@ -324,6 +327,15 @@ public class SqlParserTest extends AbstractCairoTest {
                 "select-virtual switch(a,'C',1,'A',2,'B') + 1 column, b from (tab)",
                 "select case when a = 1 then 'A' when 2 = a then 'B' else 'C' end+1, b from tab",
                 modelOf("tab").col("a", ColumnType.INT).col("b", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testConstantFunctionAsArg() throws Exception {
+        assertQuery(
+                "select-choose customerId from (customers where f(1.2) > 1)",
+                "select * from customers where f(1.2) > 1",
+                modelOf("customers").col("customerId", ColumnType.INT)
         );
     }
 
@@ -2166,18 +2178,18 @@ public class SqlParserTest extends AbstractCairoTest {
 
     @Test
     public void testLexerReset() {
-
         for (int i = 0; i < 10; i++) {
             try {
                 sqlCompiler.compileExecutionModel("select \n" +
-                        "-- ltod(Date)\n" +
-                        "count() \n" +
-                        "-- from acc\n" +
-                        "from acc(Date) sample by 1d\n" +
-                        "-- where x = 10\n");
+                                "-- ltod(Date)\n" +
+                                "count() \n" +
+                                "-- from acc\n" +
+                                "from acc(Date) sample by 1d\n" +
+                                "-- where x = 10\n",
+                        bindVariableService);
                 Assert.fail();
             } catch (SqlException e) {
-                TestUtils.assertEquals("unexpected token: Date", e.getFlyweightMessage());
+                TestUtils.assertEquals("Invalid column: Date", e.getFlyweightMessage());
             }
         }
     }
@@ -2255,7 +2267,7 @@ public class SqlParserTest extends AbstractCairoTest {
     @Test
     public void testMissingWhere() {
         try {
-            sqlCompiler.compileExecutionModel("select id, x + 10, x from tab id ~ 'HBRO'");
+            sqlCompiler.compileExecutionModel("select id, x + 10, x from tab id ~ 'HBRO'", bindVariableService);
             Assert.fail("Exception expected");
         } catch (SqlException e) {
             Assert.assertEquals(33, e.getPosition());
@@ -2862,6 +2874,13 @@ public class SqlParserTest extends AbstractCairoTest {
     }
 
     @Test
+    @Ignore
+    public void testSelectFromFunction() throws SqlException {
+        assertQuery("",
+                "select * from xyz('a','b')");
+    }
+
+    @Test
     public void testSelectFromSubQuery() throws SqlException {
         assertQuery(
                 "select-choose a.x x from ((tab where y > 10) a)",
@@ -3090,6 +3109,16 @@ public class SqlParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSubQueryAsArg() throws Exception {
+        assertQuery(
+                "select-choose customerId from (customers where (select-choose * column from (orders)) > 1)",
+                "select * from customers where (select * from orders) > 1",
+                modelOf("orders").col("orderId", ColumnType.INT),
+                modelOf("customers").col("customerId", ColumnType.INT)
+        );
+    }
+
+    @Test
     public void testSubQueryLimitLoHi() throws Exception {
         assertQuery(
                 "select-choose" +
@@ -3111,8 +3140,8 @@ public class SqlParserTest extends AbstractCairoTest {
     public void testTableNameAsArithmetic() {
         assertSyntaxError(
                 "select x from 'tab' + 1",
-                22,
-                "unexpected",
+                20,
+                "function, literal or constant is expected",
                 modelOf("tab").col("x", ColumnType.INT)
         );
     }
@@ -3228,7 +3257,7 @@ public class SqlParserTest extends AbstractCairoTest {
             }
             b.append('f').append(i);
         }
-        QueryModel st = (QueryModel) sqlCompiler.compileExecutionModel(b);
+        QueryModel st = (QueryModel) sqlCompiler.compileExecutionModel(b, bindVariableService);
         Assert.assertEquals(SqlParser.MAX_ORDER_BY_COLUMNS - 1, st.getOrderBy().size());
     }
 
@@ -3243,7 +3272,7 @@ public class SqlParserTest extends AbstractCairoTest {
             b.append('f').append(i);
         }
         try {
-            sqlCompiler.compileExecutionModel(b);
+            sqlCompiler.compileExecutionModel(b, bindVariableService);
         } catch (SqlException e) {
             TestUtils.assertEquals("Too many columns", e.getFlyweightMessage());
         }
@@ -3354,7 +3383,7 @@ public class SqlParserTest extends AbstractCairoTest {
             for (int i = 0, n = tableModels.length; i < n; i++) {
                 CairoTestUtils.create(tableModels[i]);
             }
-            compiler.compileExecutionModel(query);
+            compiler.compileExecutionModel(query, bindVariableService);
             Assert.fail("Exception expected");
         } catch (SqlException e) {
             Assert.assertEquals(position, e.getPosition());
@@ -3372,7 +3401,7 @@ public class SqlParserTest extends AbstractCairoTest {
 
     private void assertCreateTable(String expected, String ddl, TableModel... tableModels) throws SqlException {
         createModelsAndRun(() -> {
-            ExecutionModel model = sqlCompiler.compileExecutionModel(ddl);
+            ExecutionModel model = sqlCompiler.compileExecutionModel(ddl, bindVariableService);
             Assert.assertEquals(ExecutionModel.CREATE_TABLE, model.getModelType());
             Assert.assertTrue(model instanceof CreateTableModel);
             sink.clear();
@@ -3384,7 +3413,7 @@ public class SqlParserTest extends AbstractCairoTest {
     private void assertQuery(String expected, String query, TableModel... tableModels) throws SqlException {
         createModelsAndRun(() -> {
             sink.clear();
-            ExecutionModel model = sqlCompiler.compileExecutionModel(query);
+            ExecutionModel model = sqlCompiler.compileExecutionModel(query, bindVariableService);
             Assert.assertEquals(model.getModelType(), ExecutionModel.QUERY);
             ((QueryModel) model).toSink(sink);
             TestUtils.assertEquals(expected, sink);

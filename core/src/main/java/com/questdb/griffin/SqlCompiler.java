@@ -26,11 +26,14 @@ package com.questdb.griffin;
 import com.questdb.cairo.CairoConfiguration;
 import com.questdb.cairo.sql.CairoEngine;
 import com.questdb.cairo.sql.RecordCursorFactory;
+import com.questdb.griffin.engine.functions.bind.BindVariableService;
 import com.questdb.griffin.model.ExecutionModel;
 import com.questdb.griffin.model.QueryColumn;
 import com.questdb.griffin.model.QueryModel;
 import com.questdb.std.GenericLexer;
 import com.questdb.std.ObjectPool;
+
+import java.util.ServiceLoader;
 
 public class SqlCompiler {
     private final SqlOptimiser optimiser;
@@ -44,19 +47,21 @@ public class SqlCompiler {
 
     public SqlCompiler(CairoEngine engine, CairoConfiguration configuration) {
         //todo: apply configuration to all storage parameters
-        sqlNodePool = new ObjectPool<>(SqlNode.FACTORY, 128);
-        queryColumnPool = new ObjectPool<>(QueryColumn.FACTORY, 64);
-        queryModelPool = new ObjectPool<>(QueryModel.FACTORY, 16);
-        characterStore = new CharacterStore();
-        lexer = new GenericLexer();
+        this.sqlNodePool = new ObjectPool<>(SqlNode.FACTORY, 128);
+        this.queryColumnPool = new ObjectPool<>(QueryColumn.FACTORY, 64);
+        this.queryModelPool = new ObjectPool<>(QueryModel.FACTORY, 16);
+        this.characterStore = new CharacterStore();
+        this.lexer = new GenericLexer();
+        final FunctionParser functionParser = new FunctionParser(configuration, ServiceLoader.load(FunctionFactory.class));
+        this.codeGenerator = new SqlCodeGenerator(engine, functionParser);
+
         configureLexer(lexer);
-        codeGenerator = new SqlCodeGenerator(engine, configuration);
 
         final PostOrderTreeTraversalAlgo postOrderTreeTraversalAlgo = new PostOrderTreeTraversalAlgo();
         optimiser = new SqlOptimiser(
                 engine,
                 characterStore, sqlNodePool,
-                queryColumnPool, queryModelPool, postOrderTreeTraversalAlgo
+                queryColumnPool, queryModelPool, postOrderTreeTraversalAlgo, functionParser
         );
 
         parser = new SqlParser(
@@ -85,8 +90,8 @@ public class SqlCompiler {
         }
     }
 
-    public RecordCursorFactory compile(CharSequence query) throws SqlException {
-        return generate(compileExecutionModel(query));
+    public RecordCursorFactory compile(CharSequence query, BindVariableService bindVariableService) throws SqlException {
+        return generate(compileExecutionModel(query, bindVariableService), bindVariableService);
     }
 
     private void clear() {
@@ -98,22 +103,22 @@ public class SqlCompiler {
         parser.clear();
     }
 
-    ExecutionModel compileExecutionModel(GenericLexer lexer) throws SqlException {
-        ExecutionModel model = parser.parse(lexer);
+    ExecutionModel compileExecutionModel(GenericLexer lexer, BindVariableService bindVariableService) throws SqlException {
+        ExecutionModel model = parser.parse(lexer, bindVariableService);
         if (model instanceof QueryModel) {
-            return optimiser.optimise((QueryModel) model);
+            return optimiser.optimise((QueryModel) model, bindVariableService);
         }
         return model;
     }
 
-    ExecutionModel compileExecutionModel(CharSequence query) throws SqlException {
+    ExecutionModel compileExecutionModel(CharSequence query, BindVariableService bindVariableService) throws SqlException {
         clear();
         lexer.of(query);
-        return compileExecutionModel(lexer);
+        return compileExecutionModel(lexer, bindVariableService);
     }
 
-    RecordCursorFactory generate(ExecutionModel executionModel) throws SqlException {
-        return codeGenerator.generate(executionModel);
+    RecordCursorFactory generate(ExecutionModel executionModel, BindVariableService bindVariableService) throws SqlException {
+        return codeGenerator.generate(executionModel, bindVariableService);
     }
 
     // this exposed for testing only

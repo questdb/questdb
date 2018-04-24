@@ -191,10 +191,15 @@ class ExpressionParser {
                     case '9':
                     case '"':
                     case '\'':
-                        thisBranch = BRANCH_CONSTANT;
-                        // If the token is a number, then add it to the output queue.
-                        listener.onNode(sqlNodePool.next().of(SqlNode.CONSTANT, GenericLexer.immutableOf(tok), 0, lexer.lastTokenPosition()));
-                        break;
+                        if (nonLiteralBranches.excludes(thisBranch)) {
+                            thisBranch = BRANCH_CONSTANT;
+                            // If the token is a number, then add it to the output queue.
+                            listener.onNode(sqlNodePool.next().of(SqlNode.CONSTANT, GenericLexer.immutableOf(tok), 0, lexer.lastTokenPosition()));
+                            break;
+                        } else {
+                            lexer.unparse();
+                            break OUT;
+                        }
                     case 'N':
                     case 'n':
                     case 't':
