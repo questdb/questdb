@@ -322,7 +322,7 @@ public class SqlParserTest extends AbstractCairoTest {
 
     @Test
     public void testCaseToSwitchExpression2() throws SqlException {
-        // this test has inverded '=' arguments but should still be rewritten to 'switch'
+        // this test has inverted '=' arguments but should still be rewritten to 'switch'
         assertQuery(
                 "select-virtual switch(a,'C',1,'A',2,'B') + 1 column, b from (tab)",
                 "select case when a = 1 then 'A' when 2 = a then 'B' else 'C' end+1, b from tab",

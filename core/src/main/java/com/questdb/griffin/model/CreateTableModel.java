@@ -32,7 +32,6 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable {
     public static final ObjectFactory<CreateTableModel> FACTORY = CreateTableModel::new;
     private static final long COLUMN_FLAG_CHACHED = 1L;
     private static final long COLUMN_FLAG_INDEXED = 2L;
-    private static int DEFAULT_SYMBOL_CAPACITY = 128;
     private final CharSequenceObjHashMap<ColumnCastModel> columnCastModels = new CharSequenceObjHashMap<>();
     private final LongList columnBits = new LongList();
     private final ObjList<CharSequence> columnNames = new ObjList<>();

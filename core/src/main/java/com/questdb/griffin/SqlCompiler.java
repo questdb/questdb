@@ -23,17 +23,29 @@
 
 package com.questdb.griffin;
 
+import com.questdb.cairo.AppendMemory;
 import com.questdb.cairo.CairoConfiguration;
+import com.questdb.cairo.SymbolMapWriter;
+import com.questdb.cairo.TableUtils;
 import com.questdb.cairo.sql.CairoEngine;
 import com.questdb.cairo.sql.RecordCursorFactory;
+import com.questdb.common.ColumnType;
+import com.questdb.common.PartitionBy;
 import com.questdb.griffin.engine.functions.bind.BindVariableService;
+import com.questdb.griffin.model.CreateTableModel;
 import com.questdb.griffin.model.ExecutionModel;
 import com.questdb.griffin.model.QueryColumn;
 import com.questdb.griffin.model.QueryModel;
+import com.questdb.std.Files;
+import com.questdb.std.FilesFacade;
 import com.questdb.std.GenericLexer;
 import com.questdb.std.ObjectPool;
+import com.questdb.std.str.Path;
 
 import java.util.ServiceLoader;
+
+import static com.questdb.cairo.TableUtils.META_FILE_NAME;
+import static com.questdb.cairo.TableUtils.TXN_FILE_NAME;
 
 public class SqlCompiler {
     private final SqlOptimiser optimiser;
@@ -44,6 +56,9 @@ public class SqlCompiler {
     private final ObjectPool<QueryModel> queryModelPool;
     private final GenericLexer lexer;
     private final SqlCodeGenerator codeGenerator;
+    private final CairoConfiguration configuration;
+    private final Path path = new Path();
+    private final AppendMemory mem = new AppendMemory();
 
     public SqlCompiler(CairoEngine engine, CairoConfiguration configuration) {
         //todo: apply configuration to all storage parameters
@@ -54,6 +69,7 @@ public class SqlCompiler {
         this.lexer = new GenericLexer();
         final FunctionParser functionParser = new FunctionParser(configuration, ServiceLoader.load(FunctionFactory.class));
         this.codeGenerator = new SqlCodeGenerator(engine, functionParser);
+        this.configuration = configuration;
 
         configureLexer(lexer);
 
@@ -91,7 +107,22 @@ public class SqlCompiler {
     }
 
     public RecordCursorFactory compile(CharSequence query, BindVariableService bindVariableService) throws SqlException {
-        return generate(compileExecutionModel(query, bindVariableService), bindVariableService);
+        ExecutionModel executionModel = compileExecutionModel(query, bindVariableService);
+        if (executionModel.getModelType() == ExecutionModel.QUERY) {
+            return generate((QueryModel) executionModel, bindVariableService);
+        }
+        throw new IllegalArgumentException();
+    }
+
+    public void execute(CharSequence query, BindVariableService bindVariableService) throws SqlException {
+        ExecutionModel executionModel = compileExecutionModel(query, bindVariableService);
+        switch (executionModel.getModelType()) {
+            case ExecutionModel.QUERY:
+                break;
+            case ExecutionModel.CREATE_TABLE:
+                createTable((CreateTableModel) executionModel, bindVariableService);
+                break;
+        }
     }
 
     private void clear() {
@@ -105,7 +136,7 @@ public class SqlCompiler {
 
     ExecutionModel compileExecutionModel(GenericLexer lexer, BindVariableService bindVariableService) throws SqlException {
         ExecutionModel model = parser.parse(lexer, bindVariableService);
-        if (model instanceof QueryModel) {
+        if (model.getModelType() == ExecutionModel.QUERY) {
             return optimiser.optimise((QueryModel) model, bindVariableService);
         }
         return model;
@@ -117,8 +148,74 @@ public class SqlCompiler {
         return compileExecutionModel(lexer, bindVariableService);
     }
 
-    RecordCursorFactory generate(ExecutionModel executionModel, BindVariableService bindVariableService) throws SqlException {
-        return codeGenerator.generate(executionModel, bindVariableService);
+    private void copyDataFromCursor(CreateTableModel model, BindVariableService bindVariableService) throws SqlException {
+        RecordCursorFactory factory = generate(model.getQueryModel(), bindVariableService);
+    }
+
+    private void createEmptyTable(CreateTableModel model) throws SqlException {
+        final FilesFacade ff = configuration.getFilesFacade();
+
+        if (TableUtils.exists(ff, path, configuration.getRoot(), model.getName().token) != TableUtils.TABLE_DOES_NOT_EXIST) {
+            throw SqlException.position(model.getName().position).put("table already exists [table=").put(model.getName().token).put(']');
+        }
+
+        path.of(configuration.getRoot()).concat(model.getName().token);
+        final int rootLen = path.length();
+
+        if (ff.mkdirs(path.put(Files.SEPARATOR).$(), configuration.getMkDirMode()) == -1) {
+            throw SqlException.position(model.getName().position).put("cannot create directory [path=").put(path).put(", errno=").put(ff.errno()).put(']');
+        }
+
+        try (AppendMemory mem = this.mem) {
+
+            mem.of(ff, path.trimTo(rootLen).concat(META_FILE_NAME).$(), ff.getPageSize());
+
+            int count = model.getColumnCount();
+            mem.putInt(count);
+            mem.putInt(PartitionBy.fromString(model.getPartitionBy().token));
+            mem.putInt(model.getColumnIndex(model.getTimestamp().token));
+            mem.jumpTo(TableUtils.META_OFFSET_COLUMN_TYPES);
+
+            for (int i = 0; i < count; i++) {
+                mem.putByte((byte) model.getColumnType(i));
+                mem.putBool(model.getIndexedFlag(i));
+                mem.putInt(model.getIndexBlockCapacity(i));
+                mem.skip(10); // reserved
+            }
+            for (int i = 0; i < count; i++) {
+                mem.putStr(model.getColumnName(i));
+            }
+
+            // create symbol maps
+            int symbolMapCount = 0;
+            for (int i = 0; i < count; i++) {
+                if (model.getColumnType(i) == ColumnType.SYMBOL) {
+                    SymbolMapWriter.createSymbolMapFiles(
+                            ff,
+                            mem,
+                            path.trimTo(rootLen),
+                            model.getColumnName(i),
+                            model.getSymbolCapacity(i),
+                            model.getSymbolCacheFlag(i)
+                    );
+                    symbolMapCount++;
+                }
+            }
+            mem.of(ff, path.trimTo(rootLen).concat(TXN_FILE_NAME).$(), ff.getPageSize());
+            TableUtils.resetTxn(mem, symbolMapCount);
+        }
+    }
+
+    private void createTable(CreateTableModel model, BindVariableService bindVariableService) throws SqlException {
+        if (model.getQueryModel() == null) {
+            createEmptyTable(model);
+        } else {
+            copyDataFromCursor(model, bindVariableService);
+        }
+    }
+
+    RecordCursorFactory generate(QueryModel queryModel, BindVariableService bindVariableService) throws SqlException {
+        return codeGenerator.generate(queryModel, bindVariableService);
     }
 
     // this exposed for testing only

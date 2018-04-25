@@ -233,7 +233,9 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
 
     private Function createColumn(SqlNode node) throws SqlException {
         try {
+            //todo: test what happens when column is removed after expression had been parsed
             final int index = metadata.getColumnIndex(node.token);
+
             switch (metadata.getColumnQuick(index).getType()) {
                 case ColumnType.BOOLEAN:
                     return new BooleanColumn(node.position, index);

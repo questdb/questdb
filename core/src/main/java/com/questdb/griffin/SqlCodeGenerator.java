@@ -37,7 +37,6 @@ import com.questdb.griffin.engine.functions.bind.BindVariableService;
 import com.questdb.griffin.engine.table.FilteredTableRecordCursorFactory;
 import com.questdb.griffin.engine.table.SymbolIndexFilteredRowCursorFactory;
 import com.questdb.griffin.engine.table.SymbolIndexRowCursorFactory;
-import com.questdb.griffin.model.ExecutionModel;
 import com.questdb.griffin.model.IntrinsicModel;
 import com.questdb.griffin.model.QueryModel;
 
@@ -55,12 +54,9 @@ public class SqlCodeGenerator {
         // todo: clear
     }
 
-    RecordCursorFactory generate(ExecutionModel model, BindVariableService bindVariableService) throws SqlException {
-        if (model.getModelType() == ExecutionModel.QUERY) {
-            clearState();
-            return generateQuery((QueryModel) model, bindVariableService);
-        }
-        throw new IllegalArgumentException("QueryModel expected");
+    RecordCursorFactory generate(QueryModel model, BindVariableService bindVariableService) throws SqlException {
+        clearState();
+        return generateQuery(model, bindVariableService);
     }
 
     private RecordCursorFactory generateNoSelect(QueryModel model, BindVariableService bindVariableService) throws SqlException {
