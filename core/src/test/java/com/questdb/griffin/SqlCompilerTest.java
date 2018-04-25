@@ -31,7 +31,8 @@ import org.junit.Assert;
 import org.junit.Test;
 
 public class SqlCompilerTest extends AbstractCairoTest {
-    private final static SqlCompiler compiler = new SqlCompiler(new Engine(configuration), configuration);
+    private final static Engine engine = new Engine(configuration);
+    private final static SqlCompiler compiler = new SqlCompiler(engine, configuration);
     private final static BindVariableService bindVariableService = new BindVariableService();
 
     @Test

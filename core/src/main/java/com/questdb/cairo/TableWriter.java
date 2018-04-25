@@ -1262,7 +1262,7 @@ public class TableWriter implements Closeable {
 
     @SuppressWarnings("unused")
     private void recoverFrommTodoWriteFailure(CharSequence columnName) {
-        rename(TableUtils.META_PREV_FILE_NAME, metaPrevIndex, TableUtils.META_FILE_NAME);
+        restoreMetaFrom(TableUtils.META_PREV_FILE_NAME, metaPrevIndex);
         openMetaFile();
     }
 
@@ -1463,12 +1463,11 @@ public class TableWriter implements Closeable {
         }
     }
 
-    private int rename(CharSequence from, CharSequence toBase, int retries) {
+    private int rename(int retries) {
         try {
-
             int index = 0;
-            other.concat(toBase).$();
-            path.concat(from).$();
+            other.concat(TableUtils.META_PREV_FILE_NAME).$();
+            path.concat(TableUtils.META_FILE_NAME).$();
             int l = other.length();
 
             do {
@@ -1491,6 +1490,7 @@ public class TableWriter implements Closeable {
                 }
 
                 return index;
+
             } while (index < retries);
 
             throw CairoException.instance(0).put("Cannot rename ").put(path).put(". Max number of attempts reached [").put(index).put("]. Last target was: ").put(other);
@@ -1500,26 +1500,9 @@ public class TableWriter implements Closeable {
         }
     }
 
-    private void rename(CharSequence fromBase, int fromIndex, CharSequence to) {
-        try {
-            path.concat(fromBase);
-            if (fromIndex > 0) {
-                path.put('.').put(fromIndex);
-            }
-            path.$();
-
-            if (!ff.rename(path, other.concat(to).$())) {
-                throw CairoException.instance(ff.errno()).put("Cannot rename ").put(path).put(" -> ").put(other);
-            }
-        } finally {
-            path.trimTo(rootLen);
-            other.trimTo(rootLen);
-        }
-    }
-
     private void renameMetaToMetaPrev(CharSequence columnName) {
         try {
-            this.metaPrevIndex = rename(TableUtils.META_FILE_NAME, TableUtils.META_PREV_FILE_NAME, fileOperationRetryCount);
+            this.metaPrevIndex = rename(fileOperationRetryCount);
         } catch (CairoException e) {
             runFragile(RECOVER_FROM_META_RENAME_FAILURE, columnName, e);
         }
@@ -1528,9 +1511,26 @@ public class TableWriter implements Closeable {
     private void renameSwapMetaToMeta(CharSequence columnName) {
         // rename _meta.swp to _meta
         try {
-            rename(TableUtils.META_SWAP_FILE_NAME, metaSwapIndex, TableUtils.META_FILE_NAME);
+            restoreMetaFrom(TableUtils.META_SWAP_FILE_NAME, metaSwapIndex);
         } catch (CairoException e) {
             runFragile(RECOVER_FROM_SWAP_RENAME_FAILURE, columnName, e);
+        }
+    }
+
+    private void restoreMetaFrom(CharSequence fromBase, int fromIndex) {
+        try {
+            path.concat(fromBase);
+            if (fromIndex > 0) {
+                path.put('.').put(fromIndex);
+            }
+            path.$();
+
+            if (!ff.rename(path, other.concat(TableUtils.META_FILE_NAME).$())) {
+                throw CairoException.instance(ff.errno()).put("Cannot rename ").put(path).put(" -> ").put(other);
+            }
+        } finally {
+            path.trimTo(rootLen);
+            other.trimTo(rootLen);
         }
     }
 
@@ -1737,10 +1737,7 @@ public class TableWriter implements Closeable {
                         continue OUT;
                     }
 
-                    if (cursor > -1) {
-                        break;
-                    }
-                } while (true);
+                } while (cursor < 0);
             }
 
             final ColumnIndexerEntry queueItem = indexQueue.get(cursor);
