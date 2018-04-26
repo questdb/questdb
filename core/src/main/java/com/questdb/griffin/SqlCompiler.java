@@ -30,9 +30,9 @@ import com.questdb.cairo.TableUtils;
 import com.questdb.cairo.sql.CairoEngine;
 import com.questdb.cairo.sql.RecordCursor;
 import com.questdb.cairo.sql.RecordCursorFactory;
+import com.questdb.cairo.sql.RecordMetadata;
 import com.questdb.common.ColumnType;
 import com.questdb.common.PartitionBy;
-import com.questdb.common.RecordMetadata;
 import com.questdb.griffin.engine.functions.bind.BindVariableService;
 import com.questdb.griffin.model.*;
 import com.questdb.std.*;
@@ -192,8 +192,9 @@ public class SqlCompiler {
         }
 
         // validate type of timestamp column
+        // no need to worry that column will not resolve
         SqlNode timestamp = model.getTimestamp();
-        if (timestamp != null && metadata.getColumn(timestamp.token).getType() != ColumnType.TIMESTAMP) {
+        if (timestamp != null && metadata.getColumnType(timestamp.token) != ColumnType.TIMESTAMP) {
             throw SqlException.$(timestamp.position, "TIMESTAMP reference expected");
         }
 
@@ -217,7 +218,7 @@ public class SqlCompiler {
                 if (castIndex < 0) {
                     mem.putByte((byte) typeCast.valueAt(castIndex));
                 } else {
-                    mem.putByte((byte) metadata.getColumnQuick(i).getType());
+                    mem.putByte((byte) metadata.getColumnType(i));
                 }
                 mem.putBool(model.getIndexedFlag(i));
                 mem.putInt(model.getIndexBlockCapacity(i));
@@ -237,7 +238,7 @@ public class SqlCompiler {
                 if (castIndex < 0) {
                     columnType = typeCast.valueAt(castIndex);
                 } else {
-                    columnType = metadata.getColumnQuick(i).getType();
+                    columnType = metadata.getColumnType(i);
                 }
 
                 if (columnType == ColumnType.SYMBOL) {

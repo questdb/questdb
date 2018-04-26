@@ -25,10 +25,8 @@ package com.questdb.griffin;
 
 import com.questdb.cairo.AbstractCairoTest;
 import com.questdb.cairo.Engine;
-import com.questdb.common.RecordColumnMetadata;
-import com.questdb.common.SymbolTable;
+import com.questdb.cairo.GenericRecordMetadata;
 import com.questdb.griffin.engine.functions.bind.BindVariableService;
-import com.questdb.ql.CollectionRecordMetadata;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Before;
 
@@ -45,7 +43,7 @@ public class BaseFunctionFactoryTest extends AbstractCairoTest {
         functions.clear();
     }
 
-    protected static Function parseFunction(CharSequence expression, CollectionRecordMetadata metadata, FunctionParser functionParser) throws SqlException {
+    protected static Function parseFunction(CharSequence expression, GenericRecordMetadata metadata, FunctionParser functionParser) throws SqlException {
         return functionParser.parseFunction(expr(expression), metadata, bindVariableService);
     }
 
@@ -57,40 +55,4 @@ public class BaseFunctionFactoryTest extends AbstractCairoTest {
     protected FunctionParser createFunctionParser() {
         return new FunctionParser(configuration, functions);
     }
-
-    protected static class TestColumnMetadata implements RecordColumnMetadata {
-        private final String name;
-        private final int type;
-
-        public TestColumnMetadata(String name, int type) {
-            this.name = name;
-            this.type = type;
-        }
-
-        @Override
-        public int getBucketCount() {
-            return 0;
-        }
-
-        @Override
-        public String getName() {
-            return name;
-        }
-
-        @Override
-        public SymbolTable getSymbolTable() {
-            return null;
-        }
-
-        @Override
-        public int getType() {
-            return type;
-        }
-
-        @Override
-        public boolean isIndexed() {
-            return false;
-        }
-    }
-
 }

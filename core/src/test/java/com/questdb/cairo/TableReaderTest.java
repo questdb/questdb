@@ -1637,16 +1637,6 @@ public class TableReaderTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testDummyFacade() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            CairoTestUtils.createAllTable(configuration, PartitionBy.NONE);
-            try (TableReader reader = new TableReader(configuration, "all")) {
-                Assert.assertNull(reader.getCursor().getStorageFacade());
-            }
-        });
-    }
-
-    @Test
     public void testNullValueRecovery() throws Exception {
         final String expected = "int\tshort\tbyte\tdouble\tfloat\tlong\tstr\tsym\tbool\tbin\tdate\n" +
                 "NaN\t0\t0\tNaN\tNaN\tNaN\t\tabc\ttrue\t\t\n";

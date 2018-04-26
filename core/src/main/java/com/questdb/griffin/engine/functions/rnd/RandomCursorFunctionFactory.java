@@ -24,19 +24,14 @@
 package com.questdb.griffin.engine.functions.rnd;
 
 import com.questdb.cairo.CairoConfiguration;
-import com.questdb.cairo.sql.MetadataContainer;
-import com.questdb.cairo.sql.Record;
-import com.questdb.cairo.sql.RecordCursor;
-import com.questdb.cairo.sql.RecordCursorFactory;
+import com.questdb.cairo.GenericRecordMetadata;
+import com.questdb.cairo.TableColumnMetadata;
+import com.questdb.cairo.sql.*;
 import com.questdb.common.ColumnType;
-import com.questdb.common.RecordMetadata;
-import com.questdb.common.StorageFacade;
 import com.questdb.griffin.Function;
 import com.questdb.griffin.FunctionFactory;
 import com.questdb.griffin.SqlException;
 import com.questdb.griffin.engine.functions.CursorFunction;
-import com.questdb.ql.CollectionRecordMetadata;
-import com.questdb.ql.RecordColumnMetadataImpl;
 import com.questdb.std.Misc;
 import com.questdb.std.ObjList;
 import com.questdb.std.str.StringSink;
@@ -50,7 +45,7 @@ public class RandomCursorFunctionFactory implements FunctionFactory {
     @Override
     public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) throws SqlException {
         long count = args.getQuick(0).getLong(null);
-        CollectionRecordMetadata metadata = new CollectionRecordMetadata();
+        GenericRecordMetadata metadata = new GenericRecordMetadata();
         final StringSink b = Misc.getThreadLocalBuilder();
         for (int i = 1, n = args.size(); i < n; i++) {
             Function arg = args.getQuick(i);
@@ -62,7 +57,7 @@ public class RandomCursorFunctionFactory implements FunctionFactory {
                 throw SqlException.$(arg.getPosition(), "constant argument expected");
             }
             b.put("x").put(i);
-            metadata.add(new RecordColumnMetadataImpl(b.toString(), arg.getInt(null)));
+            metadata.add(new TableColumnMetadata(b.toString(), arg.getInt(null)));
             b.clear();
         }
 
@@ -86,11 +81,6 @@ public class RandomCursorFunctionFactory implements FunctionFactory {
             @Override
             public Record getRecord() {
                 return record;
-            }
-
-            @Override
-            public StorageFacade getStorageFacade() {
-                return null;
             }
 
             @Override

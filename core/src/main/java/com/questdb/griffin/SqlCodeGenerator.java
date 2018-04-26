@@ -26,13 +26,8 @@ package com.questdb.griffin;
 import com.questdb.cairo.FullTableFrameCursorFactory;
 import com.questdb.cairo.IntervalFrameCursorFactory;
 import com.questdb.cairo.TableReader;
-import com.questdb.cairo.sql.CairoEngine;
-import com.questdb.cairo.sql.DataFrameCursorFactory;
-import com.questdb.cairo.sql.RecordCursorFactory;
-import com.questdb.cairo.sql.RowCursorFactory;
+import com.questdb.cairo.sql.*;
 import com.questdb.common.ColumnType;
-import com.questdb.common.RecordColumnMetadata;
-import com.questdb.common.RecordMetadata;
 import com.questdb.griffin.engine.functions.bind.BindVariableService;
 import com.questdb.griffin.engine.table.FilteredTableRecordCursorFactory;
 import com.questdb.griffin.engine.table.SymbolIndexFilteredRowCursorFactory;
@@ -169,8 +164,7 @@ public class SqlCodeGenerator {
 
                     // first check if column is valid
                     int latestByIndex = metadata.getColumnIndex(latestBy.token);
-                    RecordColumnMetadata latestByMeta = metadata.getColumnQuick(latestByIndex);
-                    if (latestByMeta.getType() != ColumnType.SYMBOL) {
+                    if (metadata.getColumnType(latestByIndex) != ColumnType.SYMBOL) {
                         throw SqlException.$(latestBy.position, "has to be SYMBOL");
                     }
 

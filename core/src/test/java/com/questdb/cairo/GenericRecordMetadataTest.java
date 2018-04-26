@@ -23,42 +23,30 @@
 
 package com.questdb.cairo;
 
-import com.questdb.common.SymbolTable;
+import com.questdb.common.ColumnType;
+import com.questdb.test.tools.TestUtils;
+import org.junit.Assert;
+import org.junit.Test;
 
-public class TableColumnMetadata {
-    private final String name;
-    private final int type;
-    private final boolean indexed;
-    private final int indexValueBlockCapacity;
+public class GenericRecordMetadataTest {
+    @Test
+    public void testDuplicateColumn() {
+        GenericRecordMetadata metadata = new GenericRecordMetadata();
+        metadata.add(new TableColumnMetadata("abc", ColumnType.INT));
+        metadata.add(new TableColumnMetadata("cde", ColumnType.INT));
 
-    public TableColumnMetadata(String name, int type) {
-        this(name, type, false, 0);
-    }
+        Assert.assertEquals(2, metadata.getColumnCount());
 
-    public TableColumnMetadata(String name, int type, boolean indexFlag, int indexValueBlockCapacity) {
-        this.name = name;
-        this.type = type;
-        this.indexed = indexFlag;
-        this.indexValueBlockCapacity = indexValueBlockCapacity;
-    }
+        Assert.assertEquals(0, metadata.getColumnIndexQuiet("abc"));
+        Assert.assertEquals(1, metadata.getColumnIndexQuiet("cde"));
+        try {
+            metadata.add(new TableColumnMetadata("abc", ColumnType.FLOAT));
+            Assert.fail();
+        } catch (CairoException e) {
+            TestUtils.assertContains(e.getMessage(), "Duplicate column");
+        }
 
-    public int getIndexValueBlockCapacity() {
-        return indexValueBlockCapacity;
-    }
-
-    public String getName() {
-        return name;
-    }
-
-    public SymbolTable getSymbolTable() {
-        return null;
-    }
-
-    public int getType() {
-        return type;
-    }
-
-    public boolean isIndexed() {
-        return indexed;
+        Assert.assertEquals(0, metadata.getColumnIndexQuiet("abc"));
+        Assert.assertEquals(ColumnType.INT, metadata.getColumnType(0));
     }
 }

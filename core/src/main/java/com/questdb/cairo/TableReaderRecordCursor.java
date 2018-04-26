@@ -25,8 +25,7 @@ package com.questdb.cairo;
 
 import com.questdb.cairo.sql.Record;
 import com.questdb.cairo.sql.RecordCursor;
-import com.questdb.common.RecordMetadata;
-import com.questdb.common.StorageFacade;
+import com.questdb.cairo.sql.RecordMetadata;
 import com.questdb.std.Rows;
 
 public class TableReaderRecordCursor implements RecordCursor {
@@ -53,11 +52,6 @@ public class TableReaderRecordCursor implements RecordCursor {
     @Override
     public Record getRecord() {
         return record;
-    }
-
-    @Override
-    public StorageFacade getStorageFacade() {
-        return null;
     }
 
     @Override

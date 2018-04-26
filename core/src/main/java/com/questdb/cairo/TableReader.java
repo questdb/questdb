@@ -24,7 +24,9 @@
 package com.questdb.cairo;
 
 import com.questdb.cairo.sql.RecordCursor;
-import com.questdb.common.*;
+import com.questdb.cairo.sql.RecordMetadata;
+import com.questdb.common.ColumnType;
+import com.questdb.common.PartitionBy;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.std.*;
@@ -185,7 +187,7 @@ public class TableReader implements Closeable {
             Misc.free(bitmapIndexes.getAndSetQuick(base / 2 + columnIndex, null));
         }
 
-        if (metadata.getColumnQuick(columnIndex).getType() == ColumnType.SYMBOL) {
+        if (metadata.getColumnType(columnIndex) == ColumnType.SYMBOL) {
             // same goes for symbol map reader - replace object with maker instance
             Misc.free(symbolMapReaders.getAndSetQuick(columnIndex, ForceEmptySymbolMapReader.INSTANCE));
         }
@@ -196,7 +198,6 @@ public class TableReader implements Closeable {
      * Windows OS.
      *
      * @param columnName name of column to be closed.
-     * @throws NoSuchColumnException when column is not found.
      */
     public void closeColumnForRemove(CharSequence columnName) {
         closeColumnForRemove(metadata.getColumnIndex(columnName));
@@ -224,10 +225,6 @@ public class TableReader implements Closeable {
         return metadata;
     }
 
-    public CharSequence getTableName() {
-        return tableName;
-    }
-
     public int getPartitionCount() {
         return partitionCount;
     }
@@ -242,6 +239,14 @@ public class TableReader implements Closeable {
 
     public int getPartitionedBy() {
         return metadata.getPartitionBy();
+    }
+
+    public SymbolMapReader getSymbolMapReader(int columnIndex) {
+        return symbolMapReaders.getQuick(columnIndex);
+    }
+
+    public CharSequence getTableName() {
+        return tableName;
     }
 
     public boolean isOpen() {
@@ -446,9 +451,8 @@ public class TableReader implements Closeable {
     @NotNull
     private BitmapIndexReader createBitmapIndexReaderAt(int columnBase, int columnIndex) {
         BitmapIndexReader reader;
-        RecordColumnMetadata meta = metadata.getColumnQuick(columnIndex);
-        if (!meta.isIndexed()) {
-            throw CairoException.instance(0).put("Not indexed: ").put(meta.getName());
+        if (!metadata.isColumnIndexed(columnIndex)) {
+            throw CairoException.instance(0).put("Not indexed: ").put(metadata.getColumnName(columnIndex));
         }
 
         ReadOnlyColumn col = columns.getQuick(getPrimaryColumnIndex(columnBase, columnIndex));
@@ -457,7 +461,7 @@ public class TableReader implements Closeable {
         } else {
             Path path = partitionPathGenerator.generate(this, getPartitionIndex(columnBase));
             try {
-                reader = new BitmapIndexBackwardReader(configuration, path.chopZ(), meta.getName(), getColumnTop(columnBase, columnIndex));
+                reader = new BitmapIndexBackwardReader(configuration, path.chopZ(), metadata.getColumnName(columnIndex), getColumnTop(columnBase, columnIndex));
             } finally {
                 path.trimTo(rootLen);
             }
@@ -634,10 +638,6 @@ public class TableReader implements Closeable {
         return partitionRowCounts.getQuick(partitionIndex);
     }
 
-    public SymbolMapReader getSymbolMapReader(int columnIndex) {
-        return symbolMapReaders.getQuick(columnIndex);
-    }
-
     private void incrementPartitionCountBy(int delta) {
         partitionRowCounts.seed(partitionCount, delta, -1);
         partitionCount += delta;
@@ -650,7 +650,7 @@ public class TableReader implements Closeable {
 
     private TableReaderMetadata openMetaFile() {
         try {
-            return new TableReaderMetadata(ff, tableName, path.concat(TableUtils.META_FILE_NAME).$());
+            return new TableReaderMetadata(ff, path.concat(TableUtils.META_FILE_NAME).$());
         } finally {
             path.trimTo(rootLen);
         }
@@ -706,9 +706,8 @@ public class TableReader implements Closeable {
     private void openSymbolMaps() {
         int symbolColumnIndex = 0;
         for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
-            RecordColumnMetadata m = metadata.getColumnQuick(i);
-            if (m.getType() == ColumnType.SYMBOL) {
-                SymbolMapReaderImpl symbolMapReader = new SymbolMapReaderImpl(configuration, path, m.getName(), symbolCountSnapshot.getQuick(symbolColumnIndex++));
+            if (metadata.getColumnType(i) == ColumnType.SYMBOL) {
+                SymbolMapReaderImpl symbolMapReader = new SymbolMapReaderImpl(configuration, path, metadata.getColumnName(i), symbolCountSnapshot.getQuick(symbolColumnIndex++));
                 symbolMapReaders.extendAndSet(i, symbolMapReader);
             }
         }
@@ -817,8 +816,7 @@ public class TableReader implements Closeable {
     private void reloadColumnAt(Path path, ObjList<ReadOnlyColumn> columns, LongList columnTops, ObjList<BitmapIndexReader> indexReaders, int columnBase, int columnIndex, long partitionRowCount) {
         int plen = path.length();
         try {
-            final RecordColumnMetadata meta = metadata.getColumnQuick(columnIndex);
-            final String name = meta.getName();
+            final CharSequence name = metadata.getColumnName(columnIndex);
             final int primaryIndex = getPrimaryColumnIndex(columnBase, columnIndex);
             final int secondaryIndex = getSecondaryColumnIndex(columnBase, columnIndex);
             final int topIndex = columnBase / 2 + columnIndex;
@@ -838,7 +836,7 @@ public class TableReader implements Closeable {
                 }
 
                 final long columnTop = TableUtils.readColumnTop(ff, path.trimTo(plen), name, plen, tempMem8b);
-                final int type = meta.getType();
+                final int type = metadata.getColumnType(columnIndex);
 
                 switch (type) {
                     case ColumnType.BINARY:
@@ -860,7 +858,7 @@ public class TableReader implements Closeable {
 
                 columnTops.setQuick(topIndex, columnTop);
 
-                if (meta.isIndexed()) {
+                if (metadata.isColumnIndexed(columnIndex)) {
                     if (indexReader instanceof BitmapIndexBackwardReader) {
                         ((BitmapIndexBackwardReader) indexReader).of(configuration, path.trimTo(plen), name, columnTop);
                     }
@@ -933,7 +931,7 @@ public class TableReader implements Closeable {
             growColumn(
                     columns.getQuick(getPrimaryColumnIndex(columnBase, i)),
                     columns.getQuick(getSecondaryColumnIndex(columnBase, i)),
-                    metadata.getColumnQuick(i).getType(),
+                    metadata.getColumnType(i),
                     rowCount - getColumnTop(columnBase, i)
             );
 
@@ -988,20 +986,20 @@ public class TableReader implements Closeable {
     private void reloadSymbolMapCounts() {
         int symbolMapIndex = 0;
         for (int i = 0; i < columnCount; i++) {
-            if (metadata.getColumnQuick(i).getType() == ColumnType.SYMBOL) {
+            if (metadata.getColumnType(i) == ColumnType.SYMBOL) {
                 symbolMapReaders.getQuick(i).updateSymbolCount(symbolCountSnapshot.getQuick(symbolMapIndex++));
             }
         }
     }
 
     private SymbolMapReader reloadSymbolMapReader(int columnIndex, SymbolMapReader reader) {
-        RecordColumnMetadata m = metadata.getColumnQuick(columnIndex);
-        if (m.getType() == ColumnType.SYMBOL) {
+//        RecordColumnMetadata m = metadata.getColumnQuick(columnIndex);
+        if (metadata.getColumnType(columnIndex) == ColumnType.SYMBOL) {
             if (reader instanceof SymbolMapReaderImpl) {
-                ((SymbolMapReaderImpl) reader).of(configuration, path, m.getName(), 0);
+                ((SymbolMapReaderImpl) reader).of(configuration, path, metadata.getColumnName(columnIndex), 0);
                 return reader;
             }
-            return new SymbolMapReaderImpl(configuration, path, m.getName(), 0);
+            return new SymbolMapReaderImpl(configuration, path, metadata.getColumnName(columnIndex), 0);
         } else {
             return reader;
         }

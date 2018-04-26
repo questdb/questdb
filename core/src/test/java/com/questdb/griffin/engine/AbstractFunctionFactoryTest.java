@@ -23,6 +23,8 @@
 
 package com.questdb.griffin.engine;
 
+import com.questdb.cairo.GenericRecordMetadata;
+import com.questdb.cairo.TableColumnMetadata;
 import com.questdb.cairo.sql.Record;
 import com.questdb.common.ColumnType;
 import com.questdb.griffin.*;
@@ -30,7 +32,6 @@ import com.questdb.griffin.engine.functions.date.ToDateLongFunctionFactory;
 import com.questdb.griffin.engine.functions.date.ToTimestampLongFunctionFactory;
 import com.questdb.griffin.engine.functions.math.ToByteIntFunctionFactory;
 import com.questdb.griffin.engine.functions.math.ToShortIntFunctionFactory;
-import com.questdb.ql.CollectionRecordMetadata;
 import com.questdb.std.BinarySequence;
 import com.questdb.std.Numbers;
 import com.questdb.std.str.StringSink;
@@ -73,7 +74,7 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
 
         // create metadata
 
-        final CollectionRecordMetadata metadata = new CollectionRecordMetadata();
+        final GenericRecordMetadata metadata = new GenericRecordMetadata();
         final String name = signature.substring(0, pos);
         final int argCount;
         final boolean hasVarArg;
@@ -127,7 +128,7 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
                 expression2.put(',');
             }
 
-            metadata.add(new TestColumnMetadata(columnName, argType));
+            metadata.add(new TableColumnMetadata(columnName, argType));
 
             if (constantArg || forceConstant) {
                 printConstant(argType, expression1, arg);

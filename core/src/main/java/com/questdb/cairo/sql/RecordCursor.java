@@ -23,14 +23,11 @@
 
 package com.questdb.cairo.sql;
 
-import com.questdb.common.StorageFacade;
 import com.questdb.std.ImmutableIterator;
 
 public interface RecordCursor extends ImmutableIterator<Record>, MetadataContainer {
 
     Record getRecord();
-
-    StorageFacade getStorageFacade();
 
     Record newRecord();
 

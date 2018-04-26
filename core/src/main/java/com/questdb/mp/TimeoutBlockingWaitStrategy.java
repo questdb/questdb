@@ -23,7 +23,6 @@
 
 package com.questdb.mp;
 
-import com.questdb.common.JournalRuntimeException;
 import com.questdb.ex.TimeoutException;
 
 import java.util.concurrent.TimeUnit;
@@ -58,7 +57,7 @@ public class TimeoutBlockingWaitStrategy extends AbstractWaitStrategy {
                 throw TimeoutException.INSTANCE;
             }
         } catch (InterruptedException e) {
-            throw new JournalRuntimeException(e);
+            throw new RuntimeException(e);
         } finally {
             lock.unlock();
         }

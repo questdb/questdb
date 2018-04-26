@@ -28,8 +28,8 @@ import com.questdb.cairo.TableReader;
 import com.questdb.cairo.TableUtils;
 import com.questdb.cairo.pool.ex.EntryLockedException;
 import com.questdb.cairo.sql.CairoEngine;
+import com.questdb.cairo.sql.RecordMetadata;
 import com.questdb.common.ColumnType;
-import com.questdb.common.RecordMetadata;
 import com.questdb.griffin.engine.functions.bind.BindVariableService;
 import com.questdb.griffin.model.AnalyticColumn;
 import com.questdb.griffin.model.JoinContext;
@@ -772,13 +772,13 @@ class SqlOptimiser {
             SqlNode timestamp = model.getTimestamp();
             if (timestamp == null) {
                 if (m.getTimestampIndex() != -1) {
-                    model.setTimestamp(exprNodePool.next().of(SqlNode.LITERAL, m.getColumnQuick(m.getTimestampIndex()).getName(), 0, 0));
+                    model.setTimestamp(exprNodePool.next().of(SqlNode.LITERAL, m.getColumnName(m.getTimestampIndex()), 0, 0));
                 }
             } else {
                 int index = m.getColumnIndexQuiet(timestamp.token);
                 if (index == -1) {
                     throw SqlException.invalidColumn(timestamp.position, timestamp.token);
-                } else if (m.getColumnQuick(index).getType() != ColumnType.TIMESTAMP) {
+                } else if (m.getColumnType(index) != ColumnType.TIMESTAMP) {
                     throw SqlException.$(timestamp.position, "not a TIMESTAMP");
                 }
             }

@@ -24,12 +24,12 @@
 package com.questdb.cairo.sql;
 
 import com.questdb.cairo.TableReader;
-import com.questdb.common.StorageFacade;
+import com.questdb.common.SymbolTable;
 import com.questdb.std.ImmutableIterator;
 
 import java.io.Closeable;
 
-public interface DataFrameCursor extends ImmutableIterator<DataFrame>, StorageFacade, Closeable {
+public interface DataFrameCursor extends ImmutableIterator<DataFrame>, Closeable {
 
     @Override
     void close(); // we don't throw IOException
@@ -40,4 +40,6 @@ public interface DataFrameCursor extends ImmutableIterator<DataFrame>, StorageFa
     boolean reload();
 
     void toTop();
+
+    SymbolTable getSymbolTable(int columnIndex);
 }

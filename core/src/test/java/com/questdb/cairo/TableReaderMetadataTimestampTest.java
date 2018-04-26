@@ -25,7 +25,6 @@ package com.questdb.cairo;
 
 import com.questdb.common.ColumnType;
 import com.questdb.common.PartitionBy;
-import com.questdb.common.RecordColumnMetadata;
 import com.questdb.std.FilesFacadeImpl;
 import com.questdb.std.str.Path;
 import com.questdb.std.str.StringSink;
@@ -202,7 +201,7 @@ public class TableReaderMetadataTimestampTest extends AbstractCairoTest {
         int columnCount = 11;
         TestUtils.assertMemoryLeak(() -> {
             try (Path path = new Path().of(root).concat("all")) {
-                try (TableReaderMetadata metadata = new TableReaderMetadata(FilesFacadeImpl.INSTANCE, "all", path.concat(TableUtils.META_FILE_NAME).$())) {
+                try (TableReaderMetadata metadata = new TableReaderMetadata(FilesFacadeImpl.INSTANCE, path.concat(TableUtils.META_FILE_NAME).$())) {
 
                     Assert.assertEquals(12, metadata.getColumnCount());
                     Assert.assertEquals(expectedInitialTimestampIndex, metadata.getTimestampIndex());
@@ -216,8 +215,7 @@ public class TableReaderMetadataTimestampTest extends AbstractCairoTest {
                         metadata.applyTransitionIndex(pTransitionIndex);
                         Assert.assertEquals(columnCount, metadata.getColumnCount());
                         for (int i = 0; i < columnCount; i++) {
-                            RecordColumnMetadata m = metadata.getColumnQuick(i);
-                            sink.put(m.getName()).put(':').put(ColumnType.nameOf(m.getType())).put('\n');
+                            sink.put(metadata.getColumnName(i)).put(':').put(ColumnType.nameOf(metadata.getColumnType(i))).put('\n');
                         }
 
                         TestUtils.assertEquals(expected, sink);
@@ -237,7 +235,7 @@ public class TableReaderMetadataTimestampTest extends AbstractCairoTest {
                                             int expectedColumnCount) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (Path path = new Path().of(root).concat("all")) {
-                try (TableReaderMetadata metadata = new TableReaderMetadata(FilesFacadeImpl.INSTANCE, "all", path.concat(TableUtils.META_FILE_NAME).$())) {
+                try (TableReaderMetadata metadata = new TableReaderMetadata(FilesFacadeImpl.INSTANCE, path.concat(TableUtils.META_FILE_NAME).$())) {
 
                     Assert.assertEquals(12, metadata.getColumnCount());
                     Assert.assertEquals(expectedInitialTimestampIndex, metadata.getTimestampIndex());
@@ -251,8 +249,7 @@ public class TableReaderMetadataTimestampTest extends AbstractCairoTest {
                         metadata.applyTransitionIndex(address);
                         Assert.assertEquals(expectedColumnCount, metadata.getColumnCount());
                         for (int i = 0; i < expectedColumnCount; i++) {
-                            RecordColumnMetadata m = metadata.getColumnQuick(i);
-                            sink.put(m.getName()).put(':').put(ColumnType.nameOf(m.getType())).put('\n');
+                            sink.put(metadata.getColumnName(i)).put(':').put(ColumnType.nameOf(metadata.getColumnType(i))).put('\n');
                         }
 
                         TestUtils.assertEquals(expected, sink);

@@ -24,9 +24,9 @@
 package com.questdb.griffin;
 
 import com.questdb.cairo.CairoConfiguration;
+import com.questdb.cairo.sql.InvalidColumnException;
+import com.questdb.cairo.sql.RecordMetadata;
 import com.questdb.common.ColumnType;
-import com.questdb.common.NoSuchColumnException;
-import com.questdb.common.RecordMetadata;
 import com.questdb.griffin.engine.functions.bind.BindVariableService;
 import com.questdb.griffin.engine.functions.columns.*;
 import com.questdb.griffin.engine.functions.constants.*;
@@ -236,7 +236,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
             //todo: test what happens when column is removed after expression had been parsed
             final int index = metadata.getColumnIndex(node.token);
 
-            switch (metadata.getColumnQuick(index).getType()) {
+            switch (metadata.getColumnType(index)) {
                 case ColumnType.BOOLEAN:
                     return new BooleanColumn(node.position, index);
                 case ColumnType.BYTE:
@@ -263,7 +263,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
                     return new TimestampColumn(node.position, index);
 
             }
-        } catch (NoSuchColumnException e) {
+        } catch (InvalidColumnException e) {
             throw SqlException.invalidColumn(node.position, node.token);
         }
     }

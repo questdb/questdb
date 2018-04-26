@@ -23,23 +23,18 @@
 
 package com.questdb.cairo;
 
-import com.questdb.common.AbstractRecordMetadata;
 import com.questdb.common.ColumnType;
-import com.questdb.common.RecordColumnMetadata;
 import com.questdb.std.CharSequenceIntHashMap;
 import com.questdb.std.FilesFacade;
 import com.questdb.std.ObjList;
 
-public class TableWriterMetadata extends AbstractRecordMetadata {
-    private final ObjList<TableColumnMetadata> columnMetadata;
-    private final CharSequenceIntHashMap columnNameIndexMap = new CharSequenceIntHashMap();
-    private final int timestampIndex;
-    private int columnCount;
+public class TableWriterMetadata extends BaseRecordMetadata {
     private int symbolMapCount;
 
     public TableWriterMetadata(FilesFacade ff, ReadOnlyMemory metaMem) {
-        TableUtils.validate(ff, metaMem, columnNameIndexMap);
         this.columnCount = metaMem.getInt(TableUtils.META_OFFSET_COUNT);
+        this.columnNameIndexMap = new CharSequenceIntHashMap(columnCount);
+        TableUtils.validate(ff, metaMem, columnNameIndexMap);
         this.timestampIndex = metaMem.getInt(TableUtils.META_OFFSET_TIMESTAMP_INDEX);
         this.columnMetadata = new ObjList<>(this.columnCount);
 
@@ -63,27 +58,6 @@ public class TableWriterMetadata extends AbstractRecordMetadata {
             }
             offset += ReadOnlyMemory.getStorageLength(name);
         }
-    }
-
-    @Override
-    public int getColumnCount() {
-        return columnCount;
-    }
-
-
-    @Override
-    public int getColumnIndexQuiet(CharSequence name) {
-        return columnNameIndexMap.get(name);
-    }
-
-    @Override
-    public RecordColumnMetadata getColumnQuick(int index) {
-        return columnMetadata.getQuick(index);
-    }
-
-    @Override
-    public int getTimestampIndex() {
-        return timestampIndex;
     }
 
     public int getSymbolMapCount() {

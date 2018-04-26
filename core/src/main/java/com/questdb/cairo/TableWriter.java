@@ -23,7 +23,10 @@
 
 package com.questdb.cairo;
 
-import com.questdb.common.*;
+import com.questdb.cairo.sql.RecordMetadata;
+import com.questdb.common.ColumnType;
+import com.questdb.common.PartitionBy;
+import com.questdb.common.SymbolTable;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.mp.RingQueue;
@@ -200,7 +203,7 @@ public class TableWriter implements Closeable {
      * already have data this function will create ".top" file in addition to column files. ".top" file contains
      * size of partition at the moment of column creation. It must be used to accurately position inside new
      * column when either appending or reading.
-     * <p>
+     *
      * <b>Failures</b>
      * Adding new column can fail in many different situations. None of the failures affect integrity of data that is already in
      * the table but can leave instance of TableWriter in inconsistent state. When this happens function will throw CairoError.
@@ -209,7 +212,7 @@ public class TableWriter implements Closeable {
      * <p>
      * Whenever function throws CairoException application code can continue using TableWriter instance and may attempt to
      * add columns again.
-     * <p>
+     *
      * <b>Transactions</b>
      * <p>
      * Pending transaction will be committed before function attempts to add column. Even when function is unsuccessful it may
@@ -404,7 +407,7 @@ public class TableWriter implements Closeable {
         checkDistressed();
 
         final int index = getColumnIndex(name);
-        final int type = metadata.getColumnQuick(index).getType();
+        final int type = metadata.getColumnType(index);
 
         LOG.info().$("removing column '").utf8(name).$("' from ").$(path).$();
 
@@ -880,20 +883,19 @@ public class TableWriter implements Closeable {
         int expectedMapWriters = txMem.getInt(TX_OFFSET_MAP_WRITER_COUNT);
         long nextSymbolCountOffset = TX_OFFSET_MAP_WRITER_COUNT + 4;
         for (int i = 0; i < columnCount; i++) {
-            RecordColumnMetadata m = metadata.getColumnQuick(i);
-            int type = m.getType();
-            configureColumn(type, m.isIndexed());
+            int type = metadata.getColumnType(i);
+            configureColumn(type, metadata.isColumnIndexed(i));
 
             if (type == ColumnType.SYMBOL) {
                 assert nextSymbolCountOffset < TX_OFFSET_MAP_WRITER_COUNT + 4 + 8 * expectedMapWriters;
                 // keep symbol map writers list sparse for ease of access
-                SymbolMapWriter symbolMapWriter = new SymbolMapWriter(configuration, path.trimTo(rootLen), m.getName(), txMem.getInt(nextSymbolCountOffset));
+                SymbolMapWriter symbolMapWriter = new SymbolMapWriter(configuration, path.trimTo(rootLen), metadata.getColumnName(i), txMem.getInt(nextSymbolCountOffset));
                 symbolMapWriters.extendAndSet(i, symbolMapWriter);
                 denseSymbolMapWriters.add(symbolMapWriter);
                 nextSymbolCountOffset += 4;
             }
 
-            if (m.isIndexed()) {
+            if (metadata.isColumnIndexed(i)) {
                 indexers.extendAndSet(i, new SymbolColumnIndexer());
             }
         }
@@ -952,12 +954,12 @@ public class TableWriter implements Closeable {
      * Creates bitmap index files for a column. This method uses primary column instance as temporary tool to
      * append index data. Therefore it must be called before primary column is initialized.
      *
-     * @param columnName         column name
-     * @param columnIndex        column index in table writer column list
-     * @param indexBlockCapacity approximate number of values per index key
-     * @param plen               path length. This is used to trim shared path object to.
+     * @param columnName              column name
+     * @param columnIndex             column index in table writer column list
+     * @param indexValueBlockCapacity approximate number of values per index key
+     * @param plen                    path length. This is used to trim shared path object to.
      */
-    private void createIndexFiles(CharSequence columnName, int columnIndex, int indexBlockCapacity, int plen, boolean force) {
+    private void createIndexFiles(CharSequence columnName, int columnIndex, int indexValueBlockCapacity, int plen, boolean force) {
         try {
             BitmapIndexUtils.keyFileName(path.trimTo(plen), columnName);
 
@@ -968,7 +970,7 @@ public class TableWriter implements Closeable {
             // reuse memory column object to create index and close it at the end
             try (AppendMemory mem = getPrimaryColumn(columnIndex)) {
                 mem.of(ff, path, ff.getPageSize());
-                BitmapIndexWriter.initKeyMemory(mem, indexBlockCapacity);
+                BitmapIndexWriter.initKeyMemory(mem, indexValueBlockCapacity);
             } catch (CairoException e) {
                 // looks like we could not create key file properly
                 // lets not leave half baked file sitting around
@@ -1165,16 +1167,15 @@ public class TableWriter implements Closeable {
             assert columnCount > 0;
 
             for (int i = 0; i < columnCount; i++) {
-                final RecordColumnMetadata meta = metadata.getColumnQuick(i);
-                final CharSequence name = meta.getName();
-                final boolean indexed = meta.isIndexed();
+                final CharSequence name = metadata.getColumnName(i);
+                final boolean indexed = metadata.isColumnIndexed(i);
                 final long columnTop;
 
                 // prepare index writer if column requires indexing
                 if (indexed) {
                     // we have to create files before columns are open
                     // because we are reusing AppendMemory object from columns list
-                    createIndexFiles(name, i, meta.getBucketCount(), plen, transientRowCount < 1);
+                    createIndexFiles(name, i, metadata.getIndexValueBlockCapacity(i), plen, transientRowCount < 1);
                 }
 
                 openColumnFiles(name, i, plen);
@@ -1517,23 +1518,6 @@ public class TableWriter implements Closeable {
         }
     }
 
-    private void restoreMetaFrom(CharSequence fromBase, int fromIndex) {
-        try {
-            path.concat(fromBase);
-            if (fromIndex > 0) {
-                path.put('.').put(fromIndex);
-            }
-            path.$();
-
-            if (!ff.rename(path, other.concat(TableUtils.META_FILE_NAME).$())) {
-                throw CairoException.instance(ff.errno()).put("Cannot rename ").put(path).put(" -> ").put(other);
-            }
-        } finally {
-            path.trimTo(rootLen);
-            other.trimTo(rootLen);
-        }
-    }
-
     private void repairMetaRename(int index) {
         try {
             path.concat(TableUtils.META_PREV_FILE_NAME);
@@ -1567,6 +1551,23 @@ public class TableWriter implements Closeable {
         }
         TableUtils.resetTxn(txMem, metadata.getSymbolMapCount());
         removeTodoFile();
+    }
+
+    private void restoreMetaFrom(CharSequence fromBase, int fromIndex) {
+        try {
+            path.concat(fromBase);
+            if (fromIndex > 0) {
+                path.put('.').put(fromIndex);
+            }
+            path.$();
+
+            if (!ff.rename(path, other.concat(TableUtils.META_FILE_NAME).$())) {
+                throw CairoException.instance(ff.errno()).put("Cannot rename ").put(path).put(" -> ").put(other);
+            }
+        } finally {
+            path.trimTo(rootLen);
+            other.trimTo(rootLen);
+        }
     }
 
     private void rollbackIndexes() {

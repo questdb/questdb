@@ -23,56 +23,17 @@
 
 package com.questdb.griffin;
 
-import com.questdb.common.NoSuchColumnException;
-import com.questdb.common.RecordColumnMetadata;
-import com.questdb.common.RecordMetadata;
+import com.questdb.cairo.BaseRecordMetadata;
 
-public class EmptyRecordMetadata implements RecordMetadata {
-
+public final class EmptyRecordMetadata extends BaseRecordMetadata {
     public static final EmptyRecordMetadata INSTANCE = new EmptyRecordMetadata();
 
-    @Override
-    public String getAlias() {
-        return null;
+    private EmptyRecordMetadata() {
+        columnCount = 0;
     }
 
     @Override
-    public void setAlias(String alias) {
-
-    }
-
-    @Override
-    public RecordColumnMetadata getColumn(CharSequence name) {
-        return null;
-    }
-
-    @Override
-    public int getColumnCount() {
-        return 0;
-    }
-
-    @Override
-    public int getColumnIndex(CharSequence name) {
-        throw new NoSuchColumnException(name);
-    }
-
-    @Override
-    public int getColumnIndexQuiet(CharSequence name) {
-        throw new NoSuchColumnException(name);
-    }
-
-    @Override
-    public String getColumnName(int index) {
-        return null;
-    }
-
-    @Override
-    public RecordColumnMetadata getColumnQuick(int index) {
-        return null;
-    }
-
-    @Override
-    public int getTimestampIndex() {
+    public int getColumnIndexQuiet(CharSequence columnName) {
         return -1;
     }
 }

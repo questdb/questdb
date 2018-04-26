@@ -32,7 +32,7 @@ public class TableColumnMetadataTest {
     public void testHasIndex() {
         TableColumnMetadata metadata = new TableColumnMetadata("x", ColumnType.INT, true, 0);
         Assert.assertNull(metadata.getSymbolTable());
-        Assert.assertEquals(0, metadata.getBucketCount());
+        Assert.assertEquals(0, metadata.getIndexValueBlockCapacity());
         Assert.assertTrue(metadata.isIndexed());
     }
 
@@ -40,7 +40,7 @@ public class TableColumnMetadataTest {
     public void testNoIndex() {
         TableColumnMetadata metadata = new TableColumnMetadata("x", ColumnType.INT, false, 0);
         Assert.assertNull(metadata.getSymbolTable());
-        Assert.assertEquals(0, metadata.getBucketCount());
+        Assert.assertEquals(0, metadata.getIndexValueBlockCapacity());
         Assert.assertFalse(metadata.isIndexed());
     }
 

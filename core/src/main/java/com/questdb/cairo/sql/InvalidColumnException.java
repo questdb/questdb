@@ -21,15 +21,8 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.engine.views;
+package com.questdb.cairo.sql;
 
-import com.questdb.BootstrapEnv;
-import com.questdb.common.RecordMetadata;
-import com.questdb.ql.RecordSource;
-import com.questdb.store.factory.ReaderFactory;
-
-public interface SystemViewFactory {
-    RecordSource create(ReaderFactory factory, BootstrapEnv env);
-
-    RecordMetadata getMetadata();
+public class InvalidColumnException extends RuntimeException {
+    public static final InvalidColumnException INSTANCE = new InvalidColumnException();
 }

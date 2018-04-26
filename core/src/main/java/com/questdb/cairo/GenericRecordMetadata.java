@@ -21,25 +21,33 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.engine.views;
+package com.questdb.cairo;
 
-import com.questdb.std.CharSequenceObjHashMap;
+import com.questdb.std.CharSequenceIntHashMap;
+import com.questdb.std.ObjList;
 
-public final class SysFactories {
-
-    private final static CharSequenceObjHashMap<SystemViewFactory> sysViewFactories = new CharSequenceObjHashMap<>();
-
-    private SysFactories() {
+public class GenericRecordMetadata extends BaseRecordMetadata {
+    public GenericRecordMetadata() {
+        this.columnMetadata = new ObjList<>();
+        this.columnNameIndexMap = new CharSequenceIntHashMap();
+        this.timestampIndex = -1;
     }
 
-    public static SystemViewFactory getFactory(CharSequence name) {
-        return sysViewFactories.get(name);
+    public GenericRecordMetadata add(TableColumnMetadata meta) {
+        int index = columnNameIndexMap.keyIndex(meta.getName());
+        if (index > -1) {
+            columnNameIndexMap.putAt(index, meta.getName(), columnCount);
+            columnMetadata.add(meta);
+            columnCount++;
+            return this;
+        } else {
+            throw CairoException.instance(0).put("Duplicate column [name=").put(meta.getName()).put(']');
+        }
     }
 
-    static {
-//        sysViewFactories.put("$tabs", $TabsFactory.INSTANCE);
-//        sysViewFactories.put("$cols", $ColsFactory.INSTANCE);
-//        sysViewFactories.put("$locales", $LocalesFactory.INSTANCE);
-//        sysViewFactories.put("dual", DualFactory.INSTANCE);
+    public void clear() {
+        columnMetadata.clear();
+        columnNameIndexMap.clear();
+        columnCount = 0;
     }
 }

@@ -25,8 +25,6 @@ package com.questdb.cairo;
 
 import com.questdb.cairo.sql.Record;
 import com.questdb.common.ColumnType;
-import com.questdb.ql.CollectionRecordMetadata;
-import com.questdb.ql.RecordColumnMetadataImpl;
 import com.questdb.std.BinarySequence;
 import com.questdb.std.LongList;
 import com.questdb.test.tools.TestUtils;
@@ -35,7 +33,7 @@ import org.junit.Test;
 
 public class RecordChainTest extends AbstractCairoTest {
     public static final long SIZE_4M = 4 * 1024 * 1024L;
-    private static final CollectionRecordMetadata metadata;
+    private static final GenericRecordMetadata metadata;
 
     @Test
     public void testClear() throws Exception {
@@ -154,12 +152,11 @@ public class RecordChainTest extends AbstractCairoTest {
 
     @Test
     public void testWrongColumnType() throws Exception {
-        CollectionRecordMetadata metadata = new CollectionRecordMetadata();
-        metadata.add(new RecordColumnMetadataImpl("int", 199));
+        GenericRecordMetadata metadata = new GenericRecordMetadata();
+        metadata.add(new TableColumnMetadata("int", 199));
         TestRecord r = new TestRecord();
         TestUtils.assertMemoryLeak(() -> {
             try (RecordChain chain = new RecordChain(metadata, 1024)) {
-                Assert.assertNull(chain.getStorageFacade());
                 chain.putRecord(r, -1);
                 Assert.fail();
             } catch (CairoException ignored) {
@@ -188,7 +185,7 @@ public class RecordChainTest extends AbstractCairoTest {
 
     private void assertSame(Record expected, Record actual) {
         for (int i = 0; i < metadata.getColumnCount(); i++) {
-            switch (metadata.getColumnQuick(i).getType()) {
+            switch (metadata.getColumnType(i)) {
                 case ColumnType.INT:
                     Assert.assertEquals(expected.getInt(i), actual.getInt(i));
                     break;
@@ -246,7 +243,7 @@ public class RecordChainTest extends AbstractCairoTest {
                     }
                     break;
                 default:
-                    throw CairoException.instance(0).put("Record chain does not support: ").put(ColumnType.nameOf(metadata.getColumnQuick(i).getType()));
+                    throw CairoException.instance(0).put("Record chain does not support: ").put(ColumnType.nameOf(metadata.getColumnType(i)));
 
             }
         }
@@ -276,18 +273,18 @@ public class RecordChainTest extends AbstractCairoTest {
     }
 
     static {
-        metadata = new CollectionRecordMetadata();
-        metadata.add(new RecordColumnMetadataImpl("int", ColumnType.INT));
-        metadata.add(new RecordColumnMetadataImpl("long", ColumnType.LONG));
-        metadata.add(new RecordColumnMetadataImpl("short", ColumnType.SHORT));
-        metadata.add(new RecordColumnMetadataImpl("double", ColumnType.DOUBLE));
-        metadata.add(new RecordColumnMetadataImpl("float", ColumnType.FLOAT));
-        metadata.add(new RecordColumnMetadataImpl("str", ColumnType.STRING));
-        metadata.add(new RecordColumnMetadataImpl("byte", ColumnType.BYTE));
-        metadata.add(new RecordColumnMetadataImpl("date", ColumnType.DATE));
-        metadata.add(new RecordColumnMetadataImpl("bool", ColumnType.BOOLEAN));
-        metadata.add(new RecordColumnMetadataImpl("str2", ColumnType.STRING));
-        metadata.add(new RecordColumnMetadataImpl("sym", ColumnType.SYMBOL));
-        metadata.add(new RecordColumnMetadataImpl("bin", ColumnType.BINARY));
+        metadata = new GenericRecordMetadata();
+        metadata.add(new TableColumnMetadata("int", ColumnType.INT));
+        metadata.add(new TableColumnMetadata("long", ColumnType.LONG));
+        metadata.add(new TableColumnMetadata("short", ColumnType.SHORT));
+        metadata.add(new TableColumnMetadata("double", ColumnType.DOUBLE));
+        metadata.add(new TableColumnMetadata("float", ColumnType.FLOAT));
+        metadata.add(new TableColumnMetadata("str", ColumnType.STRING));
+        metadata.add(new TableColumnMetadata("byte", ColumnType.BYTE));
+        metadata.add(new TableColumnMetadata("date", ColumnType.DATE));
+        metadata.add(new TableColumnMetadata("bool", ColumnType.BOOLEAN));
+        metadata.add(new TableColumnMetadata("str2", ColumnType.STRING));
+        metadata.add(new TableColumnMetadata("sym", ColumnType.SYMBOL));
+        metadata.add(new TableColumnMetadata("bin", ColumnType.BINARY));
     }
 }

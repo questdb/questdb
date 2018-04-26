@@ -23,6 +23,8 @@
 
 package com.questdb.griffin.engine.functions.bind;
 
+import com.questdb.cairo.GenericRecordMetadata;
+import com.questdb.cairo.TableColumnMetadata;
 import com.questdb.cairo.sql.Record;
 import com.questdb.common.ColumnType;
 import com.questdb.griffin.*;
@@ -30,7 +32,6 @@ import com.questdb.griffin.engine.TestBinarySequence;
 import com.questdb.griffin.engine.functions.bool.NotVFunctionFactory;
 import com.questdb.griffin.engine.functions.math.*;
 import com.questdb.griffin.engine.functions.str.*;
-import com.questdb.ql.CollectionRecordMetadata;
 import com.questdb.std.NumericException;
 import com.questdb.std.ObjList;
 import com.questdb.std.Rnd;
@@ -273,7 +274,7 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
 
     private static class FunctionBuilder {
         final ObjList<Object> columnValues = new ObjList<>();
-        final CollectionRecordMetadata metadata = new CollectionRecordMetadata();
+        final GenericRecordMetadata metadata = new GenericRecordMetadata();
         final Record record = new Record() {
             @Override
             public byte getByte(int col) {
@@ -316,7 +317,7 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
         }
 
         private FunctionBuilder withColumn(String name, int type, Object value) {
-            metadata.add(new TestColumnMetadata(name, type));
+            metadata.add(new TableColumnMetadata(name, type));
             columnValues.add(value);
             return this;
         }

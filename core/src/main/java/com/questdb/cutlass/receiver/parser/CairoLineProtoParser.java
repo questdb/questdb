@@ -25,9 +25,9 @@ package com.questdb.cutlass.receiver.parser;
 
 import com.questdb.cairo.*;
 import com.questdb.cairo.pool.ResourcePool;
+import com.questdb.cairo.sql.RecordMetadata;
 import com.questdb.common.ColumnType;
 import com.questdb.common.PartitionBy;
-import com.questdb.common.RecordMetadata;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.std.*;
@@ -367,7 +367,7 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
         if (columnIndex == -1) {
             columnName = token.getCacheAddress();
         } else {
-            columnType = metadata.getColumnQuick(columnIndex).getType();
+            columnType = metadata.getColumnType(columnIndex);
         }
     }
 
@@ -411,7 +411,7 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
         } else {
             if (columnType != valueType) {
                 LOG.error().$("mismatched column and value types [table=").$(writer.getName())
-                        .$(", column=").$(metadata.getColumnQuick(columnIndex).getName())
+                        .$(", column=").$(metadata.getColumnName(columnIndex))
                         .$(", columnType=").$(ColumnType.nameOf(columnType))
                         .$(", valueType=").$(ColumnType.nameOf(valueType))
                         .$(']').$();

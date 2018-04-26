@@ -25,9 +25,8 @@ package com.questdb.cairo;
 
 import com.questdb.cairo.sql.Record;
 import com.questdb.cairo.sql.RecordCursor;
+import com.questdb.cairo.sql.RecordMetadata;
 import com.questdb.common.ColumnType;
-import com.questdb.common.RecordMetadata;
-import com.questdb.common.StorageFacade;
 import com.questdb.std.BinarySequence;
 import com.questdb.std.Mutable;
 import com.questdb.std.Unsafe;
@@ -56,7 +55,7 @@ public class RecordChain implements Closeable, RecordCursor, Mutable {
 
         this.columnOffsets = new long[count];
         for (int i = 0; i < count; i++) {
-            int type = metadata.getColumnQuick(i).getType();
+            int type = metadata.getColumnType(i);
 
             switch (type) {
                 case ColumnType.STRING:
@@ -112,11 +111,6 @@ public class RecordChain implements Closeable, RecordCursor, Mutable {
     @Override
     public Record getRecord() {
         return record;
-    }
-
-    @Override
-    public StorageFacade getStorageFacade() {
-        return null;
     }
 
     @Override
@@ -232,7 +226,7 @@ public class RecordChain implements Closeable, RecordCursor, Mutable {
 
     private void putRecord0(Record record) {
         for (int i = 0; i < columnCount; i++) {
-            switch (metadata.getColumnQuick(i).getType()) {
+            switch (metadata.getColumnType(i)) {
                 case ColumnType.BOOLEAN:
                     putBool(record.getBool(i));
                     break;
@@ -270,7 +264,7 @@ public class RecordChain implements Closeable, RecordCursor, Mutable {
                     putBin(record.getBin(i));
                     break;
                 default:
-                    throw CairoException.instance(0).put("Unsupported type: ").put(ColumnType.nameOf(metadata.getColumnQuick(i).getType())).put(" [").put(metadata.getColumnQuick(i).getType()).put(']');
+                    throw CairoException.instance(0).put("Unsupported type: ").put(ColumnType.nameOf(metadata.getColumnType(i))).put(" [").put(metadata.getColumnType(i)).put(']');
             }
         }
     }

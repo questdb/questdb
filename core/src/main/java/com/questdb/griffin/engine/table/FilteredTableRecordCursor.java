@@ -25,9 +25,7 @@ package com.questdb.griffin.engine.table;
 
 import com.questdb.cairo.TableReaderRecord;
 import com.questdb.cairo.sql.*;
-import com.questdb.common.RecordMetadata;
 import com.questdb.common.RowCursor;
-import com.questdb.common.StorageFacade;
 import com.questdb.std.Rows;
 
 class FilteredTableRecordCursor implements RecordCursor {
@@ -56,11 +54,6 @@ class FilteredTableRecordCursor implements RecordCursor {
     @Override
     public Record getRecord() {
         return record;
-    }
-
-    @Override
-    public StorageFacade getStorageFacade() {
-        return null;
     }
 
     @Override

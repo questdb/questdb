@@ -23,8 +23,6 @@
 
 package com.questdb.cairo.sql;
 
-import com.questdb.common.RecordMetadata;
-
 import java.io.Closeable;
 
 public interface MetadataContainer extends Closeable {

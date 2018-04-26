@@ -23,9 +23,8 @@
 
 package com.questdb.griffin;
 
+import com.questdb.cairo.sql.RecordMetadata;
 import com.questdb.common.ColumnType;
-import com.questdb.common.RecordColumnMetadata;
-import com.questdb.common.RecordMetadata;
 import com.questdb.griffin.model.AliasTranslator;
 import com.questdb.griffin.model.IntrinsicModel;
 import com.questdb.std.*;
@@ -54,7 +53,7 @@ final class WhereClauseParser {
     private final CharSequenceHashSet tempK = new CharSequenceHashSet();
     private final IntList tempP = new IntList();
     private final ObjectPool<FlyweightCharSequence> csPool = new ObjectPool<>(FlyweightCharSequence.FACTORY, 64);
-    private String timestamp;
+    private CharSequence timestamp;
     private CharSequence preferredKeyColumn;
 
     private static void checkNodeValid(SqlNode node) throws SqlException {
@@ -85,14 +84,14 @@ final class WhereClauseParser {
                 if (index == -1) {
                     throw SqlException.invalidColumn(a.position, a.token);
                 }
-                RecordColumnMetadata meta = m.getColumnQuick(index);
+//                RecordColumnMetadata meta = m.getColumnQuick(index);
 
-                switch (meta.getType()) {
+                switch (m.getColumnType(index)) {
                     case ColumnType.SYMBOL:
                     case ColumnType.STRING:
                     case ColumnType.LONG:
                     case ColumnType.INT:
-                        if (meta.isIndexed()) {
+                        if (m.isColumnIndexed(index)) {
 
                             // check if we are limited by preferred column
                             if (preferredKeyColumn != null && !Chars.equals(preferredKeyColumn, column)) {
@@ -103,7 +102,7 @@ final class WhereClauseParser {
                             // check if we already have indexed column and it is of worse selectivity
                             if (model.keyColumn != null
                                     && (newColumn = !Chars.equals(model.keyColumn, column))
-                                    && meta.getBucketCount() <= m.getColumn(model.keyColumn).getBucketCount()) {
+                                    && m.getIndexValueBlockCapacity(index) <= m.getIndexValueBlockCapacity(model.keyColumn)) {
                                 return false;
                             }
 
@@ -252,10 +251,11 @@ final class WhereClauseParser {
         return false;
     }
 
-    private boolean analyzeInLambda(IntrinsicModel model, CharSequence col, RecordMetadata meta, SqlNode node) throws SqlException {
-        RecordColumnMetadata colMeta = meta.getColumn(col);
-        if (colMeta.isIndexed()) {
-            if (preferredKeyColumn != null && !col.equals(preferredKeyColumn)) {
+    private boolean analyzeInLambda(IntrinsicModel model, CharSequence columnName, RecordMetadata meta, SqlNode node) throws SqlException {
+//        RecordColumnMetadata colMeta = meta.getColumn(columnName);
+        int columnIndex = meta.getColumnIndex(columnName);
+        if (meta.isColumnIndexed(columnIndex)) {
+            if (preferredKeyColumn != null && !columnName.equals(preferredKeyColumn)) {
                 return false;
             }
 
@@ -265,12 +265,12 @@ final class WhereClauseParser {
 
             // check if we already have indexed column and it is of worse selectivity
             if (model.keyColumn != null
-                    && (!Chars.equals(model.keyColumn, col))
-                    && colMeta.getBucketCount() <= meta.getColumn(model.keyColumn).getBucketCount()) {
+                    && (!Chars.equals(model.keyColumn, columnName))
+                    && meta.getIndexValueBlockCapacity(columnIndex) <= meta.getIndexValueBlockCapacity(model.keyColumn)) {
                 return false;
             }
 
-            if ((col.equals(model.keyColumn) && model.keySubQuery != null) || node.paramCount > 2) {
+            if ((columnName.equals(model.keyColumn) && model.keySubQuery != null) || node.paramCount > 2) {
                 throw SqlException.$(node.position, "Multiple lambda expressions not supported");
             }
 
@@ -284,7 +284,7 @@ final class WhereClauseParser {
                 keyNodes.getQuick(n).intrinsicValue = IntrinsicModel.UNDEFINED;
             }
             keyNodes.clear();
-            model.keyColumn = col;
+            model.keyColumn = columnName;
             keyNodes.add(node);
             node.intrinsicValue = IntrinsicModel.TRUE;
             return true;
@@ -338,19 +338,20 @@ final class WhereClauseParser {
         return false;
     }
 
-    private boolean analyzeListOfValues(IntrinsicModel model, CharSequence col, RecordMetadata meta, SqlNode node) {
-        RecordColumnMetadata colMeta = meta.getColumn(col);
-        if (colMeta.isIndexed()) {
+    private boolean analyzeListOfValues(IntrinsicModel model, CharSequence columnName, RecordMetadata meta, SqlNode node) {
+//        RecordColumnMetadata colMeta = meta.getColumn(columnName);
+        final int columnIndex = meta.getColumnIndex(columnName);
+        if (meta.isColumnIndexed(columnIndex)) {
             boolean newColumn = true;
 
-            if (preferredKeyColumn != null && !col.equals(preferredKeyColumn)) {
+            if (preferredKeyColumn != null && !columnName.equals(preferredKeyColumn)) {
                 return false;
             }
 
             // check if we already have indexed column and it is of worse selectivity
             if (model.keyColumn != null
-                    && (newColumn = !Chars.equals(model.keyColumn, col))
-                    && colMeta.getBucketCount() <= meta.getColumn(model.keyColumn).getBucketCount()) {
+                    && (newColumn = !Chars.equals(model.keyColumn, columnName))
+                    && meta.getIndexValueBlockCapacity(columnIndex) <= meta.getIndexValueBlockCapacity(model.keyColumn)) {
                 return false;
             }
 
@@ -391,7 +392,7 @@ final class WhereClauseParser {
                     keyNodes.getQuick(n).intrinsicValue = IntrinsicModel.UNDEFINED;
                 }
                 keyNodes.clear();
-                model.keyColumn = col;
+                model.keyColumn = columnName;
                 keyNodes.add(node);
                 node.intrinsicValue = IntrinsicModel.TRUE;
                 return true;
@@ -432,14 +433,13 @@ final class WhereClauseParser {
                 if (index == -1) {
                     throw SqlException.invalidColumn(a.position, a.token);
                 }
-                RecordColumnMetadata meta = m.getColumnQuick(index);
 
-                switch (meta.getType()) {
+                switch (m.getColumnType(index)) {
                     case ColumnType.SYMBOL:
                     case ColumnType.STRING:
                     case ColumnType.LONG:
                     case ColumnType.INT:
-                        if (meta.isIndexed()) {
+                        if (m.isColumnIndexed(index)) {
 
                             // check if we are limited by preferred column
                             if (preferredKeyColumn != null && !Chars.equals(preferredKeyColumn, column)) {
@@ -528,15 +528,15 @@ final class WhereClauseParser {
         return false;
     }
 
-    private void analyzeNotListOfValues(CharSequence column, RecordMetadata m, SqlNode notNode) {
-        RecordColumnMetadata meta = m.getColumn(column);
+    private void analyzeNotListOfValues(CharSequence columnName, RecordMetadata m, SqlNode notNode) {
+        final int columnIndex = m.getColumnIndex(columnName);
 
-        switch (meta.getType()) {
+        switch (m.getColumnType(columnIndex)) {
             case ColumnType.SYMBOL:
             case ColumnType.STRING:
             case ColumnType.LONG:
             case ColumnType.INT:
-                if (meta.isIndexed() && (preferredKeyColumn == null || Chars.equals(preferredKeyColumn, column))) {
+                if (m.isColumnIndexed(columnIndex) && (preferredKeyColumn == null || Chars.equals(preferredKeyColumn, columnName))) {
                     keyExclNodes.add(notNode);
                 }
                 break;

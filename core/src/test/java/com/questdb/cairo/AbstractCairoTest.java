@@ -24,7 +24,7 @@
 package com.questdb.cairo;
 
 import com.questdb.cairo.sql.RecordCursor;
-import com.questdb.common.RecordMetadata;
+import com.questdb.cairo.sql.RecordMetadata;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.std.Files;

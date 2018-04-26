@@ -23,34 +23,27 @@
 
 package com.questdb.cairo;
 
-import com.questdb.common.AbstractRecordMetadata;
-import com.questdb.common.RecordColumnMetadata;
 import com.questdb.std.*;
 import com.questdb.std.str.Path;
 
 import java.io.Closeable;
 
-class TableReaderMetadata extends AbstractRecordMetadata implements Closeable {
-    private final ObjList<TableColumnMetadata> columnMetadata;
-    private final CharSequenceIntHashMap columnNameIndexMap = new CharSequenceIntHashMap();
+class TableReaderMetadata extends BaseRecordMetadata implements Closeable {
     private final ReadOnlyMemory metaMem;
     private final Path path;
     private final FilesFacade ff;
     private final CharSequenceIntHashMap tmpValidationMap = new CharSequenceIntHashMap();
-    private final String tableName;
-    private int timestampIndex;
-    private int columnCount;
     private ReadOnlyMemory transitionMeta;
 
-    public TableReaderMetadata(FilesFacade ff, String tableName, Path path) {
+    public TableReaderMetadata(FilesFacade ff, Path path) {
         this.ff = ff;
-        this.tableName = tableName;
         this.path = new Path().of(path).$();
         try {
             this.metaMem = new ReadOnlyMemory(ff, path, ff.getPageSize(), ff.length(path));
+            this.columnCount = metaMem.getInt(TableUtils.META_OFFSET_COUNT);
+            this.columnNameIndexMap = new CharSequenceIntHashMap(columnCount);
             TableUtils.validate(ff, metaMem, this.columnNameIndexMap);
             this.timestampIndex = metaMem.getInt(TableUtils.META_OFFSET_TIMESTAMP_INDEX);
-            this.columnCount = metaMem.getInt(TableUtils.META_OFFSET_COUNT);
             this.columnMetadata = new ObjList<>(columnCount);
             long offset = TableUtils.getColumnNameOffset(columnCount);
 
@@ -255,39 +248,8 @@ class TableReaderMetadata extends AbstractRecordMetadata implements Closeable {
         return columnCount;
     }
 
-    @Override
-    public int getColumnIndexQuiet(CharSequence name) {
-        int dot = Chars.indexOf(name, '.');
-        if (dot == -1) {
-            return columnNameIndexMap.get(name);
-        }
-
-        return getColumnIndexPrefixed(name, dot);
-    }
-
-    @Override
-    public RecordColumnMetadata getColumnQuick(int index) {
-        return columnMetadata.getQuick(index);
-    }
-
-    @Override
-    public int getTimestampIndex() {
-        return timestampIndex;
-    }
-
     public int getPartitionBy() {
         return metaMem.getInt(TableUtils.META_OFFSET_PARTITION_BY);
-    }
-
-    private int getColumnIndexPrefixed(CharSequence name, int dot) {
-        if (Chars.equals(tableName, name, 0, dot)) {
-            int n = name.length();
-            int keyIndex = columnNameIndexMap.keyIndex(name, dot + 1, n);
-            if (keyIndex < 0) {
-                return columnNameIndexMap.valueAt(keyIndex);
-            }
-        }
-        return -1;
     }
 
     private TableColumnMetadata moveMetadata(int index, TableColumnMetadata metadata) {
