@@ -763,7 +763,6 @@ class SqlOptimiser {
         if (model.getTableName() != null) {
             RecordMetadata m = getTableMetadata(model.getTableName(), bindVariableService);
             // column names are not allowed to have dot
-            // todo: test that this is the case
             for (int i = 0, k = m.getColumnCount(); i < k; i++) {
                 model.addField(createColumnAlias(m.getColumnName(i), model));
             }

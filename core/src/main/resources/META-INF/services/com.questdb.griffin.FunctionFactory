@@ -21,7 +21,40 @@
 #
 ################################################################################
 
+# '<' operation
+
 com.questdb.griffin.engine.functions.lt.LtDoubleVCFunctionFactory
 com.questdb.griffin.engine.functions.lt.LtDoubleCCFunctionFactory
 com.questdb.griffin.engine.functions.lt.LtDoubleCVFunctionFactory
 com.questdb.griffin.engine.functions.lt.LtDoubleVVFunctionFactory
+
+# random generator functions
+
+com.questdb.griffin.engine.functions.rnd.RandomCursorFunctionFactory
+com.questdb.griffin.engine.functions.rnd.RndBooleanFunctionFactory
+com.questdb.griffin.engine.functions.rnd.RndIntFunctionFactory
+com.questdb.griffin.engine.functions.rnd.RndIntCCFunctionFactory
+com.questdb.griffin.engine.functions.rnd.RndStrFunctionFactory
+com.questdb.griffin.engine.functions.rnd.RndDoubleFunctionFactory
+com.questdb.griffin.engine.functions.rnd.RndFloatFunctionFactory
+com.questdb.griffin.engine.functions.rnd.RndShortCCFunctionFactory
+com.questdb.griffin.engine.functions.rnd.RndShortFunctionFactory
+com.questdb.griffin.engine.functions.rnd.RndDateFunctionFactory
+com.questdb.griffin.engine.functions.rnd.RndTimestampFunctionFactory
+com.questdb.griffin.engine.functions.rnd.RndSymbolFunctionFactory
+com.questdb.griffin.engine.functions.rnd.RndLongCCFunctionFactory
+com.questdb.griffin.engine.functions.rnd.RndLongFunctionFactory
+com.questdb.griffin.engine.functions.date.TimestampSequenceFunctionFactory
+com.questdb.griffin.engine.functions.rnd.RndByteCCFunctionFactory
+com.questdb.griffin.engine.functions.rnd.RndBinFunctionFactory
+
+# date conversion functions
+
+com.questdb.griffin.engine.functions.date.SysdateFunctionFactory
+com.questdb.griffin.engine.functions.date.ToTimestampVCFunctionFactory
+com.questdb.griffin.engine.functions.date.ToTimestampLongFunctionFactory
+com.questdb.griffin.engine.functions.str.ToCharTimestampVCFunctionFactory
+
+com.questdb.griffin.engine.functions.date.ToDateVCFunctionFactory
+com.questdb.griffin.engine.functions.date.ToDateLongFunctionFactory
+com.questdb.griffin.engine.functions.str.ToCharDateVCFunctionFactory

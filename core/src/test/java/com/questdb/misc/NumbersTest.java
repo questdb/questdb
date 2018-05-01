@@ -118,7 +118,7 @@ public class NumbersTest {
 
         for (int i = 0; i < 1000; i++) {
             int n = rnd.nextPositiveInt() % 10;
-            double d = rnd.nextDouble() * Math.pow(10, n);
+            double d = rnd.nextDouble2() * Math.pow(10, n);
             sink.clear();
             Numbers.append(sink, d, 8);
             String actual = sink.toString();
@@ -153,7 +153,7 @@ public class NumbersTest {
 
         for (int i = 0; i < 1000; i++) {
             int n = rnd.nextPositiveInt() % 10;
-            float f = rnd.nextFloat() * (float) Math.pow(10, n);
+            float f = rnd.nextFloat2() * (float) Math.pow(10, n);
             sink.clear();
             Numbers.append(sink, f, 8);
             String actual = sink.toString();
@@ -462,7 +462,7 @@ public class NumbersTest {
     public void testRoundDown() throws Exception {
         Rnd rnd = new Rnd();
         for (int i = 0; i < 1000; i++) {
-            double d = rnd.nextDouble();
+            double d = rnd.nextDouble2();
             double n = Numbers.roundDown(d, 8);
             Assert.assertTrue(d + " " + n + " " + (d - n - 1E-8), d - n - 1E-8 < Numbers.TOLERANCE);
         }
@@ -504,7 +504,7 @@ public class NumbersTest {
 
         Rnd rnd = new Rnd();
         for (int i = 0; i < 1000; i++) {
-            double d = rnd.nextDouble();
+            double d = rnd.nextDouble2();
             double n = Numbers.roundUp(d, 8);
             Assert.assertTrue(d + " " + n + " " + (n - d - 1E-8), n - d - 1E-8 < Numbers.TOLERANCE);
         }

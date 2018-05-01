@@ -26,6 +26,7 @@ package com.questdb.griffin;
 import com.questdb.cairo.FullTableFrameCursorFactory;
 import com.questdb.cairo.IntervalFrameCursorFactory;
 import com.questdb.cairo.TableReader;
+import com.questdb.cairo.TableReaderRecordCursorFactory;
 import com.questdb.cairo.sql.*;
 import com.questdb.common.ColumnType;
 import com.questdb.griffin.engine.functions.bind.BindVariableService;
@@ -34,6 +35,7 @@ import com.questdb.griffin.engine.table.SymbolIndexFilteredRowCursorFactory;
 import com.questdb.griffin.engine.table.SymbolIndexRowCursorFactory;
 import com.questdb.griffin.model.IntrinsicModel;
 import com.questdb.griffin.model.QueryModel;
+import com.questdb.std.Chars;
 
 public class SqlCodeGenerator {
     private final WhereClauseParser filterAnalyser = new WhereClauseParser();
@@ -54,9 +56,23 @@ public class SqlCodeGenerator {
         return generateQuery(model, bindVariableService);
     }
 
+    private RecordCursorFactory generateFunctionQuery(QueryModel model, BindVariableService bindVariableService) throws SqlException {
+        Function function = functionParser.parseFunction(model.getTableName(), EmptyRecordMetadata.INSTANCE, bindVariableService);
+        if (function.getType() != TypeEx.CURSOR) {
+            throw SqlException.position(model.getTableName().position).put("function must return CURSOR [actual=").put(ColumnType.nameOf(function.getType())).put(']');
+        }
+
+        return function.getRecordCursorFactory(null);
+    }
+
     private RecordCursorFactory generateNoSelect(QueryModel model, BindVariableService bindVariableService) throws SqlException {
-        if (model.getTableName() != null) {
-            return generateTableQuery(model, bindVariableService);
+        SqlNode tableName = model.getTableName();
+        if (tableName != null) {
+            if (tableName.type == SqlNode.FUNCTION) {
+                return generateFunctionQuery(model, bindVariableService);
+            } else {
+                return generateTableQuery(model, bindVariableService);
+            }
 
         }
         assert model.getNestedModel() != null;
@@ -246,8 +262,9 @@ public class SqlCodeGenerator {
 
                 return null;
 
+            } else {
+                return new TableReaderRecordCursorFactory(engine, Chars.toString(model.getTableName().token));
             }
         }
-        return null;
     }
 }

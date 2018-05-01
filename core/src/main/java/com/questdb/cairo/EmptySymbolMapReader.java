@@ -52,4 +52,14 @@ public class EmptySymbolMapReader implements SymbolMapReader {
     @Override
     public void updateSymbolCount(int count) {
     }
+
+    @Override
+    public int getSymbolCapacity() {
+        return 0;
+    }
+
+    @Override
+    public boolean isCached() {
+        return false;
+    }
 }

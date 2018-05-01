@@ -26,6 +26,9 @@ package com.questdb.std;
 import com.questdb.std.str.StringSink;
 
 public class Rnd {
+    private static final long mask = (1L << 48) - 1;
+    private static final double DOUBLE_UNIT = 0x1.0p-53; // 1.0 / (1L << 53)
+    private static final float FLOAT_UNIT = 1 / ((float) (1 << 24));
     private final StringSink sink = new StringSink();
     private long s0;
     private long s1;
@@ -69,11 +72,19 @@ public class Rnd {
     }
 
     public double nextDouble() {
-        return (nextLong(26) << 27 + nextLong(27)) / (double) (1L << 53);
+        return (nextLong(26) << 27 + nextLong(27)) * DOUBLE_UNIT;
+    }
+
+    public double nextDouble2() {
+        return (((long) (nextIntForDouble(26)) << 27) + nextIntForDouble(27)) * DOUBLE_UNIT;
     }
 
     public float nextFloat() {
-        return nextLong(24) / ((float) (1 << 24));
+        return nextLong(24) * FLOAT_UNIT;
+    }
+
+    public float nextFloat2() {
+        return nextIntForDouble(24) * FLOAT_UNIT;
     }
 
     public int nextInt() {
@@ -122,6 +133,10 @@ public class Rnd {
     public void syncWith(Rnd other) {
         this.s0 = other.s0;
         this.s1 = other.s1;
+    }
+
+    private int nextIntForDouble(int bits) {
+        return (int) ((nextLong() & mask) >>> (48 - bits));
     }
 
     private long nextLong(int bits) {

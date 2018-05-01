@@ -21,11 +21,10 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.engine;
+package com.questdb.griffin.engine.functions.rnd;
 
-import com.questdb.common.Record;
-import com.questdb.store.JournalEntryWriter;
+import com.questdb.std.Rnd;
 
-public interface CopyHelper {
-    void copy(Record r, JournalEntryWriter w);
+public interface RandomFunction {
+    void init(Rnd rnd);
 }

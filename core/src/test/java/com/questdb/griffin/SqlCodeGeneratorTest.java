@@ -58,7 +58,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
             for (int i = 0; i < N; i++) {
                 TableWriter.Row row = writer.newRow(0);
                 row.putSym(0, symbols[rnd.nextPositiveInt() % symbols.length]);
-                row.putDouble(1, rnd.nextDouble());
+                row.putDouble(1, rnd.nextDouble2());
                 row.append();
             }
             writer.commit();
@@ -66,16 +66,15 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
         try (TableReader reader = engine.getReader("tab")) {
             sink.clear();
-            printer.print(reader.getCursor(), true, reader.getMetadata());
+            printer.print(reader.getCursor(), true);
         }
         System.out.println(sink);
         System.out.println("----------------------");
 
 
         RecordCursorFactory rcf = parser.compile("select * from tab where sym = 'ABC'", bindVariableService);
-        RecordCursor cursor = rcf.getCursor();
         sink.clear();
-        printer.print(cursor, true, cursor.getMetadata());
+        printer.print(rcf.getCursor(), true);
         System.out.println(sink);
     }
 
@@ -98,7 +97,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
             for (int i = 0; i < N; i++) {
                 TableWriter.Row row = writer.newRow(0);
                 row.putSym(0, symbols[rnd.nextPositiveInt() % symbols.length]);
-                row.putDouble(1, rnd.nextDouble());
+                row.putDouble(1, rnd.nextDouble2());
                 row.append();
             }
             writer.commit();
@@ -106,7 +105,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
         try (TableReader reader = engine.getReader("tab")) {
             sink.clear();
-            printer.print(reader.getCursor(), true, reader.getMetadata());
+            printer.print(reader.getCursor(), true);
         }
         System.out.println(sink);
         System.out.println("----------------------");
@@ -115,7 +114,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
         RecordCursorFactory rcf = compiler.compile("select * from tab where sym = 'ABC' and value < 1.0", bindVariableService);
         RecordCursor cursor = rcf.getCursor();
         sink.clear();
-        printer.print(cursor, true, cursor.getMetadata());
+        printer.print(cursor, true);
         System.out.println(sink);
     }
 }

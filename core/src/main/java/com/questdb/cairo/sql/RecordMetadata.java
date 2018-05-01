@@ -66,19 +66,22 @@ public interface RecordMetadata {
         sink.putQuoted("columns").put(':');
         sink.put('[');
         for (int i = 0, n = getColumnCount(); i < n; i++) {
+            final int type = getColumnType(i);
             if (i > 0) {
                 sink.put(',');
             }
             sink.put('{');
             sink.putQuoted("index").put(':').put(i).put(',');
             sink.putQuoted("name").put(':').putQuoted(getColumnName(i)).put(',');
-            sink.putQuoted("type").put(':').putQuoted(ColumnType.nameOf(getColumnType(i)));
+            sink.putQuoted("type").put(':').putQuoted(ColumnType.nameOf(type));
             if (isColumnIndexed(i)) {
                 sink.put(',').putQuoted("indexed").put(":true");
+                sink.put(',').putQuoted("indexValueBlockCapacity").put(':').put(getIndexValueBlockCapacity(i));
             }
             sink.put('}');
         }
         sink.put(']');
+        sink.put(',').putQuoted("timestampIndex").put(':').put(getTimestampIndex());
         sink.put('}');
     }
 }

@@ -50,7 +50,7 @@ public class TableReaderRecordCursorFactoryTest extends AbstractCairoTest {
                 CairoTestUtils.create(model);
             }
 
-            final String expectedMetadata = "{\"columnCount\":5,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\"STRING\"},{\"index\":1,\"name\":\"b\",\"type\":\"SYMBOL\",\"indexed\":true},{\"index\":2,\"name\":\"i\",\"type\":\"INT\"},{\"index\":3,\"name\":\"c\",\"type\":\"SYMBOL\",\"indexed\":true},{\"index\":4,\"name\":\"timestamp\",\"type\":\"TIMESTAMP\"}]}";
+            final String expectedMetadata = "{\"columnCount\":5,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\"STRING\"},{\"index\":1,\"name\":\"b\",\"type\":\"SYMBOL\",\"indexed\":true,\"indexValueBlockCapacity\":32},{\"index\":2,\"name\":\"i\",\"type\":\"INT\"},{\"index\":3,\"name\":\"c\",\"type\":\"SYMBOL\",\"indexed\":true,\"indexValueBlockCapacity\":32},{\"index\":4,\"name\":\"timestamp\",\"type\":\"TIMESTAMP\"}],\"timestampIndex\":4}";
 
             final Rnd rnd = new Rnd();
             final String symbols[] = new String[N];

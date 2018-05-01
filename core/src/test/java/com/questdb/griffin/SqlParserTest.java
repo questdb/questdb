@@ -40,7 +40,6 @@ import com.questdb.std.str.Path;
 import com.questdb.test.tools.TestUtils;
 import org.junit.AfterClass;
 import org.junit.Assert;
-import org.junit.Ignore;
 import org.junit.Test;
 
 import java.io.IOException;
@@ -361,6 +360,19 @@ public class SqlParserTest extends AbstractCairoTest {
                 "create table X as ( select a, b, c from tab ), index(x)",
                 53,
                 "Invalid column",
+                modelOf("tab")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.DOUBLE)
+                        .col("c", ColumnType.STRING)
+        );
+    }
+
+    @Test
+    public void testCreateNameWithDot() {
+        assertSyntaxError(
+                "create table X.y as ( select a, b, c from tab )",
+                13,
+                "'.' is not allowed here",
                 modelOf("tab")
                         .col("a", ColumnType.INT)
                         .col("b", ColumnType.DOUBLE)
@@ -2871,13 +2883,6 @@ public class SqlParserTest extends AbstractCairoTest {
                 "Analytic function expected",
                 modelOf("tab").col("x", ColumnType.INT)
         );
-    }
-
-    @Test
-    @Ignore
-    public void testSelectFromFunction() throws SqlException {
-        assertQuery("",
-                "select * from xyz('a','b')");
     }
 
     @Test

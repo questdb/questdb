@@ -42,8 +42,8 @@ public final class ColumnType {
     public static final int SYMBOL = 8;
     public static final int BINARY = 9;
     public static final int DATE = 10;
-    public static final int TIMESTAMP = 12;
     public static final int PARAMETER = 11;
+    public static final int TIMESTAMP = 12;
     private static final ObjIntHashMap<Class> classMap = new ObjIntHashMap<>();
     private static final IntObjHashMap<String> typeNameMap = new IntObjHashMap<>();
     private static final CharSequenceIntHashMap nameTypeMap = new CharSequenceIntHashMap();

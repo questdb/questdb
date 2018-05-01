@@ -112,4 +112,9 @@ public class BinFunctionTest {
     public void testGetTimestamp() {
         function.getTimestamp(null);
     }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetRecordCursorFactory() {
+        function.getRecordCursorFactory(null);
+    }
 }

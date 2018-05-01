@@ -1938,6 +1938,11 @@ public class TableWriter implements Closeable {
             notNull(index);
         }
 
+        public void putBin(int index, BinarySequence sequence) {
+            getSecondaryColumn(index).putLong(getPrimaryColumn(index).putBin(sequence));
+            notNull(index);
+        }
+
         public void putBool(int index, boolean value) {
             getPrimaryColumn(index).putBool(value);
             notNull(index);
@@ -1990,6 +1995,10 @@ public class TableWriter implements Closeable {
         public void putSym(int index, CharSequence value) {
             getPrimaryColumn(index).putInt(symbolMapWriters.getQuick(index).put(value));
             notNull(index);
+        }
+
+        public void putTimestamp(int index, long value) {
+            putLong(index, value);
         }
 
         private void notNull(int index) {

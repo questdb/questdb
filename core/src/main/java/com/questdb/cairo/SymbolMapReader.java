@@ -29,4 +29,8 @@ public interface SymbolMapReader extends SymbolTable {
     boolean isDeleted();
 
     void updateSymbolCount(int count);
+
+    int getSymbolCapacity();
+
+    boolean isCached();
 }

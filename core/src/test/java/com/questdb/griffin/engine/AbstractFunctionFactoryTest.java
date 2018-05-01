@@ -55,6 +55,9 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
         }
     }
 
+    protected void addExtraFunctions() {
+    }
+
     protected Invocation call(Object... args) throws SqlException {
         return callCustomised(false, args);
     }
@@ -166,6 +169,9 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
         if (toByteRefs > 0) {
             functions.add(new ToByteIntFunctionFactory());
         }
+
+        addExtraFunctions();
+
         FunctionParser functionParser = new FunctionParser(configuration, functions);
         return new Invocation(
                 parseFunction(expression1, metadata, functionParser),
@@ -308,6 +314,11 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
         public void andAssert(short expected) {
             Assert.assertEquals(expected, function1.getShort(record));
             Assert.assertEquals(expected, function2.getShort(record));
+        }
+
+        public void andAssert(long expected) {
+            Assert.assertEquals(expected, function1.getLong(record));
+            Assert.assertEquals(expected, function2.getLong(record));
         }
 
         public void andAssertDate(long expected) {

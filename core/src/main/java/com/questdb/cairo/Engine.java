@@ -105,6 +105,11 @@ public class Engine implements Closeable, CairoEngine {
     }
 
     @Override
+    public boolean releaseAllWriters() {
+        return writerPool.releaseAll();
+    }
+
+    @Override
     public boolean lock(CharSequence tableName) {
         if (writerPool.lock(tableName)) {
             boolean locked = readerPool.lock(tableName);

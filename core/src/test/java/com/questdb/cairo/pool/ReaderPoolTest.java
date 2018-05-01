@@ -27,7 +27,6 @@ import com.questdb.cairo.*;
 import com.questdb.cairo.pool.ex.EntryLockedException;
 import com.questdb.cairo.pool.ex.EntryUnavailableException;
 import com.questdb.cairo.pool.ex.PoolClosedException;
-import com.questdb.cairo.sql.RecordCursor;
 import com.questdb.common.ColumnType;
 import com.questdb.common.PartitionBy;
 import com.questdb.log.Log;
@@ -249,7 +248,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
 
             sink.clear();
             try (TableReader r = new TableReader(configuration, names[i])) {
-                printer.print(r.getCursor(), true, r.getMetadata());
+                printer.print(r.getCursor(), true);
             }
             expectedRows[i] = sink.toString();
             expectedRowMap.put(names[i], expectedRows[i]);
@@ -299,9 +298,8 @@ public class ReaderPoolTest extends AbstractCairoTest {
                                 Assert.assertTrue(reader.isOpen());
 
                                 // read rows
-                                RecordCursor cursor = reader.getCursor();
                                 sink.clear();
-                                printer.print(cursor, true, reader.getMetadata());
+                                printer.print(reader.getCursor(), true);
                                 TestUtils.assertEquals(expectedRowMap.get(reader.getTableName()), sink);
 
                                 Thread.yield();
@@ -540,7 +538,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
 
             sink.clear();
             try (TableReader r = new TableReader(configuration, names[i])) {
-                printer.print(r.getCursor(), true, r.getMetadata());
+                printer.print(r.getCursor(), true);
             }
             expectedRows[i] = sink.toString();
         }
@@ -587,9 +585,8 @@ public class ReaderPoolTest extends AbstractCairoTest {
                         int index = rnd.nextPositiveInt() % readerCount;
                         String name = names[index];
                         try (TableReader r = pool.get(name)) {
-                            RecordCursor cursor = r.getCursor();
                             sink.clear();
-                            printer.print(cursor, true, r.getMetadata());
+                            printer.print(r.getCursor(), true);
                             TestUtils.assertEquals(expectedRows[index], sink);
 
                             if (name.equals(names[readerCount - 1]) && barrier.getNumberWaiting() > 0) {

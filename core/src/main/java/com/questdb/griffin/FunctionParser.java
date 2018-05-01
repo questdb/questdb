@@ -305,9 +305,6 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
     }
 
     private Function createFunction(SqlNode node, ObjList<Function> args) throws SqlException {
-        if (node.type == SqlNode.LAMBDA) {
-            throw SqlException.$(node.position, "Cannot use lambda in this context");
-        }
         ObjList<FunctionFactory> overload = factories.get(node.token);
         if (overload == null) {
             throw invalidFunction("unknown function name", node, args);

@@ -230,7 +230,11 @@ final class SqlParser {
 
     private ExecutionModel parseCreateTable(GenericLexer lexer, BindVariableService bindVariableService) throws SqlException {
         final CreateTableModel model = createTableModelPool.next();
-        model.setName(nextLiteral(GenericLexer.unquote(tok(lexer, "table name")), lexer.lastTokenPosition()));
+        final CharSequence tableName = tok(lexer, "table name");
+        if (Chars.indexOf(tableName, '.') != -1) {
+            throw SqlException.$(lexer.lastTokenPosition(), "'.' is not allowed here");
+        }
+        model.setName(nextLiteral(GenericLexer.unquote(tableName), lexer.lastTokenPosition()));
 
         CharSequence tok = tok(lexer, "'(' or 'as'");
 

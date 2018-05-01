@@ -32,33 +32,60 @@ import com.questdb.griffin.Function;
 import com.questdb.griffin.FunctionFactory;
 import com.questdb.griffin.SqlException;
 import com.questdb.griffin.engine.functions.CursorFunction;
-import com.questdb.std.Misc;
 import com.questdb.std.ObjList;
-import com.questdb.std.str.StringSink;
+import com.questdb.std.Rnd;
 
 public class RandomCursorFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "random(lV)";
+        return "random_cursor(lV)";
     }
 
     @Override
     public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) throws SqlException {
-        long count = args.getQuick(0).getLong(null);
-        GenericRecordMetadata metadata = new GenericRecordMetadata();
-        final StringSink b = Misc.getThreadLocalBuilder();
-        for (int i = 1, n = args.size(); i < n; i++) {
-            Function arg = args.getQuick(i);
-            if (arg.getType() != ColumnType.INT) {
-                throw SqlException.$(arg.getPosition(), "'TYPE' argument expected");
+
+        if (args.size() % 2 == 0) {
+            throw SqlException.position(position).put("Invalid number of arguments. Expected rnd_table(count, seed1, seed2, 'column', rnd_function(), ...)");
+        }
+
+        final long recordCount = args.getQuick(0).getLong(null);
+        final Rnd rnd = new Rnd(
+                args.getQuick(1).getLong(null),
+                args.getQuick(2).getLong(null)
+        );
+
+        final GenericRecordMetadata metadata = new GenericRecordMetadata();
+        final ObjList<Function> functions = new ObjList<>();
+
+        for (int i = 3, n = args.size(); i < n; i += 2) {
+
+            // validate column name expression
+            // ideally we need column name just a string, but it can also be a function
+            // as long as it returns constant value
+            //
+            // edge condition here is NULL, which is a constant we do not allow
+            Function columnName = args.getQuick(i);
+
+            if (!columnName.isConstant() || columnName.getType() != ColumnType.STRING) {
+                throw SqlException.position(columnName.getPosition()).put("STRING constant expected");
             }
 
-            if (!arg.isConstant()) {
-                throw SqlException.$(arg.getPosition(), "constant argument expected");
+            CharSequence columnNameStr = columnName.getStr(null);
+            if (columnNameStr == null) {
+                throw SqlException.position(columnName.getPosition()).put("column name must not be NULL");
             }
-            b.put("x").put(i);
-            metadata.add(new TableColumnMetadata(b.toString(), arg.getInt(null)));
-            b.clear();
+
+            // random function is the second argument in pair
+            // functions implementing RandomFunction interface can be seeded
+            // with Rnd instance so that they don't return the same value
+            Function rndFunc = args.getQuick(i + 1);
+
+            if (rndFunc instanceof RandomFunction) {
+                ((RandomFunction) rndFunc).init(rnd);
+            }
+
+            metadata.add(new TableColumnMetadata(columnNameStr.toString(), rndFunc.getType()));
+            functions.add(rndFunc);
         }
 
         MetadataContainer metadataContainer = new MetadataContainer() {
@@ -72,60 +99,9 @@ public class RandomCursorFunctionFactory implements FunctionFactory {
             }
         };
 
-        RandomRecord record = new RandomRecord();
+        RandomRecord record = new RandomRecord(functions);
 
-        RecordCursor recordCursor = new RecordCursor() {
-            private final long recordCount = count;
-            private long recordIndex = 0;
-
-            @Override
-            public Record getRecord() {
-                return record;
-            }
-
-            @Override
-            public Record newRecord() {
-                return record;
-            }
-
-            @Override
-            public Record recordAt(long rowId) {
-                throw new UnsupportedOperationException();
-            }
-
-            @Override
-            public void recordAt(Record record, long atRowId) {
-                throw new UnsupportedOperationException();
-            }
-
-            @Override
-            public void toTop() {
-                recordIndex = 0;
-            }
-
-            @Override
-            public boolean hasNext() {
-                return recordIndex < recordCount;
-            }
-
-            @Override
-            public Record next() {
-                recordIndex++;
-                return record;
-            }
-
-            @Override
-            public void close() {
-            }
-
-
-            @Override
-            public RecordMetadata getMetadata() {
-                return metadata;
-            }
-
-
-        };
+        RecordCursor recordCursor = new RandomRecordCursor(recordCount, record, metadata);
 
         RecordCursorFactory recordCursorFactory = new RecordCursorFactory() {
             @Override
@@ -138,7 +114,6 @@ public class RandomCursorFunctionFactory implements FunctionFactory {
                 return metadataContainer;
             }
         };
-
 
         return new CursorFunction(position) {
             @Override

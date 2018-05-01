@@ -37,87 +37,87 @@ public abstract class CursorFunction implements Function {
     }
 
     @Override
-    public BinarySequence getBin(Record rec) {
+    public final BinarySequence getBin(Record rec) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public boolean getBool(Record rec) {
+    public final boolean getBool(Record rec) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public byte getByte(Record rec) {
+    public final byte getByte(Record rec) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public long getDate(Record rec) {
+    public final long getDate(Record rec) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public double getDouble(Record rec) {
+    public final double getDouble(Record rec) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public float getFloat(Record rec) {
+    public final float getFloat(Record rec) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public int getInt(Record rec) {
+    public final int getInt(Record rec) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public long getLong(Record rec) {
+    public final long getLong(Record rec) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public int getPosition() {
+    public final int getPosition() {
         return position;
     }
 
     @Override
-    public short getShort(Record rec) {
+    public final short getShort(Record rec) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public CharSequence getStr(Record rec) {
+    public final CharSequence getStr(Record rec) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public void getStr(Record rec, CharSink sink) {
+    public final void getStr(Record rec, CharSink sink) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public CharSequence getStrB(Record rec) {
+    public final CharSequence getStrB(Record rec) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public int getStrLen(Record rec) {
-        return 0;
-    }
-
-    @Override
-    public CharSequence getSymbol(Record rec) {
+    public final int getStrLen(Record rec) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public long getTimestamp(Record rec) {
+    public final CharSequence getSymbol(Record rec) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public int getType() {
+    public final long getTimestamp(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public final int getType() {
         return TypeEx.CURSOR;
     }
 }

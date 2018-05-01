@@ -68,6 +68,11 @@ public class LongFunctionTest {
     }
 
     @Test(expected = UnsupportedOperationException.class)
+    public void testGetRecordCursorFactory() {
+        function.getRecordCursorFactory(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
     public void testGetShort() {
         function.getShort(null);
     }

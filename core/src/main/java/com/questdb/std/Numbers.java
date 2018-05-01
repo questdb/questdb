@@ -65,11 +65,11 @@ public final class Numbers {
             d = -value;
         }
 
-        long factor = pow10[scale];
+        long factor = Unsafe.arrayGet(pow10, scale);
         long scaled = (long) (d * factor + 0.5);
         int targetScale = scale + 1;
-        while (targetScale < 20 && pow10[targetScale] <= scaled) {
-            factor = pow10[targetScale++];
+        while (targetScale < 20 && Unsafe.arrayGet(pow10, targetScale) <= scaled) {
+            factor = Unsafe.arrayGet(pow10, targetScale++);
         }
 
         // factor overflow, fallback to slow method rather than throwing exception

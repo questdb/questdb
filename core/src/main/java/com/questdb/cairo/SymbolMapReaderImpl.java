@@ -45,6 +45,7 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
     private boolean cached;
     private int symbolCount;
     private long maxOffset;
+    private int symbolCapacity;
 
     public SymbolMapReaderImpl(CairoConfiguration configuration, Path path, CharSequence name, int symbolCount) {
         of(configuration, path, name, symbolCount);
@@ -55,11 +56,9 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
         Misc.free(indexReader);
         Misc.free(charMem);
         this.cache.clear();
-        if (this.offsetMem != null) {
-            long fd = this.offsetMem.getFd();
-            Misc.free(offsetMem);
-            LOG.info().$("closed [fd=").$(fd).$(']').$();
-        }
+        long fd = this.offsetMem.getFd();
+        Misc.free(offsetMem);
+        LOG.info().$("closed [fd=").$(fd).$(']').$();
     }
 
     @Override
@@ -115,7 +114,7 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
             // open "offset" memory and make sure we start appending from where
             // we left off. Where we left off is stored externally to symbol map
             this.offsetMem.of(ff, path, mapPageSize, keyToOffset(symbolCount));
-            final int symbolCapacity = offsetMem.getInt(0);
+            symbolCapacity = offsetMem.getInt(0);
             this.cached = offsetMem.getBool(4);
             this.offsetMem.grow(maxOffset);
 
@@ -156,6 +155,16 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
     }
 
     @Override
+    public int getSymbolCapacity() {
+        return symbolCapacity;
+    }
+
+    @Override
+    public boolean isCached() {
+        return cached;
+    }
+
+    @Override
     public CharSequence value(int key) {
         if (key > -1 && key < symbolCount) {
             if (cached) {
@@ -188,10 +197,6 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
         } else {
             this.charMem.grow(0);
         }
-    }
-
-    boolean isCached() {
-        return cached;
     }
 
     private CharSequence uncachedValue(int key) {

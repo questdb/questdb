@@ -24,105 +24,74 @@
 package com.questdb.griffin.engine.functions.rnd;
 
 import com.questdb.cairo.sql.Record;
+import com.questdb.griffin.Function;
 import com.questdb.std.BinarySequence;
-import com.questdb.std.Rnd;
+import com.questdb.std.ObjList;
 
 public class RandomRecord implements Record {
-    final Rnd rnd = new Rnd();
-    final ArrayBinarySequence abs = new ArrayBinarySequence().of(new byte[1024]);
+    final ObjList<Function> functions;
+
+    public RandomRecord(ObjList<Function> functions) {
+        this.functions = functions;
+    }
 
     @Override
     public BinarySequence getBin(int col) {
-        if (rnd.nextPositiveInt() % 32 == 0) {
-            return null;
-        }
-        for (int i = 0, n = abs.array.length; i < n; i++) {
-            abs.array[i] = rnd.nextByte();
-        }
-        return abs;
+        return functions.getQuick(col).getBin(null);
     }
 
     @Override
     public boolean getBool(int col) {
-        return rnd.nextBoolean();
+        return functions.getQuick(col).getBool(null);
     }
 
     @Override
     public byte getByte(int col) {
-        return rnd.nextByte();
+        return functions.getQuick(col).getByte(null);
     }
 
     @Override
     public long getDate(int col) {
-        return rnd.nextPositiveLong();
+        return functions.getQuick(col).getDate(null);
     }
 
     @Override
     public double getDouble(int col) {
-        return rnd.nextDouble();
+        return functions.getQuick(col).getDouble(null);
     }
 
     @Override
     public float getFloat(int col) {
-        return rnd.nextFloat();
+        return functions.getQuick(col).getFloat(null);
     }
 
     @Override
     public CharSequence getStr(int col) {
-        return rnd.nextInt() % 16 == 0 ? null : rnd.nextChars(15);
+        return functions.getQuick(col).getStr(null);
     }
 
     @Override
     public int getInt(int col) {
-        return rnd.nextInt();
+        return functions.getQuick(col).getInt(null);
     }
 
     @Override
     public long getLong(int col) {
-        return rnd.nextLong();
-    }
-
-    @Override
-    public long getRowId() {
-        return -1;
+        return functions.getQuick(col).getLong(null);
     }
 
     @Override
     public short getShort(int col) {
-        return rnd.nextShort();
-    }
-
-    @Override
-    public CharSequence getStrB(int col) {
-        return rnd.nextInt() % 16 == 0 ? null : rnd.nextChars(15);
-    }
-
-    @Override
-    public int getStrLen(int col) {
-        return 15;
+        return functions.getQuick(col).getShort(null);
     }
 
     @Override
     public CharSequence getSym(int col) {
-        return rnd.nextChars(10);
+        return functions.getQuick(col).getSymbol(null);
     }
 
-    public static class ArrayBinarySequence implements BinarySequence {
-        private byte[] array;
-
-        @Override
-        public byte byteAt(long index) {
-            return array[(int) index];
-        }
-
-        @Override
-        public long length() {
-            return array.length;
-        }
-
-        ArrayBinarySequence of(byte[] array) {
-            this.array = array;
-            return this;
-        }
+    @Override
+    public long getTimestamp(int col) {
+        return functions.getQuick(col).getTimestamp(null);
     }
 }

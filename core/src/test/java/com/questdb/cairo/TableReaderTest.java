@@ -72,13 +72,13 @@ public class TableReaderTest extends AbstractCairoTest {
         }
 
         if (exp.nextBoolean()) {
-            Assert.assertEquals(exp.nextDouble(), r.getDouble(3), 0.00000001);
+            Assert.assertEquals(exp.nextDouble2(), r.getDouble(3), 0.00000001);
         } else {
             Assert.assertTrue(Double.isNaN(r.getDouble(3)));
         }
 
         if (exp.nextBoolean()) {
-            Assert.assertEquals(exp.nextFloat(), r.getFloat(4), 0.000001f);
+            Assert.assertEquals(exp.nextFloat2(), r.getFloat(4), 0.000001f);
         } else {
             Assert.assertTrue(Float.isNaN(r.getFloat(4)));
         }
@@ -138,13 +138,13 @@ public class TableReaderTest extends AbstractCairoTest {
         }
 
         if (exp.nextBoolean()) {
-            Assert.assertEquals(exp.nextDouble(), r.getDouble(3), 0.00000001);
+            Assert.assertEquals(exp.nextDouble2(), r.getDouble(3), 0.00000001);
         } else {
             Assert.assertTrue(Double.isNaN(r.getDouble(3)));
         }
 
         if (exp.nextBoolean()) {
-            Assert.assertEquals(exp.nextFloat(), r.getFloat(4), 0.000001f);
+            Assert.assertEquals(exp.nextFloat2(), r.getFloat(4), 0.000001f);
         } else {
             Assert.assertTrue(Float.isNaN(r.getFloat(4)));
         }
@@ -207,13 +207,13 @@ public class TableReaderTest extends AbstractCairoTest {
         }
 
         if (exp.nextBoolean()) {
-            Assert.assertEquals(exp.nextDouble(), r.getDouble(3), 0.00000001);
+            Assert.assertEquals(exp.nextDouble2(), r.getDouble(3), 0.00000001);
         } else {
             Assert.assertTrue(Double.isNaN(r.getDouble(3)));
         }
 
         if (exp.nextBoolean()) {
-            Assert.assertEquals(exp.nextFloat(), r.getFloat(4), 0.000001f);
+            Assert.assertEquals(exp.nextFloat2(), r.getFloat(4), 0.000001f);
         } else {
             Assert.assertTrue(Float.isNaN(r.getFloat(4)));
         }
@@ -270,13 +270,13 @@ public class TableReaderTest extends AbstractCairoTest {
         Assert.assertEquals(Numbers.INT_NaN, r.getInt(0));
 
         if (exp.nextBoolean()) {
-            Assert.assertEquals(exp.nextDouble(), r.getDouble(3), 0.00000001);
+            Assert.assertEquals(exp.nextDouble2(), r.getDouble(3), 0.00000001);
         } else {
             Assert.assertTrue(Double.isNaN(r.getDouble(3)));
         }
 
         if (exp.nextBoolean()) {
-            Assert.assertEquals(exp.nextFloat(), r.getFloat(4), 0.000001f);
+            Assert.assertEquals(exp.nextFloat2(), r.getFloat(4), 0.000001f);
         } else {
             Assert.assertTrue(Float.isNaN(r.getFloat(4)));
         }
@@ -332,13 +332,13 @@ public class TableReaderTest extends AbstractCairoTest {
         }
 
         if (exp.nextBoolean()) {
-            Assert.assertEquals(exp.nextDouble(), r.getDouble(2), 0.00000001);
+            Assert.assertEquals(exp.nextDouble2(), r.getDouble(2), 0.00000001);
         } else {
             Assert.assertTrue(Double.isNaN(r.getDouble(2)));
         }
 
         if (exp.nextBoolean()) {
-            Assert.assertEquals(exp.nextFloat(), r.getFloat(3), 0.000001f);
+            Assert.assertEquals(exp.nextFloat2(), r.getFloat(3), 0.000001f);
         } else {
             Assert.assertTrue(Float.isNaN(r.getFloat(3)));
         }
@@ -395,13 +395,13 @@ public class TableReaderTest extends AbstractCairoTest {
         }
 
         if (exp.nextBoolean()) {
-            Assert.assertEquals(exp.nextDouble(), r.getDouble(2), 0.00000001);
+            Assert.assertEquals(exp.nextDouble2(), r.getDouble(2), 0.00000001);
         } else {
             Assert.assertTrue(Double.isNaN(r.getDouble(2)));
         }
 
         if (exp.nextBoolean()) {
-            Assert.assertEquals(exp.nextFloat(), r.getFloat(3), 0.000001f);
+            Assert.assertEquals(exp.nextFloat2(), r.getFloat(3), 0.000001f);
         } else {
             Assert.assertTrue(Float.isNaN(r.getFloat(3)));
         }
@@ -540,13 +540,13 @@ public class TableReaderTest extends AbstractCairoTest {
         }
 
         if (rnd.nextBoolean()) {
-            Assert.assertEquals(rnd.nextFloat(), r.getFloat(16), 0.00000001f);
+            Assert.assertEquals(rnd.nextFloat2(), r.getFloat(16), 0.00000001f);
         } else {
             Assert.assertTrue(Float.isNaN(r.getFloat(16)));
         }
 
         if (rnd.nextBoolean()) {
-            Assert.assertEquals(rnd.nextDouble(), r.getDouble(17), 0.0000001d);
+            Assert.assertEquals(rnd.nextDouble2(), r.getDouble(17), 0.0000001d);
         } else {
             Assert.assertTrue(Double.isNaN(r.getDouble(17)));
         }
@@ -593,13 +593,13 @@ public class TableReaderTest extends AbstractCairoTest {
         }
 
         if (rnd.nextBoolean()) {
-            Assert.assertEquals(rnd.nextFloat(), r.getFloat(16), 0.00000001f);
+            Assert.assertEquals(rnd.nextFloat2(), r.getFloat(16), 0.00000001f);
         } else {
             Assert.assertTrue(Float.isNaN(r.getFloat(16)));
         }
 
         if (rnd.nextBoolean()) {
-            Assert.assertEquals(rnd.nextDouble(), r.getDouble(17), 0.0000001d);
+            Assert.assertEquals(rnd.nextDouble2(), r.getDouble(17), 0.0000001d);
         } else {
             Assert.assertTrue(Double.isNaN(r.getDouble(17)));
         }
@@ -644,13 +644,13 @@ public class TableReaderTest extends AbstractCairoTest {
         }
 
         if (rnd.nextBoolean()) {
-            Assert.assertEquals(rnd.nextFloat(), r.getFloat(15), 0.00000001f);
+            Assert.assertEquals(rnd.nextFloat2(), r.getFloat(15), 0.00000001f);
         } else {
             Assert.assertTrue(Float.isNaN(r.getFloat(15)));
         }
 
         if (rnd.nextBoolean()) {
-            Assert.assertEquals(rnd.nextDouble(), r.getDouble(16), 0.0000001d);
+            Assert.assertEquals(rnd.nextDouble2(), r.getDouble(16), 0.0000001d);
         } else {
             Assert.assertTrue(Double.isNaN(r.getDouble(16)));
         }
@@ -695,13 +695,13 @@ public class TableReaderTest extends AbstractCairoTest {
         }
 
         if (rnd.nextBoolean()) {
-            Assert.assertEquals(rnd.nextFloat(), r.getFloat(14), 0.00000001f);
+            Assert.assertEquals(rnd.nextFloat2(), r.getFloat(14), 0.00000001f);
         } else {
             Assert.assertTrue(Float.isNaN(r.getFloat(14)));
         }
 
         if (rnd.nextBoolean()) {
-            Assert.assertEquals(rnd.nextDouble(), r.getDouble(15), 0.0000001d);
+            Assert.assertEquals(rnd.nextDouble2(), r.getDouble(15), 0.0000001d);
         } else {
             Assert.assertTrue(Double.isNaN(r.getDouble(15)));
         }
@@ -766,11 +766,11 @@ public class TableReaderTest extends AbstractCairoTest {
         }
 
         if (rnd1.nextBoolean()) {
-            r1.putDouble(3, rnd1.nextDouble());
+            r1.putDouble(3, rnd1.nextDouble2());
         }
 
         if (rnd1.nextBoolean()) {
-            r1.putFloat(4, rnd1.nextFloat());
+            r1.putFloat(4, rnd1.nextFloat2());
         }
 
         if (rnd1.nextBoolean()) {
@@ -814,13 +814,13 @@ public class TableReaderTest extends AbstractCairoTest {
         }
 
         if (rnd.nextBoolean()) {
-            Assert.assertEquals(rnd.nextDouble(), r.getDouble(2), 0.0000001d);
+            Assert.assertEquals(rnd.nextDouble2(), r.getDouble(2), 0.0000001d);
         } else {
             Assert.assertTrue(Double.isNaN(r.getDouble(2)));
         }
 
         if (rnd.nextBoolean()) {
-            Assert.assertEquals(rnd.nextFloat(), r.getFloat(3), 0.000001f);
+            Assert.assertEquals(rnd.nextFloat2(), r.getFloat(3), 0.000001f);
         } else {
             Assert.assertTrue(Float.isNaN(r.getFloat(3)));
         }
@@ -882,13 +882,13 @@ public class TableReaderTest extends AbstractCairoTest {
         }
 
         if (rnd.nextBoolean()) {
-            Assert.assertEquals(rnd.nextFloat(), r.getFloat(15), 0.000001f);
+            Assert.assertEquals(rnd.nextFloat2(), r.getFloat(15), 0.000001f);
         } else {
             Assert.assertTrue(Float.isNaN(r.getFloat(15)));
         }
 
         if (rnd.nextBoolean()) {
-            Assert.assertEquals(rnd.nextDouble(), r.getDouble(16), 0.0000001d);
+            Assert.assertEquals(rnd.nextDouble2(), r.getDouble(16), 0.0000001d);
         } else {
             Assert.assertTrue(Double.isNaN(r.getDouble(16)));
         }
@@ -937,13 +937,13 @@ public class TableReaderTest extends AbstractCairoTest {
         }
 
         if (rnd.nextBoolean()) {
-            Assert.assertEquals(rnd.nextDouble(), r.getDouble(2), 0.0000001d);
+            Assert.assertEquals(rnd.nextDouble2(), r.getDouble(2), 0.0000001d);
         } else {
             Assert.assertTrue(Double.isNaN(r.getDouble(2)));
         }
 
         if (rnd.nextBoolean()) {
-            Assert.assertEquals(rnd.nextFloat(), r.getFloat(3), 0.000001f);
+            Assert.assertEquals(rnd.nextFloat2(), r.getFloat(3), 0.000001f);
         } else {
             Assert.assertTrue(Float.isNaN(r.getFloat(3)));
         }
@@ -1003,13 +1003,13 @@ public class TableReaderTest extends AbstractCairoTest {
         }
 
         if (rnd.nextBoolean()) {
-            Assert.assertEquals(rnd.nextFloat(), r.getFloat(14), 0.000001f);
+            Assert.assertEquals(rnd.nextFloat2(), r.getFloat(14), 0.000001f);
         } else {
             Assert.assertTrue(Float.isNaN(r.getFloat(14)));
         }
 
         if (rnd.nextBoolean()) {
-            Assert.assertEquals(rnd.nextDouble(), r.getDouble(15), 0.0000001d);
+            Assert.assertEquals(rnd.nextDouble2(), r.getDouble(15), 0.0000001d);
         } else {
             Assert.assertTrue(Double.isNaN(r.getDouble(15)));
         }
@@ -1060,13 +1060,13 @@ public class TableReaderTest extends AbstractCairoTest {
         }
 
         if (rnd.nextBoolean()) {
-            Assert.assertEquals(rnd.nextDouble(), r.getDouble(2), 0.0000001d);
+            Assert.assertEquals(rnd.nextDouble2(), r.getDouble(2), 0.0000001d);
         } else {
             Assert.assertTrue(Double.isNaN(r.getDouble(2)));
         }
 
         if (rnd.nextBoolean()) {
-            Assert.assertEquals(rnd.nextFloat(), r.getFloat(3), 0.000001f);
+            Assert.assertEquals(rnd.nextFloat2(), r.getFloat(3), 0.000001f);
         } else {
             Assert.assertTrue(Float.isNaN(r.getFloat(3)));
         }
@@ -1122,13 +1122,13 @@ public class TableReaderTest extends AbstractCairoTest {
         }
 
         if (rnd.nextBoolean()) {
-            Assert.assertEquals(rnd.nextFloat(), r.getFloat(14), 0.000001f);
+            Assert.assertEquals(rnd.nextFloat2(), r.getFloat(14), 0.000001f);
         } else {
             Assert.assertTrue(Float.isNaN(r.getFloat(14)));
         }
 
         if (rnd.nextBoolean()) {
-            Assert.assertEquals(rnd.nextDouble(), r.getDouble(15), 0.0000001d);
+            Assert.assertEquals(rnd.nextDouble2(), r.getDouble(15), 0.0000001d);
         } else {
             Assert.assertTrue(Double.isNaN(r.getDouble(15)));
         }
@@ -1193,11 +1193,11 @@ public class TableReaderTest extends AbstractCairoTest {
         }
 
         if (rnd.nextBoolean()) {
-            r.putFloat(16, rnd.nextFloat());
+            r.putFloat(16, rnd.nextFloat2());
         }
 
         if (rnd.nextBoolean()) {
-            r.putDouble(17, rnd.nextDouble());
+            r.putDouble(17, rnd.nextDouble2());
         }
 
         if (rnd.nextBoolean()) {
@@ -1233,11 +1233,11 @@ public class TableReaderTest extends AbstractCairoTest {
         }
 
         if (rnd.nextBoolean()) {
-            r.putFloat(16, rnd.nextFloat());
+            r.putFloat(16, rnd.nextFloat2());
         }
 
         if (rnd.nextBoolean()) {
-            r.putDouble(17, rnd.nextDouble());
+            r.putDouble(17, rnd.nextDouble2());
         }
 
         if (rnd.nextBoolean()) {
@@ -1266,11 +1266,11 @@ public class TableReaderTest extends AbstractCairoTest {
         }
 
         if (rnd.nextBoolean()) {
-            r.putDouble(2, rnd.nextDouble());
+            r.putDouble(2, rnd.nextDouble2());
         }
 
         if (rnd.nextBoolean()) {
-            r.putFloat(3, rnd.nextFloat());
+            r.putFloat(3, rnd.nextFloat2());
         }
 
         if (rnd.nextBoolean()) {
@@ -1315,11 +1315,11 @@ public class TableReaderTest extends AbstractCairoTest {
         }
 
         if (rnd.nextBoolean()) {
-            r.putFloat(15, rnd.nextFloat());
+            r.putFloat(15, rnd.nextFloat2());
         }
 
         if (rnd.nextBoolean()) {
-            r.putDouble(16, rnd.nextDouble());
+            r.putDouble(16, rnd.nextDouble2());
         }
 
         if (rnd.nextBoolean()) {
@@ -1352,11 +1352,11 @@ public class TableReaderTest extends AbstractCairoTest {
         }
 
         if (rnd.nextBoolean()) {
-            r.putDouble(2, rnd.nextDouble());
+            r.putDouble(2, rnd.nextDouble2());
         }
 
         if (rnd.nextBoolean()) {
-            r.putFloat(3, rnd.nextFloat());
+            r.putFloat(3, rnd.nextFloat2());
         }
 
         if (rnd.nextBoolean()) {
@@ -1398,11 +1398,11 @@ public class TableReaderTest extends AbstractCairoTest {
         }
 
         if (rnd.nextBoolean()) {
-            r.putFloat(14, rnd.nextFloat());
+            r.putFloat(14, rnd.nextFloat2());
         }
 
         if (rnd.nextBoolean()) {
-            r.putDouble(15, rnd.nextDouble());
+            r.putDouble(15, rnd.nextDouble2());
         }
 
         if (rnd.nextBoolean()) {
@@ -1662,7 +1662,7 @@ public class TableReaderTest extends AbstractCairoTest {
 
             try (TableReader r = new TableReader(configuration, "all")) {
                 sink.clear();
-                printer.print(r.getCursor(), true, r.getMetadata());
+                printer.print(r.getCursor(), true);
                 TestUtils.assertEquals(expected, sink);
             }
         });
@@ -2081,7 +2081,7 @@ public class TableReaderTest extends AbstractCairoTest {
 
     @Test
     public void testSymbolIndex() throws Exception {
-        String expected = "{\"columnCount\":3,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\"SYMBOL\",\"indexed\":true},{\"index\":1,\"name\":\"b\",\"type\":\"INT\"},{\"index\":2,\"name\":\"timestamp\",\"type\":\"TIMESTAMP\"}]}";
+        String expected = "{\"columnCount\":3,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\"SYMBOL\",\"indexed\":true,\"indexValueBlockCapacity\":2},{\"index\":1,\"name\":\"b\",\"type\":\"INT\"},{\"index\":2,\"name\":\"timestamp\",\"type\":\"TIMESTAMP\"}],\"timestampIndex\":2}";
 
         TestUtils.assertMemoryLeak(() -> {
             try (TableModel model = new TableModel(configuration, "x", PartitionBy.DAY)

@@ -39,6 +39,8 @@ public interface CairoEngine extends Closeable {
 
     boolean releaseAllReaders();
 
+    boolean releaseAllWriters();
+
     boolean lock(CharSequence tableName);
 
     void unlock(CharSequence tableName);

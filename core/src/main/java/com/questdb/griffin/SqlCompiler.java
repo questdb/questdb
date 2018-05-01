@@ -23,14 +23,8 @@
 
 package com.questdb.griffin;
 
-import com.questdb.cairo.AppendMemory;
-import com.questdb.cairo.CairoConfiguration;
-import com.questdb.cairo.SymbolMapWriter;
-import com.questdb.cairo.TableUtils;
-import com.questdb.cairo.sql.CairoEngine;
-import com.questdb.cairo.sql.RecordCursor;
-import com.questdb.cairo.sql.RecordCursorFactory;
-import com.questdb.cairo.sql.RecordMetadata;
+import com.questdb.cairo.*;
+import com.questdb.cairo.sql.*;
 import com.questdb.common.ColumnType;
 import com.questdb.common.PartitionBy;
 import com.questdb.griffin.engine.functions.bind.BindVariableService;
@@ -44,6 +38,7 @@ import static com.questdb.cairo.TableUtils.META_FILE_NAME;
 import static com.questdb.cairo.TableUtils.TXN_FILE_NAME;
 
 public class SqlCompiler {
+    private final CairoEngine engine;
     private final SqlOptimiser optimiser;
     private final SqlParser parser;
     private final ObjectPool<SqlNode> sqlNodePool;
@@ -55,9 +50,11 @@ public class SqlCompiler {
     private final CairoConfiguration configuration;
     private final Path path = new Path();
     private final AppendMemory mem = new AppendMemory();
+    private final BytecodeAssembler asm = new BytecodeAssembler();
 
     public SqlCompiler(CairoEngine engine, CairoConfiguration configuration) {
         //todo: apply configuration to all storage parameters
+        this.engine = engine;
         this.sqlNodePool = new ObjectPool<>(SqlNode.FACTORY, 128);
         this.queryColumnPool = new ObjectPool<>(QueryColumn.FACTORY, 64);
         this.queryModelPool = new ObjectPool<>(QueryModel.FACTORY, 16);
@@ -119,6 +116,414 @@ public class SqlCompiler {
                 createTable((CreateTableModel) executionModel, bindVariableService);
                 break;
         }
+    }
+
+    private static CopyHelper compile(BytecodeAssembler asm, RecordMetadata from, RecordMetadata to) {
+        int tsIndex = to.getTimestampIndex();
+        asm.init(CopyHelper.class);
+        asm.setupPool();
+        int thisClassIndex = asm.poolClass(asm.poolUtf8("questdbasm"));
+        int interfaceClassIndex = asm.poolClass(CopyHelper.class);
+
+        int rGetInt = asm.poolInterfaceMethod(Record.class, "getInt", "(I)I");
+        int rGetLong = asm.poolInterfaceMethod(Record.class, "getLong", "(I)J");
+        int rGetDate = asm.poolInterfaceMethod(Record.class, "getDate", "(I)J");
+        int rGetTimestamp = asm.poolInterfaceMethod(Record.class, "getTimestamp", "(I)J");
+        //
+        int rGetByte = asm.poolInterfaceMethod(Record.class, "getByte", "(I)B");
+        int rGetShort = asm.poolInterfaceMethod(Record.class, "getShort", "(I)S");
+        int rGetBool = asm.poolInterfaceMethod(Record.class, "getBool", "(I)Z");
+        int rGetFloat = asm.poolInterfaceMethod(Record.class, "getFloat", "(I)F");
+        int rGetDouble = asm.poolInterfaceMethod(Record.class, "getDouble", "(I)D");
+        int rGetSym = asm.poolInterfaceMethod(Record.class, "getSym", "(I)Ljava/lang/CharSequence;");
+        int rGetStr = asm.poolInterfaceMethod(Record.class, "getStr", "(I)Ljava/lang/CharSequence;");
+        int rGetBin = asm.poolInterfaceMethod(Record.class, "getBin", "(I)Lcom/questdb/std/BinarySequence;");
+        //
+        int wPutInt = asm.poolMethod(TableWriter.Row.class, "putInt", "(II)V");
+        int wPutLong = asm.poolMethod(TableWriter.Row.class, "putLong", "(IJ)V");
+        int wPutDate = asm.poolMethod(TableWriter.Row.class, "putDate", "(IJ)V");
+        int wPutTimestamp = asm.poolMethod(TableWriter.Row.class, "putTimestamp", "(IJ)V");
+        //
+        int wPutByte = asm.poolMethod(TableWriter.Row.class, "putByte", "(IB)V");
+        int wPutShort = asm.poolMethod(TableWriter.Row.class, "putShort", "(IS)V");
+        int wPutBool = asm.poolMethod(TableWriter.Row.class, "putBool", "(IZ)V");
+        int wPutFloat = asm.poolMethod(TableWriter.Row.class, "putFloat", "(IF)V");
+        int wPutDouble = asm.poolMethod(TableWriter.Row.class, "putDouble", "(ID)V");
+        int wPutSym = asm.poolMethod(TableWriter.Row.class, "putSym", "(ILjava/lang/CharSequence;)V");
+        int wPutStr = asm.poolMethod(TableWriter.Row.class, "putStr", "(ILjava/lang/CharSequence;)V");
+        int wPutBin = asm.poolMethod(TableWriter.Row.class, "putBin", "(ILcom/questdb/std/BinarySequence;)V");
+
+        int copyNameIndex = asm.poolUtf8("copy");
+        int copySigIndex = asm.poolUtf8("(Lcom/questdb/cairo/sql/Record;Lcom/questdb/cairo/TableWriter$Row;)V");
+
+        asm.finishPool();
+        asm.defineClass(thisClassIndex);
+        asm.interfaceCount(1);
+        asm.putShort(interfaceClassIndex);
+        asm.fieldCount(0);
+        asm.methodCount(2);
+        asm.defineDefaultConstructor();
+
+        asm.startMethod(copyNameIndex, copySigIndex, 4, 3);
+
+        int n = from.getColumnCount();
+        for (int i = 0; i < n; i++) {
+
+            // do not copy timestamp, it will be copied externally to this helper
+
+            if (i == tsIndex) {
+                continue;
+            }
+
+            asm.aload(2);
+            asm.iconst(i);
+            asm.aload(1);
+            asm.iconst(i);
+
+            switch (from.getColumnType(i)) {
+                case ColumnType.INT:
+                    asm.invokeInterface(rGetInt, 1);
+                    switch (to.getColumnType(i)) {
+                        case ColumnType.LONG:
+                            asm.i2l();
+                            asm.invokeVirtual(wPutLong);
+                            break;
+                        case ColumnType.DATE:
+                            asm.i2l();
+                            asm.invokeVirtual(wPutDate);
+                            break;
+                        case ColumnType.TIMESTAMP:
+                            asm.i2l();
+                            asm.invokeVirtual(wPutTimestamp);
+                            break;
+                        case ColumnType.SHORT:
+                            asm.i2s();
+                            asm.invokeVirtual(wPutShort);
+                            break;
+                        case ColumnType.BYTE:
+                            asm.i2b();
+                            asm.invokeVirtual(wPutByte);
+                            break;
+                        case ColumnType.FLOAT:
+                            asm.i2f();
+                            asm.invokeVirtual(wPutFloat);
+                            break;
+                        case ColumnType.DOUBLE:
+                            asm.i2d();
+                            asm.invokeVirtual(wPutDouble);
+                            break;
+                        default:
+                            asm.invokeVirtual(wPutInt);
+                            break;
+                    }
+                    break;
+                case ColumnType.LONG:
+                    asm.invokeInterface(rGetLong, 1);
+                    switch (to.getColumnType(i)) {
+                        case ColumnType.INT:
+                            asm.l2i();
+                            asm.invokeVirtual(wPutInt);
+                            break;
+                        case ColumnType.DATE:
+                            asm.invokeVirtual(wPutDate);
+                            break;
+                        case ColumnType.TIMESTAMP:
+                            asm.invokeVirtual(wPutTimestamp);
+                            break;
+                        case ColumnType.SHORT:
+                            asm.l2i();
+                            asm.i2s();
+                            asm.invokeVirtual(wPutShort);
+                            break;
+                        case ColumnType.BYTE:
+                            asm.l2i();
+                            asm.i2b();
+                            asm.invokeVirtual(wPutByte);
+                            break;
+                        case ColumnType.FLOAT:
+                            asm.l2f();
+                            asm.invokeVirtual(wPutFloat);
+                            break;
+                        case ColumnType.DOUBLE:
+                            asm.l2d();
+                            asm.invokeVirtual(wPutDouble);
+                            break;
+                        default:
+                            asm.invokeVirtual(wPutLong);
+                            break;
+                    }
+                    break;
+                case ColumnType.DATE:
+                    asm.invokeInterface(rGetDate, 1);
+                    switch (to.getColumnType(i)) {
+                        case ColumnType.INT:
+                            asm.l2i();
+                            asm.invokeVirtual(wPutInt);
+                            break;
+                        case ColumnType.LONG:
+                            asm.invokeVirtual(wPutLong);
+                            break;
+                        case ColumnType.TIMESTAMP:
+                            asm.invokeVirtual(wPutTimestamp);
+                            break;
+                        case ColumnType.SHORT:
+                            asm.l2i();
+                            asm.i2s();
+                            asm.invokeVirtual(wPutShort);
+                            break;
+                        case ColumnType.BYTE:
+                            asm.l2i();
+                            asm.i2b();
+                            asm.invokeVirtual(wPutByte);
+                            break;
+                        case ColumnType.FLOAT:
+                            asm.l2f();
+                            asm.invokeVirtual(wPutFloat);
+                            break;
+                        case ColumnType.DOUBLE:
+                            asm.l2d();
+                            asm.invokeVirtual(wPutDouble);
+                            break;
+                        default:
+                            asm.invokeVirtual(wPutDate);
+                            break;
+                    }
+                    break;
+                case ColumnType.TIMESTAMP:
+                    asm.invokeInterface(rGetTimestamp, 1);
+                    switch (to.getColumnType(i)) {
+                        case ColumnType.INT:
+                            asm.l2i();
+                            asm.invokeVirtual(wPutInt);
+                            break;
+                        case ColumnType.LONG:
+                            asm.invokeVirtual(wPutLong);
+                            break;
+                        case ColumnType.SHORT:
+                            asm.l2i();
+                            asm.i2s();
+                            asm.invokeVirtual(wPutShort);
+                            break;
+                        case ColumnType.BYTE:
+                            asm.l2i();
+                            asm.i2b();
+                            asm.invokeVirtual(wPutByte);
+                            break;
+                        case ColumnType.FLOAT:
+                            asm.l2f();
+                            asm.invokeVirtual(wPutFloat);
+                            break;
+                        case ColumnType.DOUBLE:
+                            asm.l2d();
+                            asm.invokeVirtual(wPutDouble);
+                            break;
+                        case ColumnType.DATE:
+                            asm.invokeVirtual(wPutDate);
+                            break;
+                        default:
+                            asm.invokeVirtual(wPutTimestamp);
+                            break;
+                    }
+                    break;
+                case ColumnType.BYTE:
+                    asm.invokeInterface(rGetByte, 1);
+                    switch (to.getColumnType(i)) {
+                        case ColumnType.INT:
+                            asm.invokeVirtual(wPutInt);
+                            break;
+                        case ColumnType.LONG:
+                            asm.i2l();
+                            asm.invokeVirtual(wPutLong);
+                            break;
+                        case ColumnType.DATE:
+                            asm.i2l();
+                            asm.invokeVirtual(wPutDate);
+                            break;
+                        case ColumnType.TIMESTAMP:
+                            asm.i2l();
+                            asm.invokeVirtual(wPutTimestamp);
+                            break;
+                        case ColumnType.SHORT:
+                            asm.i2s();
+                            asm.invokeVirtual(wPutShort);
+                            break;
+                        case ColumnType.FLOAT:
+                            asm.i2f();
+                            asm.invokeVirtual(wPutFloat);
+                            break;
+                        case ColumnType.DOUBLE:
+                            asm.i2d();
+                            asm.invokeVirtual(wPutDouble);
+                            break;
+                        default:
+                            asm.invokeVirtual(wPutByte);
+                            break;
+                    }
+                    break;
+                case ColumnType.SHORT:
+                    asm.invokeInterface(rGetShort, 1);
+                    switch (to.getColumnType(i)) {
+                        case ColumnType.INT:
+                            asm.invokeVirtual(wPutInt);
+                            break;
+                        case ColumnType.LONG:
+                            asm.i2l();
+                            asm.invokeVirtual(wPutLong);
+                            break;
+                        case ColumnType.DATE:
+                            asm.i2l();
+                            asm.invokeVirtual(wPutDate);
+                            break;
+                        case ColumnType.TIMESTAMP:
+                            asm.i2l();
+                            asm.invokeVirtual(wPutTimestamp);
+                            break;
+                        case ColumnType.BYTE:
+                            asm.i2b();
+                            asm.invokeVirtual(wPutByte);
+                            break;
+                        case ColumnType.FLOAT:
+                            asm.i2f();
+                            asm.invokeVirtual(wPutFloat);
+                            break;
+                        case ColumnType.DOUBLE:
+                            asm.i2d();
+                            asm.invokeVirtual(wPutDouble);
+                            break;
+                        default:
+                            asm.invokeVirtual(wPutShort);
+                            break;
+                    }
+                    break;
+                case ColumnType.BOOLEAN:
+                    asm.invokeInterface(rGetBool, 1);
+                    asm.invokeVirtual(wPutBool);
+                    break;
+                case ColumnType.FLOAT:
+                    asm.invokeInterface(rGetFloat, 1);
+                    switch (to.getColumnType(i)) {
+                        case ColumnType.INT:
+                            asm.f2i();
+                            asm.invokeVirtual(wPutInt);
+                            break;
+                        case ColumnType.LONG:
+                            asm.f2l();
+                            asm.invokeVirtual(wPutLong);
+                            break;
+                        case ColumnType.DATE:
+                            asm.f2l();
+                            asm.invokeVirtual(wPutDate);
+                            break;
+                        case ColumnType.TIMESTAMP:
+                            asm.f2l();
+                            asm.invokeVirtual(wPutTimestamp);
+                            break;
+                        case ColumnType.SHORT:
+                            asm.f2i();
+                            asm.i2s();
+                            asm.invokeVirtual(wPutShort);
+                            break;
+                        case ColumnType.BYTE:
+                            asm.f2i();
+                            asm.i2b();
+                            asm.invokeVirtual(wPutByte);
+                            break;
+                        case ColumnType.DOUBLE:
+                            asm.f2d();
+                            asm.invokeVirtual(wPutDouble);
+                            break;
+                        default:
+                            asm.invokeVirtual(wPutFloat);
+                            break;
+                    }
+                    break;
+                case ColumnType.DOUBLE:
+                    asm.invokeInterface(rGetDouble, 1);
+                    switch (to.getColumnType(i)) {
+                        case ColumnType.INT:
+                            asm.d2i();
+                            asm.invokeVirtual(wPutInt);
+                            break;
+                        case ColumnType.LONG:
+                            asm.d2l();
+                            asm.invokeVirtual(wPutLong);
+                            break;
+                        case ColumnType.DATE:
+                            asm.d2l();
+                            asm.invokeVirtual(wPutDate);
+                            break;
+                        case ColumnType.TIMESTAMP:
+                            asm.d2l();
+                            asm.invokeVirtual(wPutTimestamp);
+                            break;
+                        case ColumnType.SHORT:
+                            asm.d2i();
+                            asm.i2s();
+                            asm.invokeVirtual(wPutShort);
+                            break;
+                        case ColumnType.BYTE:
+                            asm.d2i();
+                            asm.i2b();
+                            asm.invokeVirtual(wPutByte);
+                            break;
+                        case ColumnType.FLOAT:
+                            asm.d2f();
+                            asm.invokeVirtual(wPutFloat);
+                            break;
+                        default:
+                            asm.invokeVirtual(wPutDouble);
+                            break;
+                    }
+                    break;
+                case ColumnType.SYMBOL:
+                    asm.invokeInterface(rGetSym, 1);
+                    switch (to.getColumnType(i)) {
+                        case ColumnType.STRING:
+                            asm.invokeVirtual(wPutStr);
+                            break;
+                        default:
+                            asm.invokeVirtual(wPutSym);
+                            break;
+                    }
+                    break;
+                case ColumnType.STRING:
+                    asm.invokeInterface(rGetStr, 1);
+                    switch (to.getColumnType(i)) {
+                        case ColumnType.SYMBOL:
+                            asm.invokeVirtual(wPutSym);
+                            break;
+                        default:
+                            asm.invokeVirtual(wPutStr);
+                            break;
+                    }
+                    break;
+                case ColumnType.BINARY:
+                    asm.invokeInterface(rGetBin, 1);
+                    asm.invokeVirtual(wPutBin);
+                    break;
+                default:
+                    break;
+            }
+        }
+
+        asm.return_();
+        asm.endMethodCode();
+
+        // exceptions
+        asm.putShort(0);
+
+        // we have to add stack map table as branch target
+        // jvm requires it
+
+        // attributes: 0 (void, no stack verification)
+        asm.putShort(0);
+
+        asm.endMethod();
+
+        // class attribute count
+        asm.putShort(0);
+
+        return asm.newInstance();
     }
 
     private void checkTableNameAvailable(CreateTableModel model) throws SqlException {
@@ -208,8 +613,18 @@ public class SqlCompiler {
 
             int count = model.getColumnCount();
             mem.putInt(count);
-            mem.putInt(PartitionBy.fromString(model.getPartitionBy().token));
-            mem.putInt(model.getColumnIndex(model.getTimestamp().token));
+            final SqlNode partitionBy = model.getPartitionBy();
+            if (partitionBy == null) {
+                mem.putInt(PartitionBy.NONE);
+            } else {
+                mem.putInt(PartitionBy.fromString(partitionBy.token));
+            }
+
+            if (timestamp == null) {
+                mem.putInt(-1);
+            } else {
+                mem.putInt(model.getColumnIndex(timestamp.token));
+            }
             mem.jumpTo(TableUtils.META_OFFSET_COLUMN_TYPES);
 
             for (int i = 0; i < count; i++) {
@@ -242,12 +657,16 @@ public class SqlCompiler {
                 }
 
                 if (columnType == ColumnType.SYMBOL) {
+                    int symbolCapacity = model.getSymbolCapacity(i);
+                    if (symbolCapacity == -1) {
+                        symbolCapacity = configuration.getCutlassSymbolCapacity();
+                    }
                     SymbolMapWriter.createSymbolMapFiles(
                             ff,
                             mem,
                             path.trimTo(rootLen),
                             model.getColumnName(i),
-                            model.getSymbolCapacity(i),
+                            symbolCapacity,
                             model.getSymbolCacheFlag(i)
                     );
                     symbolMapCount++;
@@ -255,6 +674,29 @@ public class SqlCompiler {
             }
             mem.of(ff, path.trimTo(rootLen).concat(TXN_FILE_NAME).$(), ff.getPageSize());
             TableUtils.resetTxn(mem, symbolMapCount);
+        }
+
+        try (TableWriter writer = engine.getWriter(model.getName().token)) {
+            RecordMetadata writerMetadata = writer.getMetadata();
+            CopyHelper copyHelper = compile(asm, metadata, writerMetadata);
+
+            int timestampIndex = writerMetadata.getTimestampIndex();
+            if (timestampIndex == -1) {
+                while (cursor.hasNext()) {
+                    Record record = cursor.next();
+                    TableWriter.Row row = writer.newRow(0);
+                    copyHelper.copy(record, row);
+                    row.append();
+                }
+            } else {
+                while (cursor.hasNext()) {
+                    Record record = cursor.next();
+                    TableWriter.Row row = writer.newRow(record.getTimestamp(timestampIndex));
+                    copyHelper.copy(record, row);
+                    row.append();
+                }
+            }
+            writer.commit();
         }
     }
 
@@ -270,8 +712,19 @@ public class SqlCompiler {
 
             int count = model.getColumnCount();
             mem.putInt(count);
-            mem.putInt(PartitionBy.fromString(model.getPartitionBy().token));
-            mem.putInt(model.getColumnIndex(model.getTimestamp().token));
+            final SqlNode partitionBy = model.getPartitionBy();
+            if (partitionBy == null) {
+                mem.putInt(PartitionBy.NONE);
+            } else {
+                mem.putInt(PartitionBy.fromString(partitionBy.token));
+            }
+
+            final SqlNode timestamp = model.getTimestamp();
+            if (timestamp == null) {
+                mem.putInt(-1);
+            } else {
+                mem.putInt(model.getColumnIndex(timestamp.token));
+            }
             mem.jumpTo(TableUtils.META_OFFSET_COLUMN_TYPES);
 
             for (int i = 0; i < count; i++) {
@@ -329,5 +782,9 @@ public class SqlCompiler {
         clear();
         lexer.of(expression);
         parser.expr(lexer, listener);
+    }
+
+    public interface CopyHelper {
+        void copy(Record record, TableWriter.Row row);
     }
 }

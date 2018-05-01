@@ -63,6 +63,11 @@ public class ShortFunctionTest {
     }
 
     @Test(expected = UnsupportedOperationException.class)
+    public void testGetRecordCursorFactory() {
+        function.getRecordCursorFactory(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
     public void testGetStr() {
         function.getStr(null);
     }
