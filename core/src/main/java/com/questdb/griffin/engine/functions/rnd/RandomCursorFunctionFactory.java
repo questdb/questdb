@@ -33,7 +33,6 @@ import com.questdb.griffin.FunctionFactory;
 import com.questdb.griffin.SqlException;
 import com.questdb.griffin.engine.functions.CursorFunction;
 import com.questdb.std.ObjList;
-import com.questdb.std.Rnd;
 
 public class RandomCursorFunctionFactory implements FunctionFactory {
     @Override
@@ -49,15 +48,10 @@ public class RandomCursorFunctionFactory implements FunctionFactory {
         }
 
         final long recordCount = args.getQuick(0).getLong(null);
-        final Rnd rnd = new Rnd(
-                args.getQuick(1).getLong(null),
-                args.getQuick(2).getLong(null)
-        );
-
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
         final ObjList<Function> functions = new ObjList<>();
 
-        for (int i = 3, n = args.size(); i < n; i += 2) {
+        for (int i = 1, n = args.size(); i < n; i += 2) {
 
             // validate column name expression
             // ideally we need column name just a string, but it can also be a function
@@ -79,11 +73,6 @@ public class RandomCursorFunctionFactory implements FunctionFactory {
             // functions implementing RandomFunction interface can be seeded
             // with Rnd instance so that they don't return the same value
             Function rndFunc = args.getQuick(i + 1);
-
-            if (rndFunc instanceof RandomFunction) {
-                ((RandomFunction) rndFunc).init(rnd);
-            }
-
             metadata.add(new TableColumnMetadata(columnNameStr.toString(), rndFunc.getType()));
             functions.add(rndFunc);
         }

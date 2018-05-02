@@ -59,17 +59,17 @@ public class RndStrFunctionFactory implements FunctionFactory {
         throw SqlException.position(position).put("invalid range");
     }
 
-    private static class RndFunction extends StrFunction implements RandomFunction {
+    private static class RndFunction extends StrFunction {
         private final int lo;
         private final int range;
         private final int nullRate;
-        private Rnd rnd;
+        private final Rnd rnd;
 
         public RndFunction(int position, int lo, int hi, int nullRate, CairoConfiguration configuration) {
             super(position);
             this.lo = lo;
             this.range = hi - lo + 1;
-            this.rnd = new Rnd(configuration.getMillisecondClock().getTicks(), configuration.getMicrosecondClock().getTicks());
+            this.rnd = SharedRandom.getRandom(configuration);
             this.nullRate = nullRate;
         }
 
@@ -82,27 +82,20 @@ public class RndStrFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void init(Rnd rnd) {
-            this.rnd = rnd;
-        }
-
-        @Override
         public CharSequence getStrB(Record rec) {
             return getStr(rec);
         }
-
-
     }
 
-    private static class FixedFunction extends StrFunction implements RandomFunction {
+    private static class FixedFunction extends StrFunction {
         private final int len;
         private final int nullRate;
-        private Rnd rnd;
+        private final Rnd rnd;
 
         public FixedFunction(int position, int len, int nullRate, CairoConfiguration configuration) {
             super(position);
             this.len = len;
-            this.rnd = new Rnd(configuration.getMillisecondClock().getTicks(), configuration.getMicrosecondClock().getTicks());
+            this.rnd = SharedRandom.getRandom(configuration);
             this.nullRate = nullRate;
         }
 
@@ -117,11 +110,6 @@ public class RndStrFunctionFactory implements FunctionFactory {
         @Override
         public CharSequence getStrB(Record rec) {
             return getStr(rec);
-        }
-
-        @Override
-        public void init(Rnd rnd) {
-            this.rnd = rnd;
         }
     }
 }

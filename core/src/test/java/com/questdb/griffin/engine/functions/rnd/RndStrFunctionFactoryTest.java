@@ -28,21 +28,10 @@ import com.questdb.griffin.FunctionFactory;
 import com.questdb.griffin.SqlException;
 import com.questdb.griffin.engine.AbstractFunctionFactoryTest;
 import com.questdb.griffin.engine.functions.math.NegIntFunctionFactory;
-import com.questdb.std.Rnd;
-import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
 public class RndStrFunctionFactoryTest extends AbstractFunctionFactoryTest {
-    @Test
-    public void testExpectedOutcome() throws SqlException {
-        Invocation invocation = call(4, 10, 2);
-        Function function = invocation.getFunction1();
-
-        Assert.assertTrue(function instanceof RandomFunction);
-        ((RandomFunction) function).init(new Rnd()); // stable generator
-        TestUtils.assertEquals("JWCPSW", function.getStr(null));
-    }
 
     @Test
     public void testFixLength() throws SqlException {

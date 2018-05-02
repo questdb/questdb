@@ -23,37 +23,19 @@
 
 package com.questdb.griffin.engine.functions.math;
 
-import com.questdb.cairo.CairoConfiguration;
-import com.questdb.cairo.sql.Record;
-import com.questdb.griffin.Function;
 import com.questdb.griffin.FunctionFactory;
-import com.questdb.griffin.engine.functions.LongFunction;
-import com.questdb.std.ObjList;
+import com.questdb.griffin.SqlException;
+import com.questdb.griffin.engine.AbstractFunctionFactoryTest;
+import org.junit.Test;
 
-public class AddLongVVFunctionFactory implements FunctionFactory {
-    @Override
-    public String getSignature() {
-        return "+(LL)";
+public class AddByteFunctionFactoryTest extends AbstractFunctionFactoryTest {
+    @Test
+    public void testSimple() throws SqlException {
+        call(2, 5).andAssert((byte) 7);
     }
 
     @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
-        return new AddLongVVFunc(position, args.getQuick(0), args.getQuick(1));
-    }
-
-    private static class AddLongVVFunc extends LongFunction {
-        final Function left;
-        final Function right;
-
-        public AddLongVVFunc(int position, Function left, Function right) {
-            super(position);
-            this.left = left;
-            this.right = right;
-        }
-
-        @Override
-        public long getLong(Record rec) {
-            return left.getLong(rec) + right.getLong(rec);
-        }
+    protected FunctionFactory getFunctionFactory() {
+        return new AddByteFunctionFactory();
     }
 }

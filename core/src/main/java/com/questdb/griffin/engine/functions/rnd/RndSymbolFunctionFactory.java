@@ -60,13 +60,13 @@ public class RndSymbolFunctionFactory implements FunctionFactory {
         return new Func(position, count, lo, hi, nullRate, configuration);
     }
 
-    private static final class Func extends SymbolFunction implements RandomFunction {
+    private static final class Func extends SymbolFunction {
         private final int count;
         private final int lo;
         private final int hi;
         private final int nullRate;
         private final ObjList<String> symbols;
-        private Rnd rnd;
+        private final Rnd rnd;
 
         public Func(int position, int count, int lo, int hi, int nullRate, CairoConfiguration configuration) {
             super(position);
@@ -74,7 +74,7 @@ public class RndSymbolFunctionFactory implements FunctionFactory {
             this.lo = lo;
             this.hi = hi;
             this.nullRate = nullRate + 1;
-            this.rnd = new Rnd(configuration.getMillisecondClock().getTicks(), configuration.getMicrosecondClock().getTicks());
+            this.rnd = SharedRandom.getRandom(configuration);
             this.symbols = new ObjList<>(count);
             seedSymbols();
         }
@@ -85,12 +85,6 @@ public class RndSymbolFunctionFactory implements FunctionFactory {
                 return null;
             }
             return symbols.getQuick(rnd.nextPositiveInt() % count);
-        }
-
-        @Override
-        public void init(Rnd rnd) {
-            this.rnd = rnd;
-            seedSymbols();
         }
 
         private void seedFixed() {

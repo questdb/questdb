@@ -73,7 +73,7 @@ public class DateFormatUtils {
         Numbers.append(sink, val);
     }
 
-    // YYYY-MM-DDThh:mm:ss.mmmmZ
+    // YYYY-MM-DDThh:mm:ss.mmmZ
     public static void appendDateTime(CharSink sink, long micros) {
         if (micros == Long.MIN_VALUE) {
             return;

@@ -56,18 +56,18 @@ public class RndTimestampFunctionFactory implements FunctionFactory {
         throw SqlException.$(position, "invalid range");
     }
 
-    private static class Func extends TimestampFunction implements RandomFunction {
+    private static class Func extends TimestampFunction {
         private final long lo;
         private final long range;
         private final int nanRate;
-        private Rnd rnd;
+        private final Rnd rnd;
 
         public Func(int position, long lo, long hi, int nanRate, CairoConfiguration configuration) {
             super(position);
             this.lo = lo;
             this.range = hi - lo + 1;
             this.nanRate = nanRate + 1;
-            this.rnd = new Rnd(configuration.getMillisecondClock().getTicks(), configuration.getMicrosecondClock().getTicks());
+            this.rnd = SharedRandom.getRandom(configuration);
         }
 
         @Override
@@ -76,11 +76,6 @@ public class RndTimestampFunctionFactory implements FunctionFactory {
                 return Numbers.LONG_NaN;
             }
             return lo + rnd.nextPositiveLong() % range;
-        }
-
-        @Override
-        public void init(Rnd rnd) {
-            this.rnd = rnd;
         }
     }
 }

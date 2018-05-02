@@ -52,7 +52,7 @@ public class RndShortCCFunctionFactory implements FunctionFactory {
         throw SqlException.position(position).put("invalid range");
     }
 
-    private static class RndFunction extends ShortFunction implements RandomFunction {
+    private static class RndFunction extends ShortFunction {
         private final short lo;
         private final short range;
         private Rnd rnd;
@@ -61,7 +61,7 @@ public class RndShortCCFunctionFactory implements FunctionFactory {
             super(position);
             this.lo = lo;
             this.range = (short) (hi - lo + 1);
-            this.rnd = new Rnd(configuration.getMillisecondClock().getTicks(), configuration.getMicrosecondClock().getTicks());
+            this.rnd = SharedRandom.getRandom(configuration);
         }
 
         @Override
@@ -71,11 +71,6 @@ public class RndShortCCFunctionFactory implements FunctionFactory {
                 return (short) (lo - s % range);
             }
             return (short) (lo + s % range);
-        }
-
-        @Override
-        public void init(Rnd rnd) {
-            this.rnd = rnd;
         }
     }
 }

@@ -29,7 +29,6 @@ import com.questdb.griffin.FunctionFactory;
 import com.questdb.griffin.SqlException;
 import com.questdb.griffin.engine.AbstractFunctionFactoryTest;
 import com.questdb.griffin.engine.functions.math.NegIntFunctionFactory;
-import com.questdb.std.Rnd;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -42,17 +41,6 @@ public class RndDoubleFunctionFactoryTest extends AbstractFunctionFactoryTest {
     @Test
     public void testNoNaN() throws SqlException {
         assertFunction(call(0), false);
-    }
-
-    @Test
-    public void testRndSubstitute() throws SqlException {
-        // by default function uses timer-seeded random generator
-        // we will substitute it with constant-seeded random, which will give us stable output
-        Invocation invocation = call(0);
-        Function function = invocation.getFunction1();
-        Assert.assertTrue(function instanceof RandomFunction);
-        ((RandomFunction) function).init(new Rnd());
-        Assert.assertEquals(0.8043224099968393d, function.getDouble(null), 0.000000001d);
     }
 
     @Test

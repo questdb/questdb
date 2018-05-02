@@ -27,48 +27,38 @@ import com.questdb.cairo.CairoConfiguration;
 import com.questdb.cairo.sql.Record;
 import com.questdb.griffin.Function;
 import com.questdb.griffin.FunctionFactory;
-import com.questdb.griffin.engine.functions.IntFunction;
-import com.questdb.std.Numbers;
+import com.questdb.griffin.engine.functions.FloatFunction;
 import com.questdb.std.ObjList;
 
-public class AddIntVVFunctionFactory implements FunctionFactory {
+public class AddFloatFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "+(II)";
+        return "+(FF)";
     }
 
     @Override
     public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
-        return new AddIntVVFunc(position, args.getQuick(0), args.getQuick(1));
+        return new Func(position, args.getQuick(0), args.getQuick(1));
     }
 
-    private static class AddIntVVFunc extends IntFunction {
+    private static class Func extends FloatFunction {
         final Function left;
         final Function right;
 
-        public AddIntVVFunc(int position, Function left, Function right) {
+        public Func(int position, Function left, Function right) {
             super(position);
             this.left = left;
             this.right = right;
         }
 
         @Override
-        public int getInt(Record rec) {
-            final int left = this.left.getInt(rec);
-            final int right = this.right.getInt(rec);
-
-            if (left == Numbers.INT_NaN || right == Numbers.INT_NaN) {
-                return Numbers.INT_NaN;
-            }
-
-            return left + right;
+        public float getFloat(Record rec) {
+            return left.getFloat(rec) + right.getFloat(rec);
         }
 
         @Override
         public boolean isConstant() {
-            return left.isConstant() && right.isConstant()
-                    || (left.isConstant() && left.getInt(null) == Numbers.INT_NaN)
-                    || (right.isConstant() && right.getInt(null) == Numbers.INT_NaN);
+            return left.isConstant() && right.isConstant();
         }
     }
 }

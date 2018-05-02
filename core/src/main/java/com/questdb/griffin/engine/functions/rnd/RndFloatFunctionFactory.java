@@ -48,15 +48,15 @@ public class RndFloatFunctionFactory implements FunctionFactory {
         return new RndFunction(position, nanRate, configuration);
     }
 
-    private static class RndFunction extends FloatFunction implements RandomFunction {
+    private static class RndFunction extends FloatFunction {
 
         private final int nanRate;
-        private Rnd rnd;
+        private final Rnd rnd;
 
         public RndFunction(int position, int nanRate, CairoConfiguration configuration) {
             super(position);
             this.nanRate = nanRate + 1;
-            this.rnd = new Rnd(configuration.getMillisecondClock().getTicks(), configuration.getMicrosecondClock().getTicks());
+            this.rnd = SharedRandom.getRandom(configuration);
         }
 
         @Override
@@ -65,11 +65,6 @@ public class RndFloatFunctionFactory implements FunctionFactory {
                 return Float.NaN;
             }
             return rnd.nextFloat2();
-        }
-
-        @Override
-        public void init(Rnd rnd) {
-            this.rnd = rnd;
         }
     }
 }

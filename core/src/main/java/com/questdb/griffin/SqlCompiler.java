@@ -29,6 +29,8 @@ import com.questdb.common.ColumnType;
 import com.questdb.common.PartitionBy;
 import com.questdb.griffin.engine.functions.bind.BindVariableService;
 import com.questdb.griffin.model.*;
+import com.questdb.log.Log;
+import com.questdb.log.LogFactory;
 import com.questdb.std.*;
 import com.questdb.std.str.Path;
 
@@ -38,6 +40,8 @@ import static com.questdb.cairo.TableUtils.META_FILE_NAME;
 import static com.questdb.cairo.TableUtils.TXN_FILE_NAME;
 
 public class SqlCompiler {
+    private final static Log LOG = LogFactory.getLog(SqlCompiler.class);
+    private static final IntList castGroups = new IntList();
     private final CairoEngine engine;
     private final SqlOptimiser optimiser;
     private final SqlParser parser;
@@ -104,7 +108,7 @@ public class SqlCompiler {
         if (executionModel.getModelType() == ExecutionModel.QUERY) {
             return generate((QueryModel) executionModel, bindVariableService);
         }
-        throw new IllegalArgumentException();
+        return null;
     }
 
     public void execute(CharSequence query, BindVariableService bindVariableService) throws SqlException {
@@ -118,6 +122,8 @@ public class SqlCompiler {
         }
     }
 
+    // Creates data type converter.
+    // INT and LONG NaN values are cast to their representation rather than Double or Float NaN.
     private static CopyHelper compile(BytecodeAssembler asm, RecordMetadata from, RecordMetadata to) {
         int tsIndex = to.getTimestampIndex();
         asm.init(CopyHelper.class);
@@ -526,6 +532,10 @@ public class SqlCompiler {
         return asm.newInstance();
     }
 
+    private static boolean isCompatibleCase(int from, int to) {
+        return castGroups.getQuick(from) == castGroups.getQuick(to);
+    }
+
     private void checkTableNameAvailable(CreateTableModel model) throws SqlException {
         final FilesFacade ff = configuration.getFilesFacade();
 
@@ -563,7 +573,78 @@ public class SqlCompiler {
         return compileExecutionModel(lexer, bindVariableService);
     }
 
-    private void copyDataFromCursor(CreateTableModel model, BindVariableService bindVariableService) throws SqlException {
+    //todo: creating table requires lock to guard against bad concurrency
+    private void createEmptyTable(CreateTableModel model) {
+        final FilesFacade ff = configuration.getFilesFacade();
+        path.of(configuration.getRoot()).concat(model.getName().token);
+        final int rootLen = path.length();
+
+        try (AppendMemory mem = this.mem) {
+
+            mem.of(ff, path.trimTo(rootLen).concat(META_FILE_NAME).$(), ff.getPageSize());
+
+            int count = model.getColumnCount();
+            mem.putInt(count);
+            final SqlNode partitionBy = model.getPartitionBy();
+            if (partitionBy == null) {
+                mem.putInt(PartitionBy.NONE);
+            } else {
+                mem.putInt(PartitionBy.fromString(partitionBy.token));
+            }
+
+            final SqlNode timestamp = model.getTimestamp();
+            if (timestamp == null) {
+                mem.putInt(-1);
+            } else {
+                mem.putInt(model.getColumnIndex(timestamp.token));
+            }
+            mem.jumpTo(TableUtils.META_OFFSET_COLUMN_TYPES);
+
+            for (int i = 0; i < count; i++) {
+                mem.putByte((byte) model.getColumnType(i));
+                mem.putBool(model.getIndexedFlag(i));
+                mem.putInt(model.getIndexBlockCapacity(i));
+                mem.skip(10); // reserved
+            }
+            for (int i = 0; i < count; i++) {
+                mem.putStr(model.getColumnName(i));
+            }
+
+            // create symbol maps
+            int symbolMapCount = 0;
+            for (int i = 0; i < count; i++) {
+                if (model.getColumnType(i) == ColumnType.SYMBOL) {
+                    SymbolMapWriter.createSymbolMapFiles(
+                            ff,
+                            mem,
+                            path.trimTo(rootLen),
+                            model.getColumnName(i),
+                            model.getSymbolCapacity(i),
+                            model.getSymbolCacheFlag(i)
+                    );
+                    symbolMapCount++;
+                }
+            }
+            mem.of(ff, path.trimTo(rootLen).concat(TXN_FILE_NAME).$(), ff.getPageSize());
+            TableUtils.resetTxn(mem, symbolMapCount);
+        }
+    }
+
+    private void createTable(CreateTableModel model, BindVariableService bindVariableService) throws SqlException {
+        checkTableNameAvailable(model);
+        try {
+            if (model.getQueryModel() == null) {
+                createEmptyTable(model);
+            } else {
+                createTableFromCursor(model, bindVariableService);
+            }
+        } catch (SqlException e) {
+            removeTableDirectory(model);
+            throw e;
+        }
+    }
+
+    private void createTableFromCursor(CreateTableModel model, BindVariableService bindVariableService) throws SqlException {
         RecordCursor cursor = generate(model.getQueryModel(), bindVariableService).getCursor();
         RecordMetadata metadata = cursor.getMetadata();
         IntIntHashMap typeCast = new IntIntHashMap();
@@ -578,7 +659,15 @@ public class SqlCompiler {
             if (index == -1) {
                 throw ConcurrentModificationException.INSTANCE;
             }
-            typeCast.put(index, castModels.get(columnName).getColumnType());
+            ColumnCastModel ccm = castModels.get(columnName);
+            int from = metadata.getColumnType(index);
+            int to = ccm.getColumnType();
+            if (isCompatibleCase(from, to)) {
+                typeCast.put(index, to);
+            } else {
+                throw SqlException.$(ccm.getColumnTypePos(),
+                        "unsupported cast [from=").put(ColumnType.nameOf(from)).put(",to=").put(ColumnType.nameOf(to)).put(']');
+            }
         }
 
         // check that column count matches
@@ -700,72 +789,6 @@ public class SqlCompiler {
         }
     }
 
-    //todo: creating table requires lock to guard against bad concurrency
-    private void createEmptyTable(CreateTableModel model) {
-        final FilesFacade ff = configuration.getFilesFacade();
-        path.of(configuration.getRoot()).concat(model.getName().token);
-        final int rootLen = path.length();
-
-        try (AppendMemory mem = this.mem) {
-
-            mem.of(ff, path.trimTo(rootLen).concat(META_FILE_NAME).$(), ff.getPageSize());
-
-            int count = model.getColumnCount();
-            mem.putInt(count);
-            final SqlNode partitionBy = model.getPartitionBy();
-            if (partitionBy == null) {
-                mem.putInt(PartitionBy.NONE);
-            } else {
-                mem.putInt(PartitionBy.fromString(partitionBy.token));
-            }
-
-            final SqlNode timestamp = model.getTimestamp();
-            if (timestamp == null) {
-                mem.putInt(-1);
-            } else {
-                mem.putInt(model.getColumnIndex(timestamp.token));
-            }
-            mem.jumpTo(TableUtils.META_OFFSET_COLUMN_TYPES);
-
-            for (int i = 0; i < count; i++) {
-                mem.putByte((byte) model.getColumnType(i));
-                mem.putBool(model.getIndexedFlag(i));
-                mem.putInt(model.getIndexBlockCapacity(i));
-                mem.skip(10); // reserved
-            }
-            for (int i = 0; i < count; i++) {
-                mem.putStr(model.getColumnName(i));
-            }
-
-            // create symbol maps
-            int symbolMapCount = 0;
-            for (int i = 0; i < count; i++) {
-                if (model.getColumnType(i) == ColumnType.SYMBOL) {
-                    SymbolMapWriter.createSymbolMapFiles(
-                            ff,
-                            mem,
-                            path.trimTo(rootLen),
-                            model.getColumnName(i),
-                            model.getSymbolCapacity(i),
-                            model.getSymbolCacheFlag(i)
-                    );
-                    symbolMapCount++;
-                }
-            }
-            mem.of(ff, path.trimTo(rootLen).concat(TXN_FILE_NAME).$(), ff.getPageSize());
-            TableUtils.resetTxn(mem, symbolMapCount);
-        }
-    }
-
-    private void createTable(CreateTableModel model, BindVariableService bindVariableService) throws SqlException {
-        checkTableNameAvailable(model);
-        if (model.getQueryModel() == null) {
-            createEmptyTable(model);
-        } else {
-            copyDataFromCursor(model, bindVariableService);
-        }
-    }
-
     RecordCursorFactory generate(QueryModel queryModel, BindVariableService bindVariableService) throws SqlException {
         return codeGenerator.generate(queryModel, bindVariableService);
     }
@@ -784,7 +807,34 @@ public class SqlCompiler {
         parser.expr(lexer, listener);
     }
 
+    private void removeTableDirectory(CreateTableModel model) {
+        path.of(configuration.getRoot()).concat(model.getName().token);
+        final FilesFacade ff = configuration.getFilesFacade();
+        if (ff.rmdir(path.put(Files.SEPARATOR).$())) {
+            return;
+        }
+        LOG.error().$("failed to clean up after create table failure [path=").$(path).$(", errno=").$(ff.errno()).$(']').$();
+    }
+
     public interface CopyHelper {
         void copy(Record record, TableWriter.Row row);
+    }
+
+    static {
+        castGroups.extendAndSet(ColumnType.BOOLEAN, 2);
+
+        castGroups.extendAndSet(ColumnType.BYTE, 1);
+        castGroups.extendAndSet(ColumnType.SHORT, 1);
+        castGroups.extendAndSet(ColumnType.INT, 1);
+        castGroups.extendAndSet(ColumnType.LONG, 1);
+        castGroups.extendAndSet(ColumnType.FLOAT, 1);
+        castGroups.extendAndSet(ColumnType.DOUBLE, 1);
+        castGroups.extendAndSet(ColumnType.DATE, 1);
+        castGroups.extendAndSet(ColumnType.TIMESTAMP, 1);
+
+        castGroups.extendAndSet(ColumnType.STRING, 3);
+        castGroups.extendAndSet(ColumnType.SYMBOL, 3);
+
+        castGroups.extendAndSet(ColumnType.BINARY, 4);
     }
 }

@@ -21,38 +21,19 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.engine.functions.math;
+package com.questdb.griffin.engine.functions.rnd;
 
-import com.questdb.griffin.FunctionFactory;
-import com.questdb.griffin.SqlException;
-import com.questdb.griffin.engine.AbstractFunctionFactoryTest;
-import com.questdb.std.Numbers;
-import org.junit.Test;
+import com.questdb.cairo.CairoConfiguration;
+import com.questdb.std.Rnd;
 
-public class AddIntVVFunctionFactoryTest extends AbstractFunctionFactoryTest {
+public class SharedRandom {
+    public static final ThreadLocal<Rnd> RANDOM = new ThreadLocal<>();
 
-    @Test
-    public void testLeftNull() throws SqlException {
-        call(Numbers.INT_NaN, 10).andAssert(Numbers.INT_NaN);
-    }
-
-    @Test
-    public void testOverflow() throws SqlException {
-        call(5, Integer.MAX_VALUE).andAssert(-2147483644);
-    }
-
-    @Test
-    public void testRightNull() throws SqlException {
-        call(4, Numbers.INT_NaN).andAssert(Numbers.INT_NaN);
-    }
-
-    @Test
-    public void testSimple() throws SqlException {
-        call(5, 8).andAssert(13);
-    }
-
-    @Override
-    protected FunctionFactory getFunctionFactory() {
-        return new AddIntVVFunctionFactory();
+    public static Rnd getRandom(CairoConfiguration configuration) {
+        Rnd rnd = RANDOM.get();
+        if (rnd == null) {
+            RANDOM.set(rnd = new Rnd(configuration.getMillisecondClock().getTicks(), configuration.getMicrosecondClock().getTicks()));
+        }
+        return rnd;
     }
 }

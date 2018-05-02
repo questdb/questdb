@@ -70,7 +70,7 @@ public class RecordCursorPrinter {
                 DateFormatUtils.appendDateTime(sink, r.getDate(i));
                 break;
             case ColumnType.TIMESTAMP:
-                com.questdb.std.microtime.DateFormatUtils.appendDateTime(sink, r.getTimestamp(i));
+                com.questdb.std.microtime.DateFormatUtils.appendDateTimeUSec(sink, r.getTimestamp(i));
                 break;
             case ColumnType.DOUBLE:
                 Numbers.append(sink, r.getDouble(i), 12);

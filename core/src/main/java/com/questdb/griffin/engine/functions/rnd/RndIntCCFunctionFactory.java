@@ -58,18 +58,18 @@ public class RndIntCCFunctionFactory implements FunctionFactory {
         throw SqlException.position(position).put("invalid range");
     }
 
-    private static class RndFunction extends IntFunction implements RandomFunction {
+    private static class RndFunction extends IntFunction {
         private final int lo;
         private final int range;
         private final int nanRate;
-        private Rnd rnd;
+        private final Rnd rnd;
 
         public RndFunction(int position, int lo, int hi, int nanRate, CairoConfiguration configuration) {
             super(position);
             this.lo = lo;
             this.range = hi - lo + 1;
             this.nanRate = nanRate + 1;
-            this.rnd = new Rnd(configuration.getMillisecondClock().getTicks(), configuration.getMicrosecondClock().getTicks());
+            this.rnd = SharedRandom.getRandom(configuration);
         }
 
         @Override
@@ -78,11 +78,6 @@ public class RndIntCCFunctionFactory implements FunctionFactory {
                 return Numbers.INT_NaN;
             }
             return lo + rnd.nextPositiveInt() % range;
-        }
-
-        @Override
-        public void init(Rnd rnd) {
-            this.rnd = rnd;
         }
     }
 }

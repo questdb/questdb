@@ -225,16 +225,16 @@ public class LinuxLineProtoReceiverTest extends AbstractCairoTest {
     private void assertReceive(ReceiverConfiguration receiverCfg, ReceiverFactory factory) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             final String expected = "colour\tshape\tsize\ttimestamp\n" +
-                    "blue\tsquare\t3.400000000000\t1970-01-01T00:01:40.000Z\n" +
-                    "blue\tsquare\t3.400000000000\t1970-01-01T00:01:40.000Z\n" +
-                    "blue\tsquare\t3.400000000000\t1970-01-01T00:01:40.000Z\n" +
-                    "blue\tsquare\t3.400000000000\t1970-01-01T00:01:40.000Z\n" +
-                    "blue\tsquare\t3.400000000000\t1970-01-01T00:01:40.000Z\n" +
-                    "blue\tsquare\t3.400000000000\t1970-01-01T00:01:40.000Z\n" +
-                    "blue\tsquare\t3.400000000000\t1970-01-01T00:01:40.000Z\n" +
-                    "blue\tsquare\t3.400000000000\t1970-01-01T00:01:40.000Z\n" +
-                    "blue\tsquare\t3.400000000000\t1970-01-01T00:01:40.000Z\n" +
-                    "blue\tsquare\t3.400000000000\t1970-01-01T00:01:40.000Z\n";
+                    "blue\tsquare\t3.400000000000\t1970-01-01T00:01:40.000000Z\n" +
+                    "blue\tsquare\t3.400000000000\t1970-01-01T00:01:40.000000Z\n" +
+                    "blue\tsquare\t3.400000000000\t1970-01-01T00:01:40.000000Z\n" +
+                    "blue\tsquare\t3.400000000000\t1970-01-01T00:01:40.000000Z\n" +
+                    "blue\tsquare\t3.400000000000\t1970-01-01T00:01:40.000000Z\n" +
+                    "blue\tsquare\t3.400000000000\t1970-01-01T00:01:40.000000Z\n" +
+                    "blue\tsquare\t3.400000000000\t1970-01-01T00:01:40.000000Z\n" +
+                    "blue\tsquare\t3.400000000000\t1970-01-01T00:01:40.000000Z\n" +
+                    "blue\tsquare\t3.400000000000\t1970-01-01T00:01:40.000000Z\n" +
+                    "blue\tsquare\t3.400000000000\t1970-01-01T00:01:40.000000Z\n";
 
             CairoConfiguration cairoCfg = new DefaultCairoConfiguration(root);
             try (WriterPool pool = new WriterPool(cairoCfg)) {

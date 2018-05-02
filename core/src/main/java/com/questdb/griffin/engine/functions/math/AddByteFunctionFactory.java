@@ -27,33 +27,33 @@ import com.questdb.cairo.CairoConfiguration;
 import com.questdb.cairo.sql.Record;
 import com.questdb.griffin.Function;
 import com.questdb.griffin.FunctionFactory;
-import com.questdb.griffin.engine.functions.DoubleFunction;
+import com.questdb.griffin.engine.functions.ByteFunction;
 import com.questdb.std.ObjList;
 
-public class AddDoubleVVFunctionFactory implements FunctionFactory {
+public class AddByteFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "+(DD)";
+        return "+(BB)";
     }
 
     @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
-        return new Func(position, args.getQuick(0), args.getQuick(1));
+    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration1) {
+        return new AddShortVVFunc(position, args.getQuick(0), args.getQuick(1));
     }
 
-    private static class Func extends DoubleFunction {
-        private final Function left;
-        private final Function right;
+    private static class AddShortVVFunc extends ByteFunction {
+        final Function left;
+        final Function right;
 
-        public Func(int position, Function left, Function right) {
+        public AddShortVVFunc(int position, Function left, Function right) {
             super(position);
             this.left = left;
             this.right = right;
         }
 
         @Override
-        public double getDouble(Record rec) {
-            return left.getDouble(rec) + right.getDouble(rec);
+        public byte getByte(Record rec) {
+            return (byte) (left.getByte(rec) + right.getByte(rec));
         }
 
         @Override

@@ -118,7 +118,7 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
     public void testByte() throws SqlException {
         bindVariableService.setByte("xyz", (byte) 8);
         Function func = expr("b + :xyz")
-                .withFunction(new AddByteVVFunctionFactory())
+                .withFunction(new AddByteFunctionFactory())
                 .withColumn("b", ColumnType.BYTE, (byte) 22)
                 .$();
 
@@ -145,7 +145,7 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
     public void testDouble() throws SqlException {
         bindVariableService.setDouble("xyz", 7.98821);
         Function func = expr("a + :xyz")
-                .withFunction(new AddDoubleVVFunctionFactory())
+                .withFunction(new AddDoubleFunctionFactory())
                 .withColumn("a", ColumnType.DOUBLE, 25.1)
                 .$();
 
@@ -160,7 +160,7 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
         bindVariableService.setFloat("xyz", 7.6f);
 
         Function func = expr("a + :xyz")
-                .withFunction(new AddFloatVVFunctionFactory())
+                .withFunction(new AddFloatFunctionFactory())
                 .withColumn("a", ColumnType.FLOAT, 25.1f)
                 .$();
 
@@ -177,7 +177,7 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
         bindVariableService.setInt("zz", 5);
 
         Function func = expr("a + :xyz + :xyz - :zz")
-                .withFunction(new AddIntVVFunctionFactory())
+                .withFunction(new AddIntFunctionFactory())
                 .withFunction(new SubtractIntVVFunctionFactory())
                 .withColumn("a", ColumnType.INT, 22)
                 .$();
@@ -192,7 +192,7 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
     public void testLong() throws SqlException {
         bindVariableService.setLong("xyz", 9);
         Function func = expr("a + :xyz")
-                .withFunction(new AddLongVVFunctionFactory())
+                .withFunction(new AddLongFunctionFactory())
                 .withColumn("a", ColumnType.LONG, 22L)
                 .$();
 
@@ -206,7 +206,7 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
     public void testShort() throws SqlException {
         bindVariableService.setShort("xyz", (short) 8);
         Function func = expr("b + :xyz")
-                .withFunction(new AddShortVVFunctionFactory())
+                .withFunction(new AddShortFunctionFactory())
                 .withColumn("b", ColumnType.SHORT, (short) 22)
                 .$();
 

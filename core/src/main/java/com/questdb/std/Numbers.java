@@ -145,106 +145,76 @@ public final class Numbers {
         if (i < 10) {
             sink.put((char) ('0' + i));
         } else if (i < 100) {  // two
-            sink.put((char) ('0' + i / 10));
-            sink.put((char) ('0' + i % 10));
+            appendInt2(sink, i);
         } else if (i < 1000) { // three
-            sink.put((char) ('0' + i / 100));
-            sink.put((char) ('0' + (c = i % 100) / 10));
-            sink.put((char) ('0' + (c % 10)));
+            appendInt3(sink, i);
         } else if (i < 10000) { // four
-            sink.put((char) ('0' + i / 1000));
-            sink.put((char) ('0' + (c = i % 1000) / 100));
-            sink.put((char) ('0' + (c %= 100) / 10));
-            sink.put((char) ('0' + (c % 10)));
+            appendInt4(sink, i);
         } else if (i < 100000) { // five
-            sink.put((char) ('0' + i / 10000));
-            sink.put((char) ('0' + (c = i % 10000) / 1000));
-            sink.put((char) ('0' + (c %= 1000) / 100));
-            sink.put((char) ('0' + (c %= 100) / 10));
-            sink.put((char) ('0' + (c % 10)));
+            appendInt5(sink, i);
         } else if (i < 1000000) { // six
-            sink.put((char) ('0' + i / 100000));
-            sink.put((char) ('0' + (c = i % 100000) / 10000));
-            sink.put((char) ('0' + (c %= 10000) / 1000));
-            sink.put((char) ('0' + (c %= 1000) / 100));
-            sink.put((char) ('0' + (c %= 100) / 10));
-            sink.put((char) ('0' + (c % 10)));
+            appendInt6(sink, i);
         } else if (i < 10000000) { // seven
-            sink.put((char) ('0' + i / 1000000));
-            sink.put((char) ('0' + (c = i % 1000000) / 100000));
-            sink.put((char) ('0' + (c %= 100000) / 10000));
-            sink.put((char) ('0' + (c %= 10000) / 1000));
-            sink.put((char) ('0' + (c %= 1000) / 100));
-            sink.put((char) ('0' + (c %= 100) / 10));
-            sink.put((char) ('0' + (c % 10)));
+            appendInt7(sink, i);
         } else if (i < 100000000) { // eight
-            sink.put((char) ('0' + i / 10000000));
-            sink.put((char) ('0' + (c = i % 10000000) / 1000000));
-            sink.put((char) ('0' + (c %= 1000000) / 100000));
-            sink.put((char) ('0' + (c %= 100000) / 10000));
-            sink.put((char) ('0' + (c %= 10000) / 1000));
-            sink.put((char) ('0' + (c %= 1000) / 100));
-            sink.put((char) ('0' + (c %= 100) / 10));
-            sink.put((char) ('0' + (c % 10)));
+            appendInt8(sink, i);
         } else if (i < 1000000000) { // nine
-            sink.put((char) ('0' + i / 100000000));
-            sink.put((char) ('0' + (c = i % 100000000) / 10000000));
-            sink.put((char) ('0' + (c %= 10000000) / 1000000));
-            sink.put((char) ('0' + (c %= 1000000) / 100000));
-            sink.put((char) ('0' + (c %= 100000) / 10000));
-            sink.put((char) ('0' + (c %= 10000) / 1000));
-            sink.put((char) ('0' + (c %= 1000) / 100));
-            sink.put((char) ('0' + (c %= 100) / 10));
-            sink.put((char) ('0' + (c % 10)));
+            appendInt9(sink, i);
         } else {
             // ten
-            sink.put((char) ('0' + i / 1000000000));
-            sink.put((char) ('0' + (c = i % 1000000000) / 100000000));
-            sink.put((char) ('0' + (c %= 100000000) / 10000000));
-            sink.put((char) ('0' + (c %= 10000000) / 1000000));
-            sink.put((char) ('0' + (c %= 1000000) / 100000));
-            sink.put((char) ('0' + (c %= 100000) / 10000));
-            sink.put((char) ('0' + (c %= 10000) / 1000));
-            sink.put((char) ('0' + (c %= 1000) / 100));
-            sink.put((char) ('0' + (c %= 100) / 10));
-            sink.put((char) ('0' + (c % 10)));
+            appendInt10(sink, i);
         }
     }
 
     public static void append(CharSink sink, final long value) {
         long i = value;
-        if (i > Integer.MAX_VALUE || i < Integer.MIN_VALUE) {
-            if (i < 0) {
-                if (i == Long.MIN_VALUE) {
-                    sink.put("NaN");
-                    return;
-                }
-                sink.put('-');
-                i = -i;
+        if (i < 0) {
+            if (i == Long.MIN_VALUE) {
+                sink.put("NaN");
+                return;
             }
-            if (i < 10000000000L) {
-                appendLong10(sink, i);
-            } else if (i < 100000000000L) { //  eleven
-                appendLong11(sink, i);
-            } else if (i < 1000000000000L) { //  twelve
-                appendLong12(sink, i);
-            } else if (i < 10000000000000L) { //  thirteen
-                appendLong13(sink, i);
-            } else if (i < 100000000000000L) { //  fourteen
-                appendLong14(sink, i);
-            } else if (i < 1000000000000000L) { //  fifteen
-                appendLong15(sink, i);
-            } else if (i < 10000000000000000L) { //  sixteen
-                appendLong16(sink, i);
-            } else if (i < 100000000000000000L) { //  seventeen
-                appendLong17(sink, i);
-            } else if (i < 1000000000000000000L) { //  eighteen
-                appendLong18(sink, i);
-            } else { //  nineteen
-                appendLong19(sink, i);
-            }
-        } else {
-            append(sink, (int) i);
+            sink.put('-');
+            i = -i;
+        }
+
+        if (i < 10) {
+            sink.put((char) ('0' + i));
+        } else if (i < 100) {  // two
+            appendLong2(sink, i);
+        } else if (i < 1000) { // three
+            appendLong3(sink, i);
+        } else if (i < 10000) { // four
+            appendLong4(sink, i);
+        } else if (i < 100000) { // five
+            appendLong5(sink, i);
+        } else if (i < 1000000) { // six
+            appendLong6(sink, i);
+        } else if (i < 10000000) { // seven
+            appendLong7(sink, i);
+        } else if (i < 100000000) { // eight
+            appendLong8(sink, i);
+        } else if (i < 1000000000) { // nine
+            appendLong9(sink, i);
+        } else if (i < 10000000000L) {
+            appendLong10(sink, i);
+        } else if (i < 100000000000L) { //  eleven
+            appendLong11(sink, i);
+        } else if (i < 1000000000000L) { //  twelve
+            appendLong12(sink, i);
+        } else if (i < 10000000000000L) { //  thirteen
+            appendLong13(sink, i);
+        } else if (i < 100000000000000L) { //  fourteen
+            appendLong14(sink, i);
+        } else if (i < 1000000000000000L) { //  fifteen
+            appendLong15(sink, i);
+        } else if (i < 10000000000000000L) { //  sixteen
+            appendLong16(sink, i);
+        } else if (i < 100000000000000000L) { //  seventeen
+            appendLong17(sink, i);
+        } else if (i < 1000000000000000000L) { //  eighteen
+            appendLong18(sink, i);
+        } else { //  nineteen
+            appendLong19(sink, i);
         }
     }
 
@@ -391,7 +361,6 @@ public final class Numbers {
             sink.put(hexDigits[c % 0x10]);
         }
     }
-
 
     public static void appendTrim(CharSink sink, double value, final int inScale) {
         double d = value;
@@ -966,6 +935,170 @@ public final class Numbers {
             return roundUp0(value, scale);
         }
         throw NumericException.INSTANCE;
+    }
+
+    private static void appendInt10(CharSink sink, int i) {
+        int c;
+        sink.put((char) ('0' + i / 1000000000));
+        sink.put((char) ('0' + (c = i % 1000000000) / 100000000));
+        sink.put((char) ('0' + (c %= 100000000) / 10000000));
+        sink.put((char) ('0' + (c %= 10000000) / 1000000));
+        sink.put((char) ('0' + (c %= 1000000) / 100000));
+        sink.put((char) ('0' + (c %= 100000) / 10000));
+        sink.put((char) ('0' + (c %= 10000) / 1000));
+        sink.put((char) ('0' + (c %= 1000) / 100));
+        sink.put((char) ('0' + (c %= 100) / 10));
+        sink.put((char) ('0' + (c % 10)));
+    }
+
+    private static void appendInt9(CharSink sink, int i) {
+        int c;
+        sink.put((char) ('0' + i / 100000000));
+        sink.put((char) ('0' + (c = i % 100000000) / 10000000));
+        sink.put((char) ('0' + (c %= 10000000) / 1000000));
+        sink.put((char) ('0' + (c %= 1000000) / 100000));
+        sink.put((char) ('0' + (c %= 100000) / 10000));
+        sink.put((char) ('0' + (c %= 10000) / 1000));
+        sink.put((char) ('0' + (c %= 1000) / 100));
+        sink.put((char) ('0' + (c %= 100) / 10));
+        sink.put((char) ('0' + (c % 10)));
+    }
+
+    private static void appendInt8(CharSink sink, int i) {
+        int c;
+        sink.put((char) ('0' + i / 10000000));
+        sink.put((char) ('0' + (c = i % 10000000) / 1000000));
+        sink.put((char) ('0' + (c %= 1000000) / 100000));
+        sink.put((char) ('0' + (c %= 100000) / 10000));
+        sink.put((char) ('0' + (c %= 10000) / 1000));
+        sink.put((char) ('0' + (c %= 1000) / 100));
+        sink.put((char) ('0' + (c %= 100) / 10));
+        sink.put((char) ('0' + (c % 10)));
+    }
+
+    private static void appendInt7(CharSink sink, int i) {
+        int c;
+        sink.put((char) ('0' + i / 1000000));
+        sink.put((char) ('0' + (c = i % 1000000) / 100000));
+        sink.put((char) ('0' + (c %= 100000) / 10000));
+        sink.put((char) ('0' + (c %= 10000) / 1000));
+        sink.put((char) ('0' + (c %= 1000) / 100));
+        sink.put((char) ('0' + (c %= 100) / 10));
+        sink.put((char) ('0' + (c % 10)));
+    }
+
+    private static void appendInt6(CharSink sink, int i) {
+        int c;
+        sink.put((char) ('0' + i / 100000));
+        sink.put((char) ('0' + (c = i % 100000) / 10000));
+        sink.put((char) ('0' + (c %= 10000) / 1000));
+        sink.put((char) ('0' + (c %= 1000) / 100));
+        sink.put((char) ('0' + (c %= 100) / 10));
+        sink.put((char) ('0' + (c % 10)));
+    }
+
+    private static void appendInt5(CharSink sink, int i) {
+        int c;
+        sink.put((char) ('0' + i / 10000));
+        sink.put((char) ('0' + (c = i % 10000) / 1000));
+        sink.put((char) ('0' + (c %= 1000) / 100));
+        sink.put((char) ('0' + (c %= 100) / 10));
+        sink.put((char) ('0' + (c % 10)));
+    }
+
+    private static void appendInt4(CharSink sink, int i) {
+        int c;
+        sink.put((char) ('0' + i / 1000));
+        sink.put((char) ('0' + (c = i % 1000) / 100));
+        sink.put((char) ('0' + (c %= 100) / 10));
+        sink.put((char) ('0' + (c % 10)));
+    }
+
+    private static void appendInt3(CharSink sink, int i) {
+        int c;
+        sink.put((char) ('0' + i / 100));
+        sink.put((char) ('0' + (c = i % 100) / 10));
+        sink.put((char) ('0' + (c % 10)));
+    }
+
+    private static void appendInt2(CharSink sink, int i) {
+        sink.put((char) ('0' + i / 10));
+        sink.put((char) ('0' + i % 10));
+    }
+
+    private static void appendLong2(CharSink sink, long i) {
+        sink.put((char) ('0' + i / 10));
+        sink.put((char) ('0' + i % 10));
+    }
+
+    private static void appendLong9(CharSink sink, long i) {
+        long c;
+        sink.put((char) ('0' + i / 100000000));
+        sink.put((char) ('0' + (c = i % 100000000) / 10000000));
+        sink.put((char) ('0' + (c %= 10000000) / 1000000));
+        sink.put((char) ('0' + (c %= 1000000) / 100000));
+        sink.put((char) ('0' + (c %= 100000) / 10000));
+        sink.put((char) ('0' + (c %= 10000) / 1000));
+        sink.put((char) ('0' + (c %= 1000) / 100));
+        sink.put((char) ('0' + (c %= 100) / 10));
+        sink.put((char) ('0' + (c % 10)));
+    }
+
+    private static void appendLong8(CharSink sink, long i) {
+        long c;
+        sink.put((char) ('0' + i / 10000000));
+        sink.put((char) ('0' + (c = i % 10000000) / 1000000));
+        sink.put((char) ('0' + (c %= 1000000) / 100000));
+        sink.put((char) ('0' + (c %= 100000) / 10000));
+        sink.put((char) ('0' + (c %= 10000) / 1000));
+        sink.put((char) ('0' + (c %= 1000) / 100));
+        sink.put((char) ('0' + (c %= 100) / 10));
+        sink.put((char) ('0' + (c % 10)));
+    }
+
+    private static void appendLong7(CharSink sink, long i) {
+        long c;
+        sink.put((char) ('0' + i / 1000000));
+        sink.put((char) ('0' + (c = i % 1000000) / 100000));
+        sink.put((char) ('0' + (c %= 100000) / 10000));
+        sink.put((char) ('0' + (c %= 10000) / 1000));
+        sink.put((char) ('0' + (c %= 1000) / 100));
+        sink.put((char) ('0' + (c %= 100) / 10));
+        sink.put((char) ('0' + (c % 10)));
+    }
+
+    private static void appendLong6(CharSink sink, long i) {
+        long c;
+        sink.put((char) ('0' + i / 100000));
+        sink.put((char) ('0' + (c = i % 100000) / 10000));
+        sink.put((char) ('0' + (c %= 10000) / 1000));
+        sink.put((char) ('0' + (c %= 1000) / 100));
+        sink.put((char) ('0' + (c %= 100) / 10));
+        sink.put((char) ('0' + (c % 10)));
+    }
+
+    private static void appendLong5(CharSink sink, long i) {
+        long c;
+        sink.put((char) ('0' + i / 10000));
+        sink.put((char) ('0' + (c = i % 10000) / 1000));
+        sink.put((char) ('0' + (c %= 1000) / 100));
+        sink.put((char) ('0' + (c %= 100) / 10));
+        sink.put((char) ('0' + (c % 10)));
+    }
+
+    private static void appendLong4(CharSink sink, long i) {
+        long c;
+        sink.put((char) ('0' + i / 1000));
+        sink.put((char) ('0' + (c = i % 1000) / 100));
+        sink.put((char) ('0' + (c %= 100) / 10));
+        sink.put((char) ('0' + (c % 10)));
+    }
+
+    private static void appendLong3(CharSink sink, long i) {
+        long c;
+        sink.put((char) ('0' + i / 100));
+        sink.put((char) ('0' + (c = i % 100) / 10));
+        sink.put((char) ('0' + (c % 10)));
     }
 
     private static boolean notDigit(char c) {

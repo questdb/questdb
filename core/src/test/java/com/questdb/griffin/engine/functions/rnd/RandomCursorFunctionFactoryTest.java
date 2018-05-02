@@ -32,7 +32,7 @@ import org.junit.Test;
 public class RandomCursorFunctionFactoryTest extends AbstractFunctionFactoryTest {
     @Test
     public void testSimple() throws SqlException {
-        Invocation invocation = callCustomised(true, 10L, 2, 2);
+        Invocation invocation = callCustomised(true, 10L);
 
         Function function1 = invocation.getFunction1();
         Function function2 = invocation.getFunction2();

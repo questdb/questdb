@@ -28,14 +28,14 @@ import com.questdb.griffin.SqlException;
 import com.questdb.griffin.engine.AbstractFunctionFactoryTest;
 import org.junit.Test;
 
-public class AddByteVVFunctionFactoryTest extends AbstractFunctionFactoryTest {
+public class AddShortFunctionFactoryTest extends AbstractFunctionFactoryTest {
     @Test
     public void testSimple() throws SqlException {
-        call(2, 5).andAssert((byte) 7);
+        call(45, 51).andAssert((short) 96);
     }
 
     @Override
     protected FunctionFactory getFunctionFactory() {
-        return new AddByteVVFunctionFactory();
+        return new AddShortFunctionFactory();
     }
 }

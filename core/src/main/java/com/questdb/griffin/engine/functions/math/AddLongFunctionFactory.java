@@ -21,50 +21,39 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.engine.functions.rnd;
+package com.questdb.griffin.engine.functions.math;
 
 import com.questdb.cairo.CairoConfiguration;
 import com.questdb.cairo.sql.Record;
 import com.questdb.griffin.Function;
 import com.questdb.griffin.FunctionFactory;
-import com.questdb.griffin.SqlException;
-import com.questdb.griffin.engine.functions.DoubleFunction;
+import com.questdb.griffin.engine.functions.LongFunction;
 import com.questdb.std.ObjList;
-import com.questdb.std.Rnd;
 
-public class RndDoubleFunctionFactory implements FunctionFactory {
-
+public class AddLongFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "rnd_double(i)";
+        return "+(LL)";
     }
 
     @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) throws SqlException {
-        int nanRate = args.getQuick(0).getInt(null);
-        if (nanRate < 0) {
-            throw SqlException.$(args.getQuick(0).getPosition(), "invalid NaN rate");
-        }
-        return new RndFunction(position, nanRate, configuration);
+    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
+        return new AddLongVVFunc(position, args.getQuick(0), args.getQuick(1));
     }
 
-    private static class RndFunction extends DoubleFunction {
+    private static class AddLongVVFunc extends LongFunction {
+        final Function left;
+        final Function right;
 
-        private final int nanRate;
-        private final Rnd rnd;
-
-        public RndFunction(int position, int nanRate, CairoConfiguration configuration) {
+        public AddLongVVFunc(int position, Function left, Function right) {
             super(position);
-            this.nanRate = nanRate + 1;
-            this.rnd = SharedRandom.getRandom(configuration);
+            this.left = left;
+            this.right = right;
         }
 
         @Override
-        public double getDouble(Record rec) {
-            if ((rnd.nextInt() % nanRate) == 1) {
-                return Double.NaN;
-            }
-            return rnd.nextDouble2();
+        public long getLong(Record rec) {
+            return left.getLong(rec) + right.getLong(rec);
         }
     }
 }

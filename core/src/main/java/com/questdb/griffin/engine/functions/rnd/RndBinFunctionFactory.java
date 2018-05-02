@@ -63,10 +63,10 @@ public class RndBinFunctionFactory implements FunctionFactory {
 
     private static final class VarLenFunction extends BinFunction {
         private final Sequence sequence = new Sequence();
+        private final Rnd rnd;
         private long lo;
         private long range;
         private int nullRate;
-        private Rnd rnd;
 
         public VarLenFunction(int position, long lo, long hi, int nullRate, CairoConfiguration configuration) {
             super(position);
@@ -88,13 +88,13 @@ public class RndBinFunctionFactory implements FunctionFactory {
 
     private static final class FixLenFunction extends BinFunction {
         private final Sequence sequence = new Sequence();
+        private final Rnd rnd;
         private int nullRate;
-        private Rnd rnd;
 
         public FixLenFunction(int position, long len, int nullRate, CairoConfiguration configuration) {
             super(position);
             this.nullRate = nullRate + 1;
-            this.sequence.rnd = rnd = new Rnd(configuration.getMillisecondClock().getTicks(), configuration.getMicrosecondClock().getTicks());
+            this.sequence.rnd = rnd = SharedRandom.getRandom(configuration);
             this.sequence.len = len;
         }
 

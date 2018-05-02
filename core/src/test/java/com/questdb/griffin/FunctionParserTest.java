@@ -47,8 +47,8 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
 
     @Test
     public void testAmbiguousFunctionInvocation() {
-        functions.add(new AddLongVVFunctionFactory());
-        functions.add(new AddIntVVFunctionFactory());
+        functions.add(new AddLongFunctionFactory());
+        functions.add(new AddIntFunctionFactory());
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
         metadata.add(new TableColumnMetadata("a", ColumnType.SHORT));
         metadata.add(new TableColumnMetadata("c", ColumnType.SHORT));
@@ -121,7 +121,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
 
     @Test
     public void testByteAndShortToIntCast() throws SqlException {
-        functions.add(new AddIntVVFunctionFactory());
+        functions.add(new AddIntFunctionFactory());
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
         metadata.add(new TableColumnMetadata("a", ColumnType.BYTE));
         metadata.add(new TableColumnMetadata("b", ColumnType.SHORT));
@@ -169,7 +169,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
 
     @Test
     public void testByteToShortCast() throws SqlException {
-        functions.add(new AddShortVVFunctionFactory());
+        functions.add(new AddShortFunctionFactory());
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
         metadata.add(new TableColumnMetadata("a", ColumnType.BYTE));
         metadata.add(new TableColumnMetadata("b", ColumnType.BYTE));
@@ -1125,7 +1125,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
     }
 
     private void assertCastToDouble(double expected, int type1, int type2, Record record) throws SqlException {
-        functions.add(new AddDoubleVVFunctionFactory());
+        functions.add(new AddDoubleFunctionFactory());
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
         metadata.add(new TableColumnMetadata("a", type1));
         metadata.add(new TableColumnMetadata("b", type2));
@@ -1136,7 +1136,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
     }
 
     private void assertCastToFloat(float expected, int type1, int type2, Record record) throws SqlException {
-        functions.add(new AddFloatVVFunctionFactory());
+        functions.add(new AddFloatFunctionFactory());
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
         metadata.add(new TableColumnMetadata("a", type1));
         metadata.add(new TableColumnMetadata("b", type2));
@@ -1147,7 +1147,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
     }
 
     private void assertCastToLong(long expected, int type1, int type2, Record record) throws SqlException {
-        functions.add(new AddLongVVFunctionFactory());
+        functions.add(new AddLongFunctionFactory());
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
         metadata.add(new TableColumnMetadata("a", type1));
         metadata.add(new TableColumnMetadata("b", type2));

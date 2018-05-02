@@ -43,23 +43,18 @@ public class RndShortFunctionFactory implements FunctionFactory {
         return new RndFunction(position, configuration);
     }
 
-    private static class RndFunction extends ShortFunction implements RandomFunction {
+    private static class RndFunction extends ShortFunction {
 
-        private Rnd rnd;
+        private final Rnd rnd;
 
         public RndFunction(int position, CairoConfiguration configuration) {
             super(position);
-            this.rnd = new Rnd(configuration.getMillisecondClock().getTicks(), configuration.getMicrosecondClock().getTicks());
+            this.rnd = SharedRandom.getRandom(configuration);
         }
 
         @Override
         public short getShort(Record rec) {
             return rnd.nextShort();
-        }
-
-        @Override
-        public void init(Rnd rnd) {
-            this.rnd = rnd;
         }
     }
 }
