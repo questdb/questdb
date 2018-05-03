@@ -239,29 +239,185 @@ public class SqlCompilerTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCastDoubleByte() throws SqlException, IOException {
+        assertCastDouble("a\n" +
+                        "80\n" +
+                        "8\n" +
+                        "8\n" +
+                        "65\n" +
+                        "79\n" +
+                        "22\n" +
+                        "34\n" +
+                        "76\n" +
+                        "42\n" +
+                        "0\n" +
+                        "72\n" +
+                        "42\n" +
+                        "70\n" +
+                        "38\n" +
+                        "0\n" +
+                        "32\n" +
+                        "0\n" +
+                        "97\n" +
+                        "24\n" +
+                        "63\n",
+                ColumnType.BYTE);
+    }
+
+    @Test
+    public void testCastDoubleDate() throws SqlException, IOException {
+        assertCastDouble("a\n" +
+                        "1970-01-01T00:00:00.080Z\n" +
+                        "1970-01-01T00:00:00.008Z\n" +
+                        "1970-01-01T00:00:00.008Z\n" +
+                        "1970-01-01T00:00:00.065Z\n" +
+                        "1970-01-01T00:00:00.079Z\n" +
+                        "1970-01-01T00:00:00.022Z\n" +
+                        "1970-01-01T00:00:00.034Z\n" +
+                        "1970-01-01T00:00:00.076Z\n" +
+                        "1970-01-01T00:00:00.042Z\n" +
+                        "1970-01-01T00:00:00.000Z\n" +
+                        "1970-01-01T00:00:00.072Z\n" +
+                        "1970-01-01T00:00:00.042Z\n" +
+                        "1970-01-01T00:00:00.070Z\n" +
+                        "1970-01-01T00:00:00.038Z\n" +
+                        "1970-01-01T00:00:00.000Z\n" +
+                        "1970-01-01T00:00:00.032Z\n" +
+                        "1970-01-01T00:00:00.000Z\n" +
+                        "1970-01-01T00:00:00.097Z\n" +
+                        "1970-01-01T00:00:00.024Z\n" +
+                        "1970-01-01T00:00:00.063Z\n",
+                ColumnType.DATE);
+    }
+
+    @Test
+    public void testCastDoubleFloat() throws SqlException, IOException {
+        assertCastDouble("a\n" +
+                        "80.4322\n" +
+                        "8.4870\n" +
+                        "8.4383\n" +
+                        "65.0859\n" +
+                        "79.0568\n" +
+                        "22.4523\n" +
+                        "34.9107\n" +
+                        "76.1103\n" +
+                        "42.1777\n" +
+                        "NaN\n" +
+                        "72.6114\n" +
+                        "42.2436\n" +
+                        "70.9436\n" +
+                        "38.5399\n" +
+                        "0.3598\n" +
+                        "32.8818\n" +
+                        "NaN\n" +
+                        "97.7110\n" +
+                        "24.8088\n" +
+                        "63.8161\n",
+                ColumnType.FLOAT);
+    }
+
+    @Test
+    public void testCastDoubleInt() throws SqlException, IOException {
+        assertCastDouble("a\n" +
+                        "80\n" +
+                        "8\n" +
+                        "8\n" +
+                        "65\n" +
+                        "79\n" +
+                        "22\n" +
+                        "34\n" +
+                        "76\n" +
+                        "42\n" +
+                        "0\n" +
+                        "72\n" +
+                        "42\n" +
+                        "70\n" +
+                        "38\n" +
+                        "0\n" +
+                        "32\n" +
+                        "0\n" +
+                        "97\n" +
+                        "24\n" +
+                        "63\n",
+                ColumnType.INT);
+    }
+
+    @Test
+    public void testCastDoubleLong() throws SqlException, IOException {
+        assertCastDouble("a\n" +
+                        "80\n" +
+                        "8\n" +
+                        "8\n" +
+                        "65\n" +
+                        "79\n" +
+                        "22\n" +
+                        "34\n" +
+                        "76\n" +
+                        "42\n" +
+                        "0\n" +
+                        "72\n" +
+                        "42\n" +
+                        "70\n" +
+                        "38\n" +
+                        "0\n" +
+                        "32\n" +
+                        "0\n" +
+                        "97\n" +
+                        "24\n" +
+                        "63\n",
+                ColumnType.LONG);
+    }
+
+    @Test
+    public void testCastDoubleShort() throws SqlException, IOException {
+        assertCastDouble("a\n" +
+                        "80\n" +
+                        "8\n" +
+                        "8\n" +
+                        "65\n" +
+                        "79\n" +
+                        "22\n" +
+                        "34\n" +
+                        "76\n" +
+                        "42\n" +
+                        "0\n" +
+                        "72\n" +
+                        "42\n" +
+                        "70\n" +
+                        "38\n" +
+                        "0\n" +
+                        "32\n" +
+                        "0\n" +
+                        "97\n" +
+                        "24\n" +
+                        "63\n",
+                ColumnType.SHORT);
+    }
+
+    @Test
     public void testCastDoubleTimestamp() throws SqlException, IOException {
-        assertCastLong("a\n" +
-                        "22.000000000000\n" +
-                        "-9.223372036854776E18\n" +
-                        "17.000000000000\n" +
-                        "2.000000000000\n" +
-                        "-9.223372036854776E18\n" +
-                        "21.000000000000\n" +
-                        "1.000000000000\n" +
-                        "20.000000000000\n" +
-                        "-9.223372036854776E18\n" +
-                        "14.000000000000\n" +
-                        "-9.223372036854776E18\n" +
-                        "26.000000000000\n" +
-                        "-9.223372036854776E18\n" +
-                        "23.000000000000\n" +
-                        "2.000000000000\n" +
-                        "24.000000000000\n" +
-                        "-9.223372036854776E18\n" +
-                        "16.000000000000\n" +
-                        "10.000000000000\n" +
-                        "6.000000000000\n",
-                ColumnType.DOUBLE);
+        assertCastDouble("a\n" +
+                        "1970-01-01T00:00:00.000080Z\n" +
+                        "1970-01-01T00:00:00.000008Z\n" +
+                        "1970-01-01T00:00:00.000008Z\n" +
+                        "1970-01-01T00:00:00.000065Z\n" +
+                        "1970-01-01T00:00:00.000079Z\n" +
+                        "1970-01-01T00:00:00.000022Z\n" +
+                        "1970-01-01T00:00:00.000034Z\n" +
+                        "1970-01-01T00:00:00.000076Z\n" +
+                        "1970-01-01T00:00:00.000042Z\n" +
+                        "1970-01-01T00:00:00.000000Z\n" +
+                        "1970-01-01T00:00:00.000072Z\n" +
+                        "1970-01-01T00:00:00.000042Z\n" +
+                        "1970-01-01T00:00:00.000070Z\n" +
+                        "1970-01-01T00:00:00.000038Z\n" +
+                        "1970-01-01T00:00:00.000000Z\n" +
+                        "1970-01-01T00:00:00.000032Z\n" +
+                        "1970-01-01T00:00:00.000000Z\n" +
+                        "1970-01-01T00:00:00.000097Z\n" +
+                        "1970-01-01T00:00:00.000024Z\n" +
+                        "1970-01-01T00:00:00.000063Z\n",
+                ColumnType.TIMESTAMP);
     }
 
     @Test
@@ -679,6 +835,32 @@ public class SqlCompilerTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCastLongDouble() throws SqlException, IOException {
+        assertCastLong("a\n" +
+                        "22.000000000000\n" +
+                        "-9.223372036854776E18\n" +
+                        "17.000000000000\n" +
+                        "2.000000000000\n" +
+                        "-9.223372036854776E18\n" +
+                        "21.000000000000\n" +
+                        "1.000000000000\n" +
+                        "20.000000000000\n" +
+                        "-9.223372036854776E18\n" +
+                        "14.000000000000\n" +
+                        "-9.223372036854776E18\n" +
+                        "26.000000000000\n" +
+                        "-9.223372036854776E18\n" +
+                        "23.000000000000\n" +
+                        "2.000000000000\n" +
+                        "24.000000000000\n" +
+                        "-9.223372036854776E18\n" +
+                        "16.000000000000\n" +
+                        "10.000000000000\n" +
+                        "6.000000000000\n",
+                ColumnType.DOUBLE);
+    }
+
+    @Test
     public void testCastLongFloat() throws SqlException, IOException {
         assertCastLong("a\n" +
                         "22.0000\n" +
@@ -811,6 +993,24 @@ public class SqlCompilerTest extends AbstractCairoTest {
         assertCastShortFail(ColumnType.BINARY);
         assertCastFloatFail(ColumnType.BINARY);
         assertCastDoubleFail(ColumnType.BINARY);
+
+        assertCastStringFail(ColumnType.BYTE);
+        assertCastStringFail(ColumnType.SHORT);
+        assertCastStringFail(ColumnType.INT);
+        assertCastStringFail(ColumnType.LONG);
+        assertCastStringFail(ColumnType.FLOAT);
+        assertCastStringFail(ColumnType.DOUBLE);
+        assertCastStringFail(ColumnType.DATE);
+        assertCastStringFail(ColumnType.TIMESTAMP);
+
+        assertCastSymbolFail(ColumnType.BYTE);
+        assertCastSymbolFail(ColumnType.SHORT);
+        assertCastSymbolFail(ColumnType.INT);
+        assertCastSymbolFail(ColumnType.LONG);
+        assertCastSymbolFail(ColumnType.FLOAT);
+        assertCastSymbolFail(ColumnType.DOUBLE);
+        assertCastSymbolFail(ColumnType.DATE);
+        assertCastSymbolFail(ColumnType.TIMESTAMP);
     }
 
     @Test
@@ -1433,4 +1633,33 @@ public class SqlCompilerTest extends AbstractCairoTest {
         }
     }
 
+    private void assertCastStringFail(int castTo) {
+        try {
+            compiler.execute("create table y as (" +
+                            "select * from random_cursor(" +
+                            " 20," + // record count
+                            " 'a', rnd_str(5,10,2)" +
+                            ")), cast(a as " + ColumnType.nameOf(castTo) + ")",
+                    bindVariableService);
+            Assert.fail();
+        } catch (SqlException e) {
+            Assert.assertEquals(86, e.getPosition());
+            TestUtils.assertContains(e.getMessage(), "unsupported cast");
+        }
+    }
+
+    private void assertCastSymbolFail(int castTo) {
+        try {
+            compiler.execute("create table y as (" +
+                            "select * from random_cursor(" +
+                            " 20," + // record count
+                            " 'a', rnd_symbol(4,6,10,2)" +
+                            ")), cast(a as " + ColumnType.nameOf(castTo) + ")",
+                    bindVariableService);
+            Assert.fail();
+        } catch (SqlException e) {
+            Assert.assertEquals(91, e.getPosition());
+            TestUtils.assertContains(e.getMessage(), "unsupported cast");
+        }
+    }
 }

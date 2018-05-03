@@ -39,6 +39,13 @@ import java.util.ArrayDeque;
 
 public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
     private static final Log LOG = LogFactory.getLog(FunctionParser.class);
+
+    // order of values matters here, partial match must have greater value than fuzzy match
+    private static final int MATCH_NO_MATCH = 0;
+    private static final int MATCH_FUZZY_MATCH = 1;
+    private static final int MATCH_PARTIAL_MATCH = 2;
+    private static final int MATCH_EXACT_MATCH = 3;
+
     private static IntHashSet invalidFunctionNameChars = new IntHashSet();
     private final ObjList<Function> mutableArgs = new ObjList<>();
     private final ArrayDeque<Function> stack = new ArrayDeque<>();
@@ -316,8 +323,15 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
         } else {
             argCount = args.size();
         }
+
         FunctionFactory candidate = null;
-        int matchCount = 0;
+        String candidateSignature = null;
+        boolean candidateSigVarArgConst = false;
+        int candidateSigArgCount = 0;
+
+        int fuzzyMatchCount = 0;
+        int bestMatch = MATCH_NO_MATCH;
+
         for (int i = 0, n = overload.size(); i < n; i++) {
             final FunctionFactory factory = overload.getQuick(i);
             final String signature = factory.getSignature();
@@ -347,90 +361,124 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
 
             // otherwise, is number of arguments the same?
             if (sigArgCount == argCount || (sigVarArg && argCount >= sigArgCount)) {
-                int match = 2; // match
-
-
-                OUT:
+                int match = 0; // no match
                 for (int k = 0; k < sigArgCount; k++) {
                     final Function arg = args.getQuick(k);
                     final char c = signature.charAt(sigArgOffset + k);
 
                     if (Character.isLowerCase(c) && !arg.isConstant()) {
-                        match = 0; // no match
+                        match = MATCH_NO_MATCH; // no match
                         break;
                     }
 
                     final int sigArgType = getArgType(c);
 
                     if (sigArgType == arg.getType()) {
+                        switch (match) {
+                            case MATCH_NO_MATCH: // was it no match
+                                match = MATCH_EXACT_MATCH;
+                                break;
+                            case MATCH_FUZZY_MATCH: // was it fuzzy match ?
+                                match = MATCH_PARTIAL_MATCH; // this is mixed match, fuzzy and exact
+                                break;
+                            default:
+                                // don't change match otherwise
+                                break;
+                        }
                         continue;
                     }
 
-                    // can we use overload mechanism?
-                    if (arg.getType() >= ColumnType.BYTE
-                            && arg.getType() <= ColumnType.DOUBLE
-                            && sigArgType >= ColumnType.BYTE
-                            && sigArgType <= ColumnType.DOUBLE
-                            && arg.getType() < sigArgType) {
-                        match = 1; // fuzzy match
-                    } else if (arg.getType() == ColumnType.DOUBLE && arg.isConstant() && Double.isNaN(arg.getDouble(null))) {
-                        // special case for NaN handling.
-                        // NaN should be assignable to LONG and INT, but we need to make sure type of constant is
-                        // correct for function call.
+                    final boolean overloadPossible = (
+                            arg.getType() >= ColumnType.BYTE
+                                    && arg.getType() <= ColumnType.DOUBLE
+                                    && sigArgType >= ColumnType.BYTE
+                                    && sigArgType <= ColumnType.DOUBLE
+                                    && arg.getType() < sigArgType
+                    )
+                            || (
+                            arg.getType() == ColumnType.DOUBLE
+                                    && arg.isConstant()
+                                    && Double.isNaN(arg.getDouble(null))
+                                    && (sigArgType == ColumnType.LONG || sigArgType == ColumnType.INT)
+                    );
 
-                        // replace constant inline! It is hacky but better than creating new arg list.
-                        switch (sigArgType) {
-                            case ColumnType.LONG:
-                                args.setQuick(k, new LongConstant(arg.getPosition(), Numbers.LONG_NaN));
-                                match = 1;
+                    // can we use overload mechanism?
+
+                    if (overloadPossible) {
+                        switch (match) {
+                            case MATCH_NO_MATCH: // no match?
+                                match = MATCH_FUZZY_MATCH; // upgrade to fuzzy match
                                 break;
-                            case ColumnType.INT:
-                                args.setQuick(k, new IntConstant(arg.getPosition(), Numbers.INT_NaN));
-                                match = 1;
+                            case MATCH_EXACT_MATCH: // was it full match so far? ? oh, well, fuzzy now
+                                match = MATCH_PARTIAL_MATCH; // downgrade
                                 break;
                             default:
-                                match = 0;
-                                break OUT;
+                                break; // don't change match otherwise
                         }
                     } else {
                         // types mismatch
-                        match = 0;
+                        match = MATCH_NO_MATCH;
                         break;
                     }
                 }
 
-                if (match == 2) {
-                    // exact match?
+                if (match == MATCH_NO_MATCH) {
+                    continue;
+                }
+
+                if (match == MATCH_EXACT_MATCH || match >= bestMatch) {
+                    // exact match may be?
                     // special case - if signature enforces constant vararg we
                     // have to ensure all args are indeed constant
 
-                    if (sigVarArgConst && args != null) {
-                        for (int k = sigArgCount; k < argCount; k++) {
-                            Function func = args.getQuick(k);
-                            if (!func.isConstant()) {
-                                throw SqlException.$(func.getPosition(), "constant expected");
-                            }
-                        }
-                    }
+                    candidate = factory;
+                    candidateSignature = signature;
+                    candidateSigArgCount = sigArgCount;
+                    candidateSigVarArgConst = sigVarArgConst;
 
-                    return checkAndCreateFunction(factory, args, node.position, configuration);
-                } else if (match == 1) {
-                    // fuzzy match
-                    if (candidate == null) {
-                        candidate = factory;
+                    if (match != MATCH_EXACT_MATCH) {
+                        fuzzyMatchCount++;
+                        bestMatch = match;
+                    } else {
+                        break;
                     }
-                    matchCount++;
                 }
             }
         }
-        if (matchCount > 1) {
+
+        if (fuzzyMatchCount > 1) {
             // ambiguous invocation target
             throw invalidFunction("ambiguous function call", node, args);
         }
 
-        if (matchCount == 0) {
+        if (candidate == null) {
             // no signature match
             throw invalidFunction("no signature match", node, args);
+        }
+
+        if (candidateSigVarArgConst) {
+            for (int k = candidateSigArgCount; k < argCount; k++) {
+                Function func = args.getQuick(k);
+                if (!func.isConstant()) {
+                    throw SqlException.$(func.getPosition(), "constant expected");
+                }
+            }
+        }
+
+        // substitute NaNs with appropriate types
+        final int sigArgOffset = candidateSignature.indexOf('(') + 1;
+        for (int k = 0; k < candidateSigArgCount; k++) {
+            final Function arg = args.getQuick(k);
+            final char c = candidateSignature.charAt(sigArgOffset + k);
+
+            final int sigArgType = getArgType(c);
+            if (arg.getType() == ColumnType.DOUBLE && arg.isConstant() && Double.isNaN(arg.getDouble(null))) {
+                if (sigArgType == ColumnType.LONG) {
+                    args.setQuick(k, new LongConstant(arg.getPosition(), Numbers.LONG_NaN));
+                } else if (sigArgType == ColumnType.INT) {
+                    args.setQuick(k, new IntConstant(arg.getPosition(), Numbers.INT_NaN));
+                }
+            }
         }
 
         return checkAndCreateFunction(candidate, args, node.position, configuration);

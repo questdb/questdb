@@ -61,6 +61,7 @@ com.questdb.griffin.engine.functions.math.AddDoubleFunctionFactory
 
 # '*' operator
 com.questdb.griffin.engine.functions.math.MulFloatFunctionFactory
+com.questdb.griffin.engine.functions.math.MulDoubleFunctionFactory
 
 # random generator functions
 

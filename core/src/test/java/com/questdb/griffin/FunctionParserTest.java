@@ -47,12 +47,94 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
 
     @Test
     public void testAmbiguousFunctionInvocation() {
-        functions.add(new AddLongFunctionFactory());
-        functions.add(new AddIntFunctionFactory());
+        functions.add(new FunctionFactory() {
+            @Override
+            public String getSignature() {
+                return "+(BI)"; // byte,int
+            }
+
+            @Override
+            public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
+                return null;
+            }
+        });
+        functions.add(new FunctionFactory() {
+            @Override
+            public String getSignature() {
+                return "+(LE)"; // long,short
+            }
+
+            @Override
+            public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
+                return null;
+            }
+        });
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        metadata.add(new TableColumnMetadata("a", ColumnType.SHORT));
+        metadata.add(new TableColumnMetadata("a", ColumnType.BYTE));
         metadata.add(new TableColumnMetadata("c", ColumnType.SHORT));
-        assertFail(2, "ambiguous function call: +(SHORT,SHORT)", "a + c", metadata);
+        assertFail(2, "ambiguous function call: +(BYTE,SHORT)", "a + c", metadata);
+    }
+
+    @Test
+    public void testAmbiguousFunctionInvocation2() {
+        functions.add(new FunctionFactory() {
+            @Override
+            public String getSignature() {
+                return "x(BIS)"; // byte,int,string
+            }
+
+            @Override
+            public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
+                return null;
+            }
+        });
+        functions.add(new FunctionFactory() {
+            @Override
+            public String getSignature() {
+                return "x(LES)"; // long,short,string
+            }
+
+            @Override
+            public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
+                return null;
+            }
+        });
+        final GenericRecordMetadata metadata = new GenericRecordMetadata();
+        metadata.add(new TableColumnMetadata("a", ColumnType.BYTE));
+        metadata.add(new TableColumnMetadata("b", ColumnType.SHORT));
+        metadata.add(new TableColumnMetadata("c", ColumnType.STRING));
+        assertFail(0, "ambiguous function call: x(BYTE,SHORT,STRING)", "x(a,b,c)", metadata);
+    }
+
+    @Test
+    public void testAmbiguousFunctionInvocation3() {
+        functions.add(new FunctionFactory() {
+            @Override
+            public String getSignature() {
+                return "x(IIS)"; // int,int,string
+            }
+
+            @Override
+            public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
+                return null;
+            }
+        });
+        functions.add(new FunctionFactory() {
+            @Override
+            public String getSignature() {
+                return "x(LES)"; // long,short,string
+            }
+
+            @Override
+            public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
+                return null;
+            }
+        });
+        final GenericRecordMetadata metadata = new GenericRecordMetadata();
+        metadata.add(new TableColumnMetadata("a", ColumnType.BYTE));
+        metadata.add(new TableColumnMetadata("b", ColumnType.SHORT));
+        metadata.add(new TableColumnMetadata("c", ColumnType.STRING));
+        assertFail(0, "ambiguous function call: x(DOUBLE,SHORT,STRING)", "x(NaN,b,c)", metadata);
     }
 
     @Test
@@ -957,7 +1039,6 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         });
 
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        metadata.add(new TableColumnMetadata("a", ColumnType.SHORT));
         try {
             parseFunction("x(NaN)", metadata, createFunctionParser());
             Assert.fail();
