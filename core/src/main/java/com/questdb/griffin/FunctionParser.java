@@ -24,6 +24,7 @@
 package com.questdb.griffin;
 
 import com.questdb.cairo.CairoConfiguration;
+import com.questdb.cairo.sql.Function;
 import com.questdb.cairo.sql.InvalidColumnException;
 import com.questdb.cairo.sql.RecordMetadata;
 import com.questdb.common.ColumnType;

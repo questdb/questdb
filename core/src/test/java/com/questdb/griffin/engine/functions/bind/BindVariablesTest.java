@@ -25,9 +25,13 @@ package com.questdb.griffin.engine.functions.bind;
 
 import com.questdb.cairo.GenericRecordMetadata;
 import com.questdb.cairo.TableColumnMetadata;
+import com.questdb.cairo.sql.Function;
 import com.questdb.cairo.sql.Record;
 import com.questdb.common.ColumnType;
-import com.questdb.griffin.*;
+import com.questdb.griffin.BaseFunctionFactoryTest;
+import com.questdb.griffin.FunctionFactory;
+import com.questdb.griffin.FunctionParser;
+import com.questdb.griffin.SqlException;
 import com.questdb.griffin.engine.TestBinarySequence;
 import com.questdb.griffin.engine.functions.bool.NotVFunctionFactory;
 import com.questdb.griffin.engine.functions.math.*;
@@ -178,7 +182,7 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
 
         Function func = expr("a + :xyz + :xyz - :zz")
                 .withFunction(new AddIntFunctionFactory())
-                .withFunction(new SubtractIntVVFunctionFactory())
+                .withFunction(new SubtractIntFunctionFactory())
                 .withColumn("a", ColumnType.INT, 22)
                 .$();
 

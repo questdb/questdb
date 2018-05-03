@@ -23,7 +23,6 @@
 
 package com.questdb.cairo;
 
-import com.questdb.cairo.sql.MetadataContainer;
 import com.questdb.cairo.sql.Record;
 import com.questdb.cairo.sql.RecordCursor;
 import com.questdb.cairo.sql.RecordCursorFactory;
@@ -80,13 +79,6 @@ public class TableReaderRecordCursorFactoryTest extends AbstractCairoTest {
 
             try (Engine engine = new Engine(configuration)) {
                 RecordCursorFactory factory = new TableReaderRecordCursorFactory(engine, "x");
-
-                sink.clear();
-                try (MetadataContainer container = factory.getMetadataContainer()) {
-                    container.getMetadata().toJson(sink);
-                    TestUtils.assertEquals(expectedMetadata, sink);
-                }
-
 
                 long count = 0;
                 try (RecordCursor cursor = factory.getCursor()) {

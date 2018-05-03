@@ -25,11 +25,17 @@ package com.questdb.griffin.engine.functions;
 
 import com.questdb.cairo.sql.Record;
 import com.questdb.cairo.sql.RecordCursorFactory;
+import com.questdb.cairo.sql.RecordMetadata;
 import org.junit.Assert;
 import org.junit.Test;
 
 public class CursorFunctionTest {
     private static final CursorFunction function = new CursorFunction(25) {
+        @Override
+        public RecordMetadata getMetadata() {
+            return null;
+        }
+
         @Override
         public RecordCursorFactory getRecordCursorFactory(Record record) {
             return null;

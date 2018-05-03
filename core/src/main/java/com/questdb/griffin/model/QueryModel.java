@@ -23,6 +23,7 @@
 
 package com.questdb.griffin.model;
 
+import com.questdb.cairo.sql.Function;
 import com.questdb.griffin.SqlNode;
 import com.questdb.std.*;
 import com.questdb.std.str.CharSink;
@@ -71,6 +72,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private SqlNode constWhereClause;
     private QueryModel nestedModel;
     private SqlNode tableName;
+    private Function tableNameFunction;
     private SqlNode alias;
     private SqlNode latestBy;
     private SqlNode timestamp;
@@ -166,6 +168,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         withClauses.clear();
         selectModelType = SELECT_MODEL_NONE;
         columnToAliasMap.clear();
+        tableNameFunction = null;
     }
 
     public void clearOrderBy() {
@@ -358,6 +361,14 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         this.tableName = tableName;
     }
 
+    public Function getTableNameFunction() {
+        return tableNameFunction;
+    }
+
+    public void setTableNameFunction(Function function) {
+        this.tableNameFunction = function;
+    }
+
     public SqlNode getTimestamp() {
         return timestamp;
     }
@@ -528,7 +539,8 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
             sink.put(" from ");
         }
         if (tableName != null) {
-            sink.put(tableName.token);
+            tableName.toSink(sink);
+//            sink.put(tableName.token);
             if (alias != null) {
                 aliasToSink(alias.token, sink);
             }

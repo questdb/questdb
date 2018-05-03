@@ -24,7 +24,7 @@
 package com.questdb.griffin.engine.functions.lt;
 
 import com.questdb.cairo.CairoConfiguration;
-import com.questdb.griffin.Function;
+import com.questdb.cairo.sql.Function;
 import com.questdb.griffin.FunctionFactory;
 import com.questdb.griffin.engine.functions.constants.BooleanConstant;
 import com.questdb.std.ObjList;

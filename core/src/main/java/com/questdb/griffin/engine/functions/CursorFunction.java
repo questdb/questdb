@@ -23,8 +23,8 @@
 
 package com.questdb.griffin.engine.functions;
 
+import com.questdb.cairo.sql.Function;
 import com.questdb.cairo.sql.Record;
-import com.questdb.griffin.Function;
 import com.questdb.griffin.TypeEx;
 import com.questdb.std.BinarySequence;
 import com.questdb.std.str.CharSink;

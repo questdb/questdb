@@ -23,8 +23,7 @@
 
 package com.questdb.cairo.sql;
 
+@FunctionalInterface
 public interface RecordCursorFactory {
     RecordCursor getCursor();
-
-    MetadataContainer getMetadataContainer();
 }

@@ -25,6 +25,7 @@ package com.questdb.griffin.engine;
 
 import com.questdb.cairo.GenericRecordMetadata;
 import com.questdb.cairo.TableColumnMetadata;
+import com.questdb.cairo.sql.Function;
 import com.questdb.cairo.sql.Record;
 import com.questdb.common.ColumnType;
 import com.questdb.griffin.*;

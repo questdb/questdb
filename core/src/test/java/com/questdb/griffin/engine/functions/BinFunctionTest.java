@@ -73,9 +73,19 @@ public class BinFunctionTest {
         function.getLong(null);
     }
 
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetMetadata() {
+        function.getMetadata();
+    }
+
     @Test
     public void testGetPosition() {
         Assert.assertEquals(25, function.getPosition());
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetRecordCursorFactory() {
+        function.getRecordCursorFactory(null);
     }
 
     @Test(expected = UnsupportedOperationException.class)
@@ -111,10 +121,5 @@ public class BinFunctionTest {
     @Test(expected = UnsupportedOperationException.class)
     public void testGetTimestamp() {
         function.getTimestamp(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetRecordCursorFactory() {
-        function.getRecordCursorFactory(null);
     }
 }

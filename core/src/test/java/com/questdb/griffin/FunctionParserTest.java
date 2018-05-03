@@ -24,6 +24,7 @@
 package com.questdb.griffin;
 
 import com.questdb.cairo.*;
+import com.questdb.cairo.sql.Function;
 import com.questdb.cairo.sql.Record;
 import com.questdb.common.ColumnType;
 import com.questdb.griffin.engine.functions.*;
@@ -1120,7 +1121,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
     public void testSymbolFunction() throws SqlException {
         functions.add(new LengthStrVFunctionFactory());
         functions.add(new LengthSymbolVFunctionFactory());
-        functions.add(new SubtractIntVVFunctionFactory());
+        functions.add(new SubtractIntFunctionFactory());
 
         FunctionParser functionParser = createFunctionParser();
         final GenericRecordMetadata metadata = new GenericRecordMetadata();

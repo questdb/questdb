@@ -28,7 +28,6 @@ import com.questdb.cairo.GenericRecordMetadata;
 import com.questdb.cairo.TableColumnMetadata;
 import com.questdb.cairo.sql.*;
 import com.questdb.common.ColumnType;
-import com.questdb.griffin.Function;
 import com.questdb.griffin.FunctionFactory;
 import com.questdb.griffin.SqlException;
 import com.questdb.griffin.engine.functions.CursorFunction;
@@ -77,34 +76,18 @@ public class RandomCursorFunctionFactory implements FunctionFactory {
             functions.add(rndFunc);
         }
 
-        MetadataContainer metadataContainer = new MetadataContainer() {
-            @Override
-            public void close() {
-            }
-
-            @Override
-            public RecordMetadata getMetadata() {
-                return metadata;
-            }
-        };
-
         RandomRecord record = new RandomRecord(functions);
 
         RecordCursor recordCursor = new RandomRecordCursor(recordCount, record, metadata);
 
-        RecordCursorFactory recordCursorFactory = new RecordCursorFactory() {
-            @Override
-            public RecordCursor getCursor() {
-                return recordCursor;
-            }
-
-            @Override
-            public MetadataContainer getMetadataContainer() {
-                return metadataContainer;
-            }
-        };
+        RecordCursorFactory recordCursorFactory = () -> recordCursor;
 
         return new CursorFunction(position) {
+            @Override
+            public RecordMetadata getMetadata() {
+                return metadata;
+            }
+
             @Override
             public RecordCursorFactory getRecordCursorFactory(Record record) {
                 return recordCursorFactory;

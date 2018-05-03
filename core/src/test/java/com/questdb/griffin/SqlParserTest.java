@@ -2180,6 +2180,14 @@ public class SqlParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testJoinWithFunction() throws SqlException {
+
+        assertQuery("select-choose x1.a a, x1.s s, x2.a a1, x2.s s1 from ((select-choose a, s from (random_cursor(rnd_symbol(2,4,4,4),'s',rnd_int(),'a',10))) x1 join (select-choose a, s from (random_cursor(rnd_symbol(2,4,4,4),'s',rnd_int(),'a',10))) x2 on x2.s = x1.s)",
+                "with x as (select * from random_cursor(10, 'a', rnd_int(), 's', rnd_symbol(4,4,4,2))) " +
+                        "select * from x x1 join x x2 on (s)");
+    }
+
+    @Test
     public void testLatestBySyntax() {
         assertSyntaxError(
                 "select * from tab latest",

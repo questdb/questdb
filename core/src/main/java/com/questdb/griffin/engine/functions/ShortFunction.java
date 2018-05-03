@@ -23,10 +23,11 @@
 
 package com.questdb.griffin.engine.functions;
 
+import com.questdb.cairo.sql.Function;
 import com.questdb.cairo.sql.Record;
 import com.questdb.cairo.sql.RecordCursorFactory;
+import com.questdb.cairo.sql.RecordMetadata;
 import com.questdb.common.ColumnType;
-import com.questdb.griffin.Function;
 import com.questdb.std.BinarySequence;
 import com.questdb.std.str.CharSink;
 
@@ -83,6 +84,16 @@ public abstract class ShortFunction implements Function {
     }
 
     @Override
+    public RecordMetadata getMetadata() {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public RecordCursorFactory getRecordCursorFactory(Record record) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public final CharSequence getStr(Record rec) {
         throw new UnsupportedOperationException();
     }
@@ -115,10 +126,5 @@ public abstract class ShortFunction implements Function {
     @Override
     public final int getType() {
         return ColumnType.SHORT;
-    }
-
-    @Override
-    public RecordCursorFactory getRecordCursorFactory(Record record) {
-        throw new UnsupportedOperationException();
     }
 }

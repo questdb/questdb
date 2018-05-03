@@ -21,10 +21,8 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin;
+package com.questdb.cairo.sql;
 
-import com.questdb.cairo.sql.Record;
-import com.questdb.cairo.sql.RecordCursorFactory;
 import com.questdb.std.BinarySequence;
 import com.questdb.std.str.CharSink;
 
@@ -46,7 +44,11 @@ public interface Function {
 
     long getLong(Record rec);
 
+    RecordMetadata getMetadata();
+
     int getPosition();
+
+    RecordCursorFactory getRecordCursorFactory(Record record);
 
     short getShort(Record rec);
 
@@ -67,6 +69,4 @@ public interface Function {
     default boolean isConstant() {
         return false;
     }
-
-    RecordCursorFactory getRecordCursorFactory(Record record);
 }

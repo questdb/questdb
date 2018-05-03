@@ -24,7 +24,7 @@
 package com.questdb.griffin.engine.functions.columns;
 
 import com.questdb.cairo.CairoConfiguration;
-import com.questdb.griffin.Function;
+import com.questdb.cairo.sql.Function;
 import com.questdb.griffin.FunctionFactory;
 import com.questdb.griffin.SqlException;
 import com.questdb.griffin.engine.AbstractFunctionFactoryTest;

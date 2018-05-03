@@ -28,6 +28,7 @@ import com.questdb.cairo.TableReader;
 import com.questdb.cairo.TableUtils;
 import com.questdb.cairo.pool.ex.EntryLockedException;
 import com.questdb.cairo.sql.CairoEngine;
+import com.questdb.cairo.sql.Function;
 import com.questdb.cairo.sql.RecordMetadata;
 import com.questdb.common.ColumnType;
 import com.questdb.griffin.engine.functions.bind.BindVariableService;
@@ -444,6 +445,28 @@ class SqlOptimiser {
         }
     }
 
+    private void copyColumnsFromMetadata(QueryModel model, RecordMetadata m) throws SqlException {
+        // column names are not allowed to have dot
+        for (int i = 0, k = m.getColumnCount(); i < k; i++) {
+            model.addField(createColumnAlias(m.getColumnName(i), model));
+        }
+
+        // validate explicitly defined timestamp, if it exists
+        SqlNode timestamp = model.getTimestamp();
+        if (timestamp == null) {
+            if (m.getTimestampIndex() != -1) {
+                model.setTimestamp(exprNodePool.next().of(SqlNode.LITERAL, m.getColumnName(m.getTimestampIndex()), 0, 0));
+            }
+        } else {
+            int index = m.getColumnIndexQuiet(timestamp.token);
+            if (index == -1) {
+                throw SqlException.invalidColumn(timestamp.position, timestamp.token);
+            } else if (m.getColumnType(index) != ColumnType.TIMESTAMP) {
+                throw SqlException.$(timestamp.position, "not a TIMESTAMP");
+            }
+        }
+    }
+
     private CharSequence createColumnAlias(CharSequence name, QueryModel model) {
         return SqlUtil.createColumnAlias(characterStore, name, -1, model.getColumnNameTypeMap());
     }
@@ -760,26 +783,12 @@ class SqlOptimiser {
 
         // we have plain tables and possibly joins
         // deal with _this_ model first, it will always be the first element in join model list
-        if (model.getTableName() != null) {
-            RecordMetadata m = getTableMetadata(model.getTableName(), bindVariableService);
-            // column names are not allowed to have dot
-            for (int i = 0, k = m.getColumnCount(); i < k; i++) {
-                model.addField(createColumnAlias(m.getColumnName(i), model));
-            }
-
-            // validate explicitly defined timestamp, if it exists
-            SqlNode timestamp = model.getTimestamp();
-            if (timestamp == null) {
-                if (m.getTimestampIndex() != -1) {
-                    model.setTimestamp(exprNodePool.next().of(SqlNode.LITERAL, m.getColumnName(m.getTimestampIndex()), 0, 0));
-                }
+        final SqlNode tableName = model.getTableName();
+        if (tableName != null) {
+            if (tableName.type == SqlNode.FUNCTION) {
+                parseFunctionAndEnumerateColumns(model, bindVariableService);
             } else {
-                int index = m.getColumnIndexQuiet(timestamp.token);
-                if (index == -1) {
-                    throw SqlException.invalidColumn(timestamp.position, timestamp.token);
-                } else if (m.getColumnType(index) != ColumnType.TIMESTAMP) {
-                    throw SqlException.$(timestamp.position, "not a TIMESTAMP");
-                }
+                openReaderAndEnumerateColumns(model);
             }
         } else {
             if (model.getNestedModel() != null) {
@@ -827,45 +836,6 @@ class SqlOptimiser {
             }
 
             return index;
-        }
-    }
-
-    private RecordMetadata getTableMetadata(SqlNode tableName, BindVariableService bindVariableService) throws SqlException {
-
-        if (tableName.type == SqlNode.FUNCTION) {
-            // todo: hold on to function
-            Function function = functionParser.parseFunction(tableName, EmptyRecordMetadata.INSTANCE, bindVariableService);
-            return function.getRecordCursorFactory(null).getMetadataContainer().getMetadata();
-        }
-
-
-        // table name must not contain quotes by now
-        int lo = 0;
-        int hi = tableName.token.length();
-        if (Chars.startsWith(tableName.token, QueryModel.NO_ROWID_MARKER)) {
-            lo += QueryModel.NO_ROWID_MARKER.length();
-        }
-
-        if (lo == hi) {
-            throw SqlException.$(tableName.position, "come on, where is table name?");
-        }
-
-        int status = engine.getStatus(tableName.token, lo, hi);
-
-        if (status == TableUtils.TABLE_DOES_NOT_EXIST) {
-            throw SqlException.$(tableName.position, "table does not exist");
-        }
-
-        if (status == TableUtils.TABLE_RESERVED) {
-            throw SqlException.$(tableName.position, "table directory is of unknown format");
-        }
-
-        try (TableReader r = engine.getReader(tableLookupSequence.of(tableName.token, lo, hi - lo))) {
-            return r.getMetadata();
-        } catch (EntryLockedException e) {
-            throw SqlException.position(tableName.position).put("table is locked: ").put(tableLookupSequence);
-        } catch (CairoException e) {
-            throw SqlException.position(tableName.position).put(e);
         }
     }
 
@@ -1177,6 +1147,42 @@ class SqlOptimiser {
         return nextLiteral(token, 0);
     }
 
+    private void openReaderAndEnumerateColumns(QueryModel model) throws SqlException {
+        final SqlNode tableNameNode = model.getTableName();
+
+        // table name must not contain quotes by now
+        final CharSequence tableName = tableNameNode.token;
+        final int tableNamePosition = tableNameNode.position;
+
+        int lo = 0;
+        int hi = tableName.length();
+        if (Chars.startsWith(tableName, QueryModel.NO_ROWID_MARKER)) {
+            lo += QueryModel.NO_ROWID_MARKER.length();
+        }
+
+        if (lo == hi) {
+            throw SqlException.$(tableNamePosition, "come on, where is table name?");
+        }
+
+        int status = engine.getStatus(tableName, lo, hi);
+
+        if (status == TableUtils.TABLE_DOES_NOT_EXIST) {
+            throw SqlException.$(tableNamePosition, "table does not exist");
+        }
+
+        if (status == TableUtils.TABLE_RESERVED) {
+            throw SqlException.$(tableNamePosition, "table directory is of unknown format");
+        }
+
+        try (TableReader r = engine.getReader(tableLookupSequence.of(tableName, lo, hi - lo))) {
+            copyColumnsFromMetadata(model, r.getMetadata());
+        } catch (EntryLockedException e) {
+            throw SqlException.position(tableNamePosition).put("table is locked: ").put(tableLookupSequence);
+        } catch (CairoException e) {
+            throw SqlException.position(tableNamePosition).put(e);
+        }
+    }
+
     QueryModel optimise(QueryModel model, BindVariableService bindVariableService) throws SqlException {
         enumerateTableColumns(model, bindVariableService);
         resolveJoinColumns(model);
@@ -1374,6 +1380,18 @@ class SqlOptimiser {
                 optimiseOrderBy(qm, subQueryOrderByState);
             }
         }
+    }
+
+    private void parseFunctionAndEnumerateColumns(QueryModel model, BindVariableService bindVariableService) throws SqlException {
+        Function function = model.getTableNameFunction();
+        if (function == null) {
+            function = functionParser.parseFunction(model.getTableName(), EmptyRecordMetadata.INSTANCE, bindVariableService);
+            if (function.getType() != TypeEx.CURSOR) {
+                throw SqlException.$(model.getTableName().position, "function must return CURSOR");
+            }
+            model.setTableNameFunction(function);
+        }
+        copyColumnsFromMetadata(model, function.getMetadata());
     }
 
     private void processEmittedJoinClauses(QueryModel model) {

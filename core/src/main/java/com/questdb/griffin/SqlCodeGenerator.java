@@ -57,7 +57,8 @@ public class SqlCodeGenerator {
     }
 
     private RecordCursorFactory generateFunctionQuery(QueryModel model, BindVariableService bindVariableService) throws SqlException {
-        Function function = functionParser.parseFunction(model.getTableName(), EmptyRecordMetadata.INSTANCE, bindVariableService);
+        Function function = model.getTableNameFunction();
+        assert function != null;
         if (function.getType() != TypeEx.CURSOR) {
             throw SqlException.position(model.getTableName().position).put("function must return CURSOR [actual=").put(ColumnType.nameOf(function.getType())).put(']');
         }

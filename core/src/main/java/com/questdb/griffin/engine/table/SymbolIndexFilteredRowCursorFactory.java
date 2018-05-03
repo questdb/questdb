@@ -27,9 +27,9 @@ import com.questdb.cairo.TableReader;
 import com.questdb.cairo.TableReaderRecord;
 import com.questdb.cairo.sql.CairoEngine;
 import com.questdb.cairo.sql.DataFrame;
+import com.questdb.cairo.sql.Function;
 import com.questdb.cairo.sql.RowCursorFactory;
 import com.questdb.common.RowCursor;
-import com.questdb.griffin.Function;
 
 public class SymbolIndexFilteredRowCursorFactory implements RowCursorFactory {
     private final SymbolIndexFilteredRowCursor cursor;

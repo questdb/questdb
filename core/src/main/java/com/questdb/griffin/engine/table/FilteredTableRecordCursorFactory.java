@@ -23,7 +23,10 @@
 
 package com.questdb.griffin.engine.table;
 
-import com.questdb.cairo.sql.*;
+import com.questdb.cairo.sql.DataFrameCursorFactory;
+import com.questdb.cairo.sql.RecordCursor;
+import com.questdb.cairo.sql.RecordCursorFactory;
+import com.questdb.cairo.sql.RowCursorFactory;
 
 public class FilteredTableRecordCursorFactory implements RecordCursorFactory {
     private final DataFrameCursorFactory dataFrameCursorFactory;
@@ -32,11 +35,6 @@ public class FilteredTableRecordCursorFactory implements RecordCursorFactory {
     public FilteredTableRecordCursorFactory(DataFrameCursorFactory dataFrameCursorFactory, RowCursorFactory rowCursorFactory) {
         this.dataFrameCursorFactory = dataFrameCursorFactory;
         this.cursor = new FilteredTableRecordCursor(rowCursorFactory);
-    }
-
-    @Override
-    public MetadataContainer getMetadataContainer() {
-        return getCursor();
     }
 
     @Override

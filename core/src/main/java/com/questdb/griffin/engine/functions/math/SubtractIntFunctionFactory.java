@@ -24,13 +24,13 @@
 package com.questdb.griffin.engine.functions.math;
 
 import com.questdb.cairo.CairoConfiguration;
+import com.questdb.cairo.sql.Function;
 import com.questdb.cairo.sql.Record;
-import com.questdb.griffin.Function;
 import com.questdb.griffin.FunctionFactory;
 import com.questdb.griffin.engine.functions.IntFunction;
 import com.questdb.std.ObjList;
 
-public class SubtractIntVVFunctionFactory implements FunctionFactory {
+public class SubtractIntFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
         return "-(II)";

@@ -26,6 +26,7 @@ package com.questdb.griffin;
 import com.questdb.cairo.AbstractCairoTest;
 import com.questdb.cairo.Engine;
 import com.questdb.cairo.GenericRecordMetadata;
+import com.questdb.cairo.sql.Function;
 import com.questdb.griffin.engine.functions.bind.BindVariableService;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Before;

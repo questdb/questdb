@@ -24,9 +24,9 @@
 package com.questdb.griffin.engine.functions.bool;
 
 import com.questdb.cairo.CairoConfiguration;
+import com.questdb.cairo.sql.Function;
 import com.questdb.cairo.sql.Record;
 import com.questdb.common.ColumnType;
-import com.questdb.griffin.Function;
 import com.questdb.griffin.FunctionFactory;
 import com.questdb.griffin.SqlException;
 import com.questdb.griffin.engine.functions.BooleanFunction;
