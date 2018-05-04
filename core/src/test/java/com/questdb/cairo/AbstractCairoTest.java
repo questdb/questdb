@@ -76,15 +76,15 @@ public class AbstractCairoTest {
         }
     }
 
+    protected void assertOnce(CharSequence expected, RecordCursor cursor, boolean header) throws IOException {
+        sink.clear();
+        printer.print(cursor, header);
+        TestUtils.assertEquals(expected, sink);
+    }
+
     protected void assertThat(CharSequence expected, RecordCursor cursor, boolean header) throws IOException {
-        sink.clear();
-        printer.print(cursor, header);
-        TestUtils.assertEquals(expected, sink);
-
+        assertOnce(expected, cursor, header);
         cursor.toTop();
-
-        sink.clear();
-        printer.print(cursor, header);
-        TestUtils.assertEquals(expected, sink);
+        assertOnce(expected, cursor, header);
     }
 }

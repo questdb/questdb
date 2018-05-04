@@ -42,11 +42,20 @@ public class RandomCursorFunctionFactory implements FunctionFactory {
     @Override
     public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) throws SqlException {
 
-        if (args.size() % 2 == 0) {
-            throw SqlException.position(position).put("Invalid number of arguments. Expected rnd_table(count, seed1, seed2, 'column', rnd_function(), ...)");
+        int argLen = args.size();
+        if (argLen % 2 == 0) {
+            throw SqlException.position(position).put("invalid number of arguments. Expected rnd_table(count, 'column', rnd_function(), ...)");
+        }
+
+        if (argLen < 3) {
+            throw SqlException.$(position, "not enough arguments");
         }
 
         final long recordCount = args.getQuick(0).getLong(null);
+        if (recordCount < 0) {
+            throw SqlException.$(args.getQuick(0).getPosition(), "invalid record count");
+
+        }
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
         final ObjList<Function> functions = new ObjList<>();
 

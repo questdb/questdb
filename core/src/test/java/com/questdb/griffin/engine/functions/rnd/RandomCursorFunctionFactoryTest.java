@@ -23,22 +23,48 @@
 
 package com.questdb.griffin.engine.functions.rnd;
 
-import com.questdb.cairo.sql.Function;
 import com.questdb.griffin.FunctionFactory;
-import com.questdb.griffin.SqlException;
 import com.questdb.griffin.engine.AbstractFunctionFactoryTest;
+import com.questdb.griffin.engine.functions.math.NegIntFunctionFactory;
 import org.junit.Test;
 
+// this test will only test edge cases in factory, testing results with
+// current state of function test harness is not possible, because passing of
+// arbitrary functions as arguments is not supported.
+//
+// full tests are done using sql compiler
+//
 public class RandomCursorFunctionFactoryTest extends AbstractFunctionFactoryTest {
     @Test
-    public void testSimple() throws SqlException {
-        Invocation invocation = callCustomised(true, 10L);
+    public void testNegativeRecordCount() {
+        assertFailure(14, "invalid record count", -1L, "x", null);
+    }
 
-        Function function1 = invocation.getFunction1();
-        Function function2 = invocation.getFunction2();
+    @Test
+    public void testNoColumnDefs() {
+        assertFailure(0, "not enough arguments", 10L);
+    }
 
+    @Test
+    public void testNoColumnFunction() {
+        assertFailure(0, "invalid number of arguments", 10L, "x");
+    }
 
-        function2.getRecordCursorFactory(invocation.getRecord());
+    @Test
+    public void testNonConstantColumnName() {
+        // assert will create two invocations, one is with constants, which we expect under normal circumstances
+        // the other is invocation with function as parameter, which is where we expect factory to throw exception
+        assertFailure(false, 17, "STRING constant expected", 10L, "x", 5L, null, 6L);
+    }
+
+    @Test
+    public void testNullColumnName() {
+        assertFailure(true, 23, "column name must not be NULL", 10L, "x", 5L, null, 6L);
+    }
+
+    @Override
+    protected void addExtraFunctions() {
+        functions.add(new NegIntFunctionFactory());
     }
 
     @Override

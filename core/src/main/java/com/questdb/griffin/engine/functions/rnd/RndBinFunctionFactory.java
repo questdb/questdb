@@ -53,6 +53,10 @@ public class RndBinFunctionFactory implements FunctionFactory {
             throw SqlException.$(position, "invalid range");
         }
 
+        if (lo < 1) {
+            throw SqlException.$(args.getQuick(0).getPosition(), "minimum has to be grater than 0");
+        }
+
         if (lo < hi) {
             return new VarLenFunction(position, lo, hi, nullRate, configuration);
         }
@@ -73,7 +77,7 @@ public class RndBinFunctionFactory implements FunctionFactory {
             this.lo = lo;
             this.range = hi - lo + 1;
             this.nullRate = nullRate + 1;
-            this.sequence.rnd = rnd = new Rnd(configuration.getMillisecondClock().getTicks(), configuration.getMicrosecondClock().getTicks());
+            this.sequence.rnd = rnd = SharedRandom.getRandom(configuration);
         }
 
         @Override

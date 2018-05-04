@@ -1384,13 +1384,14 @@ class SqlOptimiser {
 
     private void parseFunctionAndEnumerateColumns(QueryModel model, BindVariableService bindVariableService) throws SqlException {
         Function function = model.getTableNameFunction();
-        if (function == null) {
-            function = functionParser.parseFunction(model.getTableName(), EmptyRecordMetadata.INSTANCE, bindVariableService);
-            if (function.getType() != TypeEx.CURSOR) {
-                throw SqlException.$(model.getTableName().position, "function must return CURSOR");
-            }
-            model.setTableNameFunction(function);
+
+        assert function == null;
+
+        function = functionParser.parseFunction(model.getTableName(), EmptyRecordMetadata.INSTANCE, bindVariableService);
+        if (function.getType() != TypeEx.CURSOR) {
+            throw SqlException.$(model.getTableName().position, "function must return CURSOR");
         }
+        model.setTableNameFunction(function);
         copyColumnsFromMetadata(model, function.getMetadata());
     }
 

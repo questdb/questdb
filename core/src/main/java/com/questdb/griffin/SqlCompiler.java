@@ -104,20 +104,28 @@ public class SqlCompiler {
     }
 
     public RecordCursorFactory compile(CharSequence query, BindVariableService bindVariableService) throws SqlException {
-        ExecutionModel executionModel = compileExecutionModel(query, bindVariableService);
-        if (executionModel.getModelType() == ExecutionModel.QUERY) {
-            return generate((QueryModel) executionModel, bindVariableService);
+        ExecutionModel executionModel = compileExecutionModel(query, bindVariableService, true);
+        switch (executionModel.getModelType()) {
+            case ExecutionModel.QUERY:
+                return generate((QueryModel) executionModel, bindVariableService);
+            case ExecutionModel.CREATE_TABLE:
+                createTable((CreateTableModel) executionModel, bindVariableService);
+                break;
+            default:
+                break;
         }
         return null;
     }
 
     public void execute(CharSequence query, BindVariableService bindVariableService) throws SqlException {
-        ExecutionModel executionModel = compileExecutionModel(query, bindVariableService);
+        ExecutionModel executionModel = compileExecutionModel(query, bindVariableService, false);
         switch (executionModel.getModelType()) {
             case ExecutionModel.QUERY:
                 break;
             case ExecutionModel.CREATE_TABLE:
                 createTable((CreateTableModel) executionModel, bindVariableService);
+                break;
+            default:
                 break;
         }
     }
@@ -559,18 +567,18 @@ public class SqlCompiler {
         parser.clear();
     }
 
-    ExecutionModel compileExecutionModel(GenericLexer lexer, BindVariableService bindVariableService) throws SqlException {
+    private ExecutionModel compileExecutionModel(GenericLexer lexer, BindVariableService bindVariableService, boolean optimise) throws SqlException {
         ExecutionModel model = parser.parse(lexer, bindVariableService);
-        if (model.getModelType() == ExecutionModel.QUERY) {
+        if (optimise && model.getModelType() == ExecutionModel.QUERY) {
             return optimiser.optimise((QueryModel) model, bindVariableService);
         }
         return model;
     }
 
-    ExecutionModel compileExecutionModel(CharSequence query, BindVariableService bindVariableService) throws SqlException {
+    ExecutionModel compileExecutionModel(CharSequence query, BindVariableService bindVariableService, boolean optimise) throws SqlException {
         clear();
         lexer.of(query);
-        return compileExecutionModel(lexer, bindVariableService);
+        return compileExecutionModel(lexer, bindVariableService, optimise);
     }
 
     //todo: creating table requires lock to guard against bad concurrency
@@ -689,7 +697,7 @@ public class SqlCompiler {
         // no need to worry that column will not resolve
         SqlNode timestamp = model.getTimestamp();
         if (timestamp != null && metadata.getColumnType(timestamp.token) != ColumnType.TIMESTAMP) {
-            throw SqlException.$(timestamp.position, "TIMESTAMP reference expected");
+            throw SqlException.position(timestamp.position).put("TIMESTAMP column expected [actual=").put(ColumnType.nameOf(metadata.getColumnType(timestamp.token))).put(']');
         }
 
         final FilesFacade ff = configuration.getFilesFacade();

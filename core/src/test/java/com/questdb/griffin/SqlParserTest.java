@@ -2181,7 +2181,6 @@ public class SqlParserTest extends AbstractCairoTest {
 
     @Test
     public void testJoinWithFunction() throws SqlException {
-
         assertQuery("select-choose x1.a a, x1.s s, x2.a a1, x2.s s1 from ((select-choose a, s from (random_cursor(rnd_symbol(2,4,4,4),'s',rnd_int(),'a',10))) x1 join (select-choose a, s from (random_cursor(rnd_symbol(2,4,4,4),'s',rnd_int(),'a',10))) x2 on x2.s = x1.s)",
                 "with x as (select * from random_cursor(10, 'a', rnd_int(), 's', rnd_symbol(4,4,4,2))) " +
                         "select * from x x1 join x x2 on (s)");
@@ -2206,7 +2205,7 @@ public class SqlParserTest extends AbstractCairoTest {
                                 "-- from acc\n" +
                                 "from acc(Date) sample by 1d\n" +
                                 "-- where x = 10\n",
-                        bindVariableService);
+                        bindVariableService, true);
                 Assert.fail();
             } catch (SqlException e) {
                 TestUtils.assertEquals("Invalid column: Date", e.getFlyweightMessage());
@@ -2287,7 +2286,7 @@ public class SqlParserTest extends AbstractCairoTest {
     @Test
     public void testMissingWhere() {
         try {
-            sqlCompiler.compileExecutionModel("select id, x + 10, x from tab id ~ 'HBRO'", bindVariableService);
+            sqlCompiler.compileExecutionModel("select id, x + 10, x from tab id ~ 'HBRO'", bindVariableService, true);
             Assert.fail("Exception expected");
         } catch (SqlException e) {
             Assert.assertEquals(33, e.getPosition());
@@ -2894,6 +2893,11 @@ public class SqlParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSelectFromNonCursorFunction() {
+        assertSyntaxError("select * from length('')", 14, "function must return CURSOR");
+    }
+
+    @Test
     public void testSelectFromSubQuery() throws SqlException {
         assertQuery(
                 "select-choose a.x x from ((tab where y > 10) a)",
@@ -3270,7 +3274,7 @@ public class SqlParserTest extends AbstractCairoTest {
             }
             b.append('f').append(i);
         }
-        QueryModel st = (QueryModel) sqlCompiler.compileExecutionModel(b, bindVariableService);
+        QueryModel st = (QueryModel) sqlCompiler.compileExecutionModel(b, bindVariableService, true);
         Assert.assertEquals(SqlParser.MAX_ORDER_BY_COLUMNS - 1, st.getOrderBy().size());
     }
 
@@ -3285,7 +3289,7 @@ public class SqlParserTest extends AbstractCairoTest {
             b.append('f').append(i);
         }
         try {
-            sqlCompiler.compileExecutionModel(b, bindVariableService);
+            sqlCompiler.compileExecutionModel(b, bindVariableService, true);
         } catch (SqlException e) {
             TestUtils.assertEquals("Too many columns", e.getFlyweightMessage());
         }
@@ -3396,7 +3400,7 @@ public class SqlParserTest extends AbstractCairoTest {
             for (int i = 0, n = tableModels.length; i < n; i++) {
                 CairoTestUtils.create(tableModels[i]);
             }
-            compiler.compileExecutionModel(query, bindVariableService);
+            compiler.compileExecutionModel(query, bindVariableService, true);
             Assert.fail("Exception expected");
         } catch (SqlException e) {
             Assert.assertEquals(position, e.getPosition());
@@ -3414,7 +3418,7 @@ public class SqlParserTest extends AbstractCairoTest {
 
     private void assertCreateTable(String expected, String ddl, TableModel... tableModels) throws SqlException {
         createModelsAndRun(() -> {
-            ExecutionModel model = sqlCompiler.compileExecutionModel(ddl, bindVariableService);
+            ExecutionModel model = sqlCompiler.compileExecutionModel(ddl, bindVariableService, true);
             Assert.assertEquals(ExecutionModel.CREATE_TABLE, model.getModelType());
             Assert.assertTrue(model instanceof CreateTableModel);
             sink.clear();
@@ -3426,7 +3430,7 @@ public class SqlParserTest extends AbstractCairoTest {
     private void assertQuery(String expected, String query, TableModel... tableModels) throws SqlException {
         createModelsAndRun(() -> {
             sink.clear();
-            ExecutionModel model = sqlCompiler.compileExecutionModel(query, bindVariableService);
+            ExecutionModel model = sqlCompiler.compileExecutionModel(query, bindVariableService, true);
             Assert.assertEquals(model.getModelType(), ExecutionModel.QUERY);
             ((QueryModel) model).toSink(sink);
             TestUtils.assertEquals(expected, sink);

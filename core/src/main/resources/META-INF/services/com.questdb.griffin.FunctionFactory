@@ -63,6 +63,15 @@ com.questdb.griffin.engine.functions.math.AddDoubleFunctionFactory
 com.questdb.griffin.engine.functions.math.MulFloatFunctionFactory
 com.questdb.griffin.engine.functions.math.MulDoubleFunctionFactory
 
+# 'to_char'
+com.questdb.griffin.engine.functions.str.ToCharDateVCFunctionFactory
+com.questdb.griffin.engine.functions.str.ToCharTimestampVCFunctionFactory
+com.questdb.griffin.engine.functions.str.ToCharBinVFunctionFactory
+
+# 'length'
+com.questdb.griffin.engine.functions.str.LengthStrVFunctionFactory
+com.questdb.griffin.engine.functions.str.LengthSymbolVFunctionFactory
+
 # random generator functions
 
 com.questdb.griffin.engine.functions.rnd.RandomCursorFunctionFactory

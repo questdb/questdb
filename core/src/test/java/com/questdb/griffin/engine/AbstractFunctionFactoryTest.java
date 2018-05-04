@@ -47,8 +47,12 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
     private FunctionFactory factory;
 
     public void assertFailure(int expectedPosition, CharSequence expectedMsg, Object... args) {
+        assertFailure(false, expectedPosition, expectedMsg, args);
+    }
+
+    public void assertFailure(boolean forceConstant, int expectedPosition, CharSequence expectedMsg, Object... args) {
         try {
-            call(args);
+            callCustomised(forceConstant, args);
             Assert.fail();
         } catch (SqlException e) {
             Assert.assertEquals(expectedPosition, e.getPosition());
@@ -195,6 +199,10 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
 
         if (arg instanceof Double) {
             return ColumnType.DOUBLE;
+        }
+
+        if (arg instanceof Long) {
+            return ColumnType.LONG;
         }
 
         Assert.fail("Unsupported type: " + arg.getClass());

@@ -46,6 +46,77 @@ public class SqlCompilerTest extends AbstractCairoTest {
     private final static SqlCompiler compiler = new SqlCompiler(engine, configuration);
     private final static BindVariableService bindVariableService = new BindVariableService();
 
+    @Test
+    public void assertCastString() throws SqlException, IOException {
+        final String expectedData = "a\n" +
+                "JWCPS\n" +
+                "\n" +
+                "RXPEHNRXG\n" +
+                "\n" +
+                "\n" +
+                "XIBBT\n" +
+                "GWFFY\n" +
+                "EYYQEHBHFO\n" +
+                "PDXYSBEOUO\n" +
+                "HRUEDRQQUL\n" +
+                "JGETJRSZS\n" +
+                "RFBVTMHGO\n" +
+                "ZVDZJMY\n" +
+                "CXZOUICWEK\n" +
+                "VUVSDOTS\n" +
+                "YYCTG\n" +
+                "LYXWCKYLSU\n" +
+                "SWUGSHOLNV\n" +
+                "\n" +
+                "BZXIOVI\n";
+
+        String expectedMeta = "{\"columnCount\":1,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\"SYMBOL\"}],\"timestampIndex\":-1}";
+
+        String sql = "create table y as (" +
+                "select * from random_cursor(" +
+                " 20," + // record count
+                " 'a', rnd_str(5,10,2)" +
+                ")), cast(a as SYMBOL)";
+
+        assertCast(expectedData, expectedMeta, sql);
+    }
+
+    @Test
+    public void assertCastSymbol() throws SqlException, IOException {
+        final String expectedData = "a\n" +
+                "CPSW\n" +
+                "HYRX\n" +
+                "\n" +
+                "VTJW\n" +
+                "PEHN\n" +
+                "\n" +
+                "VTJW\n" +
+                "\n" +
+                "CPSW\n" +
+                "\n" +
+                "PEHN\n" +
+                "CPSW\n" +
+                "VTJW\n" +
+                "\n" +
+                "\n" +
+                "CPSW\n" +
+                "\n" +
+                "\n" +
+                "\n" +
+                "PEHN\n";
+
+        String expectedMeta = "{\"columnCount\":1,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\"STRING\"}],\"timestampIndex\":-1}";
+
+        String sql = "create table y as (" +
+                "select * from random_cursor(" +
+                " 20," + // record count
+                " 'a', rnd_symbol(4,4,4,2)" +
+                ")), cast(a as STRING)";
+
+        assertCast(expectedData, expectedMeta, sql);
+    }
+
+
     @Before
     public void setUp2() {
         SharedRandom.RANDOM.set(new Rnd());
@@ -236,6 +307,188 @@ public class SqlCompilerTest extends AbstractCairoTest {
                         "1970-01-01T00:00:00.000040Z\n" +
                         "1970-01-01T00:00:00.000116Z\n" +
                         "1970-01-01T00:00:00.000117Z\n",
+                ColumnType.TIMESTAMP);
+    }
+
+    @Test
+    public void testCastDateByte() throws SqlException, IOException {
+        assertCastDate("a\n" +
+                        "11\n" +
+                        "0\n" +
+                        "121\n" +
+                        "-2\n" +
+                        "0\n" +
+                        "-43\n" +
+                        "-124\n" +
+                        "100\n" +
+                        "0\n" +
+                        "124\n" +
+                        "0\n" +
+                        "-45\n" +
+                        "0\n" +
+                        "24\n" +
+                        "-16\n" +
+                        "58\n" +
+                        "0\n" +
+                        "-6\n" +
+                        "73\n" +
+                        "125\n",
+                ColumnType.BYTE);
+    }
+
+    @Test
+    public void testCastDateDouble() throws SqlException, IOException {
+        assertCastDate("a\n" +
+                        "1.426297242379E12\n" +
+                        "-9.223372036854776E18\n" +
+                        "1.446081058169E12\n" +
+                        "1.434834113022E12\n" +
+                        "-9.223372036854776E18\n" +
+                        "1.439739868373E12\n" +
+                        "1.443957889668E12\n" +
+                        "1.440280260964E12\n" +
+                        "-9.223372036854776E18\n" +
+                        "1.44318380966E12\n" +
+                        "-9.223372036854776E18\n" +
+                        "1.435298544851E12\n" +
+                        "-9.223372036854776E18\n" +
+                        "1.447181628184E12\n" +
+                        "1.4423615004E12\n" +
+                        "1.428165287226E12\n" +
+                        "-9.223372036854776E18\n" +
+                        "1.434999533562E12\n" +
+                        "1.423736755529E12\n" +
+                        "1.426566352765E12\n",
+                ColumnType.DOUBLE);
+    }
+
+    @Test
+    public void testCastDateFloat() throws SqlException, IOException {
+        assertCastDate("a\n" +
+                        "1.42629719E12\n" +
+                        "-9.223372E18\n" +
+                        "1.44608107E12\n" +
+                        "1.43483417E12\n" +
+                        "-9.223372E18\n" +
+                        "1.43973981E12\n" +
+                        "1.44395783E12\n" +
+                        "1.44028022E12\n" +
+                        "-9.223372E18\n" +
+                        "1.44318385E12\n" +
+                        "-9.223372E18\n" +
+                        "1.43529856E12\n" +
+                        "-9.223372E18\n" +
+                        "1.44718168E12\n" +
+                        "1.44236151E12\n" +
+                        "1.42816523E12\n" +
+                        "-9.223372E18\n" +
+                        "1.43499959E12\n" +
+                        "1.4237367E12\n" +
+                        "1.42656641E12\n",
+                ColumnType.FLOAT);
+    }
+
+    @Test
+    public void testCastDateInt() throws SqlException, IOException {
+        assertCastDate("a\n" +
+                        "368100107\n" +
+                        "0\n" +
+                        "-1322920583\n" +
+                        "315036158\n" +
+                        "0\n" +
+                        "925824213\n" +
+                        "848878212\n" +
+                        "1466216804\n" +
+                        "0\n" +
+                        "74798204\n" +
+                        "0\n" +
+                        "779467987\n" +
+                        "0\n" +
+                        "-222350568\n" +
+                        "-747511056\n" +
+                        "-2058822342\n" +
+                        "0\n" +
+                        "480456698\n" +
+                        "2102580553\n" +
+                        "637210493\n",
+                ColumnType.INT);
+    }
+
+    @Test
+    public void testCastDateLong() throws SqlException, IOException {
+        assertCastDate("a\n" +
+                        "1426297242379\n" +
+                        "NaN\n" +
+                        "1446081058169\n" +
+                        "1434834113022\n" +
+                        "NaN\n" +
+                        "1439739868373\n" +
+                        "1443957889668\n" +
+                        "1440280260964\n" +
+                        "NaN\n" +
+                        "1443183809660\n" +
+                        "NaN\n" +
+                        "1435298544851\n" +
+                        "NaN\n" +
+                        "1447181628184\n" +
+                        "1442361500400\n" +
+                        "1428165287226\n" +
+                        "NaN\n" +
+                        "1434999533562\n" +
+                        "1423736755529\n" +
+                        "1426566352765\n",
+                ColumnType.LONG);
+    }
+
+    @Test
+    public void testCastDateShort() throws SqlException, IOException {
+        assertCastDate("a\n" +
+                        "-15605\n" +
+                        "0\n" +
+                        "-10887\n" +
+                        "4606\n" +
+                        "0\n" +
+                        "-2859\n" +
+                        "-9596\n" +
+                        "-20124\n" +
+                        "0\n" +
+                        "21628\n" +
+                        "0\n" +
+                        "-17197\n" +
+                        "0\n" +
+                        "13080\n" +
+                        "-7440\n" +
+                        "-8902\n" +
+                        "0\n" +
+                        "12282\n" +
+                        "-10935\n" +
+                        "3965\n",
+                ColumnType.SHORT);
+    }
+
+    @Test
+    public void testCastDateTimestamp() throws SqlException, IOException {
+        assertCastDate("a\n" +
+                        "1970-01-17T12:11:37.242379Z\n" +
+                        "\n" +
+                        "1970-01-17T17:41:21.058169Z\n" +
+                        "1970-01-17T14:33:54.113022Z\n" +
+                        "\n" +
+                        "1970-01-17T15:55:39.868373Z\n" +
+                        "1970-01-17T17:05:57.889668Z\n" +
+                        "1970-01-17T16:04:40.260964Z\n" +
+                        "\n" +
+                        "1970-01-17T16:53:03.809660Z\n" +
+                        "\n" +
+                        "1970-01-17T14:41:38.544851Z\n" +
+                        "\n" +
+                        "1970-01-17T17:59:41.628184Z\n" +
+                        "1970-01-17T16:39:21.500400Z\n" +
+                        "1970-01-17T12:42:45.287226Z\n" +
+                        "\n" +
+                        "1970-01-17T14:36:39.533562Z\n" +
+                        "1970-01-17T11:28:56.755529Z\n" +
+                        "1970-01-17T12:16:06.352765Z\n",
                 ColumnType.TIMESTAMP);
     }
 
@@ -1197,6 +1450,188 @@ public class SqlCompilerTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCastTimestampByte() throws SqlException, IOException {
+        assertCastTimestamp("a\n" +
+                        "89\n" +
+                        "0\n" +
+                        "-19\n" +
+                        "-99\n" +
+                        "0\n" +
+                        "-102\n" +
+                        "86\n" +
+                        "83\n" +
+                        "0\n" +
+                        "30\n" +
+                        "0\n" +
+                        "-128\n" +
+                        "0\n" +
+                        "-115\n" +
+                        "-106\n" +
+                        "-76\n" +
+                        "0\n" +
+                        "25\n" +
+                        "30\n" +
+                        "-69\n",
+                ColumnType.BYTE);
+    }
+
+    @Test
+    public void testCastTimestampDate() throws SqlException, IOException {
+        assertCastTimestamp("a\n" +
+                        "47956-10-13T01:43:12.217Z\n" +
+                        "\n" +
+                        "47830-07-03T01:52:05.101Z\n" +
+                        "47946-01-25T16:00:41.629Z\n" +
+                        "\n" +
+                        "47133-10-04T06:29:09.402Z\n" +
+                        "47578-08-06T19:13:17.654Z\n" +
+                        "47813-04-30T15:45:24.307Z\n" +
+                        "\n" +
+                        "47370-09-18T01:29:39.870Z\n" +
+                        "\n" +
+                        "47817-03-02T05:38:00.192Z\n" +
+                        "\n" +
+                        "47502-10-03T01:46:21.965Z\n" +
+                        "47627-07-07T11:02:25.686Z\n" +
+                        "47630-01-25T00:47:44.820Z\n" +
+                        "\n" +
+                        "47620-04-14T19:43:29.561Z\n" +
+                        "47725-11-11T00:22:36.062Z\n" +
+                        "47867-11-08T16:30:43.643Z\n",
+                ColumnType.DATE);
+    }
+
+    @Test
+    public void testCastTimestampDouble() throws SqlException, IOException {
+        assertCastTimestamp("a\n" +
+                        "1.451202658992217E15\n" +
+                        "-9.223372036854776E18\n" +
+                        "1.447217632325101E15\n" +
+                        "1.450864540841629E15\n" +
+                        "-9.223372036854776E18\n" +
+                        "1.425230490549402E15\n" +
+                        "1.439268289997654E15\n" +
+                        "1.446675695124307E15\n" +
+                        "-9.223372036854776E18\n" +
+                        "1.43270813337987E15\n" +
+                        "-9.223372036854776E18\n" +
+                        "1.446796791480192E15\n" +
+                        "-9.223372036854776E18\n" +
+                        "1.436874860781965E15\n" +
+                        "1.440811969345686E15\n" +
+                        "1.44089254366482E15\n" +
+                        "-9.223372036854776E18\n" +
+                        "1.440583904609561E15\n" +
+                        "1.443915505356062E15\n" +
+                        "1.448396353843643E15\n",
+                ColumnType.DOUBLE);
+    }
+
+    @Test
+    public void testCastTimestampFloat() throws SqlException, IOException {
+        assertCastTimestamp("a\n" +
+                        "1.45120261E15\n" +
+                        "-9.223372E18\n" +
+                        "1.44721768E15\n" +
+                        "1.45086451E15\n" +
+                        "-9.223372E18\n" +
+                        "1.42523054E15\n" +
+                        "1.43926824E15\n" +
+                        "1.44667571E15\n" +
+                        "-9.223372E18\n" +
+                        "1.43270808E15\n" +
+                        "-9.223372E18\n" +
+                        "1.44679678E15\n" +
+                        "-9.223372E18\n" +
+                        "1.43687487E15\n" +
+                        "1.44081201E15\n" +
+                        "1.44089254E15\n" +
+                        "-9.223372E18\n" +
+                        "1.44058384E15\n" +
+                        "1.44391553E15\n" +
+                        "1.44839638E15\n",
+                ColumnType.FLOAT);
+    }
+
+    @Test
+    public void testCastTimestampInt() throws SqlException, IOException {
+        assertCastTimestamp("a\n" +
+                        "1929150553\n" +
+                        "0\n" +
+                        "-1662833171\n" +
+                        "-1181550947\n" +
+                        "0\n" +
+                        "1427946650\n" +
+                        "-1020695722\n" +
+                        "1860812627\n" +
+                        "0\n" +
+                        "1532714782\n" +
+                        "0\n" +
+                        "-1596883072\n" +
+                        "0\n" +
+                        "2141839757\n" +
+                        "765393046\n" +
+                        "-264666444\n" +
+                        "0\n" +
+                        "333923609\n" +
+                        "-959951586\n" +
+                        "237646267\n",
+                ColumnType.INT);
+    }
+
+    @Test
+    public void testCastTimestampLong() throws SqlException, IOException {
+        assertCastTimestamp("a\n" +
+                        "1451202658992217\n" +
+                        "NaN\n" +
+                        "1447217632325101\n" +
+                        "1450864540841629\n" +
+                        "NaN\n" +
+                        "1425230490549402\n" +
+                        "1439268289997654\n" +
+                        "1446675695124307\n" +
+                        "NaN\n" +
+                        "1432708133379870\n" +
+                        "NaN\n" +
+                        "1446796791480192\n" +
+                        "NaN\n" +
+                        "1436874860781965\n" +
+                        "1440811969345686\n" +
+                        "1440892543664820\n" +
+                        "NaN\n" +
+                        "1440583904609561\n" +
+                        "1443915505356062\n" +
+                        "1448396353843643\n",
+                ColumnType.LONG);
+    }
+
+    @Test
+    public void testCastTimestampShort() throws SqlException, IOException {
+        assertCastTimestamp("a\n" +
+                        "-32679\n" +
+                        "0\n" +
+                        "11757\n" +
+                        "-2403\n" +
+                        "0\n" +
+                        "-17254\n" +
+                        "27478\n" +
+                        "-16557\n" +
+                        "0\n" +
+                        "24350\n" +
+                        "0\n" +
+                        "32640\n" +
+                        "0\n" +
+                        "-7795\n" +
+                        "-1898\n" +
+                        "-32076\n" +
+                        "0\n" +
+                        "17689\n" +
+                        "19742\n" +
+                        "12731\n",
+                ColumnType.SHORT);
+    }
+
+    @Test
     public void testCreateEmptyTableNoPartition() throws SqlException {
         compiler.execute("create table x (" +
                         "a INT, " +
@@ -1388,25 +1823,25 @@ public class SqlCompilerTest extends AbstractCairoTest {
     public void testCreateTableAsSelect() throws SqlException, IOException {
         String expectedData = "a1\ta\tb\tc\td\te\tf\tf1\tg\th\ti\tj\tj1\tk\tl\tm\n" +
                 "1569490116\tNaN\tfalse\t\tNaN\t0.7611\t428\t-1593\t2015-04-04T16:34:47.226Z\t\t\t185\t7039584373105579285\t1970-01-01T00:00:00.000000Z\t4\t\n" +
-                "-1153445279\t13\tfalse\tYYQ\t0.336082555725\tNaN\t1012\t-9925\t2015-10-10T02:10:45.262Z\t2015-11-07T23:57:18.762143Z\tCPSW\t182\t-4842723177835140152\t1970-01-01T00:16:40.000000Z\t15\t\n" +
-                "-27395319\t17\tfalse\t\t0.134501705709\t0.8913\t256\t1404\t2015-07-06T12:38:05.676Z\t2015-07-05T05:27:40.318830Z\tCPSW\t112\t6179044593759294347\t1970-01-01T00:33:20.000000Z\t31\t\n" +
-                "326010667\t9\tfalse\t\t0.975019885373\t0.0011\t946\t-5637\t2015-07-26T19:40:33.330Z\t2015-02-12T10:08:48.404057Z\tPEHN\t129\t-5233802075754153909\t1970-01-01T00:50:00.000000Z\t25\t\n" +
-                "-1212175298\t25\ttrue\tZOU\t0.565942913986\t0.8828\t958\t10633\t2015-10-26T01:51:34.298Z\t2015-04-29T03:13:50.122536Z\tVTJW\t134\t-8081265393416742311\t1970-01-01T01:06:40.000000Z\t17\t\n" +
-                "-916132123\t25\ttrue\tQOL\t0.038317858637\tNaN\t253\t-8761\t2015-09-19T19:55:53.176Z\t2015-08-16T07:46:57.313650Z\tPEHN\t190\t8611582118025429627\t1970-01-01T01:23:20.000000Z\t25\t\n" +
-                "-876466531\t14\ttrue\tTIQ\tNaN\t0.9442\t95\t2508\t\t2015-10-20T09:33:20.502524Z\t\tNaN\t-3289070757475856942\t1970-01-01T01:40:00.000000Z\t40\t\n" +
-                "602835017\t26\tfalse\tLTK\t0.240791559814\tNaN\t261\t-15573\t2015-03-03T13:26:27.587Z\t2015-07-06T20:28:39.110999Z\tCPSW\t153\t8889492928577876455\t1970-01-01T01:56:40.000000Z\t27\t\n" +
-                "-805434743\t10\ttrue\t\t0.763261500432\t0.8817\t944\t-32151\t2015-03-18T09:57:14.898Z\t2015-06-24T05:57:55.642438Z\tPEHN\t173\t-6071768268784020226\t1970-01-01T02:13:20.000000Z\t6\t\n" +
-                "133913299\t28\ttrue\tZRM\t0.117853162127\t0.7446\t175\t-5240\t2015-12-13T05:57:28.108Z\t2015-05-20T07:10:25.828661Z\t\t164\t7759595275644638709\t1970-01-01T02:30:00.000000Z\t39\t\n" +
-                "-2108151088\t28\tfalse\tGII\t0.985907032220\t0.9884\t926\t17250\t2015-09-27T21:45:00.056Z\t\t\t122\t1488156692375549016\t1970-01-01T02:46:40.000000Z\t21\t\n" +
-                "-1726426588\t30\tfalse\tZSQ\t0.779222297767\t0.8584\t1008\t11796\t2015-07-31T07:46:53.973Z\t2015-10-06T02:03:42.485301Z\t\t115\t-6782883555378798844\t1970-01-01T03:03:20.000000Z\t22\t\n" +
-                "503883303\t29\ttrue\tQCE\t0.760625263412\t0.0658\t1018\t30442\t2015-11-09T04:12:58.038Z\t2015-11-14T01:00:25.951588Z\tVTJW\t144\t4579251508938058953\t1970-01-01T03:20:00.000000Z\t15\t\n" +
-                "-1504180829\t27\ttrue\tOMN\t0.758625411859\t0.7705\t241\t26471\t2015-11-23T04:33:14.998Z\t\tVTJW\t163\t5953039264407551685\t1970-01-01T03:36:40.000000Z\t24\t\n" +
-                "178157274\t20\ttrue\tXHF\t0.729248236745\t0.6108\t405\t13114\t2015-04-13T18:21:35.304Z\t2015-02-09T14:14:51.624879Z\tPEHN\tNaN\t-7274175842748412916\t1970-01-01T03:53:20.000000Z\t13\t\n" +
-                "-715453934\t15\tfalse\tTOG\t0.585933238860\t0.3350\t639\t-3573\t\t2015-11-15T11:50:57.929220Z\tPEHN\t149\t-2471456524133707236\t1970-01-01T04:10:00.000000Z\t41\t\n" +
-                "1561652006\t20\ttrue\tFFD\t0.515022928022\t0.1816\t439\t-11470\t2015-07-14T14:04:41.916Z\t2015-10-12T03:09:35.903970Z\tPEHN\t178\t7046578844650327247\t1970-01-01T04:26:40.000000Z\t47\t\n" +
-                "267011905\t13\ttrue\tGPU\t0.753049452785\t0.4915\t598\t-24503\t2015-04-30T08:18:10.453Z\t2015-01-05T16:05:43.310197Z\t\t147\t6153381060986313135\t1970-01-01T04:43:20.000000Z\t40\t\n" +
-                "-1091570282\t2\tfalse\tKHT\t0.187466319954\t0.2915\t348\t-7455\t2015-11-24T08:52:41.325Z\t2015-01-14T12:20:51.177806Z\tCPSW\t193\t1737550138998374432\t1970-01-01T05:00:00.000000Z\t21\t\n" +
-                "1328749623\tNaN\tfalse\tYMI\t0.174984257225\t0.9798\t145\t22350\t2015-09-08T04:40:10.437Z\t2015-12-16T02:05:46.885318Z\tVTJW\t173\t-3578120825657825955\t1970-01-01T05:16:40.000000Z\t42\t\n";
+                "1253890363\t10\tfalse\tXYS\t0.191123461757\t0.5793\t881\t-1379\t\t2015-03-04T23:08:35.722465Z\tHYRX\t188\t-4986232506486815364\t1970-01-01T00:16:40.000000Z\t50\t\n" +
+                "-1819240775\t27\ttrue\tGOO\t0.041428124702\t0.9205\t97\t-9039\t2015-08-25T03:15:07.653Z\t2015-12-06T09:41:30.297134Z\tHYRX\t109\t571924429013198086\t1970-01-01T00:33:20.000000Z\t21\t\n" +
+                "-1201923128\t18\ttrue\tUVS\t0.758817540345\t0.5779\t480\t-4379\t2015-12-16T09:15:02.086Z\t2015-05-31T18:12:45.686366Z\tCPSW\tNaN\t-6161552193869048721\t1970-01-01T00:50:00.000000Z\t27\t\n" +
+                "865832060\tNaN\ttrue\t\t0.148305523358\t0.9442\t95\t2508\t\t2015-10-20T09:33:20.502524Z\t\tNaN\t-3289070757475856942\t1970-01-01T01:06:40.000000Z\t40\t\n" +
+                "1100812407\t22\tfalse\tOVL\tNaN\t0.7633\t698\t-17778\t2015-09-13T09:55:17.815Z\t\tCPSW\t182\t-8757007522346766135\t1970-01-01T01:23:20.000000Z\t23\t\n" +
+                "1677463366\t18\tfalse\tMNZ\t0.337470756550\t0.1179\t533\t18904\t2015-05-13T23:13:05.262Z\t2015-05-10T00:20:17.926993Z\t\t175\t6351664568801157821\t1970-01-01T01:40:00.000000Z\t29\t\n" +
+                "39497392\t4\tfalse\tUOH\t0.029227696943\t0.1718\t652\t14242\t\t2015-05-24T22:09:55.175991Z\tVTJW\t141\t3527911398466283309\t1970-01-01T01:56:40.000000Z\t9\t\n" +
+                "1545963509\t10\tfalse\tNWI\t0.113718418361\t0.0620\t356\t-29980\t2015-09-12T14:33:11.105Z\t2015-08-06T04:51:01.526782Z\t\t168\t6380499796471875623\t1970-01-01T02:13:20.000000Z\t13\t\n" +
+                "53462821\t4\tfalse\tGOO\t0.055149337562\t0.1195\t115\t-6087\t2015-08-09T19:28:14.249Z\t2015-09-20T01:50:37.694867Z\tCPSW\t145\t-7212878484370155026\t1970-01-01T02:30:00.000000Z\t46\t\n" +
+                "-2139296159\t30\tfalse\t\t0.185864355816\t0.5638\t299\t21020\t2015-12-30T22:10:50.759Z\t2015-01-19T15:54:44.696040Z\tHYRX\t105\t-3463832009795858033\t1970-01-01T02:46:40.000000Z\t38\t\n" +
+                "-406528351\t21\tfalse\tNLE\tNaN\tNaN\t968\t21057\t2015-10-17T07:20:26.881Z\t2015-06-02T13:00:45.180827Z\tPEHN\t102\t5360746485515325739\t1970-01-01T03:03:20.000000Z\t43\t\n" +
+                "415709351\t17\tfalse\tGQZ\t0.491990017163\t0.6292\t581\t18605\t2015-03-04T06:48:42.194Z\t2015-08-14T15:51:23.307152Z\tHYRX\t185\t-5611837907908424613\t1970-01-01T03:20:00.000000Z\t19\t\n" +
+                "-1387693529\t19\ttrue\tMCG\t0.848083900630\t0.4699\t119\t24206\t2015-03-01T23:54:10.204Z\t2015-10-01T12:02:08.698373Z\t\t175\t3669882909701240516\t1970-01-01T03:36:40.000000Z\t12\t\n" +
+                "346891421\t21\tfalse\t\t0.933609514583\t0.6380\t405\t15084\t2015-10-12T05:36:54.066Z\t2015-11-16T05:48:57.958190Z\tPEHN\t196\t-9200716729349404576\t1970-01-01T03:53:20.000000Z\t43\t\n" +
+                "263487884\t27\ttrue\tHZQ\t0.703978540803\t0.8461\t834\t31562\t2015-08-04T00:55:25.323Z\t2015-07-25T18:26:42.499255Z\tHYRX\t128\t8196544381931602027\t1970-01-01T04:10:00.000000Z\t15\t\n" +
+                "-1034870849\t9\tfalse\tLSV\t0.650660460171\t0.7020\t110\t-838\t2015-08-17T23:50:39.534Z\t2015-03-17T03:23:26.126568Z\tHYRX\tNaN\t-6929866925584807039\t1970-01-01T04:26:40.000000Z\t4\t\n" +
+                "1848218326\t26\ttrue\tSUW\t0.803404910559\t0.0440\t854\t-3502\t2015-04-04T20:55:02.116Z\t2015-11-23T07:46:10.570856Z\t\t145\t4290477379978201771\t1970-01-01T04:43:20.000000Z\t35\t\n" +
+                "-1496904948\t5\ttrue\tDBZ\t0.286271736488\tNaN\t764\t5698\t2015-02-06T02:49:54.147Z\t\t\tNaN\t-3058745577013275321\t1970-01-01T05:00:00.000000Z\t19\t\n" +
+                "856634079\t20\ttrue\tRJU\t0.108206023861\t0.4565\t669\t13505\t2015-11-14T15:19:19.390Z\t\tVTJW\t134\t-3700177025310488849\t1970-01-01T05:16:40.000000Z\t3\t\n";
 
         String expectedMeta = "{\"columnCount\":16,\"columns\":[{\"index\":0,\"name\":\"a1\",\"type\":\"INT\"},{\"index\":1,\"name\":\"a\",\"type\":\"INT\"},{\"index\":2,\"name\":\"b\",\"type\":\"BOOLEAN\"},{\"index\":3,\"name\":\"c\",\"type\":\"STRING\"},{\"index\":4,\"name\":\"d\",\"type\":\"DOUBLE\"},{\"index\":5,\"name\":\"e\",\"type\":\"FLOAT\"},{\"index\":6,\"name\":\"f\",\"type\":\"SHORT\"},{\"index\":7,\"name\":\"f1\",\"type\":\"SHORT\"},{\"index\":8,\"name\":\"g\",\"type\":\"DATE\"},{\"index\":9,\"name\":\"h\",\"type\":\"TIMESTAMP\"},{\"index\":10,\"name\":\"i\",\"type\":\"SYMBOL\"},{\"index\":11,\"name\":\"j\",\"type\":\"LONG\"},{\"index\":12,\"name\":\"j1\",\"type\":\"LONG\"},{\"index\":13,\"name\":\"k\",\"type\":\"TIMESTAMP\"},{\"index\":14,\"name\":\"l\",\"type\":\"BYTE\"},{\"index\":15,\"name\":\"m\",\"type\":\"BINARY\"}],\"timestampIndex\":13}";
 
@@ -1433,13 +1868,13 @@ public class SqlCompilerTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testWithFunction() throws SqlException, IOException {
-        String sql = "with x as (select * from random_cursor(10, 'a', rnd_int(), 's', rnd_symbol(4,4,4,2))) " +
-                "select * from x x1 join x x2 on (s)";
-        RecordCursorFactory factory = compiler.compile(sql, bindVariableService);
-        sink.clear();
-        printer.print(factory.getCursor(), true);
-        System.out.println(sink);
+    public void testCreateTableAsSelectInvalidTimestamp() {
+        assertFailure(88, "TIMESTAMP column expected",
+                "create table y as (" +
+                        "select * from random_cursor(" +
+                        " 20," + // record count
+                        " 'a', rnd_int(0, 30, 2)" +
+                        "))  timestamp(a) partition by DAY");
     }
 
     @Test
@@ -1454,19 +1889,29 @@ public class SqlCompilerTest extends AbstractCairoTest {
                 bindVariableService
         );
 
-        try {
-            compiler.execute("create table x (" +
-                            "t TIMESTAMP, " +
-                            "y BOOLEAN) " +
-                            "timestamp(t) " +
-                            "partition by MONTH",
-                    bindVariableService
-            );
-            Assert.fail();
-        } catch (SqlException e) {
-            Assert.assertEquals(13, e.getPosition());
-            TestUtils.assertContains(e.getMessage(), "table already exists");
-        }
+        assertFailure(13, "table already exists",
+                "create table x (" +
+                        "t TIMESTAMP, " +
+                        "y BOOLEAN) " +
+                        "timestamp(t) " +
+                        "partition by MONTH");
+    }
+
+    @Test
+    public void testExecuteQuery() throws SqlException {
+        // there is no explicit assert here because when SQL contains semantic error
+        // timestamp refers to INT column, which is picked up by both optimiser and compiler
+        compiler.execute("select * from random_cursor(20, 'x', rnd_int()) timestamp(x)", bindVariableService);
+    }
+
+    @Test
+    public void testWithFunction() throws SqlException, IOException {
+        String sql = "with x as (select * from random_cursor(10, 'a', rnd_int(), 's', rnd_symbol(4,4,4,2))) " +
+                "select * from x x1 join x x2 on (s)";
+        RecordCursorFactory factory = compiler.compile(sql, bindVariableService);
+        sink.clear();
+        printer.print(factory.getCursor(), true);
+        System.out.println(sink);
     }
 
     private void assertCast(String expectedData, String expectedMeta, String sql) throws SqlException, IOException {
@@ -1507,6 +1952,18 @@ public class SqlCompilerTest extends AbstractCairoTest {
             Assert.assertEquals(85, e.getPosition());
             TestUtils.assertContains(e.getMessage(), "unsupported cast");
         }
+    }
+
+    private void assertCastDate(String expectedData, int castTo) throws SqlException, IOException {
+        String expectedMeta = "{\"columnCount\":1,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\"" + ColumnType.nameOf(castTo) + "\"}],\"timestampIndex\":-1}";
+
+        String sql = "create table y as (" +
+                "select * from random_cursor(" +
+                " 20," + // record count
+                " 'a', rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2)" +
+                ")), cast(a as " + ColumnType.nameOf(castTo) + ")";
+
+        assertCast(expectedData, expectedMeta, sql);
     }
 
     private void assertCastDouble(String expectedData, int castTo) throws SqlException, IOException {
@@ -1671,6 +2128,28 @@ public class SqlCompilerTest extends AbstractCairoTest {
         } catch (SqlException e) {
             Assert.assertEquals(91, e.getPosition());
             TestUtils.assertContains(e.getMessage(), "unsupported cast");
+        }
+    }
+
+    private void assertCastTimestamp(String expectedData, int castTo) throws SqlException, IOException {
+        String expectedMeta = "{\"columnCount\":1,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\"" + ColumnType.nameOf(castTo) + "\"}],\"timestampIndex\":-1}";
+
+        String sql = "create table y as (" +
+                "select * from random_cursor(" +
+                " 20," + // record count
+                " 'a', rnd_timestamp(to_timestamp('2015', 'yyyy'), to_timestamp('2016', 'yyyy'), 2)" +
+                ")), cast(a as " + ColumnType.nameOf(castTo) + ")";
+
+        assertCast(expectedData, expectedMeta, sql);
+    }
+
+    private void assertFailure(int position, CharSequence expectedMessage, CharSequence sql) {
+        try {
+            compiler.compile(sql, bindVariableService);
+            Assert.fail();
+        } catch (SqlException e) {
+            Assert.assertEquals(position, e.getPosition());
+            TestUtils.assertContains(e.getMessage(), expectedMessage);
         }
     }
 }
