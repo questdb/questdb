@@ -105,13 +105,13 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
-    public boolean touch(LPSZ path) {
-        return Files.touch(path);
+    public long getPageSize() {
+        return Files.PAGE_SIZE;
     }
 
     @Override
-    public long getPageSize() {
-        return Files.PAGE_SIZE;
+    public boolean isRestrictedFileSystem() {
+        return Os.type == Os.WINDOWS;
     }
 
     public void iterateDir(LPSZ path, FindVisitor func) {
@@ -140,6 +140,11 @@ public class FilesFacadeImpl implements FilesFacade {
     @Override
     public int lock(long fd) {
         return Files.lock(fd);
+    }
+
+    @Override
+    public int mkdir(LPSZ path, int mode) {
+        return Files.mkdir(path, mode);
     }
 
     @Override
@@ -193,8 +198,8 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
-    public boolean isRestrictedFileSystem() {
-        return Os.type == Os.WINDOWS;
+    public boolean touch(LPSZ path) {
+        return Files.touch(path);
     }
 
     @Override

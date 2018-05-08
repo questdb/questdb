@@ -34,7 +34,6 @@ public interface RecordMetadata {
         int index = getColumnIndexQuiet(columnName);
         if (index == -1) {
             throw InvalidColumnException.INSTANCE;
-
         }
         return index;
     }

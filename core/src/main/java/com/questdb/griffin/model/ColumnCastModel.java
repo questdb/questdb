@@ -33,11 +33,16 @@ public class ColumnCastModel implements Mutable {
     private SqlNode name;
     private int columnType;
     private int columnTypePos;
+    private int columnNamePos;
     private int symbolCapacity;
 
     @Override
     public void clear() {
         symbolCapacity = 0;
+    }
+
+    public int getColumnNamePos() {
+        return columnNamePos;
     }
 
     public int getColumnType() {
@@ -64,8 +69,9 @@ public class ColumnCastModel implements Mutable {
         this.symbolCapacity = symbolCapacity;
     }
 
-    public void setType(int columnType, int columnTypePos) {
+    public void setType(int columnType, int columnNamePos, int columnTypePos) {
         this.columnType = columnType;
+        this.columnNamePos = columnNamePos;
         this.columnTypePos = columnTypePos;
     }
 }

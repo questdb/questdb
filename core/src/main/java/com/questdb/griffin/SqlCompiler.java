@@ -39,6 +39,7 @@ import java.util.ServiceLoader;
 import static com.questdb.cairo.TableUtils.META_FILE_NAME;
 import static com.questdb.cairo.TableUtils.TXN_FILE_NAME;
 
+
 public class SqlCompiler {
     private final static Log LOG = LogFactory.getLog(SqlCompiler.class);
     private static final IntList castGroups = new IntList();
@@ -109,7 +110,7 @@ public class SqlCompiler {
             case ExecutionModel.QUERY:
                 return generate((QueryModel) executionModel, bindVariableService);
             case ExecutionModel.CREATE_TABLE:
-                createTable((CreateTableModel) executionModel, bindVariableService);
+                createTable0(query, executionModel, bindVariableService);
                 break;
             default:
                 break;
@@ -123,7 +124,7 @@ public class SqlCompiler {
             case ExecutionModel.QUERY:
                 break;
             case ExecutionModel.CREATE_TABLE:
-                createTable((CreateTableModel) executionModel, bindVariableService);
+                createTable0(query, executionModel, bindVariableService);
                 break;
             default:
                 break;
@@ -544,20 +545,6 @@ public class SqlCompiler {
         return castGroups.getQuick(from) == castGroups.getQuick(to);
     }
 
-    private void checkTableNameAvailable(CreateTableModel model) throws SqlException {
-        final FilesFacade ff = configuration.getFilesFacade();
-
-        if (TableUtils.exists(ff, path, configuration.getRoot(), model.getName().token) != TableUtils.TABLE_DOES_NOT_EXIST) {
-            throw SqlException.position(model.getName().position).put("table already exists [table=").put(model.getName().token).put(']');
-        }
-
-        path.of(configuration.getRoot()).concat(model.getName().token);
-
-        if (ff.mkdirs(path.put(Files.SEPARATOR).$(), configuration.getMkDirMode()) == -1) {
-            throw SqlException.position(model.getName().position).put("cannot create directory [path=").put(path).put(", errno=").put(ff.errno()).put(']');
-        }
-    }
-
     private void clear() {
         sqlNodePool.clear();
         characterStore.clear();
@@ -639,7 +626,23 @@ public class SqlCompiler {
     }
 
     private void createTable(CreateTableModel model, BindVariableService bindVariableService) throws SqlException {
-        checkTableNameAvailable(model);
+        final FilesFacade ff = configuration.getFilesFacade();
+
+        // create root if it doesn't exist
+        path.of(configuration.getRoot()).put(Files.SEPARATOR).$();
+        if (ff.mkdirs(path, configuration.getMkDirMode()) != 0) {
+            LOG.error().$("failed to create database root [path=").utf8(path).$(", errno=]").$(ff.errno()).$(']').$();
+            throw SqlException.$(0, "Cannot create database root");
+        }
+
+        SqlNode name = model.getName();
+        // race to create table directory, first to succeed would own creation process
+        path.chopZ().encodeUtf8(name.token).put(Files.SEPARATOR);
+        if (ff.mkdir(path.$(), configuration.getMkDirMode()) != 0) {
+            LOG.error().$("table already exists [path=").utf8(path).$(", errno=").$(ff.errno()).$(']').$();
+            throw SqlException.$(name.position, "table already exists");
+        }
+
         try {
             if (model.getQueryModel() == null) {
                 createEmptyTable(model);
@@ -649,151 +652,197 @@ public class SqlCompiler {
         } catch (SqlException e) {
             removeTableDirectory(model);
             throw e;
+        } catch (ConcurrentModificationException e) {
+            if (removeTableDirectory(model)) {
+                throw e;
+            }
+            throw SqlException.$(0, "Concurrent modification cannot be handled. Failed to clean up. See log for more details.");
+        }
+    }
+
+    /**
+     * Creates new table.
+     * <p>
+     * Table name must not exist. Existence check relies on directory existence followed by attempt to clarify what
+     * that directory is. Sometimes it can be just empty directory, which prevents new table from being created.
+     * <p>
+     * Table name can be utf8 encoded but must not contain '.' (dot). Dot is used to separate table and field name,
+     * where table is uses as an alias.
+     * <p>
+     * Creating table from column definition looks like:
+     * <code>
+     * create table x (column_name column_type, ...) [timestamp(column_name)] [partition by ...]
+     * </code>
+     * For non-partitioned table partition by value would be NONE. For any other type of partition timestamp
+     * has to be defined as reference to TIMESTAMP (type) column.
+     *
+     * @param query               SQL text. When concurrent modification is detected SQL text is re-parsed and re-executed
+     * @param executionModel      created from parsed sql.
+     * @param bindVariableService bind variables for the 'select' statement
+     * @throws SqlException contains text of error and error position in SQL text.
+     */
+    private void createTable0(CharSequence query, ExecutionModel executionModel, BindVariableService bindVariableService) throws SqlException {
+        int retries = configuration.getCreateAsSelectRetryCount();
+        do {
+            try {
+                createTable((CreateTableModel) executionModel, bindVariableService);
+                break;
+            } catch (ConcurrentModificationException e) {
+                retries--;
+                executionModel = compileExecutionModel(query, bindVariableService, true);
+            }
+        } while (retries > 0);
+
+        if (retries < 1) {
+            throw SqlException.position(0).put("underlying cursor is extremely volatile");
         }
     }
 
     private void createTableFromCursor(CreateTableModel model, BindVariableService bindVariableService) throws SqlException {
-        RecordCursor cursor = generate(model.getQueryModel(), bindVariableService).getCursor();
-        RecordMetadata metadata = cursor.getMetadata();
-        IntIntHashMap typeCast = new IntIntHashMap();
-        CharSequenceObjHashMap<ColumnCastModel> castModels = model.getColumnCastModels();
-        ObjList<CharSequence> castColumnNames = castModels.keys();
+        try (RecordCursor cursor = generate(model.getQueryModel(), bindVariableService).getCursor()) {
+            RecordMetadata metadata = cursor.getMetadata();
+            IntIntHashMap typeCast = new IntIntHashMap();
+            CharSequenceObjHashMap<ColumnCastModel> castModels = model.getColumnCastModels();
+            ObjList<CharSequence> castColumnNames = castModels.keys();
 
-        for (int i = 0, n = castColumnNames.size(); i < n; i++) {
-            CharSequence columnName = castColumnNames.getQuick(i);
-            int index = metadata.getColumnIndexQuiet(columnName);
-            // the only reason why columns cannot be found at this stage is
-            // concurrent table modification of table structure
-            if (index == -1) {
+            for (int i = 0, n = castColumnNames.size(); i < n; i++) {
+                CharSequence columnName = castColumnNames.getQuick(i);
+                int index = metadata.getColumnIndexQuiet(columnName);
+                // the only reason why columns cannot be found at this stage is
+                // concurrent table modification of table structure
+                if (index == -1) {
+                    // Cast isn't going to go away when we re-parse SQL. We must make this
+                    // permanent error
+                    throw SqlException.invalidColumn(castModels.get(columnName).getColumnNamePos(), columnName);
+                }
+                ColumnCastModel ccm = castModels.get(columnName);
+                int from = metadata.getColumnType(index);
+                int to = ccm.getColumnType();
+                if (isCompatibleCase(from, to)) {
+                    typeCast.put(index, to);
+                } else {
+                    throw SqlException.$(ccm.getColumnTypePos(),
+                            "unsupported cast [from=").put(ColumnType.nameOf(from)).put(",to=").put(ColumnType.nameOf(to)).put(']');
+                }
+            }
+
+            // check that column count matches
+            int columnCount = model.getColumnCount();
+            if (columnCount != metadata.getColumnCount()) {
                 throw ConcurrentModificationException.INSTANCE;
             }
-            ColumnCastModel ccm = castModels.get(columnName);
-            int from = metadata.getColumnType(index);
-            int to = ccm.getColumnType();
-            if (isCompatibleCase(from, to)) {
-                typeCast.put(index, to);
-            } else {
-                throw SqlException.$(ccm.getColumnTypePos(),
-                        "unsupported cast [from=").put(ColumnType.nameOf(from)).put(",to=").put(ColumnType.nameOf(to)).put(']');
-            }
-        }
 
-        // check that column count matches
-        int columnCount = model.getColumnCount();
-        if (columnCount != metadata.getColumnCount()) {
-            throw ConcurrentModificationException.INSTANCE;
-        }
-
-        // check that names match
-        for (int i = 0; i < columnCount; i++) {
-            CharSequence modelColumnName = model.getColumnName(i);
-            CharSequence metaColumnName = metadata.getColumnName(i);
-            if (!Chars.equals(modelColumnName, metaColumnName)) {
-                throw ConcurrentModificationException.INSTANCE;
-            }
-        }
-
-        // validate type of timestamp column
-        // no need to worry that column will not resolve
-        SqlNode timestamp = model.getTimestamp();
-        if (timestamp != null && metadata.getColumnType(timestamp.token) != ColumnType.TIMESTAMP) {
-            throw SqlException.position(timestamp.position).put("TIMESTAMP column expected [actual=").put(ColumnType.nameOf(metadata.getColumnType(timestamp.token))).put(']');
-        }
-
-        final FilesFacade ff = configuration.getFilesFacade();
-        path.of(configuration.getRoot()).concat(model.getName().token);
-        final int rootLen = path.length();
-
-        try (AppendMemory mem = this.mem) {
-
-            mem.of(ff, path.trimTo(rootLen).concat(META_FILE_NAME).$(), ff.getPageSize());
-
-            int count = model.getColumnCount();
-            mem.putInt(count);
-            final SqlNode partitionBy = model.getPartitionBy();
-            if (partitionBy == null) {
-                mem.putInt(PartitionBy.NONE);
-            } else {
-                mem.putInt(PartitionBy.fromString(partitionBy.token));
-            }
-
-            if (timestamp == null) {
-                mem.putInt(-1);
-            } else {
-                mem.putInt(model.getColumnIndex(timestamp.token));
-            }
-            mem.jumpTo(TableUtils.META_OFFSET_COLUMN_TYPES);
-
-            for (int i = 0; i < count; i++) {
-                // use type cast when available
-                int castIndex = typeCast.keyIndex(i);
-                if (castIndex < 0) {
-                    mem.putByte((byte) typeCast.valueAt(castIndex));
-                } else {
-                    mem.putByte((byte) metadata.getColumnType(i));
+            // check that names match
+            for (int i = 0; i < columnCount; i++) {
+                CharSequence modelColumnName = model.getColumnName(i);
+                CharSequence metaColumnName = metadata.getColumnName(i);
+                if (!Chars.equals(modelColumnName, metaColumnName)) {
+                    throw ConcurrentModificationException.INSTANCE;
                 }
-                mem.putBool(model.getIndexedFlag(i));
-                mem.putInt(model.getIndexBlockCapacity(i));
-                mem.skip(10); // reserved
             }
 
-            for (int i = 0; i < count; i++) {
-                mem.putStr(model.getColumnName(i));
+            // validate type of timestamp column
+            // no need to worry that column will not resolve
+            SqlNode timestamp = model.getTimestamp();
+            if (timestamp != null && metadata.getColumnType(timestamp.token) != ColumnType.TIMESTAMP) {
+                throw SqlException.position(timestamp.position).put("TIMESTAMP column expected [actual=").put(ColumnType.nameOf(metadata.getColumnType(timestamp.token))).put(']');
             }
 
-            // create symbol maps
-            int symbolMapCount = 0;
-            for (int i = 0; i < count; i++) {
+            final FilesFacade ff = configuration.getFilesFacade();
+            path.of(configuration.getRoot()).concat(model.getName().token);
+            final int rootLen = path.length();
 
-                int columnType;
-                int castIndex = typeCast.keyIndex(i);
-                if (castIndex < 0) {
-                    columnType = typeCast.valueAt(castIndex);
+            try (AppendMemory mem = this.mem) {
+
+                mem.of(ff, path.trimTo(rootLen).concat(META_FILE_NAME).$(), ff.getPageSize());
+
+                int count = model.getColumnCount();
+                mem.putInt(count);
+                final SqlNode partitionBy = model.getPartitionBy();
+                if (partitionBy == null) {
+                    mem.putInt(PartitionBy.NONE);
                 } else {
-                    columnType = metadata.getColumnType(i);
+                    mem.putInt(PartitionBy.fromString(partitionBy.token));
                 }
 
-                if (columnType == ColumnType.SYMBOL) {
-                    int symbolCapacity = model.getSymbolCapacity(i);
-                    if (symbolCapacity == -1) {
-                        symbolCapacity = configuration.getCutlassSymbolCapacity();
+                if (timestamp == null) {
+                    mem.putInt(-1);
+                } else {
+                    mem.putInt(model.getColumnIndex(timestamp.token));
+                }
+                mem.jumpTo(TableUtils.META_OFFSET_COLUMN_TYPES);
+
+                for (int i = 0; i < count; i++) {
+                    // use type cast when available
+                    int castIndex = typeCast.keyIndex(i);
+                    if (castIndex < 0) {
+                        mem.putByte((byte) typeCast.valueAt(castIndex));
+                    } else {
+                        mem.putByte((byte) metadata.getColumnType(i));
                     }
-                    SymbolMapWriter.createSymbolMapFiles(
-                            ff,
-                            mem,
-                            path.trimTo(rootLen),
-                            model.getColumnName(i),
-                            symbolCapacity,
-                            model.getSymbolCacheFlag(i)
-                    );
-                    symbolMapCount++;
+                    mem.putBool(model.getIndexedFlag(i));
+                    mem.putInt(model.getIndexBlockCapacity(i));
+                    mem.skip(10); // reserved
                 }
-            }
-            mem.of(ff, path.trimTo(rootLen).concat(TXN_FILE_NAME).$(), ff.getPageSize());
-            TableUtils.resetTxn(mem, symbolMapCount);
-        }
 
-        try (TableWriter writer = engine.getWriter(model.getName().token)) {
-            RecordMetadata writerMetadata = writer.getMetadata();
-            CopyHelper copyHelper = compile(asm, metadata, writerMetadata);
+                for (int i = 0; i < count; i++) {
+                    mem.putStr(model.getColumnName(i));
+                }
 
-            int timestampIndex = writerMetadata.getTimestampIndex();
-            if (timestampIndex == -1) {
-                while (cursor.hasNext()) {
-                    Record record = cursor.next();
-                    TableWriter.Row row = writer.newRow(0);
-                    copyHelper.copy(record, row);
-                    row.append();
+                // create symbol maps
+                int symbolMapCount = 0;
+                for (int i = 0; i < count; i++) {
+
+                    int columnType;
+                    int castIndex = typeCast.keyIndex(i);
+                    if (castIndex < 0) {
+                        columnType = typeCast.valueAt(castIndex);
+                    } else {
+                        columnType = metadata.getColumnType(i);
+                    }
+
+                    if (columnType == ColumnType.SYMBOL) {
+                        int symbolCapacity = model.getSymbolCapacity(i);
+                        if (symbolCapacity == -1) {
+                            symbolCapacity = configuration.getDefaultSymbolCapacity();
+                        }
+                        SymbolMapWriter.createSymbolMapFiles(
+                                ff,
+                                mem,
+                                path.trimTo(rootLen),
+                                model.getColumnName(i),
+                                symbolCapacity,
+                                model.getSymbolCacheFlag(i)
+                        );
+                        symbolMapCount++;
+                    }
                 }
-            } else {
-                while (cursor.hasNext()) {
-                    Record record = cursor.next();
-                    TableWriter.Row row = writer.newRow(record.getTimestamp(timestampIndex));
-                    copyHelper.copy(record, row);
-                    row.append();
-                }
+                mem.of(ff, path.trimTo(rootLen).concat(TXN_FILE_NAME).$(), ff.getPageSize());
+                TableUtils.resetTxn(mem, symbolMapCount);
             }
-            writer.commit();
+
+            try (TableWriter writer = engine.getWriter(model.getName().token)) {
+                RecordMetadata writerMetadata = writer.getMetadata();
+                CopyHelper copyHelper = compile(asm, metadata, writerMetadata);
+
+                int timestampIndex = writerMetadata.getTimestampIndex();
+                if (timestampIndex == -1) {
+                    while (cursor.hasNext()) {
+                        Record record = cursor.next();
+                        TableWriter.Row row = writer.newRow(0);
+                        copyHelper.copy(record, row);
+                        row.append();
+                    }
+                } else {
+                    while (cursor.hasNext()) {
+                        Record record = cursor.next();
+                        TableWriter.Row row = writer.newRow(record.getTimestamp(timestampIndex));
+                        copyHelper.copy(record, row);
+                        row.append();
+                    }
+                }
+                writer.commit();
+            }
         }
     }
 
@@ -815,13 +864,14 @@ public class SqlCompiler {
         parser.expr(lexer, listener);
     }
 
-    private void removeTableDirectory(CreateTableModel model) {
+    private boolean removeTableDirectory(CreateTableModel model) {
         path.of(configuration.getRoot()).concat(model.getName().token);
         final FilesFacade ff = configuration.getFilesFacade();
         if (ff.rmdir(path.put(Files.SEPARATOR).$())) {
-            return;
+            return true;
         }
         LOG.error().$("failed to clean up after create table failure [path=").$(path).$(", errno=").$(ff.errno()).$(']').$();
+        return false;
     }
 
     public interface CopyHelper {
@@ -839,10 +889,8 @@ public class SqlCompiler {
         castGroups.extendAndSet(ColumnType.DOUBLE, 1);
         castGroups.extendAndSet(ColumnType.DATE, 1);
         castGroups.extendAndSet(ColumnType.TIMESTAMP, 1);
-
         castGroups.extendAndSet(ColumnType.STRING, 3);
         castGroups.extendAndSet(ColumnType.SYMBOL, 3);
-
         castGroups.extendAndSet(ColumnType.BINARY, 4);
     }
 }

@@ -290,7 +290,7 @@ final class SqlParser {
         // we do not know types of columns at this stage
         // compiler must put table together using query metadata.
         for (int i = 0, n = columns.size(); i < n; i++) {
-            model.addColumn(columns.getQuick(i).getName(), -1, configuration.getCutlassSymbolCapacity());
+            model.addColumn(columns.getQuick(i).getName(), -1, configuration.getDefaultSymbolCapacity());
         }
 
         model.setQueryModel(queryModel);
@@ -304,19 +304,20 @@ final class SqlParser {
         expectTok(lexer, '(');
         ColumnCastModel columnCastModel = columnCastModelPool.next();
 
-        columnCastModel.setName(expectLiteral(lexer));
+        final SqlNode columnName = expectLiteral(lexer);
+        columnCastModel.setName(columnName);
         expectTok(lexer, "as");
 
-        final SqlNode node = expectLiteral(lexer);
-        final int type = toColumnType(lexer, node.token);
-        columnCastModel.setType(type, node.position);
+        final SqlNode columnType = expectLiteral(lexer);
+        final int type = toColumnType(lexer, columnType.token);
+        columnCastModel.setType(type, columnName.position, columnType.position);
 
         if (type == ColumnType.SYMBOL) {
             if (Chars.equals(optTok(lexer), "capacity")) {
                 columnCastModel.setSymbolCapacity(expectInt(lexer));
             } else {
                 lexer.unparse();
-                columnCastModel.setSymbolCapacity(configuration.getCutlassSymbolCapacity());
+                columnCastModel.setSymbolCapacity(configuration.getDefaultSymbolCapacity());
             }
         }
 
@@ -335,7 +336,7 @@ final class SqlParser {
             final CharSequence name = GenericLexer.immutableOf(notTermTok(lexer));
             final int type = toColumnType(lexer, notTermTok(lexer));
 
-            if (!model.addColumn(name, type, configuration.getCutlassSymbolCapacity())) {
+            if (!model.addColumn(name, type, configuration.getDefaultSymbolCapacity())) {
                 throw SqlException.$(position, "Duplicate column");
             }
 

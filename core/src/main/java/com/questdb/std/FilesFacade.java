@@ -51,9 +51,9 @@ public interface FilesFacade {
 
     long getOpenFileCount();
 
-    boolean touch(LPSZ path);
-
     long getPageSize();
+
+    boolean isRestrictedFileSystem();
 
     void iterateDir(LPSZ path, FindVisitor func);
 
@@ -62,6 +62,8 @@ public interface FilesFacade {
     long length(LPSZ name);
 
     int lock(long fd);
+
+    int mkdir(LPSZ path, int mode);
 
     int mkdirs(LPSZ path, int mode);
 
@@ -83,7 +85,7 @@ public interface FilesFacade {
 
     boolean rmdir(Path name);
 
-    boolean isRestrictedFileSystem();
+    boolean touch(LPSZ path);
 
     boolean truncate(long fd, long size);
 

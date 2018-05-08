@@ -23,16 +23,16 @@
 
 package com.questdb.griffin;
 
-import com.questdb.cairo.AbstractCairoTest;
-import com.questdb.cairo.Engine;
-import com.questdb.cairo.SymbolMapReader;
-import com.questdb.cairo.TableReader;
+import com.questdb.cairo.*;
+import com.questdb.cairo.sql.CairoEngine;
 import com.questdb.cairo.sql.RecordCursorFactory;
 import com.questdb.common.ColumnType;
 import com.questdb.common.PartitionBy;
 import com.questdb.griffin.engine.functions.bind.BindVariableService;
 import com.questdb.griffin.engine.functions.rnd.SharedRandom;
-import com.questdb.std.Rnd;
+import com.questdb.std.*;
+import com.questdb.std.str.LPSZ;
+import com.questdb.std.str.Path;
 import com.questdb.test.tools.TestUtils;
 import org.junit.After;
 import org.junit.Assert;
@@ -126,6 +126,35 @@ public class SqlCompilerTest extends AbstractCairoTest {
     public void tearDown() {
         engine.releaseAllReaders();
         engine.releaseAllWriters();
+    }
+
+    @Test
+    public void testCannotCreateTable() {
+
+        FilesFacade ff = new FilesFacadeImpl() {
+            @Override
+            public int mkdir(LPSZ path, int mode) {
+                return -1;
+            }
+        };
+
+        CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+            @Override
+            public FilesFacade getFilesFacade() {
+                return ff;
+            }
+        };
+
+        CairoEngine engine = new Engine(configuration);
+        SqlCompiler compiler = new SqlCompiler(engine, configuration);
+
+        try {
+            compiler.execute("create table x (a int)", bindVariableService);
+            Assert.fail();
+        } catch (SqlException e) {
+            Assert.assertEquals(13, e.getPosition());
+            TestUtils.assertContains(e.getMessage(), "table already exists");
+        }
     }
 
     @Test
@@ -1632,6 +1661,220 @@ public class SqlCompilerTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCreateAsSelectConstantColumnRename() {
+        try {
+            assertCreateTableAsSelect(
+                    null,
+                    "create table Y as (select * from X) timestamp(t)",
+                    new Fiddler() {
+                        int state = 0;
+
+                        @Override
+                        public boolean isHappy() {
+                            return state > 1;
+                        }
+
+                        @Override
+                        public void run(CairoEngine engine) {
+                            if (state++ > 0) {
+                                // remove column from table X
+                                try (TableWriter writer = engine.getWriter("X")) {
+                                    if (state == 2) {
+                                        writer.removeColumn("b");
+                                    } else {
+                                        writer.removeColumn("b" + (state - 1));
+                                    }
+                                    writer.addColumn("b" + state, ColumnType.INT);
+                                }
+                            }
+                        }
+                    });
+            Assert.fail();
+        } catch (SqlException e) {
+            TestUtils.assertContains(e.getMessage(), "underlying cursor is extremely volatile");
+        }
+    }
+
+    @Test
+    public void testCreateAsSelectRemoveColumn() throws SqlException {
+        assertCreateTableAsSelect(
+                "{\"columnCount\":2,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\"INT\"},{\"index\":1,\"name\":\"t\",\"type\":\"TIMESTAMP\"}],\"timestampIndex\":1}",
+                "create table Y as (select * from X) timestamp(t)",
+                new Fiddler() {
+                    int state = 0;
+
+                    @Override
+                    public boolean isHappy() {
+                        return state > 1;
+                    }
+
+                    @Override
+                    public void run(CairoEngine engine) {
+                        if (state++ == 1) {
+                            // remove column from table X
+                            try (TableWriter writer = engine.getWriter("X")) {
+                                writer.removeColumn("b");
+                            }
+                        }
+                    }
+                });
+    }
+
+    @Test
+    public void testCreateAsSelectRemoveColumnFromCast() {
+        // because the column we delete is used in "cast" expression this SQL must fail
+        try {
+            assertCreateTableAsSelect(
+                    "{\"columnCount\":2,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\"INT\"},{\"index\":1,\"name\":\"t\",\"type\":\"TIMESTAMP\"}],\"timestampIndex\":1}",
+                    "create table Y as (select * from X), cast (b as DOUBLE) timestamp(t)",
+                    new Fiddler() {
+                        int state = 0;
+
+                        @Override
+                        public boolean isHappy() {
+                            return state > 1;
+                        }
+
+                        @Override
+                        public void run(CairoEngine engine) {
+                            if (state++ == 1) {
+                                // remove column from table X
+                                try (TableWriter writer = engine.getWriter("X")) {
+                                    writer.removeColumn("b");
+                                }
+                            }
+                        }
+                    });
+            Assert.fail();
+        } catch (SqlException e) {
+            Assert.assertEquals(43, e.getPosition());
+            TestUtils.assertContains(e.getMessage(), "Invalid column: b");
+        }
+    }
+
+    @Test
+    public void testCreateAsSelectReplaceColumn() throws SqlException {
+        assertCreateTableAsSelect(
+                "{\"columnCount\":3,\"columns\":[{\"index\":0,\"name\":\"b\",\"type\":\"INT\"},{\"index\":1,\"name\":\"t\",\"type\":\"TIMESTAMP\"},{\"index\":2,\"name\":\"c\",\"type\":\"FLOAT\"}],\"timestampIndex\":1}",
+                "create table Y as (select * from X) timestamp(t)",
+                new Fiddler() {
+                    int state = 0;
+
+                    @Override
+                    public boolean isHappy() {
+                        return state > 1;
+                    }
+
+                    @Override
+                    public void run(CairoEngine engine) {
+                        if (state++ == 1) {
+                            // remove column from table X
+                            try (TableWriter writer = engine.getWriter("X")) {
+                                writer.removeColumn("a");
+                                writer.addColumn("c", ColumnType.FLOAT);
+                            }
+                        }
+                    }
+                });
+    }
+
+    @Test
+    public void testCreateAsSelectReplaceTimestamp() {
+        try {
+            assertCreateTableAsSelect(
+                    "{\"columnCount\":3,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\"INT\"},{\"index\":1,\"name\":\"b\",\"type\":\"INT\"},{\"index\":2,\"name\":\"t\",\"type\":\"FLOAT\"}],\"timestampIndex\":-1}",
+                    "create table Y as (select * from X) timestamp(t)",
+                    new Fiddler() {
+                        int state = 0;
+
+                        @Override
+                        public boolean isHappy() {
+                            return state > 1;
+                        }
+
+                        @Override
+                        public void run(CairoEngine engine) {
+                            if (state++ == 1) {
+                                // remove column from table X
+                                try (TableWriter writer = engine.getWriter("X")) {
+                                    writer.removeColumn("t");
+                                    writer.addColumn("t", ColumnType.FLOAT);
+                                }
+                            }
+                        }
+                    });
+            Assert.fail();
+        } catch (SqlException e) {
+            Assert.assertEquals(46, e.getPosition());
+            TestUtils.assertContains(e.getMessage(), "TIMESTAMP column expected");
+        }
+    }
+
+    @Test
+    public void testCreateCleanUpFailure() throws SqlException {
+        // remove column from table X
+        Fiddler fiddler = new Fiddler() {
+            int state = 0;
+
+            @Override
+            public boolean isHappy() {
+                return state > 1;
+            }
+
+            @Override
+            public void run(CairoEngine engine) {
+                if (state++ == 1) {
+                    // remove column from table X
+                    try (TableWriter writer = engine.getWriter("X")) {
+                        writer.removeColumn("a");
+                        writer.addColumn("c", ColumnType.FLOAT);
+                    }
+                }
+            }
+        };
+
+        final FilesFacade ff = new FilesFacadeImpl() {
+            @Override
+            public boolean rmdir(Path name) {
+                if (Chars.endsWith(name, "Y" + Files.SEPARATOR)) {
+                    return false;
+                }
+                return super.rmdir(name);
+            }
+        };
+
+        final CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+            @Override
+            public FilesFacade getFilesFacade() {
+                return ff;
+            }
+        };
+
+        CairoEngine engine = new Engine(configuration) {
+            @Override
+            public TableReader getReader(CharSequence tableName) {
+                fiddler.run(this);
+                return super.getReader(tableName);
+            }
+        };
+
+        SqlCompiler compiler = new SqlCompiler(engine, configuration);
+
+        // create source table
+        SqlCompilerTest.compiler.execute("create table X (a int, b int, t timestamp) timestamp(t)", bindVariableService);
+
+        try {
+            compiler.execute("create table Y as (select * from X) timestamp(t)", bindVariableService);
+            Assert.fail();
+        } catch (SqlException e) {
+            Assert.assertEquals(0, e.getPosition());
+            TestUtils.assertContains(e.getMessage(), "Concurrent modification cannot be handled");
+        }
+
+        Assert.assertEquals(0, ((Engine) engine).getBusyReaderCount());
+    }
+
+    @Test
     public void testCreateEmptyTableNoPartition() throws SqlException {
         compiler.execute("create table x (" +
                         "a INT, " +
@@ -1660,8 +1903,7 @@ public class SqlCompilerTest extends AbstractCairoTest {
             Assert.assertEquals(PartitionBy.NONE, reader.getPartitionedBy());
             Assert.assertEquals(0L, reader.size());
 
-            int symbolIndex = reader.getMetadata().getColumnIndex("x");
-            SymbolMapReader symbolMapReader = reader.getSymbolMapReader(symbolIndex);
+            SymbolMapReader symbolMapReader = reader.getSymbolMapReader(reader.getMetadata().getColumnIndexQuiet("x"));
             Assert.assertNotNull(symbolMapReader);
             Assert.assertEquals(16, symbolMapReader.getSymbolCapacity());
             Assert.assertTrue(symbolMapReader.isCached());
@@ -1697,8 +1939,7 @@ public class SqlCompilerTest extends AbstractCairoTest {
             Assert.assertEquals(PartitionBy.MONTH, reader.getPartitionedBy());
             Assert.assertEquals(0L, reader.size());
 
-            int symbolIndex = reader.getMetadata().getColumnIndex("x");
-            SymbolMapReader symbolMapReader = reader.getSymbolMapReader(symbolIndex);
+            SymbolMapReader symbolMapReader = reader.getSymbolMapReader(reader.getMetadata().getColumnIndexQuiet("x"));
             Assert.assertNotNull(symbolMapReader);
             Assert.assertEquals(16, symbolMapReader.getSymbolCapacity());
             Assert.assertTrue(symbolMapReader.isCached());
@@ -1735,8 +1976,7 @@ public class SqlCompilerTest extends AbstractCairoTest {
             Assert.assertEquals(PartitionBy.MONTH, reader.getPartitionedBy());
             Assert.assertEquals(0L, reader.size());
 
-            int symbolIndex = reader.getMetadata().getColumnIndex("x");
-            SymbolMapReader symbolMapReader = reader.getSymbolMapReader(symbolIndex);
+            SymbolMapReader symbolMapReader = reader.getSymbolMapReader(reader.getMetadata().getColumnIndexQuiet("x"));
             Assert.assertNotNull(symbolMapReader);
             Assert.assertEquals(16, symbolMapReader.getSymbolCapacity());
             Assert.assertTrue(symbolMapReader.isCached());
@@ -1773,8 +2013,7 @@ public class SqlCompilerTest extends AbstractCairoTest {
             Assert.assertEquals(PartitionBy.MONTH, reader.getPartitionedBy());
             Assert.assertEquals(0L, reader.size());
 
-            int symbolIndex = reader.getMetadata().getColumnIndex("x");
-            SymbolMapReader symbolMapReader = reader.getSymbolMapReader(symbolIndex);
+            SymbolMapReader symbolMapReader = reader.getSymbolMapReader(reader.getMetadata().getColumnIndexQuiet("x"));
             Assert.assertNotNull(symbolMapReader);
             Assert.assertEquals(16, symbolMapReader.getSymbolCapacity());
             Assert.assertFalse(symbolMapReader.isCached());
@@ -1811,8 +2050,7 @@ public class SqlCompilerTest extends AbstractCairoTest {
             Assert.assertEquals(PartitionBy.MONTH, reader.getPartitionedBy());
             Assert.assertEquals(0L, reader.size());
 
-            int symbolIndex = reader.getMetadata().getColumnIndex("x");
-            SymbolMapReader symbolMapReader = reader.getSymbolMapReader(symbolIndex);
+            SymbolMapReader symbolMapReader = reader.getSymbolMapReader(reader.getMetadata().getColumnIndexQuiet("x"));
             Assert.assertNotNull(symbolMapReader);
             Assert.assertEquals(16, symbolMapReader.getSymbolCapacity());
             Assert.assertTrue(symbolMapReader.isCached());
@@ -1875,6 +2113,51 @@ public class SqlCompilerTest extends AbstractCairoTest {
                         " 20," + // record count
                         " 'a', rnd_int(0, 30, 2)" +
                         "))  timestamp(a) partition by DAY");
+    }
+
+    @Test
+    public void testCreateTableUtf8() throws SqlException, IOException {
+        compiler.execute("create table доходы(экспорт int)", bindVariableService);
+
+        try (TableWriter writer = engine.getWriter("доходы")) {
+            for (int i = 0; i < 20; i++) {
+                TableWriter.Row row = writer.newRow(0);
+                row.putInt(0, i);
+                row.append();
+            }
+            writer.commit();
+        }
+
+        compiler.execute("create table миллионы as (select * from доходы)", bindVariableService);
+
+        try (TableReader reader = engine.getReader("миллионы")) {
+            sink.clear();
+            printer.print(reader.getCursor(), true);
+        }
+
+        final String expected = "экспорт\n" +
+                "0\n" +
+                "1\n" +
+                "2\n" +
+                "3\n" +
+                "4\n" +
+                "5\n" +
+                "6\n" +
+                "7\n" +
+                "8\n" +
+                "9\n" +
+                "10\n" +
+                "11\n" +
+                "12\n" +
+                "13\n" +
+                "14\n" +
+                "15\n" +
+                "16\n" +
+                "17\n" +
+                "18\n" +
+                "19\n";
+
+        TestUtils.assertEquals(expected, sink);
     }
 
     @Test
@@ -2143,6 +2426,33 @@ public class SqlCompilerTest extends AbstractCairoTest {
         assertCast(expectedData, expectedMeta, sql);
     }
 
+    private void assertCreateTableAsSelect(CharSequence expectedMetadata, CharSequence sql, Fiddler fiddler) throws SqlException {
+
+        // create source table
+        compiler.execute("create table X (a int, b int, t timestamp) timestamp(t)", bindVariableService);
+
+        CairoEngine engine = new Engine(configuration) {
+            @Override
+            public TableReader getReader(CharSequence tableName) {
+                fiddler.run(this);
+                return super.getReader(tableName);
+            }
+        };
+
+        SqlCompiler compiler = new SqlCompiler(engine, configuration);
+        compiler.execute(sql, bindVariableService);
+
+        Assert.assertTrue(fiddler.isHappy());
+
+        try (TableReader reader = engine.getReader("Y")) {
+            sink.clear();
+            reader.getMetadata().toJson(sink);
+            TestUtils.assertEquals(expectedMetadata, sink);
+        }
+
+        Assert.assertEquals(0, ((Engine) engine).getBusyReaderCount());
+    }
+
     private void assertFailure(int position, CharSequence expectedMessage, CharSequence sql) {
         try {
             compiler.compile(sql, bindVariableService);
@@ -2151,5 +2461,11 @@ public class SqlCompilerTest extends AbstractCairoTest {
             Assert.assertEquals(position, e.getPosition());
             TestUtils.assertContains(e.getMessage(), expectedMessage);
         }
+    }
+
+    private interface Fiddler {
+        boolean isHappy();
+
+        void run(CairoEngine engine);
     }
 }

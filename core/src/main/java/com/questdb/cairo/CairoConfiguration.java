@@ -33,9 +33,9 @@ public interface CairoConfiguration {
 
     MillisecondClock getMillisecondClock();
 
-    boolean getCutlassSymbolCacheFlag();
+    int getCreateAsSelectRetryCount();
 
-    int getCutlassSymbolCapacity();
+    boolean getDefaultSymbolCacheFlag();
 
     int getFileOperationRetryCount();
 
@@ -64,4 +64,6 @@ public interface CairoConfiguration {
     long getWorkStealTimeoutNanos();
 
     boolean isParallelIndexingEnabled();
+
+    int getDefaultSymbolCapacity();
 }

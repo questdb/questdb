@@ -195,7 +195,7 @@ public class TableWriter implements Closeable {
     }
 
     public void addColumn(CharSequence name, int type) {
-        addColumn(name, type, configuration.getCutlassSymbolCapacity(), configuration.getCutlassSymbolCacheFlag(), false, 0);
+        addColumn(name, type, configuration.getDefaultSymbolCapacity(), configuration.getDefaultSymbolCacheFlag(), false, 0);
     }
 
     /**

@@ -50,13 +50,13 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public boolean getCutlassSymbolCacheFlag() {
-        return true;
+    public int getCreateAsSelectRetryCount() {
+        return 5;
     }
 
     @Override
-    public int getCutlassSymbolCapacity() {
-        return 128;
+    public boolean getDefaultSymbolCacheFlag() {
+        return true;
     }
 
     @Override
@@ -127,5 +127,10 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public boolean isParallelIndexingEnabled() {
         return true;
+    }
+
+    @Override
+    public int getDefaultSymbolCapacity() {
+        return 128;
     }
 }

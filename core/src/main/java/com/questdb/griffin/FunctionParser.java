@@ -25,7 +25,6 @@ package com.questdb.griffin;
 
 import com.questdb.cairo.CairoConfiguration;
 import com.questdb.cairo.sql.Function;
-import com.questdb.cairo.sql.InvalidColumnException;
 import com.questdb.cairo.sql.RecordMetadata;
 import com.questdb.common.ColumnType;
 import com.questdb.griffin.engine.functions.bind.BindVariableService;
@@ -240,39 +239,37 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
     }
 
     private Function createColumn(SqlNode node) throws SqlException {
-        try {
-            //todo: test what happens when column is removed after expression had been parsed
-            final int index = metadata.getColumnIndex(node.token);
+        final int index = metadata.getColumnIndexQuiet(node.token);
 
-            switch (metadata.getColumnType(index)) {
-                case ColumnType.BOOLEAN:
-                    return new BooleanColumn(node.position, index);
-                case ColumnType.BYTE:
-                    return new ByteColumn(node.position, index);
-                case ColumnType.SHORT:
-                    return new ShortColumn(node.position, index);
-                case ColumnType.INT:
-                    return new IntColumn(node.position, index);
-                case ColumnType.LONG:
-                    return new LongColumn(node.position, index);
-                case ColumnType.FLOAT:
-                    return new FloatColumn(node.position, index);
-                case ColumnType.DOUBLE:
-                    return new DoubleColumn(node.position, index);
-                case ColumnType.STRING:
-                    return new StrColumn(node.position, index);
-                case ColumnType.SYMBOL:
-                    return new SymbolColumn(node.position, index);
-                case ColumnType.BINARY:
-                    return new BinColumn(node.position, index);
-                case ColumnType.DATE:
-                    return new DateColumn(node.position, index);
-                default:
-                    return new TimestampColumn(node.position, index);
-
-            }
-        } catch (InvalidColumnException e) {
+        if (index == -1) {
             throw SqlException.invalidColumn(node.position, node.token);
+        }
+
+        switch (metadata.getColumnType(index)) {
+            case ColumnType.BOOLEAN:
+                return new BooleanColumn(node.position, index);
+            case ColumnType.BYTE:
+                return new ByteColumn(node.position, index);
+            case ColumnType.SHORT:
+                return new ShortColumn(node.position, index);
+            case ColumnType.INT:
+                return new IntColumn(node.position, index);
+            case ColumnType.LONG:
+                return new LongColumn(node.position, index);
+            case ColumnType.FLOAT:
+                return new FloatColumn(node.position, index);
+            case ColumnType.DOUBLE:
+                return new DoubleColumn(node.position, index);
+            case ColumnType.STRING:
+                return new StrColumn(node.position, index);
+            case ColumnType.SYMBOL:
+                return new SymbolColumn(node.position, index);
+            case ColumnType.BINARY:
+                return new BinColumn(node.position, index);
+            case ColumnType.DATE:
+                return new DateColumn(node.position, index);
+            default:
+                return new TimestampColumn(node.position, index);
         }
     }
 

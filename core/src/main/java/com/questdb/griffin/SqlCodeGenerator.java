@@ -131,12 +131,15 @@ public class SqlCodeGenerator {
 
                 SqlNode timestamp = model.getTimestamp();
                 if (timestamp != null) {
-                    timestampIndex = metadata.getColumnIndex(timestamp.token);
+                    timestampIndex = metadata.getColumnIndexQuiet(timestamp.token);
+                    if (timestampIndex == -1) {
+                        throw ConcurrentModificationException.INSTANCE;
+                    }
                 } else {
                     timestampIndex = -1;
                 }
 
-                final IntrinsicModel intrinsicModel = filterAnalyser.extract(model, whereClause, reader.getMetadata(), latestBy != null ? latestBy.token : null, timestampIndex);
+                final IntrinsicModel intrinsicModel = filterAnalyser.extract(model, whereClause, metadata, latestBy != null ? latestBy.token : null, timestampIndex);
 
                 if (intrinsicModel.intrinsicValue == IntrinsicModel.FALSE) {
                     // todo: return empty factory
@@ -180,7 +183,10 @@ public class SqlCodeGenerator {
                     // this is everything "latest by"
 
                     // first check if column is valid
-                    int latestByIndex = metadata.getColumnIndex(latestBy.token);
+                    int latestByIndex = metadata.getColumnIndexQuiet(latestBy.token);
+                    if (latestByIndex == -1) {
+                        throw ConcurrentModificationException.INSTANCE;
+                    }
                     if (metadata.getColumnType(latestByIndex) != ColumnType.SYMBOL) {
                         throw SqlException.$(latestBy.position, "has to be SYMBOL");
                     }
@@ -188,7 +194,10 @@ public class SqlCodeGenerator {
                     if (intrinsicModel.keyColumn != null) {
                         // we also have key lookup, is the the same column as "latest by"
                         // note: key column is always indexed
-                        int keyColumnIndex = metadata.getColumnIndex(intrinsicModel.keyColumn);
+                        int keyColumnIndex = metadata.getColumnIndexQuiet(intrinsicModel.keyColumn);
+                        if (keyColumnIndex == -1) {
+                            throw ConcurrentModificationException.INSTANCE;
+                        }
 
                         if (keyColumnIndex == latestByIndex) {
                             // we somewhat in luck

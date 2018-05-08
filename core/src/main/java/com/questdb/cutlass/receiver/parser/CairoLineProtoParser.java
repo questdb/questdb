@@ -290,8 +290,8 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
                             mem,
                             path.trimTo(rootLen),
                             cache.get(columnNameType.getQuick(i * 2)),
-                            configuration.getCutlassSymbolCapacity(),
-                            configuration.getCutlassSymbolCacheFlag()
+                            configuration.getDefaultSymbolCapacity(),
+                            configuration.getDefaultSymbolCacheFlag()
                     );
                     symbolMapCount++;
                 }
