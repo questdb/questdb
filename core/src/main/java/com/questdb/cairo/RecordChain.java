@@ -246,6 +246,7 @@ public class RecordChain implements Closeable, RecordCursor, Mutable {
                     putLong(record.getDate(i));
                     break;
                 case ColumnType.TIMESTAMP:
+                    //todo: not hit
                     putLong(record.getTimestamp(i));
                     break;
                 case ColumnType.SHORT:

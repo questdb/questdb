@@ -27,6 +27,8 @@ import com.questdb.cairo.pool.PoolListener;
 import com.questdb.common.ColumnType;
 import com.questdb.common.PartitionBy;
 import com.questdb.mp.Job;
+import com.questdb.mp.RingQueue;
+import com.questdb.mp.Sequence;
 import com.questdb.std.FilesFacade;
 import com.questdb.std.ObjHashSet;
 import com.questdb.std.str.LPSZ;
@@ -74,8 +76,6 @@ public class EngineTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             createX();
 
-            final ObjHashSet<Job> jobs = new ObjHashSet<>();
-
             class MyListener implements PoolListener {
                 int count = 0;
 
@@ -87,18 +87,42 @@ public class EngineTest extends AbstractCairoTest {
                 }
             }
 
-            MyListener listener = new MyListener();
+            class MyWorkScheduler implements CairoWorkScheduler {
+                final ObjHashSet<Job> jobs = new ObjHashSet<>();
 
-            try (Engine engine = new Engine(configuration)) {
+                @Override
+                public void addJob(Job job) {
+                    jobs.add(job);
+                }
+
+                @Override
+                public Sequence getIndexerPubSequence() {
+                    return null;
+                }
+
+                @Override
+                public RingQueue<ColumnIndexerEntry> getIndexerQueue() {
+                    return null;
+                }
+
+                @Override
+                public Sequence getIndexerSubSequence() {
+                    return null;
+                }
+            }
+
+            MyListener listener = new MyListener();
+            MyWorkScheduler workScheduler = new MyWorkScheduler();
+
+            try (Engine engine = new Engine(configuration, workScheduler)) {
                 engine.setPoolListener(listener);
 
                 assertWriter(engine, "x");
                 assertReader(engine, "x");
-                engine.exportJobs(jobs);
 
-                Assert.assertEquals(1, jobs.size());
+                Assert.assertEquals(2, workScheduler.jobs.size());
 
-                Job job = jobs.get(0);
+                Job job = workScheduler.jobs.get(0);
                 Assert.assertNotNull(job);
 
                 Assert.assertTrue(job.run());

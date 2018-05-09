@@ -45,6 +45,7 @@ public class GenericRecordMetadata extends BaseRecordMetadata {
         }
     }
 
+    // todo: not hit
     public void clear() {
         columnMetadata.clear();
         columnNameIndexMap.clear();

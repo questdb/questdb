@@ -29,11 +29,9 @@ import com.questdb.cairo.pool.WriterPool;
 import com.questdb.cairo.sql.CairoEngine;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
-import com.questdb.mp.Job;
 import com.questdb.mp.SynchronizedJob;
 import com.questdb.std.FilesFacade;
 import com.questdb.std.Misc;
-import com.questdb.std.ObjHashSet;
 import com.questdb.std.microtime.MicrosecondClock;
 import com.questdb.std.str.Path;
 
@@ -44,16 +42,22 @@ public class Engine implements Closeable, CairoEngine {
 
     private final WriterPool writerPool;
     private final ReaderPool readerPool;
-    private final WriterMaintenanceJob writerMaintenanceJob;
     private final CairoConfiguration configuration;
     private final Path path = new Path();
     private final Path other = new Path();
 
     public Engine(CairoConfiguration configuration) {
+        this(configuration, null);
+    }
+
+    public Engine(CairoConfiguration configuration, CairoWorkScheduler workScheduler) {
         this.configuration = configuration;
-        this.writerPool = new WriterPool(configuration);
+        this.writerPool = new WriterPool(configuration, workScheduler);
         this.readerPool = new ReaderPool(configuration);
-        this.writerMaintenanceJob = new WriterMaintenanceJob(configuration);
+        if (workScheduler != null) {
+            workScheduler.addJob(new WriterMaintenanceJob(configuration));
+            workScheduler.addJob(new ColumnIndexerJob(workScheduler));
+        }
     }
 
     @Override
@@ -62,10 +66,6 @@ public class Engine implements Closeable, CairoEngine {
         Misc.free(readerPool);
         Misc.free(path);
         Misc.free(other);
-    }
-
-    public void exportJobs(ObjHashSet<Job> jobs) {
-        jobs.add(writerMaintenanceJob);
     }
 
     public int getBusyReaderCount() {

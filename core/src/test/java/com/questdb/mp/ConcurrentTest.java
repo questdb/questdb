@@ -75,7 +75,7 @@ public class ConcurrentTest {
         int size = 1024 * cycle;
         RingQueue<Event> queue = new RingQueue<>(Event.FACTORY, cycle);
         SPSequence pubSeq = new SPSequence(cycle);
-        MCSequence subSeq = new MCSequence(cycle, null);
+        MCSequence subSeq = new MCSequence(cycle);
         pubSeq.then(subSeq).then(pubSeq);
 
         CyclicBarrier barrier = new CyclicBarrier(3);

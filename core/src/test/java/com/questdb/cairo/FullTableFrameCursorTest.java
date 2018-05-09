@@ -702,9 +702,8 @@ public class FullTableFrameCursorTest extends AbstractCairoTest {
             int S = 128;
             Rnd rnd = new Rnd();
             SymbolGroup sg = new SymbolGroup(rnd, S, N, PartitionBy.NONE, true);
-            RingQueue<ColumnIndexerEntry> queue = new RingQueue<>(ColumnIndexerEntry::new, 1024);
-            MPSequence pubSeq;
-            pubSeq = new MPSequence(queue.getCapacity()) {
+
+            final MyWorkScheduler workScheduler = new MyWorkScheduler(new MPSequence(1024) {
                 private boolean flap = false;
 
                 @Override
@@ -713,10 +712,10 @@ public class FullTableFrameCursorTest extends AbstractCairoTest {
                     this.flap = !this.flap;
                     return flap ? -1 : -2;
                 }
-            };
+            }, null);
 
             long timestamp = 0;
-            try (TableWriter writer = new TableWriter(configuration, "ABC", queue, pubSeq)) {
+            try (TableWriter writer = new TableWriter(configuration, "ABC", workScheduler)) {
                 for (int i = 0; i < N; i++) {
                     TableWriter.Row r = writer.newRow(timestamp += (long) 0);
                     r.putSym(0, sg.symA[rnd.nextPositiveInt() % S]);
@@ -1194,24 +1193,16 @@ public class FullTableFrameCursorTest extends AbstractCairoTest {
     private void testParallelIndex(int partitionBy, long increment, int expectedPartitionMin, int testWorkStealing) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             int N = 1000000;
-            int nWorkers = 2;
             int S = 128;
             Rnd rnd = new Rnd();
 
             SymbolGroup sg = new SymbolGroup(rnd, S, N, partitionBy, false);
-
-            CountDownLatch workerHaltLatch = new CountDownLatch(nWorkers);
-            Worker workers[] = null;
-
-            RingQueue<ColumnIndexerEntry> queue = new RingQueue<>(ColumnIndexerEntry::new, 1024);
-
             MPSequence pubSeq;
-            MCSequence subSeq;
-            ObjHashSet<Job> jobs = new ObjHashSet<>();
+            MCSequence subSeq = null;
 
             switch (testWorkStealing) {
                 case WORK_STEALING_BUSY_QUEUE:
-                    pubSeq = new MPSequence(queue.getCapacity()) {
+                    pubSeq = new MPSequence(1024) {
                         @Override
                         public long next() {
                             return -1;
@@ -1219,7 +1210,7 @@ public class FullTableFrameCursorTest extends AbstractCairoTest {
                     };
                     break;
                 case WORK_STEALING_HIGH_CONTENTION:
-                    pubSeq = new MPSequence(queue.getCapacity()) {
+                    pubSeq = new MPSequence(1024) {
                         private boolean flap = false;
 
                         @Override
@@ -1231,19 +1222,11 @@ public class FullTableFrameCursorTest extends AbstractCairoTest {
                     };
                     break;
                 case WORK_STEALING_DONT_TEST:
-                    pubSeq = new MPSequence(queue.getCapacity());
-                    subSeq = new MCSequence(queue.getCapacity(), null);
-                    pubSeq.then(subSeq).then(pubSeq);
-                    jobs.add(new ColumnIndexerJob(queue, subSeq));
-
-                    workers = new Worker[nWorkers];
-                    for (int i = 0; i < nWorkers; i++) {
-                        workers[i] = new Worker(jobs, workerHaltLatch);
-                        workers[i].start();
-                    }
+                    pubSeq = new MPSequence(1024);
+                    subSeq = new MCSequence(1024);
                     break;
                 case WORK_STEALING_CAS_FLAP:
-                    pubSeq = new MPSequence(queue.getCapacity()) {
+                    pubSeq = new MPSequence(1024) {
                         private boolean flap = true;
 
                         @Override
@@ -1253,18 +1236,10 @@ public class FullTableFrameCursorTest extends AbstractCairoTest {
                             return flap ? -2 : super.next();
                         }
                     };
-                    subSeq = new MCSequence(queue.getCapacity(), null);
-                    pubSeq.then(subSeq).then(pubSeq);
-                    jobs.add(new ColumnIndexerJob(queue, subSeq));
-
-                    workers = new Worker[nWorkers];
-                    for (int i = 0; i < nWorkers; i++) {
-                        workers[i] = new Worker(jobs, workerHaltLatch);
-                        workers[i].start();
-                    }
+                    subSeq = new MCSequence(1024);
                     break;
                 case WORK_STEALING_NO_PICKUP:
-                    pubSeq = new MPSequence(queue.getCapacity());
+                    pubSeq = new MPSequence(1024);
                     break;
                 default:
                     throw new RuntimeException("Unsupported test");
@@ -1277,8 +1252,14 @@ public class FullTableFrameCursorTest extends AbstractCairoTest {
                 }
             };
 
+            MyWorkScheduler workScheduler = new MyWorkScheduler(pubSeq, subSeq);
+            if (subSeq != null) {
+                workScheduler.addJob(new ColumnIndexerJob(workScheduler));
+                workScheduler.start();
+            }
+
             long timestamp = 0;
-            try (TableWriter writer = new TableWriter(configuration, "ABC", queue, pubSeq)) {
+            try (TableWriter writer = new TableWriter(configuration, "ABC", workScheduler)) {
                 for (int i = 0; i < N; i++) {
                     TableWriter.Row r = writer.newRow(timestamp += increment);
                     r.putSym(0, sg.symA[rnd.nextPositiveInt() % S]);
@@ -1290,13 +1271,7 @@ public class FullTableFrameCursorTest extends AbstractCairoTest {
                 writer.commit();
             }
 
-            if (workers != null) {
-                for (int i = 0; i < nWorkers; i++) {
-                    workers[i].halt();
-                }
-
-                workerHaltLatch.await();
-            }
+            workScheduler.halt();
 
             try (TableReader reader = new TableReader(configuration, "ABC")) {
 
@@ -1314,7 +1289,6 @@ public class FullTableFrameCursorTest extends AbstractCairoTest {
                 cursor.toTop();
                 assertIndexRowsMatchSymbol(cursor, record, 2, N);
             }
-
         });
     }
 
@@ -1379,28 +1353,11 @@ public class FullTableFrameCursorTest extends AbstractCairoTest {
                 timestamp = sg.appendABC(AbstractCairoTest.configuration, rnd, N, timestamp, increment);
             }
 
-            int nWorkers = 2;
-            CountDownLatch workerHaltLatch = new CountDownLatch(nWorkers);
-            Worker workers[];
+            final MyWorkScheduler workScheduler = new MyWorkScheduler();
+            workScheduler.addJob(new ColumnIndexerJob(workScheduler));
+            workScheduler.start();
 
-            RingQueue<ColumnIndexerEntry> queue = new RingQueue<>(ColumnIndexerEntry::new, 1024);
-
-            MPSequence pubSeq;
-            MCSequence subSeq;
-            ObjHashSet<Job> jobs = new ObjHashSet<>();
-
-            pubSeq = new MPSequence(queue.getCapacity());
-            subSeq = new MCSequence(queue.getCapacity(), null);
-            pubSeq.then(subSeq).then(pubSeq);
-            jobs.add(new ColumnIndexerJob(queue, subSeq));
-
-            workers = new Worker[nWorkers];
-            for (int i = 0; i < nWorkers; i++) {
-                workers[i] = new Worker(jobs, workerHaltLatch);
-                workers[i].start();
-            }
-
-            try (TableWriter writer = new TableWriter(configuration, "ABC", queue, pubSeq)) {
+            try (TableWriter writer = new TableWriter(configuration, "ABC", workScheduler)) {
                 try {
                     for (int i = 0; i < (long) N; i++) {
                         TableWriter.Row r = writer.newRow(timestamp += increment);
@@ -1443,11 +1400,7 @@ public class FullTableFrameCursorTest extends AbstractCairoTest {
                 }
             }
 
-            for (int i = 0; i < nWorkers; i++) {
-                workers[i].halt();
-            }
-
-            workerHaltLatch.await();
+            workScheduler.halt();
 
             // lets see what we can read after this catastrophe
             try (TableReader reader = new TableReader(AbstractCairoTest.configuration, "ABC")) {
@@ -2112,4 +2065,61 @@ public class FullTableFrameCursorTest extends AbstractCairoTest {
         }
     }
 
+    final static class MyWorkScheduler implements CairoWorkScheduler {
+        private final int nWorkers = 2;
+        private final CountDownLatch workerHaltLatch = new CountDownLatch(nWorkers);
+        private final Worker workers[] = new Worker[nWorkers];
+        private final RingQueue<ColumnIndexerEntry> queue = new RingQueue<>(ColumnIndexerEntry::new, 1024);
+        private final Sequence pubSeq;
+        private final Sequence subSeq;
+        private final ObjHashSet<Job> jobs = new ObjHashSet<>();
+        private boolean active = false;
+
+        public MyWorkScheduler(Sequence pubSequence, Sequence subSequence) {
+            this.pubSeq = pubSequence;
+            this.subSeq = subSequence;
+        }
+
+        public MyWorkScheduler() {
+            this(new MPSequence(1024), new MCSequence(1024));
+        }
+
+        @Override
+        public void addJob(Job job) {
+            jobs.add(job);
+        }
+
+        @Override
+        public Sequence getIndexerPubSequence() {
+            return pubSeq;
+        }
+
+        @Override
+        public RingQueue<ColumnIndexerEntry> getIndexerQueue() {
+            return queue;
+        }
+
+        @Override
+        public Sequence getIndexerSubSequence() {
+            return subSeq;
+        }
+
+        void halt() throws InterruptedException {
+            if (active) {
+                for (int i = 0; i < nWorkers; i++) {
+                    workers[i].halt();
+                }
+                workerHaltLatch.await();
+            }
+        }
+
+        void start() {
+            pubSeq.then(subSeq).then(pubSeq);
+            for (int i = 0; i < nWorkers; i++) {
+                workers[i] = new Worker(jobs, workerHaltLatch);
+                workers[i].start();
+            }
+            active = true;
+        }
+    }
 }

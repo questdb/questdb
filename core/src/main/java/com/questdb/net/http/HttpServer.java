@@ -101,7 +101,7 @@ public class HttpServer {
         this.running = true;
         ioQueue = new RingQueue<>(EVENT_FACTORY, configuration.getHttpQueueDepth());
         SPSequence ioPubSequence = new SPSequence(ioQueue.getCapacity());
-        MCSequence ioSubSequence = new MCSequence(ioQueue.getCapacity(), null);
+        MCSequence ioSubSequence = new MCSequence(ioQueue.getCapacity());
         ioPubSequence.then(ioSubSequence).then(ioPubSequence);
 
         try {

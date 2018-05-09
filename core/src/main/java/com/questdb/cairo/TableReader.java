@@ -645,7 +645,7 @@ public class TableReader implements Closeable {
     }
 
     boolean isColumnCached(int columnIndex) {
-        return ((SymbolMapReaderImpl) symbolMapReaders.getQuick(columnIndex)).isCached();
+        return symbolMapReaders.getQuick(columnIndex).isCached();
     }
 
     private TableReaderMetadata openMetaFile() {

@@ -23,47 +23,16 @@
 
 package com.questdb.cairo;
 
-import com.questdb.std.FilesFacade;
-import com.questdb.std.microtime.MicrosecondClock;
-import com.questdb.std.time.MillisecondClock;
+import com.questdb.mp.Job;
+import com.questdb.mp.RingQueue;
+import com.questdb.mp.Sequence;
 
-public interface CairoConfiguration {
+public interface CairoWorkScheduler {
+    void addJob(Job job);
 
-    int getCreateAsSelectRetryCount();
+    Sequence getIndexerPubSequence();
 
-    boolean getDefaultSymbolCacheFlag();
+    RingQueue<ColumnIndexerEntry> getIndexerQueue();
 
-    int getDefaultSymbolCapacity();
-
-    int getFileOperationRetryCount();
-
-    FilesFacade getFilesFacade();
-
-    long getIdleCheckInterval();
-
-    long getInactiveReaderTTL();
-
-    long getInactiveWriterTTL();
-
-    int getIndexValueBlockSize();
-
-    int getMaxNumberOfSwapFiles();
-
-    MicrosecondClock getMicrosecondClock();
-
-    MillisecondClock getMillisecondClock();
-
-    int getMkDirMode();
-
-    int getParallelIndexThreshold();
-
-    int getReaderPoolSegments();
-
-    CharSequence getRoot();
-
-    long getSpinLockTimeoutUs();
-
-    long getWorkStealTimeoutNanos();
-
-    boolean isParallelIndexingEnabled();
+    Sequence getIndexerSubSequence();
 }

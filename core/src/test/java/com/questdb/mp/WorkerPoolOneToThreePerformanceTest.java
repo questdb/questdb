@@ -41,7 +41,7 @@ public class WorkerPoolOneToThreePerformanceTest {
         // producer thread sequence
         SPSequence pubSeq = new SPSequence(cycle);
         // consumer thread sequence, which is shared between worker threads
-        MCSequence subSeq = new MCSequence(cycle, null);
+        MCSequence subSeq = new MCSequence(cycle);
 
         pubSeq.then(subSeq).then(pubSeq);
 

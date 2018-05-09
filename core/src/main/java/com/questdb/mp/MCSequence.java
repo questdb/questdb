@@ -24,6 +24,11 @@
 package com.questdb.mp;
 
 public class MCSequence extends AbstractMSequence {
+
+    public MCSequence(int cycle) {
+        this(cycle, null);
+    }
+
     public MCSequence(int cycle, WaitStrategy waitStrategy) {
         super(cycle, waitStrategy);
     }

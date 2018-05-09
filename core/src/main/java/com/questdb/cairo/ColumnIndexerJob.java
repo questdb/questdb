@@ -32,9 +32,9 @@ class ColumnIndexerJob implements Job {
     private final RingQueue<ColumnIndexerEntry> queue;
     private final Sequence sequence;
 
-    public ColumnIndexerJob(RingQueue<ColumnIndexerEntry> queue, Sequence sequence) {
-        this.queue = queue;
-        this.sequence = sequence;
+    public ColumnIndexerJob(CairoWorkScheduler workScheduler) {
+        this.queue = workScheduler.getIndexerQueue();
+        this.sequence = workScheduler.getIndexerSubSequence();
     }
 
     @Override

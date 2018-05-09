@@ -84,10 +84,10 @@ public class TableWriter implements Closeable {
     private final CairoConfiguration configuration;
     private final CharSequenceIntHashMap validationMap = new CharSequenceIntHashMap();
     private final FragileCode RECOVER_FROM_META_RENAME_FAILURE = this::recoverFromMetaRenameFailure;
-    private final RingQueue<ColumnIndexerEntry> indexQueue;
-    private final Sequence indexPubSequence;
     private final SOCountDownLatch indexLatch = new SOCountDownLatch();
     private final LongList indexSequences = new LongList();
+    private final CairoWorkScheduler workScheduler;
+    private final boolean parallelIndexerEnabled;
     int txPartitionCount = 0;
     private long lockFd;
     private LongConsumer timestampSetter;
@@ -113,20 +113,18 @@ public class TableWriter implements Closeable {
     private final FragileCode RECOVER_FROM_SWAP_RENAME_FAILURE = this::recoverFromSwapRenameFailure;
     private final FragileCode RECOVER_FROM_COLUMN_OPEN_FAILURE = this::recoverOpenColumnFailure;
     private int indexCount;
-    private boolean useParallelIndexer;
     private boolean performRecovery;
     private boolean distressed = false;
 
     public TableWriter(CairoConfiguration configuration, CharSequence name) {
-        this(configuration, name, null, null);
+        this(configuration, name, null);
     }
 
-    public TableWriter(CairoConfiguration configuration, CharSequence name, RingQueue<ColumnIndexerEntry> indexQueue, Sequence indexPubSequence) {
+    public TableWriter(CairoConfiguration configuration, CharSequence name, CairoWorkScheduler workScheduler) {
         LOG.info().$("open '").utf8(name).$('\'').$();
         this.configuration = configuration;
-        this.indexQueue = indexQueue;
-        this.indexPubSequence = indexPubSequence;
-        this.useParallelIndexer = indexQueue != null && configuration.isParallelIndexingEnabled();
+        this.workScheduler = workScheduler;
+        this.parallelIndexerEnabled = workScheduler != null && configuration.isParallelIndexingEnabled();
         this.ff = configuration.getFilesFacade();
         this.mkDirMode = configuration.getMkDirMode();
         this.fileOperationRetryCount = configuration.getFileOperationRetryCount();
@@ -1012,12 +1010,6 @@ public class TableWriter implements Closeable {
         }
     }
 
-    private void doPerformRecovery() {
-        rollbackIndexes();
-        rollbackSymbolTables();
-        performRecovery = false;
-    }
-
     private void freeColumns(boolean truncate) {
         if (columns != null) {
             for (int i = 0, n = columns.size(); i < n; i++) {
@@ -1113,7 +1105,7 @@ public class TableWriter implements Closeable {
         openPartition(timestamp);
         setAppendPosition(transientRowCount);
         if (performRecovery) {
-            doPerformRecovery();
+            performRecovery();
         }
         txPartitionCount = 1;
     }
@@ -1206,6 +1198,12 @@ public class TableWriter implements Closeable {
         }
     }
 
+    private void performRecovery() {
+        rollbackIndexes();
+        rollbackSymbolTables();
+        performRecovery = false;
+    }
+
     private void populateDenseIndexerList() {
         denseIndexers.clear();
         for (int i = 0, n = indexers.size(); i < n; i++) {
@@ -1215,7 +1213,6 @@ public class TableWriter implements Closeable {
             }
         }
         indexCount = denseIndexers.size();
-        useParallelIndexer = indexCount > 1 && indexQueue != null && configuration.isParallelIndexingEnabled();
     }
 
     private void purgeUnusedPartitions() {
@@ -1704,7 +1701,7 @@ public class TableWriter implements Closeable {
         if (indexCount > 0) {
             final long lo = txPartitionCount == 1 ? prevTransientRowCount : 0;
             final long hi = transientRowCount;
-            if (useParallelIndexer && hi - lo > configuration.getParallelIndexThreshold()) {
+            if (indexCount > 1 && parallelIndexerEnabled && hi - lo > configuration.getParallelIndexThreshold()) {
                 updateIndexesParallel(lo, hi);
             } else {
                 updateIndexesSerially(lo, hi);
@@ -1717,6 +1714,8 @@ public class TableWriter implements Closeable {
         indexSequences.clear();
         indexLatch.setCount(indexCount);
         final int nParallelIndexes = indexCount - 1;
+        final Sequence indexPubSequence = this.workScheduler.getIndexerPubSequence();
+        final RingQueue<ColumnIndexerEntry> indexerQueue = this.workScheduler.getIndexerQueue();
 
         // we are going to index last column in this thread while other columns are on the queue
         OUT:
@@ -1741,7 +1740,7 @@ public class TableWriter implements Closeable {
                 } while (cursor < 0);
             }
 
-            final ColumnIndexerEntry queueItem = indexQueue.get(cursor);
+            final ColumnIndexerEntry queueItem = indexerQueue.get(cursor);
             final ColumnIndexer indexer = denseIndexers.getQuick(i);
             final long sequence = indexer.getSequence();
             queueItem.indexer = indexer;
@@ -1938,6 +1937,7 @@ public class TableWriter implements Closeable {
             notNull(index);
         }
 
+        //todo: not hit
         public void putBin(int index, BinarySequence sequence) {
             getSecondaryColumn(index).putLong(getPrimaryColumn(index).putBin(sequence));
             notNull(index);
@@ -1997,6 +1997,7 @@ public class TableWriter implements Closeable {
             notNull(index);
         }
 
+        // todo: not hit
         public void putTimestamp(int index, long value) {
             putLong(index, value);
         }

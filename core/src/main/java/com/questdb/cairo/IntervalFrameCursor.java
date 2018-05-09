@@ -265,6 +265,7 @@ public class IntervalFrameCursor implements DataFrameCursor {
             return rowLo;
         }
 
+        // todo: not hit
         @Override
         public TableReader getTableReader() {
             return IntervalFrameCursor.this.getTableReader();

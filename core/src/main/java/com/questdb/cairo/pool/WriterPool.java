@@ -23,10 +23,7 @@
 
 package com.questdb.cairo.pool;
 
-import com.questdb.cairo.CairoConfiguration;
-import com.questdb.cairo.CairoException;
-import com.questdb.cairo.TableUtils;
-import com.questdb.cairo.TableWriter;
+import com.questdb.cairo.*;
 import com.questdb.cairo.pool.ex.EntryLockedException;
 import com.questdb.cairo.pool.ex.EntryUnavailableException;
 import com.questdb.cairo.pool.ex.PoolClosedException;
@@ -71,15 +68,17 @@ public class WriterPool extends AbstractPool implements ResourcePool<TableWriter
     private final Path path = new Path();
     private final MicrosecondClock clock;
     private final CharSequence root;
+    private final CairoWorkScheduler workScheduler;
 
     /**
      * Pool constructor. WriterPool root directory is passed via configuration.
      *
      * @param configuration configuration parameters.
      */
-    public WriterPool(CairoConfiguration configuration) {
+    public WriterPool(CairoConfiguration configuration, CairoWorkScheduler workScheduler) {
         super(configuration, configuration.getInactiveWriterTTL());
         this.configuration = configuration;
+        this.workScheduler = workScheduler;
         this.clock = configuration.getMicrosecondClock();
         this.root = configuration.getRoot();
         notifyListener(Thread.currentThread().getId(), null, PoolListener.EV_POOL_OPEN);
@@ -413,7 +412,7 @@ public class WriterPool extends AbstractPool implements ResourcePool<TableWriter
         private Entry entry;
 
         public PooledTableWriter(WriterPool pool, Entry e, CharSequence name) {
-            super(pool.configuration, name);
+            super(pool.configuration, name, pool.workScheduler);
             this.pool = pool;
             this.entry = e;
         }

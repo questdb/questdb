@@ -40,16 +40,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public MicrosecondClock getMicrosecondClock() {
-        return MicrosecondClockImpl.INSTANCE;
-    }
-
-    @Override
-    public MillisecondClock getMillisecondClock() {
-        return MillisecondClockImpl.INSTANCE;
-    }
-
-    @Override
     public int getCreateAsSelectRetryCount() {
         return 5;
     }
@@ -57,6 +47,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public boolean getDefaultSymbolCacheFlag() {
         return true;
+    }
+
+    @Override
+    public int getDefaultSymbolCapacity() {
+        return 128;
     }
 
     @Override
@@ -95,6 +90,16 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public MicrosecondClock getMicrosecondClock() {
+        return MicrosecondClockImpl.INSTANCE;
+    }
+
+    @Override
+    public MillisecondClock getMillisecondClock() {
+        return MillisecondClockImpl.INSTANCE;
+    }
+
+    @Override
     public int getMkDirMode() {
         return 509;
     }
@@ -127,10 +132,5 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public boolean isParallelIndexingEnabled() {
         return true;
-    }
-
-    @Override
-    public int getDefaultSymbolCapacity() {
-        return 128;
     }
 }

@@ -53,6 +53,7 @@ public class EmptySymbolMapReader implements SymbolMapReader {
     public void updateSymbolCount(int count) {
     }
 
+    //todo: not hit (both methods)
     @Override
     public int getSymbolCapacity() {
         return 0;
