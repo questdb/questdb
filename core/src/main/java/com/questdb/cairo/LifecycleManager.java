@@ -21,30 +21,9 @@
  *
  ******************************************************************************/
 
-package com.questdb.cairo.sql;
+package com.questdb.cairo;
 
-import com.questdb.cairo.TableReader;
-import com.questdb.cairo.TableWriter;
-import org.jetbrains.annotations.Nullable;
-
-import java.io.Closeable;
-
-public interface CairoEngine extends Closeable {
-    TableReader getReader(CharSequence tableName);
-
-    int getStatus(CharSequence tableName, int lo, int hi);
-
-    default int getStatus(CharSequence tableName) {
-        return getStatus(tableName, 0, tableName.length());
-    }
-
-    boolean releaseAllReaders();
-
-    boolean releaseAllWriters();
-
-    boolean lock(CharSequence tableName);
-
-    void unlock(CharSequence tableName, @Nullable TableWriter writer);
-
-    TableWriter getWriter(CharSequence tableName);
+@FunctionalInterface
+public interface LifecycleManager {
+    boolean close();
 }

@@ -575,8 +575,9 @@ public class SqlCompiler {
         return compileExecutionModel(lexer, bindVariableService, optimise);
     }
 
-    private void copyTableData(CreateTableModel model, RecordCursor cursor) {
-        try (TableWriter writer = new TableWriter(configuration, model.getName().token, workScheduler, false)) {
+    private TableWriter copyTableData(CreateTableModel model, RecordCursor cursor) {
+        TableWriter writer = new TableWriter(configuration, model.getName().token, workScheduler, false, DefaultLifecycleManager.INSTANCE);
+        try {
             RecordMetadata writerMetadata = writer.getMetadata();
             CopyHelper copyHelper = compile(asm, cursor.getMetadata(), writerMetadata);
 
@@ -597,6 +598,10 @@ public class SqlCompiler {
                 }
             }
             writer.commit();
+            return writer;
+        } catch (CairoException e) {
+            writer.close();
+            throw e;
         }
     }
 
@@ -666,6 +671,9 @@ public class SqlCompiler {
         }
 
         if (engine.lock(name.token)) {
+
+            TableWriter writer = null;
+
             try {
                 if (ff.mkdir(path.chopZ().put(Files.SEPARATOR).$(), configuration.getMkDirMode()) != 0) {
                     LOG.error().$("table already exists [path=").utf8(path).$(", errno=").$(ff.errno()).$(']').$();
@@ -676,7 +684,7 @@ public class SqlCompiler {
                     if (model.getQueryModel() == null) {
                         createEmptyTable(model);
                     } else {
-                        createTableFromCursor(model, bindVariableService);
+                        writer = createTableFromCursor(model, bindVariableService);
                     }
                 } catch (SqlException e) {
                     removeTableDirectory(model);
@@ -688,7 +696,7 @@ public class SqlCompiler {
                     throw SqlException.$(0, "Concurrent modification cannot be handled. Failed to clean up. See log for more details.");
                 }
             } finally {
-                engine.unlock(name.token);
+                engine.unlock(name.token, writer);
             }
         } else {
             throw SqlException.$(name.position, "cannot acquire table lock");
@@ -733,12 +741,12 @@ public class SqlCompiler {
         }
     }
 
-    private void createTableFromCursor(CreateTableModel model, BindVariableService bindVariableService) throws SqlException {
+    private TableWriter createTableFromCursor(CreateTableModel model, BindVariableService bindVariableService) throws SqlException {
         try (RecordCursor cursor = generate(model.getQueryModel(), bindVariableService).getCursor()) {
             IntIntHashMap typeCast = new IntIntHashMap();
             validateTableModelAndCreateTypeCast(model, cursor, typeCast);
             createTableMetaFile(model, cursor.getMetadata(), typeCast);
-            copyTableData(model, cursor);
+            return copyTableData(model, cursor);
         }
     }
 

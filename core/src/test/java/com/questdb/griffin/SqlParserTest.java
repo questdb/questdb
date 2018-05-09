@@ -3214,7 +3214,7 @@ public class SqlParserTest extends AbstractCairoTest {
                     modelOf("tab").col("x", ColumnType.INT)
             );
         } finally {
-            engine.unlock("tab");
+            engine.unlock("tab", null);
         }
     }
 

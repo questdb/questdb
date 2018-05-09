@@ -35,6 +35,7 @@ import com.questdb.std.Misc;
 import com.questdb.std.Unsafe;
 import com.questdb.std.microtime.MicrosecondClock;
 import com.questdb.std.str.Path;
+import org.jetbrains.annotations.Nullable;
 
 import java.util.Iterator;
 
@@ -130,7 +131,7 @@ public class WriterPool extends AbstractPool implements ResourcePool<TableWriter
             if (isClosed()) {
                 // pool closed but we somehow managed to lock writer
                 // make sure that interceptor cleared to allow calling thread close writer normally
-                e.writer.goodby();
+                e.goodby();
             }
             return logAndReturn(e, PoolListener.EV_GET);
         } else {
@@ -148,7 +149,7 @@ public class WriterPool extends AbstractPool implements ResourcePool<TableWriter
 
                 if (isClosed()) {
                     LOG.info().$('\'').utf8(tableName).$("' born free").$();
-                    e.writer.goodby();
+                    e.goodby();
                 }
                 return logAndReturn(e, PoolListener.EV_GET);
             }
@@ -222,6 +223,10 @@ public class WriterPool extends AbstractPool implements ResourcePool<TableWriter
     }
 
     public void unlock(CharSequence name) {
+        unlock(name, null);
+    }
+
+    public void unlock(CharSequence name, @Nullable TableWriter writer) {
         long thread = Thread.currentThread().getId();
 
         Entry e = entries.get(name);
@@ -239,14 +244,26 @@ public class WriterPool extends AbstractPool implements ResourcePool<TableWriter
                 notifyListener(thread, name, PoolListener.EV_NOT_LOCKED);
                 throw CairoException.instance(0).put("Writer ").put(name).put(" is not locked");
             }
-            // unlock must remove entry because pool does not deal with null writer
-            entries.remove(name);
-        }
 
-        if (e.lockFd != -1) {
-            ff.close(e.lockFd);
+            if (writer == null) {
+                // unlock must remove entry because pool does not deal with null writer
+                entries.remove(name);
+
+                if (e.lockFd != -1) {
+                    ff.close(e.lockFd);
+                }
+            } else {
+                e.writer = writer;
+                writer.setLifecycleManager(e);
+                writer.transferLock(e.lockFd);
+                e.lockFd = -1;
+                Unsafe.getUnsafe().putOrderedLong(e, ENTRY_OWNER, UNALLOCATED);
+            }
+            notifyListener(thread, name, PoolListener.EV_UNLOCKED);
+        } else {
+            notifyListener(thread, name, PoolListener.EV_NOT_LOCK_OWNER);
+            throw CairoException.instance(0).put("Not lock owner of ").put(name);
         }
-        notifyListener(thread, name, PoolListener.EV_UNLOCKED);
     }
 
     private void checkClosed() {
@@ -312,10 +329,10 @@ public class WriterPool extends AbstractPool implements ResourcePool<TableWriter
     }
 
     private void closeWriter(long thread, Entry e, short ev, int reason) {
-        PooledTableWriter w = e.writer;
+        TableWriter w = e.writer;
         if (w != null) {
             CharSequence name = e.writer.getName();
-            w.goodby();
+            w.setLifecycleManager(DefaultLifecycleManager.INSTANCE);
             w.close();
             e.writer = null;
             LOG.info().$("closed '").utf8(name).$("' [reason=").$(PoolConstants.closeReasonText(reason)).$(", by=").$(thread).$(']').$();
@@ -336,11 +353,11 @@ public class WriterPool extends AbstractPool implements ResourcePool<TableWriter
         return count;
     }
 
-    private PooledTableWriter createWriter(CharSequence name, Entry e, long thread) {
+    private TableWriter createWriter(CharSequence name, Entry e, long thread) {
         try {
             checkClosed();
             LOG.info().$("open '").utf8(name).$("' [thread=").$(thread).$(']').$();
-            e.writer = new PooledTableWriter(this, e, name);
+            e.writer = new TableWriter(configuration, name, workScheduler, true, e);
             return logAndReturn(e, PoolListener.EV_CREATE);
         } catch (CairoException ex) {
             LOG.error().$("failed to allocate writer '").utf8(name).$("' [thread=").$(e.owner).$(']').$();
@@ -363,7 +380,7 @@ public class WriterPool extends AbstractPool implements ResourcePool<TableWriter
         return true;
     }
 
-    private PooledTableWriter logAndReturn(Entry e, short event) {
+    private TableWriter logAndReturn(Entry e, short event) {
         LOG.info().$('\'').utf8(e.writer.getName()).$("' is assigned [thread=").$(e.owner).$(']').$();
         notifyListener(e.owner, e.writer.getName(), event);
         return e.writer;
@@ -376,8 +393,6 @@ public class WriterPool extends AbstractPool implements ResourcePool<TableWriter
             LOG.info().$('\'').utf8(name).$(" is back [thread=").$(thread).$(']').$();
             if (isClosed()) {
                 LOG.info().$("allowing '").utf8(name).$("' to close [thread=").$(e.owner).$(']').$();
-                e.writer.goodby();
-                e.writer = null;
                 entries.remove(name);
                 notifyListener(thread, name, PoolListener.EV_OUT_OF_POOL_CLOSE);
                 return false;
@@ -393,10 +408,10 @@ public class WriterPool extends AbstractPool implements ResourcePool<TableWriter
         return true;
     }
 
-    private static class Entry {
+    private class Entry implements LifecycleManager {
         // owner thread id or -1 if writer is available for hire
         private long owner = Thread.currentThread().getId();
-        private PooledTableWriter writer;
+        private TableWriter writer;
         // time writer was last released
         private volatile long lastReleaseTime;
         private CairoException ex = null;
@@ -405,35 +420,18 @@ public class WriterPool extends AbstractPool implements ResourcePool<TableWriter
         public Entry(long lastReleaseTime) {
             this.lastReleaseTime = lastReleaseTime;
         }
-    }
-
-    private static class PooledTableWriter extends TableWriter {
-        private final WriterPool pool;
-        private Entry entry;
-
-        public PooledTableWriter(WriterPool pool, Entry e, CharSequence name) {
-            super(pool.configuration, name, pool.workScheduler);
-            this.pool = pool;
-            this.entry = e;
-        }
 
         @Override
-        public void close() {
-            if (entry != null && pool != null && pool.returnToPool(entry)) {
-                return;
+        public boolean close() {
+            return !WriterPool.this.returnToPool(this);
+        }
+
+        public void goodby() {
+            if (writer != null) {
+                writer.setLifecycleManager(DefaultLifecycleManager.INSTANCE);
+                writer.close();
+                writer = null;
             }
-            super.close();
-        }
-
-        @Override
-        public String toString() {
-            return "PooledTableWriter{" +
-                    "name=" + (entry.writer != null ? entry.writer.getName() : "<unassigned>") +
-                    '}';
-        }
-
-        private void goodby() {
-            this.entry = null;
         }
     }
 }

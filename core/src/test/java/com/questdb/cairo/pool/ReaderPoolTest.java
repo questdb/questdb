@@ -359,6 +359,41 @@ public class ReaderPoolTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testUnlockByAnotherThread() throws Exception {
+        assertWithPool(pool -> {
+            Assert.assertTrue(pool.lock("x"));
+            AtomicInteger errors = new AtomicInteger();
+
+            CountDownLatch latch = new CountDownLatch(1);
+            new Thread(() -> {
+                try {
+                    try {
+                        pool.unlock("x");
+                        Assert.fail();
+                    } catch (CairoException e) {
+                        TestUtils.assertContains(e.getMessage(), "Not lock owner");
+                    }
+                } catch (Throwable e) {
+                    e.printStackTrace();
+                    errors.incrementAndGet();
+                } finally {
+                    latch.countDown();
+                }
+            }).start();
+
+            Assert.assertTrue(latch.await(2, TimeUnit.SECONDS));
+            Assert.assertEquals(0, errors.get());
+
+            try {
+                pool.get("x");
+                Assert.fail();
+            } catch (EntryLockedException ignore) {
+            }
+            pool.unlock("x");
+        });
+    }
+
+    @Test
     public void testGetAndCloseRace() throws Exception {
 
         try (TableModel model = new TableModel(configuration, "xyz", PartitionBy.NONE).col("ts", ColumnType.DATE)) {

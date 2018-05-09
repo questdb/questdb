@@ -34,6 +34,7 @@ import com.questdb.std.FilesFacade;
 import com.questdb.std.Misc;
 import com.questdb.std.microtime.MicrosecondClock;
 import com.questdb.std.str.Path;
+import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 
@@ -121,17 +122,6 @@ public class Engine implements Closeable, CairoEngine {
         return false;
     }
 
-    @Override
-    public void unlock(CharSequence tableName) {
-        readerPool.unlock(tableName);
-        writerPool.unlock(tableName);
-    }
-
-    @Override
-    public TableWriter getWriter(CharSequence tableName) {
-        return writerPool.get(tableName);
-    }
-
     public void remove(CharSequence tableName) {
         if (lock(tableName)) {
             try {
@@ -143,10 +133,15 @@ public class Engine implements Closeable, CairoEngine {
                 }
                 return;
             } finally {
-                unlock(tableName);
+                unlock(tableName, null);
             }
         }
         throw CairoException.instance(configuration.getFilesFacade().errno()).put("Cannot lock ").put(tableName);
+    }
+
+    @Override
+    public TableWriter getWriter(CharSequence tableName) {
+        return writerPool.get(tableName);
     }
 
     public void rename(CharSequence tableName, String newName) {
@@ -154,12 +149,18 @@ public class Engine implements Closeable, CairoEngine {
             try {
                 rename0(tableName, newName);
             } finally {
-                unlock(tableName);
+                unlock(tableName, null);
             }
         } else {
             LOG.error().$("cannot lock and rename [from='").$(tableName).$("', to='").$(newName).$("']").$();
             throw CairoException.instance(0).put("Cannot lock [table=").put(tableName).put(']');
         }
+    }
+
+    @Override
+    public void unlock(CharSequence tableName, @Nullable TableWriter writer) {
+        readerPool.unlock(tableName);
+        writerPool.unlock(tableName, writer);
     }
 
     private void rename0(CharSequence tableName, CharSequence to) {

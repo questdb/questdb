@@ -445,10 +445,40 @@ public class WriterPoolTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testReplaceWriterAfterUnlock() throws Exception {
+
+        assertWithPool(pool -> {
+            try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE).col("ts", ColumnType.DATE)) {
+                CairoTestUtils.create(model);
+            }
+
+            Assert.assertTrue(pool.lock("x"));
+
+            TableWriter writer = new TableWriter(configuration, "x", null, false, DefaultLifecycleManager.INSTANCE);
+            for (int i = 0; i < 100; i++) {
+                TableWriter.Row row = writer.newRow(0);
+                row.putDate(0, i);
+                row.append();
+            }
+            writer.commit();
+
+            pool.unlock("x", writer);
+
+            // make sure our writer stays in pool and close() doesn't destroy it
+            Assert.assertSame(writer, pool.get("x"));
+            writer.close();
+
+            // this isn't a mistake, need to check that writer is still alive after close
+            Assert.assertSame(writer, pool.get("x"));
+            writer.close();
+        });
+    }
+
+    @Test
     public void testToStringOnWriter() throws Exception {
         assertWithPool(pool -> {
             try (TableWriter w = pool.get("z")) {
-                Assert.assertEquals("PooledTableWriter{name=z}", w.toString());
+                Assert.assertEquals("TableWriter{name=z}", w.toString());
             }
         });
     }
@@ -585,6 +615,42 @@ public class WriterPoolTest extends AbstractCairoTest {
                 Assert.assertEquals(0, errors.get());
                 Assert.assertEquals(0, pool.countFreeWriters());
             }
+        });
+    }
+
+    @Test
+    public void testUnlockInAnotherThread() throws Exception {
+        assertWithPool(pool -> {
+
+            Assert.assertTrue(pool.lock("x"));
+            AtomicInteger errors = new AtomicInteger();
+
+            CountDownLatch latch = new CountDownLatch(1);
+            new Thread(() -> {
+                try {
+                    try {
+                        pool.unlock("x");
+                        Assert.fail();
+                    } catch (CairoException e) {
+                        TestUtils.assertContains(e.getMessage(), "Not lock owner");
+                    }
+                } catch (Throwable e) {
+                    e.printStackTrace();
+                    errors.incrementAndGet();
+                } finally {
+                    latch.countDown();
+                }
+            }).start();
+
+            Assert.assertTrue(latch.await(2, TimeUnit.SECONDS));
+            Assert.assertEquals(0, errors.get());
+
+            try {
+                pool.get("x");
+                Assert.fail();
+            } catch (EntryLockedException ignore) {
+            }
+            pool.unlock("x");
         });
     }
 

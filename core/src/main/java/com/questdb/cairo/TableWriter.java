@@ -115,19 +115,21 @@ public class TableWriter implements Closeable {
     private int indexCount;
     private boolean performRecovery;
     private boolean distressed = false;
+    private LifecycleManager lifecycleManager;
 
     public TableWriter(CairoConfiguration configuration, CharSequence name) {
         this(configuration, name, null);
     }
 
     public TableWriter(CairoConfiguration configuration, CharSequence name, CairoWorkScheduler workScheduler) {
-        this(configuration, name, workScheduler, true);
+        this(configuration, name, workScheduler, true, DefaultLifecycleManager.INSTANCE);
     }
 
-    public TableWriter(CairoConfiguration configuration, CharSequence name, CairoWorkScheduler workScheduler, boolean lock) {
+    public TableWriter(CairoConfiguration configuration, CharSequence name, CairoWorkScheduler workScheduler, boolean lock, LifecycleManager lifecycleManager) {
         LOG.info().$("open '").utf8(name).$('\'').$();
         this.configuration = configuration;
         this.workScheduler = workScheduler;
+        this.lifecycleManager = lifecycleManager;
         this.parallelIndexerEnabled = workScheduler != null && configuration.isParallelIndexingEnabled();
         this.ff = configuration.getFilesFacade();
         this.mkDirMode = configuration.getMkDirMode();
@@ -307,7 +309,7 @@ public class TableWriter implements Closeable {
 
     @Override
     public void close() {
-        if (isOpen()) {
+        if (isOpen() && lifecycleManager.close()) {
             doClose(true);
         }
     }
@@ -479,6 +481,10 @@ public class TableWriter implements Closeable {
         }
     }
 
+    public void setLifecycleManager(LifecycleManager lifecycleManager) {
+        this.lifecycleManager = lifecycleManager;
+    }
+
     public long size() {
         return fixedRowCount + transientRowCount;
     }
@@ -488,6 +494,11 @@ public class TableWriter implements Closeable {
         return "TableWriter{" +
                 "name=" + name +
                 '}';
+    }
+
+    public void transferLock(long lockFd) {
+        assert lockFd != -1;
+        this.lockFd = lockFd;
     }
 
     /**
