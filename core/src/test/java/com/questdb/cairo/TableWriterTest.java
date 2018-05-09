@@ -2778,8 +2778,8 @@ public class TableWriterTest extends AbstractCairoTest {
                             // if we destined to fail, prepare to retry commit
                             try {
                                 // do not fail on first partition, fail on last
-                                ff.count = writer.txPartitionCount - 1;
-                                valid = valid || writer.txPartitionCount > 1;
+                                ff.count = writer.getTxPartitionCount() - 1;
+                                valid = valid || writer.getTxPartitionCount() > 1;
                                 writer.commit();
                                 // sometimes commit may pass because transaction does not span multiple partition
                                 // out transaction size is random after all

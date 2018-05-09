@@ -132,15 +132,8 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
     }
 
     public Path concat(CharSequence str, int from, int to) {
-//        if (len + this.len + OVERHEAD >= capacity) {
-//            extend(len + this.len + OVERHEAD);
-//        }
-
         ensureSeparator();
         copy(str, from, to);
-
-//        this.wptr += len;
-//        this.len += len;
         return this;
     }
 

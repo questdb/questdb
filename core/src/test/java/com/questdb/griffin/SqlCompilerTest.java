@@ -40,6 +40,10 @@ import org.junit.Before;
 import org.junit.Test;
 
 import java.io.IOException;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 public class SqlCompilerTest extends AbstractCairoTest {
     private final static Engine engine = new Engine(configuration);
@@ -153,7 +157,7 @@ public class SqlCompilerTest extends AbstractCairoTest {
             Assert.fail();
         } catch (SqlException e) {
             Assert.assertEquals(13, e.getPosition());
-            TestUtils.assertContains(e.getMessage(), "table already exists");
+            TestUtils.assertContains(e.getMessage(), "Cannot create table");
         }
     }
 
@@ -2185,6 +2189,63 @@ public class SqlCompilerTest extends AbstractCairoTest {
         // there is no explicit assert here because when SQL contains semantic error
         // timestamp refers to INT column, which is picked up by both optimiser and compiler
         compiler.execute("select * from random_cursor(20, 'x', rnd_int()) timestamp(x)", bindVariableService);
+    }
+
+    @Test
+    public void testRaceToCreateEmptyTable() throws InterruptedException {
+        SqlCompiler compiler2 = new SqlCompiler(engine, configuration);
+        AtomicInteger index = new AtomicInteger();
+        AtomicInteger success = new AtomicInteger();
+
+        for (int i = 0; i < 50; i++) {
+            CyclicBarrier barrier = new CyclicBarrier(2);
+            CountDownLatch haltLatch = new CountDownLatch(2);
+
+            index.set(-1);
+            success.set(0);
+
+            new Thread(() -> {
+                try {
+                    barrier.await();
+                    compiler.execute("create table x (a INT, b FLOAT)", bindVariableService);
+                    index.set(0);
+                    success.incrementAndGet();
+                } catch (Exception ignore) {
+//                    e.printStackTrace();
+                } finally {
+                    haltLatch.countDown();
+                }
+            }).start();
+
+            new Thread(() -> {
+                try {
+                    barrier.await();
+                    compiler2.execute("create table x (a STRING, b DOUBLE)", bindVariableService);
+                    index.set(1);
+                    success.incrementAndGet();
+                } catch (Exception ignore) {
+//                    e.printStackTrace();
+                } finally {
+                    haltLatch.countDown();
+                }
+            }).start();
+
+            Assert.assertTrue(haltLatch.await(5, TimeUnit.SECONDS));
+
+            Assert.assertEquals(1, success.get());
+            Assert.assertNotEquals(-1, index.get());
+
+            try (TableReader reader = engine.getReader("x")) {
+                sink.clear();
+                reader.getMetadata().toJson(sink);
+                if (index.get() == 0) {
+                    TestUtils.assertEquals("{\"columnCount\":2,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\"INT\"},{\"index\":1,\"name\":\"b\",\"type\":\"FLOAT\"}],\"timestampIndex\":-1}", sink);
+                } else {
+                    TestUtils.assertEquals("{\"columnCount\":2,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\"STRING\"},{\"index\":1,\"name\":\"b\",\"type\":\"DOUBLE\"}],\"timestampIndex\":-1}", sink);
+                }
+            }
+            engine.remove("x");
+        }
     }
 
     @Test

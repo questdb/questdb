@@ -88,7 +88,7 @@ public class TableWriter implements Closeable {
     private final LongList indexSequences = new LongList();
     private final CairoWorkScheduler workScheduler;
     private final boolean parallelIndexerEnabled;
-    int txPartitionCount = 0;
+    private int txPartitionCount = 0;
     private long lockFd;
     private LongConsumer timestampSetter;
     private int columnCount;
@@ -121,6 +121,10 @@ public class TableWriter implements Closeable {
     }
 
     public TableWriter(CairoConfiguration configuration, CharSequence name, CairoWorkScheduler workScheduler) {
+        this(configuration, name, workScheduler, true);
+    }
+
+    public TableWriter(CairoConfiguration configuration, CharSequence name, CairoWorkScheduler workScheduler, boolean lock) {
         LOG.info().$("open '").utf8(name).$('\'').$();
         this.configuration = configuration;
         this.workScheduler = workScheduler;
@@ -133,18 +137,11 @@ public class TableWriter implements Closeable {
         this.name = Chars.stringOf(name);
         this.rootLen = path.length();
         try {
-            try {
-                TableUtils.lockName(path);
-                performRecovery = ff.exists(path);
-                this.lockFd = TableUtils.lock(ff, path);
-            } finally {
-                path.trimTo(rootLen);
+            if (lock) {
+                lock();
+            } else {
+                this.lockFd = -1L;
             }
-
-            if (this.lockFd == -1L) {
-                throw CairoException.instance(ff.errno()).put("Cannot lock table: ").put(path.$());
-            }
-
             this.txMem = openTxnFile();
             long todo = readTodoTaskCode();
             if (todo != -1L && (int) (todo & 0xff) == TableUtils.TODO_RESTORE_META) {
@@ -1076,8 +1073,27 @@ public class TableWriter implements Closeable {
         }
     }
 
+    int getTxPartitionCount() {
+        return txPartitionCount;
+    }
+
     boolean isSymbolMapWriterCached(int columnIndex) {
         return symbolMapWriters.getQuick(columnIndex).isCached();
+    }
+
+    private void lock() {
+        try {
+            path.trimTo(rootLen);
+            TableUtils.lockName(path);
+            performRecovery = ff.exists(path);
+            this.lockFd = TableUtils.lock(ff, path);
+        } finally {
+            path.trimTo(rootLen);
+        }
+
+        if (this.lockFd == -1L) {
+            throw CairoException.instance(ff.errno()).put("Cannot lock table: ").put(path.$());
+        }
     }
 
     private long openAppend(LPSZ name) {
