@@ -103,6 +103,7 @@ public class RecordChain implements Closeable, RecordCursor, Mutable {
         varAppendOffset = 0L;
     }
 
+    //todo: not hit
     @Override
     public RecordMetadata getMetadata() {
         return metadata;
@@ -246,7 +247,6 @@ public class RecordChain implements Closeable, RecordCursor, Mutable {
                     putLong(record.getDate(i));
                     break;
                 case ColumnType.TIMESTAMP:
-                    //todo: not hit
                     putLong(record.getTimestamp(i));
                     break;
                 case ColumnType.SHORT:

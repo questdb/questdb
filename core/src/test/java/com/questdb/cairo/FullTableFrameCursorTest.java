@@ -850,6 +850,7 @@ public class FullTableFrameCursorTest extends AbstractCairoTest {
         long count = 0;
         while (cursor.hasNext()) {
             DataFrame frame = cursor.next();
+            Assert.assertSame(cursor.getTableReader(), frame.getTableReader());
             record.jumpTo(frame.getPartitionIndex(), frame.getRowLo());
             final long limit = frame.getRowHi();
 

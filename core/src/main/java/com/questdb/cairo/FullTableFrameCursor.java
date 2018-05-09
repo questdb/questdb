@@ -120,7 +120,6 @@ public class FullTableFrameCursor implements DataFrameCursor {
             return rowLo;
         }
 
-        //todo: not hit
         @Override
         public TableReader getTableReader() {
             return reader;

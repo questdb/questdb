@@ -52,6 +52,11 @@ class ColumnIndexerJob implements Job {
         final long indexSequence = queueItem.sequence;
         final SOCountDownLatch latch = queueItem.countDownLatch;
         sequence.done(cursor);
+
+        // On the face of it main thread could have consumed same sequence as
+        // child workers. The reason it is undesirable is because all writers
+        // share the same queue and main thread end up indexing content for other writers.
+        // Using CAS allows main thread to steal only parts of its own job.
         if (indexer.tryLock(indexSequence)) {
             TableWriter.indexAndCountDown(indexer, lo, hi, latch);
             return true;

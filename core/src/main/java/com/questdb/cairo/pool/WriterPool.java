@@ -429,7 +429,6 @@ public class WriterPool extends AbstractPool implements ResourcePool<TableWriter
         public void goodby() {
             if (writer != null) {
                 writer.setLifecycleManager(DefaultLifecycleManager.INSTANCE);
-                writer.close();
                 writer = null;
             }
         }

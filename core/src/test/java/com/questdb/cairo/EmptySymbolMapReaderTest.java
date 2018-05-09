@@ -38,5 +38,8 @@ public class EmptySymbolMapReaderTest {
         }
         Assert.assertEquals(0, reader.size());
         Assert.assertEquals(SymbolTable.VALUE_NOT_FOUND, reader.getQuick("abc"));
+
+        Assert.assertEquals(0, reader.getSymbolCapacity());
+        Assert.assertFalse(reader.isCached());
     }
 }

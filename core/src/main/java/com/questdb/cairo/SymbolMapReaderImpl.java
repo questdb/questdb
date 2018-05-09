@@ -154,7 +154,6 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
         }
     }
 
-    //todo: not hit
     @Override
     public int getSymbolCapacity() {
         return symbolCapacity;

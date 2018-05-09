@@ -45,10 +45,14 @@ public class GenericRecordMetadata extends BaseRecordMetadata {
         }
     }
 
-    // todo: not hit
     public void clear() {
         columnMetadata.clear();
         columnNameIndexMap.clear();
         columnCount = 0;
+        timestampIndex = -1;
+    }
+
+    void setTimestampIndex(int index) {
+        this.timestampIndex = index;
     }
 }

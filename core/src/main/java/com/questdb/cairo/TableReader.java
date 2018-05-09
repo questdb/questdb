@@ -189,7 +189,7 @@ public class TableReader implements Closeable {
 
         if (metadata.getColumnType(columnIndex) == ColumnType.SYMBOL) {
             // same goes for symbol map reader - replace object with maker instance
-            Misc.free(symbolMapReaders.getAndSetQuick(columnIndex, ForceEmptySymbolMapReader.INSTANCE));
+            Misc.free(symbolMapReaders.getAndSetQuick(columnIndex, EmptySymbolMapReader.INSTANCE));
         }
     }
 
@@ -1091,10 +1091,6 @@ public class TableReader implements Closeable {
     @FunctionalInterface
     private interface PartitionPathGenerator {
         Path generate(TableReader reader, int partitionIndex);
-    }
-
-    private static class ForceEmptySymbolMapReader extends EmptySymbolMapReader {
-        private static final ForceEmptySymbolMapReader INSTANCE = new ForceEmptySymbolMapReader();
     }
 
     private static class ForceNullColumn extends NullColumn {

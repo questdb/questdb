@@ -145,6 +145,7 @@ public class RecordChainTest extends AbstractCairoTest {
                         System.out.println("RecordChain append time: " + (System.nanoTime() - t));
                         assertChain(chain, new TestRecord(), N * 2);
                         assertChain(chain, new TestRecord(), N * 2);
+                        Assert.assertSame(metadata, chain.getMetadata());
                     }
                 }
         );
@@ -286,5 +287,6 @@ public class RecordChainTest extends AbstractCairoTest {
         metadata.add(new TableColumnMetadata("str2", ColumnType.STRING));
         metadata.add(new TableColumnMetadata("sym", ColumnType.SYMBOL));
         metadata.add(new TableColumnMetadata("bin", ColumnType.BINARY));
+        metadata.add(new TableColumnMetadata("ts", ColumnType.TIMESTAMP));
     }
 }

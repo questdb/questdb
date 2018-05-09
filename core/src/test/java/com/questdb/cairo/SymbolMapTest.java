@@ -170,6 +170,7 @@ public class SymbolMapTest extends AbstractCairoTest {
             try (Path path = new Path().of(configuration.getRoot())) {
                 create(path, "x", N, true);
                 try (SymbolMapReaderImpl reader = new SymbolMapReaderImpl(configuration, path, "x", 0)) {
+                    Assert.assertEquals(N, reader.getSymbolCapacity());
                     Assert.assertNull(reader.value(-1));
                     Assert.assertEquals(SymbolTable.VALUE_IS_NULL, reader.getQuick(null));
                 }
