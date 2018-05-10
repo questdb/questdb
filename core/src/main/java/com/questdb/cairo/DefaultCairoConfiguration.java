@@ -111,7 +111,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public int getReaderPoolSegments() {
-        return 2;
+        return 5;
     }
 
     @Override

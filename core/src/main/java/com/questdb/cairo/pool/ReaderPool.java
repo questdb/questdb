@@ -186,23 +186,12 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
                     }
                 }
 
-                if (e.next == null) {
-                    // prevent new entries from being created
-                    if (Unsafe.getUnsafe().compareAndSwapInt(e, NEXT_STATUS, NEXT_OPEN, NEXT_LOCKED)) {
-                        break;
-                    } else {
-                        // right, failed to lock next entry
-                        // are we failing to read what next entry is?
-                        if (e.next == null && e.lockOwner != thread) {
-                            // lost the race
-                            LOG.info().$("'").$(name).$("' is busy [at=").$(e.index + 1).$(':').$(0).$(", owner=unknown").$(", thread=").$(thread).$(']').$();
-                            e.lockOwner = -1L;
-                            return false;
-                        }
-                    }
+                // prevent new entries from being created
+                if (e.next == null && Unsafe.getUnsafe().compareAndSwapInt(e, NEXT_STATUS, NEXT_OPEN, NEXT_LOCKED)) {
+                    break;
                 }
-                e = e.next;
 
+                e = e.next;
             } while (e != null);
         } else {
             LOG.error().$('\'').$(name).$("' already locked [owner=").$(e.lockOwner).$(']').$();
@@ -260,7 +249,8 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
 
             do {
                 for (int i = 0; i < ENTRY_SIZE; i++) {
-                    if (deadline > Unsafe.arrayGetVolatile(e.releaseTimes, i) && Unsafe.arrayGet(e.readers, i) != null) {
+                    R r;
+                    if (deadline > Unsafe.arrayGetVolatile(e.releaseTimes, i) && (r = Unsafe.arrayGet(e.readers, i)) != null) {
                         if (Unsafe.cas(e.allocations, i, UNALLOCATED, thread)) {
                             // check if deadline violation still holds
                             if (deadline > Unsafe.arrayGet(e.releaseTimes, i)) {
@@ -270,11 +260,8 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
                             Unsafe.arrayPutOrdered(e.allocations, i, UNALLOCATED);
                         } else {
                             casFailures++;
-                        }
-                    } else {
-                        if (deadline == Long.MAX_VALUE) {
-                            R r = Unsafe.arrayGet(e.readers, i);
-                            if (r != null) {
+
+                            if (deadline == Long.MAX_VALUE) {
                                 r.goodby();
                                 LOG.info().$("shutting down. '").$(r.getTableName()).$("' is left behind").$();
                             }
@@ -320,15 +307,6 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
         int index = reader.index;
 
         if (Unsafe.arrayGetVolatile(reader.entry.allocations, index) != UNALLOCATED) {
-
-            if (isClosed()) {
-                // keep locked and close
-                Unsafe.arrayPutOrdered(reader.entry.readers, index, null);
-                notifyListener(thread, name, PoolListener.EV_OUT_OF_POOL_CLOSE, reader.entry.index, index);
-                LOG.info().$("allowing '").$(name).$("' to close [thread=").$(thread).$(']').$();
-                reader.goodby();
-                return false;
-            }
 
             LOG.debug().$('\'').$(name).$("' is back [at=").$(reader.entry.index).$(':').$(index).$(", thread=").$(thread).$(']').$();
             notifyListener(thread, name, PoolListener.EV_RETURN, reader.entry.index, index);
