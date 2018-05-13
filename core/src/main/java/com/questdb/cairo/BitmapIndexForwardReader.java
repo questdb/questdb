@@ -33,8 +33,8 @@ import com.questdb.std.str.Path;
 
 import java.util.concurrent.locks.LockSupport;
 
-public class BitmapIndexBackwardReader implements BitmapIndexReader {
-    private final static Log LOG = LogFactory.getLog(BitmapIndexBackwardReader.class);
+public class BitmapIndexForwardReader implements BitmapIndexReader {
+    private final static Log LOG = LogFactory.getLog(BitmapIndexForwardReader.class);
     private final ReadOnlyMemory keyMem = new ReadOnlyMemory();
     private final ReadOnlyMemory valueMem = new ReadOnlyMemory();
     private final Cursor cursor = new Cursor();
@@ -46,10 +46,10 @@ public class BitmapIndexBackwardReader implements BitmapIndexReader {
     private int keyCount;
     private long unIndexedNullCount;
 
-    public BitmapIndexBackwardReader() {
+    public BitmapIndexForwardReader() {
     }
 
-    public BitmapIndexBackwardReader(CairoConfiguration configuration, Path path, CharSequence name, long unIndexedNullCount) {
+    public BitmapIndexForwardReader(CairoConfiguration configuration, Path path, CharSequence name, long unIndexedNullCount) {
         of(configuration, path, name, unIndexedNullCount);
     }
 
@@ -63,7 +63,7 @@ public class BitmapIndexBackwardReader implements BitmapIndexReader {
     }
 
     @Override
-    public RowCursor getCursor(int key, long maxValue) {
+    public RowCursor getCursor(int key, long minValue) {
 
         if (key >= keyCount) {
             updateKeyCount();
@@ -71,12 +71,12 @@ public class BitmapIndexBackwardReader implements BitmapIndexReader {
 
         if (key == 0 && unIndexedNullCount > 0) {
             nullCursor.nullCount = unIndexedNullCount;
-            nullCursor.of(key, maxValue);
+            nullCursor.of(key, minValue);
             return nullCursor;
         }
 
         if (key < keyCount) {
-            cursor.of(key, maxValue);
+            cursor.of(key, minValue);
             return cursor;
         }
 
@@ -188,28 +188,29 @@ public class BitmapIndexBackwardReader implements BitmapIndexReader {
     }
 
     private class Cursor implements RowCursor {
+        protected long position;
         protected long valueCount;
         private long valueBlockOffset;
         private final BitmapIndexUtils.ValueBlockSeeker SEEKER = this::seekValue;
 
         @Override
         public boolean hasNext() {
-            return valueCount > 0;
+            return position < valueCount;
         }
 
         @Override
         public long next() {
-            long cellIndex = getValueCellIndex(--valueCount);
+            long cellIndex = getValueCellIndex(position++);
             long result = valueMem.getLong(valueBlockOffset + cellIndex * 8);
-            if (cellIndex == 0 && valueCount > 0) {
+            if (cellIndex == blockValueCountMod && position < valueCount) {
                 // we are at edge of block right now, next value will be in previous block
                 jumpToPreviousValueBlock();
             }
             return result;
         }
 
-        private long getPreviousBlock(long currentValueBlockOffset) {
-            return valueMem.getLong(currentValueBlockOffset + blockCapacity - BitmapIndexUtils.VALUE_BLOCK_FILE_RESERVED);
+        private long getNextBlock(long currentValueBlockOffset) {
+            return valueMem.getLong(currentValueBlockOffset + blockCapacity - BitmapIndexUtils.VALUE_BLOCK_FILE_RESERVED + 8);
         }
 
         private long getValueCellIndex(long absoluteValueIndex) {
@@ -219,10 +220,10 @@ public class BitmapIndexBackwardReader implements BitmapIndexReader {
         private void jumpToPreviousValueBlock() {
             // we don't need to grow valueMem because we going from farthest block back to start of file
             // to closes, e.g. valueBlockOffset is decreasing.
-            valueBlockOffset = getPreviousBlock(valueBlockOffset);
+            valueBlockOffset = getNextBlock(valueBlockOffset);
         }
 
-        void of(int key, long maxValue) {
+        void of(int key, long minValue) {
             assert key > -1 : "key must be positive integer: " + key;
             long offset = BitmapIndexUtils.getKeyEntryOffset(key);
             keyMem.grow(offset + BitmapIndexUtils.KEY_ENTRY_SIZE);
@@ -231,13 +232,15 @@ public class BitmapIndexBackwardReader implements BitmapIndexReader {
             // should these values do not match.
             long valueCount;
             long valueBlockOffset;
+            long lastValueBlockOffset;
             final long deadline = clock.getTicks() + spinLockTimeoutUs;
             while (true) {
                 valueCount = keyMem.getLong(offset + BitmapIndexUtils.KEY_ENTRY_OFFSET_VALUE_COUNT);
 
                 Unsafe.getUnsafe().loadFence();
                 if (keyMem.getLong(offset + BitmapIndexUtils.KEY_ENTRY_OFFSET_COUNT_CHECK) == valueCount) {
-                    valueBlockOffset = keyMem.getLong(offset + BitmapIndexUtils.KEY_ENTRY_OFFSET_LAST_VALUE_BLOCK_OFFSET);
+                    valueBlockOffset = keyMem.getLong(offset + BitmapIndexUtils.KEY_ENTRY_OFFSET_FIRST_VALUE_BLOCK_OFFSET);
+                    lastValueBlockOffset = keyMem.getLong(offset + BitmapIndexUtils.KEY_ENTRY_OFFSET_LAST_VALUE_BLOCK_OFFSET);
 
                     Unsafe.getUnsafe().loadFence();
                     if (keyMem.getLong(offset + BitmapIndexUtils.KEY_ENTRY_OFFSET_VALUE_COUNT) == valueCount) {
@@ -251,17 +254,17 @@ public class BitmapIndexBackwardReader implements BitmapIndexReader {
                 }
             }
 
-            valueMem.grow(valueBlockOffset + blockCapacity);
-
+            valueMem.grow(lastValueBlockOffset + blockCapacity);
+            this.valueCount = valueCount;
             if (valueCount > 0) {
-                BitmapIndexUtils.seekValueBlockRTL(valueCount, valueBlockOffset, valueMem, maxValue, blockValueCountMod, SEEKER);
+                BitmapIndexUtils.seekValueBlockLTR(valueCount, valueBlockOffset, valueMem, minValue, blockValueCountMod, SEEKER);
             } else {
                 seekValue(valueCount, valueBlockOffset);
             }
         }
 
         private void seekValue(long count, long offset) {
-            this.valueCount = count;
+            this.position = count;
             this.valueBlockOffset = offset;
         }
     }
@@ -271,15 +274,15 @@ public class BitmapIndexBackwardReader implements BitmapIndexReader {
 
         @Override
         public boolean hasNext() {
-            return nullCount > 0;
+            return position < valueCount;
         }
 
         @Override
         public long next() {
-            if (valueCount > 0) {
-                return super.next();
-            } else {
+            if (nullCount > 0) {
                 return --nullCount;
+            } else {
+                return super.next();
             }
         }
     }

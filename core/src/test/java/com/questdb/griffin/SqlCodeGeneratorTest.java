@@ -30,7 +30,9 @@ import com.questdb.cairo.sql.RecordCursorFactory;
 import com.questdb.common.ColumnType;
 import com.questdb.common.PartitionBy;
 import com.questdb.griffin.engine.functions.bind.BindVariableService;
+import com.questdb.griffin.engine.functions.rnd.SharedRandom;
 import com.questdb.std.Rnd;
+import org.junit.Before;
 import org.junit.Test;
 
 import java.io.IOException;
@@ -38,43 +40,22 @@ import java.io.IOException;
 public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     private static final BindVariableService bindVariableService = new BindVariableService();
+    private static final CairoEngine engine = new Engine(configuration);
+    private static final SqlCompiler compiler = new SqlCompiler(engine, configuration);
+
+    @Before
+    public void setUp2() {
+        SharedRandom.RANDOM.set(new Rnd());
+    }
 
     @Test
     public void testFilterSingleKeyValue() throws SqlException, IOException {
-        CairoEngine engine = new Engine(configuration);
-        SqlCompiler parser = new SqlCompiler(engine, configuration);
-
-        try (TableModel model = new TableModel(configuration, "tab", PartitionBy.NONE)) {
-            model.col("sym", ColumnType.SYMBOL).indexed(true, 256);
-            model.col("value", ColumnType.DOUBLE);
-            CairoTestUtils.create(model);
-        }
-
-        final int N = 20;
-        final String[] symbols = {"ABC", "CDE", "EFG"};
-        final Rnd rnd = new Rnd();
-
-        try (TableWriter writer = engine.getWriter("tab")) {
-            for (int i = 0; i < N; i++) {
-                TableWriter.Row row = writer.newRow(0);
-                row.putSym(0, symbols[rnd.nextPositiveInt() % symbols.length]);
-                row.putDouble(1, rnd.nextDouble2());
-                row.append();
-            }
-            writer.commit();
-        }
-
-        try (TableReader reader = engine.getReader("tab")) {
-            sink.clear();
-            printer.print(reader.getCursor(), true);
-        }
+        compiler.execute("create table x as (select * from random_cursor(20, 'a', rnd_double(0)*100, 'b', rnd_symbol(5,4,4,0))), index(b)", bindVariableService);
+        printSqlResult("select * from x");
         System.out.println(sink);
-        System.out.println("----------------------");
 
-
-        RecordCursorFactory rcf = parser.compile("select * from tab where sym = 'ABC'", bindVariableService);
-        sink.clear();
-        printer.print(rcf.getCursor(), true);
+        System.out.println("--------------");
+        printSqlResult("select * from x where b = 'HYRX'");
         System.out.println(sink);
     }
 
@@ -116,5 +97,12 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
         sink.clear();
         printer.print(cursor, true);
         System.out.println(sink);
+    }
+
+    private void printSqlResult(CharSequence query) throws IOException, SqlException {
+        sink.clear();
+        try (RecordCursor cursor = compiler.compile(query, bindVariableService).getCursor()) {
+            printer.print(cursor, true);
+        }
     }
 }

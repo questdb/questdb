@@ -213,7 +213,7 @@ public class BitmapIndexWriter implements Closeable {
             // do we have anything for the key?
             if (valueCount > 0) {
                 long blockOffset = keyMem.getLong(offset + BitmapIndexUtils.KEY_ENTRY_OFFSET_LAST_VALUE_BLOCK_OFFSET);
-                BitmapIndexUtils.seekValueBlock(valueCount, blockOffset, valueMem, maxValue, blockValueCountMod, SEEKER);
+                BitmapIndexUtils.seekValueBlockRTL(valueCount, blockOffset, valueMem, maxValue, blockValueCountMod, SEEKER);
 
                 if (valueCount != seekValueCount || blockOffset != seekValueBlockOffset) {
                     // set new value count

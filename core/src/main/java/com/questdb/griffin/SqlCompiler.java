@@ -140,12 +140,12 @@ public class SqlCompiler {
 
     // Creates data type converter.
     // INT and LONG NaN values are cast to their representation rather than Double or Float NaN.
-    private static CopyHelper compile(BytecodeAssembler asm, RecordMetadata from, RecordMetadata to) {
+    private static RecordToRowCopier assembleRecordToRowCopier(BytecodeAssembler asm, RecordMetadata from, RecordMetadata to) {
         int tsIndex = to.getTimestampIndex();
-        asm.init(CopyHelper.class);
+        asm.init(RecordToRowCopier.class);
         asm.setupPool();
         int thisClassIndex = asm.poolClass(asm.poolUtf8("questdbasm"));
-        int interfaceClassIndex = asm.poolClass(CopyHelper.class);
+        int interfaceClassIndex = asm.poolClass(RecordToRowCopier.class);
 
         int rGetInt = asm.poolInterfaceMethod(Record.class, "getInt", "(I)I");
         int rGetLong = asm.poolInterfaceMethod(Record.class, "getLong", "(I)J");
@@ -579,21 +579,21 @@ public class SqlCompiler {
         TableWriter writer = new TableWriter(configuration, model.getName().token, workScheduler, false, DefaultLifecycleManager.INSTANCE);
         try {
             RecordMetadata writerMetadata = writer.getMetadata();
-            CopyHelper copyHelper = compile(asm, cursor.getMetadata(), writerMetadata);
+            RecordToRowCopier recordToRowCopier = assembleRecordToRowCopier(asm, cursor.getMetadata(), writerMetadata);
 
             int timestampIndex = writerMetadata.getTimestampIndex();
             if (timestampIndex == -1) {
                 while (cursor.hasNext()) {
                     Record record = cursor.next();
                     TableWriter.Row row = writer.newRow(0);
-                    copyHelper.copy(record, row);
+                    recordToRowCopier.copy(record, row);
                     row.append();
                 }
             } else {
                 while (cursor.hasNext()) {
                     Record record = cursor.next();
                     TableWriter.Row row = writer.newRow(record.getTimestamp(timestampIndex));
-                    copyHelper.copy(record, row);
+                    recordToRowCopier.copy(record, row);
                     row.append();
                 }
             }
@@ -903,7 +903,7 @@ public class SqlCompiler {
         }
     }
 
-    public interface CopyHelper {
+    public interface RecordToRowCopier {
         void copy(Record record, TableWriter.Row row);
     }
 
