@@ -101,8 +101,8 @@ public class FullTableFrameCursor implements DataFrameCursor {
         private int partitionIndex;
 
         @Override
-        public BitmapIndexReader getBitmapIndexReader(int columnIndex) {
-            return reader.getBitmapIndexReader(reader.getColumnBase(partitionIndex), columnIndex);
+        public BitmapIndexReader getBitmapIndexReader(int columnIndex, int direction) {
+            return reader.getBitmapIndexReader(reader.getColumnBase(partitionIndex), columnIndex, direction);
         }
 
         @Override

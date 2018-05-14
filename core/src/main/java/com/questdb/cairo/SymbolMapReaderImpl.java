@@ -68,7 +68,7 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
         }
 
         int hash = Hash.boundedHash(symbol, maxHash);
-        RowCursor cursor = indexReader.getCursor(hash, maxOffset);
+        RowCursor cursor = indexReader.getCursor(hash, 0, maxOffset);
         while (cursor.hasNext()) {
             long offsetOffset = cursor.next();
             if (Chars.equals(symbol, charMem.getStr(offsetMem.getLong(offsetOffset)))) {

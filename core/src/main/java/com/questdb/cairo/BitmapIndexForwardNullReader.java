@@ -24,37 +24,40 @@
 package com.questdb.cairo;
 
 import com.questdb.common.RowCursor;
-import com.questdb.std.Rnd;
-import org.junit.Assert;
-import org.junit.Test;
 
-public class BitmapIndexNullReaderTest {
+public class BitmapIndexForwardNullReader implements BitmapIndexReader {
 
-    private static final BitmapIndexNullReader reader = new BitmapIndexNullReader();
+    private final NullCursor cursor = new NullCursor();
 
-    @Test
-    public void testAlwaysOpen() {
-        Assert.assertTrue(reader.isOpen());
+    @Override
+    public RowCursor getCursor(int key, long minValue, long maxValue) {
+        cursor.max = maxValue + 1;
+        cursor.value = 0;
+        return cursor;
     }
 
-    @Test
-    public void testCursor() {
-        final Rnd rnd = new Rnd();
-        for (int i = 0; i < 10; i++) {
-            int n = rnd.nextPositiveInt() % 1024;
-            int m = n;
-            RowCursor cursor = reader.getCursor(0, n);
-            while (cursor.hasNext()) {
-                Assert.assertEquals(m--, cursor.next());
-            }
+    @Override
+    public int getKeyCount() {
+        return 1;
+    }
 
-            Assert.assertEquals(-1, m);
+    @Override
+    public boolean isOpen() {
+        return true;
+    }
+
+    private class NullCursor implements RowCursor {
+        private long max;
+        private long value;
+
+        @Override
+        public boolean hasNext() {
+            return value < max;
         }
-    }
 
-    @Test
-    public void testKeyCount() {
-        // has to be always 1
-        Assert.assertEquals(1, reader.getKeyCount());
+        @Override
+        public long next() {
+            return value++;
+        }
     }
 }

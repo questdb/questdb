@@ -28,22 +28,25 @@ import com.questdb.common.RowCursor;
 import java.io.Closeable;
 
 public interface BitmapIndexReader extends Closeable {
+
+    int DIR_FORWARD = 1;
+    int DIR_BACKWARD = 2;
+
     @Override
     default void close() {
     }
 
     /**
-     * Creates cursor for index values for the given key. Cursor should be treated as mutable
-     * instance. Typical BitmapIndexReader implementation will return same object instance
-     * configured for the required parameters.
-     * <p>
-     * Returned values are capped to given maximum inclusive.
+     * Setup value cursor. Values in this cursor will be bounded by provided
+     * minimum and maximum, both of which are inclusive. Order of values is
+     * determined by specific implementations of this method.
      *
      * @param key      index key
+     * @param minValue inclusive minimum value
      * @param maxValue inclusive maximum value
      * @return index value cursor
      */
-    RowCursor getCursor(int key, long maxValue);
+    RowCursor getCursor(int key, long minValue, long maxValue);
 
     int getKeyCount();
 

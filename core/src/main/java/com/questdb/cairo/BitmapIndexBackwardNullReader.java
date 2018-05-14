@@ -21,30 +21,41 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.engine.table;
+package com.questdb.cairo;
 
-import com.questdb.cairo.BitmapIndexReader;
-import com.questdb.cairo.TableReader;
-import com.questdb.cairo.sql.CairoEngine;
-import com.questdb.cairo.sql.DataFrame;
-import com.questdb.cairo.sql.RowCursorFactory;
 import com.questdb.common.RowCursor;
 
-public class SymbolIndexRowCursorFactory implements RowCursorFactory {
-    private final int columnIndex;
-    private final int symbolKey;
+public class BitmapIndexBackwardNullReader implements BitmapIndexReader {
 
-    public SymbolIndexRowCursorFactory(CairoEngine engine, CharSequence tableName, CharSequence columnName, CharSequence value) {
-        try (TableReader reader = engine.getReader(tableName)) {
-            this.columnIndex = reader.getMetadata().getColumnIndex(columnName);
-            this.symbolKey = reader.getSymbolMapReader(this.columnIndex).getQuick(value) + 1;
-        }
+    private final NullCursor cursor = new NullCursor();
+
+    @Override
+    public RowCursor getCursor(int key, long minValue, long maxValue) {
+        cursor.value = maxValue;
+        return cursor;
     }
 
     @Override
-    public RowCursor getCursor(DataFrame dataFrame) {
-        return dataFrame
-                .getBitmapIndexReader(columnIndex, BitmapIndexReader.DIR_FORWARD)
-                .getCursor(symbolKey, dataFrame.getRowLo(), dataFrame.getRowHi() - 1);
+    public int getKeyCount() {
+        return 1;
+    }
+
+    @Override
+    public boolean isOpen() {
+        return true;
+    }
+
+    private class NullCursor implements RowCursor {
+        private long value;
+
+        @Override
+        public boolean hasNext() {
+            return value > -1;
+        }
+
+        @Override
+        public long next() {
+            return value--;
+        }
     }
 }

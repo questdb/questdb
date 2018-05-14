@@ -46,9 +46,6 @@ public class BitmapIndexForwardReader implements BitmapIndexReader {
     private int keyCount;
     private long unIndexedNullCount;
 
-    public BitmapIndexForwardReader() {
-    }
-
     public BitmapIndexForwardReader(CairoConfiguration configuration, Path path, CharSequence name, long unIndexedNullCount) {
         of(configuration, path, name, unIndexedNullCount);
     }
@@ -63,20 +60,22 @@ public class BitmapIndexForwardReader implements BitmapIndexReader {
     }
 
     @Override
-    public RowCursor getCursor(int key, long minValue) {
+    public RowCursor getCursor(int key, long minValue, long maxValue) {
 
         if (key >= keyCount) {
             updateKeyCount();
         }
 
-        if (key == 0 && unIndexedNullCount > 0) {
+        if (key == 0 && minValue < unIndexedNullCount) {
+            // we need to return some nulls and the whole set of actual index values
+            nullCursor.nullPos = minValue;
             nullCursor.nullCount = unIndexedNullCount;
-            nullCursor.of(key, minValue);
+            nullCursor.of(key, 0, maxValue);
             return nullCursor;
         }
 
         if (key < keyCount) {
-            cursor.of(key, minValue);
+            cursor.of(key, minValue, maxValue);
             return cursor;
         }
 
@@ -93,8 +92,8 @@ public class BitmapIndexForwardReader implements BitmapIndexReader {
         return keyMem.getFd() != -1;
     }
 
-    public void of(CairoConfiguration configuration, Path path, CharSequence name, long unindexedNullCount) {
-        this.unIndexedNullCount = unindexedNullCount;
+    public void of(CairoConfiguration configuration, Path path, CharSequence name, long unIndexedNullCount) {
+        this.unIndexedNullCount = unIndexedNullCount;
         final int plen = path.length();
         final long pageSize = configuration.getFilesFacade().getMapPageSize();
         this.spinLockTimeoutUs = configuration.getSpinLockTimeoutUs();
@@ -190,23 +189,36 @@ public class BitmapIndexForwardReader implements BitmapIndexReader {
     private class Cursor implements RowCursor {
         protected long position;
         protected long valueCount;
+        protected long next;
         private long valueBlockOffset;
         private final BitmapIndexUtils.ValueBlockSeeker SEEKER = this::seekValue;
+        private long maxValue;
 
         @Override
         public boolean hasNext() {
-            return position < valueCount;
+            if (position < valueCount) {
+                long cellIndex = getValueCellIndex(position++);
+                long result = valueMem.getLong(valueBlockOffset + cellIndex * 8);
+
+                if (result > maxValue) {
+                    valueCount = 0;
+                    return false;
+                }
+
+                if (cellIndex == blockValueCountMod && position < valueCount) {
+                    // we are at edge of block right now, next value will be in previous block
+                    jumpToPreviousValueBlock();
+                }
+
+                this.next = result;
+                return true;
+            }
+            return false;
         }
 
         @Override
         public long next() {
-            long cellIndex = getValueCellIndex(position++);
-            long result = valueMem.getLong(valueBlockOffset + cellIndex * 8);
-            if (cellIndex == blockValueCountMod && position < valueCount) {
-                // we are at edge of block right now, next value will be in previous block
-                jumpToPreviousValueBlock();
-            }
-            return result;
+            return next;
         }
 
         private long getNextBlock(long currentValueBlockOffset) {
@@ -223,7 +235,7 @@ public class BitmapIndexForwardReader implements BitmapIndexReader {
             valueBlockOffset = getNextBlock(valueBlockOffset);
         }
 
-        void of(int key, long minValue) {
+        void of(int key, long minValue, long maxValue) {
             assert key > -1 : "key must be positive integer: " + key;
             long offset = BitmapIndexUtils.getKeyEntryOffset(key);
             keyMem.grow(offset + BitmapIndexUtils.KEY_ENTRY_SIZE);
@@ -261,6 +273,8 @@ public class BitmapIndexForwardReader implements BitmapIndexReader {
             } else {
                 seekValue(valueCount, valueBlockOffset);
             }
+
+            this.maxValue = maxValue;
         }
 
         private void seekValue(long count, long offset) {
@@ -271,19 +285,15 @@ public class BitmapIndexForwardReader implements BitmapIndexReader {
 
     private class NullCursor extends Cursor {
         private long nullCount;
+        private long nullPos;
 
         @Override
         public boolean hasNext() {
-            return position < valueCount;
-        }
-
-        @Override
-        public long next() {
-            if (nullCount > 0) {
-                return --nullCount;
-            } else {
-                return super.next();
+            if (nullPos < nullCount) {
+                next = nullPos++;
+                return true;
             }
+            return super.hasNext();
         }
     }
 }

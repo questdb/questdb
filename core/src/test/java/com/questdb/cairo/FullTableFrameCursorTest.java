@@ -780,14 +780,14 @@ public class FullTableFrameCursorTest extends AbstractCairoTest {
 
             // BitmapIndex is always at data frame scope, each table can have more than one.
             // we have to get BitmapIndexReader instance once for each frame.
-            BitmapIndexReader indexReader = frame.getBitmapIndexReader(columnIndex);
+            BitmapIndexReader indexReader = frame.getBitmapIndexReader(columnIndex, BitmapIndexReader.DIR_BACKWARD);
 
             // because out Symbol column 0 is indexed, frame has to have index.
             Assert.assertNotNull(indexReader);
 
             int keyCount = indexReader.getKeyCount();
             for (int i = 0; i < keyCount; i++) {
-                RowCursor ic = indexReader.getCursor(i, limit - 1);
+                RowCursor ic = indexReader.getCursor(i, 0, limit - 1);
                 CharSequence expected = symbolTable.value(i - 1);
                 while (ic.hasNext()) {
                     record.setRecordIndex(ic.next());
@@ -822,6 +822,50 @@ public class FullTableFrameCursorTest extends AbstractCairoTest {
         Assert.assertEquals(expecteRowCount, rowCount);
     }
 
+    private long assertIndex(TableReaderRecord record, int columnIndex, SymbolTable symbolTable, long count, DataFrame frame, int direction) {
+
+        BitmapIndexReader indexReader = frame.getBitmapIndexReader(columnIndex, direction);
+
+        // because out Symbol column 0 is indexed, frame has to have index.
+        Assert.assertNotNull(indexReader);
+
+        final long hi = frame.getRowHi();
+        record.jumpTo(frame.getPartitionIndex(), frame.getRowLo());
+        // Iterate data frame and advance record by incrementing "recordIndex"
+        long recordIndex;
+        while ((recordIndex = record.getRecordIndex()) < hi) {
+            CharSequence sym = record.getSym(columnIndex);
+
+            // Assert that index cursor contains offset of current row
+            boolean offsetFound = false;
+            long target = record.getRecordIndex();
+/*
+
+            if (*/
+            /*direction == BitmapIndexReader.DIR_FORWARD &&*//*
+ sym == null && recordIndex == 0) {
+                System.out.println("ok");
+            }
+*/
+
+            // Get index cursor for each symbol in data frame
+            RowCursor ic = indexReader.getCursor(symbolTable.getQuick(sym) + 1, frame.getRowLo(), hi - 1);
+
+            while (ic.hasNext()) {
+                if (ic.next() == target) {
+                    offsetFound = true;
+                    break;
+                }
+            }
+            if (!offsetFound) {
+                Assert.fail("not found, target=" + target + ", sym=" + sym);
+            }
+            record.setRecordIndex(recordIndex + 1);
+            count++;
+        }
+        return count;
+    }
+
     private void assertMetadataEquals(RecordMetadata a, RecordMetadata b) {
         StringSink sinkA = new StringSink();
         StringSink sinkB = new StringSink();
@@ -834,7 +878,7 @@ public class FullTableFrameCursorTest extends AbstractCairoTest {
         while (cursor.hasNext()) {
             DataFrame frame = cursor.next();
             try {
-                frame.getBitmapIndexReader(4);
+                frame.getBitmapIndexReader(4, BitmapIndexReader.DIR_BACKWARD);
                 Assert.fail();
             } catch (CairoException e) {
                 Assert.assertTrue(Chars.contains(e.getMessage(), "Not indexed"));
@@ -851,41 +895,31 @@ public class FullTableFrameCursorTest extends AbstractCairoTest {
         while (cursor.hasNext()) {
             DataFrame frame = cursor.next();
             Assert.assertSame(cursor.getTableReader(), frame.getTableReader());
-            record.jumpTo(frame.getPartitionIndex(), frame.getRowLo());
-            final long limit = frame.getRowHi();
 
             // BitmapIndex is always at data frame scope, each table can have more than one.
             // we have to get BitmapIndexReader instance once for each frame.
-            BitmapIndexReader indexReader = frame.getBitmapIndexReader(columnIndex);
+            count = assertIndex(
+                    record,
+                    columnIndex,
+                    symbolTable,
+                    count,
+                    frame,
+                    BitmapIndexReader.DIR_BACKWARD
+            );
 
-            // because out Symbol column 0 is indexed, frame has to have index.
-            Assert.assertNotNull(indexReader);
+            count = assertIndex(
+                    record,
+                    columnIndex,
+                    symbolTable,
+                    count,
+                    frame,
+                    BitmapIndexReader.DIR_FORWARD
+            );
 
-            // Iterate data frame and advance record by incrementing "recordIndex"
-            long recordIndex;
-            while ((recordIndex = record.getRecordIndex()) < limit) {
-                CharSequence sym = record.getSym(columnIndex);
-
-                // Assert that index cursor contains offset of current row
-                boolean offsetFound = false;
-                long target = record.getRecordIndex();
-
-                // Get index cursor for each symbol in data frame
-                RowCursor ic = indexReader.getCursor(symbolTable.getQuick(sym) + 1, limit - 1);
-
-                while (ic.hasNext()) {
-                    if (ic.next() == target) {
-                        offsetFound = true;
-                        break;
-                    }
-                }
-                Assert.assertTrue(offsetFound);
-                record.setRecordIndex(recordIndex + 1);
-                count++;
-            }
         }
+
         // assert that we read entire table
-        Assert.assertEquals(M, count);
+        Assert.assertEquals(M * 2, count);
     }
 
     private long populateTable(TableWriter writer, String[] symbols, Rnd rnd, long ts, long increment) {

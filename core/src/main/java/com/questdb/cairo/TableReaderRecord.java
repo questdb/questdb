@@ -95,15 +95,6 @@ public class TableReaderRecord implements Record {
     }
 
     @Override
-    public CharSequence getStrB(int col) {
-        long index = getIndex(col);
-        if (index < 0) {
-            return null;
-        }
-        return colA(col).getStr2(colB(col).getLong(index * 8));
-    }
-
-    @Override
     public int getInt(int col) {
         long index = getIndex(col);
         if (index < 0) {
@@ -133,6 +124,15 @@ public class TableReaderRecord implements Record {
             return 0;
         }
         return colA(col).getShort(index * 2);
+    }
+
+    @Override
+    public CharSequence getStrB(int col) {
+        long index = getIndex(col);
+        if (index < 0) {
+            return null;
+        }
+        return colA(col).getStr2(colB(col).getLong(index * 8));
     }
 
     @Override
@@ -179,7 +179,7 @@ public class TableReaderRecord implements Record {
     }
 
     private ReadOnlyColumn colB(int col) {
-        return reader.getColumn(TableReader.getSecondaryColumnIndex(columnBase, col));
+        return reader.getColumn(TableReader.getPrimaryColumnIndex(columnBase, col) + 1);
     }
 
     private long getIndex(int col) {

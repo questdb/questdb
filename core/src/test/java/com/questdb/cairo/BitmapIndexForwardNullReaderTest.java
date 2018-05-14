@@ -21,30 +21,40 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.engine.table;
+package com.questdb.cairo;
 
-import com.questdb.cairo.BitmapIndexReader;
-import com.questdb.cairo.TableReader;
-import com.questdb.cairo.sql.CairoEngine;
-import com.questdb.cairo.sql.DataFrame;
-import com.questdb.cairo.sql.RowCursorFactory;
 import com.questdb.common.RowCursor;
+import com.questdb.std.Rnd;
+import org.junit.Assert;
+import org.junit.Test;
 
-public class SymbolIndexRowCursorFactory implements RowCursorFactory {
-    private final int columnIndex;
-    private final int symbolKey;
+public class BitmapIndexForwardNullReaderTest {
 
-    public SymbolIndexRowCursorFactory(CairoEngine engine, CharSequence tableName, CharSequence columnName, CharSequence value) {
-        try (TableReader reader = engine.getReader(tableName)) {
-            this.columnIndex = reader.getMetadata().getColumnIndex(columnName);
-            this.symbolKey = reader.getSymbolMapReader(this.columnIndex).getQuick(value) + 1;
+    private static final BitmapIndexForwardNullReader reader = new BitmapIndexForwardNullReader();
+
+    @Test
+    public void testAlwaysOpen() {
+        Assert.assertTrue(reader.isOpen());
+    }
+
+    @Test
+    public void testCursor() {
+        final Rnd rnd = new Rnd();
+        for (int i = 0; i < 10; i++) {
+            int n = rnd.nextPositiveInt() % 1024;
+            int m = 0;
+            RowCursor cursor = reader.getCursor(0, 0, n);
+            while (cursor.hasNext()) {
+                Assert.assertEquals(m++, cursor.next());
+            }
+
+            Assert.assertEquals(n + 1, m);
         }
     }
 
-    @Override
-    public RowCursor getCursor(DataFrame dataFrame) {
-        return dataFrame
-                .getBitmapIndexReader(columnIndex, BitmapIndexReader.DIR_FORWARD)
-                .getCursor(symbolKey, dataFrame.getRowLo(), dataFrame.getRowHi() - 1);
+    @Test
+    public void testKeyCount() {
+        // has to be always 1
+        Assert.assertEquals(1, reader.getKeyCount());
     }
 }

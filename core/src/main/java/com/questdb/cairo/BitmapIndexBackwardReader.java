@@ -63,7 +63,9 @@ public class BitmapIndexBackwardReader implements BitmapIndexReader {
     }
 
     @Override
-    public RowCursor getCursor(int key, long maxValue) {
+    public RowCursor getCursor(int key, long minValue, long maxValue) {
+
+        assert minValue <= maxValue;
 
         if (key >= keyCount) {
             updateKeyCount();
@@ -71,12 +73,12 @@ public class BitmapIndexBackwardReader implements BitmapIndexReader {
 
         if (key == 0 && unIndexedNullCount > 0) {
             nullCursor.nullCount = unIndexedNullCount;
-            nullCursor.of(key, maxValue);
+            nullCursor.of(key, minValue, maxValue);
             return nullCursor;
         }
 
         if (key < keyCount) {
-            cursor.of(key, maxValue);
+            cursor.of(key, minValue, maxValue);
             return cursor;
         }
 
@@ -93,8 +95,8 @@ public class BitmapIndexBackwardReader implements BitmapIndexReader {
         return keyMem.getFd() != -1;
     }
 
-    public void of(CairoConfiguration configuration, Path path, CharSequence name, long unindexedNullCount) {
-        this.unIndexedNullCount = unindexedNullCount;
+    public void of(CairoConfiguration configuration, Path path, CharSequence name, long unIndexedNullCount) {
+        this.unIndexedNullCount = unIndexedNullCount;
         final int plen = path.length();
         final long pageSize = configuration.getFilesFacade().getMapPageSize();
         this.spinLockTimeoutUs = configuration.getSpinLockTimeoutUs();
@@ -189,23 +191,35 @@ public class BitmapIndexBackwardReader implements BitmapIndexReader {
 
     private class Cursor implements RowCursor {
         protected long valueCount;
+        protected long minValue;
+        protected long next;
         private long valueBlockOffset;
         private final BitmapIndexUtils.ValueBlockSeeker SEEKER = this::seekValue;
 
         @Override
         public boolean hasNext() {
-            return valueCount > 0;
+            if (valueCount > 0) {
+                long cellIndex = getValueCellIndex(--valueCount);
+                long result = valueMem.getLong(valueBlockOffset + cellIndex * 8);
+                if (cellIndex == 0 && valueCount > 0) {
+                    // we are at edge of block right now, next value will be in previous block
+                    jumpToPreviousValueBlock();
+                }
+
+                if (result < minValue) {
+                    valueCount = 0;
+                    return false;
+                }
+
+                this.next = result;
+                return true;
+            }
+            return false;
         }
 
         @Override
         public long next() {
-            long cellIndex = getValueCellIndex(--valueCount);
-            long result = valueMem.getLong(valueBlockOffset + cellIndex * 8);
-            if (cellIndex == 0 && valueCount > 0) {
-                // we are at edge of block right now, next value will be in previous block
-                jumpToPreviousValueBlock();
-            }
-            return result;
+            return next;
         }
 
         private long getPreviousBlock(long currentValueBlockOffset) {
@@ -222,7 +236,7 @@ public class BitmapIndexBackwardReader implements BitmapIndexReader {
             valueBlockOffset = getPreviousBlock(valueBlockOffset);
         }
 
-        void of(int key, long maxValue) {
+        void of(int key, long minValue, long maxValue) {
             assert key > -1 : "key must be positive integer: " + key;
             long offset = BitmapIndexUtils.getKeyEntryOffset(key);
             keyMem.grow(offset + BitmapIndexUtils.KEY_ENTRY_SIZE);
@@ -258,6 +272,7 @@ public class BitmapIndexBackwardReader implements BitmapIndexReader {
             } else {
                 seekValue(valueCount, valueBlockOffset);
             }
+            this.minValue = minValue;
         }
 
         private void seekValue(long count, long offset) {
@@ -271,16 +286,16 @@ public class BitmapIndexBackwardReader implements BitmapIndexReader {
 
         @Override
         public boolean hasNext() {
-            return nullCount > 0;
-        }
-
-        @Override
-        public long next() {
-            if (valueCount > 0) {
-                return super.next();
-            } else {
-                return --nullCount;
+            if (super.hasNext()) {
+                return true;
             }
+
+            if (--nullCount < minValue) {
+                return false;
+            }
+
+            this.next = nullCount;
+            return true;
         }
     }
 }

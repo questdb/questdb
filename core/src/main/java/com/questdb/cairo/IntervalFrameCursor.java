@@ -59,6 +59,35 @@ public class IntervalFrameCursor implements DataFrameCursor {
     }
 
     @Override
+    public void close() {
+        if (reader != null) {
+            reader.close();
+            reader = null;
+        }
+    }
+
+    @Override
+    public TableReader getTableReader() {
+        return reader;
+    }
+
+    @Override
+    public boolean reload() {
+        if (reader != null && reader.reload()) {
+            calculateRanges();
+            return true;
+        }
+        return false;
+    }
+
+    @Override
+    public void toTop() {
+        intervalsLo = initialIntervalsLo;
+        partitionLo = initialPartitionLo;
+        partitionSearchTop = 0;
+    }
+
+    @Override
     public SymbolTable getSymbolTable(int columnIndex) {
         return reader.getSymbolMapReader(columnIndex);
     }
@@ -147,35 +176,6 @@ public class IntervalFrameCursor implements DataFrameCursor {
         calculateRanges();
     }
 
-    @Override
-    public boolean reload() {
-        if (reader != null && reader.reload()) {
-            calculateRanges();
-            return true;
-        }
-        return false;
-    }
-
-    @Override
-    public void close() {
-        if (reader != null) {
-            reader.close();
-            reader = null;
-        }
-    }
-
-    @Override
-    public TableReader getTableReader() {
-        return reader;
-    }
-
-    @Override
-    public void toTop() {
-        intervalsLo = initialIntervalsLo;
-        partitionLo = initialPartitionLo;
-        partitionSearchTop = 0;
-    }
-
     private static long search(ReadOnlyColumn column, long value, long low, long high) {
         while (low < high) {
             long mid = (low + high - 1) >>> 1;
@@ -246,8 +246,8 @@ public class IntervalFrameCursor implements DataFrameCursor {
         private int partitionIndex;
 
         @Override
-        public BitmapIndexReader getBitmapIndexReader(int columnIndex) {
-            return reader.getBitmapIndexReader(reader.getColumnBase(partitionIndex), columnIndex);
+        public BitmapIndexReader getBitmapIndexReader(int columnIndex, int direction) {
+            return reader.getBitmapIndexReader(reader.getColumnBase(partitionIndex), columnIndex, direction);
         }
 
         @Override

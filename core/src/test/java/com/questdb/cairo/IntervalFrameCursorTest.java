@@ -34,7 +34,6 @@ import com.questdb.std.LongList;
 import com.questdb.std.Rnd;
 import com.questdb.std.microtime.DateFormatUtils;
 import com.questdb.std.microtime.Dates;
-import com.questdb.std.str.CharSink;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -61,7 +60,7 @@ public class IntervalFrameCursorTest extends AbstractCairoTest {
         intervals.add(DateFormatUtils.parseDateTime("1979-01-08T00:00:00.000Z"));
         intervals.add(DateFormatUtils.parseDateTime("1979-01-09T00:00:00.000Z"));
 
-        testIntervals(PartitionBy.DAY, increment, intervals, N, "", 0);
+        testIntervals(PartitionBy.DAY, increment, N, "", 0);
     }
 
     @Test
@@ -83,7 +82,7 @@ public class IntervalFrameCursorTest extends AbstractCairoTest {
         intervals.add(DateFormatUtils.parseDateTime("1979-01-08T00:00:00.000Z"));
         intervals.add(DateFormatUtils.parseDateTime("1979-01-09T00:00:00.000Z"));
 
-        testIntervals(PartitionBy.NONE, increment, intervals, N, "", 0);
+        testIntervals(PartitionBy.NONE, increment, N, "", 0);
     }
 
 
@@ -106,7 +105,7 @@ public class IntervalFrameCursorTest extends AbstractCairoTest {
         intervals.add(DateFormatUtils.parseDateTime("1979-01-08T00:00:00.000Z"));
         intervals.add(DateFormatUtils.parseDateTime("1979-01-09T00:00:00.000Z"));
 
-        testIntervals(PartitionBy.DAY, increment, intervals, N, "", 0);
+        testIntervals(PartitionBy.DAY, increment, N, "", 0);
     }
 
     @Test
@@ -128,7 +127,7 @@ public class IntervalFrameCursorTest extends AbstractCairoTest {
         intervals.add(DateFormatUtils.parseDateTime("1979-01-08T00:00:00.000Z"));
         intervals.add(DateFormatUtils.parseDateTime("1979-01-09T00:00:00.000Z"));
 
-        testIntervals(PartitionBy.NONE, increment, intervals, N, "", 0);
+        testIntervals(PartitionBy.NONE, increment, N, "", 0);
     }
 
     @Test
@@ -154,7 +153,7 @@ public class IntervalFrameCursorTest extends AbstractCairoTest {
                 "1980-01-02T20:00:00.000000Z\n" +
                 "1983-01-05T14:00:00.000000Z\n";
 
-        testIntervals(PartitionBy.NONE, increment, intervals, N, expected, 3);
+        testIntervals(PartitionBy.NONE, increment, N, expected, 3);
     }
 
     @Test
@@ -197,7 +196,7 @@ public class IntervalFrameCursorTest extends AbstractCairoTest {
 
         final String expected = "1980-01-02T22:00:00.000000Z\n";
 
-        testIntervals(PartitionBy.DAY, increment, intervals, N, expected, 1);
+        testIntervals(PartitionBy.DAY, increment, N, expected, 1);
     }
 
     @Test
@@ -225,7 +224,7 @@ public class IntervalFrameCursorTest extends AbstractCairoTest {
                 "1980-01-02T20:00:00.000000Z\n" +
                 "1983-01-05T14:00:00.000000Z\n";
 
-        testIntervals(PartitionBy.DAY, increment, intervals, N, expected, 3);
+        testIntervals(PartitionBy.DAY, increment, N, expected, 3);
     }
 
     @Test
@@ -292,7 +291,7 @@ public class IntervalFrameCursorTest extends AbstractCairoTest {
                 "1980-01-03T12:00:00.000000Z\n" +
                 "1980-01-03T14:00:00.000000Z\n";
 
-        testIntervals(PartitionBy.DAY, increment, intervals, N, expected, 11);
+        testIntervals(PartitionBy.DAY, increment, N, expected, 11);
     }
 
     @Test
@@ -478,7 +477,7 @@ public class IntervalFrameCursorTest extends AbstractCairoTest {
                 "1983-01-06T20:00:00.000000Z\n" +
                 "1983-01-06T22:00:00.000000Z\n";
 
-        testIntervals(PartitionBy.DAY, increment, intervals, N, expected, 72);
+        testIntervals(PartitionBy.DAY, increment, N, expected, 72);
     }
 
     private static void assertIndexRowsMatchSymbol(DataFrameCursor cursor, TableReaderRecord record, int columnIndex, long expectedCount) {
@@ -496,20 +495,17 @@ public class IntervalFrameCursorTest extends AbstractCairoTest {
 
             // BitmapIndex is always at data frame scope, each table can have more than one.
             // we have to get BitmapIndexReader instance once for each frame.
-            BitmapIndexReader indexReader = frame.getBitmapIndexReader(columnIndex);
+            BitmapIndexReader indexReader = frame.getBitmapIndexReader(columnIndex, BitmapIndexReader.DIR_BACKWARD);
 
             // because out Symbol column 0 is indexed, frame has to have index.
             Assert.assertNotNull(indexReader);
 
             int keyCount = indexReader.getKeyCount();
             for (int i = 0; i < keyCount; i++) {
-                RowCursor ic = indexReader.getCursor(i, limit - 1);
+                RowCursor ic = indexReader.getCursor(i, low, limit - 1);
                 CharSequence expected = symbolTable.value(i - 1);
                 while (ic.hasNext()) {
                     long row = ic.next();
-                    if (row < low) {
-                        break;
-                    }
                     record.setRecordIndex(row);
                     TestUtils.assertEquals(expected, record.getSym(columnIndex));
                     rowCount++;
@@ -521,11 +517,11 @@ public class IntervalFrameCursorTest extends AbstractCairoTest {
 
     private void assertEquals(CharSequence expected, TableReaderRecord record, DataFrameCursor cursor) {
         sink.clear();
-        collectTimestamps(cursor, record, sink);
+        collectTimestamps(cursor, record);
         TestUtils.assertEquals(expected, sink);
     }
 
-    private void collectTimestamps(DataFrameCursor cursor, TableReaderRecord record, CharSink sink) {
+    private void collectTimestamps(DataFrameCursor cursor, TableReaderRecord record) {
         int timestampIndex = cursor.getTableReader().getMetadata().getTimestampIndex();
         while (cursor.hasNext()) {
             DataFrame frame = cursor.next();
@@ -533,13 +529,13 @@ public class IntervalFrameCursorTest extends AbstractCairoTest {
             long limit = frame.getRowHi();
             long recordIndex;
             while ((recordIndex = record.getRecordIndex()) < limit) {
-                sink.putISODate(record.getDate(timestampIndex)).put('\n');
+                AbstractCairoTest.sink.putISODate(record.getDate(timestampIndex)).put('\n');
                 record.setRecordIndex(recordIndex + 1);
             }
         }
     }
 
-    private void testIntervals(int partitionBy, long increment, LongList intervals, int rowCount, CharSequence expected, long expectedCount) throws Exception {
+    private void testIntervals(int partitionBy, long increment, int rowCount, CharSequence expected, long expectedCount) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
 
             try (TableModel model = new TableModel(configuration, "x", partitionBy).
@@ -577,7 +573,7 @@ public class IntervalFrameCursorTest extends AbstractCairoTest {
 
             try (TableReader reader = new TableReader(configuration, "x")) {
                 final TableReaderRecord record = new TableReaderRecord();
-                IntervalFrameCursor cursor = new IntervalFrameCursor(intervals, reader.getMetadata().getTimestampIndex());
+                IntervalFrameCursor cursor = new IntervalFrameCursor(IntervalFrameCursorTest.intervals, reader.getMetadata().getTimestampIndex());
                 cursor.of(reader);
                 record.of(reader);
 

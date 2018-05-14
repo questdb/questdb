@@ -27,7 +27,7 @@ import com.questdb.cairo.BitmapIndexReader;
 import com.questdb.cairo.TableReader;
 
 public interface DataFrame {
-    BitmapIndexReader getBitmapIndexReader(int columnIndex);
+    BitmapIndexReader getBitmapIndexReader(int columnIndex, int direction);
 
     int getPartitionIndex();
 

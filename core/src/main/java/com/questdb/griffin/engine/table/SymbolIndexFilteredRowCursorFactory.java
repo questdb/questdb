@@ -23,6 +23,7 @@
 
 package com.questdb.griffin.engine.table;
 
+import com.questdb.cairo.BitmapIndexReader;
 import com.questdb.cairo.TableReader;
 import com.questdb.cairo.TableReaderRecord;
 import com.questdb.cairo.sql.CairoEngine;
@@ -78,7 +79,9 @@ public class SymbolIndexFilteredRowCursorFactory implements RowCursorFactory {
         }
 
         public SymbolIndexFilteredRowCursor of(DataFrame dataFrame) {
-            this.dataFrameCursor = dataFrame.getBitmapIndexReader(columnIndex).getCursor(symbolKey, dataFrame.getRowHi() - 1);
+            this.dataFrameCursor = dataFrame
+                    .getBitmapIndexReader(columnIndex, BitmapIndexReader.DIR_FORWARD)
+                    .getCursor(symbolKey, dataFrame.getRowLo(), dataFrame.getRowHi() - 1);
             this.record.of(dataFrame.getTableReader());
             return this;
         }

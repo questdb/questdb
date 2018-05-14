@@ -32,6 +32,7 @@ import com.questdb.common.PartitionBy;
 import com.questdb.griffin.engine.functions.bind.BindVariableService;
 import com.questdb.griffin.engine.functions.rnd.SharedRandom;
 import com.questdb.std.Rnd;
+import com.questdb.test.tools.TestUtils;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -51,12 +52,13 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     @Test
     public void testFilterSingleKeyValue() throws SqlException, IOException {
         compiler.execute("create table x as (select * from random_cursor(20, 'a', rnd_double(0)*100, 'b', rnd_symbol(5,4,4,0))), index(b)", bindVariableService);
-        printSqlResult("select * from x");
-        System.out.println(sink);
-
-        System.out.println("--------------");
         printSqlResult("select * from x where b = 'HYRX'");
-        System.out.println(sink);
+        TestUtils.assertEquals("a\tb\n" +
+                        "11.427984775756\tHYRX\n" +
+                        "52.984059417621\tHYRX\n" +
+                        "40.455469747939\tHYRX\n" +
+                        "72.300157631336\tHYRX\n",
+                sink);
     }
 
     @Test
