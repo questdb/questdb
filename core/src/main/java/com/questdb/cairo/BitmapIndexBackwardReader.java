@@ -39,7 +39,7 @@ public class BitmapIndexBackwardReader extends AbstractIndexReader {
     }
 
     @Override
-    public RowCursor getCursor(int key, long minValue, long maxValue) {
+    public RowCursor getCursor(boolean cachedInstance, int key, long minValue, long maxValue) {
 
         assert minValue <= maxValue;
 
@@ -48,17 +48,27 @@ public class BitmapIndexBackwardReader extends AbstractIndexReader {
         }
 
         if (key == 0 && unIndexedNullCount > 0) {
+            final NullCursor nullCursor = getNullCursor(cachedInstance);
             nullCursor.nullCount = unIndexedNullCount;
             nullCursor.of(key, minValue, maxValue);
             return nullCursor;
         }
 
         if (key < getKeyCount()) {
+            final Cursor cursor = getCursor(cachedInstance);
             cursor.of(key, minValue, maxValue);
             return cursor;
         }
 
         return EmptyRowCursor.INSTANCE;
+    }
+
+    private Cursor getCursor(boolean cachedInstance) {
+        return cachedInstance ? cursor : new Cursor();
+    }
+
+    private NullCursor getNullCursor(boolean cachedInstance) {
+        return cachedInstance ? nullCursor : new NullCursor();
     }
 
     private class Cursor implements RowCursor {

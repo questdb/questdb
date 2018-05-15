@@ -68,7 +68,7 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
         }
 
         int hash = Hash.boundedHash(symbol, maxHash);
-        RowCursor cursor = indexReader.getCursor(hash, 0, maxOffset);
+        RowCursor cursor = indexReader.getCursor(true, hash, 0, maxOffset);
         while (cursor.hasNext()) {
             long offsetOffset = cursor.next();
             if (Chars.equals(symbol, charMem.getStr(offsetMem.getLong(offsetOffset)))) {
@@ -84,8 +84,39 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
     }
 
     @Override
+    public CharSequence value(int key) {
+        if (key > -1 && key < symbolCount) {
+            if (cached) {
+                return cachedValue(key);
+            }
+            return uncachedValue(key);
+        }
+        return null;
+    }
+
+    @Override
     public boolean isDeleted() {
         return offsetMem.isDeleted();
+    }
+
+    @Override
+    public void updateSymbolCount(int symbolCount) {
+        if (symbolCount > this.symbolCount) {
+            this.symbolCount = symbolCount;
+            this.maxOffset = SymbolMapWriter.keyToOffset(symbolCount - 1);
+            this.offsetMem.grow(maxOffset);
+            growCharMemToSymbolCount(symbolCount);
+        }
+    }
+
+    @Override
+    public int getSymbolCapacity() {
+        return symbolCapacity;
+    }
+
+    @Override
+    public boolean isCached() {
+        return cached;
     }
 
     public void of(CairoConfiguration configuration, Path path, CharSequence name, int symbolCount) {
@@ -142,37 +173,6 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
         } finally {
             path.trimTo(plen);
         }
-    }
-
-    @Override
-    public void updateSymbolCount(int symbolCount) {
-        if (symbolCount > this.symbolCount) {
-            this.symbolCount = symbolCount;
-            this.maxOffset = SymbolMapWriter.keyToOffset(symbolCount - 1);
-            this.offsetMem.grow(maxOffset);
-            growCharMemToSymbolCount(symbolCount);
-        }
-    }
-
-    @Override
-    public int getSymbolCapacity() {
-        return symbolCapacity;
-    }
-
-    @Override
-    public boolean isCached() {
-        return cached;
-    }
-
-    @Override
-    public CharSequence value(int key) {
-        if (key > -1 && key < symbolCount) {
-            if (cached) {
-                return cachedValue(key);
-            }
-            return uncachedValue(key);
-        }
-        return null;
     }
 
     private CharSequence cachedValue(int key) {

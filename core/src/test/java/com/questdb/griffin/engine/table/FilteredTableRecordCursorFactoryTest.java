@@ -75,7 +75,13 @@ public class FilteredTableRecordCursorFactoryTest extends AbstractCairoTest {
 
             try (Engine engine = new Engine(configuration)) {
                 String value = symbols[N - 10];
-                SymbolIndexRowCursorFactory symbolIndexRowCursorFactory = new SymbolIndexRowCursorFactory(engine, "x", "b", value);
+                int columnIndex;
+                int symbolKey;
+                try (TableReader reader = engine.getReader("x")) {
+                    columnIndex = reader.getMetadata().getColumnIndexQuiet("b");
+                    symbolKey = reader.getSymbolMapReader(columnIndex).getQuick(value);
+                }
+                SymbolIndexRowCursorFactory symbolIndexRowCursorFactory = new SymbolIndexRowCursorFactory(columnIndex, symbolKey, true);
                 FullTableFrameCursorFactory dataFrameFactory = new FullTableFrameCursorFactory(engine, "x");
                 FilteredTableRecordCursorFactory factory = new FilteredTableRecordCursorFactory(dataFrameFactory, symbolIndexRowCursorFactory);
 

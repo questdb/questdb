@@ -43,7 +43,7 @@ public class BitmapIndexForwardNullReaderTest {
         for (int i = 0; i < 10; i++) {
             int n = rnd.nextPositiveInt() % 1024;
             int m = 0;
-            RowCursor cursor = reader.getCursor(0, 0, n);
+            RowCursor cursor = reader.getCursor(true, 0, 0, n);
             while (cursor.hasNext()) {
                 Assert.assertEquals(m++, cursor.next());
             }

@@ -24,9 +24,7 @@
 package com.questdb.griffin.engine.table;
 
 import com.questdb.cairo.BitmapIndexReader;
-import com.questdb.cairo.TableReader;
 import com.questdb.cairo.TableReaderRecord;
-import com.questdb.cairo.sql.CairoEngine;
 import com.questdb.cairo.sql.DataFrame;
 import com.questdb.cairo.sql.Function;
 import com.questdb.cairo.sql.RowCursorFactory;
@@ -35,8 +33,8 @@ import com.questdb.common.RowCursor;
 public class SymbolIndexFilteredRowCursorFactory implements RowCursorFactory {
     private final SymbolIndexFilteredRowCursor cursor;
 
-    public SymbolIndexFilteredRowCursorFactory(CairoEngine engine, CharSequence tableName, CharSequence columnName, CharSequence value, Function filter) {
-        this.cursor = new SymbolIndexFilteredRowCursor(engine, tableName, columnName, value, filter);
+    public SymbolIndexFilteredRowCursorFactory(int columnIndex, int symbolKey, Function filter, boolean cachedIndexReaderCursor) {
+        this.cursor = new SymbolIndexFilteredRowCursor(columnIndex, symbolKey, filter, cachedIndexReaderCursor);
     }
 
     @Override
@@ -49,15 +47,15 @@ public class SymbolIndexFilteredRowCursorFactory implements RowCursorFactory {
         private final TableReaderRecord record = new TableReaderRecord();
         private final int columnIndex;
         private final int symbolKey;
+        private final boolean cachedIndexReaderCursor;
         private RowCursor dataFrameCursor;
         private long rowid;
 
-        public SymbolIndexFilteredRowCursor(CairoEngine engine, CharSequence tableName, CharSequence columnName, CharSequence value, Function filter) {
-            try (TableReader reader = engine.getReader(tableName)) {
-                this.columnIndex = reader.getMetadata().getColumnIndex(columnName);
-                this.symbolKey = reader.getSymbolMapReader(this.columnIndex).getQuick(value) + 1;
-            }
+        public SymbolIndexFilteredRowCursor(int columnIndex, int symbolKey, Function filter, boolean cachedIndexReaderCursor) {
+            this.columnIndex = columnIndex;
+            this.symbolKey = symbolKey + 1;
             this.filter = filter;
+            this.cachedIndexReaderCursor = cachedIndexReaderCursor;
         }
 
         @Override
@@ -81,7 +79,7 @@ public class SymbolIndexFilteredRowCursorFactory implements RowCursorFactory {
         public SymbolIndexFilteredRowCursor of(DataFrame dataFrame) {
             this.dataFrameCursor = dataFrame
                     .getBitmapIndexReader(columnIndex, BitmapIndexReader.DIR_FORWARD)
-                    .getCursor(symbolKey, dataFrame.getRowLo(), dataFrame.getRowHi() - 1);
+                    .getCursor(cachedIndexReaderCursor, symbolKey, dataFrame.getRowLo(), dataFrame.getRowHi() - 1);
             this.record.of(dataFrame.getTableReader());
             return this;
         }

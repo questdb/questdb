@@ -375,8 +375,15 @@ final class WhereClauseParser {
                     if (c.type != SqlNode.CONSTANT) {
                         return false;
                     }
-                    if (tempKeys.add(unquote(c.token))) {
-                        tempPos.add(c.position);
+
+                    if (Chars.equalsIgnoreCase(c.token, "null")) {
+                        if (tempKeys.add(null)) {
+                            tempPos.add(c.position);
+                        }
+                    } else {
+                        if (tempKeys.add(unquote(c.token))) {
+                            tempPos.add(c.position);
+                        }
                     }
                 }
             }

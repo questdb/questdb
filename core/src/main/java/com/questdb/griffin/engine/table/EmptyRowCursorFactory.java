@@ -23,30 +23,16 @@
 
 package com.questdb.griffin.engine.table;
 
+import com.questdb.cairo.EmptyRowCursor;
 import com.questdb.cairo.sql.DataFrame;
 import com.questdb.cairo.sql.RowCursorFactory;
 import com.questdb.common.RowCursor;
-import com.questdb.std.ObjList;
-import com.questdb.std.Unsafe;
 
-public class HeapRowCursorFactory implements RowCursorFactory {
-    private final ObjList<RowCursorFactory> cursorFactories;
-    private final RowCursor[] cursors;
-    private final HeapRowCursor cursor;
-
-    public HeapRowCursorFactory(ObjList<RowCursorFactory> cursorFactories) {
-        this.cursorFactories = cursorFactories;
-        int n = cursorFactories.size();
-        this.cursors = new RowCursor[n];
-        this.cursor = new HeapRowCursor(n);
-    }
+public class EmptyRowCursorFactory implements RowCursorFactory {
+    public static final RowCursorFactory INSTANCE = new EmptyRowCursorFactory();
 
     @Override
     public RowCursor getCursor(DataFrame dataFrame) {
-        for (int i = 0, n = cursors.length; i < n; i++) {
-            Unsafe.arrayPut(cursors, i, cursorFactories.getQuick(i).getCursor(dataFrame));
-        }
-        cursor.of(cursors);
-        return cursor;
+        return EmptyRowCursor.INSTANCE;
     }
 }

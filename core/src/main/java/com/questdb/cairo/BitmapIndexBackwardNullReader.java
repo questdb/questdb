@@ -30,7 +30,8 @@ public class BitmapIndexBackwardNullReader implements BitmapIndexReader {
     private final NullCursor cursor = new NullCursor();
 
     @Override
-    public RowCursor getCursor(int key, long minValue, long maxValue) {
+    public RowCursor getCursor(boolean cachedInstance, int key, long minValue, long maxValue) {
+        final NullCursor cursor = getCursor(cachedInstance);
         cursor.value = maxValue;
         return cursor;
     }
@@ -43,6 +44,10 @@ public class BitmapIndexBackwardNullReader implements BitmapIndexReader {
     @Override
     public boolean isOpen() {
         return true;
+    }
+
+    private NullCursor getCursor(boolean cachedInstance) {
+        return cachedInstance ? cursor : new NullCursor();
     }
 
     private class NullCursor implements RowCursor {

@@ -23,19 +23,16 @@
 
 package com.questdb.griffin;
 
-import com.questdb.cairo.FullTableFrameCursorFactory;
-import com.questdb.cairo.IntervalFrameCursorFactory;
-import com.questdb.cairo.TableReader;
-import com.questdb.cairo.TableReaderRecordCursorFactory;
+import com.questdb.cairo.*;
 import com.questdb.cairo.sql.*;
 import com.questdb.common.ColumnType;
+import com.questdb.common.SymbolTable;
 import com.questdb.griffin.engine.functions.bind.BindVariableService;
-import com.questdb.griffin.engine.table.FilteredTableRecordCursorFactory;
-import com.questdb.griffin.engine.table.SymbolIndexFilteredRowCursorFactory;
-import com.questdb.griffin.engine.table.SymbolIndexRowCursorFactory;
+import com.questdb.griffin.engine.table.*;
 import com.questdb.griffin.model.IntrinsicModel;
 import com.questdb.griffin.model.QueryModel;
 import com.questdb.std.Chars;
+import com.questdb.std.ObjList;
 
 public class SqlCodeGenerator {
     private final WhereClauseParser filterAnalyser = new WhereClauseParser();
@@ -229,33 +226,44 @@ public class SqlCodeGenerator {
                 } else {
                     // no "latest by" clause
                     if (intrinsicModel.keyColumn != null) {
+
+                        final int columnIndex = reader.getMetadata().getColumnIndexQuiet(intrinsicModel.keyColumn);
+                        if (columnIndex == -1) {
+                            // todo: obtain key column position
+                            throw SqlException.invalidColumn(0, intrinsicModel.keyColumn);
+                        }
+                        final int nKeyValues = intrinsicModel.keyValues.size();
                         if (intrinsicModel.keySubQuery != null) {
                             // perform lambda based key lookup
-                            assert intrinsicModel.keyValues.size() == 1;
+                            assert nKeyValues == 1;
                         } else {
-                            assert intrinsicModel.keyValues.size() > 0;
-                            if (intrinsicModel.keyValues.size() == 1) {
-                                if (filter == null) {
-                                    RowCursorFactory rcf = new SymbolIndexRowCursorFactory(
-                                            engine,
-                                            model.getTableName().token,
-                                            intrinsicModel.keyColumn,
-                                            intrinsicModel.keyValues.get(0));
-                                    return new FilteredTableRecordCursorFactory(dfcFactory, rcf);
+                            assert nKeyValues > 0;
+                            if (nKeyValues == 1) {
+                                final RowCursorFactory rcf;
+                                final int symbolKey = reader.getSymbolMapReader(columnIndex).getQuick(intrinsicModel.keyValues.get(0));
+                                if (symbolKey == SymbolTable.VALUE_NOT_FOUND) {
+                                    rcf = EmptyRowCursorFactory.INSTANCE;
                                 } else {
-                                    RowCursorFactory rcf = new SymbolIndexFilteredRowCursorFactory(
-                                            engine,
-                                            model.getTableName().token,
-                                            intrinsicModel.keyColumn,
-                                            intrinsicModel.keyValues.get(0),
-                                            filter
-                                    );
-                                    return new FilteredTableRecordCursorFactory(dfcFactory, rcf);
+                                    if (filter == null) {
+                                        rcf = new SymbolIndexRowCursorFactory(columnIndex, symbolKey, true);
+                                    } else {
+                                        rcf = new SymbolIndexFilteredRowCursorFactory(columnIndex, symbolKey, filter, true);
+                                    }
                                 }
+                                return new FilteredTableRecordCursorFactory(dfcFactory, rcf);
                             } else {
                                 // multiple key values
                                 if (filter == null) {
                                     // without filter
+                                    final ObjList<RowCursorFactory> cursorFactories = new ObjList<>(nKeyValues);
+                                    final SymbolMapReader symbolMapReader = reader.getSymbolMapReader(columnIndex);
+                                    for (int i = 0; i < nKeyValues; i++) {
+                                        final int symbolKey = symbolMapReader.getQuick(intrinsicModel.keyValues.get(i));
+                                        if (symbolKey != SymbolTable.VALUE_NOT_FOUND) {
+                                            cursorFactories.add(new SymbolIndexRowCursorFactory(columnIndex, symbolKey, i == 0));
+                                        }
+                                    }
+                                    return new FilteredTableRecordCursorFactory(dfcFactory, new HeapRowCursorFactory(cursorFactories));
                                 } else {
                                     // with filter
                                 }

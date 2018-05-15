@@ -787,7 +787,7 @@ public class FullTableFrameCursorTest extends AbstractCairoTest {
 
             int keyCount = indexReader.getKeyCount();
             for (int i = 0; i < keyCount; i++) {
-                RowCursor ic = indexReader.getCursor(i, 0, limit - 1);
+                RowCursor ic = indexReader.getCursor(true, i, 0, limit - 1);
                 CharSequence expected = symbolTable.value(i - 1);
                 while (ic.hasNext()) {
                     record.setRecordIndex(ic.next());
@@ -849,7 +849,7 @@ public class FullTableFrameCursorTest extends AbstractCairoTest {
 */
 
             // Get index cursor for each symbol in data frame
-            RowCursor ic = indexReader.getCursor(symbolTable.getQuick(sym) + 1, frame.getRowLo(), hi - 1);
+            RowCursor ic = indexReader.getCursor(true, symbolTable.getQuick(sym) + 1, frame.getRowLo(), hi - 1);
 
             while (ic.hasNext()) {
                 if (ic.next() == target) {

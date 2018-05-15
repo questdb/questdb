@@ -45,7 +45,8 @@ class HeapRowCursor implements RowCursor {
     @Override
     public long next() {
         int idx = heap.popIndex();
-        return Unsafe.arrayGet(cursors, idx).hasNext() ? heap.popAndReplace(idx, Unsafe.arrayGet(cursors, idx).next()) : heap.popValue();
+        RowCursor cursor = Unsafe.arrayGet(cursors, idx);
+        return cursor.hasNext() ? heap.popAndReplace(idx, cursor.next()) : heap.popValue();
     }
 
     public void of(RowCursor[] cursors) {

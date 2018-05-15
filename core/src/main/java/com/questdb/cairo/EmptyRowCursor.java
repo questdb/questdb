@@ -27,7 +27,7 @@ import com.questdb.common.RowCursor;
 
 public class EmptyRowCursor implements RowCursor {
 
-    static final RowCursor INSTANCE = new EmptyRowCursor();
+    public static final RowCursor INSTANCE = new EmptyRowCursor();
 
     @Override
     public boolean hasNext() {

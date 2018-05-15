@@ -502,7 +502,7 @@ public class IntervalFrameCursorTest extends AbstractCairoTest {
 
             int keyCount = indexReader.getKeyCount();
             for (int i = 0; i < keyCount; i++) {
-                RowCursor ic = indexReader.getCursor(i, low, limit - 1);
+                RowCursor ic = indexReader.getCursor(true, i, low, limit - 1);
                 CharSequence expected = symbolTable.value(i - 1);
                 while (ic.hasNext()) {
                     long row = ic.next();
