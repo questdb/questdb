@@ -23,17 +23,18 @@
 
 package com.questdb.griffin;
 
-import com.questdb.cairo.*;
-import com.questdb.cairo.sql.CairoEngine;
+import com.questdb.cairo.AbstractCairoTest;
+import com.questdb.cairo.Engine;
+import com.questdb.cairo.sql.Record;
 import com.questdb.cairo.sql.RecordCursor;
-import com.questdb.cairo.sql.RecordCursorFactory;
-import com.questdb.common.ColumnType;
-import com.questdb.common.PartitionBy;
+import com.questdb.cairo.sql.RecordMetadata;
 import com.questdb.griffin.engine.functions.bind.BindVariableService;
 import com.questdb.griffin.engine.functions.rnd.SharedRandom;
+import com.questdb.std.LongList;
 import com.questdb.std.Rnd;
 import com.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.Nullable;
+import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -42,8 +43,9 @@ import java.io.IOException;
 public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     private static final BindVariableService bindVariableService = new BindVariableService();
-    private static final CairoEngine engine = new Engine(configuration);
+    private static final Engine engine = new Engine(configuration);
     private static final SqlCompiler compiler = new SqlCompiler(engine, configuration);
+    private static final LongList rows = new LongList();
 
     @Before
     public void setUp2() {
@@ -51,7 +53,56 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testFilterMultipleKeyValues() throws SqlException, IOException {
+    public void testFilterConstantFalse() throws Exception {
+        assertQuery("a\tb\tk\n",
+                "select * from x o where 10 < 8",
+                "create table x as " +
+                        "(" +
+                        "select * from" +
+                        " random_cursor" +
+                        "(20," +
+                        " 'a', rnd_double(0)*100," +
+                        " 'b', rnd_symbol(5,4,4,1)," +
+                        " 'k', timestamp_sequence(to_timestamp(0), 1000000000)" +
+                        ")" +
+                        "), index(b) timestamp(k)");
+    }
+
+    @Test
+    public void testFilterKeyAndFields() throws Exception {
+        assertQuery("a\tb\tk\n" +
+                        "11.427984775756\t\t1970-01-01T00:00:00.000000Z\n" +
+                        "32.881769076795\t\t1970-01-01T01:23:20.000000Z\n" +
+                        "12.026122412833\tHYRX\t1970-01-01T02:30:00.000000Z\n" +
+                        "26.922103479745\t\t1970-01-01T03:03:20.000000Z\n" +
+                        "49.005104498852\tPEHN\t1970-01-01T04:10:00.000000Z\n" +
+                        "45.634456960908\t\t1970-01-01T05:00:00.000000Z\n" +
+                        "40.455469747939\t\t1970-01-01T05:16:40.000000Z\n",
+                "select * from x o where o.b in ('HYRX','PEHN', null) and a < 50",
+                "create table x as (select * from random_cursor(20, 'a', rnd_double(0)*100, 'b', rnd_symbol(5,4,4,1), 'k', timestamp_sequence(to_timestamp(0), 1000000000))), index(b)");
+    }
+
+    @Test
+    public void testFilterKeyAndInterval() throws Exception {
+        assertQuery("a\tb\tk\n" +
+                        "84.452581772111\tPEHN\t1970-01-01T03:36:40.000000Z\n" +
+                        "97.501988537251\t\t1970-01-01T03:53:20.000000Z\n" +
+                        "49.005104498852\tPEHN\t1970-01-01T04:10:00.000000Z\n",
+                "select * from x o where o.b in ('HYRX','PEHN', null) and k = '1970-01-01T03:36:40;45m'",
+                "create table x as " +
+                        "(" +
+                        "select * from" +
+                        " random_cursor" +
+                        "(20," +
+                        " 'a', rnd_double(0)*100," +
+                        " 'b', rnd_symbol(5,4,4,1)," +
+                        " 'k', timestamp_sequence(to_timestamp(0), 1000000000)" +
+                        ")" +
+                        "), index(b) timestamp(k)");
+    }
+
+    @Test
+    public void testFilterMultipleKeyValues() throws Exception {
         assertQuery("a\tb\tk\n" +
                         "11.427984775756\t\t1970-01-01T00:00:00.000000Z\n" +
                         "70.943604871712\tPEHN\t1970-01-01T00:50:00.000000Z\n" +
@@ -75,7 +126,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testFilterNullKeyValue() throws SqlException, IOException {
+    public void testFilterNullKeyValue() throws Exception {
         assertQuery("a\tb\n" +
                         "11.427984775756\t\n" +
                         "87.996347253916\t\n" +
@@ -93,7 +144,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testFilterSingleKeyValue() throws SqlException, IOException {
+    public void testFilterSingleKeyValue() throws Exception {
         assertQuery("a\tb\n" +
                         "11.427984775756\tHYRX\n" +
                         "52.984059417621\tHYRX\n" +
@@ -104,71 +155,93 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testFilterSingleKeyValueAndFilter() throws SqlException, IOException {
-        CairoEngine engine = new Engine(configuration);
-        SqlCompiler compiler = new SqlCompiler(engine, configuration);
-
-        try (TableModel model = new TableModel(configuration, "tab", PartitionBy.NONE)) {
-            model.col("sym", ColumnType.SYMBOL).indexed(true, 256);
-            model.col("value", ColumnType.DOUBLE);
-            CairoTestUtils.create(model);
-        }
-
-        final int N = 20;
-        final String[] symbols = {"ABC", "CDE", "EFG"};
-        final Rnd rnd = new Rnd();
-
-        try (TableWriter writer = engine.getWriter("tab")) {
-            for (int i = 0; i < N; i++) {
-                TableWriter.Row row = writer.newRow(0);
-                row.putSym(0, symbols[rnd.nextPositiveInt() % symbols.length]);
-                row.putDouble(1, rnd.nextDouble2());
-                row.append();
-            }
-            writer.commit();
-        }
-
-        try (TableReader reader = engine.getReader("tab")) {
-            sink.clear();
-            printer.print(reader.getCursor(), true);
-        }
-        System.out.println(sink);
-        System.out.println("----------------------");
-
-
-        RecordCursorFactory rcf = compiler.compile("select * from tab where sym = 'ABC' and value < 1.0", bindVariableService);
-        RecordCursor cursor = rcf.getCursor();
-        sink.clear();
-        printer.print(cursor, true);
-        System.out.println(sink);
+    public void testFilterSingleKeyValueAndField() throws Exception {
+        assertQuery("a\tb\n" +
+                        "52.984059417621\tHYRX\n" +
+                        "72.300157631336\tHYRX\n",
+                "select * from x where b = 'HYRX' and a > 41",
+                "create table x as (select * from random_cursor(20, 'a', rnd_double(0)*100, 'b', rnd_symbol(5,4,4,0))), index(b)");
     }
 
     @Test
-    public void testFilterSingleNonExistingSymbol() throws SqlException, IOException {
+    public void testFilterSingleNonExistingSymbol() throws Exception {
         assertQuery("a\tb\n",
                 "select * from x where b = 'ABC'",
                 "create table x as (select * from random_cursor(20, 'a', rnd_double(0)*100, 'b', rnd_symbol(5,4,4,0))), index(b)");
     }
 
-    private void assertQuery(CharSequence expected, CharSequence query, CharSequence ddl) throws SqlException, IOException {
+    private void assertQuery(CharSequence expected, CharSequence query, CharSequence ddl) throws Exception {
         assertQuery(expected, query, ddl, null);
     }
 
     @SuppressWarnings("SameParameterValue")
-    private void assertQuery(CharSequence expected, CharSequence query, CharSequence ddl, @Nullable CharSequence verify) throws SqlException, IOException {
-        compiler.execute(ddl, bindVariableService);
-        if (verify != null) {
-            printSqlResult(verify);
-            System.out.println(sink);
-        }
-        printSqlResult(query);
-        TestUtils.assertEquals(expected, sink);
+    private void assertQuery(CharSequence expected, CharSequence query, CharSequence ddl, @Nullable CharSequence verify) throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            compiler.execute(ddl, bindVariableService);
+            if (verify != null) {
+                printSqlResult(null, verify);
+                System.out.println(sink);
+            }
+            printSqlResult(expected, query);
+            Assert.assertEquals(0, engine.getBusyReaderCount());
+            Assert.assertEquals(0, engine.getBusyWriterCount());
+            engine.releaseAllWriters();
+            engine.releaseAllReaders();
+        });
     }
 
-    private void printSqlResult(CharSequence query) throws IOException, SqlException {
+    private void printSqlResult(CharSequence expected, CharSequence query) throws IOException, SqlException {
         sink.clear();
+        rows.clear();
+
         try (RecordCursor cursor = compiler.compile(query, bindVariableService).getCursor()) {
             printer.print(cursor, true);
+
+            if (expected == null) {
+                return;
+            }
+
+            TestUtils.assertEquals(expected, sink);
+            cursor.toTop();
+
+            sink.clear();
+            while (cursor.hasNext()) {
+                rows.add(cursor.next().getRowId());
+            }
+
+            final RecordMetadata metadata = cursor.getMetadata();
+
+            // test external record
+            Record record = cursor.getRecord();
+
+            printer.printHeader(metadata);
+            for (int i = 0, n = rows.size(); i < n; i++) {
+                cursor.recordAt(record, rows.getQuick(i));
+                printer.print(record, metadata);
+            }
+
+            TestUtils.assertEquals(expected, sink);
+
+            // test internal record
+            sink.clear();
+            printer.printHeader(metadata);
+            for (int i = 0, n = rows.size(); i < n; i++) {
+                printer.print(cursor.recordAt(rows.getQuick(i)), metadata);
+            }
+
+            TestUtils.assertEquals(expected, sink);
+
+            // test _new_ record
+
+            sink.clear();
+            record = cursor.newRecord();
+            printer.printHeader(metadata);
+            for (int i = 0, n = rows.size(); i < n; i++) {
+                cursor.recordAt(record, rows.getQuick(i));
+                printer.print(record, metadata);
+            }
+
+            TestUtils.assertEquals(expected, sink);
         }
     }
 }

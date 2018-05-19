@@ -21,7 +21,7 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.engine.functions.lt;
+package com.questdb.griffin.engine.functions.gt;
 
 import com.questdb.cairo.CairoConfiguration;
 import com.questdb.cairo.sql.Function;
@@ -30,10 +30,10 @@ import com.questdb.griffin.FunctionFactory;
 import com.questdb.griffin.engine.functions.BooleanFunction;
 import com.questdb.std.ObjList;
 
-public class LtDoubleVVFunctionFactory implements FunctionFactory {
+public class GtDoubleFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "<(DD)";
+        return ">(DD)";
     }
 
     @Override
@@ -53,12 +53,7 @@ public class LtDoubleVVFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return left.getDouble(rec) < right.getDouble(rec);
-        }
-
-        @Override
-        public boolean isConstant() {
-            return left.isConstant() && right.isConstant();
+            return left.getDouble(rec) > right.getDouble(rec);
         }
     }
 }

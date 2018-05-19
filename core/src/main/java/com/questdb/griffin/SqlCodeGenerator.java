@@ -163,8 +163,7 @@ public class SqlCodeGenerator {
                             // filter is constant "true", do not evaluate for every row
                             filter = null;
                         } else {
-                            //todo: return factory, which would create empty record cursor for the given table
-                            return null;
+                            return new EmptyTableRecordCursorFactory(engine, model.getTableName().token.toString());
                         }
                     }
                 }
@@ -238,6 +237,7 @@ public class SqlCodeGenerator {
                             assert nKeyValues == 1;
                         } else {
                             assert nKeyValues > 0;
+
                             if (nKeyValues == 1) {
                                 final RowCursorFactory rcf;
                                 final int symbolKey = reader.getSymbolMapReader(columnIndex).getQuick(intrinsicModel.keyValues.get(0));
@@ -266,6 +266,15 @@ public class SqlCodeGenerator {
                                     return new FilteredTableRecordCursorFactory(dfcFactory, new HeapRowCursorFactory(cursorFactories));
                                 } else {
                                     // with filter
+                                    final ObjList<RowCursorFactory> cursorFactories = new ObjList<>(nKeyValues);
+                                    final SymbolMapReader symbolMapReader = reader.getSymbolMapReader(columnIndex);
+                                    for (int i = 0; i < nKeyValues; i++) {
+                                        final int symbolKey = symbolMapReader.getQuick(intrinsicModel.keyValues.get(i));
+                                        if (symbolKey != SymbolTable.VALUE_NOT_FOUND) {
+                                            cursorFactories.add(new SymbolIndexFilteredRowCursorFactory(columnIndex, symbolKey, filter, i == 0));
+                                        }
+                                    }
+                                    return new FilteredTableRecordCursorFactory(dfcFactory, new HeapRowCursorFactory(cursorFactories));
                                 }
                             }
                         }

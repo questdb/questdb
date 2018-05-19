@@ -1220,6 +1220,7 @@ class SqlOptimiser {
         optimiseJoins(rewrittenModel);
         moveWhereInsideSubQueries(rewrittenModel);
         eraseColumnPrefixInWhereClauses(rewrittenModel);
+        // todo: extract constant where clauses from non-join SQL statements
         return rewrittenModel;
     }
 

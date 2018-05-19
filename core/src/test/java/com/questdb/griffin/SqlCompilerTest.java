@@ -25,7 +25,6 @@ package com.questdb.griffin;
 
 import com.questdb.cairo.*;
 import com.questdb.cairo.sql.CairoEngine;
-import com.questdb.cairo.sql.RecordCursorFactory;
 import com.questdb.common.ColumnType;
 import com.questdb.common.PartitionBy;
 import com.questdb.griffin.engine.functions.bind.BindVariableService;
@@ -2246,16 +2245,6 @@ public class SqlCompilerTest extends AbstractCairoTest {
             }
             engine.remove("x");
         }
-    }
-
-    @Test
-    public void testWithFunction() throws SqlException, IOException {
-        String sql = "with x as (select * from random_cursor(10, 'a', rnd_int(), 's', rnd_symbol(4,4,4,2))) " +
-                "select * from x x1 join x x2 on (s)";
-        RecordCursorFactory factory = compiler.compile(sql, bindVariableService);
-        sink.clear();
-        printer.print(factory.getCursor(), true);
-        System.out.println(sink);
     }
 
     private void assertCast(String expectedData, String expectedMeta, String sql) throws SqlException, IOException {

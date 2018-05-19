@@ -84,7 +84,6 @@ final class WhereClauseParser {
                 if (index == -1) {
                     throw SqlException.invalidColumn(a.position, a.token);
                 }
-//                RecordColumnMetadata meta = m.getColumnQuick(index);
 
                 switch (m.getColumnType(index)) {
                     case ColumnType.SYMBOL:

@@ -53,7 +53,7 @@ public class RecordCursorPrinter {
         }
     }
 
-    private void print(Record r, RecordMetadata m) throws IOException {
+    public void print(Record r, RecordMetadata m) throws IOException {
         for (int i = 0, sz = m.getColumnCount(); i < sz; i++) {
             if (i > 0) {
                 sink.put(delimiter);
@@ -62,6 +62,16 @@ public class RecordCursorPrinter {
         }
         sink.put("\n");
         sink.flush();
+    }
+
+    public void printHeader(RecordMetadata metadata) {
+        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+            if (i > 0) {
+                sink.put(delimiter);
+            }
+            sink.put(metadata.getColumnName(i));
+        }
+        sink.put('\n');
     }
 
     private void printColumn(Record r, RecordMetadata m, int i) {
@@ -102,15 +112,5 @@ public class RecordCursorPrinter {
             default:
                 break;
         }
-    }
-
-    private void printHeader(RecordMetadata metadata) {
-        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
-            if (i > 0) {
-                sink.put(delimiter);
-            }
-            sink.put(metadata.getColumnName(i));
-        }
-        sink.put('\n');
     }
 }
