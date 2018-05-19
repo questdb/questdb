@@ -339,7 +339,6 @@ final class WhereClauseParser {
     }
 
     private boolean analyzeListOfValues(IntrinsicModel model, CharSequence columnName, RecordMetadata meta, SqlNode node) {
-//        RecordColumnMetadata colMeta = meta.getColumn(columnName);
         final int columnIndex = meta.getColumnIndex(columnName);
         if (meta.isColumnIndexed(columnIndex)) {
             boolean newColumn = true;

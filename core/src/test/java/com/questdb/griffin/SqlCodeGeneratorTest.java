@@ -70,7 +70,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         "92.050039469858\t\t1970-01-01T04:43:20.000000Z\n" +
                         "45.634456960908\t\t1970-01-01T05:00:00.000000Z\n" +
                         "40.455469747939\t\t1970-01-01T05:16:40.000000Z\n",
-                "select * from x where b in ('HYRX','PEHN', null)",
+                "select * from x o where o.b in ('HYRX','PEHN', null)",
                 "create table x as (select * from random_cursor(20, 'a', rnd_double(0)*100, 'b', rnd_symbol(5,4,4,1), 'k', timestamp_sequence(to_timestamp(0), 1000000000))), index(b)");
     }
 

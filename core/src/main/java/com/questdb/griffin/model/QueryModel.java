@@ -540,7 +540,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         }
         if (tableName != null) {
             tableName.toSink(sink);
-//            sink.put(tableName.token);
             if (alias != null) {
                 aliasToSink(alias.token, sink);
             }

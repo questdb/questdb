@@ -605,7 +605,6 @@ public class SqlCompiler {
         }
     }
 
-    //todo: creating table requires lock to guard against bad concurrency
     private void createEmptyTable(CreateTableModel model) {
         final FilesFacade ff = configuration.getFilesFacade();
         path.of(configuration.getRoot()).concat(model.getName().token);

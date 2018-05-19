@@ -67,7 +67,7 @@ class SqlOptimiser {
     private static final int JOIN_OP_REGEX = 4;
     private final CairoEngine engine;
     private final FlyweightCharSequence tableLookupSequence = new FlyweightCharSequence();
-    private final ObjectPool<SqlNode> exprNodePool;
+    private final ObjectPool<SqlNode> sqlNodePool;
     private final CharacterStore characterStore;
     private final ObjList<JoinContext> joinClausesSwap1 = new ObjList<>();
     private final ObjList<JoinContext> joinClausesSwap2 = new ObjList<>();
@@ -97,19 +97,20 @@ class SqlOptimiser {
     private final IntPriorityQueue orderingStack = new IntPriorityQueue();
     private final ObjectPool<QueryColumn> queryColumnPool;
     private final FunctionParser functionParser;
+    private final ColumnPrefixEraser columnPrefixEraser = new ColumnPrefixEraser();
     private int defaultAliasCount = 0;
     private ObjList<JoinContext> emittedJoinClauses;
 
     SqlOptimiser(
             CairoEngine engine,
             CharacterStore characterStore,
-            ObjectPool<SqlNode> exprNodePool,
+            ObjectPool<SqlNode> sqlNodePool,
             ObjectPool<QueryColumn> queryColumnPool,
             ObjectPool<QueryModel> queryModelPool,
             PostOrderTreeTraversalAlgo traversalAlgo,
             FunctionParser functionParser) {
         this.engine = engine;
-        this.exprNodePool = exprNodePool;
+        this.sqlNodePool = sqlNodePool;
         this.characterStore = characterStore;
         this.traversalAlgo = traversalAlgo;
         this.queryModelPool = queryModelPool;
@@ -150,7 +151,7 @@ class SqlOptimiser {
 
         if (ai == bi) {
             // (same table)
-            SqlNode node = exprNodePool.next().of(SqlNode.OPERATION, "=", 0, 0);
+            SqlNode node = sqlNodePool.next().of(SqlNode.OPERATION, "=", 0, 0);
             node.paramCount = 2;
             node.lhs = ao;
             node.rhs = bo;
@@ -195,19 +196,19 @@ class SqlOptimiser {
      * this filter is not explicitly mentioned but it might help pre-filtering record sources
      * before hashing.
      */
-    private void addTransitiveFilters(QueryModel parent) {
-        ObjList<QueryModel> joinModels = parent.getJoinModels();
+    private void addTransitiveFilters(QueryModel model) {
+        ObjList<QueryModel> joinModels = model.getJoinModels();
         for (int i = 0, n = joinModels.size(); i < n; i++) {
             JoinContext jc = joinModels.getQuick(i).getContext();
             if (jc != null) {
                 for (int k = 0, kn = jc.bNames.size(); k < kn; k++) {
                     CharSequence name = jc.bNames.getQuick(k);
                     if (constNameToIndex.get(name) == jc.bIndexes.getQuick(k)) {
-                        SqlNode node = exprNodePool.next().of(SqlNode.OPERATION, constNameToToken.get(name), 0, 0);
+                        SqlNode node = sqlNodePool.next().of(SqlNode.OPERATION, constNameToToken.get(name), 0, 0);
                         node.lhs = jc.aNodes.getQuick(k);
                         node.rhs = constNameToNode.get(name);
                         node.paramCount = 2;
-                        addWhereNode(parent, jc.slaveIndex, node);
+                        addWhereNode(model, jc.slaveIndex, node);
                     }
                 }
             }
@@ -437,7 +438,7 @@ class SqlOptimiser {
         if (old == null) {
             return filter;
         } else {
-            SqlNode n = exprNodePool.next().of(SqlNode.OPERATION, "and", 0, 0);
+            SqlNode n = sqlNodePool.next().of(SqlNode.OPERATION, "and", 0, 0);
             n.paramCount = 2;
             n.lhs = old;
             n.rhs = filter;
@@ -455,7 +456,7 @@ class SqlOptimiser {
         SqlNode timestamp = model.getTimestamp();
         if (timestamp == null) {
             if (m.getTimestampIndex() != -1) {
-                model.setTimestamp(exprNodePool.next().of(SqlNode.LITERAL, m.getColumnName(m.getTimestampIndex()), 0, 0));
+                model.setTimestamp(sqlNodePool.next().of(SqlNode.LITERAL, m.getColumnName(m.getTimestampIndex()), 0, 0));
             }
         } else {
             int index = m.getColumnIndexQuiet(timestamp.token);
@@ -803,6 +804,32 @@ class SqlOptimiser {
         }
     }
 
+    private void eraseColumnPrefixInWhereClauses(QueryModel model) throws SqlException {
+
+        ObjList<QueryModel> joinModels = model.getJoinModels();
+        for (int i = 0, n = joinModels.size(); i < n; i++) {
+            QueryModel m = joinModels.getQuick(i);
+            SqlNode where = m.getWhereClause();
+
+            // join models can have "where" clause
+            // although in context of SQL where is executed after joins, this model
+            // always localises "where" to a single table and therefore "where" is
+            // is applied before join. Please see post-join-where for filters that
+            // executed in line with standard SQL behaviour.
+
+            if (where != null) {
+                if (where.type == SqlNode.LITERAL) {
+                    m.setWhereClause(columnPrefixEraser.rewrite(where));
+                } else {
+                    traversalAlgo.traverse(where, columnPrefixEraser);
+                }
+            }
+            if (m.getNestedModel() != null) {
+                eraseColumnPrefixInWhereClauses(m.getNestedModel());
+            }
+        }
+    }
+
     private int getIndexOfTableForColumn(QueryModel model, CharSequence column, int dot, int position) throws SqlException {
         ObjList<QueryModel> joinModels = model.getJoinModels();
         int index = -1;
@@ -901,7 +928,7 @@ class SqlOptimiser {
     }
 
     private SqlNode makeOperation(CharSequence token, SqlNode lhs, SqlNode rhs) {
-        SqlNode expr = exprNodePool.next().of(SqlNode.OPERATION, token, 0, 0);
+        SqlNode expr = sqlNodePool.next().of(SqlNode.OPERATION, token, 0, 0);
         expr.paramCount = 2;
         expr.lhs = lhs;
         expr.rhs = rhs;
@@ -1132,15 +1159,15 @@ class SqlOptimiser {
     }
 
     private QueryColumn nextColumn(CharSequence name) {
-        return SqlUtil.nextColumn(queryColumnPool, exprNodePool, name, name);
+        return SqlUtil.nextColumn(queryColumnPool, sqlNodePool, name, name);
     }
 
     private QueryColumn nextColumn(CharSequence alias, CharSequence column) {
-        return SqlUtil.nextColumn(queryColumnPool, exprNodePool, alias, column);
+        return SqlUtil.nextColumn(queryColumnPool, sqlNodePool, alias, column);
     }
 
     private SqlNode nextLiteral(CharSequence token, int position) {
-        return SqlUtil.nextLiteral(exprNodePool, token, position);
+        return SqlUtil.nextLiteral(sqlNodePool, token, position);
     }
 
     private SqlNode nextLiteral(CharSequence token) {
@@ -1192,6 +1219,7 @@ class SqlOptimiser {
         createOrderHash(rewrittenModel);
         optimiseJoins(rewrittenModel);
         moveWhereInsideSubQueries(rewrittenModel);
+        eraseColumnPrefixInWhereClauses(rewrittenModel);
         return rewrittenModel;
     }
 
@@ -1261,7 +1289,7 @@ class SqlOptimiser {
                 return node;
             default:
                 if (reverse) {
-                    SqlNode n = exprNodePool.next();
+                    SqlNode n = sqlNodePool.next();
                     n.token = "not";
                     n.paramCount = 1;
                     n.rhs = node;
@@ -2091,6 +2119,39 @@ class SqlOptimiser {
                 }
             }
         }
+    }
+
+    private class ColumnPrefixEraser implements PostOrderTreeTraversalAlgo.Visitor {
+
+        @Override
+        public void visit(SqlNode node) {
+            switch (node.type) {
+                case SqlNode.FUNCTION:
+                case SqlNode.OPERATION:
+                case SqlNode.SET_OPERATION:
+                    if (node.paramCount < 3) {
+                        node.lhs = rewrite(node.lhs);
+                        node.rhs = rewrite(node.rhs);
+                    } else {
+                        for (int i = 0, n = node.paramCount; i < n; i++) {
+                            node.args.setQuick(i, rewrite(node.args.getQuick(i)));
+                        }
+                    }
+                    break;
+                default:
+                    break;
+            }
+        }
+
+        private SqlNode rewrite(SqlNode node) {
+            if (node != null && node.type == SqlNode.LITERAL) {
+                final int dot = Chars.indexOf(node.token, '.');
+                if (dot != -1) {
+                    return nextLiteral(node.token.subSequence(dot + 1, node.token.length()));
+                }
+            }
+            return node;
+        }
 
 
     }
@@ -2176,4 +2237,6 @@ class SqlOptimiser {
         joinOps.put("or", JOIN_OP_OR);
         joinOps.put("~", JOIN_OP_REGEX);
     }
+
+
 }

@@ -1111,7 +1111,7 @@ public class SqlParserTest extends AbstractCairoTest {
                         " o.customerId customerId1" +
                         " from (" +
                         "customers c" +
-                        " outer join (orders o where o.customerId = 100) o on o.customerId = c.customerId where 100 = c.customerId)",
+                        " outer join (orders o where customerId = 100) o on o.customerId = c.customerId where 100 = customerId)",
                 "customers c" +
                         " outer join orders o on c.customerId = o.customerId" +
                         " where 100 = c.customerId",
@@ -1127,7 +1127,7 @@ public class SqlParserTest extends AbstractCairoTest {
                         " c.customerId customerId," +
                         " o.customerId customerId1" +
                         " from (" +
-                        "customers c outer join (orders o where o.customerId = 100) o on o.customerId = c.customerId where c.customerId = 100)",
+                        "customers c outer join (orders o where customerId = 100) o on o.customerId = c.customerId where customerId = 100)",
                 "customers c" +
                         " outer join orders o on c.customerId = o.customerId" +
                         " where c.customerId = 100",
@@ -1135,6 +1135,39 @@ public class SqlParserTest extends AbstractCairoTest {
                 modelOf("orders").col("customerId", ColumnType.INT)
         );
     }
+
+    @Test
+    public void testEraseColumnPrefix() throws SqlException {
+        assertQuery(
+                "select-choose name from (cust where name ~ 'x')",
+                "cust where cust.name ~ 'x'",
+                modelOf("cust").col("name", ColumnType.STRING)
+        );
+    }
+
+    @Test
+    public void testEraseColumnPrefixInJoin() throws Exception {
+        assertQuery(
+                "select-choose" +
+                        " c.customerId customerId," +
+                        " o.x x," +
+                        " o.customerId customerId1" +
+                        " from " +
+                        "(" +
+                        "customers c" +
+                        " outer join (orders o where x = 10 and customerId = 100) o on customerId = c.customerId" +
+                        " where customerId = 100" +
+                        ")",
+                "customers c" +
+                        " outer join (orders o where o.x = 10) o on c.customerId = o.customerId" +
+                        " where c.customerId = 100",
+                modelOf("customers").col("customerId", ColumnType.INT),
+                modelOf("orders")
+                        .col("customerId", ColumnType.INT)
+                        .col("x", ColumnType.INT)
+        );
+    }
+
 
     @Test
     public void testExpressionSyntaxError() {
@@ -1508,7 +1541,7 @@ public class SqlParserTest extends AbstractCairoTest {
                         " from (" +
                         "orders" +
                         " join customers on customers.customerId = orders.customerId" +
-                        " join (orderDetails d where d.orderId = d.productId) d on d.productId = orders.orderId" +
+                        " join (orderDetails d where orderId = productId) d on d.productId = orders.orderId" +
                         " join suppliers on suppliers.supplier = orders.orderId" +
                         " join products on products.productId = orders.orderId and products.supplier = suppliers.supplier)",
                 "orders" +
@@ -1676,7 +1709,7 @@ public class SqlParserTest extends AbstractCairoTest {
                         " from (" +
                         "orders" +
                         " join customers on customers.customerId = orders.customerId" +
-                        " join (orderDetails d where d.productId = d.orderId) d on d.productId = customers.customerId and d.orderId = orders.orderId" +
+                        " join (orderDetails d where productId = orderId) d on d.productId = customers.customerId and d.orderId = orders.orderId" +
                         " join products on products.productId = d.productId" +
                         " join suppliers on suppliers.supplier = products.supplier)",
                 "orders" +
@@ -1729,7 +1762,7 @@ public class SqlParserTest extends AbstractCairoTest {
     @Test
     public void testJoinOnCase() throws Exception {
         assertQuery(
-                "select-choose a.x x from (a a cross join b where switch(a.x,15,1,10))",
+                "select-choose a.x x from (a a cross join b where switch(x,15,1,10))",
                 "select a.x from a a join b on (case when a.x = 1 then 10 else 15 end)",
                 modelOf("a").col("x", ColumnType.INT),
                 modelOf("b").col("x", ColumnType.INT));
@@ -1768,7 +1801,7 @@ public class SqlParserTest extends AbstractCairoTest {
                         " a.x x," +
                         " b.x x1" +
                         " from (" +
-                        "a cross join (b where b.x) b where a.x + 1" +
+                        "a cross join (b where x) b where x + 1" +
                         ")",
                 "a join b on a.x+1 and b.x",
                 modelOf("a").col("x", ColumnType.INT),
@@ -1791,10 +1824,10 @@ public class SqlParserTest extends AbstractCairoTest {
                         " from (" +
                         "orders" +
                         " join customers on customers.customerId = orders.orderId" +
-                        " join (orderDetails d where d.productId = d.orderId) d on d.orderId = orders.orderId" +
+                        " join (orderDetails d where productId = orderId) d on d.orderId = orders.orderId" +
                         " join products on products.productId = d.productId" +
                         " join suppliers on suppliers.supplier = products.supplier" +
-                        " where orders.customerId = orders.orderId)",
+                        " where customerId = orderId)",
                 "orders" +
                         " join customers on orders.customerId = customers.customerId" +
                         " join orderDetails d on d.orderId = customers.customerId and orders.orderId = d.orderId" +
@@ -1823,11 +1856,11 @@ public class SqlParserTest extends AbstractCairoTest {
                         " suppliers.supplier supplier1" +
                         " from (" +
                         "orders" +
-                        " join (orderDetails d where d.productId = d.orderId) d on d.orderId = orders.customerId" +
+                        " join (orderDetails d where productId = orderId) d on d.orderId = orders.customerId" +
                         " join customers on customers.customerId = orders.customerId" +
                         " join products on products.productId = d.productId" +
                         " join suppliers on suppliers.supplier = products.supplier" +
-                        " where orders.orderId = orders.customerId)",
+                        " where orderId = customerId)",
                 "orders" +
                         " join orderDetails d on d.orderId = orders.orderId and d.orderId = customers.customerId" +
                         " join customers on orders.customerId = customers.customerId" +
@@ -1879,7 +1912,7 @@ public class SqlParserTest extends AbstractCairoTest {
                         " suppliers.supplier supplier1" +
                         " from (" +
                         "orders" +
-                        " join (orderDetails d where d.productId = d.orderId) d on d.orderId = orders.orderId" +
+                        " join (orderDetails d where productId = orderId) d on d.orderId = orders.orderId" +
                         " join customers on customers.customerId = d.productId" +
                         " join products on products.productId = d.productId" +
                         " join suppliers on suppliers.supplier = products.supplier const-where 1 = 1" +
@@ -1913,7 +1946,7 @@ public class SqlParserTest extends AbstractCairoTest {
                         " from (" +
                         "orders" +
                         " join shippers on shippers.shipper = orders.orderId" +
-                        " join (orderDetails d where d.productId = d.orderId) d on d.productId = shippers.shipper" +
+                        " join (orderDetails d where productId = orderId) d on d.productId = shippers.shipper" +
                         " join products on products.productId = d.productId" +
                         " join suppliers on suppliers.supplier = products.supplier" +
                         " cross join customers" +
@@ -1947,7 +1980,7 @@ public class SqlParserTest extends AbstractCairoTest {
                         " suppliers.supplier supplier1" +
                         " from (" +
                         "customers" +
-                        " join (orderDetails d where d.productId = d.orderId) d on d.productId = customers.customerId" +
+                        " join (orderDetails d where productId = orderId) d on d.productId = customers.customerId" +
                         " join orders on orders.orderId = d.orderId" +
                         " join products on products.productId = d.productId" +
                         " join suppliers on suppliers.supplier = products.supplier" +
@@ -1986,7 +2019,7 @@ public class SqlParserTest extends AbstractCairoTest {
                         // 1. shipper = orders.orderId
                         // 2. d.orderId = orders.orderId
                         // 3. d.productId = shipper
-                        " join (orderDetails d where d.productId = d.orderId) d on d.productId = shippers.shipper" +
+                        " join (orderDetails d where productId = orderId) d on d.productId = shippers.shipper" +
                         " join products on products.productId = d.productId" +
                         " join suppliers on suppliers.supplier = products.supplier" +
                         " cross join customers const-where 1 = 1" +
@@ -2031,7 +2064,7 @@ public class SqlParserTest extends AbstractCairoTest {
         assertQuery(
                 "select-choose o.customerId customerId" +
                         " from ((select-choose customerId cid from (customers where 100 = customerId)) c" +
-                        " outer join (orders o where o.customerId = 100) o on o.customerId = c.cid" +
+                        " outer join (orders o where customerId = 100) o on o.customerId = c.cid" +
                         " const-where 10 = 9)",
                 "select o.customerId from (select customerId cid from customers) c" +
                         " outer join orders o on c.cid = o.customerId" +
@@ -2050,7 +2083,7 @@ public class SqlParserTest extends AbstractCairoTest {
                         "((select-choose" +
                         " customerId cid " +
                         "from (customers where 100 = customerId)) c " +
-                        "outer join (orders o where o.customerId = 100) o on o.customerId = c.cid)",
+                        "outer join (orders o where customerId = 100) o on o.customerId = c.cid)",
                 "select o.customerId from (select customerId cid from customers) c" +
                         " outer join orders o on c.cid = o.customerId" +
                         " where 100 = c.cid",
@@ -2153,7 +2186,7 @@ public class SqlParserTest extends AbstractCairoTest {
                         " suppliers.supplier supplier1" +
                         " from (" +
                         "customers" +
-                        " join (orderDetails d where d.productId = d.orderId) d on d.productId = customers.customerId" +
+                        " join (orderDetails d where productId = orderId) d on d.productId = customers.customerId" +
                         " join orders on orders.orderId = d.orderId post-join-where d.quantity < orders.orderId" +
                         " join products on products.productId = d.productId post-join-where products.price > d.quantity or d.orderId = orders.orderId" +
                         " join suppliers on suppliers.supplier = products.supplier" +
@@ -2339,17 +2372,22 @@ public class SqlParserTest extends AbstractCairoTest {
                         " x.productId productId," +
                         " y.orderId orderId1," +
                         " y.customerId customerId" +
-                        " from (" +
-                        "(select-choose orders.orderId orderId, products.productId productId" +
-                        " from (orders" +
-                        " join (orderDetails d where d.productId = d.orderId) d on d.orderId = orders.customerId" +
+                        " from " +
+                        "(" +
+                        "(" +
+                        "select-choose orders.orderId orderId, products.productId productId" +
+                        " from " +
+                        "(" +
+                        "orders" +
+                        " join (orderDetails d where productId = orderId) d on d.orderId = orders.customerId" +
                         " join customers on customers.customerId = orders.customerId" +
                         " join products on products.productId = d.productId" +
                         " join suppliers on suppliers.supplier = products.supplier" +
-                        " where orders.orderId = orders.customerId)" +
+                        " where orderId = customerId" +
+                        ")" +
                         ") x cross join (orders" +
                         " join customers on customers.customerId = orders.customerId" +
-                        " join (orderDetails d where d.orderId = d.productId) d on d.productId = orders.orderId" +
+                        " join (orderDetails d where orderId = productId) d on d.productId = orders.orderId" +
                         " join suppliers on suppliers.supplier = orders.orderId" +
                         " join products on products.productId = orders.orderId and products.supplier = suppliers.supplier) y)",
                 "with x as (select orders.orderId, products.productId from " +
