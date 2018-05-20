@@ -28,13 +28,13 @@ import com.questdb.cairo.sql.*;
 import com.questdb.common.RowCursor;
 import com.questdb.std.Rows;
 
-class FilteredTableRecordCursor implements RecordCursor {
+class DataFrameRecordCursor implements RecordCursor {
     private final TableReaderRecord record = new TableReaderRecord();
     private final RowCursorFactory rowCursorFactory;
     private DataFrameCursor dataFrameCursor;
     private RowCursor rowCursor;
 
-    public FilteredTableRecordCursor(RowCursorFactory rowCursorFactory) {
+    public DataFrameRecordCursor(RowCursorFactory rowCursorFactory) {
         this.rowCursorFactory = rowCursorFactory;
     }
 

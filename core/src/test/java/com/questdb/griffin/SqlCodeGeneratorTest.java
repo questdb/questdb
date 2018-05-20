@@ -69,6 +69,50 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFilterInterval() throws Exception {
+        assertQuery("a\tb\tk\n" +
+                        "84.452581772111\tPEHN\t1970-01-01T03:36:40.000000Z\n" +
+                        "97.501988537251\t\t1970-01-01T03:53:20.000000Z\n" +
+                        "49.005104498852\tPEHN\t1970-01-01T04:10:00.000000Z\n",
+                "select * from x o where k = '1970-01-01T03:36:40;45m'",
+                "create table x as " +
+                        "(" +
+                        "select * from" +
+                        " random_cursor" +
+                        "(20," +
+                        " 'a', rnd_double(0)*100," +
+                        " 'b', rnd_symbol(5,4,4,1)," +
+                        " 'k', timestamp_sequence(to_timestamp(0), 1000000000)" +
+                        ")" +
+                        "), index(b) timestamp(k)");
+    }
+
+    @Test
+    public void testFilterIntervalAndField() throws Exception {
+        assertQuery("a\tb\tk\n" +
+                        "84.452581772111\tPEHN\t1970-01-01T03:36:40.000000Z\n" +
+                        "97.501988537251\t\t1970-01-01T03:53:20.000000Z\n",
+                "select * from x o where k = '1970-01-01T03:36:40;45m' and a > 50",
+                "create table x as " +
+                        "(" +
+                        "select * from" +
+                        " random_cursor" +
+                        "(20," +
+                        " 'a', rnd_double(0)*100," +
+                        " 'b', rnd_symbol(5,4,4,1)," +
+                        " 'k', timestamp_sequence(to_timestamp(0), 1000000000)" +
+                        ")" +
+                        "), index(b) timestamp(k)");
+    }
+
+    @Test
+    public void testFilterIntrinsicFalse() throws Exception {
+        assertQuery("a\tb\tk\n",
+                "select * from x o where o.b in ('HYRX','PEHN', null) and a < a",
+                "create table x as (select * from random_cursor(20, 'a', rnd_double(0)*100, 'b', rnd_symbol(5,4,4,1), 'k', timestamp_sequence(to_timestamp(0), 1000000000))), index(b)");
+    }
+
+    @Test
     public void testFilterKeyAndFields() throws Exception {
         assertQuery("a\tb\tk\n" +
                         "11.427984775756\t\t1970-01-01T00:00:00.000000Z\n" +

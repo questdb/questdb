@@ -139,8 +139,7 @@ public class SqlCodeGenerator {
                 final IntrinsicModel intrinsicModel = filterAnalyser.extract(model, whereClause, metadata, latestBy != null ? latestBy.token : null, timestampIndex);
 
                 if (intrinsicModel.intrinsicValue == IntrinsicModel.FALSE) {
-                    // todo: return empty factory
-                    return null;
+                    return new EmptyTableRecordCursorFactory(engine, model.getTableName().token.toString());
                 }
 
                 Function filter;
@@ -250,34 +249,37 @@ public class SqlCodeGenerator {
                                         rcf = new SymbolIndexFilteredRowCursorFactory(columnIndex, symbolKey, filter, true);
                                     }
                                 }
-                                return new FilteredTableRecordCursorFactory(dfcFactory, rcf);
+                                return new DataFrameRecordCursorFactory(dfcFactory, rcf);
+                            }
+                            // multiple key values
+                            final ObjList<RowCursorFactory> cursorFactories = new ObjList<>(nKeyValues);
+                            if (filter == null) {
+                                // without filter
+                                final SymbolMapReader symbolMapReader = reader.getSymbolMapReader(columnIndex);
+                                for (int i = 0; i < nKeyValues; i++) {
+                                    final int symbolKey = symbolMapReader.getQuick(intrinsicModel.keyValues.get(i));
+                                    if (symbolKey != SymbolTable.VALUE_NOT_FOUND) {
+                                        cursorFactories.add(new SymbolIndexRowCursorFactory(columnIndex, symbolKey, i == 0));
+                                    }
+                                }
                             } else {
-                                // multiple key values
-                                if (filter == null) {
-                                    // without filter
-                                    final ObjList<RowCursorFactory> cursorFactories = new ObjList<>(nKeyValues);
-                                    final SymbolMapReader symbolMapReader = reader.getSymbolMapReader(columnIndex);
-                                    for (int i = 0; i < nKeyValues; i++) {
-                                        final int symbolKey = symbolMapReader.getQuick(intrinsicModel.keyValues.get(i));
-                                        if (symbolKey != SymbolTable.VALUE_NOT_FOUND) {
-                                            cursorFactories.add(new SymbolIndexRowCursorFactory(columnIndex, symbolKey, i == 0));
-                                        }
+                                // with filter
+                                final SymbolMapReader symbolMapReader = reader.getSymbolMapReader(columnIndex);
+                                for (int i = 0; i < nKeyValues; i++) {
+                                    final int symbolKey = symbolMapReader.getQuick(intrinsicModel.keyValues.get(i));
+                                    if (symbolKey != SymbolTable.VALUE_NOT_FOUND) {
+                                        cursorFactories.add(new SymbolIndexFilteredRowCursorFactory(columnIndex, symbolKey, filter, i == 0));
                                     }
-                                    return new FilteredTableRecordCursorFactory(dfcFactory, new HeapRowCursorFactory(cursorFactories));
-                                } else {
-                                    // with filter
-                                    final ObjList<RowCursorFactory> cursorFactories = new ObjList<>(nKeyValues);
-                                    final SymbolMapReader symbolMapReader = reader.getSymbolMapReader(columnIndex);
-                                    for (int i = 0; i < nKeyValues; i++) {
-                                        final int symbolKey = symbolMapReader.getQuick(intrinsicModel.keyValues.get(i));
-                                        if (symbolKey != SymbolTable.VALUE_NOT_FOUND) {
-                                            cursorFactories.add(new SymbolIndexFilteredRowCursorFactory(columnIndex, symbolKey, filter, i == 0));
-                                        }
-                                    }
-                                    return new FilteredTableRecordCursorFactory(dfcFactory, new HeapRowCursorFactory(cursorFactories));
                                 }
                             }
+                            return new DataFrameRecordCursorFactory(dfcFactory, new HeapRowCursorFactory(cursorFactories));
                         }
+                    } else {
+                        RecordCursorFactory factory = new DataFrameRecordCursorFactory(dfcFactory, new DataFrameRowCursorFactory());
+                        if (filter != null) {
+                            return new FilteredRecordCursorFactory(factory, filter);
+                        }
+                        return factory;
                     }
                 }
 

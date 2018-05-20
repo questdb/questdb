@@ -24,20 +24,16 @@
 package com.questdb.griffin.engine.table;
 
 import com.questdb.cairo.sql.DataFrame;
-import com.questdb.cairo.sql.Function;
 import com.questdb.cairo.sql.RowCursorFactory;
 import com.questdb.common.RowCursor;
 
-public class SymbolIndexFilteredRowCursorFactory implements RowCursorFactory {
-    private final SymbolIndexFilteredRowCursor cursor;
-
-    public SymbolIndexFilteredRowCursorFactory(int columnIndex, int symbolKey, Function filter, boolean cachedIndexReaderCursor) {
-        this.cursor = new SymbolIndexFilteredRowCursor(columnIndex, symbolKey, filter, cachedIndexReaderCursor);
-    }
+public class DataFrameRowCursorFactory implements RowCursorFactory {
+    private final DataFrameRowCursor cursor = new DataFrameRowCursor();
 
     @Override
     public RowCursor getCursor(DataFrame dataFrame) {
-        return cursor.of(dataFrame);
+        cursor.of(dataFrame);
+        return cursor;
     }
 
 }

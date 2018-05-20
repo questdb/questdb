@@ -116,8 +116,6 @@ public class CharacterStore extends AbstractCharSink implements CharacterStoreEn
             assert that.lo < that.hi;
             return that;
         }
-
-
     }
 
     @Override

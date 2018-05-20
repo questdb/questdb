@@ -32,7 +32,7 @@ import com.questdb.std.Rnd;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
-public class FilteredTableRecordCursorFactoryTest extends AbstractCairoTest {
+public class DataFrameRecordCursorFactoryTest extends AbstractCairoTest {
     @Test
     public void testFactory() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
@@ -83,7 +83,7 @@ public class FilteredTableRecordCursorFactoryTest extends AbstractCairoTest {
                 }
                 SymbolIndexRowCursorFactory symbolIndexRowCursorFactory = new SymbolIndexRowCursorFactory(columnIndex, symbolKey, true);
                 FullTableFrameCursorFactory dataFrameFactory = new FullTableFrameCursorFactory(engine, "x");
-                FilteredTableRecordCursorFactory factory = new FilteredTableRecordCursorFactory(dataFrameFactory, symbolIndexRowCursorFactory);
+                DataFrameRecordCursorFactory factory = new DataFrameRecordCursorFactory(dataFrameFactory, symbolIndexRowCursorFactory);
 
                 try (RecordCursor cursor = factory.getCursor()) {
                     while (cursor.hasNext()) {
