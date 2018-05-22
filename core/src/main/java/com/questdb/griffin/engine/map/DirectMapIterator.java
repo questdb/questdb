@@ -21,43 +21,35 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.engine.table;
+package com.questdb.griffin.engine.map;
 
-import com.questdb.common.RowCursor;
-import com.questdb.std.IntLongPriorityQueue;
 import com.questdb.std.Unsafe;
 
-class HeapRowCursor implements RowCursor {
-    private final IntLongPriorityQueue heap;
-    private RowCursor[] cursors;
-    private final int nCursors;
+public final class DirectMapIterator implements com.questdb.std.ImmutableIterator<DirectMapEntry> {
+    private final DirectMapEntry entry;
+    private int count;
+    private long address;
 
-    public HeapRowCursor(int nCursors) {
-        this.heap = new IntLongPriorityQueue(nCursors);
-        this.nCursors = nCursors;
+    DirectMapIterator(DirectMapEntry entry) {
+        this.entry = entry;
     }
 
     @Override
     public boolean hasNext() {
-        return heap.hasNext();
+        return count > 0;
     }
 
     @Override
-    public long next() {
-        int idx = heap.popIndex();
-        RowCursor cursor = Unsafe.arrayGet(cursors, idx);
-        return cursor.hasNext() ? heap.popAndReplace(idx, cursor.next()) : heap.popValue();
+    public DirectMapEntry next() {
+        long address = this.address;
+        this.address = address + Unsafe.getUnsafe().getInt(address);
+        count--;
+        return entry.init(address);
     }
 
-    public void of(RowCursor[] cursors) {
-        assert nCursors == cursors.length;
-        this.cursors = cursors;
-        this.heap.clear();
-        for (int i = 0; i < nCursors; i++) {
-            RowCursor cursor = Unsafe.arrayGet(cursors, i);
-            if (cursor.hasNext()) {
-                heap.add(i, cursor.next());
-            }
-        }
+    DirectMapIterator init(long address, int count) {
+        this.address = address;
+        this.count = count;
+        return this;
     }
 }

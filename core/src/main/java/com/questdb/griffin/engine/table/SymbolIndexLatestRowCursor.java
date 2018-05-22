@@ -23,23 +23,27 @@
 
 package com.questdb.griffin.engine.table;
 
-import com.questdb.cairo.sql.DataFrame;
-import com.questdb.cairo.sql.RowCursorFactory;
 import com.questdb.common.RowCursor;
 
-public class MergingRowCursorFactory implements RowCursorFactory {
-    private final RowCursorFactory lhs;
-    private final RowCursorFactory rhs;
-    private final MergingRowCursor cursor = new MergingRowCursor();
+class SymbolIndexLatestRowCursor implements RowCursor {
+    private long next;
 
-    public MergingRowCursorFactory(RowCursorFactory lhs, RowCursorFactory rhs) {
-        this.lhs = lhs;
-        this.rhs = rhs;
+    @Override
+    public boolean hasNext() {
+        if (next == -1) {
+            throw NoMoreFramesException.INSTANCE;
+        }
+        return true;
     }
 
     @Override
-    public RowCursor getCursor(DataFrame dataFrame) {
-        cursor.of(lhs.getCursor(dataFrame), rhs.getCursor(dataFrame));
-        return cursor;
+    public long next() {
+        long next = this.next;
+        this.next = -1;
+        return next;
+    }
+
+    void of(long rowid) {
+        this.next = rowid;
     }
 }

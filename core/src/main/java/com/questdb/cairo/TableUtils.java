@@ -63,7 +63,7 @@ public final class TableUtils {
     static final long META_OFFSET_TIMESTAMP_INDEX = 8;
     private static final int META_COLUMN_DATA_SIZE = 16;
     private final static Log LOG = LogFactory.getLog(TableUtils.class);
-    public static int NULL_LEN = -1;
+    public static final int NULL_LEN = -1;
 
     public static void create(FilesFacade ff, Path path, AppendMemory memory, CharSequence root, JournalMetadata metadata, int mode) {
         path.of(root).concat(metadata.getName());

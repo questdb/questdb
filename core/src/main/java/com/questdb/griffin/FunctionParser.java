@@ -46,7 +46,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
     private static final int MATCH_PARTIAL_MATCH = 2;
     private static final int MATCH_EXACT_MATCH = 3;
 
-    private static IntHashSet invalidFunctionNameChars = new IntHashSet();
+    private static final IntHashSet invalidFunctionNameChars = new IntHashSet();
     private final ObjList<Function> mutableArgs = new ObjList<>();
     private final ArrayDeque<Function> stack = new ArrayDeque<>();
     private final PostOrderTreeTraversalAlgo algo = new PostOrderTreeTraversalAlgo();

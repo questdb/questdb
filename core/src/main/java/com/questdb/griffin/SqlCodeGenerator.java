@@ -168,14 +168,14 @@ public class SqlCodeGenerator {
                 }
 
                 DataFrameCursorFactory dfcFactory;
-                if (intrinsicModel.intervals != null) {
-                    dfcFactory = new IntervalFrameCursorFactory(engine, model.getTableName().token.toString(), intrinsicModel.intervals);
-                } else {
-                    dfcFactory = new FullTableFrameCursorFactory(engine, model.getTableName().token.toString());
-                }
 
                 if (latestBy != null) {
                     // this is everything "latest by"
+                    if (intrinsicModel.intervals != null) {
+                        dfcFactory = new IntervalFrameCursorFactory(engine, model.getTableName().token.toString(), intrinsicModel.intervals);
+                    } else {
+                        dfcFactory = new FullTableFrameBackwardCursorFactory(engine, model.getTableName().token.toString());
+                    }
 
                     // first check if column is valid
                     int latestByIndex = metadata.getColumnIndexQuiet(latestBy.token);
@@ -194,18 +194,32 @@ public class SqlCodeGenerator {
                             throw ConcurrentModificationException.INSTANCE;
                         }
 
+                        assert intrinsicModel.keyValues != null;
+                        int nKeyValues = intrinsicModel.keyValues.size();
+
                         if (keyColumnIndex == latestByIndex) {
                             // we somewhat in luck
                             if (intrinsicModel.keySubQuery != null) {
                                 // treat key values as lambda
                                 // 1. get lambda cursor
                                 // 2. for each value of first column of lambda: resolve to "int" of symbol, find first row in index
-                                assert intrinsicModel.keyValues.size() == 1;
+                                assert nKeyValues == 1;
                             } else {
-                                assert intrinsicModel.keyValues != null && intrinsicModel.keyValues.size() > 0;
+                                assert nKeyValues > 0;
                                 // deal with key values as a list
                                 // 1. resolve each value of the list to "int"
                                 // 2. get first row in index for each value (stream)
+
+                                if (nKeyValues == 1) {
+                                    final RowCursorFactory rcf;
+                                    final int symbolKey = reader.getSymbolMapReader(keyColumnIndex).getQuick(intrinsicModel.keyValues.get(0));
+                                    if (symbolKey == SymbolTable.VALUE_NOT_FOUND) {
+                                        rcf = EmptyRowCursorFactory.INSTANCE;
+                                    } else {
+                                        rcf = new SymbolIndexLatestRowCursorFactory(keyColumnIndex, symbolKey, false);
+                                    }
+                                    return new DataFrameRecordCursorFactory(dfcFactory, rcf);
+                                }
                             }
                         } else {
                             // this could only happen when "latest by" is not indexed
@@ -222,14 +236,22 @@ public class SqlCodeGenerator {
                         // get latest rows for all values of "latest by" column
                     }
                 } else {
+
+                    if (intrinsicModel.intervals != null) {
+                        dfcFactory = new IntervalFrameCursorFactory(engine, model.getTableName().token.toString(), intrinsicModel.intervals);
+                    } else {
+                        dfcFactory = new FullTableFrameCursorFactory(engine, model.getTableName().token.toString());
+                    }
+
                     // no "latest by" clause
                     if (intrinsicModel.keyColumn != null) {
 
-                        final int columnIndex = reader.getMetadata().getColumnIndexQuiet(intrinsicModel.keyColumn);
-                        if (columnIndex == -1) {
+                        final int keyColumnIndex = reader.getMetadata().getColumnIndexQuiet(intrinsicModel.keyColumn);
+                        if (keyColumnIndex == -1) {
                             // todo: obtain key column position
                             throw SqlException.invalidColumn(0, intrinsicModel.keyColumn);
                         }
+
                         final int nKeyValues = intrinsicModel.keyValues.size();
                         if (intrinsicModel.keySubQuery != null) {
                             // perform lambda based key lookup
@@ -239,14 +261,14 @@ public class SqlCodeGenerator {
 
                             if (nKeyValues == 1) {
                                 final RowCursorFactory rcf;
-                                final int symbolKey = reader.getSymbolMapReader(columnIndex).getQuick(intrinsicModel.keyValues.get(0));
+                                final int symbolKey = reader.getSymbolMapReader(keyColumnIndex).getQuick(intrinsicModel.keyValues.get(0));
                                 if (symbolKey == SymbolTable.VALUE_NOT_FOUND) {
                                     rcf = EmptyRowCursorFactory.INSTANCE;
                                 } else {
                                     if (filter == null) {
-                                        rcf = new SymbolIndexRowCursorFactory(columnIndex, symbolKey, true);
+                                        rcf = new SymbolIndexRowCursorFactory(keyColumnIndex, symbolKey, true);
                                     } else {
-                                        rcf = new SymbolIndexFilteredRowCursorFactory(columnIndex, symbolKey, filter, true);
+                                        rcf = new SymbolIndexFilteredRowCursorFactory(keyColumnIndex, symbolKey, filter, true);
                                     }
                                 }
                                 return new DataFrameRecordCursorFactory(dfcFactory, rcf);
@@ -255,20 +277,20 @@ public class SqlCodeGenerator {
                             final ObjList<RowCursorFactory> cursorFactories = new ObjList<>(nKeyValues);
                             if (filter == null) {
                                 // without filter
-                                final SymbolMapReader symbolMapReader = reader.getSymbolMapReader(columnIndex);
+                                final SymbolMapReader symbolMapReader = reader.getSymbolMapReader(keyColumnIndex);
                                 for (int i = 0; i < nKeyValues; i++) {
                                     final int symbolKey = symbolMapReader.getQuick(intrinsicModel.keyValues.get(i));
                                     if (symbolKey != SymbolTable.VALUE_NOT_FOUND) {
-                                        cursorFactories.add(new SymbolIndexRowCursorFactory(columnIndex, symbolKey, i == 0));
+                                        cursorFactories.add(new SymbolIndexRowCursorFactory(keyColumnIndex, symbolKey, i == 0));
                                     }
                                 }
                             } else {
                                 // with filter
-                                final SymbolMapReader symbolMapReader = reader.getSymbolMapReader(columnIndex);
+                                final SymbolMapReader symbolMapReader = reader.getSymbolMapReader(keyColumnIndex);
                                 for (int i = 0; i < nKeyValues; i++) {
                                     final int symbolKey = symbolMapReader.getQuick(intrinsicModel.keyValues.get(i));
                                     if (symbolKey != SymbolTable.VALUE_NOT_FOUND) {
-                                        cursorFactories.add(new SymbolIndexFilteredRowCursorFactory(columnIndex, symbolKey, filter, i == 0));
+                                        cursorFactories.add(new SymbolIndexFilteredRowCursorFactory(keyColumnIndex, symbolKey, filter, i == 0));
                                     }
                                 }
                             }

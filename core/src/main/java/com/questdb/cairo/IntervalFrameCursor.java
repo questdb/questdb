@@ -102,7 +102,7 @@ public class IntervalFrameCursor implements DataFrameCursor {
             long rowCount = reader.openPartition(partitionLo);
             if (rowCount > 0) {
 
-                ReadOnlyColumn column = reader.getColumn(TableReader.getPrimaryColumnIndex(reader.getColumnBase(partitionLo), timestampIndex));
+                final ReadOnlyColumn column = reader.getColumn(TableReader.getPrimaryColumnIndex(reader.getColumnBase(partitionLo), timestampIndex));
                 final long intervalLo = intervals.getQuick(intervalsLo * 2);
                 final long intervalHi = intervals.getQuick(intervalsLo * 2 + 1);
 

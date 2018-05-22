@@ -114,19 +114,15 @@ public class BitmapIndexWriter implements Closeable {
 
     @Override
     public void close() {
-        if (keyMem != null) {
-            if (keyMem.isOpen() && keyCount > -1) {
-                keyMem.jumpTo(keyMemSize());
-            }
-            Misc.free(keyMem);
+        if (keyMem.isOpen() && keyCount > -1) {
+            keyMem.jumpTo(keyMemSize());
         }
+        Misc.free(keyMem);
 
-        if (valueMem != null) {
-            if (valueMem.isOpen() && valueMemSize > -1) {
-                valueMem.jumpTo(valueMemSize);
-            }
-            Misc.free(valueMem);
+        if (valueMem.isOpen() && valueMemSize > -1) {
+            valueMem.jumpTo(valueMemSize);
         }
+        Misc.free(valueMem);
     }
 
     public RowCursor getCursor(int key) {

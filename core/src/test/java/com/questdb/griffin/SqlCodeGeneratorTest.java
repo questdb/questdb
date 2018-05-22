@@ -214,6 +214,24 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "create table x as (select * from random_cursor(20, 'a', rnd_double(0)*100, 'b', rnd_symbol(5,4,4,0))), index(b)");
     }
 
+    @Test
+    public void testLatestByKeyValue() throws Exception {
+        assertQuery("a\tb\tk\n" +
+                        "49.005104498852\tPEHN\t1970-01-18T08:40:00.000000Z\n",
+                "select * from x latest by b where b = 'PEHN'",
+                "create table x as " +
+                        "(" +
+                        "select * from" +
+                        " random_cursor" +
+                        "(20," +
+                        " 'a', rnd_double(0)*100," +
+                        " 'b', rnd_symbol(5,4,4,1)," +
+                        " 'k', timestamp_sequence(to_timestamp(0), 100000000000)" +
+                        ")" +
+                        "), index(b) timestamp(k) partition by DAY",
+                "x");
+    }
+
     private void assertQuery(CharSequence expected, CharSequence query, CharSequence ddl) throws Exception {
         assertQuery(expected, query, ddl, null);
     }

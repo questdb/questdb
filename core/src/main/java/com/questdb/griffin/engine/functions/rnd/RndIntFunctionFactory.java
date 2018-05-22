@@ -45,7 +45,7 @@ public class RndIntFunctionFactory implements FunctionFactory {
 
     private static class RndFunction extends IntFunction {
 
-        private Rnd rnd;
+        private final Rnd rnd;
 
         public RndFunction(int position, CairoConfiguration configuration) {
             super(position);

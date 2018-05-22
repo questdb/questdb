@@ -157,8 +157,6 @@ public class GenericInteropTest extends AbstractTest {
             w.putShort(13, (short) 25000);
             w.append();
             writer.commit();
-
-            writer.close();
         }
 
         try {

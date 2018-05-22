@@ -75,17 +75,22 @@ class DataFrameRecordCursor implements RecordCursor {
     }
 
     @Override
-    public void toTop() {
-        dataFrameCursor.toTop();
+    public boolean hasNext() {
+        try {
+            if (rowCursor != null && rowCursor.hasNext()) {
+                record.setRecordIndex(rowCursor.next());
+                return true;
+            }
+            return nextFrame();
+        } catch (NoMoreFramesException ignore) {
+            return false;
+        }
     }
 
     @Override
-    public boolean hasNext() {
-        if (rowCursor != null && rowCursor.hasNext()) {
-            record.setRecordIndex(rowCursor.next());
-            return true;
-        }
-        return nextFrame();
+    public void toTop() {
+        dataFrameCursor.toTop();
+        rowCursor = null;
     }
 
     @Override

@@ -32,7 +32,7 @@ public class BindVariableServiceTest {
     private final static BindVariableService bindVariableService = new BindVariableService();
 
     @Before
-    public void setUp() throws Exception {
+    public void setUp() {
         bindVariableService.clear();
     }
 

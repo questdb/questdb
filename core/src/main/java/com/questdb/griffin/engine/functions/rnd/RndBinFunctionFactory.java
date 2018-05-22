@@ -68,9 +68,9 @@ public class RndBinFunctionFactory implements FunctionFactory {
     private static final class VarLenFunction extends BinFunction {
         private final Sequence sequence = new Sequence();
         private final Rnd rnd;
-        private long lo;
-        private long range;
-        private int nullRate;
+        private final long lo;
+        private final long range;
+        private final int nullRate;
 
         public VarLenFunction(int position, long lo, long hi, int nullRate, CairoConfiguration configuration) {
             super(position);
@@ -93,7 +93,7 @@ public class RndBinFunctionFactory implements FunctionFactory {
     private static final class FixLenFunction extends BinFunction {
         private final Sequence sequence = new Sequence();
         private final Rnd rnd;
-        private int nullRate;
+        private final int nullRate;
 
         public FixLenFunction(int position, long len, int nullRate, CairoConfiguration configuration) {
             super(position);

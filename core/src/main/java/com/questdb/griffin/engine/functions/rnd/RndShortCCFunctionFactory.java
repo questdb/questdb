@@ -55,7 +55,7 @@ public class RndShortCCFunctionFactory implements FunctionFactory {
     private static class RndFunction extends ShortFunction {
         private final short lo;
         private final short range;
-        private Rnd rnd;
+        private final Rnd rnd;
 
         public RndFunction(int position, short lo, short hi, CairoConfiguration configuration) {
             super(position);

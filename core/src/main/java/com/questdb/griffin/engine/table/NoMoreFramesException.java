@@ -21,18 +21,8 @@
  *
  ******************************************************************************/
 
-package com.questdb.store;
+package com.questdb.griffin.engine.table;
 
-import com.questdb.model.Quote;
-import com.questdb.test.tools.AbstractTest;
-import com.questdb.test.tools.TestUtils;
-import org.junit.Test;
-
-public class WriterDoubleCloseTest extends AbstractTest {
-    @Test
-    public void testDoubleClose() throws Exception {
-        try (JournalWriter<Quote> w = getFactory().writer(Quote.class)) {
-            TestUtils.generateQuoteData(w, 100);
-        }
-    }
+public class NoMoreFramesException extends RuntimeException {
+    public static final NoMoreFramesException INSTANCE = new NoMoreFramesException();
 }

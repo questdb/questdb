@@ -50,6 +50,7 @@ final class PostOrderTreeTraversalAlgo {
                 node = node.rhs;
             } else {
                 ExprNode peek = stack.peek();
+                assert peek != null;
                 if (peek.paramCount < 3) {
                     if (peek.lhs != null && lastVisited != peek.lhs) {
                         node = peek.lhs;

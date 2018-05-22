@@ -21,48 +21,24 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.engine.table;
+package com.questdb.cairo;
 
-import com.questdb.common.RowCursor;
+import com.questdb.cairo.sql.CairoEngine;
+import com.questdb.cairo.sql.DataFrameCursor;
+import com.questdb.cairo.sql.DataFrameCursorFactory;
 
-class MergingRowCursor implements RowCursor {
+public class FullTableFrameBackwardCursorFactory implements DataFrameCursorFactory {
+    private final FullTableBackwardFrameCursor cursor = new FullTableBackwardFrameCursor();
+    private final CairoEngine engine;
+    private final String tableName;
 
-    private RowCursor lhc;
-    private RowCursor rhc;
-    private long nxtl;
-    private long nxtr;
-
-    @Override
-    public boolean hasNext() {
-        return nxtl > -1 || lhc.hasNext() || nxtr > -1 || rhc.hasNext();
+    public FullTableFrameBackwardCursorFactory(CairoEngine engine, String tableName) {
+        this.engine = engine;
+        this.tableName = tableName;
     }
 
     @Override
-    public long next() {
-        long result;
-
-        if (nxtl == -1 && lhc.hasNext()) {
-            nxtl = lhc.next();
-        }
-
-        if (nxtr == -1 && rhc.hasNext()) {
-            nxtr = rhc.next();
-        }
-
-        if (nxtr == -1 || (nxtl > -1 && nxtl < nxtr)) {
-            result = nxtl;
-            nxtl = -1;
-        } else {
-            result = nxtr;
-            nxtr = -1;
-        }
-
-        return result;
-    }
-
-    public void of(RowCursor lhc, RowCursor rhc) {
-        this.lhc = lhc;
-        this.rhc = rhc;
-        nxtl = nxtr = -1;
+    public DataFrameCursor getCursor() {
+        return cursor.of(engine.getReader(tableName));
     }
 }

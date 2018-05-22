@@ -21,18 +21,10 @@
  *
  ******************************************************************************/
 
-package com.questdb.store;
+package com.questdb.griffin.engine.map;
 
-import com.questdb.model.Quote;
-import com.questdb.test.tools.AbstractTest;
-import com.questdb.test.tools.TestUtils;
-import org.junit.Test;
+public interface ColumnTypeResolver {
+    int count();
 
-public class WriterDoubleCloseTest extends AbstractTest {
-    @Test
-    public void testDoubleClose() throws Exception {
-        try (JournalWriter<Quote> w = getFactory().writer(Quote.class)) {
-            TestUtils.generateQuoteData(w, 100);
-        }
-    }
+    int getColumnType(int index);
 }

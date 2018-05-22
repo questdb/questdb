@@ -46,7 +46,7 @@ import org.junit.Test;
 
 public class BindVariablesTest extends BaseFunctionFactoryTest {
 
-    private static FunctionBuilder builder = new FunctionBuilder();
+    private static final FunctionBuilder builder = new FunctionBuilder();
 
     @Test
     public void testAmbiguousCall() throws SqlException {
