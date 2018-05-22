@@ -25,20 +25,14 @@ package com.questdb.cairo;
 
 import com.questdb.cairo.sql.CairoEngine;
 import com.questdb.cairo.sql.DataFrameCursor;
-import com.questdb.cairo.sql.DataFrameCursorFactory;
 import com.questdb.std.LongList;
 
-public class IntervalFrameCursorFactory implements DataFrameCursorFactory {
-    private final CairoEngine engine;
-    private final String tableName;
-    private final IntervalFrameCursor cursor;
+public class IntervalFwdDataFrameCursorFactory extends AbstractDataFrameCursorFactory {
+    private final IntervalFwdDataFrameCursor cursor;
 
-    public IntervalFrameCursorFactory(CairoEngine engine, String tableName, LongList intervals) {
-        this.engine = engine;
-        this.tableName = tableName;
-        try (TableReader reader = engine.getReader(tableName)) {
-            this.cursor = new IntervalFrameCursor(intervals, reader.getMetadata().getTimestampIndex());
-        }
+    public IntervalFwdDataFrameCursorFactory(CairoEngine engine, String tableName, LongList intervals) {
+        super(engine, tableName);
+        this.cursor = new IntervalFwdDataFrameCursor(intervals);
     }
 
     @Override

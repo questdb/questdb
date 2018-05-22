@@ -228,8 +228,24 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         " 'b', rnd_symbol(5,4,4,1)," +
                         " 'k', timestamp_sequence(to_timestamp(0), 100000000000)" +
                         ")" +
-                        "), index(b) timestamp(k) partition by DAY",
-                "x");
+                        "), index(b) timestamp(k) partition by DAY");
+    }
+
+    @Test
+    public void testLatestByKeyValueInterval() throws Exception {
+        assertQuery("a\tb\tk\n" +
+                        "84.452581772111\tPEHN\t1970-01-16T01:06:40.000000Z\n",
+                "select * from x latest by b where b = 'PEHN' and k = '1970-01-06T18:53:20;11d'",
+                "create table x as " +
+                        "(" +
+                        "select * from" +
+                        " random_cursor" +
+                        "(20," +
+                        " 'a', rnd_double(0)*100," +
+                        " 'b', rnd_symbol(5,4,4,1)," +
+                        " 'k', timestamp_sequence(to_timestamp(0), 100000000000)" +
+                        ")" +
+                        "), index(b) timestamp(k) partition by DAY");
     }
 
     private void assertQuery(CharSequence expected, CharSequence query, CharSequence ddl) throws Exception {

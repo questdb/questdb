@@ -25,16 +25,12 @@ package com.questdb.cairo;
 
 import com.questdb.cairo.sql.CairoEngine;
 import com.questdb.cairo.sql.DataFrameCursor;
-import com.questdb.cairo.sql.DataFrameCursorFactory;
 
-public class FullTableFrameBackwardCursorFactory implements DataFrameCursorFactory {
-    private final FullTableBackwardFrameCursor cursor = new FullTableBackwardFrameCursor();
-    private final CairoEngine engine;
-    private final String tableName;
+public class FullBwdDataFrameCursorFactory extends AbstractDataFrameCursorFactory {
+    private final FullBwdDataFrameCursor cursor = new FullBwdDataFrameCursor();
 
-    public FullTableFrameBackwardCursorFactory(CairoEngine engine, String tableName) {
-        this.engine = engine;
-        this.tableName = tableName;
+    public FullBwdDataFrameCursorFactory(CairoEngine engine, String tableName) {
+        super(engine, tableName);
     }
 
     @Override

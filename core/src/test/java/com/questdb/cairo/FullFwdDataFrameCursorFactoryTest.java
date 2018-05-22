@@ -33,7 +33,7 @@ import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class FullTableFrameCursorFactoryTest extends AbstractCairoTest {
+public class FullFwdDataFrameCursorFactoryTest extends AbstractCairoTest {
     @Test
     public void testFactory() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
@@ -74,7 +74,7 @@ public class FullTableFrameCursorFactoryTest extends AbstractCairoTest {
 
 
             try (Engine engine = new Engine(configuration)) {
-                FullTableFrameCursorFactory factory = new FullTableFrameCursorFactory(engine, "x");
+                FullFwdDataFrameCursorFactory factory = new FullFwdDataFrameCursorFactory(engine, "x");
                 long count = 0;
                 try (DataFrameCursor cursor = factory.getCursor()) {
                     while (cursor.hasNext()) {

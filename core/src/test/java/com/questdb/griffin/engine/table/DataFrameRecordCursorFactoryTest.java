@@ -82,7 +82,7 @@ public class DataFrameRecordCursorFactoryTest extends AbstractCairoTest {
                     symbolKey = reader.getSymbolMapReader(columnIndex).getQuick(value);
                 }
                 SymbolIndexRowCursorFactory symbolIndexRowCursorFactory = new SymbolIndexRowCursorFactory(columnIndex, symbolKey, true);
-                FullTableFrameCursorFactory dataFrameFactory = new FullTableFrameCursorFactory(engine, "x");
+                FullFwdDataFrameCursorFactory dataFrameFactory = new FullFwdDataFrameCursorFactory(engine, "x");
                 DataFrameRecordCursorFactory factory = new DataFrameRecordCursorFactory(dataFrameFactory, symbolIndexRowCursorFactory);
 
                 try (RecordCursor cursor = factory.getCursor()) {

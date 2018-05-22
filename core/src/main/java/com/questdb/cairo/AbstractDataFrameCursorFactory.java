@@ -24,21 +24,14 @@
 package com.questdb.cairo;
 
 import com.questdb.cairo.sql.CairoEngine;
-import com.questdb.cairo.sql.DataFrameCursor;
 import com.questdb.cairo.sql.DataFrameCursorFactory;
 
-public class FullTableFrameCursorFactory implements DataFrameCursorFactory {
-    private final FullTableFrameCursor cursor = new FullTableFrameCursor();
-    private final CairoEngine engine;
-    private final String tableName;
+public abstract class AbstractDataFrameCursorFactory implements DataFrameCursorFactory {
+    protected final CairoEngine engine;
+    protected final String tableName;
 
-    public FullTableFrameCursorFactory(CairoEngine engine, String tableName) {
+    public AbstractDataFrameCursorFactory(CairoEngine engine, String tableName) {
         this.engine = engine;
         this.tableName = tableName;
-    }
-
-    @Override
-    public DataFrameCursor getCursor() {
-        return cursor.of(engine.getReader(tableName));
     }
 }

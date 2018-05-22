@@ -63,7 +63,7 @@ public class FullTableFrameCursorTest extends AbstractCairoTest {
             }
 
             TableReader reader = new TableReader(configuration, "x");
-            FullTableFrameCursor cursor = new FullTableFrameCursor();
+            FullFwdDataFrameCursor cursor = new FullFwdDataFrameCursor();
             cursor.of(reader);
             cursor.close();
             Assert.assertFalse(reader.isOpen());
@@ -95,7 +95,7 @@ public class FullTableFrameCursorTest extends AbstractCairoTest {
                 // create partition on disk but not commit neither transaction nor row
 
                 try (TableReader reader = new TableReader(configuration, "x")) {
-                    FullTableFrameCursor cursor = new FullTableFrameCursor();
+                    FullFwdDataFrameCursor cursor = new FullFwdDataFrameCursor();
 
                     int frameCount = 0;
                     cursor.of(reader);
@@ -731,7 +731,7 @@ public class FullTableFrameCursorTest extends AbstractCairoTest {
 
                 Assert.assertTrue(reader.getPartitionCount() > 0);
 
-                FullTableFrameCursor cursor = new FullTableFrameCursor();
+                FullFwdDataFrameCursor cursor = new FullFwdDataFrameCursor();
                 TableReaderRecord record = new TableReaderRecord();
 
                 cursor.of(reader);
@@ -799,7 +799,7 @@ public class FullTableFrameCursorTest extends AbstractCairoTest {
         Assert.assertEquals(expecteRowCount, rowCount);
     }
 
-    private void assertData(FullTableFrameCursor cursor, TableReaderRecord record, Rnd rnd, SymbolGroup sg, long expecteRowCount) {
+    private void assertData(FullFwdDataFrameCursor cursor, TableReaderRecord record, Rnd rnd, SymbolGroup sg, long expecteRowCount) {
         // SymbolTable is table at table scope, so it will be the same for every
         // data frame here. Get its instance outside of data frame loop.
 
@@ -874,7 +874,7 @@ public class FullTableFrameCursorTest extends AbstractCairoTest {
         TestUtils.assertEquals(sinkA, sinkB);
     }
 
-    private void assertNoIndex(FullTableFrameCursor cursor) {
+    private void assertNoIndex(FullFwdDataFrameCursor cursor) {
         while (cursor.hasNext()) {
             DataFrame frame = cursor.next();
             try {
@@ -886,7 +886,7 @@ public class FullTableFrameCursorTest extends AbstractCairoTest {
         }
     }
 
-    private void assertSymbolFoundInIndex(FullTableFrameCursor cursor, TableReaderRecord record, int columnIndex, int M) {
+    private void assertSymbolFoundInIndex(FullFwdDataFrameCursor cursor, TableReaderRecord record, int columnIndex, int M) {
         // SymbolTable is table at table scope, so it will be the same for every
         // data frame here. Get its instance outside of data frame loop.
         SymbolTable symbolTable = cursor.getSymbolTable(columnIndex);
@@ -994,7 +994,7 @@ public class FullTableFrameCursorTest extends AbstractCairoTest {
 
             // lets see what we can read after this catastrophe
             try (TableReader reader = new TableReader(AbstractCairoTest.configuration, "ABC")) {
-                FullTableFrameCursor cursor = new FullTableFrameCursor();
+                FullFwdDataFrameCursor cursor = new FullFwdDataFrameCursor();
                 TableReaderRecord record = new TableReaderRecord();
 
                 cursor.of(reader);
@@ -1119,7 +1119,7 @@ public class FullTableFrameCursorTest extends AbstractCairoTest {
 
             // lets see what we can read after this catastrophe
             try (TableReader reader = new TableReader(AbstractCairoTest.configuration, "ABC")) {
-                FullTableFrameCursor cursor = new FullTableFrameCursor();
+                FullFwdDataFrameCursor cursor = new FullFwdDataFrameCursor();
                 TableReaderRecord record = new TableReaderRecord();
 
                 Assert.assertEquals(expectedPartitionCount, reader.getPartitionCount());
@@ -1312,7 +1312,7 @@ public class FullTableFrameCursorTest extends AbstractCairoTest {
 
                 Assert.assertTrue(reader.getPartitionCount() > expectedPartitionMin);
 
-                FullTableFrameCursor cursor = new FullTableFrameCursor();
+                FullFwdDataFrameCursor cursor = new FullFwdDataFrameCursor();
                 TableReaderRecord record = new TableReaderRecord();
 
                 cursor.of(reader);
@@ -1439,7 +1439,7 @@ public class FullTableFrameCursorTest extends AbstractCairoTest {
 
             // lets see what we can read after this catastrophe
             try (TableReader reader = new TableReader(AbstractCairoTest.configuration, "ABC")) {
-                FullTableFrameCursor cursor = new FullTableFrameCursor();
+                FullFwdDataFrameCursor cursor = new FullFwdDataFrameCursor();
                 TableReaderRecord record = new TableReaderRecord();
 
                 Assert.assertEquals(expectedPartitionCount, reader.getPartitionCount());
@@ -1523,7 +1523,7 @@ public class FullTableFrameCursorTest extends AbstractCairoTest {
 
                     Assert.assertTrue(reader.getPartitionCount() > expectedPartitionMin);
 
-                    FullTableFrameCursor cursor = new FullTableFrameCursor();
+                    FullFwdDataFrameCursor cursor = new FullFwdDataFrameCursor();
 
                     // assert baseline
                     cursor.of(reader);
@@ -1595,7 +1595,7 @@ public class FullTableFrameCursorTest extends AbstractCairoTest {
                 writer.commit();
 
                 try (TableReader reader = new TableReader(configuration, "x")) {
-                    FullTableFrameCursor cursor = new FullTableFrameCursor();
+                    FullFwdDataFrameCursor cursor = new FullFwdDataFrameCursor();
                     TableReaderRecord record = new TableReaderRecord();
 
                     Assert.assertTrue(reader.getPartitionCount() > expectedPartitionMin);
@@ -1666,7 +1666,7 @@ public class FullTableFrameCursorTest extends AbstractCairoTest {
                 writer.commit();
 
                 try (TableReader reader = new TableReader(configuration, "x")) {
-                    FullTableFrameCursor cursor = new FullTableFrameCursor();
+                    FullFwdDataFrameCursor cursor = new FullFwdDataFrameCursor();
                     TableReaderRecord record = new TableReaderRecord();
 
                     Assert.assertTrue(reader.getPartitionCount() > expectedPartitionMin);
@@ -1744,7 +1744,7 @@ public class FullTableFrameCursorTest extends AbstractCairoTest {
 
                 try (TableReader reader = new TableReader(configuration, "x")) {
 
-                    final FullTableFrameCursor cursor = new FullTableFrameCursor();
+                    final FullFwdDataFrameCursor cursor = new FullFwdDataFrameCursor();
                     final TableReaderRecord record = new TableReaderRecord();
 
                     Assert.assertTrue(reader.getPartitionCount() > expectedPartitionMin);
@@ -1822,7 +1822,7 @@ public class FullTableFrameCursorTest extends AbstractCairoTest {
 
                 try (TableReader reader = new TableReader(configuration, "x")) {
 
-                    final FullTableFrameCursor cursor = new FullTableFrameCursor();
+                    final FullFwdDataFrameCursor cursor = new FullFwdDataFrameCursor();
                     final TableReaderRecord record = new TableReaderRecord();
 
                     Assert.assertTrue(reader.getPartitionCount() > expectedPartitionMin);
@@ -1900,7 +1900,7 @@ public class FullTableFrameCursorTest extends AbstractCairoTest {
 
                 try (TableReader reader = new TableReader(configuration, "x")) {
 
-                    final FullTableFrameCursor cursor = new FullTableFrameCursor();
+                    final FullFwdDataFrameCursor cursor = new FullFwdDataFrameCursor();
                     final TableReaderRecord record = new TableReaderRecord();
 
                     Assert.assertTrue(reader.getPartitionCount() > expectedPartitionMin);
@@ -1973,7 +1973,7 @@ public class FullTableFrameCursorTest extends AbstractCairoTest {
 
                 // Open data frame cursor. This one will frame table as collection of
                 // partitions, each partition is a frame.
-                FullTableFrameCursor cursor = new FullTableFrameCursor();
+                FullFwdDataFrameCursor cursor = new FullFwdDataFrameCursor();
                 // TableRecord will help us read the table. We need to position this record using
                 // "recordIndex" and "columnBase".
                 TableReaderRecord record = new TableReaderRecord();
@@ -2028,7 +2028,7 @@ public class FullTableFrameCursorTest extends AbstractCairoTest {
 
                 // Open data frame cursor. This one will frame table as collection of
                 // partitions, each partition is a frame.
-                FullTableFrameCursor cursor = new FullTableFrameCursor();
+                FullFwdDataFrameCursor cursor = new FullFwdDataFrameCursor();
                 // TableRecord will help us read the table. We need to position this record using
                 // "recordIndex" and "columnBase".
                 TableReaderRecord record = new TableReaderRecord();

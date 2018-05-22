@@ -27,55 +27,11 @@ import com.questdb.cairo.sql.DataFrame;
 import com.questdb.cairo.sql.DataFrameCursor;
 import com.questdb.common.SymbolTable;
 
-public class FullTableFrameCursor implements DataFrameCursor {
-    private final FullTableDataFrame frame = new FullTableDataFrame();
-    private TableReader reader;
-    private int partitionLo;
-    private int partitionHi;
-    private int partitionIndex;
-
-    @Override
-    public SymbolTable getSymbolTable(int columnIndex) {
-        return reader.getSymbolMapReader(columnIndex);
-    }
-
-    @Override
-    public boolean hasNext() {
-        while (this.partitionIndex < partitionHi) {
-            final long hi = reader.openPartition(partitionIndex);
-            if (hi < 1) {
-                // this partition is missing, skip
-                partitionIndex++;
-            } else {
-                frame.partitionIndex = partitionIndex;
-                frame.rowHi = hi;
-                partitionIndex++;
-                return true;
-
-            }
-        }
-        return false;
-    }
-
-    @Override
-    public DataFrame next() {
-        return frame;
-    }
-
-    public FullTableFrameCursor of(TableReader reader) {
-        this.reader = reader;
-        this.partitionIndex = this.partitionLo = 0;
-        this.partitionHi = reader.getPartitionCount();
-        return this;
-    }
-
-    @Override
-    public boolean reload() {
-        boolean moreData = reader.reload();
-        this.partitionHi = reader.getPartitionCount();
-        toTop();
-        return moreData;
-    }
+public abstract class AbstractFullDataFrameCursor implements DataFrameCursor {
+    protected final FullTableDataFrame frame = new FullTableDataFrame();
+    protected TableReader reader;
+    protected int partitionHi;
+    protected int partitionIndex;
 
     @Override
     public void close() {
@@ -91,14 +47,34 @@ public class FullTableFrameCursor implements DataFrameCursor {
     }
 
     @Override
-    public void toTop() {
-        this.partitionIndex = this.partitionLo;
+    public boolean reload() {
+        boolean moreData = reader.reload();
+        this.partitionHi = reader.getPartitionCount();
+        toTop();
+        return moreData;
     }
 
-    private class FullTableDataFrame implements DataFrame {
+    @Override
+    public SymbolTable getSymbolTable(int columnIndex) {
+        return reader.getSymbolMapReader(columnIndex);
+    }
+
+    @Override
+    public DataFrame next() {
+        return frame;
+    }
+
+    public DataFrameCursor of(TableReader reader) {
+        this.reader = reader;
+        this.partitionHi = reader.getPartitionCount();
+        toTop();
+        return this;
+    }
+
+    protected class FullTableDataFrame implements DataFrame {
         final static private long rowLo = 0;
-        private long rowHi;
-        private int partitionIndex;
+        protected long rowHi;
+        protected int partitionIndex;
 
         @Override
         public BitmapIndexReader getBitmapIndexReader(int columnIndex, int direction) {

@@ -172,9 +172,9 @@ public class SqlCodeGenerator {
                 if (latestBy != null) {
                     // this is everything "latest by"
                     if (intrinsicModel.intervals != null) {
-                        dfcFactory = new IntervalFrameCursorFactory(engine, model.getTableName().token.toString(), intrinsicModel.intervals);
+                        dfcFactory = new IntervalBwdDataFrameCursorFactory(engine, model.getTableName().token.toString(), intrinsicModel.intervals);
                     } else {
-                        dfcFactory = new FullTableFrameBackwardCursorFactory(engine, model.getTableName().token.toString());
+                        dfcFactory = new FullBwdDataFrameCursorFactory(engine, model.getTableName().token.toString());
                     }
 
                     // first check if column is valid
@@ -238,9 +238,9 @@ public class SqlCodeGenerator {
                 } else {
 
                     if (intrinsicModel.intervals != null) {
-                        dfcFactory = new IntervalFrameCursorFactory(engine, model.getTableName().token.toString(), intrinsicModel.intervals);
+                        dfcFactory = new IntervalFwdDataFrameCursorFactory(engine, model.getTableName().token.toString(), intrinsicModel.intervals);
                     } else {
-                        dfcFactory = new FullTableFrameCursorFactory(engine, model.getTableName().token.toString());
+                        dfcFactory = new FullFwdDataFrameCursorFactory(engine, model.getTableName().token.toString());
                     }
 
                     // no "latest by" clause

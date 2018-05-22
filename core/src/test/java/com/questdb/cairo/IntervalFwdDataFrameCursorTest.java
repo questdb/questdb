@@ -38,7 +38,7 @@ import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class IntervalFrameCursorTest extends AbstractCairoTest {
+public class IntervalFwdDataFrameCursorTest extends AbstractCairoTest {
     private static final LongList intervals = new LongList();
 
     @Test
@@ -169,7 +169,7 @@ public class IntervalFrameCursorTest extends AbstractCairoTest {
             }
 
             TableReader reader = new TableReader(configuration, "x");
-            IntervalFrameCursor cursor = new IntervalFrameCursor(intervals, reader.getMetadata().getTimestampIndex());
+            IntervalFwdDataFrameCursor cursor = new IntervalFwdDataFrameCursor(intervals);
             cursor.of(reader);
             cursor.close();
             Assert.assertFalse(reader.isOpen());
@@ -345,7 +345,7 @@ public class IntervalFrameCursorTest extends AbstractCairoTest {
 
             try (CairoEngine engine = new Engine(configuration)) {
                 final TableReaderRecord record = new TableReaderRecord();
-                final IntervalFrameCursorFactory factory = new IntervalFrameCursorFactory(engine, "x", intervals);
+                final IntervalFwdDataFrameCursorFactory factory = new IntervalFwdDataFrameCursorFactory(engine, "x", intervals);
                 try (DataFrameCursor cursor = factory.getCursor()) {
 
                     // assert that there is nothing to start with
@@ -573,7 +573,7 @@ public class IntervalFrameCursorTest extends AbstractCairoTest {
 
             try (TableReader reader = new TableReader(configuration, "x")) {
                 final TableReaderRecord record = new TableReaderRecord();
-                IntervalFrameCursor cursor = new IntervalFrameCursor(IntervalFrameCursorTest.intervals, reader.getMetadata().getTimestampIndex());
+                IntervalFwdDataFrameCursor cursor = new IntervalFwdDataFrameCursor(IntervalFwdDataFrameCursorTest.intervals);
                 cursor.of(reader);
                 record.of(reader);
 
