@@ -38,7 +38,7 @@ import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class IntervalFwdDataFrameCursorTest extends AbstractCairoTest {
+public class IntervalBwdDataFrameCursorTest extends AbstractCairoTest {
     private static final LongList intervals = new LongList();
 
     @Test
@@ -149,9 +149,9 @@ public class IntervalFwdDataFrameCursorTest extends AbstractCairoTest {
         intervals.add(DateFormatUtils.parseDateTime("1983-01-05T12:30:00.000Z"));
         intervals.add(DateFormatUtils.parseDateTime("1983-01-05T14:35:00.000Z"));
 
-        final String expected = "1980-01-02T18:00:00.000000Z\n" +
+        final String expected = "1983-01-05T14:00:00.000000Z\n" +
                 "1980-01-02T20:00:00.000000Z\n" +
-                "1983-01-05T14:00:00.000000Z\n";
+                "1980-01-02T18:00:00.000000Z\n";
 
         testIntervals(PartitionBy.NONE, increment, N, expected, 3);
     }
@@ -169,7 +169,7 @@ public class IntervalFwdDataFrameCursorTest extends AbstractCairoTest {
             }
 
             TableReader reader = new TableReader(configuration, "x");
-            IntervalFwdDataFrameCursor cursor = new IntervalFwdDataFrameCursor(intervals);
+            IntervalBwdDataFrameCursor cursor = new IntervalBwdDataFrameCursor(intervals);
             cursor.of(reader);
             cursor.close();
             Assert.assertFalse(reader.isOpen());
@@ -220,9 +220,9 @@ public class IntervalFwdDataFrameCursorTest extends AbstractCairoTest {
         intervals.add(DateFormatUtils.parseDateTime("1983-01-05T12:30:00.000Z"));
         intervals.add(DateFormatUtils.parseDateTime("1983-01-05T14:35:00.000Z"));
 
-        final String expected = "1980-01-02T18:00:00.000000Z\n" +
+        final String expected = "1983-01-05T14:00:00.000000Z\n" +
                 "1980-01-02T20:00:00.000000Z\n" +
-                "1983-01-05T14:00:00.000000Z\n";
+                "1980-01-02T18:00:00.000000Z\n";
 
         testIntervals(PartitionBy.DAY, increment, N, expected, 3);
     }
@@ -238,7 +238,7 @@ public class IntervalFwdDataFrameCursorTest extends AbstractCairoTest {
             }
 
             try (TableReader reader = new TableReader(configuration, "x")) {
-                IntervalFwdDataFrameCursor cursor = new IntervalFwdDataFrameCursor(new LongList());
+                IntervalBwdDataFrameCursor cursor = new IntervalBwdDataFrameCursor(new LongList());
                 try {
                     cursor.of(reader);
                     Assert.fail();
@@ -267,19 +267,19 @@ public class IntervalFwdDataFrameCursorTest extends AbstractCairoTest {
         intervals.add(DateFormatUtils.parseDateTime("1980-01-03T11:00:00.000Z"));
         intervals.add(DateFormatUtils.parseDateTime("1980-01-03T14:00:00.000Z"));
 
-        final String expected1 = "1980-01-02T02:00:00.000000Z\n" +
-                "1980-01-02T04:00:00.000000Z\n" +
-                "1980-01-02T06:00:00.000000Z\n" +
-                "1980-01-02T08:00:00.000000Z\n" +
-                "1980-01-02T10:00:00.000000Z\n" +
-                "1980-01-02T12:00:00.000000Z\n" +
-                "1980-01-02T14:00:00.000000Z\n" +
-                "1980-01-02T16:00:00.000000Z\n" +
-                "1980-01-02T22:00:00.000000Z\n" +
+        final String expected = "1980-01-03T14:00:00.000000Z\n" +
                 "1980-01-03T12:00:00.000000Z\n" +
-                "1980-01-03T14:00:00.000000Z\n";
+                "1980-01-02T22:00:00.000000Z\n" +
+                "1980-01-02T16:00:00.000000Z\n" +
+                "1980-01-02T14:00:00.000000Z\n" +
+                "1980-01-02T12:00:00.000000Z\n" +
+                "1980-01-02T10:00:00.000000Z\n" +
+                "1980-01-02T08:00:00.000000Z\n" +
+                "1980-01-02T06:00:00.000000Z\n" +
+                "1980-01-02T04:00:00.000000Z\n" +
+                "1980-01-02T02:00:00.000000Z\n";
 
-        testReload(PartitionBy.DAY, increment, intervals, N, expected1, null);
+        testReload(PartitionBy.DAY, increment, intervals, N, expected, null);
     }
 
     @Test
@@ -301,17 +301,17 @@ public class IntervalFwdDataFrameCursorTest extends AbstractCairoTest {
         intervals.add(DateFormatUtils.parseDateTime("1980-01-03T11:00:00.000Z"));
         intervals.add(DateFormatUtils.parseDateTime("1980-01-03T14:00:00.000Z"));
 
-        final String expected = "1980-01-02T02:00:00.000000Z\n" +
-                "1980-01-02T04:00:00.000000Z\n" +
-                "1980-01-02T06:00:00.000000Z\n" +
-                "1980-01-02T08:00:00.000000Z\n" +
-                "1980-01-02T10:00:00.000000Z\n" +
-                "1980-01-02T12:00:00.000000Z\n" +
-                "1980-01-02T14:00:00.000000Z\n" +
-                "1980-01-02T16:00:00.000000Z\n" +
-                "1980-01-02T22:00:00.000000Z\n" +
+        final String expected = "1980-01-03T14:00:00.000000Z\n" +
                 "1980-01-03T12:00:00.000000Z\n" +
-                "1980-01-03T14:00:00.000000Z\n";
+                "1980-01-02T22:00:00.000000Z\n" +
+                "1980-01-02T16:00:00.000000Z\n" +
+                "1980-01-02T14:00:00.000000Z\n" +
+                "1980-01-02T12:00:00.000000Z\n" +
+                "1980-01-02T10:00:00.000000Z\n" +
+                "1980-01-02T08:00:00.000000Z\n" +
+                "1980-01-02T06:00:00.000000Z\n" +
+                "1980-01-02T04:00:00.000000Z\n" +
+                "1980-01-02T02:00:00.000000Z\n";
 
         testIntervals(PartitionBy.DAY, increment, N, expected, 11);
     }
@@ -334,19 +334,18 @@ public class IntervalFwdDataFrameCursorTest extends AbstractCairoTest {
         intervals.add(DateFormatUtils.parseDateTime("1983-01-05T11:00:00.000Z"));
         intervals.add(DateFormatUtils.parseDateTime("1983-01-05T14:00:00.000Z"));
 
-        final String expected1 = "1980-01-02T02:00:00.000000Z\n" +
-                "1980-01-02T04:00:00.000000Z\n" +
-                "1980-01-02T06:00:00.000000Z\n" +
-                "1980-01-02T08:00:00.000000Z\n" +
-                "1980-01-02T10:00:00.000000Z\n" +
-                "1980-01-02T12:00:00.000000Z\n" +
-                "1980-01-02T14:00:00.000000Z\n" +
+        final String expected1 = "1980-01-02T22:00:00.000000Z\n" +
                 "1980-01-02T16:00:00.000000Z\n" +
-                "1980-01-02T22:00:00.000000Z\n";
+                "1980-01-02T14:00:00.000000Z\n" +
+                "1980-01-02T12:00:00.000000Z\n" +
+                "1980-01-02T10:00:00.000000Z\n" +
+                "1980-01-02T08:00:00.000000Z\n" +
+                "1980-01-02T06:00:00.000000Z\n" +
+                "1980-01-02T04:00:00.000000Z\n" +
+                "1980-01-02T02:00:00.000000Z\n";
 
-        final String expected2 = expected1 +
-                "1983-01-05T12:00:00.000000Z\n" +
-                "1983-01-05T14:00:00.000000Z\n";
+        final String expected2 = "1983-01-05T14:00:00.000000Z\n" +
+                "1983-01-05T12:00:00.000000Z\n" + expected1;
 
         testReload(PartitionBy.DAY, increment, intervals, N, expected1, expected2);
     }
@@ -367,7 +366,7 @@ public class IntervalFwdDataFrameCursorTest extends AbstractCairoTest {
 
             try (CairoEngine engine = new Engine(configuration)) {
                 final TableReaderRecord record = new TableReaderRecord();
-                final IntervalFwdDataFrameCursorFactory factory = new IntervalFwdDataFrameCursorFactory(engine, "x", intervals);
+                final IntervalBwdDataFrameCursorFactory factory = new IntervalBwdDataFrameCursorFactory(engine, "x", intervals);
                 try (DataFrameCursor cursor = factory.getCursor()) {
 
                     // assert that there is nothing to start with
@@ -426,78 +425,78 @@ public class IntervalFwdDataFrameCursorTest extends AbstractCairoTest {
         intervals.add(DateFormatUtils.parseDateTime("1980-01-01T00:00:00.000Z"));
         intervals.add(DateFormatUtils.parseDateTime("1984-01-06T00:00:00.000Z"));
 
-        final String expected = "1980-01-01T00:00:00.000000Z\n" +
-                "1980-01-01T02:00:00.000000Z\n" +
-                "1980-01-01T04:00:00.000000Z\n" +
-                "1980-01-01T06:00:00.000000Z\n" +
-                "1980-01-01T08:00:00.000000Z\n" +
-                "1980-01-01T10:00:00.000000Z\n" +
-                "1980-01-01T12:00:00.000000Z\n" +
-                "1980-01-01T14:00:00.000000Z\n" +
-                "1980-01-01T16:00:00.000000Z\n" +
-                "1980-01-01T18:00:00.000000Z\n" +
-                "1980-01-01T20:00:00.000000Z\n" +
-                "1980-01-01T22:00:00.000000Z\n" +
-                "1980-01-02T00:00:00.000000Z\n" +
-                "1980-01-02T02:00:00.000000Z\n" +
-                "1980-01-02T04:00:00.000000Z\n" +
-                "1980-01-02T06:00:00.000000Z\n" +
-                "1980-01-02T08:00:00.000000Z\n" +
-                "1980-01-02T10:00:00.000000Z\n" +
-                "1980-01-02T12:00:00.000000Z\n" +
-                "1980-01-02T14:00:00.000000Z\n" +
-                "1980-01-02T16:00:00.000000Z\n" +
-                "1980-01-02T18:00:00.000000Z\n" +
-                "1980-01-02T20:00:00.000000Z\n" +
-                "1980-01-02T22:00:00.000000Z\n" +
-                "1980-01-03T00:00:00.000000Z\n" +
-                "1980-01-03T02:00:00.000000Z\n" +
-                "1980-01-03T04:00:00.000000Z\n" +
-                "1980-01-03T06:00:00.000000Z\n" +
-                "1980-01-03T08:00:00.000000Z\n" +
-                "1980-01-03T10:00:00.000000Z\n" +
-                "1980-01-03T12:00:00.000000Z\n" +
-                "1980-01-03T14:00:00.000000Z\n" +
-                "1980-01-03T16:00:00.000000Z\n" +
-                "1980-01-03T18:00:00.000000Z\n" +
-                "1980-01-03T20:00:00.000000Z\n" +
-                "1980-01-03T22:00:00.000000Z\n" +
-                "1983-01-04T00:00:00.000000Z\n" +
-                "1983-01-04T02:00:00.000000Z\n" +
-                "1983-01-04T04:00:00.000000Z\n" +
-                "1983-01-04T06:00:00.000000Z\n" +
-                "1983-01-04T08:00:00.000000Z\n" +
-                "1983-01-04T10:00:00.000000Z\n" +
-                "1983-01-04T12:00:00.000000Z\n" +
-                "1983-01-04T14:00:00.000000Z\n" +
-                "1983-01-04T16:00:00.000000Z\n" +
-                "1983-01-04T18:00:00.000000Z\n" +
-                "1983-01-04T20:00:00.000000Z\n" +
-                "1983-01-04T22:00:00.000000Z\n" +
-                "1983-01-05T00:00:00.000000Z\n" +
-                "1983-01-05T02:00:00.000000Z\n" +
-                "1983-01-05T04:00:00.000000Z\n" +
-                "1983-01-05T06:00:00.000000Z\n" +
-                "1983-01-05T08:00:00.000000Z\n" +
-                "1983-01-05T10:00:00.000000Z\n" +
-                "1983-01-05T12:00:00.000000Z\n" +
-                "1983-01-05T14:00:00.000000Z\n" +
-                "1983-01-05T16:00:00.000000Z\n" +
-                "1983-01-05T18:00:00.000000Z\n" +
-                "1983-01-05T20:00:00.000000Z\n" +
-                "1983-01-05T22:00:00.000000Z\n" +
-                "1983-01-06T00:00:00.000000Z\n" +
-                "1983-01-06T02:00:00.000000Z\n" +
-                "1983-01-06T04:00:00.000000Z\n" +
-                "1983-01-06T06:00:00.000000Z\n" +
-                "1983-01-06T08:00:00.000000Z\n" +
-                "1983-01-06T10:00:00.000000Z\n" +
-                "1983-01-06T12:00:00.000000Z\n" +
-                "1983-01-06T14:00:00.000000Z\n" +
-                "1983-01-06T16:00:00.000000Z\n" +
-                "1983-01-06T18:00:00.000000Z\n" +
+        final String expected = "1983-01-06T22:00:00.000000Z\n" +
                 "1983-01-06T20:00:00.000000Z\n" +
-                "1983-01-06T22:00:00.000000Z\n";
+                "1983-01-06T18:00:00.000000Z\n" +
+                "1983-01-06T16:00:00.000000Z\n" +
+                "1983-01-06T14:00:00.000000Z\n" +
+                "1983-01-06T12:00:00.000000Z\n" +
+                "1983-01-06T10:00:00.000000Z\n" +
+                "1983-01-06T08:00:00.000000Z\n" +
+                "1983-01-06T06:00:00.000000Z\n" +
+                "1983-01-06T04:00:00.000000Z\n" +
+                "1983-01-06T02:00:00.000000Z\n" +
+                "1983-01-06T00:00:00.000000Z\n" +
+                "1983-01-05T22:00:00.000000Z\n" +
+                "1983-01-05T20:00:00.000000Z\n" +
+                "1983-01-05T18:00:00.000000Z\n" +
+                "1983-01-05T16:00:00.000000Z\n" +
+                "1983-01-05T14:00:00.000000Z\n" +
+                "1983-01-05T12:00:00.000000Z\n" +
+                "1983-01-05T10:00:00.000000Z\n" +
+                "1983-01-05T08:00:00.000000Z\n" +
+                "1983-01-05T06:00:00.000000Z\n" +
+                "1983-01-05T04:00:00.000000Z\n" +
+                "1983-01-05T02:00:00.000000Z\n" +
+                "1983-01-05T00:00:00.000000Z\n" +
+                "1983-01-04T22:00:00.000000Z\n" +
+                "1983-01-04T20:00:00.000000Z\n" +
+                "1983-01-04T18:00:00.000000Z\n" +
+                "1983-01-04T16:00:00.000000Z\n" +
+                "1983-01-04T14:00:00.000000Z\n" +
+                "1983-01-04T12:00:00.000000Z\n" +
+                "1983-01-04T10:00:00.000000Z\n" +
+                "1983-01-04T08:00:00.000000Z\n" +
+                "1983-01-04T06:00:00.000000Z\n" +
+                "1983-01-04T04:00:00.000000Z\n" +
+                "1983-01-04T02:00:00.000000Z\n" +
+                "1983-01-04T00:00:00.000000Z\n" +
+                "1980-01-03T22:00:00.000000Z\n" +
+                "1980-01-03T20:00:00.000000Z\n" +
+                "1980-01-03T18:00:00.000000Z\n" +
+                "1980-01-03T16:00:00.000000Z\n" +
+                "1980-01-03T14:00:00.000000Z\n" +
+                "1980-01-03T12:00:00.000000Z\n" +
+                "1980-01-03T10:00:00.000000Z\n" +
+                "1980-01-03T08:00:00.000000Z\n" +
+                "1980-01-03T06:00:00.000000Z\n" +
+                "1980-01-03T04:00:00.000000Z\n" +
+                "1980-01-03T02:00:00.000000Z\n" +
+                "1980-01-03T00:00:00.000000Z\n" +
+                "1980-01-02T22:00:00.000000Z\n" +
+                "1980-01-02T20:00:00.000000Z\n" +
+                "1980-01-02T18:00:00.000000Z\n" +
+                "1980-01-02T16:00:00.000000Z\n" +
+                "1980-01-02T14:00:00.000000Z\n" +
+                "1980-01-02T12:00:00.000000Z\n" +
+                "1980-01-02T10:00:00.000000Z\n" +
+                "1980-01-02T08:00:00.000000Z\n" +
+                "1980-01-02T06:00:00.000000Z\n" +
+                "1980-01-02T04:00:00.000000Z\n" +
+                "1980-01-02T02:00:00.000000Z\n" +
+                "1980-01-02T00:00:00.000000Z\n" +
+                "1980-01-01T22:00:00.000000Z\n" +
+                "1980-01-01T20:00:00.000000Z\n" +
+                "1980-01-01T18:00:00.000000Z\n" +
+                "1980-01-01T16:00:00.000000Z\n" +
+                "1980-01-01T14:00:00.000000Z\n" +
+                "1980-01-01T12:00:00.000000Z\n" +
+                "1980-01-01T10:00:00.000000Z\n" +
+                "1980-01-01T08:00:00.000000Z\n" +
+                "1980-01-01T06:00:00.000000Z\n" +
+                "1980-01-01T04:00:00.000000Z\n" +
+                "1980-01-01T02:00:00.000000Z\n" +
+                "1980-01-01T00:00:00.000000Z\n";
 
         testIntervals(PartitionBy.DAY, increment, N, expected, 72);
     }
@@ -547,12 +546,12 @@ public class IntervalFwdDataFrameCursorTest extends AbstractCairoTest {
         int timestampIndex = cursor.getTableReader().getMetadata().getTimestampIndex();
         while (cursor.hasNext()) {
             DataFrame frame = cursor.next();
-            record.jumpTo(frame.getPartitionIndex(), frame.getRowLo());
-            long limit = frame.getRowHi();
+            record.jumpTo(frame.getPartitionIndex(), frame.getRowHi() - 1);
+            long limit = frame.getRowLo() - 1;
             long recordIndex;
-            while ((recordIndex = record.getRecordIndex()) < limit) {
+            while ((recordIndex = record.getRecordIndex()) > limit) {
                 AbstractCairoTest.sink.putISODate(record.getDate(timestampIndex)).put('\n');
-                record.setRecordIndex(recordIndex + 1);
+                record.setRecordIndex(recordIndex - 1);
             }
         }
     }
@@ -595,7 +594,7 @@ public class IntervalFwdDataFrameCursorTest extends AbstractCairoTest {
 
             try (TableReader reader = new TableReader(configuration, "x")) {
                 final TableReaderRecord record = new TableReaderRecord();
-                IntervalFwdDataFrameCursor cursor = new IntervalFwdDataFrameCursor(IntervalFwdDataFrameCursorTest.intervals);
+                IntervalBwdDataFrameCursor cursor = new IntervalBwdDataFrameCursor(IntervalBwdDataFrameCursorTest.intervals);
                 cursor.of(reader);
                 record.of(reader);
 

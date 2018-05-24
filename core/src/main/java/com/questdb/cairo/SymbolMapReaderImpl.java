@@ -37,7 +37,7 @@ import static com.questdb.cairo.SymbolMapWriter.*;
 
 public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
     private static final Log LOG = LogFactory.getLog(SymbolMapReaderImpl.class);
-    private final BitmapIndexBackwardReader indexReader = new BitmapIndexBackwardReader();
+    private final BitmapIndexBwdReader indexReader = new BitmapIndexBwdReader();
     private final ReadOnlyMemory charMem = new ReadOnlyMemory();
     private final ReadOnlyMemory offsetMem = new ReadOnlyMemory();
     private final ObjList<String> cache = new ObjList<>();

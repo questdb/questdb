@@ -69,7 +69,7 @@ public class BitmapIndexWriter implements Closeable {
      * new value list is associated with the key.
      * <p>
      * Index is updated atomically as far as concurrent reading is concerned. Please refer to notes on classes that
-     * are responsible for reading bitmap indexes, such as {@link BitmapIndexBackwardReader}.
+     * are responsible for reading bitmap indexes, such as {@link BitmapIndexBwdReader}.
      *
      * @param key   int key
      * @param value long value

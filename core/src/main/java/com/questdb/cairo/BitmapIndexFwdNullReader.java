@@ -25,14 +25,15 @@ package com.questdb.cairo;
 
 import com.questdb.common.RowCursor;
 
-public class BitmapIndexBackwardNullReader implements BitmapIndexReader {
+public class BitmapIndexFwdNullReader implements BitmapIndexReader {
 
     private final NullCursor cursor = new NullCursor();
 
     @Override
     public RowCursor getCursor(boolean cachedInstance, int key, long minValue, long maxValue) {
         final NullCursor cursor = getCursor(cachedInstance);
-        cursor.value = maxValue;
+        cursor.max = maxValue + 1;
+        cursor.value = 0;
         return cursor;
     }
 
@@ -51,16 +52,17 @@ public class BitmapIndexBackwardNullReader implements BitmapIndexReader {
     }
 
     private class NullCursor implements RowCursor {
+        private long max;
         private long value;
 
         @Override
         public boolean hasNext() {
-            return value > -1;
+            return value < max;
         }
 
         @Override
         public long next() {
-            return value--;
+            return value++;
         }
     }
 }

@@ -24,37 +24,37 @@
 package com.questdb.cairo;
 
 import com.questdb.common.RowCursor;
-import com.questdb.log.Log;
-import com.questdb.log.LogFactory;
 import com.questdb.std.Unsafe;
 import com.questdb.std.str.Path;
 
-public class BitmapIndexForwardReader extends AbstractIndexReader {
-    private final static Log LOG = LogFactory.getLog(BitmapIndexForwardReader.class);
+public class BitmapIndexBwdReader extends AbstractIndexReader {
     private final Cursor cursor = new Cursor();
     private final NullCursor nullCursor = new NullCursor();
 
-    public BitmapIndexForwardReader(CairoConfiguration configuration, Path path, CharSequence name, long unIndexedNullCount) {
+    public BitmapIndexBwdReader() {
+    }
+
+    public BitmapIndexBwdReader(CairoConfiguration configuration, Path path, CharSequence name, long unIndexedNullCount) {
         of(configuration, path, name, unIndexedNullCount);
     }
 
     @Override
     public RowCursor getCursor(boolean cachedInstance, int key, long minValue, long maxValue) {
 
-        if (key >= keyCount) {
+        assert minValue <= maxValue;
+
+        if (key >= getKeyCount()) {
             updateKeyCount();
         }
 
-        if (key == 0 && unIndexedNullCount > 0 && minValue < unIndexedNullCount) {
-            // we need to return some nulls and the whole set of actual index values
+        if (key == 0 && unIndexedNullCount > 0) {
             final NullCursor nullCursor = getNullCursor(cachedInstance);
-            nullCursor.nullPos = minValue;
             nullCursor.nullCount = unIndexedNullCount;
-            nullCursor.of(key, 0, maxValue);
+            nullCursor.of(key, minValue, maxValue);
             return nullCursor;
         }
 
-        if (key < keyCount) {
+        if (key < getKeyCount()) {
             final Cursor cursor = getCursor(cachedInstance);
             cursor.of(key, minValue, maxValue);
             return cursor;
@@ -72,27 +72,25 @@ public class BitmapIndexForwardReader extends AbstractIndexReader {
     }
 
     private class Cursor implements RowCursor {
-        protected long position;
         protected long valueCount;
+        protected long minValue;
         protected long next;
         private long valueBlockOffset;
         private final BitmapIndexUtils.ValueBlockSeeker SEEKER = this::seekValue;
-        private long maxValue;
 
         @Override
         public boolean hasNext() {
-            if (position < valueCount) {
-                long cellIndex = getValueCellIndex(position++);
+            if (valueCount > 0) {
+                long cellIndex = getValueCellIndex(--valueCount);
                 long result = valueMem.getLong(valueBlockOffset + cellIndex * 8);
-
-                if (result > maxValue) {
-                    valueCount = 0;
-                    return false;
-                }
-
-                if (cellIndex == blockValueCountMod && position < valueCount) {
+                if (cellIndex == 0 && valueCount > 0) {
                     // we are at edge of block right now, next value will be in previous block
                     jumpToPreviousValueBlock();
+                }
+
+                if (result < minValue) {
+                    valueCount = 0;
+                    return false;
                 }
 
                 this.next = result;
@@ -106,8 +104,8 @@ public class BitmapIndexForwardReader extends AbstractIndexReader {
             return next;
         }
 
-        private long getNextBlock(long currentValueBlockOffset) {
-            return valueMem.getLong(currentValueBlockOffset + blockCapacity - BitmapIndexUtils.VALUE_BLOCK_FILE_RESERVED + 8);
+        private long getPreviousBlock(long currentValueBlockOffset) {
+            return valueMem.getLong(currentValueBlockOffset + blockCapacity - BitmapIndexUtils.VALUE_BLOCK_FILE_RESERVED);
         }
 
         private long getValueCellIndex(long absoluteValueIndex) {
@@ -117,7 +115,7 @@ public class BitmapIndexForwardReader extends AbstractIndexReader {
         private void jumpToPreviousValueBlock() {
             // we don't need to grow valueMem because we going from farthest block back to start of file
             // to closes, e.g. valueBlockOffset is decreasing.
-            valueBlockOffset = getNextBlock(valueBlockOffset);
+            valueBlockOffset = getPreviousBlock(valueBlockOffset);
         }
 
         void of(int key, long minValue, long maxValue) {
@@ -129,15 +127,13 @@ public class BitmapIndexForwardReader extends AbstractIndexReader {
             // should these values do not match.
             long valueCount;
             long valueBlockOffset;
-            long lastValueBlockOffset;
             final long deadline = clock.getTicks() + spinLockTimeoutUs;
             while (true) {
                 valueCount = keyMem.getLong(offset + BitmapIndexUtils.KEY_ENTRY_OFFSET_VALUE_COUNT);
 
                 Unsafe.getUnsafe().loadFence();
                 if (keyMem.getLong(offset + BitmapIndexUtils.KEY_ENTRY_OFFSET_COUNT_CHECK) == valueCount) {
-                    valueBlockOffset = keyMem.getLong(offset + BitmapIndexUtils.KEY_ENTRY_OFFSET_FIRST_VALUE_BLOCK_OFFSET);
-                    lastValueBlockOffset = keyMem.getLong(offset + BitmapIndexUtils.KEY_ENTRY_OFFSET_LAST_VALUE_BLOCK_OFFSET);
+                    valueBlockOffset = keyMem.getLong(offset + BitmapIndexUtils.KEY_ENTRY_OFFSET_LAST_VALUE_BLOCK_OFFSET);
 
                     Unsafe.getUnsafe().loadFence();
                     if (keyMem.getLong(offset + BitmapIndexUtils.KEY_ENTRY_OFFSET_VALUE_COUNT) == valueCount) {
@@ -151,34 +147,37 @@ public class BitmapIndexForwardReader extends AbstractIndexReader {
                 }
             }
 
-            valueMem.grow(lastValueBlockOffset + blockCapacity);
-            this.valueCount = valueCount;
+            valueMem.grow(valueBlockOffset + blockCapacity);
+
             if (valueCount > 0) {
-                BitmapIndexUtils.seekValueBlockLTR(valueCount, valueBlockOffset, valueMem, minValue, blockValueCountMod, SEEKER);
+                BitmapIndexUtils.seekValueBlockRTL(valueCount, valueBlockOffset, valueMem, maxValue, blockValueCountMod, SEEKER);
             } else {
                 seekValue(valueCount, valueBlockOffset);
             }
-
-            this.maxValue = maxValue;
+            this.minValue = minValue;
         }
 
         private void seekValue(long count, long offset) {
-            this.position = count;
+            this.valueCount = count;
             this.valueBlockOffset = offset;
         }
     }
 
     private class NullCursor extends Cursor {
         private long nullCount;
-        private long nullPos;
 
         @Override
         public boolean hasNext() {
-            if (nullPos < nullCount) {
-                next = nullPos++;
+            if (super.hasNext()) {
                 return true;
             }
-            return super.hasNext();
+
+            if (--nullCount < minValue) {
+                return false;
+            }
+
+            this.next = nullCount;
+            return true;
         }
     }
 }

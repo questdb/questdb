@@ -28,9 +28,9 @@ import com.questdb.std.Rnd;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class BitmapIndexBackwardNullReaderTest {
+public class BitmapIndexBwdNullReaderTest {
 
-    private static final BitmapIndexBackwardNullReader reader = new BitmapIndexBackwardNullReader();
+    private static final BitmapIndexBwdNullReader reader = new BitmapIndexBwdNullReader();
 
     @Test
     public void testAlwaysOpen() {

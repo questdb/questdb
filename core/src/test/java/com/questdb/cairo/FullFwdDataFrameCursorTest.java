@@ -42,7 +42,7 @@ import org.junit.Test;
 
 import java.util.concurrent.CountDownLatch;
 
-public class FullTableFrameCursorTest extends AbstractCairoTest {
+public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
 
     private static final int WORK_STEALING_DONT_TEST = 0;
     private static final int WORK_STEALING_NO_PICKUP = 1;

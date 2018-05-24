@@ -58,7 +58,8 @@ public class IntervalBwdDataFrameCursor extends AbstractIntervalDataFrameCursor 
 
                 // interval is wholly above partition, skip interval
                 if (column.getLong(0) > intervalHi) {
-                    intervalsHi = currentInterval;
+                    partitionHi = currentPartition;
+                    partitionLimit = -1;
                     continue;
                 }
 
@@ -109,7 +110,7 @@ public class IntervalBwdDataFrameCursor extends AbstractIntervalDataFrameCursor 
                 intervalsHi = currentInterval;
             } else {
                 // partition was empty, just skip to next
-                partitionLo++;
+                partitionHi = currentPartition;
             }
         }
         return false;

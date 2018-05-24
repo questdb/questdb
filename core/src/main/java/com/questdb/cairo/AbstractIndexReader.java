@@ -33,7 +33,7 @@ import com.questdb.std.str.Path;
 import java.util.concurrent.locks.LockSupport;
 
 public abstract class AbstractIndexReader implements BitmapIndexReader {
-    protected final static Log LOG = LogFactory.getLog(BitmapIndexBackwardReader.class);
+    protected final static Log LOG = LogFactory.getLog(BitmapIndexBwdReader.class);
     protected final ReadOnlyMemory keyMem = new ReadOnlyMemory();
     protected final ReadOnlyMemory valueMem = new ReadOnlyMemory();
     protected int blockValueCountMod;

@@ -459,20 +459,20 @@ public class TableReader implements Closeable {
         ReadOnlyColumn col = columns.getQuick(globalIndex);
         if (col instanceof NullColumn) {
             if (direction == BitmapIndexReader.DIR_BACKWARD) {
-                reader = new BitmapIndexBackwardNullReader();
+                reader = new BitmapIndexBwdNullReader();
                 bitmapIndexes.setQuick(globalIndex, reader);
             } else {
-                reader = new BitmapIndexForwardNullReader();
+                reader = new BitmapIndexFwdNullReader();
                 bitmapIndexes.setQuick(globalIndex + 1, reader);
             }
         } else {
             Path path = partitionPathGenerator.generate(this, getPartitionIndex(columnBase));
             try {
                 if (direction == BitmapIndexReader.DIR_BACKWARD) {
-                    reader = new BitmapIndexBackwardReader(configuration, path.chopZ(), metadata.getColumnName(columnIndex), getColumnTop(columnBase, columnIndex));
+                    reader = new BitmapIndexBwdReader(configuration, path.chopZ(), metadata.getColumnName(columnIndex), getColumnTop(columnBase, columnIndex));
                     bitmapIndexes.setQuick(globalIndex, reader);
                 } else {
-                    reader = new BitmapIndexForwardReader(configuration, path.chopZ(), metadata.getColumnName(columnIndex), getColumnTop(columnBase, columnIndex));
+                    reader = new BitmapIndexFwdReader(configuration, path.chopZ(), metadata.getColumnName(columnIndex), getColumnTop(columnBase, columnIndex));
                     bitmapIndexes.setQuick(globalIndex + 1, reader);
                 }
             } finally {
@@ -873,13 +873,13 @@ public class TableReader implements Closeable {
 
                 if (metadata.isColumnIndexed(columnIndex)) {
                     BitmapIndexReader indexReader = indexReaders.getQuick(primaryIndex);
-                    if (indexReader instanceof BitmapIndexBackwardReader) {
-                        ((BitmapIndexBackwardReader) indexReader).of(configuration, path.trimTo(plen), name, columnTop);
+                    if (indexReader instanceof BitmapIndexBwdReader) {
+                        ((BitmapIndexBwdReader) indexReader).of(configuration, path.trimTo(plen), name, columnTop);
                     }
 
                     indexReader = indexReaders.getQuick(secondaryIndex);
-                    if (indexReader instanceof BitmapIndexForwardReader) {
-                        ((BitmapIndexForwardReader) indexReader).of(configuration, path.trimTo(plen), name, columnTop);
+                    if (indexReader instanceof BitmapIndexFwdReader) {
+                        ((BitmapIndexFwdReader) indexReader).of(configuration, path.trimTo(plen), name, columnTop);
                     }
 
                 } else {

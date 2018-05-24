@@ -92,11 +92,11 @@ public abstract class AbstractIntervalDataFrameCursor implements DataFrameCursor
     }
 
     public void of(TableReader reader) {
-        this.reader = reader;
         this.timestampIndex = reader.getMetadata().getTimestampIndex();
         if (this.timestampIndex == -1) {
-            throw CairoException.instance(0).put("no timestamp");
+            throw CairoException.instance(0).put("table '").put(reader.getTableName()).put("' has no timestamp");
         }
+        this.reader = reader;
         calculateRanges();
     }
 
@@ -119,7 +119,7 @@ public abstract class AbstractIntervalDataFrameCursor implements DataFrameCursor
         if (intervals.size() > 0) {
             if (reader.getPartitionedBy() == PartitionBy.NONE) {
                 initialIntervalsLo = 0;
-                initialIntervalsHi = intervals.size();
+                initialIntervalsHi = intervals.size() / 2;
                 initialPartitionLo = 0;
                 initialPartitionHi = reader.getPartitionCount();
             } else {
@@ -189,7 +189,6 @@ public abstract class AbstractIntervalDataFrameCursor implements DataFrameCursor
             return rowLo;
         }
 
-        // todo: not hit
         @Override
         public TableReader getTableReader() {
             return AbstractIntervalDataFrameCursor.this.getTableReader();
