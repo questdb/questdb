@@ -688,7 +688,7 @@ public class SqlCompiler {
                 } catch (SqlException e) {
                     removeTableDirectory(model);
                     throw e;
-                } catch (ConcurrentModificationException e) {
+                } catch (ReaderOutOfDateException e) {
                     if (removeTableDirectory(model)) {
                         throw e;
                     }
@@ -729,7 +729,7 @@ public class SqlCompiler {
             try {
                 createTable((CreateTableModel) executionModel, bindVariableService);
                 break;
-            } catch (ConcurrentModificationException e) {
+            } catch (ReaderOutOfDateException e) {
                 retries--;
                 executionModel = compileExecutionModel(query, bindVariableService, true);
             }
@@ -876,21 +876,6 @@ public class SqlCompiler {
             } else {
                 throw SqlException.$(ccm.getColumnTypePos(),
                         "unsupported cast [from=").put(ColumnType.nameOf(from)).put(",to=").put(ColumnType.nameOf(to)).put(']');
-            }
-        }
-
-        // check that column count matches
-        int columnCount = model.getColumnCount();
-        if (columnCount != metadata.getColumnCount()) {
-            throw ConcurrentModificationException.INSTANCE;
-        }
-
-        // check that names match
-        for (int i = 0; i < columnCount; i++) {
-            CharSequence modelColumnName = model.getColumnName(i);
-            CharSequence metaColumnName = metadata.getColumnName(i);
-            if (!Chars.equals(modelColumnName, metaColumnName)) {
-                throw ConcurrentModificationException.INSTANCE;
             }
         }
 

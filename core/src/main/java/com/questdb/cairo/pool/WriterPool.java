@@ -410,7 +410,7 @@ public class WriterPool extends AbstractPool implements ResourcePool<TableWriter
 
     private class Entry implements LifecycleManager {
         // owner thread id or -1 if writer is available for hire
-        private long owner = Thread.currentThread().getId();
+        private volatile long owner = Thread.currentThread().getId();
         private TableWriter writer;
         // time writer was last released
         private volatile long lastReleaseTime;

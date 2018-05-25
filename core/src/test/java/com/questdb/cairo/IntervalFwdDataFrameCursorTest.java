@@ -367,7 +367,7 @@ public class IntervalFwdDataFrameCursorTest extends AbstractCairoTest {
 
             try (CairoEngine engine = new Engine(configuration)) {
                 final TableReaderRecord record = new TableReaderRecord();
-                final IntervalFwdDataFrameCursorFactory factory = new IntervalFwdDataFrameCursorFactory(engine, "x", intervals);
+                final IntervalFwdDataFrameCursorFactory factory = new IntervalFwdDataFrameCursorFactory(engine, "x", 0, intervals);
                 try (DataFrameCursor cursor = factory.getCursor()) {
 
                     // assert that there is nothing to start with
@@ -408,6 +408,16 @@ public class IntervalFwdDataFrameCursorTest extends AbstractCairoTest {
 
                         Assert.assertFalse(cursor.reload());
                     }
+                }
+
+                try (TableWriter writer = engine.getWriter("x")) {
+                    writer.removeColumn("a");
+                }
+
+                try {
+                    factory.getCursor();
+                    Assert.fail();
+                } catch (ReaderOutOfDateException ignored) {
                 }
             }
         });

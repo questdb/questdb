@@ -29,12 +29,12 @@ import com.questdb.cairo.sql.DataFrameCursor;
 public class FullFwdDataFrameCursorFactory extends AbstractDataFrameCursorFactory {
     private final FullFwdDataFrameCursor cursor = new FullFwdDataFrameCursor();
 
-    public FullFwdDataFrameCursorFactory(CairoEngine engine, String tableName) {
-        super(engine, tableName);
+    public FullFwdDataFrameCursorFactory(CairoEngine engine, String tableName, long tableVersion) {
+        super(engine, tableName, tableVersion);
     }
 
     @Override
     public DataFrameCursor getCursor() {
-        return cursor.of(engine.getReader(tableName));
+        return cursor.of(getReader());
     }
 }

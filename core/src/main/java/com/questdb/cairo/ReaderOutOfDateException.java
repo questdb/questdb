@@ -21,8 +21,8 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin;
+package com.questdb.cairo;
 
-public class ConcurrentModificationException extends RuntimeException {
-    public static final ConcurrentModificationException INSTANCE = new ConcurrentModificationException();
+public class ReaderOutOfDateException extends RuntimeException {
+    public static final ReaderOutOfDateException INSTANCE = new ReaderOutOfDateException();
 }

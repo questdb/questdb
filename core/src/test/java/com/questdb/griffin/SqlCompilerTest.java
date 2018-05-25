@@ -1855,9 +1855,9 @@ public class SqlCompilerTest extends AbstractCairoTest {
 
         CairoEngine engine = new Engine(configuration) {
             @Override
-            public TableReader getReader(CharSequence tableName) {
+            public TableReader getReader(CharSequence tableName, long tableVersion) {
                 fiddler.run(this);
-                return super.getReader(tableName);
+                return super.getReader(tableName, tableVersion);
             }
         };
 
@@ -1896,7 +1896,7 @@ public class SqlCompilerTest extends AbstractCairoTest {
                 bindVariableService
         );
 
-        try (TableReader reader = engine.getReader("x")) {
+        try (TableReader reader = engine.getReader("x", -1)) {
             sink.clear();
             reader.getMetadata().toJson(sink);
             TestUtils.assertEquals(
@@ -1932,7 +1932,7 @@ public class SqlCompilerTest extends AbstractCairoTest {
                 bindVariableService
         );
 
-        try (TableReader reader = engine.getReader("x")) {
+        try (TableReader reader = engine.getReader("x", -1)) {
             sink.clear();
             reader.getMetadata().toJson(sink);
             TestUtils.assertEquals(
@@ -1969,7 +1969,7 @@ public class SqlCompilerTest extends AbstractCairoTest {
                 bindVariableService
         );
 
-        try (TableReader reader = engine.getReader("x")) {
+        try (TableReader reader = engine.getReader("x", -1)) {
             sink.clear();
             reader.getMetadata().toJson(sink);
             TestUtils.assertEquals(
@@ -2006,7 +2006,7 @@ public class SqlCompilerTest extends AbstractCairoTest {
                 bindVariableService
         );
 
-        try (TableReader reader = engine.getReader("x")) {
+        try (TableReader reader = engine.getReader("x", -1)) {
             sink.clear();
             reader.getMetadata().toJson(sink);
             TestUtils.assertEquals(
@@ -2043,7 +2043,7 @@ public class SqlCompilerTest extends AbstractCairoTest {
                 bindVariableService
         );
 
-        try (TableReader reader = engine.getReader("x")) {
+        try (TableReader reader = engine.getReader("x", -1)) {
             sink.clear();
             reader.getMetadata().toJson(sink);
             TestUtils.assertEquals(
@@ -2133,7 +2133,7 @@ public class SqlCompilerTest extends AbstractCairoTest {
 
         compiler.execute("create table миллионы as (select * from доходы)", bindVariableService);
 
-        try (TableReader reader = engine.getReader("миллионы")) {
+        try (TableReader reader = engine.getReader("миллионы", -1)) {
             sink.clear();
             printer.print(reader.getCursor(), true);
         }
@@ -2234,7 +2234,7 @@ public class SqlCompilerTest extends AbstractCairoTest {
             Assert.assertEquals(1, success.get());
             Assert.assertNotEquals(-1, index.get());
 
-            try (TableReader reader = engine.getReader("x")) {
+            try (TableReader reader = engine.getReader("x", -1)) {
                 sink.clear();
                 reader.getMetadata().toJson(sink);
                 if (index.get() == 0) {
@@ -2249,7 +2249,7 @@ public class SqlCompilerTest extends AbstractCairoTest {
 
     private void assertCast(String expectedData, String expectedMeta, String sql) throws SqlException, IOException {
         compiler.execute(sql, bindVariableService);
-        try (TableReader reader = engine.getReader("y")) {
+        try (TableReader reader = engine.getReader("y", -1)) {
             sink.clear();
             reader.getMetadata().toJson(sink);
             TestUtils.assertEquals(expectedMeta, sink);
@@ -2483,9 +2483,9 @@ public class SqlCompilerTest extends AbstractCairoTest {
 
         CairoEngine engine = new Engine(configuration) {
             @Override
-            public TableReader getReader(CharSequence tableName) {
+            public TableReader getReader(CharSequence tableName, long tableVersion) {
                 fiddler.run(this);
-                return super.getReader(tableName);
+                return super.getReader(tableName, tableVersion);
             }
         };
 
@@ -2494,7 +2494,7 @@ public class SqlCompilerTest extends AbstractCairoTest {
 
         Assert.assertTrue(fiddler.isHappy());
 
-        try (TableReader reader = engine.getReader("Y")) {
+        try (TableReader reader = engine.getReader("Y", -1)) {
             sink.clear();
             reader.getMetadata().toJson(sink);
             TestUtils.assertEquals(expectedMetadata, sink);

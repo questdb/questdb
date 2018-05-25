@@ -120,7 +120,7 @@ public class SqlCodeGenerator {
         final SqlNode latestBy = model.getLatestBy();
         final SqlNode whereClause = model.getWhereClause();
 
-        try (TableReader reader = engine.getReader(model.getTableName().token)) {
+        try (TableReader reader = engine.getReader(model.getTableName().token, model.getTableVersion())) {
             final RecordMetadata metadata = reader.getMetadata();
 
             final int latestByIndex;
@@ -128,12 +128,6 @@ public class SqlCodeGenerator {
                 // validate latest by against current reader
                 // first check if column is valid
                 latestByIndex = metadata.getColumnIndexQuiet(latestBy.token);
-                if (latestByIndex == -1) {
-                    throw ConcurrentModificationException.INSTANCE;
-                }
-                if (metadata.getColumnType(latestByIndex) != ColumnType.SYMBOL) {
-                    throw SqlException.$(latestBy.position, "has to be SYMBOL");
-                }
             } else {
                 latestByIndex = -1;
             }
@@ -146,9 +140,6 @@ public class SqlCodeGenerator {
                 SqlNode timestamp = model.getTimestamp();
                 if (timestamp != null) {
                     timestampIndex = metadata.getColumnIndexQuiet(timestamp.token);
-                    if (timestampIndex == -1) {
-                        throw ConcurrentModificationException.INSTANCE;
-                    }
                 } else {
                     timestampIndex = -1;
                 }
@@ -156,7 +147,7 @@ public class SqlCodeGenerator {
                 final IntrinsicModel intrinsicModel = filterAnalyser.extract(model, whereClause, metadata, latestBy != null ? latestBy.token : null, timestampIndex);
 
                 if (intrinsicModel.intrinsicValue == IntrinsicModel.FALSE) {
-                    return new EmptyTableRecordCursorFactory(engine, model.getTableName().token.toString());
+                    return new EmptyTableRecordCursorFactory(engine, model.getTableName().token.toString(), model.getTableVersion());
                 }
 
                 Function filter;
@@ -179,7 +170,7 @@ public class SqlCodeGenerator {
                             // filter is constant "true", do not evaluate for every row
                             filter = null;
                         } else {
-                            return new EmptyTableRecordCursorFactory(engine, model.getTableName().token.toString());
+                            return new EmptyTableRecordCursorFactory(engine, model.getTableName().token.toString(), model.getTableVersion());
                         }
                     }
                 }
@@ -189,18 +180,15 @@ public class SqlCodeGenerator {
                 if (latestByIndex > -1) {
                     // this is everything "latest by"
                     if (intrinsicModel.intervals != null) {
-                        dfcFactory = new IntervalBwdDataFrameCursorFactory(engine, model.getTableName().token.toString(), intrinsicModel.intervals);
+                        dfcFactory = new IntervalBwdDataFrameCursorFactory(engine, model.getTableName().token.toString(), model.getTableVersion(), intrinsicModel.intervals);
                     } else {
-                        dfcFactory = new FullBwdDataFrameCursorFactory(engine, model.getTableName().token.toString());
+                        dfcFactory = new FullBwdDataFrameCursorFactory(engine, model.getTableName().token.toString(), model.getTableVersion());
                     }
 
                     if (intrinsicModel.keyColumn != null) {
                         // we also have key lookup, is the the same column as "latest by"
                         // note: key column is always indexed
                         int keyColumnIndex = metadata.getColumnIndexQuiet(intrinsicModel.keyColumn);
-                        if (keyColumnIndex == -1) {
-                            throw ConcurrentModificationException.INSTANCE;
-                        }
 
                         assert intrinsicModel.keyValues != null;
                         int nKeyValues = intrinsicModel.keyValues.size();
@@ -246,9 +234,9 @@ public class SqlCodeGenerator {
                 } else {
 
                     if (intrinsicModel.intervals != null) {
-                        dfcFactory = new IntervalFwdDataFrameCursorFactory(engine, model.getTableName().token.toString(), intrinsicModel.intervals);
+                        dfcFactory = new IntervalFwdDataFrameCursorFactory(engine, model.getTableName().token.toString(), model.getTableVersion(), intrinsicModel.intervals);
                     } else {
-                        dfcFactory = new FullFwdDataFrameCursorFactory(engine, model.getTableName().token.toString());
+                        dfcFactory = new FullFwdDataFrameCursorFactory(engine, model.getTableName().token.toString(), model.getTableVersion());
                     }
 
                     // no "latest by" clause
@@ -323,10 +311,10 @@ public class SqlCodeGenerator {
 
             } else {
                 if (latestByIndex == -1) {
-                    return new TableReaderRecordCursorFactory(engine, Chars.toString(model.getTableName().token));
+                    return new TableReaderRecordCursorFactory(engine, Chars.toString(model.getTableName().token), model.getTableVersion());
                 } else {
                     return new LatestByRecordCursorFactory(
-                            new FullBwdDataFrameCursorFactory(engine, model.getTableName().token.toString()),
+                            new FullBwdDataFrameCursorFactory(engine, model.getTableName().token.toString(), model.getTableVersion()),
                             latestByIndex);
                 }
             }

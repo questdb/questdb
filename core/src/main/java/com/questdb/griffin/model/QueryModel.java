@@ -72,6 +72,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private SqlNode constWhereClause;
     private QueryModel nestedModel;
     private SqlNode tableName;
+    private long tableVersion;
     private Function tableNameFunction;
     private SqlNode alias;
     private SqlNode latestBy;
@@ -169,6 +170,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         selectModelType = SELECT_MODEL_NONE;
         columnToAliasMap.clear();
         tableNameFunction = null;
+        tableVersion = -1;
     }
 
     public void clearOrderBy() {
@@ -367,6 +369,14 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public void setTableNameFunction(Function function) {
         this.tableNameFunction = function;
+    }
+
+    public long getTableVersion() {
+        return tableVersion;
+    }
+
+    public void setTableVersion(long tableVersion) {
+        this.tableVersion = tableVersion;
     }
 
     public SqlNode getTimestamp() {

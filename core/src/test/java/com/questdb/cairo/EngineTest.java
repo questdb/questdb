@@ -57,7 +57,7 @@ public class EngineTest extends AbstractCairoTest {
                 engine.setPoolListener(listener);
                 Assert.assertEquals(listener, engine.getPoolListener());
 
-                TableReader reader = engine.getReader("x");
+                TableReader reader = engine.getReader("x", -1);
                 TableWriter writer = engine.getWriter("x");
                 Assert.assertEquals(1, engine.getBusyReaderCount());
                 Assert.assertEquals(1, engine.getBusyWriterCount());
@@ -140,7 +140,7 @@ public class EngineTest extends AbstractCairoTest {
 
         TestUtils.assertMemoryLeak(() -> {
             try (Engine engine = new Engine(configuration)) {
-                try (TableReader reader = engine.getReader("x")) {
+                try (TableReader reader = engine.getReader("x", -1)) {
                     Assert.assertNotNull(reader);
                     Assert.assertFalse(engine.lock("x"));
                     assertReader(engine, "x");
@@ -176,7 +176,7 @@ public class EngineTest extends AbstractCairoTest {
                 Assert.assertEquals(TableUtils.TABLE_DOES_NOT_EXIST, engine.getStatus("x"));
 
                 try {
-                    engine.getReader("x");
+                    engine.getReader("x", -1);
                     Assert.fail();
                 } catch (CairoException ignored) {
                 }
@@ -222,7 +222,7 @@ public class EngineTest extends AbstractCairoTest {
             createX();
 
             try (Engine engine = new Engine(configuration)) {
-                try (TableReader reader = engine.getReader("x")) {
+                try (TableReader reader = engine.getReader("x", -1)) {
                     Assert.assertNotNull(reader);
                     try {
                         engine.remove("x");
@@ -387,8 +387,26 @@ public class EngineTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testWrongReaderVersion() throws Exception {
+        createX();
+
+        TestUtils.assertMemoryLeak(() -> {
+            try (Engine engine = new Engine(configuration)) {
+                assertWriter(engine, "x");
+                try {
+                    engine.getReader("x", 2);
+                    Assert.fail();
+                } catch (ReaderOutOfDateException ignored) {
+                }
+                Assert.assertTrue(engine.releaseAllReaders());
+                Assert.assertTrue(engine.releaseAllWriters());
+            }
+        });
+    }
+
     private void assertReader(Engine engine, String name) {
-        try (TableReader reader = engine.getReader(name)) {
+        try (TableReader reader = engine.getReader(name, -1)) {
             Assert.assertNotNull(reader);
         }
     }

@@ -27,11 +27,17 @@ import com.questdb.cairo.sql.CairoEngine;
 import com.questdb.cairo.sql.DataFrameCursorFactory;
 
 public abstract class AbstractDataFrameCursorFactory implements DataFrameCursorFactory {
-    protected final CairoEngine engine;
-    protected final String tableName;
+    private final CairoEngine engine;
+    private final String tableName;
+    private final long tableVersion;
 
-    public AbstractDataFrameCursorFactory(CairoEngine engine, String tableName) {
+    public AbstractDataFrameCursorFactory(CairoEngine engine, String tableName, long tableVersion) {
         this.engine = engine;
         this.tableName = tableName;
+        this.tableVersion = tableVersion;
+    }
+
+    protected TableReader getReader() {
+        return engine.getReader(tableName, tableVersion);
     }
 }

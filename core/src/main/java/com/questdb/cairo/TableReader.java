@@ -252,6 +252,10 @@ public class TableReader implements Closeable {
         return tableName;
     }
 
+    public long getVersion() {
+        return this.structVersion;
+    }
+
     public boolean isOpen() {
         return tempMem8b != 0;
     }

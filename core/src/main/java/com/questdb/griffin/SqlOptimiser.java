@@ -1201,7 +1201,8 @@ class SqlOptimiser {
             throw SqlException.$(tableNamePosition, "table directory is of unknown format");
         }
 
-        try (TableReader r = engine.getReader(tableLookupSequence.of(tableName, lo, hi - lo))) {
+        try (TableReader r = engine.getReader(tableLookupSequence.of(tableName, lo, hi - lo), -1)) {
+            model.setTableVersion(r.getVersion());
             copyColumnsFromMetadata(model, r.getMetadata());
         } catch (EntryLockedException e) {
             throw SqlException.position(tableNamePosition).put("table is locked: ").put(tableLookupSequence);

@@ -31,15 +31,17 @@ public class TableReaderRecordCursorFactory implements RecordCursorFactory {
     private final TableReaderRecordCursor cursor = new TableReaderRecordCursor();
     private final CairoEngine engine;
     private final String tableName;
+    private final long tableVersion;
 
-    public TableReaderRecordCursorFactory(CairoEngine engine, String tableName) {
+    public TableReaderRecordCursorFactory(CairoEngine engine, String tableName, long tableVersion) {
         this.engine = engine;
         this.tableName = tableName;
+        this.tableVersion = tableVersion;
     }
 
     @Override
     public RecordCursor getCursor() {
-        cursor.of(engine.getReader(tableName));
+        cursor.of(engine.getReader(tableName, tableVersion));
         return cursor;
     }
 }

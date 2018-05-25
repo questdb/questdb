@@ -88,7 +88,7 @@ public class FullBwdDataFrameCursorTest extends AbstractCairoTest {
                 w.commit();
 
                 try (CairoEngine engine = new Engine(configuration)) {
-                    FullBwdDataFrameCursorFactory factory = new FullBwdDataFrameCursorFactory(engine, "x");
+                    FullBwdDataFrameCursorFactory factory = new FullBwdDataFrameCursorFactory(engine, "x", 0);
                     final TableReaderRecord record = new TableReaderRecord();
 
                     try (final DataFrameCursor cursor = factory.getCursor()) {
@@ -112,9 +112,16 @@ public class FullBwdDataFrameCursorTest extends AbstractCairoTest {
                         printCursor(record, cursor);
                         TestUtils.assertEquals(expectedNext + expected, sink);
                     }
+
+                    w.removeColumn("a");
+
+                    try {
+                        factory.getCursor();
+                        Assert.fail();
+                    } catch (ReaderOutOfDateException ignored) {
+                    }
                 }
             }
-
         });
 
     }

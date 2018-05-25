@@ -78,7 +78,7 @@ public class TableReaderRecordCursorFactoryTest extends AbstractCairoTest {
 
 
             try (Engine engine = new Engine(configuration)) {
-                try (RecordCursorFactory factory = new TableReaderRecordCursorFactory(engine, "x")) {
+                try (RecordCursorFactory factory = new TableReaderRecordCursorFactory(engine, "x", -1)) {
 
                     long count = 0;
                     try (RecordCursor cursor = factory.getCursor()) {
