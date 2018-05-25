@@ -21,14 +21,29 @@
  *
  ******************************************************************************/
 
-package com.questdb.cairo.sql;
+package com.questdb.griffin.engine.table;
 
-import com.questdb.cairo.TableReader;
 import com.questdb.common.RowCursor;
 
-public interface RowCursorFactory {
-    RowCursor getCursor(DataFrame dataFrame);
+class SymbolIndexLatestValueRowCursor implements RowCursor {
+    private long next;
 
-    default void prepareCursor(TableReader tableReader) {
+    @Override
+    public boolean hasNext() {
+        if (next == -1) {
+            throw NoMoreFramesException.INSTANCE;
+        }
+        return true;
+    }
+
+    @Override
+    public long next() {
+        long next = this.next;
+        this.next = -1;
+        return next;
+    }
+
+    void of(long rowid) {
+        this.next = rowid;
     }
 }

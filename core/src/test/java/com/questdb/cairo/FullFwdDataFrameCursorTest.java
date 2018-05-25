@@ -894,7 +894,6 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
         long count = 0;
         while (cursor.hasNext()) {
             DataFrame frame = cursor.next();
-            Assert.assertSame(cursor.getTableReader(), frame.getTableReader());
 
             // BitmapIndex is always at data frame scope, each table can have more than one.
             // we have to get BitmapIndexReader instance once for each frame.

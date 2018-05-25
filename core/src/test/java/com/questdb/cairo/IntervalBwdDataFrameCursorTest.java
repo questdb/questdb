@@ -509,7 +509,6 @@ public class IntervalBwdDataFrameCursorTest extends AbstractCairoTest {
         long rowCount = 0;
         while (cursor.hasNext()) {
             DataFrame frame = cursor.next();
-            Assert.assertSame(cursor.getTableReader(), frame.getTableReader());
             record.jumpTo(frame.getPartitionIndex(), frame.getRowLo());
             final long limit = frame.getRowHi();
             final long low = frame.getRowLo();

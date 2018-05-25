@@ -68,14 +68,16 @@ public class IntHashSet implements Mutable {
         if (index < 0) {
             return false;
         }
+        addAt(index, key);
+        return true;
+    }
 
+    public void addAt(int index, int key) {
         Unsafe.arrayPut(keys, index, key);
         list.add(key);
         if (--free == 0) {
             rehash();
         }
-
-        return true;
     }
 
     public final void clear() {

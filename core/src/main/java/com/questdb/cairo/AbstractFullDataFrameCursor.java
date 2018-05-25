@@ -95,10 +95,5 @@ public abstract class AbstractFullDataFrameCursor implements DataFrameCursor {
         public long getRowLo() {
             return rowLo;
         }
-
-        @Override
-        public TableReader getTableReader() {
-            return reader;
-        }
     }
 }

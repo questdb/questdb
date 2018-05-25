@@ -37,6 +37,11 @@ public class FilteredRecordCursorFactory implements RecordCursorFactory {
     }
 
     @Override
+    public void close() {
+        base.close();
+    }
+
+    @Override
     public RecordCursor getCursor() {
         cursor.of(base.getCursor());
         return cursor;

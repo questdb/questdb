@@ -78,27 +78,26 @@ public class TableReaderRecordCursorFactoryTest extends AbstractCairoTest {
 
 
             try (Engine engine = new Engine(configuration)) {
-                RecordCursorFactory factory = new TableReaderRecordCursorFactory(engine, "x");
+                try (RecordCursorFactory factory = new TableReaderRecordCursorFactory(engine, "x")) {
 
-                long count = 0;
-                try (RecordCursor cursor = factory.getCursor()) {
-                    rnd.reset();
-                    while (cursor.hasNext()) {
-                        Record record = cursor.next();
-                        TestUtils.assertEquals(rnd.nextChars(20), record.getStr(0));
-                        TestUtils.assertEquals(symbols[rnd.nextPositiveInt() % N], record.getSym(1));
-                        Assert.assertEquals(rnd.nextInt(), record.getInt(2));
-                        TestUtils.assertEquals(symbols[rnd.nextPositiveInt() % N], record.getSym(3));
-                        count++;
+                    long count = 0;
+                    try (RecordCursor cursor = factory.getCursor()) {
+                        rnd.reset();
+                        while (cursor.hasNext()) {
+                            Record record = cursor.next();
+                            TestUtils.assertEquals(rnd.nextChars(20), record.getStr(0));
+                            TestUtils.assertEquals(symbols[rnd.nextPositiveInt() % N], record.getSym(1));
+                            Assert.assertEquals(rnd.nextInt(), record.getInt(2));
+                            TestUtils.assertEquals(symbols[rnd.nextPositiveInt() % N], record.getSym(3));
+                            count++;
+                        }
+                        sink.clear();
+                        cursor.getMetadata().toJson(sink);
+                        TestUtils.assertEquals(expectedMetadata, sink);
                     }
-                    sink.clear();
-                    cursor.getMetadata().toJson(sink);
-                    TestUtils.assertEquals(expectedMetadata, sink);
+                    Assert.assertEquals(0, engine.getBusyReaderCount());
+                    Assert.assertEquals(M, count);
                 }
-
-
-                Assert.assertEquals(0, engine.getBusyReaderCount());
-                Assert.assertEquals(M, count);
             }
         });
     }

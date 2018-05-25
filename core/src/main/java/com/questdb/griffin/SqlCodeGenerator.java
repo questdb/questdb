@@ -121,9 +121,26 @@ public class SqlCodeGenerator {
         final SqlNode whereClause = model.getWhereClause();
 
         try (TableReader reader = engine.getReader(model.getTableName().token)) {
+            final RecordMetadata metadata = reader.getMetadata();
+
+            final int latestByIndex;
+            if (latestBy != null) {
+                // validate latest by against current reader
+                // first check if column is valid
+                latestByIndex = metadata.getColumnIndexQuiet(latestBy.token);
+                if (latestByIndex == -1) {
+                    throw ConcurrentModificationException.INSTANCE;
+                }
+                if (metadata.getColumnType(latestByIndex) != ColumnType.SYMBOL) {
+                    throw SqlException.$(latestBy.position, "has to be SYMBOL");
+                }
+            } else {
+                latestByIndex = -1;
+            }
+
+
             if (whereClause != null) {
 
-                final RecordMetadata metadata = reader.getMetadata();
                 final int timestampIndex;
 
                 SqlNode timestamp = model.getTimestamp();
@@ -169,21 +186,12 @@ public class SqlCodeGenerator {
 
                 DataFrameCursorFactory dfcFactory;
 
-                if (latestBy != null) {
+                if (latestByIndex > -1) {
                     // this is everything "latest by"
                     if (intrinsicModel.intervals != null) {
                         dfcFactory = new IntervalBwdDataFrameCursorFactory(engine, model.getTableName().token.toString(), intrinsicModel.intervals);
                     } else {
                         dfcFactory = new FullBwdDataFrameCursorFactory(engine, model.getTableName().token.toString());
-                    }
-
-                    // first check if column is valid
-                    int latestByIndex = metadata.getColumnIndexQuiet(latestBy.token);
-                    if (latestByIndex == -1) {
-                        throw ConcurrentModificationException.INSTANCE;
-                    }
-                    if (metadata.getColumnType(latestByIndex) != ColumnType.SYMBOL) {
-                        throw SqlException.$(latestBy.position, "has to be SYMBOL");
                     }
 
                     if (intrinsicModel.keyColumn != null) {
@@ -216,7 +224,7 @@ public class SqlCodeGenerator {
                                     if (symbolKey == SymbolTable.VALUE_NOT_FOUND) {
                                         rcf = EmptyRowCursorFactory.INSTANCE;
                                     } else {
-                                        rcf = new SymbolIndexLatestRowCursorFactory(keyColumnIndex, symbolKey, false);
+                                        rcf = new SymbolIndexLatestValueRowCursorFactory(keyColumnIndex, symbolKey, false);
                                     }
                                     return new DataFrameRecordCursorFactory(dfcFactory, rcf);
                                 }
@@ -314,7 +322,13 @@ public class SqlCodeGenerator {
                 return null;
 
             } else {
-                return new TableReaderRecordCursorFactory(engine, Chars.toString(model.getTableName().token));
+                if (latestByIndex == -1) {
+                    return new TableReaderRecordCursorFactory(engine, Chars.toString(model.getTableName().token));
+                } else {
+                    return new LatestByRecordCursorFactory(
+                            new FullBwdDataFrameCursorFactory(engine, model.getTableName().token.toString()),
+                            latestByIndex);
+                }
             }
         }
     }

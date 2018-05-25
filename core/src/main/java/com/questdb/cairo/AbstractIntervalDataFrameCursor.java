@@ -188,10 +188,5 @@ public abstract class AbstractIntervalDataFrameCursor implements DataFrameCursor
         public long getRowLo() {
             return rowLo;
         }
-
-        @Override
-        public TableReader getTableReader() {
-            return AbstractIntervalDataFrameCursor.this.getTableReader();
-        }
     }
 }

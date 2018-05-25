@@ -23,6 +23,7 @@
 
 package com.questdb.griffin.engine.table;
 
+import com.questdb.cairo.TableReader;
 import com.questdb.cairo.sql.DataFrame;
 import com.questdb.cairo.sql.Function;
 import com.questdb.cairo.sql.RowCursorFactory;
@@ -40,4 +41,8 @@ public class SymbolIndexFilteredRowCursorFactory implements RowCursorFactory {
         return cursor.of(dataFrame);
     }
 
+    @Override
+    public void prepareCursor(TableReader tableReader) {
+        this.cursor.setTableReader(tableReader);
+    }
 }

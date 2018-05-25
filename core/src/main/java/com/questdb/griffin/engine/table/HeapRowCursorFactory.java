@@ -23,6 +23,7 @@
 
 package com.questdb.griffin.engine.table;
 
+import com.questdb.cairo.TableReader;
 import com.questdb.cairo.sql.DataFrame;
 import com.questdb.cairo.sql.RowCursorFactory;
 import com.questdb.common.RowCursor;
@@ -48,5 +49,12 @@ public class HeapRowCursorFactory implements RowCursorFactory {
         }
         cursor.of(cursors);
         return cursor;
+    }
+
+    @Override
+    public void prepareCursor(TableReader tableReader) {
+        for (int i = 0, n = cursorFactories.size(); i < n; i++) {
+            cursorFactories.getQuick(i).prepareCursor(tableReader);
+        }
     }
 }

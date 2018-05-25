@@ -23,27 +23,31 @@
 
 package com.questdb.griffin.engine.table;
 
-import com.questdb.common.RowCursor;
+import com.questdb.cairo.sql.DataFrameCursorFactory;
+import com.questdb.cairo.sql.RecordCursor;
+import com.questdb.cairo.sql.RecordCursorFactory;
+import com.questdb.griffin.engine.LongTreeSet;
 
-class SymbolIndexLatestRowCursor implements RowCursor {
-    private long next;
+public class LatestByRecordCursorFactory implements RecordCursorFactory {
+    private final DataFrameCursorFactory dataFrameCursorFactory;
+    private final LatestByRecordCursor cursor;
+    private final LongTreeSet treeSet;
 
-    @Override
-    public boolean hasNext() {
-        if (next == -1) {
-            throw NoMoreFramesException.INSTANCE;
-        }
-        return true;
+    public LatestByRecordCursorFactory(DataFrameCursorFactory dataFrameCursorFactory, int columnIndex) {
+        //todo: derive page size from key count for symbol and configuration
+        this.treeSet = new LongTreeSet(4 * 1024);
+        this.cursor = new LatestByRecordCursor(columnIndex, treeSet);
+        this.dataFrameCursorFactory = dataFrameCursorFactory;
     }
 
     @Override
-    public long next() {
-        long next = this.next;
-        this.next = -1;
-        return next;
+    public void close() {
+        treeSet.close();
     }
 
-    void of(long rowid) {
-        this.next = rowid;
+    @Override
+    public RecordCursor getCursor() {
+        cursor.of(dataFrameCursorFactory.getCursor());
+        return cursor;
     }
 }

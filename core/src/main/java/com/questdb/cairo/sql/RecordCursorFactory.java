@@ -23,7 +23,13 @@
 
 package com.questdb.cairo.sql;
 
+import java.io.Closeable;
+
 @FunctionalInterface
-public interface RecordCursorFactory {
+public interface RecordCursorFactory extends Closeable {
+    @Override
+    default void close() {
+    }
+
     RecordCursor getCursor();
 }

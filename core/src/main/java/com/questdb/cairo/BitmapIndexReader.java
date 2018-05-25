@@ -41,7 +41,7 @@ public interface BitmapIndexReader extends Closeable {
      * minimum and maximum, both of which are inclusive. Order of values is
      * determined by specific implementations of this method.
      *
-     * @param cachedInstance when this paramters is true, index reader may return singleton instance of cursor.
+     * @param cachedInstance when this parameters is true, index reader may return singleton instance of cursor.
      * @param key            index key
      * @param minValue       inclusive minimum value
      * @param maxValue       inclusive maximum value

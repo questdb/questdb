@@ -23,55 +23,18 @@
 
 package com.questdb.griffin.engine.table;
 
-import com.questdb.cairo.TableReaderRecord;
-import com.questdb.cairo.sql.*;
+import com.questdb.cairo.sql.DataFrame;
+import com.questdb.cairo.sql.DataFrameCursor;
+import com.questdb.cairo.sql.Record;
+import com.questdb.cairo.sql.RowCursorFactory;
 import com.questdb.common.RowCursor;
-import com.questdb.std.Rows;
 
-class DataFrameRecordCursor implements RecordCursor {
-    private final TableReaderRecord record = new TableReaderRecord();
+class DataFrameRecordCursor extends AbstractDataFrameRecordCursor {
     private final RowCursorFactory rowCursorFactory;
-    private DataFrameCursor dataFrameCursor;
     private RowCursor rowCursor;
 
     public DataFrameRecordCursor(RowCursorFactory rowCursorFactory) {
         this.rowCursorFactory = rowCursorFactory;
-    }
-
-    @Override
-    public void close() {
-        if (dataFrameCursor != null) {
-            dataFrameCursor.close();
-            dataFrameCursor = null;
-        }
-    }
-
-    @Override
-    public RecordMetadata getMetadata() {
-        return dataFrameCursor.getTableReader().getMetadata();
-    }
-
-    @Override
-    public Record getRecord() {
-        return record;
-    }
-
-    @Override
-    public Record newRecord() {
-        TableReaderRecord record = new TableReaderRecord();
-        record.of(dataFrameCursor.getTableReader());
-        return record;
-    }
-
-    @Override
-    public Record recordAt(long rowId) {
-        recordAt(record, rowId);
-        return record;
-    }
-
-    @Override
-    public void recordAt(Record record, long atRowId) {
-        ((TableReaderRecord) record).jumpTo(Rows.toPartitionIndex(atRowId), Rows.toLocalRowID(atRowId));
     }
 
     @Override
@@ -88,12 +51,6 @@ class DataFrameRecordCursor implements RecordCursor {
     }
 
     @Override
-    public void toTop() {
-        dataFrameCursor.toTop();
-        rowCursor = null;
-    }
-
-    @Override
     public Record next() {
         return record;
     }
@@ -102,7 +59,14 @@ class DataFrameRecordCursor implements RecordCursor {
         close();
         this.dataFrameCursor = dataFrameCursor;
         this.record.of(dataFrameCursor.getTableReader());
+        this.rowCursorFactory.prepareCursor(dataFrameCursor.getTableReader());
         toTop();
+    }
+
+    @Override
+    public void toTop() {
+        dataFrameCursor.toTop();
+        rowCursor = null;
     }
 
     private boolean nextFrame() {

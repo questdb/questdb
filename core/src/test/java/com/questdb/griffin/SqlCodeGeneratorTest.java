@@ -27,6 +27,7 @@ import com.questdb.cairo.AbstractCairoTest;
 import com.questdb.cairo.Engine;
 import com.questdb.cairo.sql.Record;
 import com.questdb.cairo.sql.RecordCursor;
+import com.questdb.cairo.sql.RecordCursorFactory;
 import com.questdb.cairo.sql.RecordMetadata;
 import com.questdb.griffin.engine.functions.bind.BindVariableService;
 import com.questdb.griffin.engine.functions.rnd.SharedRandom;
@@ -215,6 +216,26 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLatestByKey() throws Exception {
+        assertQuery("a\tb\tk\n" +
+                        "23.905290108465\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
+                        "48.820511018587\tVTJW\t1970-01-12T13:46:40.000000Z\n" +
+                        "49.005104498852\tPEHN\t1970-01-18T08:40:00.000000Z\n" +
+                        "40.455469747939\t\t1970-01-22T23:46:40.000000Z\n",
+                "select * from x latest by b",
+                "create table x as " +
+                        "(" +
+                        "select * from" +
+                        " random_cursor" +
+                        "(20," +
+                        " 'a', rnd_double(0)*100," +
+                        " 'b', rnd_symbol(5,4,4,1)," +
+                        " 'k', timestamp_sequence(to_timestamp(0), 100000000000)" +
+                        ")" +
+                        "), index(b) timestamp(k) partition by DAY");
+    }
+
+    @Test
     public void testLatestByKeyValue() throws Exception {
         assertQuery("a\tb\tk\n" +
                         "49.005104498852\tPEHN\t1970-01-18T08:40:00.000000Z\n",
@@ -248,31 +269,10 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         "), index(b) timestamp(k) partition by DAY");
     }
 
-    private void assertQuery(CharSequence expected, CharSequence query, CharSequence ddl) throws Exception {
-        assertQuery(expected, query, ddl, null);
-    }
-
-    @SuppressWarnings("SameParameterValue")
-    private void assertQuery(CharSequence expected, CharSequence query, CharSequence ddl, @Nullable CharSequence verify) throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            compiler.execute(ddl, bindVariableService);
-            if (verify != null) {
-                printSqlResult(null, verify);
-                System.out.println(sink);
-            }
-            printSqlResult(expected, query);
-            Assert.assertEquals(0, engine.getBusyReaderCount());
-            Assert.assertEquals(0, engine.getBusyWriterCount());
-            engine.releaseAllWriters();
-            engine.releaseAllReaders();
-        });
-    }
-
-    private void printSqlResult(CharSequence expected, CharSequence query) throws IOException, SqlException {
-        sink.clear();
-        rows.clear();
-
-        try (RecordCursor cursor = compiler.compile(query, bindVariableService).getCursor()) {
+    private void assertCursor(CharSequence expected, RecordCursorFactory factory) throws IOException {
+        try (RecordCursor cursor = factory.getCursor()) {
+            sink.clear();
+            rows.clear();
             printer.print(cursor, true);
 
             if (expected == null) {
@@ -320,6 +320,37 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
             }
 
             TestUtils.assertEquals(expected, sink);
+        }
+    }
+
+    @SuppressWarnings("SameParameterValue")
+    private void assertQuery(CharSequence expected, CharSequence query, CharSequence ddl, @Nullable CharSequence verify) throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try {
+                compiler.execute(ddl, bindVariableService);
+                if (verify != null) {
+                    printSqlResult(null, verify);
+                    System.out.println(sink);
+                }
+                printSqlResult(expected, query);
+                Assert.assertEquals(0, engine.getBusyReaderCount());
+                Assert.assertEquals(0, engine.getBusyWriterCount());
+            } finally {
+                engine.releaseAllWriters();
+                engine.releaseAllReaders();
+            }
+        });
+    }
+
+    private void assertQuery(CharSequence expected, CharSequence query, CharSequence ddl) throws Exception {
+        assertQuery(expected, query, ddl, null);
+    }
+
+    private void printSqlResult(CharSequence expected, CharSequence query) throws IOException, SqlException {
+        try (final RecordCursorFactory factory = compiler.compile(query, bindVariableService)) {
+            assertCursor(expected, factory);
+            // make sure we get the same outcome when we get factory to create new cursor
+            assertCursor(expected, factory);
         }
     }
 }
