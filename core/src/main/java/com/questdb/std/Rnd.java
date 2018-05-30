@@ -23,6 +23,7 @@
 
 package com.questdb.std;
 
+import com.questdb.std.str.CharSink;
 import com.questdb.std.str.StringSink;
 
 public class Rnd {
@@ -65,10 +66,14 @@ public class Rnd {
 
     public CharSequence nextChars(int len) {
         sink.clear();
+        nextChars(sink, len);
+        return sink;
+    }
+
+    public void nextChars(CharSink sink, int len) {
         for (int i = 0; i < len; i++) {
             sink.put((char) (nextPositiveInt() % 25 + 66));
         }
-        return sink;
     }
 
     public double nextDouble() {

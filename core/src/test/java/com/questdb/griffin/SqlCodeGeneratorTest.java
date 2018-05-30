@@ -37,6 +37,7 @@ import com.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 import org.junit.Before;
+import org.junit.Ignore;
 import org.junit.Test;
 
 import java.io.IOException;
@@ -233,6 +234,28 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         " 'k', timestamp_sequence(to_timestamp(0), 100000000000)" +
                         ")" +
                         "), index(b) timestamp(k) partition by DAY");
+    }
+
+    @Test
+    @Ignore
+    //todo: implement
+    public void testLatestByKeyNoIndex() throws Exception {
+        assertQuery("a\tb\tk\n" +
+                        "23.905290108465\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
+                        "48.820511018587\tVTJW\t1970-01-12T13:46:40.000000Z\n" +
+                        "49.005104498852\tPEHN\t1970-01-18T08:40:00.000000Z\n" +
+                        "40.455469747939\t\t1970-01-22T23:46:40.000000Z\n",
+                "select * from x latest by b",
+                "create table x as " +
+                        "(" +
+                        "select * from" +
+                        " random_cursor" +
+                        "(20," +
+                        " 'a', rnd_double(0)*100," +
+                        " 'b', rnd_symbol(5,4,4,1)," +
+                        " 'k', timestamp_sequence(to_timestamp(0), 100000000000)" +
+                        ")" +
+                        ") timestamp(k) partition by DAY");
     }
 
     @Test

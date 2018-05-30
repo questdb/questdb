@@ -313,9 +313,12 @@ public class SqlCodeGenerator {
                 if (latestByIndex == -1) {
                     return new TableReaderRecordCursorFactory(engine, Chars.toString(model.getTableName().token), model.getTableVersion());
                 } else {
-                    return new LatestByRecordCursorFactory(
-                            new FullBwdDataFrameCursorFactory(engine, model.getTableName().token.toString(), model.getTableVersion()),
-                            latestByIndex);
+                    if (metadata.isColumnIndexed(latestByIndex)) {
+                        return new LatestByRecordCursorFactory(
+                                new FullBwdDataFrameCursorFactory(engine, model.getTableName().token.toString(), model.getTableVersion()),
+                                latestByIndex);
+                    }
+                    return null;
                 }
             }
         }

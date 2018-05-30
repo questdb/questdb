@@ -344,6 +344,17 @@ public class VirtualMemory implements Closeable {
         }
     }
 
+    public void zero() {
+        for (int i = 0, n = pages.size(); i < n; i++) {
+            long address = pages.getQuick(i);
+            if (address == 0) {
+                address = allocateNextPage(i);
+                pages.setQuick(i, address);
+            }
+            Unsafe.getUnsafe().setMemory(address, pageSize, (byte) 0);
+        }
+    }
+
     private static void copyStrChars(CharSequence value, int pos, int len, long address) {
         for (int i = 0; i < len; i++) {
             char c = value.charAt(i + pos);
@@ -379,6 +390,7 @@ public class VirtualMemory implements Closeable {
      */
     private long computeHotPage(int page) {
         long pageAddress = getPageAddress(page);
+        assert pageAddress != 0;
         roOffsetLo = pageOffset(page) - 1;
         roOffsetHi = roOffsetLo + getPageSize(page) + 1;
         absolutePointer = pageAddress - roOffsetLo - 1;
@@ -391,7 +403,6 @@ public class VirtualMemory implements Closeable {
             Unsafe.getUnsafe().putByte(appendPointer + i, c);
         }
     }
-
 
     protected void ensurePagesListCapacity(long size) {
         pages.ensureCapacity(pageIndex(size) + 1);
