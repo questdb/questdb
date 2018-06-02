@@ -204,11 +204,12 @@ class BootstrapMain {
 
     private static void configureLoggers(final ServerConfiguration configuration) {
 
-        LogFactory.INSTANCE.add(new LogWriterConfig("access", LogLevel.LOG_LEVEL_ALL, (ring, seq, level) -> {
-            LogFileWriter w = new LogFileWriter(ring, seq, level);
-            w.setLocation(configuration.getAccessLog().getAbsolutePath());
-            return w;
+        LogFactory.INSTANCE.add(new LogWriterConfig("access", LogLevel.LOG_LEVEL_ALL, (ring1, seq1, level1) -> {
+            LogFileWriter w1 = new LogFileWriter(ring1, seq1, level1);
+            w1.setLocation(configuration.getAccessLog().getAbsolutePath());
+            return w1;
         }));
+
 
         LogFactory.INSTANCE.add(new LogWriterConfig(
                 System.getProperty(LogFactory.DEBUG_TRIGGER) != null ? LogLevel.LOG_LEVEL_ALL : LogLevel.LOG_LEVEL_ERROR | LogLevel.LOG_LEVEL_INFO,
