@@ -1664,7 +1664,7 @@ public class SqlCompilerTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCreateAsSelectConstantColumnRename() {
+    public void testCreateAsSelectConstantColumnRename() throws IOException {
         try {
             assertCreateTableAsSelect(
                     null,
@@ -1699,7 +1699,7 @@ public class SqlCompilerTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCreateAsSelectRemoveColumn() throws SqlException {
+    public void testCreateAsSelectRemoveColumn() throws SqlException, IOException {
         assertCreateTableAsSelect(
                 "{\"columnCount\":2,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\"INT\"},{\"index\":1,\"name\":\"t\",\"type\":\"TIMESTAMP\"}],\"timestampIndex\":1}",
                 "create table Y as (select * from X) timestamp(t)",
@@ -1724,7 +1724,7 @@ public class SqlCompilerTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCreateAsSelectRemoveColumnFromCast() {
+    public void testCreateAsSelectRemoveColumnFromCast() throws IOException {
         // because the column we delete is used in "cast" expression this SQL must fail
         try {
             assertCreateTableAsSelect(
@@ -1756,7 +1756,7 @@ public class SqlCompilerTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCreateAsSelectReplaceColumn() throws SqlException {
+    public void testCreateAsSelectReplaceColumn() throws SqlException, IOException {
         assertCreateTableAsSelect(
                 "{\"columnCount\":3,\"columns\":[{\"index\":0,\"name\":\"b\",\"type\":\"INT\"},{\"index\":1,\"name\":\"t\",\"type\":\"TIMESTAMP\"},{\"index\":2,\"name\":\"c\",\"type\":\"FLOAT\"}],\"timestampIndex\":1}",
                 "create table Y as (select * from X) timestamp(t)",
@@ -1782,7 +1782,7 @@ public class SqlCompilerTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCreateAsSelectReplaceTimestamp() {
+    public void testCreateAsSelectReplaceTimestamp() throws IOException {
         try {
             assertCreateTableAsSelect(
                     "{\"columnCount\":3,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\"INT\"},{\"index\":1,\"name\":\"b\",\"type\":\"INT\"},{\"index\":2,\"name\":\"t\",\"type\":\"FLOAT\"}],\"timestampIndex\":-1}",
@@ -1814,7 +1814,7 @@ public class SqlCompilerTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCreateCleanUpFailure() throws SqlException {
+    public void testCreateCleanUpFailure() throws SqlException, IOException {
         // remove column from table X
         Fiddler fiddler = new Fiddler() {
             int state = 0;
@@ -1853,28 +1853,29 @@ public class SqlCompilerTest extends AbstractCairoTest {
             }
         };
 
-        CairoEngine engine = new Engine(configuration) {
+        try (CairoEngine engine = new Engine(configuration) {
             @Override
             public TableReader getReader(CharSequence tableName, long tableVersion) {
                 fiddler.run(this);
                 return super.getReader(tableName, tableVersion);
             }
-        };
+        }) {
 
-        SqlCompiler compiler = new SqlCompiler(engine, configuration);
+            SqlCompiler compiler = new SqlCompiler(engine, configuration);
 
-        // create source table
-        SqlCompilerTest.compiler.execute("create table X (a int, b int, t timestamp) timestamp(t)", bindVariableService);
+            // create source table
+            SqlCompilerTest.compiler.execute("create table X (a int, b int, t timestamp) timestamp(t)", bindVariableService);
 
-        try {
-            compiler.execute("create table Y as (select * from X) timestamp(t)", bindVariableService);
-            Assert.fail();
-        } catch (SqlException e) {
-            Assert.assertEquals(0, e.getPosition());
-            TestUtils.assertContains(e.getMessage(), "Concurrent modification cannot be handled");
+            try {
+                compiler.execute("create table Y as (select * from X) timestamp(t)", bindVariableService);
+                Assert.fail();
+            } catch (SqlException e) {
+                Assert.assertEquals(0, e.getPosition());
+                TestUtils.assertContains(e.getMessage(), "Concurrent modification cannot be handled");
+            }
+
+            Assert.assertEquals(0, ((Engine) engine).getBusyReaderCount());
         }
-
-        Assert.assertEquals(0, ((Engine) engine).getBusyReaderCount());
     }
 
     @Test
@@ -2476,31 +2477,32 @@ public class SqlCompilerTest extends AbstractCairoTest {
         assertCast(expectedData, expectedMeta, sql);
     }
 
-    private void assertCreateTableAsSelect(CharSequence expectedMetadata, CharSequence sql, Fiddler fiddler) throws SqlException {
+    private void assertCreateTableAsSelect(CharSequence expectedMetadata, CharSequence sql, Fiddler fiddler) throws SqlException, IOException {
 
         // create source table
         compiler.execute("create table X (a int, b int, t timestamp) timestamp(t)", bindVariableService);
 
-        CairoEngine engine = new Engine(configuration) {
+        try (CairoEngine engine = new Engine(configuration) {
             @Override
             public TableReader getReader(CharSequence tableName, long tableVersion) {
                 fiddler.run(this);
                 return super.getReader(tableName, tableVersion);
             }
-        };
+        }) {
 
-        SqlCompiler compiler = new SqlCompiler(engine, configuration);
-        compiler.execute(sql, bindVariableService);
+            SqlCompiler compiler = new SqlCompiler(engine, configuration);
+            compiler.execute(sql, bindVariableService);
 
-        Assert.assertTrue(fiddler.isHappy());
+            Assert.assertTrue(fiddler.isHappy());
 
-        try (TableReader reader = engine.getReader("Y", -1)) {
-            sink.clear();
-            reader.getMetadata().toJson(sink);
-            TestUtils.assertEquals(expectedMetadata, sink);
+            try (TableReader reader = engine.getReader("Y", -1)) {
+                sink.clear();
+                reader.getMetadata().toJson(sink);
+                TestUtils.assertEquals(expectedMetadata, sink);
+            }
+
+            Assert.assertEquals(0, ((Engine) engine).getBusyReaderCount());
         }
-
-        Assert.assertEquals(0, ((Engine) engine).getBusyReaderCount());
     }
 
     private void assertFailure(int position, CharSequence expectedMessage, CharSequence sql) {

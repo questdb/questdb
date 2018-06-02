@@ -115,6 +115,7 @@ JNIEXPORT jboolean JNICALL Java_com_questdb_std_Net_join
         (JNIEnv *e, jclass cl, jlong fd, jint bindAddress, jint groupAddress) {
     struct ip_mreq_source imr;
     imr.imr_multiaddr.s_addr  = htonl((u_long) groupAddress);
+    imr.imr_sourceaddr.s_addr = 0;
     imr.imr_interface.s_addr = htonl((u_long) bindAddress);
     if (setsockopt((SOCKET) fd, IPPROTO_IP, IP_ADD_MEMBERSHIP, (char *) &imr, sizeof(imr)) < 0) {
         SaveLastError();

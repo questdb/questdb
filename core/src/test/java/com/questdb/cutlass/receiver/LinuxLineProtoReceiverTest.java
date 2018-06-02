@@ -265,7 +265,7 @@ public class LinuxLineProtoReceiverTest extends AbstractCairoTest {
                     Worker worker = new Worker(jobs, workerHaltLatch);
                     worker.start();
 
-                    try (LineProtoSender sender = new LineProtoSender("127.0.0.1", receiverCfg.getPort(), 1400)) {
+                    try (LineProtoSender sender = new LineProtoSender(receiverCfg.getBindIPv4Address(), receiverCfg.getPort(), 1400)) {
                         for (int i = 0; i < 10; i++) {
                             sender.metric("tab").tag("colour", "blue").tag("shape", "square").field("size", 3.4, 4).$(100000000);
                         }
@@ -313,7 +313,7 @@ public class LinuxLineProtoReceiverTest extends AbstractCairoTest {
 
         @Override
         public CharSequence getGroupIPv4Address() {
-            return "234.5.6.7";
+            return "224.1.1.1";
         }
 
         @Override
