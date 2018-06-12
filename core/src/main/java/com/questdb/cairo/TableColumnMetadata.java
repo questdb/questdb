@@ -23,8 +23,6 @@
 
 package com.questdb.cairo;
 
-import com.questdb.common.SymbolTable;
-
 public class TableColumnMetadata {
     private final String name;
     private final int type;
@@ -48,10 +46,6 @@ public class TableColumnMetadata {
 
     public String getName() {
         return name;
-    }
-
-    public SymbolTable getSymbolTable() {
-        return null;
     }
 
     public int getType() {

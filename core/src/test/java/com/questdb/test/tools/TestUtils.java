@@ -23,7 +23,10 @@
 
 package com.questdb.test.tools;
 
-import com.questdb.common.*;
+import com.questdb.common.ColumnType;
+import com.questdb.common.Record;
+import com.questdb.common.RecordCursor;
+import com.questdb.common.RecordMetadata;
 import com.questdb.model.Quote;
 import com.questdb.model.TestEntity;
 import com.questdb.parser.sql.model.ExprNode;
@@ -503,6 +506,19 @@ public final class TestUtils {
     private static <T> void out(JournalPrinter p, JournalIterator<T> iterator) {
         for (T o : iterator) {
             p.out(o);
+        }
+    }
+
+    public static void assertEquals(BinarySequence bs, BinarySequence actBs, long actualLen) {
+        if (bs == null) {
+            Assert.assertNull(actBs);
+            Assert.assertEquals(-1, actualLen);
+        } else {
+            Assert.assertEquals(bs.length(), actBs.length());
+            Assert.assertEquals(bs.length(), actualLen);
+            for (long l = 0, z = bs.length(); l < z; l++) {
+                Assert.assertEquals(bs.byteAt(l), actBs.byteAt(l));
+            }
         }
     }
 

@@ -76,6 +76,7 @@ public class Rnd {
         }
     }
 
+    @Deprecated
     public double nextDouble() {
         return (nextLong(26) << 27 + nextLong(27)) * DOUBLE_UNIT;
     }
@@ -84,6 +85,7 @@ public class Rnd {
         return (((long) (nextIntForDouble(26)) << 27) + nextIntForDouble(27)) * DOUBLE_UNIT;
     }
 
+    @Deprecated
     public float nextFloat() {
         return nextLong(24) * FLOAT_UNIT;
     }

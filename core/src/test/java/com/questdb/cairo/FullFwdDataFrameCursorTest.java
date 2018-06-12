@@ -50,6 +50,38 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
     private static final int WORK_STEALING_HIGH_CONTENTION = 3;
     private static final int WORK_STEALING_CAS_FLAP = 4;
 
+    static void assertIndexRowsMatchSymbol(DataFrameCursor cursor, TableReaderRecord record, int columnIndex, long expectedRowCount) {
+        // SymbolTable is table at table scope, so it will be the same for every
+        // data frame here. Get its instance outside of data frame loop.
+        SymbolTable symbolTable = cursor.getSymbolTable(columnIndex);
+
+        long rowCount = 0;
+        while (cursor.hasNext()) {
+            DataFrame frame = cursor.next();
+            record.jumpTo(frame.getPartitionIndex(), frame.getRowLo());
+            final long limit = frame.getRowHi();
+
+            // BitmapIndex is always at data frame scope, each table can have more than one.
+            // we have to get BitmapIndexReader instance once for each frame.
+            BitmapIndexReader indexReader = frame.getBitmapIndexReader(columnIndex, BitmapIndexReader.DIR_BACKWARD);
+
+            // because out Symbol column 0 is indexed, frame has to have index.
+            Assert.assertNotNull(indexReader);
+
+            int keyCount = indexReader.getKeyCount();
+            for (int i = 0; i < keyCount; i++) {
+                RowCursor ic = indexReader.getCursor(true, i, 0, limit - 1);
+                CharSequence expected = symbolTable.value(i - 1);
+                while (ic.hasNext()) {
+                    record.setRecordIndex(ic.next());
+                    TestUtils.assertEquals(expected, record.getSym(columnIndex));
+                    rowCount++;
+                }
+            }
+        }
+        Assert.assertEquals(expectedRowCount, rowCount);
+    }
+
     @Test
     public void testClose() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
@@ -559,12 +591,12 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
         testReplaceIndexedColWithIndexed(PartitionBy.NONE, 1000000 * 60 * 5, 0, true);
     }
 
+    //
+
     @Test
     public void testReplaceIndexedWithIndexedByByYear() throws Exception {
         testReplaceIndexedColWithIndexed(PartitionBy.YEAR, 1000000 * 60 * 5 * 24L * 10L, 2, false);
     }
-
-    //
 
     @Test
     public void testReplaceIndexedWithIndexedByByYearR() throws Exception {
@@ -601,12 +633,12 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
         testReplaceIndexedColWithUnindexed(PartitionBy.DAY, 1000000 * 60 * 5, 3, true);
     }
 
+    ///
+
     @Test
     public void testReplaceIndexedWithUnindexedByByNone() throws Exception {
         testReplaceIndexedColWithUnindexed(PartitionBy.NONE, 1000000 * 60 * 5, 0, false);
     }
-
-    ///
 
     @Test
     public void testReplaceIndexedWithUnindexedByByNoneR() throws Exception {
@@ -663,12 +695,12 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
         testReplaceUnindexedColWithIndexed(PartitionBy.NONE, 1000000 * 60 * 5, 0, true);
     }
 
+    ///
+
     @Test
     public void testReplaceUnindexedWithIndexedByYear() throws Exception {
         testReplaceUnindexedColWithIndexed(PartitionBy.YEAR, 1000000 * 60 * 5 * 24L * 10L, 2, false);
     }
-
-    ///
 
     @Test
     public void testReplaceUnindexedWithIndexedByYearR() throws Exception {
@@ -765,38 +797,6 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
     @Test
     public void testSymbolIndexReadByYear() throws Exception {
         testSymbolIndexRead(PartitionBy.YEAR, 1000000 * 60 * 5 * 24L * 10L, 2);
-    }
-
-    static void assertIndexRowsMatchSymbol(DataFrameCursor cursor, TableReaderRecord record, int columnIndex, long expecteRowCount) {
-        // SymbolTable is table at table scope, so it will be the same for every
-        // data frame here. Get its instance outside of data frame loop.
-        SymbolTable symbolTable = cursor.getSymbolTable(columnIndex);
-
-        long rowCount = 0;
-        while (cursor.hasNext()) {
-            DataFrame frame = cursor.next();
-            record.jumpTo(frame.getPartitionIndex(), frame.getRowLo());
-            final long limit = frame.getRowHi();
-
-            // BitmapIndex is always at data frame scope, each table can have more than one.
-            // we have to get BitmapIndexReader instance once for each frame.
-            BitmapIndexReader indexReader = frame.getBitmapIndexReader(columnIndex, BitmapIndexReader.DIR_BACKWARD);
-
-            // because out Symbol column 0 is indexed, frame has to have index.
-            Assert.assertNotNull(indexReader);
-
-            int keyCount = indexReader.getKeyCount();
-            for (int i = 0; i < keyCount; i++) {
-                RowCursor ic = indexReader.getCursor(true, i, 0, limit - 1);
-                CharSequence expected = symbolTable.value(i - 1);
-                while (ic.hasNext()) {
-                    record.setRecordIndex(ic.next());
-                    TestUtils.assertEquals(expected, record.getSym(columnIndex));
-                    rowCount++;
-                }
-            }
-        }
-        Assert.assertEquals(expecteRowCount, rowCount);
     }
 
     private void assertData(FullFwdDataFrameCursor cursor, TableReaderRecord record, Rnd rnd, SymbolGroup sg, long expecteRowCount) {

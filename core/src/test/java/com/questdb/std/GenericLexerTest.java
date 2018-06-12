@@ -24,11 +24,9 @@
 package com.questdb.std;
 
 import com.questdb.griffin.SqlUtil;
-import com.questdb.std.str.DirectByteCharSequence;
 import com.questdb.std.str.StringSink;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
-import org.junit.Ignore;
 import org.junit.Test;
 
 import java.util.Iterator;
@@ -151,36 +149,6 @@ public class GenericLexerTest {
             sink.put(cs);
         }
         TestUtils.assertEquals(content, sink);
-    }
-
-    @Test
-    @Ignore
-    public void testUnicode() throws Exception {
-        GenericLexer lex = new GenericLexer();
-        lex.defineSymbol("+");
-        lex.defineSymbol("++");
-        lex.defineSymbol("*");
-
-        String s = "'авг'";
-        byte[] bb = s.getBytes("UTF8");
-        System.out.println(new String(bb));
-        long mem = Unsafe.malloc(bb.length);
-        for (int i = 0; i < bb.length; i++) {
-            Unsafe.getUnsafe().putByte(mem + i, bb[i]);
-        }
-        DirectByteCharSequence cs = new DirectByteCharSequence();
-        cs.of(mem, mem + bb.length);
-
-        lex.of(cs);
-
-        StringSink sink = new StringSink();
-        CharSequence token;
-        while ((token = SqlUtil.fetchNext(lex)) != null) {
-            sink.put(token);
-        }
-
-        TestUtils.assertEquals("a+'b'*abc", sink);
-
     }
 
     @Test

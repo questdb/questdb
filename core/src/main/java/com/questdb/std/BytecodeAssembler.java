@@ -95,7 +95,7 @@ public class BytecodeAssembler {
     }
 
     public void append_frame(int itemCount, int offset) {
-        put(0xfc + itemCount - 1);
+        putByte(0xfc + itemCount - 1);
         putShort(offset);
     }
 
@@ -133,7 +133,7 @@ public class BytecodeAssembler {
         startMethod(defaultConstructorNameIndex, defaultConstructorDescIndex, 1, 1);
         // code
         aload(0);
-        put(invokespecial);
+        putByte(invokespecial);
         putShort(superIndex);
         return_();
         endMethodCode();
@@ -203,7 +203,7 @@ public class BytecodeAssembler {
     }
 
     public void full_frame(int offset) {
-        put(0xff);
+        putByte(0xff);
         putShort(offset);
     }
 
@@ -212,7 +212,7 @@ public class BytecodeAssembler {
     }
 
     public void getfield(int index) {
-        put(0xb4);
+        putByte(0xb4);
         putShort(index);
     }
 
@@ -241,22 +241,22 @@ public class BytecodeAssembler {
     }
 
     public void iadd() {
-        put(0x60);
+        putByte(0x60);
     }
 
     public void iconst(int v) {
         if (v == -1) {
-            put(iconst_m1);
+            putByte(iconst_m1);
         } else if (v > -1 && v < 6) {
-            put(iconst_0 + v);
+            putByte(iconst_0 + v);
         } else if (v < 0) {
-            put(sipush);
+            putByte(sipush);
             putShort(v);
         } else if (v < 128) {
-            put(bipush);
-            put(v);
+            putByte(bipush);
+            putByte(v);
         } else {
-            put(sipush);
+            putByte(sipush);
             putShort(v);
         }
     }
@@ -274,9 +274,9 @@ public class BytecodeAssembler {
     }
 
     public void iinc(int index, int inc) {
-        put(iinc);
-        put(index);
-        put(inc);
+        putByte(iinc);
+        putByte(index);
+        putByte(inc);
     }
 
     public void iload(int value) {
@@ -284,7 +284,7 @@ public class BytecodeAssembler {
     }
 
     public void ineg() {
-        put(0x74);
+        putByte(0x74);
     }
 
     public void init(Class<?> host) {
@@ -300,28 +300,28 @@ public class BytecodeAssembler {
     }
 
     public void invokeInterface(int interfaceIndex, int argCount) {
-        put(185);
+        putByte(185);
         putShort(interfaceIndex);
-        put(argCount + 1);
-        put(0);
+        putByte(argCount + 1);
+        putByte(0);
     }
 
     public void invokeStatic(int index) {
-        put(184);
+        putByte(184);
         putShort(index);
     }
 
     public void invokeVirtual(int index) {
-        put(182);
+        putByte(182);
         putShort(index);
     }
 
     public void irem() {
-        put(0x70);
+        putByte(0x70);
     }
 
     public void ireturn() {
-        put(0xac);
+        putByte(0xac);
     }
 
     public void istore(int value) {
@@ -329,7 +329,7 @@ public class BytecodeAssembler {
     }
 
     public void isub() {
-        put(0x64);
+        putByte(0x64);
     }
 
     public void l2d() {
@@ -345,20 +345,20 @@ public class BytecodeAssembler {
     }
 
     public void lcmp() {
-        put(0x94);
+        putByte(0x94);
     }
 
     public void lconst_0() {
-        put(0x09);
+        putByte(0x09);
     }
 
     public void ldc(int index) {
-        put(0x12);
-        put(index);
+        putByte(0x12);
+        putByte(index);
     }
 
     public void ldc2_w(int index) {
-        put(0x14);
+        putByte(0x14);
         putShort(index);
     }
 
@@ -367,7 +367,7 @@ public class BytecodeAssembler {
     }
 
     public void lmul() {
-        put(0x69);
+        putByte(0x69);
     }
 
     @SuppressWarnings("unchecked")
@@ -378,7 +378,7 @@ public class BytecodeAssembler {
     }
 
     public void lreturn() {
-        put(0xad);
+        putByte(0xad);
     }
 
     public void lstore(int value) {
@@ -400,7 +400,7 @@ public class BytecodeAssembler {
     }
 
     public int poolClass(int classIndex) {
-        put(0x07);
+        putByte(0x07);
         putShort(classIndex);
         return poolCount++;
     }
@@ -409,17 +409,17 @@ public class BytecodeAssembler {
         int index = classCache.keyIndex(clazz);
         if (index > -1) {
             String name = clazz.getName();
-            put(0x01);
+            putByte(0x01);
             int n;
             putShort(n = name.length());
             for (int i = 0; i < n; i++) {
                 char c = name.charAt(i);
                 switch (c) {
                     case '.':
-                        put('/');
+                        putByte('/');
                         break;
                     default:
-                        put(c);
+                        putByte(c);
                         break;
                 }
             }
@@ -443,7 +443,7 @@ public class BytecodeAssembler {
     }
 
     public int poolLongConst(long value) {
-        put(0x05);
+        putByte(0x05);
         putLong(value);
         int index = poolCount;
         poolCount += 2;
@@ -467,13 +467,13 @@ public class BytecodeAssembler {
     }
 
     public int poolStringConst(int utf8Index) {
-        put(0x8);
+        putByte(0x8);
         putShort(utf8Index);
         return poolCount++;
     }
 
     public Utf8Appender poolUtf8() {
-        put(0x01);
+        putByte(0x01);
         utf8Appender.lenpos = position();
         utf8Appender.utf8len = 0;
         putShort(0);
@@ -483,11 +483,11 @@ public class BytecodeAssembler {
     public int poolUtf8(CharSequence cs) {
         int cachedIndex = utf8Cache.get(cs);
         if (cachedIndex == -1) {
-            put(0x01);
+            putByte(0x01);
             int n;
             putShort(n = cs.length());
             for (int i = 0; i < n; i++) {
-                put(cs.charAt(i));
+                putByte(cs.charAt(i));
             }
             utf8Cache.put(cs, poolCount);
             return this.poolCount++;
@@ -497,14 +497,14 @@ public class BytecodeAssembler {
     }
 
     public void pop() {
-        put(0x57);
+        putByte(0x57);
     }
 
     public int position() {
         return buf.position();
     }
 
-    public void put(int b) {
+    public void putByte(int b) {
         if (buf.remaining() == 0) {
             resize();
         }
@@ -512,20 +512,20 @@ public class BytecodeAssembler {
     }
 
     public void putITEM_Integer() {
-        put(0x01);
+        putByte(0x01);
     }
 
     public void putITEM_Long() {
-        put(0x04);
+        putByte(0x04);
     }
 
     public void putITEM_Object(int classIndex) {
-        put(0x07);
+        putByte(0x07);
         putShort(classIndex);
     }
 
     public void putITEM_Top() {
-        put(0);
+        putByte(0);
     }
 
     public void putLong(long value) {
@@ -544,19 +544,19 @@ public class BytecodeAssembler {
     }
 
     public void putfield(int index) {
-        put(181);
+        putByte(181);
         putShort(index);
     }
 
     public void return_() {
-        put(0xb1);
+        putByte(0xb1);
     }
 
     public void same_frame(int offset) {
         if (offset < 64) {
-            put(offset);
+            putByte(offset);
         } else {
-            put(251);
+            putByte(251);
             putShort(offset);
         }
     }
@@ -619,7 +619,7 @@ public class BytecodeAssembler {
     }
 
     private int genericGoto(int cmd) {
-        put(cmd);
+        putByte(cmd);
         int pos = position();
         putShort(0);
         return pos;
@@ -628,20 +628,20 @@ public class BytecodeAssembler {
     private void optimisedIO(int code0, int code1, int code2, int code3, int code, int value) {
         switch (value) {
             case 0:
-                put(code0);
+                putByte(code0);
                 break;
             case 1:
-                put(code1);
+                putByte(code1);
                 break;
             case 2:
-                put(code2);
+                putByte(code2);
                 break;
             case 3:
-                put(code3);
+                putByte(code3);
                 break;
             default:
-                put(code);
-                put(value);
+                putByte(code);
+                putByte(value);
                 break;
         }
     }
@@ -651,7 +651,7 @@ public class BytecodeAssembler {
     }
 
     private int poolRef(int op, int name, int type) {
-        put(op);
+        putByte(op);
         putShort(name);
         putShort(type);
         return poolCount++;
@@ -695,7 +695,7 @@ public class BytecodeAssembler {
         public Utf8Appender put(CharSequence cs) {
             int n = cs.length();
             for (int i = 0; i < n; i++) {
-                BytecodeAssembler.this.put(cs.charAt(i));
+                BytecodeAssembler.this.putByte(cs.charAt(i));
             }
             utf8len += n;
             return this;
@@ -703,7 +703,7 @@ public class BytecodeAssembler {
 
         @Override
         public Utf8Appender put(char c) {
-            BytecodeAssembler.this.put(c);
+            BytecodeAssembler.this.putByte(c);
             utf8len++;
             return this;
         }

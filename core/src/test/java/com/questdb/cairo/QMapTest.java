@@ -23,10 +23,11 @@
 
 package com.questdb.cairo;
 
-import com.questdb.std.Numbers;
-import com.questdb.std.NumericException;
-import com.questdb.std.ObjList;
-import com.questdb.std.Rnd;
+import com.questdb.cairo.sql.Record;
+import com.questdb.cairo.sql.RecordCursor;
+import com.questdb.common.ColumnType;
+import com.questdb.common.PartitionBy;
+import com.questdb.std.*;
 import com.questdb.std.str.StringSink;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -44,7 +45,9 @@ public class QMapTest extends AbstractCairoTest {
                 for (int i = 0; i < N; i++) {
                     CharSequence s = rnd.nextChars(11);
                     keys.add(s.toString());
-                    QMap.Key key = map.keyBuilder().putStr(s);
+                    QMap.Key key = map.withKey();
+                    key.putStr(s);
+
                     QMap.Value value = key.createValue();
                     Assert.assertTrue(value.isNew());
                     value.putLong(i + 1);
@@ -52,7 +55,8 @@ public class QMapTest extends AbstractCairoTest {
                 Assert.assertEquals(N, map.size());
 
                 for (int i = 0, n = keys.size(); i < n; i++) {
-                    QMap.Key key = map.keyBuilder().putStr(keys.getQuick(i));
+                    QMap.Key key = map.withKey();
+                    key.putStr(keys.getQuick(i));
                     QMap.Value value = key.createValue();
                     Assert.assertFalse(value.isNew());
                     Assert.assertEquals(i + 1, value.getLong(0));
@@ -65,11 +69,12 @@ public class QMapTest extends AbstractCairoTest {
     public void testAppendUnique() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             Rnd rnd = new Rnd();
-            int N = 10000000;
-            try (QMap map = new QMap(16 * 1024 * 1024, 1, 1, N / 2, 0.9)) {
+            int N = 10000;
+            try (QMap map = new QMap(1024 * 1024, 1, 1, N / 2, 0.9)) {
                 for (int i = 0; i < N; i++) {
                     CharSequence s = rnd.nextChars(11);
-                    QMap.Key key = map.keyBuilder().putStr(s);
+                    QMap.Key key = map.withKey();
+                    key.putStr(s);
                     QMap.Value value = key.createValue();
                     value.putLong(i + 1);
                 }
@@ -80,7 +85,8 @@ public class QMapTest extends AbstractCairoTest {
                 rnd.reset();
                 for (int i = 0; i < N; i++) {
                     CharSequence s = rnd.nextChars(11);
-                    QMap.Key key = map.keyBuilder().putStr(s);
+                    QMap.Key key = map.withKey();
+                    key.putStr(s);
                     QMap.Value value = key.findValue();
                     Assert.assertNotNull(value);
                     Assert.assertEquals(i + 1, value.getLong(0));
@@ -93,23 +99,6 @@ public class QMapTest extends AbstractCairoTest {
 
     @Test
     public void testKeyLookup() {
-        // This hash function will use first three characters as hash code
-        // we need decent spread of hash codes making single character not enough
-        class MockHash implements QMap.HashFunction {
-            @Override
-            public long hash(VirtualMemory mem, long offset, long size) {
-                // string begins after 8-byte cell for key value
-                CharSequence cs = mem.getStr(offset + 8);
-                try {
-                    return Numbers.parseLong(cs, 0, 3);
-                } catch (NumericException e) {
-                    // this must not happen unless test doesn't comply
-                    // with key format
-                    throw new RuntimeException();
-                }
-            }
-        }
-
         // tweak capacity in such a way that we only have one spare slot before resize is needed
         // this way algo that shuffles "foreign" slots away should face problems
         double loadFactor = 0.9;
@@ -117,33 +106,42 @@ public class QMapTest extends AbstractCairoTest {
             QMap.Key key;
             QMap.Value value;
 
-            key = map.keyBuilder().putStr("000-ABCDE");
+            key = map.withKey();
+            key.putStr("000-ABCDE");
             value = key.createValue();
             Assert.assertTrue(value.isNew());
             value.putDouble(12.5);
 
             // difference in last character
-            key = map.keyBuilder().putStr("000-ABCDG");
+            key = map.withKey();
+            key.putStr("000-ABCDG");
             value = key.createValue();
             Assert.assertTrue(value.isNew());
             value.putDouble(11.5);
 
             // different hash code
-            key = map.keyBuilder().putStr("100-ABCDE");
+            key = map.withKey();
+            key.putStr("100-ABCDE");
             value = key.createValue();
             Assert.assertTrue(value.isNew());
             value.putDouble(10.5);
 
             // check that we cannot get value with traight up non-existing hash code
-            Assert.assertNull(map.keyBuilder().putStr("200-ABCDE").findValue());
+            key = map.withKey();
+            key.putStr("200-ABCDE");
+            Assert.assertNull(key.findValue());
 
             // check that we don't get value when we go down the linked list
             // 004 will produce the same hashcode as 100
-            Assert.assertNull(map.keyBuilder().putStr("004-ABCDE").findValue());
+            key = map.withKey();
+            key.putStr("004-ABCDE");
+            Assert.assertNull(key.findValue());
 
             // check that we don't get value when we go down the linked list
             // this will produce 001 hashcode, which should find that slot 1 is occupied by indirect hit
-            Assert.assertNull(map.keyBuilder().putStr("017-ABCDE").findValue());
+            key = map.withKey();
+            key.putStr("017-ABCDE");
+            Assert.assertNull(key.findValue());
         }
     }
 
@@ -188,28 +186,12 @@ public class QMapTest extends AbstractCairoTest {
 
             sink.clear();
             sink.put('0');
-            for (long i = 0; i < target - 1; i++) {
-                // keep the first character
-                sink.clear(1);
-                rnd.nextChars(sink, 5);
-                QMap.Key key = map.keyBuilder().putStr(sink);
-                QMap.Value value = key.createValue();
-                Assert.assertTrue(value.isNew());
-                value.putLong(i + 1);
-            }
+            populate(rnd, sink, map, 0, target - 1, 1);
 
             sink.clear();
             sink.put('1');
 
-            for (long i = target - 1; i < M + N; i++) {
-                // keep the first character
-                sink.clear(1);
-                rnd.nextChars(sink, 5);
-                QMap.Key key = map.keyBuilder().putStr(sink);
-                QMap.Value value = key.createValue();
-                Assert.assertTrue(value.isNew());
-                value.putLong(i + 1);
-            }
+            populate(rnd, sink, map, target - 1, M + N, 1);
 
             // assert result
 
@@ -217,28 +199,38 @@ public class QMapTest extends AbstractCairoTest {
 
             sink.clear();
             sink.put('0');
-            for (int i = 0; i < target - 1; i++) {
-                // keep the first character
-                sink.clear(1);
-                rnd.nextChars(sink, 5);
-                QMap.Key key = map.keyBuilder().putStr(sink);
-                QMap.Value value = key.createValue();
-                Assert.assertFalse(value.isNew());
-                Assert.assertEquals(i + 1, value.getLong(0));
-            }
+            assertMap(rnd, sink, map, 0, target - 1, 1);
 
             sink.clear();
             sink.put('1');
 
-            for (long i = target - 1; i < M + N; i++) {
-                // keep the first character
-                sink.clear(1);
-                rnd.nextChars(sink, 5);
-                QMap.Key key = map.keyBuilder().putStr(sink);
-                QMap.Value value = key.createValue();
-                Assert.assertFalse(value.isNew());
-                Assert.assertEquals(i + 1, value.getLong(0));
-            }
+            assertMap(rnd, sink, map, target - 1, M + N, 1);
+        }
+    }
+
+    private void assertMap(Rnd rnd, StringSink sink, QMap map, long lo, long hi, int prefixLen) {
+        for (long i = lo; i < hi; i++) {
+            // keep the first character
+            sink.clear(prefixLen);
+            rnd.nextChars(sink, 5);
+            QMap.Key key = map.withKey();
+            key.putStr(sink);
+            QMap.Value value = key.createValue();
+            Assert.assertFalse(value.isNew());
+            Assert.assertEquals(i + 1, value.getLong(0));
+        }
+    }
+
+    private void populate(Rnd rnd, StringSink sink, QMap map, long lo, long hi, int prefixLen) {
+        for (long i = lo; i < hi; i++) {
+            // keep the first few characters
+            sink.clear(prefixLen);
+            rnd.nextChars(sink, 5);
+            QMap.Key key = map.withKey();
+            key.putStr(sink);
+            QMap.Value value = key.createValue();
+            Assert.assertTrue(value.isNew());
+            value.putLong(i + 1);
         }
     }
 
@@ -257,23 +249,6 @@ public class QMapTest extends AbstractCairoTest {
         int M = 32;
 
 
-        // This hash function will use first three characters as hash code
-        // we need decent spread of hash codes making single character not enough
-        class MockHash implements QMap.HashFunction {
-            @Override
-            public long hash(VirtualMemory mem, long offset, long size) {
-                // string begins after 8-byte cell for key value
-                CharSequence cs = mem.getStr(offset + 8);
-                try {
-                    return Numbers.parseLong(cs, 0, 3);
-                } catch (NumericException e) {
-                    // this must not happen unless test doesn't comply
-                    // with key format
-                    throw new RuntimeException();
-                }
-            }
-        }
-
         StringSink sink = new StringSink();
         // tweak capacity in such a way that we only have one spare slot before resize is needed
         // this way algo that shuffles "foreign" slots away should face problems
@@ -291,7 +266,8 @@ public class QMapTest extends AbstractCairoTest {
                 // keep the first character
                 sink.clear(3);
                 rnd.nextChars(sink, 5);
-                QMap.Key key = map.keyBuilder().putStr(sink);
+                QMap.Key key = map.withKey();
+                key.putStr(sink);
                 QMap.Value value = key.createValue();
                 Assert.assertTrue(value.isNew());
                 value.putLong(i + 1);
@@ -300,15 +276,7 @@ public class QMapTest extends AbstractCairoTest {
             sink.clear();
             sink.put(target - 2);
 
-            for (long i = target - 1; i < M + N; i++) {
-                // keep the first character
-                sink.clear(3);
-                rnd.nextChars(sink, 5);
-                QMap.Key key = map.keyBuilder().putStr(sink);
-                QMap.Value value = key.createValue();
-                Assert.assertTrue(value.isNew());
-                value.putLong(i + 1);
-            }
+            populate(rnd, sink, map, target - 1, M + N, 3);
 
             // assert result
 
@@ -316,27 +284,131 @@ public class QMapTest extends AbstractCairoTest {
 
             sink.clear();
             sink.put("000");
-            for (int i = 0; i < target - 2; i++) {
-                // keep the first character
-                sink.clear(3);
-                rnd.nextChars(sink, 5);
-                QMap.Key key = map.keyBuilder().putStr(sink);
-                QMap.Value value = key.createValue();
-                Assert.assertFalse(value.isNew());
-                Assert.assertEquals(i + 1, value.getLong(0));
-            }
+            assertMap(rnd, sink, map, 0, target - 2, 3);
 
             sink.clear();
             sink.put(target - 2);
+            assertMap(rnd, sink, map, target - 1, M + N, 3);
+        }
+    }
 
-            for (long i = target - 1; i < M + N; i++) {
-                // keep the first character
-                sink.clear(3);
-                rnd.nextChars(sink, 5);
-                QMap.Key key = map.keyBuilder().putStr(sink);
-                QMap.Value value = key.createValue();
-                Assert.assertFalse(value.isNew());
-                Assert.assertEquals(i + 1, value.getLong(0));
+    @Test
+    public void testRecordAsKey() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)) {
+                model
+                        .col("a", ColumnType.BYTE)
+                        .col("b", ColumnType.SHORT)
+                        .col("c", ColumnType.INT)
+                        .col("d", ColumnType.LONG)
+                        .col("e", ColumnType.DATE)
+                        .col("f", ColumnType.TIMESTAMP)
+                        .col("g", ColumnType.FLOAT)
+                        .col("h", ColumnType.DOUBLE)
+                        .col("i", ColumnType.STRING)
+                        .col("j", ColumnType.SYMBOL)
+                        .col("k", ColumnType.BOOLEAN)
+                        .col("l", ColumnType.BINARY);
+                CairoTestUtils.create(model);
+            }
+
+            final int N = 1000;
+            final Rnd rnd = new Rnd();
+            TestRecord.ArrayBinarySequence binarySequence = new TestRecord.ArrayBinarySequence();
+
+            try (TableWriter writer = new TableWriter(configuration, "x")) {
+                for (int i = 0; i < N; i++) {
+                    TableWriter.Row row = writer.newRow(0);
+                    row.putByte(0, rnd.nextByte());
+                    row.putShort(1, rnd.nextShort());
+                    row.putInt(2, rnd.nextInt());
+                    row.putLong(3, rnd.nextLong());
+                    row.putDate(4, rnd.nextLong());
+                    row.putTimestamp(5, rnd.nextLong());
+                    row.putFloat(6, rnd.nextFloat2());
+                    row.putDouble(7, rnd.nextDouble2());
+                    row.putStr(8, rnd.nextChars(5));
+                    row.putSym(9, rnd.nextChars(3));
+                    row.putBool(10, rnd.nextBoolean());
+                    binarySequence.of(rnd.nextBytes(25));
+                    row.putBin(11, binarySequence);
+                    row.append();
+                }
+                writer.commit();
+            }
+
+            BytecodeAssembler asm = new BytecodeAssembler();
+
+            try (TableReader reader = new TableReader(configuration, "x")) {
+                IntList columns = new IntList();
+                columns.add(0);
+                columns.add(1);
+                columns.add(2);
+                columns.add(3);
+                columns.add(4);
+                columns.add(5);
+                columns.add(6);
+                columns.add(7);
+                columns.add(8);
+                columns.add(9);
+                columns.add(10);
+                columns.add(11);
+
+                try (QMap map = new QMap(1024 * 1024, columns.size(), 1, N, 0.9)) {
+                    map.configureKeyAdaptor(asm, reader.getMetadata(), columns, true);
+
+                    long counter = 0;
+                    RecordCursor cursor = reader.getCursor();
+                    while (cursor.hasNext()) {
+                        QMap.Key key = map.withKey();
+                        key.putRecord(cursor.next());
+                        QMap.Value value = key.createValue();
+                        value.putLong(++counter);
+                    }
+
+                    long c = 0;
+                    rnd.reset();
+                    for (Record record : map.getCursor()) {
+                        // value part
+                        Assert.assertEquals(++c, record.getLong(0));
+                        Assert.assertEquals(rnd.nextByte(), record.getByte(1));
+                        Assert.assertEquals(rnd.nextShort(), record.getShort(2));
+                        Assert.assertEquals(rnd.nextInt(), record.getInt(3));
+                        Assert.assertEquals(rnd.nextLong(), record.getLong(4));
+                        Assert.assertEquals(rnd.nextLong(), record.getDate(5));
+                        Assert.assertEquals(rnd.nextLong(), record.getTimestamp(6));
+                        Assert.assertEquals(rnd.nextFloat2(), record.getFloat(7), 0.00000001f);
+                        Assert.assertEquals(rnd.nextDouble2(), record.getDouble(8), 0.0000000001d);
+                        CharSequence tmp = rnd.nextChars(5);
+                        TestUtils.assertEquals(tmp, record.getStr(9));
+                        TestUtils.assertEquals(tmp, record.getStrB(9));
+                        Assert.assertEquals(tmp.length(), record.getStrLen(9));
+                        // we are storing symbol as string, assert as such
+                        TestUtils.assertEquals(rnd.nextChars(3), record.getStr(10));
+                        Assert.assertEquals(rnd.nextBoolean(), record.getBool(11));
+                        binarySequence.of(rnd.nextBytes(25));
+                        TestUtils.assertEquals(binarySequence, record.getBin(12), record.getBinLen(12));
+
+                    }
+                    Assert.assertEquals(counter, c);
+                }
+            }
+        });
+    }
+
+    // This hash function will use first three characters as hash code
+    // we need decent spread of hash codes making single character not enough
+    private class MockHash implements QMap.HashFunction {
+        @Override
+        public long hash(VirtualMemory mem, long offset, long size) {
+            // string begins after 8-byte cell for key value
+            CharSequence cs = mem.getStr(offset + 8);
+            try {
+                return Numbers.parseLong(cs, 0, 3);
+            } catch (NumericException e) {
+                // this must not happen unless test doesn't comply
+                // with key format
+                throw new RuntimeException();
             }
         }
     }
