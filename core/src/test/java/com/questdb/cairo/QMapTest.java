@@ -321,17 +321,63 @@ public class QMapTest extends AbstractCairoTest {
                     TableWriter.Row row = writer.newRow(0);
                     row.putByte(0, rnd.nextByte());
                     row.putShort(1, rnd.nextShort());
-                    row.putInt(2, rnd.nextInt());
-                    row.putLong(3, rnd.nextLong());
-                    row.putDate(4, rnd.nextLong());
-                    row.putTimestamp(5, rnd.nextLong());
-                    row.putFloat(6, rnd.nextFloat2());
-                    row.putDouble(7, rnd.nextDouble2());
-                    row.putStr(8, rnd.nextChars(5));
-                    row.putSym(9, rnd.nextChars(3));
+
+                    if (rnd.nextInt() % 4 == 0) {
+                        row.putInt(2, Numbers.INT_NaN);
+                    } else {
+                        row.putInt(2, rnd.nextInt());
+                    }
+
+                    if (rnd.nextInt() % 4 == 0) {
+                        row.putLong(3, Numbers.LONG_NaN);
+                    } else {
+                        row.putLong(3, rnd.nextLong());
+                    }
+
+                    if (rnd.nextInt() % 4 == 0) {
+                        row.putLong(4, Numbers.LONG_NaN);
+                    } else {
+                        row.putDate(4, rnd.nextLong());
+                    }
+
+                    if (rnd.nextInt() % 4 == 0) {
+                        row.putLong(5, Numbers.LONG_NaN);
+                    } else {
+                        row.putTimestamp(5, rnd.nextLong());
+                    }
+
+                    if (rnd.nextInt() % 4 == 0) {
+                        row.putFloat(6, Float.NaN);
+                    } else {
+                        row.putFloat(6, rnd.nextFloat2());
+                    }
+
+                    if (rnd.nextInt() % 4 == 0) {
+                        row.putDouble(7, Double.NaN);
+                    } else {
+                        row.putDouble(7, rnd.nextDouble2());
+                    }
+
+                    if (rnd.nextInt() % 4 == 0) {
+                        row.putStr(8, null);
+                    } else {
+                        row.putStr(8, rnd.nextChars(5));
+                    }
+
+                    if (rnd.nextInt() % 4 == 0) {
+                        row.putSym(9, null);
+                    } else {
+                        row.putSym(9, rnd.nextChars(3));
+                    }
+
                     row.putBool(10, rnd.nextBoolean());
-                    binarySequence.of(rnd.nextBytes(25));
-                    row.putBin(11, binarySequence);
+
+                    if (rnd.nextInt() % 4 == 0) {
+                        row.putBin(11, null);
+                    } else {
+                        binarySequence.of(rnd.nextBytes(25));
+                        row.putBin(11, binarySequence);
+                    }
                     row.append();
                 }
                 writer.commit();
@@ -373,21 +419,68 @@ public class QMapTest extends AbstractCairoTest {
                         Assert.assertEquals(++c, record.getLong(0));
                         Assert.assertEquals(rnd.nextByte(), record.getByte(1));
                         Assert.assertEquals(rnd.nextShort(), record.getShort(2));
-                        Assert.assertEquals(rnd.nextInt(), record.getInt(3));
-                        Assert.assertEquals(rnd.nextLong(), record.getLong(4));
-                        Assert.assertEquals(rnd.nextLong(), record.getDate(5));
-                        Assert.assertEquals(rnd.nextLong(), record.getTimestamp(6));
-                        Assert.assertEquals(rnd.nextFloat2(), record.getFloat(7), 0.00000001f);
-                        Assert.assertEquals(rnd.nextDouble2(), record.getDouble(8), 0.0000000001d);
-                        CharSequence tmp = rnd.nextChars(5);
-                        TestUtils.assertEquals(tmp, record.getStr(9));
-                        TestUtils.assertEquals(tmp, record.getStrB(9));
-                        Assert.assertEquals(tmp.length(), record.getStrLen(9));
+                        if (rnd.nextInt() % 4 == 0) {
+                            Assert.assertEquals(Numbers.INT_NaN, record.getInt(3));
+                        } else {
+                            Assert.assertEquals(rnd.nextInt(), record.getInt(3));
+                        }
+
+                        if (rnd.nextInt() % 4 == 0) {
+                            Assert.assertEquals(Numbers.LONG_NaN, record.getLong(4));
+                        } else {
+                            Assert.assertEquals(rnd.nextLong(), record.getLong(4));
+                        }
+
+                        if (rnd.nextInt() % 4 == 0) {
+                            Assert.assertEquals(Numbers.LONG_NaN, record.getDate(5));
+                        } else {
+                            Assert.assertEquals(rnd.nextLong(), record.getDate(5));
+                        }
+
+                        if (rnd.nextInt() % 4 == 0) {
+                            Assert.assertEquals(Numbers.LONG_NaN, record.getTimestamp(6));
+                        } else {
+                            Assert.assertEquals(rnd.nextLong(), record.getTimestamp(6));
+                        }
+
+                        if (rnd.nextInt() % 4 == 0) {
+                            Assert.assertTrue(Float.isNaN(record.getFloat(7)));
+                        } else {
+                            Assert.assertEquals(rnd.nextFloat2(), record.getFloat(7), 0.00000001f);
+                        }
+
+                        if (rnd.nextInt() % 4 == 0) {
+                            Assert.assertTrue(Double.isNaN(record.getDouble(8)));
+                        } else {
+                            Assert.assertEquals(rnd.nextDouble2(), record.getDouble(8), 0.0000000001d);
+                        }
+
+                        if (rnd.nextInt() % 4 == 0) {
+                            Assert.assertNull(record.getStr(9));
+                            Assert.assertNull(record.getStrB(9));
+                            Assert.assertEquals(-1, record.getStrLen(9));
+                        } else {
+                            CharSequence tmp = rnd.nextChars(5);
+                            TestUtils.assertEquals(tmp, record.getStr(9));
+                            TestUtils.assertEquals(tmp, record.getStrB(9));
+                            Assert.assertEquals(tmp.length(), record.getStrLen(9));
+                        }
                         // we are storing symbol as string, assert as such
-                        TestUtils.assertEquals(rnd.nextChars(3), record.getStr(10));
+
+                        if (rnd.nextInt() % 4 == 0) {
+                            Assert.assertNull(record.getStr(10));
+                        } else {
+                            TestUtils.assertEquals(rnd.nextChars(3), record.getStr(10));
+                        }
+
                         Assert.assertEquals(rnd.nextBoolean(), record.getBool(11));
-                        binarySequence.of(rnd.nextBytes(25));
-                        TestUtils.assertEquals(binarySequence, record.getBin(12), record.getBinLen(12));
+
+                        if (rnd.nextInt() % 4 == 0) {
+                            TestUtils.assertEquals(null, record.getBin(12), record.getBinLen(12));
+                        } else {
+                            binarySequence.of(rnd.nextBytes(25));
+                            TestUtils.assertEquals(binarySequence, record.getBin(12), record.getBinLen(12));
+                        }
 
                     }
                     Assert.assertEquals(counter, c);

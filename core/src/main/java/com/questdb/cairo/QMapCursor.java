@@ -108,27 +108,48 @@ public class QMapCursor implements ImmutableIterator<Record>, Iterable<Record> {
 
         @Override
         public CharSequence getStr(int col) {
-            return entries.getStr(offset + getLong(col) - ENTRY_HEADER_SIZE);
+            long o = getLong(col);
+            if (o == TableUtils.NULL_LEN) {
+                return null;
+            }
+            return entries.getStr(offset + o - ENTRY_HEADER_SIZE);
         }
 
         @Override
         public CharSequence getStrB(int col) {
-            return entries.getStr2(offset + getLong(col) - ENTRY_HEADER_SIZE);
+            long o = getLong(col);
+            if (o == TableUtils.NULL_LEN) {
+                return null;
+            }
+            return entries.getStr2(offset + o - ENTRY_HEADER_SIZE);
         }
 
         @Override
         public int getStrLen(int col) {
+            long o = getLong(col);
+            if (o == TableUtils.NULL_LEN) {
+                return TableUtils.NULL_LEN;
+            }
             return entries.getStrLen(offset + getLong(col) - ENTRY_HEADER_SIZE);
         }
 
         @Override
         public BinarySequence getBin(int col) {
-            return entries.getBin(offset + getLong(col) - ENTRY_HEADER_SIZE);
+            long o = getLong(col);
+            // todo: check if type cast impacts performance
+            if (o == TableUtils.NULL_LEN) {
+                return null;
+            }
+            return entries.getBin(QMapCursor.this.offset + o - ENTRY_HEADER_SIZE);
         }
 
         @Override
         public long getBinLen(int col) {
-            return entries.getBinLen(offset + getLong(col) - ENTRY_HEADER_SIZE);
+            long o = getLong(col);
+            if (o == TableUtils.NULL_LEN) {
+                return TableUtils.NULL_LEN;
+            }
+            return entries.getBinLen(offset + o - ENTRY_HEADER_SIZE);
         }
     }
 }

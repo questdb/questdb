@@ -536,24 +536,32 @@ public class QMap implements Closeable {
         @Override
         public void putStr(CharSequence value) {
             assertKeyValidity();
-            // offset of string value relative to record start
-            entries.putLong(currentEntrySize);
-            long o = entries.getAppendOffset();
-            entries.jumpTo(currentEntryOffset + currentEntrySize);
-            entries.putStr(value);
-            currentEntrySize += VirtualMemory.getStorageLength(value);
-            entries.jumpTo(o);
+            if (value == null) {
+                entries.putLong(TableUtils.NULL_LEN);
+            } else {
+                // offset of string value relative to record start
+                entries.putLong(currentEntrySize);
+                long o = entries.getAppendOffset();
+                entries.jumpTo(currentEntryOffset + currentEntrySize);
+                entries.putStr(value);
+                currentEntrySize += VirtualMemory.getStorageLength(value);
+                entries.jumpTo(o);
+            }
         }
 
         @Override
         public void putBin(BinarySequence value) {
             assertKeyValidity();
-            entries.putLong(currentEntrySize);
-            long o = entries.getAppendOffset();
-            entries.jumpTo(currentEntryOffset + currentEntrySize);
-            entries.putBin(value);
-            currentEntrySize += 8 + value.length();
-            entries.jumpTo(o);
+            if (value == null) {
+                entries.putLong(TableUtils.NULL_LEN);
+            } else {
+                entries.putLong(currentEntrySize);
+                long o = entries.getAppendOffset();
+                entries.jumpTo(currentEntryOffset + currentEntrySize);
+                entries.putBin(value);
+                currentEntrySize += 8 + value.length();
+                entries.jumpTo(o);
+            }
         }
 
 
