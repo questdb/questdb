@@ -23,10 +23,11 @@
 
 package com.questdb.cairo.sql;
 
+import com.questdb.cairo.ColumnTypes;
 import com.questdb.common.ColumnType;
 import com.questdb.std.str.CharSink;
 
-public interface RecordMetadata {
+public interface RecordMetadata extends ColumnTypes {
 
     int getColumnCount();
 

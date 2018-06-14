@@ -21,8 +21,12 @@
  *
  ******************************************************************************/
 
-package com.questdb.cairo;
+package com.questdb.cairo.map;
 
+import com.questdb.cairo.CairoException;
+import com.questdb.cairo.ColumnTypes;
+import com.questdb.cairo.TableUtils;
+import com.questdb.cairo.VirtualMemory;
 import com.questdb.cairo.sql.Record;
 import com.questdb.cairo.sql.RecordMetadata;
 import com.questdb.common.ColumnType;
@@ -97,14 +101,14 @@ public class QMap implements Closeable {
 
     private final VirtualMemory entries;
     private final VirtualMemory entrySlots;
-    private final Key key = new KeyImpl();
+    private final Key key = new Key();
     private final Value value = new ValueImpl();
     private final double loadFactor;
-    private final int keyColumnCount;
-    private final int entryKeyOffset;
-    private final int entryFixedSize;
+    private final long entryFixedSize;
     private final HashFunction hashFunction;
     private final QMapCursor cursor;
+    private final long columnOffsets[];
+    private final long entryKeyOffset;
     private RecordWriter recordWriter = null;
     private long currentEntryOffset;
     private long currentEntrySize = 0;
@@ -112,23 +116,61 @@ public class QMap implements Closeable {
     private long mask;
     private long size;
     private long currentValueOffset;
-    private int remainingKeyValues;
+    private int valueColumnCount;
 
-    public QMap(int pageSize, int keyColumnCount, int valueColumnCount, long keyCapacity, double loadFactor) {
-        this(pageSize, keyColumnCount, valueColumnCount, keyCapacity, loadFactor, DEFAULT_HASH);
+    public QMap(int pageSize, ColumnTypes keyTypes, ColumnTypes valueTypes, long keyCapacity, double loadFactor) {
+        this(pageSize, keyTypes, valueTypes, keyCapacity, loadFactor, DEFAULT_HASH);
     }
 
-    QMap(int pageSize, int keyColumnCount, int valueColumnCount, long keyCapacity, double loadFactor, HashFunction hashFunction) {
+    QMap(int pageSize, ColumnTypes keyTypes, ColumnTypes valueTypes, long keyCapacity, double loadFactor, HashFunction hashFunction) {
         this.entries = new VirtualMemory(pageSize);
         this.entrySlots = new VirtualMemory(pageSize);
         this.loadFactor = loadFactor;
-        this.keyColumnCount = keyColumnCount;
-        this.keyCapacity = keyCapacity;
+        this.columnOffsets = new long[keyTypes.getColumnCount() + valueTypes.getColumnCount()];
+
+        // todo: reduce storage if there are no binary columns
+        this.valueColumnCount = valueTypes.getColumnCount();
+        this.entryFixedSize = calcColumnOffsets(keyTypes, calcColumnOffsets(valueTypes, ENTRY_HEADER_SIZE, 0), this.valueColumnCount);
+        this.entryKeyOffset = columnOffsets[valueColumnCount];
+        this.keyCapacity = Math.max(keyCapacity, 16);
         this.hashFunction = hashFunction;
         configureCapacity();
-        this.entryKeyOffset = valueColumnCount * 8 + ENTRY_HEADER_SIZE; // first two slots are "entry_size" and "next_block_ref"
-        this.entryFixedSize = this.entryKeyOffset + keyColumnCount * 8;
-        this.cursor = new QMapCursor(entries);
+        this.cursor = new QMapCursor(entries, columnOffsets);
+    }
+
+    private long calcColumnOffsets(ColumnTypes valueTypes, long startOffset, int startPosition) {
+        long o = startOffset;
+        for (int i = 0, n = valueTypes.getColumnCount(); i < n; i++) {
+            int sz;
+            switch (valueTypes.getColumnType(i)) {
+                case ColumnType.BOOLEAN:
+                case ColumnType.BYTE:
+                    sz = 1;
+                    break;
+                case ColumnType.DOUBLE:
+                case ColumnType.LONG:
+                case ColumnType.DATE:
+                case ColumnType.TIMESTAMP:
+                    sz = 8;
+                    break;
+                case ColumnType.FLOAT:
+                case ColumnType.INT:
+                    sz = 4;
+                    break;
+                case ColumnType.SHORT:
+                    sz = 2;
+                    break;
+                case ColumnType.STRING:
+                case ColumnType.BINARY:
+                    sz = 8;
+                    break;
+                default:
+                    throw CairoException.instance(0).put("Unsupported column type: ").put(ColumnType.nameOf(valueTypes.getColumnType(i)));
+            }
+            columnOffsets[startPosition + i] = o;
+            o += sz;
+        }
+        return o;
     }
 
     public QMapCursor getCursor() {
@@ -160,14 +202,18 @@ public class QMap implements Closeable {
         final int rGetSym = asm.poolInterfaceMethod(Record.class, "getSym", "(I)Ljava/lang/CharSequence;");
         final int rGetBin = asm.poolInterfaceMethod(Record.class, "getBin", "(I)Lcom/questdb/std/BinarySequence;");
         //
-        final int wPutLong = asm.poolInterfaceMethod(Key.class, "putLong", "(J)V");
-        final int wPutBool = asm.poolInterfaceMethod(Key.class, "putBool", "(Z)V");
-        final int wPutDouble = asm.poolInterfaceMethod(Key.class, "putDouble", "(D)V");
-        final int wPutStr = asm.poolInterfaceMethod(Key.class, "putStr", "(Ljava/lang/CharSequence;)V");
-        final int wPutBin = asm.poolInterfaceMethod(Key.class, "putBin", "(Lcom/questdb/std/BinarySequence;)V");
+        final int wPutByte = asm.poolMethod(Key.class, "putByte", "(B)V");
+        final int wPutShort = asm.poolMethod(Key.class, "putShort", "(S)V");
+        final int wPutInt = asm.poolMethod(Key.class, "putInt", "(I)V");
+        final int wPutLong = asm.poolMethod(Key.class, "putLong", "(J)V");
+        final int wPutBool = asm.poolMethod(Key.class, "putBool", "(Z)V");
+        final int wPutFloat = asm.poolMethod(Key.class, "putFloat", "(F)V");
+        final int wPutDouble = asm.poolMethod(Key.class, "putDouble", "(D)V");
+        final int wPutStr = asm.poolMethod(Key.class, "putStr", "(Ljava/lang/CharSequence;)V");
+        final int wPutBin = asm.poolMethod(Key.class, "putBin", "(Lcom/questdb/std/BinarySequence;)V");
         //
         final int copyNameIndex = asm.poolUtf8("copy");
-        final int copySigIndex = asm.poolUtf8("(Lcom/questdb/cairo/sql/Record;Lcom/questdb/cairo/QMap$Key;)V");
+        final int copySigIndex = asm.poolUtf8("(Lcom/questdb/cairo/sql/Record;Lcom/questdb/cairo/map/QMap$Key;)V");
 
         asm.finishPool();
         asm.defineClass(thisClassIndex);
@@ -190,62 +236,58 @@ public class QMap implements Closeable {
             switch (meta.getColumnType(index)) {
                 case ColumnType.INT:
                     asm.invokeInterface(rGetInt, 1);
-                    asm.i2l();
-                    asm.invokeInterface(wPutLong, 2);
+                    asm.invokeVirtual(wPutInt);
                     break;
                 case ColumnType.SYMBOL:
                     if (symbolAsString) {
                         asm.invokeInterface(rGetSym, 1);
-                        asm.invokeInterface(wPutStr, 1);
+                        asm.invokeVirtual(wPutStr);
                     } else {
                         asm.invokeInterface(rGetInt, 1);
                         asm.i2l();
-                        asm.invokeInterface(wPutLong, 2);
+                        asm.invokeVirtual(wPutLong);
                     }
                     break;
                 case ColumnType.LONG:
                     asm.invokeInterface(rGetLong, 1);
-                    asm.invokeInterface(wPutLong, 2);
+                    asm.invokeVirtual(wPutLong);
                     break;
                 case ColumnType.DATE:
                     asm.invokeInterface(rGetDate, 1);
-                    asm.invokeInterface(wPutLong, 2);
+                    asm.invokeVirtual(wPutLong);
                     break;
                 case ColumnType.TIMESTAMP:
                     asm.invokeInterface(rGetTimestamp, 1);
-                    asm.invokeInterface(wPutLong, 2);
+                    asm.invokeVirtual(wPutLong);
                     break;
                 case ColumnType.BYTE:
                     asm.invokeInterface(rGetByte, 1);
-                    asm.i2l();
-                    asm.invokeInterface(wPutLong, 2);
+                    asm.invokeVirtual(wPutByte);
                     break;
                 case ColumnType.SHORT:
                     asm.invokeInterface(rGetShort, 1);
-                    asm.i2l();
-                    asm.invokeInterface(wPutLong, 2);
+                    asm.invokeVirtual(wPutShort);
                     break;
                 case ColumnType.BOOLEAN:
                     asm.invokeInterface(rGetBool, 1);
-                    asm.invokeInterface(wPutBool, 1);
+                    asm.invokeVirtual(wPutBool);
                     break;
                 case ColumnType.FLOAT:
                     asm.invokeInterface(rGetFloat, 1);
-                    asm.f2d();
-                    asm.invokeInterface(wPutDouble, 2);
+                    asm.invokeVirtual(wPutFloat);
                     break;
                 case ColumnType.DOUBLE:
                     asm.invokeInterface(rGetDouble, 1);
-                    asm.invokeInterface(wPutDouble, 2);
+                    asm.invokeVirtual(wPutDouble);
                     break;
                 case ColumnType.STRING:
                     asm.invokeInterface(rGetStr, 1);
-                    asm.invokeInterface(wPutStr, 1);
+                    asm.invokeVirtual(wPutStr);
                     break;
                 default:
                     // binary
                     asm.invokeInterface(rGetBin, 1);
-                    asm.invokeInterface(wPutBin, 1);
+                    asm.invokeVirtual(wPutBin);
                     break;
             }
         }
@@ -276,10 +318,9 @@ public class QMap implements Closeable {
         entrySlots.close();
     }
 
-    @SuppressWarnings("AssertWithSideEffects")
     public Key withKey() {
         currentEntryOffset = currentEntryOffset + currentEntrySize;
-        entries.jumpTo(currentEntryOffset + entryKeyOffset);
+        entries.jumpTo(currentEntryOffset + columnOffsets[valueColumnCount]);
 
         // each entry cell is 8-byte value, which either holds cell value
         // or reference, relative to entry start, where value is kept in size-prefixed format
@@ -293,10 +334,6 @@ public class QMap implements Closeable {
 
         // make sure values are not read or written before we finish with key
         currentValueOffset = -1;
-
-        // for validation, we don't need this assignment when assertion is disabled
-        assert (remainingKeyValues = keyColumnCount) > 0;
-
         return key;
     }
 
@@ -322,23 +359,6 @@ public class QMap implements Closeable {
         return keyCapacity;
     }
 
-    public interface Key {
-        Value createValue();
-
-        Value findValue();
-
-        void putDouble(double value);
-
-        void putLong(long value);
-
-        void putStr(CharSequence value);
-
-        void putBin(BinarySequence value);
-
-        void putBool(boolean value);
-
-        void putRecord(Record record);
-    }
 
     public interface Value {
         byte getByte(int column);
@@ -369,31 +389,39 @@ public class QMap implements Closeable {
     }
 
     private class ValueImpl implements Value {
-        @Override
-        public byte getByte(int column) {
-            return (byte) getLong(column);
+
+        private long getValueColumnOffset(int columnIndex) {
+            return currentValueOffset + Unsafe.arrayGet(columnOffsets, columnIndex);
         }
 
         @Override
-        public double getDouble(int column) {
+        public byte getByte(int columnIndex) {
             assert currentValueOffset != -1;
-            return entries.getDouble(currentValueOffset + column * 8);
+            return entries.getByte(getValueColumnOffset(columnIndex));
         }
 
         @Override
-        public int getInt(int column) {
-            return (int) getLong(column);
-        }
-
-        @Override
-        public long getLong(int column) {
+        public double getDouble(int columnIndex) {
             assert currentValueOffset != -1;
-            return entries.getLong(currentValueOffset + column * 8);
+            return entries.getDouble(getValueColumnOffset(columnIndex));
         }
 
         @Override
-        public short getShort(int column) {
-            return (short) getLong(column);
+        public int getInt(int columnIndex) {
+            assert currentValueOffset != -1;
+            return entries.getInt(getValueColumnOffset(columnIndex));
+        }
+
+        @Override
+        public long getLong(int columnIndex) {
+            assert currentValueOffset != -1;
+            return entries.getLong(getValueColumnOffset(columnIndex));
+        }
+
+        @Override
+        public short getShort(int columnIndex) {
+            assert currentValueOffset != -1;
+            return entries.getShort(getValueColumnOffset(columnIndex));
         }
 
         @Override
@@ -416,9 +444,8 @@ public class QMap implements Closeable {
         }
     }
 
-    private class KeyImpl implements Key {
+    public class Key {
 
-        @Override
         public void putRecord(Record record) {
             recordWriter.copy(record, key);
         }
@@ -470,7 +497,6 @@ public class QMap implements Closeable {
             return appendEntry(offset, slot, flag);
         }
 
-        @Override
         public Value findValue() {
             if (currentValueOffset == -1) {
                 long slot = calculateEntrySlot(currentEntryOffset, currentEntrySize);
@@ -516,26 +542,35 @@ public class QMap implements Closeable {
             return value;
         }
 
-        @Override
         public void putDouble(double value) {
-            assertKeyValidity();
             entries.putDouble(value);
         }
 
-        @Override
         public void putBool(boolean value) {
-            assertKeyValidity();
             entries.putBool(value);
-            entries.skip(7);
         }
 
         public void putLong(long value) {
             entries.putLong(value);
         }
 
-        @Override
+        public void putShort(short value) {
+            entries.putShort(value);
+        }
+
+        public void putByte(byte value) {
+            entries.putByte(value);
+        }
+
+        public void putInt(int value) {
+            entries.putInt(value);
+        }
+
+        public void putFloat(float value) {
+            entries.putFloat(value);
+        }
+
         public void putStr(CharSequence value) {
-            assertKeyValidity();
             if (value == null) {
                 entries.putLong(TableUtils.NULL_LEN);
             } else {
@@ -549,9 +584,7 @@ public class QMap implements Closeable {
             }
         }
 
-        @Override
         public void putBin(BinarySequence value) {
-            assertKeyValidity();
             if (value == null) {
                 entries.putLong(TableUtils.NULL_LEN);
             } else {
@@ -602,12 +635,6 @@ public class QMap implements Closeable {
 
             // add new entry
             return putNewEntryAt(currentEntryOffset, currentEntrySize, slot, (byte) 0);
-        }
-
-        @SuppressWarnings("AssertWithSideEffects")
-        private void assertKeyValidity() {
-            assert currentValueOffset == -1 : "already have value";
-            assert remainingKeyValues-- > 0 : "all key values have been set";
         }
 
         private long calculateEntrySlot(long offset, long size) {
@@ -673,7 +700,7 @@ public class QMap implements Closeable {
         private Value found(long offset) {
             // found key
             // values offset will be
-            currentValueOffset = offset + ENTRY_HEADER_SIZE;
+            currentValueOffset = offset;
             entries.jumpTo(currentEntryOffset);
             // undo this key append
             currentEntrySize = 0;

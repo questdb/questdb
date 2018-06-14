@@ -120,7 +120,7 @@ public class TestRecord implements Record {
             return array.length;
         }
 
-        ArrayBinarySequence of(byte[] array) {
+        public ArrayBinarySequence of(byte[] array) {
             this.array = array;
             return this;
         }

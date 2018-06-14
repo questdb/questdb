@@ -21,8 +21,9 @@
  *
  ******************************************************************************/
 
-package com.questdb.cairo;
+package com.questdb.cairo.map;
 
+import com.questdb.cairo.*;
 import com.questdb.cairo.sql.Record;
 import com.questdb.cairo.sql.RecordCursor;
 import com.questdb.common.ColumnType;
@@ -40,7 +41,12 @@ public class QMapTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             Rnd rnd = new Rnd();
             int N = 10;
-            try (QMap map = new QMap(1024 * 1024, 1, 1, N / 2, 0.9)) {
+            try (QMap map = new QMap(
+                    1024 * 1024,
+                    new SingleColumnType(ColumnType.STRING),
+                    new SingleColumnType(ColumnType.LONG),
+                    N / 2,
+                    0.9)) {
                 ObjList<String> keys = new ObjList<>();
                 for (int i = 0; i < N; i++) {
                     CharSequence s = rnd.nextChars(11);
@@ -56,7 +62,8 @@ public class QMapTest extends AbstractCairoTest {
 
                 for (int i = 0, n = keys.size(); i < n; i++) {
                     QMap.Key key = map.withKey();
-                    key.putStr(keys.getQuick(i));
+                    CharSequence s = keys.getQuick(i);
+                    key.putStr(s);
                     QMap.Value value = key.createValue();
                     Assert.assertFalse(value.isNew());
                     Assert.assertEquals(i + 1, value.getLong(0));
@@ -69,8 +76,12 @@ public class QMapTest extends AbstractCairoTest {
     public void testAppendUnique() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             Rnd rnd = new Rnd();
-            int N = 10000;
-            try (QMap map = new QMap(1024 * 1024, 1, 1, N / 2, 0.9)) {
+            int N = 10000000;
+            try (QMap map = new QMap(
+                    1024 * 1024,
+                    new SingleColumnType(ColumnType.STRING),
+                    new SingleColumnType(ColumnType.LONG),
+                    N / 2, 0.9)) {
                 for (int i = 0; i < N; i++) {
                     CharSequence s = rnd.nextChars(11);
                     QMap.Key key = map.withKey();
@@ -102,7 +113,13 @@ public class QMapTest extends AbstractCairoTest {
         // tweak capacity in such a way that we only have one spare slot before resize is needed
         // this way algo that shuffles "foreign" slots away should face problems
         double loadFactor = 0.9;
-        try (QMap map = new QMap(4 * 1024 * 1024, 1, 1, 12, loadFactor, new MockHash())) {
+        try (QMap map = new QMap(
+                1024 * 1024,
+                new SingleColumnType(ColumnType.STRING),
+                new SingleColumnType(ColumnType.LONG),
+                12,
+                loadFactor,
+                new MockHash())) {
             QMap.Key key;
             QMap.Value value;
 
@@ -126,7 +143,7 @@ public class QMapTest extends AbstractCairoTest {
             Assert.assertTrue(value.isNew());
             value.putDouble(10.5);
 
-            // check that we cannot get value with traight up non-existing hash code
+            // check that we cannot get value with straight up non-existing hash code
             key = map.withKey();
             key.putStr("200-ABCDE");
             Assert.assertNull(key.findValue());
@@ -177,7 +194,11 @@ public class QMapTest extends AbstractCairoTest {
         // tweak capacity in such a way that we only have one spare slot before resize is needed
         // this way algo that shuffles "foreign" slots away should face problems
         double loadFactor = 0.9999999;
-        try (QMap map = new QMap(4 * 1024 * 1024, 1, 1, (long) (N * loadFactor), loadFactor, new MockHash())) {
+        try (QMap map = new QMap(
+                1024 * 1024,
+                new SingleColumnType(ColumnType.STRING),
+                new SingleColumnType(ColumnType.LONG),
+                (long) (N * loadFactor), loadFactor, new MockHash())) {
 
             // assert that key capacity is what we expect, otherwise this test would be useless
             Assert.assertEquals(N, map.getActualCapacity());
@@ -248,12 +269,15 @@ public class QMapTest extends AbstractCairoTest {
         int N = 256;
         int M = 32;
 
-
         StringSink sink = new StringSink();
         // tweak capacity in such a way that we only have one spare slot before resize is needed
         // this way algo that shuffles "foreign" slots away should face problems
         double loadFactor = 0.9999999;
-        try (QMap map = new QMap(4 * 1024 * 1024, 1, 1, (long) (N * loadFactor), loadFactor, new MockHash())) {
+        try (QMap map = new QMap(
+                1024 * 1024,
+                new SingleColumnType(ColumnType.STRING),
+                new SingleColumnType(ColumnType.LONG),
+                (long) (N * loadFactor), loadFactor, new MockHash())) {
 
             // assert that key capacity is what we expect, otherwise this test would be useless
             Assert.assertEquals(N, map.getActualCapacity());
@@ -400,7 +424,12 @@ public class QMapTest extends AbstractCairoTest {
                 columns.add(10);
                 columns.add(11);
 
-                try (QMap map = new QMap(1024 * 1024, columns.size(), 1, N, 0.9)) {
+                try (QMap map = new QMap(
+                        1024 * 1024,
+                        new SymbolAsStrTypes(reader.getMetadata()),
+                        new SingleColumnType(ColumnType.LONG),
+                        N,
+                        0.9)) {
                     map.configureKeyAdaptor(asm, reader.getMetadata(), columns, true);
 
                     long counter = 0;
@@ -415,6 +444,7 @@ public class QMapTest extends AbstractCairoTest {
                     long c = 0;
                     rnd.reset();
                     for (Record record : map.getCursor()) {
+                        System.out.println(c);
                         // value part
                         Assert.assertEquals(++c, record.getLong(0));
                         Assert.assertEquals(rnd.nextByte(), record.getByte(1));
