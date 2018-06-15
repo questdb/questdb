@@ -684,6 +684,42 @@ public class VirtualMemoryTest {
     }
 
     @Test
+    public void testStrRndOdd() {
+        testStrRnd(1, 4);
+    }
+
+    @Test
+    public void testStrRndEven() {
+        testStrRnd(0, 4);
+    }
+
+    @Test
+    public void testStrRndLargePage() {
+        testStrRnd(1, 16);
+    }
+
+    private void testStrRnd(long offset, long pageSize) {
+        Rnd rnd = new Rnd();
+        int N = 10;
+        final int M = 4;
+        try (VirtualMemory mem = new VirtualMemory(pageSize)) {
+            long o = offset;
+            for (int i = 0; i < N; i++) {
+                CharSequence s = rnd.nextChars(M);
+                mem.putStr(o, s, 0, s.length());
+                o += M * 2 + 4;
+            }
+
+            rnd.reset();
+            o = offset;
+            for (int i = 0; i < N; i++) {
+                TestUtils.assertEquals(rnd.nextChars(M), mem.getStr(o));
+                o += M * 2 + 4;
+            }
+        }
+    }
+
+    @Test
     public void testStringStorageDimensions() {
         assertEquals(10, VirtualMemory.getStorageLength("xyz"));
         assertEquals(4, VirtualMemory.getStorageLength(""));

@@ -117,7 +117,7 @@ public class QMapCursor implements ImmutableIterator<Record>, Iterable<Record> {
         @Override
         public CharSequence getStr(int col) {
             long o = getLong(col);
-            if (o == TableUtils.NULL_LEN) {
+            if (o == -1L) {
                 return null;
             }
             return entries.getStr(offset + o);
@@ -126,7 +126,7 @@ public class QMapCursor implements ImmutableIterator<Record>, Iterable<Record> {
         @Override
         public CharSequence getStrB(int col) {
             long o = getLong(col);
-            if (o == TableUtils.NULL_LEN) {
+            if (o == -1L) {
                 return null;
             }
             return entries.getStr2(offset + o);
@@ -135,7 +135,7 @@ public class QMapCursor implements ImmutableIterator<Record>, Iterable<Record> {
         @Override
         public int getStrLen(int col) {
             long o = getLong(col);
-            if (o == TableUtils.NULL_LEN) {
+            if (o == -1L) {
                 return TableUtils.NULL_LEN;
             }
             return entries.getStrLen(offset + o);
@@ -144,8 +144,7 @@ public class QMapCursor implements ImmutableIterator<Record>, Iterable<Record> {
         @Override
         public BinarySequence getBin(int col) {
             long o = getLong(col);
-            // todo: check if type cast impacts performance
-            if (o == TableUtils.NULL_LEN) {
+            if (o == -1L) {
                 return null;
             }
             return entries.getBin(QMapCursor.this.offset + o);
@@ -154,8 +153,8 @@ public class QMapCursor implements ImmutableIterator<Record>, Iterable<Record> {
         @Override
         public long getBinLen(int col) {
             long o = getLong(col);
-            if (o == TableUtils.NULL_LEN) {
-                return TableUtils.NULL_LEN;
+            if (o == -1L) {
+                return -1L;
             }
             return entries.getBinLen(offset + o);
         }

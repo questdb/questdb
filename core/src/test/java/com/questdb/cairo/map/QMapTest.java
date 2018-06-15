@@ -77,13 +77,14 @@ public class QMapTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             Rnd rnd = new Rnd();
             int N = 100000;
+            int M = 25;
             try (QMap map = new QMap(
                     1024 * 1024,
                     new SingleColumnType(ColumnType.STRING),
                     new SingleColumnType(ColumnType.LONG),
-                    N / 2, 0.9)) {
+                    2 * N, 0.7)) {
                 for (int i = 0; i < N; i++) {
-                    CharSequence s = rnd.nextChars(11);
+                    CharSequence s = rnd.nextChars(M);
                     QMap.Key key = map.withKey();
                     key.putStr(s);
                     QMap.Value value = key.createValue();
@@ -95,7 +96,7 @@ public class QMapTest extends AbstractCairoTest {
 
                 rnd.reset();
                 for (int i = 0; i < N; i++) {
-                    CharSequence s = rnd.nextChars(11);
+                    CharSequence s = rnd.nextChars(M);
                     QMap.Key key = map.withKey();
                     key.putStr(s);
                     QMap.Value value = key.findValue();
@@ -106,6 +107,7 @@ public class QMapTest extends AbstractCairoTest {
                 }
                 Assert.assertEquals(N, map.size());
                 Assert.assertEquals(expectedAppendOffset, map.getAppendOffset());
+                System.out.println(map.getCountChains());
             }
         });
     }

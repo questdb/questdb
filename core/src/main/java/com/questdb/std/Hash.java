@@ -59,8 +59,8 @@ public final class Hash {
             p += 4;
         }
 
-        if (p < hi) {
-            hash = (hash << 5) - hash + Unsafe.getUnsafe().getByte(p);
+        while (p < hi) {
+            hash = (hash << 5) - hash + Unsafe.getUnsafe().getByte(p++);
         }
 
         return hash < 0 ? -hash : hash;

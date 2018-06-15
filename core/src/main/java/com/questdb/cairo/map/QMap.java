@@ -118,19 +118,8 @@ public class QMap implements Closeable {
                     203280588949935750L, 457381324898247375L, 1029107980662394500L, 2315492957028380766L,
                     5209859150892887590L
             };
-    private static final HashFunction DEFAULT_HASH = (mem, offset, size) -> {
-        final long n = size - size % 2;
 
-        long h = 0;
-        for (long i = 0; i < n; i += 2) {
-            h = (h << 5) - h + mem.getShort(offset + i);
-        }
-
-        if (n > 0) {
-            h = (h << 5) - h + mem.getByte(offset + size - 1);
-        }
-        return h;
-    };
+    private static final HashFunction DEFAULT_HASH = VirtualMemory::hash;
 
     private final VirtualMemory entries;
     private final VirtualMemory entrySlots;
@@ -142,13 +131,16 @@ public class QMap implements Closeable {
     private final QMapCursor cursor;
     private final long columnOffsets[];
     private final long entryKeyOffset;
+    private final int valueColumnCount;
     private long currentEntryOffset;
     private long currentEntrySize = 0;
     private long keyCapacity;
     private long mask;
     private long size;
     private long currentValueOffset;
-    private int valueColumnCount;
+    private long countChains = 0;
+    private long countClashes = 0;
+    private long countRecursions = 0;
 
     public QMap(int pageSize, ColumnTypes keyTypes, ColumnTypes valueTypes, long keyCapacity, double loadFactor) {
         this(pageSize, keyTypes, valueTypes, keyCapacity, loadFactor, DEFAULT_HASH);
@@ -253,6 +245,28 @@ public class QMap implements Closeable {
         entrySlots.zero();
     }
 
+    public void clear() {
+        entrySlots.zero();
+        currentEntryOffset = 0;
+        currentEntrySize = 0;
+        size = 0;
+        countChains = 0;
+        countClashes = 0;
+        countRecursions = 0;
+    }
+
+    public long getCountChains() {
+        return countChains;
+    }
+
+    public long getCountClashes() {
+        return countClashes;
+    }
+
+    public long getCountRecursions() {
+        return countRecursions;
+    }
+
     long getActualCapacity() {
         return mask + 1;
     }
@@ -261,7 +275,7 @@ public class QMap implements Closeable {
         return currentEntryOffset + currentEntrySize;
     }
 
-    long getKeyCapacity() {
+    public long getKeyCapacity() {
         return keyCapacity;
     }
 
@@ -426,7 +440,7 @@ public class QMap implements Closeable {
 
             if (offset == -1) {
                 // great, slot is empty, create new entry as direct hit
-                return putNewEntryAt(currentEntryOffset, currentEntrySize, slot, BITS_DIRECT_HIT);
+                return putNewEntryAt(slot, BITS_DIRECT_HIT);
             }
 
             // check if this was a direct hit
@@ -450,9 +464,11 @@ public class QMap implements Closeable {
                 // entry we originally set out to free
 
                 if (moveForeignEntries(slot, offset)) {
-                    return putNewEntryAt(currentEntryOffset, currentEntrySize, slot, BITS_DIRECT_HIT);
+                    countClashes++;
+                    return putNewEntryAt(slot, BITS_DIRECT_HIT);
                 }
 
+                countRecursions++;
                 grow();
                 return createValue();
             }
@@ -464,6 +480,7 @@ public class QMap implements Closeable {
                 return found(offset);
             }
 
+            countChains++;
             return appendEntry(offset, slot, flag);
         }
 
@@ -546,11 +563,9 @@ public class QMap implements Closeable {
             } else {
                 // offset of string value relative to record start
                 entries.putLong(currentEntrySize);
-                long o = entries.getAppendOffset();
-                entries.jumpTo(currentEntryOffset + currentEntrySize);
-                entries.putStr(value);
-                currentEntrySize += VirtualMemory.getStorageLength(value);
-                entries.jumpTo(o);
+                int len = value.length();
+                entries.putStr(currentEntryOffset + currentEntrySize, value, 0, len);
+                currentEntrySize += len * 2 + 4;
             }
         }
 
@@ -567,7 +582,6 @@ public class QMap implements Closeable {
             }
         }
 
-
         private Value appendEntry(long offset, long slot, byte flag) {
             int distance = flag & BITS_DISTANCE;
             long original = offset;
@@ -579,10 +593,11 @@ public class QMap implements Closeable {
                 // this offset cannot be 0 when data structure is consistent
                 assert offset != 0;
 
+                distance = entries.getByte(offset) & BITS_DISTANCE;
+
                 if (cmp(offset)) {
                     return found(offset);
                 }
-                distance = entries.getByte(offset) & BITS_DISTANCE;
             }
 
             // create entry at "nextOffset"
@@ -603,7 +618,7 @@ public class QMap implements Closeable {
             entries.putByte(offset, (byte) distance);
 
             // add new entry
-            return putNewEntryAt(currentEntryOffset, currentEntrySize, slot, (byte) 0);
+            return putNewEntryAt(slot, (byte) 0);
         }
 
         private long calculateEntrySlot(long offset, long size) {
@@ -721,8 +736,6 @@ public class QMap implements Closeable {
                 }
 
                 // update parent entry with its new location
-//                entries.jumpTo(parentOffset);
-
                 if ((entries.getByte(parentOffset) & BITS_DIRECT_HIT) == 0) {
                     entries.putByte(parentOffset, (byte) dist);
                 } else {
@@ -764,23 +777,24 @@ public class QMap implements Closeable {
             entries.putByte(entryOffset, flag);
         }
 
-        private Value putNewEntryAt(long entryOffset, long entrySize, long slot, byte flag) {
+        private Value putNewEntryAt(long slot, byte flag) {
             // entry size is now known
             // values are always fixed size and already accounted for
             // so go ahead and finalize
-            entries.jumpTo(entryOffset);
-            entries.putByte(flag);
-            entries.putLong(entrySize); // size
+            entries.putByte(currentEntryOffset, flag);
+            entries.putLong(currentEntryOffset + 1, currentEntrySize); // size
+            entries.jumpTo(currentEntryOffset + ENTRY_HEADER_SIZE);
+
 
             if (++size == keyCapacity) {
                 // reached capacity?
                 // no need to populate slot, grow() will do the job for us
                 grow();
             } else {
-                setOffsetAt(slot, entryOffset);
+                setOffsetAt(slot, currentEntryOffset);
             }
             // this would be offset of entry values
-            currentValueOffset = entryOffset;
+            currentValueOffset = currentEntryOffset;
             return value;
         }
 
