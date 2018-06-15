@@ -76,7 +76,7 @@ public class QMapTest extends AbstractCairoTest {
     public void testAppendUnique() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             Rnd rnd = new Rnd();
-            int N = 10000000;
+            int N = 100000;
             try (QMap map = new QMap(
                     1024 * 1024,
                     new SingleColumnType(ColumnType.STRING),
@@ -99,8 +99,10 @@ public class QMapTest extends AbstractCairoTest {
                     QMap.Key key = map.withKey();
                     key.putStr(s);
                     QMap.Value value = key.findValue();
+                    long o = value.getOffset();
                     Assert.assertNotNull(value);
                     Assert.assertEquals(i + 1, value.getLong(0));
+                    Assert.assertEquals(o, key.findValue().getOffset());
                 }
                 Assert.assertEquals(N, map.size());
                 Assert.assertEquals(expectedAppendOffset, map.getAppendOffset());
@@ -157,7 +159,7 @@ public class QMapTest extends AbstractCairoTest {
             // check that we don't get value when we go down the linked list
             // this will produce 001 hashcode, which should find that slot 1 is occupied by indirect hit
             key = map.withKey();
-            key.putStr("017-ABCDE");
+            key.putStr("033-ABCDE");
             Assert.assertNull(key.findValue());
         }
     }
@@ -319,93 +321,11 @@ public class QMapTest extends AbstractCairoTest {
     @Test
     public void testRecordAsKey() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)) {
-                model
-                        .col("a", ColumnType.BYTE)
-                        .col("b", ColumnType.SHORT)
-                        .col("c", ColumnType.INT)
-                        .col("d", ColumnType.LONG)
-                        .col("e", ColumnType.DATE)
-                        .col("f", ColumnType.TIMESTAMP)
-                        .col("g", ColumnType.FLOAT)
-                        .col("h", ColumnType.DOUBLE)
-                        .col("i", ColumnType.STRING)
-                        .col("j", ColumnType.SYMBOL)
-                        .col("k", ColumnType.BOOLEAN)
-                        .col("l", ColumnType.BINARY);
-                CairoTestUtils.create(model);
-            }
-
-            final int N = 1000;
+            final int N = 5000;
             final Rnd rnd = new Rnd();
             TestRecord.ArrayBinarySequence binarySequence = new TestRecord.ArrayBinarySequence();
 
-            try (TableWriter writer = new TableWriter(configuration, "x")) {
-                for (int i = 0; i < N; i++) {
-                    TableWriter.Row row = writer.newRow(0);
-                    row.putByte(0, rnd.nextByte());
-                    row.putShort(1, rnd.nextShort());
-
-                    if (rnd.nextInt() % 4 == 0) {
-                        row.putInt(2, Numbers.INT_NaN);
-                    } else {
-                        row.putInt(2, rnd.nextInt());
-                    }
-
-                    if (rnd.nextInt() % 4 == 0) {
-                        row.putLong(3, Numbers.LONG_NaN);
-                    } else {
-                        row.putLong(3, rnd.nextLong());
-                    }
-
-                    if (rnd.nextInt() % 4 == 0) {
-                        row.putLong(4, Numbers.LONG_NaN);
-                    } else {
-                        row.putDate(4, rnd.nextLong());
-                    }
-
-                    if (rnd.nextInt() % 4 == 0) {
-                        row.putLong(5, Numbers.LONG_NaN);
-                    } else {
-                        row.putTimestamp(5, rnd.nextLong());
-                    }
-
-                    if (rnd.nextInt() % 4 == 0) {
-                        row.putFloat(6, Float.NaN);
-                    } else {
-                        row.putFloat(6, rnd.nextFloat2());
-                    }
-
-                    if (rnd.nextInt() % 4 == 0) {
-                        row.putDouble(7, Double.NaN);
-                    } else {
-                        row.putDouble(7, rnd.nextDouble2());
-                    }
-
-                    if (rnd.nextInt() % 4 == 0) {
-                        row.putStr(8, null);
-                    } else {
-                        row.putStr(8, rnd.nextChars(5));
-                    }
-
-                    if (rnd.nextInt() % 4 == 0) {
-                        row.putSym(9, null);
-                    } else {
-                        row.putSym(9, rnd.nextChars(3));
-                    }
-
-                    row.putBool(10, rnd.nextBoolean());
-
-                    if (rnd.nextInt() % 4 == 0) {
-                        row.putBin(11, null);
-                    } else {
-                        binarySequence.of(rnd.nextBytes(25));
-                        row.putBin(11, binarySequence);
-                    }
-                    row.append();
-                }
-                writer.commit();
-            }
+            createTestTable(N, rnd, binarySequence);
 
             BytecodeAssembler asm = new BytecodeAssembler();
 
@@ -427,93 +347,419 @@ public class QMapTest extends AbstractCairoTest {
                 try (QMap map = new QMap(
                         1024 * 1024,
                         new SymbolAsStrTypes(reader.getMetadata()),
-                        new SingleColumnType(ColumnType.LONG),
+                        new ArrayColumnTypes().reset()
+                                .add(ColumnType.LONG)
+                                .add(ColumnType.INT)
+                                .add(ColumnType.SHORT)
+                                .add(ColumnType.BYTE)
+                                .add(ColumnType.FLOAT)
+                                .add(ColumnType.DOUBLE)
+                                .add(ColumnType.DATE)
+                                .add(ColumnType.TIMESTAMP)
+                                .add(ColumnType.BOOLEAN)
+                        ,
                         N,
                         0.9)) {
-                    map.configureKeyAdaptor(asm, reader.getMetadata(), columns, true);
 
-                    long counter = 0;
+                    RecordSink sink = RecordSinkFactory.getInstance(asm, reader.getMetadata(), columns, true);
+
+                    final int keyColumnOffset = map.getValueColumnCount();
+
+                    // this random will be populating values
+                    Rnd rnd2 = new Rnd();
+
                     RecordCursor cursor = reader.getCursor();
-                    while (cursor.hasNext()) {
-                        QMap.Key key = map.withKey();
-                        key.putRecord(cursor.next());
-                        QMap.Value value = key.createValue();
-                        value.putLong(++counter);
-                    }
+                    populateMap(map, rnd2, cursor, sink);
 
                     long c = 0;
                     rnd.reset();
+                    rnd2.reset();
                     for (Record record : map.getCursor()) {
-                        System.out.println(c);
-                        // value part
+                        // value
                         Assert.assertEquals(++c, record.getLong(0));
-                        Assert.assertEquals(rnd.nextByte(), record.getByte(1));
-                        Assert.assertEquals(rnd.nextShort(), record.getShort(2));
+                        Assert.assertEquals(rnd2.nextInt(), record.getInt(1));
+                        Assert.assertEquals(rnd2.nextShort(), record.getShort(2));
+                        Assert.assertEquals(rnd2.nextByte(), record.getByte(3));
+                        Assert.assertEquals(rnd2.nextFloat2(), record.getFloat(4), 0.000001f);
+                        Assert.assertEquals(rnd2.nextDouble2(), record.getDouble(5), 0.000000001);
+                        Assert.assertEquals(rnd2.nextLong(), record.getDate(6));
+                        Assert.assertEquals(rnd2.nextLong(), record.getTimestamp(7));
+                        Assert.assertEquals(rnd2.nextBoolean(), record.getBool(8));
+                        // key fields
+                        Assert.assertEquals(rnd.nextByte(), record.getByte(keyColumnOffset));
+                        Assert.assertEquals(rnd.nextShort(), record.getShort(keyColumnOffset + 1));
                         if (rnd.nextInt() % 4 == 0) {
-                            Assert.assertEquals(Numbers.INT_NaN, record.getInt(3));
+                            Assert.assertEquals(Numbers.INT_NaN, record.getInt(keyColumnOffset + 2));
                         } else {
-                            Assert.assertEquals(rnd.nextInt(), record.getInt(3));
+                            Assert.assertEquals(rnd.nextInt(), record.getInt(keyColumnOffset + 2));
                         }
 
                         if (rnd.nextInt() % 4 == 0) {
-                            Assert.assertEquals(Numbers.LONG_NaN, record.getLong(4));
+                            Assert.assertEquals(Numbers.LONG_NaN, record.getLong(keyColumnOffset + 3));
                         } else {
-                            Assert.assertEquals(rnd.nextLong(), record.getLong(4));
+                            Assert.assertEquals(rnd.nextLong(), record.getLong(keyColumnOffset + 3));
                         }
 
                         if (rnd.nextInt() % 4 == 0) {
-                            Assert.assertEquals(Numbers.LONG_NaN, record.getDate(5));
+                            Assert.assertEquals(Numbers.LONG_NaN, record.getDate(keyColumnOffset + 4));
                         } else {
-                            Assert.assertEquals(rnd.nextLong(), record.getDate(5));
+                            Assert.assertEquals(rnd.nextLong(), record.getDate(keyColumnOffset + 4));
                         }
 
                         if (rnd.nextInt() % 4 == 0) {
-                            Assert.assertEquals(Numbers.LONG_NaN, record.getTimestamp(6));
+                            Assert.assertEquals(Numbers.LONG_NaN, record.getTimestamp(keyColumnOffset + 5));
                         } else {
-                            Assert.assertEquals(rnd.nextLong(), record.getTimestamp(6));
+                            Assert.assertEquals(rnd.nextLong(), record.getTimestamp(keyColumnOffset + 5));
                         }
 
                         if (rnd.nextInt() % 4 == 0) {
-                            Assert.assertTrue(Float.isNaN(record.getFloat(7)));
+                            Assert.assertTrue(Float.isNaN(record.getFloat(keyColumnOffset + 6)));
                         } else {
-                            Assert.assertEquals(rnd.nextFloat2(), record.getFloat(7), 0.00000001f);
+                            Assert.assertEquals(rnd.nextFloat2(), record.getFloat(keyColumnOffset + 6), 0.00000001f);
                         }
 
                         if (rnd.nextInt() % 4 == 0) {
-                            Assert.assertTrue(Double.isNaN(record.getDouble(8)));
+                            Assert.assertTrue(Double.isNaN(record.getDouble(keyColumnOffset + 7)));
                         } else {
-                            Assert.assertEquals(rnd.nextDouble2(), record.getDouble(8), 0.0000000001d);
+                            Assert.assertEquals(rnd.nextDouble2(), record.getDouble(keyColumnOffset + 7), 0.0000000001d);
                         }
 
                         if (rnd.nextInt() % 4 == 0) {
-                            Assert.assertNull(record.getStr(9));
-                            Assert.assertNull(record.getStrB(9));
-                            Assert.assertEquals(-1, record.getStrLen(9));
+                            Assert.assertNull(record.getStr(keyColumnOffset + 8));
+                            Assert.assertNull(record.getStrB(keyColumnOffset + 8));
+                            Assert.assertEquals(-1, record.getStrLen(keyColumnOffset + 8));
                         } else {
                             CharSequence tmp = rnd.nextChars(5);
-                            TestUtils.assertEquals(tmp, record.getStr(9));
-                            TestUtils.assertEquals(tmp, record.getStrB(9));
-                            Assert.assertEquals(tmp.length(), record.getStrLen(9));
+                            TestUtils.assertEquals(tmp, record.getStr(keyColumnOffset + 8));
+                            TestUtils.assertEquals(tmp, record.getStrB(keyColumnOffset + 8));
+                            Assert.assertEquals(tmp.length(), record.getStrLen(keyColumnOffset + 8));
                         }
                         // we are storing symbol as string, assert as such
 
                         if (rnd.nextInt() % 4 == 0) {
-                            Assert.assertNull(record.getStr(10));
+                            Assert.assertNull(record.getStr(keyColumnOffset + 9));
                         } else {
-                            TestUtils.assertEquals(rnd.nextChars(3), record.getStr(10));
+                            TestUtils.assertEquals(rnd.nextChars(3), record.getStr(keyColumnOffset + 9));
                         }
 
-                        Assert.assertEquals(rnd.nextBoolean(), record.getBool(11));
+                        Assert.assertEquals(rnd.nextBoolean(), record.getBool(keyColumnOffset + 10));
 
                         if (rnd.nextInt() % 4 == 0) {
-                            TestUtils.assertEquals(null, record.getBin(12), record.getBinLen(12));
+                            TestUtils.assertEquals(null, record.getBin(keyColumnOffset + 11), record.getBinLen(keyColumnOffset + 11));
                         } else {
                             binarySequence.of(rnd.nextBytes(25));
-                            TestUtils.assertEquals(binarySequence, record.getBin(12), record.getBinLen(12));
+                            TestUtils.assertEquals(binarySequence, record.getBin(keyColumnOffset + 11), record.getBinLen(keyColumnOffset + 11));
                         }
 
                     }
-                    Assert.assertEquals(counter, c);
+                    Assert.assertEquals(N, c);
+                }
+            }
+        });
+    }
+
+    private void createTestTable(int n, Rnd rnd, TestRecord.ArrayBinarySequence binarySequence) {
+
+        try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)) {
+            model
+                    .col("a", ColumnType.BYTE)
+                    .col("b", ColumnType.SHORT)
+                    .col("c", ColumnType.INT)
+                    .col("d", ColumnType.LONG)
+                    .col("e", ColumnType.DATE)
+                    .col("f", ColumnType.TIMESTAMP)
+                    .col("g", ColumnType.FLOAT)
+                    .col("h", ColumnType.DOUBLE)
+                    .col("i", ColumnType.STRING)
+                    .col("j", ColumnType.SYMBOL)
+                    .col("k", ColumnType.BOOLEAN)
+                    .col("l", ColumnType.BINARY);
+            CairoTestUtils.create(model);
+        }
+
+        try (TableWriter writer = new TableWriter(configuration, "x")) {
+            for (int i = 0; i < n; i++) {
+                TableWriter.Row row = writer.newRow(0);
+                row.putByte(0, rnd.nextByte());
+                row.putShort(1, rnd.nextShort());
+
+                if (rnd.nextInt() % 4 == 0) {
+                    row.putInt(2, Numbers.INT_NaN);
+                } else {
+                    row.putInt(2, rnd.nextInt());
+                }
+
+                if (rnd.nextInt() % 4 == 0) {
+                    row.putLong(3, Numbers.LONG_NaN);
+                } else {
+                    row.putLong(3, rnd.nextLong());
+                }
+
+                if (rnd.nextInt() % 4 == 0) {
+                    row.putLong(4, Numbers.LONG_NaN);
+                } else {
+                    row.putDate(4, rnd.nextLong());
+                }
+
+                if (rnd.nextInt() % 4 == 0) {
+                    row.putLong(5, Numbers.LONG_NaN);
+                } else {
+                    row.putTimestamp(5, rnd.nextLong());
+                }
+
+                if (rnd.nextInt() % 4 == 0) {
+                    row.putFloat(6, Float.NaN);
+                } else {
+                    row.putFloat(6, rnd.nextFloat2());
+                }
+
+                if (rnd.nextInt() % 4 == 0) {
+                    row.putDouble(7, Double.NaN);
+                } else {
+                    row.putDouble(7, rnd.nextDouble2());
+                }
+
+                if (rnd.nextInt() % 4 == 0) {
+                    row.putStr(8, null);
+                } else {
+                    row.putStr(8, rnd.nextChars(5));
+                }
+
+                if (rnd.nextInt() % 4 == 0) {
+                    row.putSym(9, null);
+                } else {
+                    row.putSym(9, rnd.nextChars(3));
+                }
+
+                row.putBool(10, rnd.nextBoolean());
+
+                if (rnd.nextInt() % 4 == 0) {
+                    row.putBin(11, null);
+                } else {
+                    binarySequence.of(rnd.nextBytes(25));
+                    row.putBin(11, binarySequence);
+                }
+                row.append();
+            }
+            writer.commit();
+        }
+    }
+
+    @Test
+    public void testValueAccess() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)) {
+                model
+                        .col("a", ColumnType.BYTE)
+                        .col("b", ColumnType.SHORT)
+                        .col("c", ColumnType.INT)
+                        .col("d", ColumnType.LONG)
+                        .col("e", ColumnType.DATE)
+                        .col("f", ColumnType.TIMESTAMP)
+                        .col("g", ColumnType.FLOAT)
+                        .col("h", ColumnType.DOUBLE)
+                        .col("i", ColumnType.STRING)
+                        .col("j", ColumnType.SYMBOL)
+                        .col("k", ColumnType.BOOLEAN)
+                        .col("l", ColumnType.BINARY);
+                CairoTestUtils.create(model);
+            }
+
+            final int N = 1000;
+            final Rnd rnd = new Rnd();
+            TestRecord.ArrayBinarySequence binarySequence = new TestRecord.ArrayBinarySequence();
+
+            createTestTable(N, rnd, binarySequence);
+
+            BytecodeAssembler asm = new BytecodeAssembler();
+
+            try (TableReader reader = new TableReader(configuration, "x")) {
+                IntList columns = new IntList();
+                columns.add(0);
+                columns.add(1);
+                columns.add(2);
+                columns.add(3);
+                columns.add(4);
+                columns.add(5);
+                columns.add(6);
+                columns.add(7);
+                columns.add(8);
+                columns.add(9);
+                columns.add(10);
+                columns.add(11);
+
+                try (QMap map = new QMap(
+                        1024 * 1024,
+                        new SymbolAsStrTypes(reader.getMetadata()),
+                        new ArrayColumnTypes().reset()
+                                .add(ColumnType.LONG)
+                                .add(ColumnType.INT)
+                                .add(ColumnType.SHORT)
+                                .add(ColumnType.BYTE)
+                                .add(ColumnType.FLOAT)
+                                .add(ColumnType.DOUBLE)
+                                .add(ColumnType.DATE)
+                                .add(ColumnType.TIMESTAMP)
+                                .add(ColumnType.BOOLEAN)
+                        ,
+                        N,
+                        0.9)) {
+
+                    RecordSink sink = RecordSinkFactory.getInstance(asm, reader.getMetadata(), columns, true);
+
+                    // this random will be populating values
+                    Rnd rnd2 = new Rnd();
+
+                    RecordCursor cursor = reader.getCursor();
+                    populateMap(map, rnd2, cursor, sink);
+
+                    cursor.toTop();
+                    rnd2.reset();
+                    long c = 0;
+                    while (cursor.hasNext()) {
+                        QMap.Key key = map.withKey();
+                        key.putRecord(cursor.next(), sink);
+                        QMap.Value value = key.findValue();
+                        Assert.assertNotNull(value);
+                        Assert.assertEquals(++c, value.getLong(0));
+                        Assert.assertEquals(rnd2.nextInt(), value.getInt(1));
+                        Assert.assertEquals(rnd2.nextShort(), value.getShort(2));
+                        Assert.assertEquals(rnd2.nextByte(), value.getByte(3));
+                        Assert.assertEquals(rnd2.nextFloat2(), value.getFloat(4), 0.000001f);
+                        Assert.assertEquals(rnd2.nextDouble2(), value.getDouble(5), 0.000000001);
+                        Assert.assertEquals(rnd2.nextLong(), value.getDate(6));
+                        Assert.assertEquals(rnd2.nextLong(), value.getTimestamp(7));
+                        Assert.assertEquals(rnd2.nextBoolean(), value.getBool(8));
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testValueRandomWrite() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+
+            final int N = 1000;
+            final Rnd rnd = new Rnd();
+            TestRecord.ArrayBinarySequence binarySequence = new TestRecord.ArrayBinarySequence();
+
+            createTestTable(N, rnd, binarySequence);
+
+            BytecodeAssembler asm = new BytecodeAssembler();
+
+            try (TableReader reader = new TableReader(configuration, "x")) {
+                IntList columns = new IntList();
+                columns.add(0);
+                columns.add(1);
+                columns.add(2);
+                columns.add(3);
+                columns.add(4);
+                columns.add(5);
+                columns.add(6);
+                columns.add(7);
+                columns.add(8);
+                columns.add(9);
+                columns.add(10);
+                columns.add(11);
+
+                try (QMap map = new QMap(
+                        1024 * 1024,
+                        new SymbolAsIntTypes(reader.getMetadata()),
+                        new ArrayColumnTypes().reset()
+                                .add(ColumnType.LONG)
+                                .add(ColumnType.INT)
+                                .add(ColumnType.SHORT)
+                                .add(ColumnType.BYTE)
+                                .add(ColumnType.FLOAT)
+                                .add(ColumnType.DOUBLE)
+                                .add(ColumnType.DATE)
+                                .add(ColumnType.TIMESTAMP)
+                                .add(ColumnType.BOOLEAN)
+                        ,
+                        N,
+                        0.9)) {
+
+                    RecordSink sink = RecordSinkFactory.getInstance(asm, reader.getMetadata(), columns, false);
+
+                    // this random will be populating values
+                    Rnd rnd2 = new Rnd();
+
+                    RecordCursor cursor = reader.getCursor();
+                    long counter = 0;
+                    while (cursor.hasNext()) {
+                        QMap.Key key = map.withKey();
+                        key.putRecord(cursor.next(), sink);
+                        QMap.Value value1 = key.createValue();
+                        Assert.assertTrue(value1.isNew());
+                        value1.putFloat(4, rnd2.nextFloat2());
+                        value1.putDouble(5, rnd2.nextDouble2());
+                        value1.putDate(6, rnd2.nextLong());
+                        value1.putTimestamp(7, rnd2.nextLong());
+                        value1.putBool(8, rnd2.nextBoolean());
+
+                        value1.putLong(0, ++counter);
+                        value1.putInt(1, rnd2.nextInt());
+                        value1.putShort(2, rnd2.nextShort());
+                        value1.putByte(3, rnd2.nextByte());
+                    }
+
+                    cursor.toTop();
+                    rnd2.reset();
+                    long c = 0;
+                    while (cursor.hasNext()) {
+                        QMap.Key key = map.withKey();
+                        key.putRecord(cursor.next(), sink);
+                        QMap.Value value = key.findValue();
+                        Assert.assertNotNull(value);
+
+                        Assert.assertEquals(rnd2.nextFloat2(), value.getFloat(4), 0.000001f);
+                        Assert.assertEquals(rnd2.nextDouble2(), value.getDouble(5), 0.000000001);
+                        Assert.assertEquals(rnd2.nextLong(), value.getDate(6));
+                        Assert.assertEquals(rnd2.nextLong(), value.getTimestamp(7));
+                        Assert.assertEquals(rnd2.nextBoolean(), value.getBool(8));
+
+                        Assert.assertEquals(++c, value.getLong(0));
+                        Assert.assertEquals(rnd2.nextInt(), value.getInt(1));
+                        Assert.assertEquals(rnd2.nextShort(), value.getShort(2));
+                        Assert.assertEquals(rnd2.nextByte(), value.getByte(3));
+                    }
+                }
+            }
+        });
+    }
+
+    private void populateMap(QMap map, Rnd rnd2, RecordCursor cursor, RecordSink sink) {
+        long counter = 0;
+        while (cursor.hasNext()) {
+            QMap.Key key = map.withKey();
+            key.putRecord(cursor.next(), sink);
+            QMap.Value value = key.createValue();
+            Assert.assertTrue(value.isNew());
+            value.putLong(++counter);
+            value.putInt(rnd2.nextInt());
+            value.putShort(rnd2.nextShort());
+            value.putByte(rnd2.nextByte());
+            value.putFloat(rnd2.nextFloat2());
+            value.putDouble(rnd2.nextDouble2());
+            value.putDate(rnd2.nextLong());
+            value.putTimestamp(rnd2.nextLong());
+            value.putBool(rnd2.nextBoolean());
+        }
+    }
+
+    @Test
+    public void testConstructorRecovery() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            TestRecord.ArrayBinarySequence binarySequence = new TestRecord.ArrayBinarySequence();
+            createTestTable(10, new Rnd(), binarySequence);
+
+            try (TableReader reader = new TableReader(configuration, "x")) {
+                try {
+                    new QMap(1024, reader.getMetadata(), new SingleColumnType(ColumnType.LONG), 16, 0.75);
+                    Assert.fail();
+                } catch (Exception e) {
+                    TestUtils.assertContains(e.getMessage(), "Unsupported column type");
                 }
             }
         });

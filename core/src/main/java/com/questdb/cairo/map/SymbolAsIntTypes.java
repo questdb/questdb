@@ -26,17 +26,17 @@ package com.questdb.cairo.map;
 import com.questdb.cairo.ColumnTypes;
 import com.questdb.common.ColumnType;
 
-public class SymbolAsStrTypes implements ColumnTypes {
+public class SymbolAsIntTypes implements ColumnTypes {
     private ColumnTypes base;
 
-    public SymbolAsStrTypes(ColumnTypes base) {
+    public SymbolAsIntTypes(ColumnTypes base) {
         this.base = base;
     }
 
     @Override
     public int getColumnType(int columnIndex) {
         final int type = base.getColumnType(columnIndex);
-        return type == ColumnType.SYMBOL ? ColumnType.STRING : type;
+        return type == ColumnType.SYMBOL ? ColumnType.INT : type;
     }
 
     @Override

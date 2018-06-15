@@ -24,23 +24,28 @@
 package com.questdb.cairo.map;
 
 import com.questdb.cairo.ColumnTypes;
-import com.questdb.common.ColumnType;
+import com.questdb.std.IntList;
 
-public class SymbolAsStrTypes implements ColumnTypes {
-    private ColumnTypes base;
+public class ArrayColumnTypes implements ColumnTypes {
+    private final IntList types = new IntList();
 
-    public SymbolAsStrTypes(ColumnTypes base) {
-        this.base = base;
+    ArrayColumnTypes reset() {
+        types.clear();
+        return this;
+    }
+
+    ArrayColumnTypes add(int type) {
+        types.add(type);
+        return this;
     }
 
     @Override
     public int getColumnType(int columnIndex) {
-        final int type = base.getColumnType(columnIndex);
-        return type == ColumnType.SYMBOL ? ColumnType.STRING : type;
+        return types.getQuick(columnIndex);
     }
 
     @Override
     public int getColumnCount() {
-        return base.getColumnCount();
+        return types.size();
     }
 }
