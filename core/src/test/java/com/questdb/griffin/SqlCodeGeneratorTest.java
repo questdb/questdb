@@ -37,6 +37,7 @@ import com.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 import org.junit.Before;
+import org.junit.Ignore;
 import org.junit.Test;
 
 import java.io.IOException;
@@ -236,6 +237,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     }
 
     @Test
+    @Ignore
     //todo: implement
     public void testLatestByKeyNoIndex() throws Exception {
         assertQuery("a\tb\tk\n" +
