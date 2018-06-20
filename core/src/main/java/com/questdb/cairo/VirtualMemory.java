@@ -1010,9 +1010,11 @@ public class VirtualMemory implements Closeable {
         public long copyTo(long address, long start, long length) {
             long offset = this.offset + start;
             int page = pageIndex(offset);
+            long pageSize = getPageSize(page);
             long pageAddress = getPageAddress(page);
             long offsetInPage = offsetInPage(offset);
             long len = Math.min(length, pageSize - offsetInPage);
+            assert len > -1;
             long srcAddress = pageAddress + offsetInPage;
             Unsafe.getUnsafe().copyMemory(srcAddress, address, len);
             return len;

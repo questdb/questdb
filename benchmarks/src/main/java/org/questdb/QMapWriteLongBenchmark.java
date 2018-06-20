@@ -40,36 +40,20 @@ import java.util.concurrent.TimeUnit;
 @State(Scope.Thread)
 @BenchmarkMode(Mode.AverageTime)
 @OutputTimeUnit(TimeUnit.MICROSECONDS)
-public class QMapReadBenchmark {
+public class QMapWriteLongBenchmark {
 
     private static final int N = 5000000;
-    private static final double loadFactor = 0.5;
+    private static final double loadFactor = 0.9;
     private static final int M = 25;
-    private static final Rnd rnd = new Rnd();
-    private static QMap qmap = new QMap(1024 * 1024, new SingleColumnType(ColumnType.STRING), new SingleColumnType(ColumnType.LONG), N, loadFactor);
-    private static DirectMap map = new DirectMap(1024 * 1024, new SingleColumnType(ColumnType.STRING), new SingleColumnType(ColumnType.LONG), N, loadFactor);
+    private static QMap qmap = new QMap(1024 * 1024, new SingleColumnType(ColumnType.LONG), new SingleColumnType(ColumnType.LONG), 64, loadFactor);
+    private static DirectMap map = new DirectMap(1024 * 1024, new SingleColumnType(ColumnType.LONG), new SingleColumnType(ColumnType.LONG), 64, 0.5f);
 
-    static {
-        for (int i = 0; i < N; i++) {
-            QMap.Key key = qmap.withKey();
-            key.putStr(rnd.nextChars(M));
-            QMap.Value value = key.createValue();
-            value.putLong(0, i);
-        }
 
-        for (int i = 0; i < N; i++) {
-            DirectMap.Key kw = map.withKey();
-            kw.putStr(rnd.nextChars(M));
-            DirectMapValues values = map.getOrCreateValues();
-            values.putLong(0, 20);
-        }
-
-    }
-
+    private final Rnd rnd = new Rnd();
 
     public static void main(String[] args) throws RunnerException {
         Options opt = new OptionsBuilder()
-                .include(QMapReadBenchmark.class.getSimpleName())
+                .include(QMapWriteLongBenchmark.class.getSimpleName())
                 .warmupIterations(5)
                 .measurementIterations(5)
                 .forks(1)
@@ -80,20 +64,30 @@ public class QMapReadBenchmark {
 
     @Setup(Level.Iteration)
     public void reset() {
-        System.out.print(" [q=" + qmap.size() + ", l=" + map.size() + ", clash=" + qmap.getCountClashes() + ", chains=" + qmap.getCountChains() + ", recurs=" + qmap.getCountRecursions() + "] ");
+        System.out.print(" [q=" + qmap.size() + ", l=" + map.size() + ", clash=" + qmap.getCountClashes() + ", chains=" + qmap.getCountChains() + ", recurs=" + qmap.getCountRecursions() + ", cap=" + qmap.getKeyCapacity() + "] ");
+        map.clear();
+        qmap.clear();
+        rnd.reset();
     }
 
     @Benchmark
-    public QMap.Value testQMap() {
+    public long baseline() {
+        return rnd.nextLong();
+    }
+
+    @Benchmark
+    public void testQMap() {
         QMap.Key key = qmap.withKey();
-        key.putStr(rnd.nextChars(M));
-        return key.findValue();
+        key.putLong(rnd.nextLong());
+        QMap.Value value = key.createValue();
+        value.putLong(0, 20);
     }
 
     @Benchmark
-    public DirectMapValues testDirectMap() {
+    public void testDirectMap() {
         DirectMap.Key kw = map.withKey();
-        kw.putStr(rnd.nextChars(M));
-        return map.getValues();
+        kw.putLong(rnd.nextLong());
+        DirectMapValues values = map.getOrCreateValues();
+        values.putLong(0, 20);
     }
 }

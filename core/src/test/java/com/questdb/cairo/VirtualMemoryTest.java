@@ -810,6 +810,23 @@ public class VirtualMemoryTest {
         Assert.assertFalse(Chars.equals(s1, s2));
     }
 
+    @Test
+    public void testBinSequenceOnEdge() {
+        final Rnd rnd = new Rnd();
+        try (VirtualMemory mem = new VirtualMemory(32)) {
+            TestRecord.ArrayBinarySequence seq = new TestRecord.ArrayBinarySequence();
+            int N = 33;
+
+            seq.of(rnd.nextBytes(N));
+            mem.putBin(seq);
+
+            BinarySequence actual = mem.getBin(0);
+            Assert.assertNotNull(actual);
+
+            TestUtils.assertEquals(seq, actual, N);
+        }
+    }
+
     private void testBinSequence0(long mem1Size, long mem2Size) {
         Rnd rnd = new Rnd();
         int n = 999;

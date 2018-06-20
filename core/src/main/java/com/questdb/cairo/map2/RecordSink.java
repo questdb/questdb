@@ -21,31 +21,10 @@
  *
  ******************************************************************************/
 
-package com.questdb.cairo.map;
+package com.questdb.cairo.map2;
 
-import com.questdb.cairo.ColumnTypes;
-import com.questdb.std.IntList;
+import com.questdb.cairo.sql.Record;
 
-public class ArrayColumnTypes implements ColumnTypes {
-    private final IntList types = new IntList();
-
-    public ArrayColumnTypes reset() {
-        types.clear();
-        return this;
-    }
-
-    public ArrayColumnTypes add(int type) {
-        types.add(type);
-        return this;
-    }
-
-    @Override
-    public int getColumnType(int columnIndex) {
-        return types.getQuick(columnIndex);
-    }
-
-    @Override
-    public int getColumnCount() {
-        return types.size();
-    }
+public interface RecordSink {
+    void copy(Record r, DirectMap.Key w);
 }

@@ -21,31 +21,35 @@
  *
  ******************************************************************************/
 
-package com.questdb.cairo.map;
+package com.questdb.cairo.map2;
 
-import com.questdb.cairo.ColumnTypes;
-import com.questdb.std.IntList;
+import com.questdb.std.Unsafe;
 
-public class ArrayColumnTypes implements ColumnTypes {
-    private final IntList types = new IntList();
+public final class DirectMapIterator implements com.questdb.std.ImmutableIterator<DirectMapRecord> {
+    private final DirectMapRecord record;
+    private int count;
+    private long address;
 
-    public ArrayColumnTypes reset() {
-        types.clear();
-        return this;
-    }
-
-    public ArrayColumnTypes add(int type) {
-        types.add(type);
-        return this;
+    DirectMapIterator(DirectMapRecord record) {
+        this.record = record;
     }
 
     @Override
-    public int getColumnType(int columnIndex) {
-        return types.getQuick(columnIndex);
+    public boolean hasNext() {
+        return count > 0;
     }
 
     @Override
-    public int getColumnCount() {
-        return types.size();
+    public DirectMapRecord next() {
+        long address = this.address;
+        this.address = address + Unsafe.getUnsafe().getInt(address);
+        count--;
+        return record.of(address);
+    }
+
+    DirectMapIterator init(long address, int count) {
+        this.address = address;
+        this.count = count;
+        return this;
     }
 }

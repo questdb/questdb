@@ -517,6 +517,11 @@ public final class TestUtils {
             Assert.assertEquals(bs.length(), actBs.length());
             Assert.assertEquals(bs.length(), actualLen);
             for (long l = 0, z = bs.length(); l < z; l++) {
+                byte b1 = bs.byteAt(l);
+                byte b2 = actBs.byteAt(l);
+                if (b1 != b2) {
+                    Assert.fail("Failed comparison at [" + l + "], expected: " + b1 + ", actual: " + b2);
+                }
                 Assert.assertEquals(bs.byteAt(l), actBs.byteAt(l));
             }
         }

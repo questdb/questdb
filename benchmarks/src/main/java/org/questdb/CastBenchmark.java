@@ -23,12 +23,6 @@
 
 package org.questdb;
 
-import com.questdb.cairo.map.QMap;
-import com.questdb.cairo.map.SingleColumnType;
-import com.questdb.cairo.map2.DirectMap;
-import com.questdb.cairo.map2.DirectMapValues;
-import com.questdb.common.ColumnType;
-import com.questdb.std.Rnd;
 import org.openjdk.jmh.annotations.*;
 import org.openjdk.jmh.runner.Runner;
 import org.openjdk.jmh.runner.RunnerException;
@@ -39,21 +33,19 @@ import java.util.concurrent.TimeUnit;
 
 @State(Scope.Thread)
 @BenchmarkMode(Mode.AverageTime)
-@OutputTimeUnit(TimeUnit.MICROSECONDS)
-public class QMapWriteBenchmark {
+@OutputTimeUnit(TimeUnit.NANOSECONDS)
+public class CastBenchmark {
 
-    private static final int N = 5000000;
-    private static final double loadFactor = 0.5;
-    private static final int M = 25;
-    private static QMap qmap = new QMap(1024 * 1024, new SingleColumnType(ColumnType.STRING), new SingleColumnType(ColumnType.LONG), 64, loadFactor);
-    private static DirectMap map = new DirectMap(1024 * 1024, new SingleColumnType(ColumnType.STRING), new SingleColumnType(ColumnType.LONG), 64, loadFactor);
+    private Object[] objects = new Object[2];
 
-
-    private final Rnd rnd = new Rnd();
+    public CastBenchmark() {
+        this.objects[0] = 10;
+        this.objects[1] = "abc";
+    }
 
     public static void main(String[] args) throws RunnerException {
         Options opt = new OptionsBuilder()
-                .include(QMapWriteBenchmark.class.getSimpleName())
+                .include(CastBenchmark.class.getSimpleName())
                 .warmupIterations(5)
                 .measurementIterations(5)
                 .forks(1)
@@ -62,32 +54,18 @@ public class QMapWriteBenchmark {
         new Runner(opt).run();
     }
 
-    @Setup(Level.Iteration)
-    public void reset() {
-        System.out.print(" [q=" + qmap.size() + ", l=" + map.size() + ", clash=" + qmap.getCountClashes() + ", chains=" + qmap.getCountChains() + ", recurs=" + qmap.getCountRecursions() + ", cap=" + qmap.getKeyCapacity() + "] ");
-        map.clear();
-        qmap.clear();
-        rnd.reset();
+    @Benchmark
+    public Object baseline() {
+        return objects[0];
     }
 
     @Benchmark
-    public CharSequence baseline() {
-        return rnd.nextChars(M);
+    public Integer testCastInt() {
+        return (Integer) objects[0];
     }
 
     @Benchmark
-    public void testQMap() {
-        QMap.Key key = qmap.withKey();
-        key.putStr(rnd.nextChars(M));
-        QMap.Value value = key.createValue();
-        value.putLong(0, 20);
-    }
-
-    @Benchmark
-    public void testDirectMap() {
-        DirectMap.Key kw = map.withKey();
-        kw.putStr(rnd.nextChars(M));
-        DirectMapValues values = map.getOrCreateValues();
-        values.putLong(0, 20);
+    public String testCastString() {
+        return (String) objects[1];
     }
 }

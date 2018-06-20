@@ -21,31 +21,33 @@
  *
  ******************************************************************************/
 
-package com.questdb.cairo.map;
+package com.questdb.griffin.engine.table;
 
-import com.questdb.cairo.ColumnTypes;
-import com.questdb.std.IntList;
+import com.questdb.cairo.sql.DataFrameCursorFactory;
+import com.questdb.cairo.sql.RecordCursor;
+import com.questdb.cairo.sql.RecordCursorFactory;
+import com.questdb.griffin.engine.LongTreeSet;
 
-public class ArrayColumnTypes implements ColumnTypes {
-    private final IntList types = new IntList();
+public class LatestByUnindexedRecordCursorFactory implements RecordCursorFactory {
+    private final DataFrameCursorFactory dataFrameCursorFactory;
+    private final LatestByUnindexedRecordCursor cursor;
+    private final LongTreeSet treeSet;
 
-    public ArrayColumnTypes reset() {
-        types.clear();
-        return this;
-    }
-
-    public ArrayColumnTypes add(int type) {
-        types.add(type);
-        return this;
-    }
-
-    @Override
-    public int getColumnType(int columnIndex) {
-        return types.getQuick(columnIndex);
+    public LatestByUnindexedRecordCursorFactory(DataFrameCursorFactory dataFrameCursorFactory, int columnIndex) {
+        //todo: derive page size from key count for symbol and configuration
+        this.treeSet = new LongTreeSet(4 * 1024);
+        this.cursor = new LatestByUnindexedRecordCursor(treeSet, null, null);
+        this.dataFrameCursorFactory = dataFrameCursorFactory;
     }
 
     @Override
-    public int getColumnCount() {
-        return types.size();
+    public void close() {
+        treeSet.close();
+    }
+
+    @Override
+    public RecordCursor getCursor() {
+        cursor.of(dataFrameCursorFactory.getCursor());
+        return cursor;
     }
 }
