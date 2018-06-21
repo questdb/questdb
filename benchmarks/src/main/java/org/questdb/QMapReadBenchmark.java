@@ -26,7 +26,6 @@ package org.questdb;
 import com.questdb.cairo.map.QMap;
 import com.questdb.cairo.map.SingleColumnType;
 import com.questdb.cairo.map2.DirectMap;
-import com.questdb.cairo.map2.DirectMapValues;
 import com.questdb.common.ColumnType;
 import com.questdb.std.Rnd;
 import org.openjdk.jmh.annotations.*;
@@ -49,24 +48,6 @@ public class QMapReadBenchmark {
     private static QMap qmap = new QMap(1024 * 1024, new SingleColumnType(ColumnType.STRING), new SingleColumnType(ColumnType.LONG), N, loadFactor);
     private static DirectMap map = new DirectMap(1024 * 1024, new SingleColumnType(ColumnType.STRING), new SingleColumnType(ColumnType.LONG), N, loadFactor);
 
-    static {
-        for (int i = 0; i < N; i++) {
-            QMap.Key key = qmap.withKey();
-            key.putStr(rnd.nextChars(M));
-            QMap.Value value = key.createValue();
-            value.putLong(0, i);
-        }
-
-        for (int i = 0; i < N; i++) {
-            DirectMap.Key kw = map.withKey();
-            kw.putStr(rnd.nextChars(M));
-            DirectMapValues values = map.getOrCreateValues();
-            values.putLong(0, 20);
-        }
-
-    }
-
-
     public static void main(String[] args) throws RunnerException {
         Options opt = new OptionsBuilder()
                 .include(QMapReadBenchmark.class.getSimpleName())
@@ -84,16 +65,33 @@ public class QMapReadBenchmark {
     }
 
     @Benchmark
+    public DirectMap.Value testDirectMap() {
+        DirectMap.Key kw = map.withKey();
+        kw.putStr(rnd.nextChars(M));
+        return map.findValue();
+    }
+
+    @Benchmark
     public QMap.Value testQMap() {
         QMap.Key key = qmap.withKey();
         key.putStr(rnd.nextChars(M));
         return key.findValue();
     }
 
-    @Benchmark
-    public DirectMapValues testDirectMap() {
-        DirectMap.Key kw = map.withKey();
-        kw.putStr(rnd.nextChars(M));
-        return map.getValues();
+    static {
+        for (int i = 0; i < N; i++) {
+            QMap.Key key = qmap.withKey();
+            key.putStr(rnd.nextChars(M));
+            QMap.Value value = key.createValue();
+            value.putLong(0, i);
+        }
+
+        for (int i = 0; i < N; i++) {
+            DirectMap.Key kw = map.withKey();
+            kw.putStr(rnd.nextChars(M));
+            DirectMap.Value values = map.createValue();
+            values.putLong(0, 20);
+        }
+
     }
 }

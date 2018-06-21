@@ -39,7 +39,7 @@ public class DirectMap implements Mutable, Iterable<DirectMapRecord>, Closeable 
     private static final int MIN_INITIAL_CAPACITY = 128;
     private final double loadFactor;
     private final Key keyWriter = new Key();
-    private final DirectMapValues values;
+    private final DirectMapValue values;
     private final DirectMapIterator iterator;
     private final DirectMapRecord record;
     private final int valueColumnCount;
@@ -58,8 +58,17 @@ public class DirectMap implements Mutable, Iterable<DirectMapRecord>, Closeable 
     private int mask;
 
     public DirectMap(int pageSize,
-                     ColumnTypes keyTypes,
-                     ColumnTypes valueTypes,
+                     @NotNull ColumnTypes keyTypes,
+                     int keyCapacity,
+                     double loadFactor
+    ) {
+        this(pageSize, keyTypes, null, keyCapacity, loadFactor, DEFAULT_HASH);
+    }
+
+
+    public DirectMap(int pageSize,
+                     @NotNull ColumnTypes keyTypes,
+                     @NotNull ColumnTypes valueTypes,
                      int keyCapacity,
                      double loadFactor
     ) {
@@ -89,47 +98,52 @@ public class DirectMap implements Mutable, Iterable<DirectMapRecord>, Closeable 
         this.offsets = new DirectLongList(this.keyCapacity);
         this.offsets.setPos(this.keyCapacity);
         this.offsets.zero(-1);
-        this.valueColumnCount = valueTypes.getColumnCount();
-        final int columnSplit = valueColumnCount;
-        int[] valueOffsets = new int[columnSplit];
         this.hashFunction = hashFunction;
 
+        int[] valueOffsets;
         int offset = 4;
-        for (int i = 0; i < columnSplit; i++) {
-            valueOffsets[i] = offset;
-            switch (valueTypes.getColumnType(i)) {
-                case ColumnType.BYTE:
-                case ColumnType.BOOLEAN:
-                    offset++;
-                    break;
-                case ColumnType.SHORT:
-                    offset += 2;
-                    break;
-                case ColumnType.INT:
-                case ColumnType.FLOAT:
-                    offset += 4;
-                    break;
-                case ColumnType.LONG:
-                case ColumnType.DOUBLE:
-                case ColumnType.DATE:
-                case ColumnType.TIMESTAMP:
-                    offset += 8;
-                    break;
-                default:
-                    close();
-                    throw CairoException.instance(0).put("value type is not supported: ").put(ColumnType.nameOf(valueTypes.getColumnType(i)));
+        if (valueTypes != null) {
+            this.valueColumnCount = valueTypes.getColumnCount();
+            final int columnSplit = valueColumnCount;
+            valueOffsets = new int[columnSplit];
+
+            for (int i = 0; i < columnSplit; i++) {
+                valueOffsets[i] = offset;
+                switch (valueTypes.getColumnType(i)) {
+                    case ColumnType.BYTE:
+                    case ColumnType.BOOLEAN:
+                        offset++;
+                        break;
+                    case ColumnType.SHORT:
+                        offset += 2;
+                        break;
+                    case ColumnType.INT:
+                    case ColumnType.FLOAT:
+                        offset += 4;
+                        break;
+                    case ColumnType.LONG:
+                    case ColumnType.DOUBLE:
+                    case ColumnType.DATE:
+                    case ColumnType.TIMESTAMP:
+                        offset += 8;
+                        break;
+                    default:
+                        close();
+                        throw CairoException.instance(0).put("value type is not supported: ").put(ColumnType.nameOf(valueTypes.getColumnType(i)));
+                }
             }
+            this.values = new DirectMapValue(valueOffsets);
+            this.keyBlockOffset = offset;
+            this.keyDataOffset = this.keyBlockOffset + 4 * keyTypes.getColumnCount();
+            this.record = new DirectMapRecord(valueOffsets, columnSplit, keyDataOffset, keyBlockOffset, values, keyTypes);
+        } else {
+            this.valueColumnCount = 0;
+            this.values = new DirectMapValue(null);
+            this.keyBlockOffset = offset;
+            this.keyDataOffset = this.keyBlockOffset + 4 * keyTypes.getColumnCount();
+            this.record = new DirectMapRecord(null, 0, keyDataOffset, keyBlockOffset, values, keyTypes);
         }
-
-        this.values = new DirectMapValues(valueOffsets);
-        this.keyBlockOffset = offset;
-        this.keyDataOffset = this.keyBlockOffset + 4 * keyTypes.getColumnCount();
-        this.record = new DirectMapRecord(valueOffsets, keyDataOffset, keyBlockOffset, values, keyTypes);
         this.iterator = new DirectMapIterator(record);
-    }
-
-    int getValueColumnCount() {
-        return valueColumnCount;
     }
 
     public void clear() {
@@ -148,15 +162,11 @@ public class DirectMap implements Mutable, Iterable<DirectMapRecord>, Closeable 
         }
     }
 
-    public DirectMapRecord recordAt(long rowid) {
-        return record.of(rowid);
+    public boolean createKey() {
+        return createValue().isNew();
     }
 
-    private int keyIndex() {
-        return hashFunction.hash(keyWriter.startAddress + keyDataOffset, keyWriter.len - keyDataOffset) & mask;
-    }
-
-    public DirectMapValues getOrCreateValues() {
+    public Value createValue() {
         keyWriter.commit();
         // calculate hash remembering "key" structure
         // [ len | value block | key offset block | key data block ]
@@ -172,7 +182,11 @@ public class DirectMap implements Mutable, Iterable<DirectMapRecord>, Closeable 
         }
     }
 
-    public DirectMapValues getValues() {
+    public boolean excludesKey() {
+        return findValue() == null;
+    }
+
+    public Value findValue() {
         keyWriter.commit();
         int index = keyIndex();
         long offset = offsets.get(index);
@@ -192,6 +206,14 @@ public class DirectMap implements Mutable, Iterable<DirectMapRecord>, Closeable 
         return iterator.init(kStart, size);
     }
 
+    public DirectMapRecord recordAt(long rowid) {
+        return record.of(rowid);
+    }
+
+    public int size() {
+        return size;
+    }
+
     public Key withKey() {
         return keyWriter.init();
     }
@@ -206,11 +228,7 @@ public class DirectMap implements Mutable, Iterable<DirectMapRecord>, Closeable 
         keyWriter.appendAddress += 8;
     }
 
-    public int size() {
-        return size;
-    }
-
-    private DirectMapValues asNew(Key keyWriter, int index) {
+    private DirectMapValue asNew(Key keyWriter, int index) {
         kPos = keyWriter.appendAddress;
         offsets.set(index, keyWriter.startAddress - kStart);
         if (--free == 0) {
@@ -251,7 +269,19 @@ public class DirectMap implements Mutable, Iterable<DirectMapRecord>, Closeable 
         return true;
     }
 
-    private DirectMapValues probe0(Key keyWriter, int index) {
+    long getAppendOffset() {
+        return kPos;
+    }
+
+    int getValueColumnCount() {
+        return valueColumnCount;
+    }
+
+    private int keyIndex() {
+        return hashFunction.hash(keyWriter.startAddress + keyDataOffset, keyWriter.len - keyDataOffset) & mask;
+    }
+
+    private DirectMapValue probe0(Key keyWriter, int index) {
         long offset;
         while ((offset = offsets.get(index = (++index & mask))) != -1) {
             if (eq(keyWriter, offset)) {
@@ -261,7 +291,7 @@ public class DirectMap implements Mutable, Iterable<DirectMapRecord>, Closeable 
         return asNew(keyWriter, index);
     }
 
-    private DirectMapValues probeReadOnly(Key keyWriter, int index) {
+    private DirectMapValue probeReadOnly(Key keyWriter, int index) {
         long offset;
         while ((offset = offsets.get(index = (++index & mask))) != -1) {
             if (eq(keyWriter, offset)) {
@@ -325,13 +355,50 @@ public class DirectMap implements Mutable, Iterable<DirectMapRecord>, Closeable 
         this.kLimit = kStart + kCapacity;
     }
 
-    long getAppendOffset() {
-        return kPos;
-    }
-
     @FunctionalInterface
     public interface HashFunction {
         int hash(long address, int len);
+    }
+
+    public interface Value {
+
+        boolean getBool(int columnIndex);
+
+        byte getByte(int index);
+
+        long getDate(int columnIndex);
+
+        double getDouble(int index);
+
+        float getFloat(int index);
+
+        int getInt(int index);
+
+        long getLong(int index);
+
+        short getShort(int index);
+
+        long getTimestamp(int columnIndex);
+
+        boolean isNew();
+
+        void putBool(int columnIndex, boolean value);
+
+        void putByte(int index, byte value);
+
+        void putDate(int index, long value);
+
+        void putDouble(int index, double value);
+
+        void putFloat(int index, float value);
+
+        void putInt(int index, int value);
+
+        void putLong(int index, long value);
+
+        void putShort(int index, short value);
+
+        void putTimestamp(int columnIndex, long value);
     }
 
     public class Key {
@@ -339,10 +406,6 @@ public class DirectMap implements Mutable, Iterable<DirectMapRecord>, Closeable 
         private long appendAddress;
         private int len;
         private long nextColOffset;
-
-        private void commit() {
-            Unsafe.getUnsafe().putInt(startAddress, len = (int) (appendAddress - startAddress));
-        }
 
         public Key init() {
             startAddress = kPos;
@@ -382,10 +445,6 @@ public class DirectMap implements Mutable, Iterable<DirectMapRecord>, Closeable 
             }
         }
 
-        public void putRecord(Record record, RecordSink sink) {
-            sink.copy(record, this);
-        }
-
         public void putBool(boolean value) {
             checkSize(1);
             Unsafe.getUnsafe().putByte(appendAddress, (byte) (value ? 1 : 0));
@@ -398,6 +457,10 @@ public class DirectMap implements Mutable, Iterable<DirectMapRecord>, Closeable 
             Unsafe.getUnsafe().putByte(appendAddress, value);
             appendAddress += 1;
             writeOffset();
+        }
+
+        public void putDate(long value) {
+            putLong(value);
         }
 
         public void putDouble(double value) {
@@ -428,20 +491,15 @@ public class DirectMap implements Mutable, Iterable<DirectMapRecord>, Closeable 
             writeOffset();
         }
 
+        public void putRecord(Record record, RecordSink sink) {
+            sink.copy(record, this);
+        }
+
         public void putShort(short value) {
             checkSize(2);
             Unsafe.getUnsafe().putShort(appendAddress, value);
             appendAddress += 2;
             writeOffset();
-        }
-
-        public void putDate(long value) {
-            putLong(value);
-        }
-
-        @SuppressWarnings("unused")
-        public void putTimestamp(long value) {
-            putLong(value);
         }
 
         public void putStr(CharSequence value) {
@@ -461,10 +519,19 @@ public class DirectMap implements Mutable, Iterable<DirectMapRecord>, Closeable 
             writeOffset();
         }
 
+        @SuppressWarnings("unused")
+        public void putTimestamp(long value) {
+            putLong(value);
+        }
+
         private void checkSize(int size) {
             if (appendAddress + size > kLimit) {
                 resize(size);
             }
+        }
+
+        private void commit() {
+            Unsafe.getUnsafe().putInt(startAddress, len = (int) (appendAddress - startAddress));
         }
 
         private void putNull() {

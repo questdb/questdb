@@ -26,7 +26,6 @@ package org.questdb;
 import com.questdb.cairo.map.QMap;
 import com.questdb.cairo.map.SingleColumnType;
 import com.questdb.cairo.map2.DirectMap;
-import com.questdb.cairo.map2.DirectMapValues;
 import com.questdb.common.ColumnType;
 import com.questdb.std.Rnd;
 import org.openjdk.jmh.annotations.*;
@@ -62,6 +61,11 @@ public class QMapWriteLongBenchmark {
         new Runner(opt).run();
     }
 
+    @Benchmark
+    public long baseline() {
+        return rnd.nextLong();
+    }
+
     @Setup(Level.Iteration)
     public void reset() {
         System.out.print(" [q=" + qmap.size() + ", l=" + map.size() + ", clash=" + qmap.getCountClashes() + ", chains=" + qmap.getCountChains() + ", recurs=" + qmap.getCountRecursions() + ", cap=" + qmap.getKeyCapacity() + "] ");
@@ -71,8 +75,11 @@ public class QMapWriteLongBenchmark {
     }
 
     @Benchmark
-    public long baseline() {
-        return rnd.nextLong();
+    public void testDirectMap() {
+        DirectMap.Key kw = map.withKey();
+        kw.putLong(rnd.nextLong());
+        DirectMap.Value values = map.createValue();
+        values.putLong(0, 20);
     }
 
     @Benchmark
@@ -81,13 +88,5 @@ public class QMapWriteLongBenchmark {
         key.putLong(rnd.nextLong());
         QMap.Value value = key.createValue();
         value.putLong(0, 20);
-    }
-
-    @Benchmark
-    public void testDirectMap() {
-        DirectMap.Key kw = map.withKey();
-        kw.putLong(rnd.nextLong());
-        DirectMapValues values = map.getOrCreateValues();
-        values.putLong(0, 20);
     }
 }

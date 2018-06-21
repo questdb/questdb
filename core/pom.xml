@@ -5,7 +5,7 @@
   ~  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
   ~   \__\_\\__,_|\___||___/\__|____/|____/
   ~
-  ~ Copyright (C) 2014-2017 Appsicle
+  ~ Copyright (C) 2014-2018 Appsicle
   ~
   ~ This program is free software: you can redistribute it and/or  modify
   ~ it under the terms of the GNU Affero General Public License, version 3,
@@ -191,6 +191,18 @@
                                 </goals>
                             </execution>
                         </executions>
+                    </plugin>
+                    <plugin>
+                        <groupId>org.codehaus.mojo</groupId>
+                        <artifactId>cobertura-maven-plugin</artifactId>
+                        <version>2.7</version>
+                        <configuration>
+                            <formats>
+                                <format>html</format>
+                                <format>xml</format>
+                            </formats>
+                            <check/>
+                        </configuration>
                     </plugin>
                 </plugins>
             </build>

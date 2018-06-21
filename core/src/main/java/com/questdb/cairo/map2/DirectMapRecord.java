@@ -41,19 +41,20 @@ public final class DirectMapRecord implements Record {
     private final DirectCharSequence csA[];
     private final DirectCharSequence csB[];
     private final DirectBinarySequence bs[];
-    private final DirectMapValues values;
+    private final DirectMapValue values;
     private long address0;
     private long address1;
     private long address2;
 
     DirectMapRecord(
             int valueOffsets[],
+            int split,
             int keyDataOffset,
             int keyBlockOffset,
-            DirectMapValues values,
+            DirectMapValue values,
             @Transient ColumnTypes keyTypes) {
-        this.split = valueOffsets.length;
         this.valueOffsets = valueOffsets;
+        this.split = split;
         this.keyBlockOffset = keyBlockOffset;
         this.keyDataOffset = keyDataOffset;
         this.values = values;
@@ -91,13 +92,30 @@ public final class DirectMapRecord implements Record {
     }
 
     @Override
-    public byte getByte(int columnIndex) {
-        return Unsafe.getUnsafe().getByte(addressOfColumn(columnIndex));
+    public BinarySequence getBin(int columnIndex) {
+        long address = addressOfColumn(columnIndex);
+        int len = Unsafe.getUnsafe().getInt(address);
+        if (len == TableUtils.NULL_LEN) {
+            return null;
+        }
+        DirectBinarySequence bs = this.bs[columnIndex];
+        bs.of(address + 4, len);
+        return bs;
+    }
+
+    @Override
+    public long getBinLen(int columnIndex) {
+        return Unsafe.getUnsafe().getInt(addressOfColumn(columnIndex));
     }
 
     @Override
     public boolean getBool(int columnIndex) {
         return Unsafe.getBool(addressOfColumn(columnIndex));
+    }
+
+    @Override
+    public byte getByte(int columnIndex) {
+        return Unsafe.getUnsafe().getByte(addressOfColumn(columnIndex));
     }
 
     @Override
@@ -117,8 +135,14 @@ public final class DirectMapRecord implements Record {
     }
 
     @Override
-    public CharSequence getStrB(int columnIndex) {
-        return getStr0(columnIndex, Unsafe.arrayGet(csB, columnIndex));
+    public void getStr(int columnIndex, CharSink sink) {
+        long address = addressOfColumn(columnIndex);
+        int len = Unsafe.getUnsafe().getInt(address);
+        address += 4;
+        for (int i = 0; i < len; i++) {
+            sink.put(Unsafe.getUnsafe().getChar(address));
+            address += 2;
+        }
     }
 
     @Override
@@ -142,31 +166,8 @@ public final class DirectMapRecord implements Record {
     }
 
     @Override
-    public void getStr(int columnIndex, CharSink sink) {
-        long address = addressOfColumn(columnIndex);
-        int len = Unsafe.getUnsafe().getInt(address);
-        address += 4;
-        for (int i = 0; i < len; i++) {
-            sink.put(Unsafe.getUnsafe().getChar(address));
-            address += 2;
-        }
-    }
-
-    @Override
-    public BinarySequence getBin(int columnIndex) {
-        long address = addressOfColumn(columnIndex);
-        int len = Unsafe.getUnsafe().getInt(address);
-        if (len == TableUtils.NULL_LEN) {
-            return null;
-        }
-        DirectBinarySequence bs = this.bs[columnIndex];
-        bs.of(address + 4, len);
-        return bs;
-    }
-
-    @Override
-    public long getBinLen(int columnIndex) {
-        return Unsafe.getUnsafe().getInt(addressOfColumn(columnIndex));
+    public CharSequence getStrB(int columnIndex) {
+        return getStr0(columnIndex, Unsafe.arrayGet(csB, columnIndex));
     }
 
     @Override
@@ -174,7 +175,7 @@ public final class DirectMapRecord implements Record {
         return Unsafe.getUnsafe().getInt(addressOfColumn(columnIndex));
     }
 
-    public DirectMapValues values() {
+    public DirectMapValue values() {
         return values.of(address0, false);
     }
 
@@ -208,11 +209,6 @@ public final class DirectMapRecord implements Record {
         private long address;
         private long len;
 
-        public void of(long address, long len) {
-            this.address = address;
-            this.len = len;
-        }
-
         @Override
         public byte byteAt(long index) {
             return Unsafe.getUnsafe().getByte(address + index);
@@ -221,6 +217,11 @@ public final class DirectMapRecord implements Record {
         @Override
         public long length() {
             return len;
+        }
+
+        public void of(long address, long len) {
+            this.address = address;
+            this.len = len;
         }
     }
 }

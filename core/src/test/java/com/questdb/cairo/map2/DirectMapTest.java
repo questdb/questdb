@@ -32,39 +32,9 @@ import com.questdb.common.PartitionBy;
 import com.questdb.std.*;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
-import org.junit.Ignore;
 import org.junit.Test;
 
 public class DirectMapTest extends AbstractCairoTest {
-
-    @Test
-    @Ignore
-    // This test crashes CircleCI, probably due to amount of memory it need to run
-    // I'm going to find out how to deal with that
-    public void testMemoryStretch() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            ArrayColumnTypes keyTypes = new ArrayColumnTypes();
-            ColumnTypes valueTypes = new SingleColumnType(ColumnType.LONG);
-            int N = 1500000;
-            for (int i = 0; i < N; i++) {
-                keyTypes.add(ColumnType.STRING);
-            }
-
-            final Rnd rnd = new Rnd();
-            try (DirectMap map = new DirectMap(Numbers.SIZE_1MB, keyTypes, valueTypes, 1024, 0.5f)) {
-                try {
-                    DirectMap.Key key = map.withKey();
-                    for (int i = 0; i < N; i++) {
-                        key.putStr(rnd.nextChars(1024));
-                    }
-                    map.getOrCreateValues();
-                    Assert.fail();
-                } catch (CairoException e) {
-                    TestUtils.assertContains(e.getMessage(), "row data is too large");
-                }
-            }
-        });
-    }
 
     @Test
     public void testAppendExisting() throws Exception {
@@ -84,7 +54,7 @@ public class DirectMapTest extends AbstractCairoTest {
                     DirectMap.Key key = map.withKey();
                     key.putStr(s);
 
-                    DirectMapValues value = map.getOrCreateValues();
+                    DirectMap.Value value = map.createValue();
                     Assert.assertTrue(value.isNew());
                     value.putLong(0, i + 1);
                 }
@@ -94,7 +64,7 @@ public class DirectMapTest extends AbstractCairoTest {
                     DirectMap.Key key = map.withKey();
                     CharSequence s = keys.getQuick(i);
                     key.putStr(s);
-                    DirectMapValues value = map.getOrCreateValues();
+                    DirectMap.Value value = map.createValue();
                     Assert.assertFalse(value.isNew());
                     Assert.assertEquals(i + 1, value.getLong(0));
                 }
@@ -117,7 +87,7 @@ public class DirectMapTest extends AbstractCairoTest {
                     CharSequence s = rnd.nextChars(M);
                     DirectMap.Key key = map.withKey();
                     key.putStr(s);
-                    DirectMapValues value = map.getOrCreateValues();
+                    DirectMap.Value value = map.createValue();
                     value.putLong(0, i + 1);
                 }
                 Assert.assertEquals(N, map.size());
@@ -129,7 +99,7 @@ public class DirectMapTest extends AbstractCairoTest {
                     CharSequence s = rnd.nextChars(M);
                     DirectMap.Key key = map.withKey();
                     key.putStr(s);
-                    DirectMapValues value = map.getValues();
+                    DirectMap.Value value = map.findValue();
                     Assert.assertNotNull(value);
                     Assert.assertEquals(i + 1, value.getLong(0));
                 }
@@ -140,41 +110,18 @@ public class DirectMapTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testRowIdStore() throws Exception {
+    public void testConstructorRecovery() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            final int N = 10000;
-            final Rnd rnd = new Rnd();
-            final TestRecord.ArrayBinarySequence binarySequence = new TestRecord.ArrayBinarySequence();
-            createTestTable(N, rnd, binarySequence);
+            TestRecord.ArrayBinarySequence binarySequence = new TestRecord.ArrayBinarySequence();
+            createTestTable(10, new Rnd(), binarySequence);
 
-            ColumnTypes types = new SingleColumnType(ColumnType.LONG);
-
-            try (DirectMap map = new DirectMap(1024, types, types, N / 4, 0.5f)) {
-
-                try (TableReader reader = new TableReader(configuration, "x")) {
-                    RecordCursor cursor = reader.getCursor();
-
-                    long counter = 0;
-                    while (cursor.hasNext()) {
-                        Record record = cursor.next();
-                        map.withKeyAsLong(record.getRowId());
-                        DirectMapValues values = map.getOrCreateValues();
-                        Assert.assertTrue(values.isNew());
-                        values.putLong(0, ++counter);
-                    }
-
-                    cursor.toTop();
-                    counter = 0;
-                    while (cursor.hasNext()) {
-                        Record record = cursor.next();
-                        map.withKeyAsLong(record.getRowId());
-                        DirectMapValues values = map.getValues();
-                        Assert.assertNotNull(values);
-                        Assert.assertEquals(++counter, values.getLong(0));
-                    }
+            try (TableReader reader = new TableReader(configuration, "x")) {
+                try {
+                    new QMap(1024, reader.getMetadata(), new SingleColumnType(ColumnType.LONG), 16, 0.75);
+                    Assert.fail();
+                } catch (Exception e) {
+                    TestUtils.assertContains(e.getMessage(), "Unsupported column type");
                 }
-
-                Assert.assertEquals(N, map.size());
             }
         });
     }
@@ -192,9 +139,8 @@ public class DirectMapTest extends AbstractCairoTest {
 
             try (DirectMap map = new DirectMap(1024, types, types, N / 4, 0.5f, hash)) {
                 // lookup key that doesn't exist
-
                 map.withKey().putInt(10);
-                Assert.assertNull(map.getValues());
+                Assert.assertTrue(map.excludesKey());
                 assertDupes(map, rnd, N);
                 map.clear();
                 assertDupes(map, rnd, N);
@@ -202,26 +148,108 @@ public class DirectMapTest extends AbstractCairoTest {
         });
     }
 
-    private void assertDupes(DirectMap map, Rnd rnd, int n) {
-        for (int i = 0; i < n; i++) {
-            int key = rnd.nextInt() & (16 - 1);
-            map.withKey().putInt(key);
-            DirectMapValues values = map.getOrCreateValues();
-            if (values.isNew()) {
-                values.putInt(0, 0);
-            } else {
-                values.putInt(0, values.getInt(0) + 1);
-            }
-        }
-        Assert.assertEquals(map.size(), 16);
+    @Test
+    public void testLargeBinSequence() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
 
-        // attempt to read keys higher than bucket value
-        // this must yield null values
-        for (int i = 0; i < n * 2; i++) {
-            int key = (rnd.nextInt() & (16 - 1)) + 16;
-            map.withKey().putInt(key);
-            Assert.assertNull(map.getValues());
+            ColumnTypes keyTypes = new SingleColumnType(ColumnType.BINARY);
+            ColumnTypes valueTypes = new SingleColumnType(ColumnType.INT);
+            TestRecord.ArrayBinarySequence binarySequence = new TestRecord.ArrayBinarySequence();
+            try (DirectMap map = new DirectMap(Numbers.SIZE_1MB, keyTypes, valueTypes, 64, 0.5)) {
+                final Rnd rnd = new Rnd();
+                map.withKey().putBin(binarySequence.of(rnd.nextBytes(10)));
+                DirectMap.Value value = map.createValue();
+                value.putInt(0, rnd.nextInt());
+
+                BinarySequence bad = new BinarySequence() {
+                    @Override
+                    public byte byteAt(long index) {
+                        return 0;
+                    }
+
+                    @Override
+                    public long length() {
+                        return Integer.MAX_VALUE + 1L;
+                    }
+                };
+
+                try {
+                    map.withKey().putBin(bad);
+                    Assert.fail();
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getMessage(), "binary column is too large");
+                }
+
+                map.withKey().putBin(binarySequence.of(rnd.nextBytes(20)));
+                value = map.createValue();
+                value.putInt(0, rnd.nextInt());
+
+                Assert.assertEquals(2, map.size());
+
+                // and read
+                rnd.reset();
+                map.withKey().putBin(binarySequence.of(rnd.nextBytes(10)));
+                Assert.assertEquals(rnd.nextInt(), map.findValue().getInt(0));
+
+                map.withKey().putBin(binarySequence.of(rnd.nextBytes(20)));
+                Assert.assertEquals(rnd.nextInt(), map.findValue().getInt(0));
+            }
+        });
+    }
+
+    @Test
+    // This test crashes CircleCI, probably due to amount of memory it need to run
+    // I'm going to find out how to deal with that
+    public void testMemoryStretch() throws Exception {
+        if (System.getProperty("questdb.enable_heavy_tests") != null) {
+            TestUtils.assertMemoryLeak(() -> {
+                ArrayColumnTypes keyTypes = new ArrayColumnTypes();
+                ColumnTypes valueTypes = new SingleColumnType(ColumnType.LONG);
+                int N = 1500000;
+                for (int i = 0; i < N; i++) {
+                    keyTypes.add(ColumnType.STRING);
+                }
+
+                final Rnd rnd = new Rnd();
+                try (DirectMap map = new DirectMap(Numbers.SIZE_1MB, keyTypes, valueTypes, 1024, 0.5f)) {
+                    try {
+                        DirectMap.Key key = map.withKey();
+                        for (int i = 0; i < N; i++) {
+                            key.putStr(rnd.nextChars(1024));
+                        }
+                        map.createValue();
+                        Assert.fail();
+                    } catch (CairoException e) {
+                        TestUtils.assertContains(e.getMessage(), "row data is too large");
+                    }
+                }
+            });
         }
+    }
+
+    @Test
+    public void testNoValueColumns() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final ColumnTypes keyTypes = new SingleColumnType(ColumnType.INT);
+            final Rnd rnd = new Rnd();
+            final int N = 100;
+            try (DirectMap map = new DirectMap(Numbers.SIZE_1MB, keyTypes, 64, 0.5f)) {
+                for (int i = 0; i < N; i++) {
+                    map.withKey().putInt(rnd.nextInt());
+                    Assert.assertTrue(map.createKey());
+                }
+
+                Assert.assertEquals(N, map.size());
+
+                rnd.reset();
+
+                for (int i = 0; i < N; i++) {
+                    map.withKey().putInt(rnd.nextInt());
+                    Assert.assertFalse(map.excludesKey());
+                }
+                Assert.assertEquals(N, map.size());
+            }
+        });
     }
 
     @Test
@@ -334,12 +362,19 @@ public class DirectMapTest extends AbstractCairoTest {
                             Assert.assertNull(record.getStr(keyColumnOffset + 8));
                             Assert.assertNull(record.getStrB(keyColumnOffset + 8));
                             Assert.assertEquals(-1, record.getStrLen(keyColumnOffset + 8));
+                            AbstractCairoTest.sink.clear();
+                            record.getStr(keyColumnOffset + 8, AbstractCairoTest.sink);
+                            Assert.assertEquals(0, AbstractCairoTest.sink.length());
                         } else {
                             CharSequence tmp = rnd.nextChars(5);
                             TestUtils.assertEquals(tmp, record.getStr(keyColumnOffset + 8));
                             TestUtils.assertEquals(tmp, record.getStrB(keyColumnOffset + 8));
                             Assert.assertEquals(tmp.length(), record.getStrLen(keyColumnOffset + 8));
+                            AbstractCairoTest.sink.clear();
+                            record.getStr(keyColumnOffset + 8, AbstractCairoTest.sink);
+                            TestUtils.assertEquals(tmp, AbstractCairoTest.sink);
                         }
+
                         // we are storing symbol as string, assert as such
 
                         if (rnd.nextInt() % 4 == 0) {
@@ -365,8 +400,80 @@ public class DirectMapTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testUnsupportedKeyValueSymbol() throws Exception {
-        testUnsupportedValueType(ColumnType.SYMBOL);
+    public void testRowIdAccess() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            ColumnTypes types = new SingleColumnType(ColumnType.INT);
+            final int N = 10000;
+            final Rnd rnd = new Rnd();
+            try (DirectMap map = new DirectMap(Numbers.SIZE_1MB, types, types, 64, 0.5)) {
+
+
+                for (int i = 0; i < N; i++) {
+                    map.withKey().putInt(rnd.nextInt());
+                    DirectMap.Value values = map.createValue();
+                    Assert.assertTrue(values.isNew());
+                    values.putInt(0, i + 1);
+                }
+
+                // reset random generator and iterate map to double the value
+                rnd.reset();
+                LongList list = new LongList();
+                for (DirectMapRecord record : map) {
+                    list.add(record.getRowId());
+                    Assert.assertEquals(rnd.nextInt(), record.getInt(1));
+                    DirectMap.Value values = record.values();
+                    values.putInt(0, values.getInt(0) * 2);
+                }
+
+                // access map by rowid now
+                rnd.reset();
+                for (int i = 0, n = list.size(); i < n; i++) {
+                    DirectMapRecord record = map.recordAt(list.getQuick(i));
+                    Assert.assertEquals((i + 1) * 2, record.getInt(0));
+                    Assert.assertEquals(rnd.nextInt(), record.getInt(1));
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testRowIdStore() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final int N = 10000;
+            final Rnd rnd = new Rnd();
+            final TestRecord.ArrayBinarySequence binarySequence = new TestRecord.ArrayBinarySequence();
+            createTestTable(N, rnd, binarySequence);
+
+            ColumnTypes types = new SingleColumnType(ColumnType.LONG);
+
+            try (DirectMap map = new DirectMap(1024, types, types, N / 4, 0.5f)) {
+
+                try (TableReader reader = new TableReader(configuration, "x")) {
+                    RecordCursor cursor = reader.getCursor();
+
+                    long counter = 0;
+                    while (cursor.hasNext()) {
+                        Record record = cursor.next();
+                        map.withKeyAsLong(record.getRowId());
+                        DirectMap.Value values = map.createValue();
+                        Assert.assertTrue(values.isNew());
+                        values.putLong(0, ++counter);
+                    }
+
+                    cursor.toTop();
+                    counter = 0;
+                    while (cursor.hasNext()) {
+                        Record record = cursor.next();
+                        map.withKeyAsLong(record.getRowId());
+                        DirectMap.Value values = map.findValue();
+                        Assert.assertNotNull(values);
+                        Assert.assertEquals(++counter, values.getLong(0));
+                    }
+                }
+
+                Assert.assertEquals(N, map.size());
+            }
+        });
     }
 
     @Test
@@ -374,16 +481,212 @@ public class DirectMapTest extends AbstractCairoTest {
         testUnsupportedValueType(ColumnType.BINARY);
     }
 
+    @Test
+    public void testUnsupportedKeyValueSymbol() throws Exception {
+        testUnsupportedValueType(ColumnType.SYMBOL);
+    }
 
-    private void testUnsupportedValueType(int columnType) throws Exception {
+    @Test
+    public void testValueAccess() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try {
-                new DirectMap(Numbers.SIZE_1MB, new SingleColumnType(ColumnType.LONG), new SingleColumnType(columnType), 64, 0.5);
-                Assert.fail();
-            } catch (CairoException e) {
-                Assert.assertTrue(Chars.contains(e.getMessage(), "value type is not supported"));
+            try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)) {
+                model
+                        .col("a", ColumnType.BYTE)
+                        .col("b", ColumnType.SHORT)
+                        .col("c", ColumnType.INT)
+                        .col("d", ColumnType.LONG)
+                        .col("e", ColumnType.DATE)
+                        .col("f", ColumnType.TIMESTAMP)
+                        .col("g", ColumnType.FLOAT)
+                        .col("h", ColumnType.DOUBLE)
+                        .col("i", ColumnType.STRING)
+                        .col("j", ColumnType.SYMBOL)
+                        .col("k", ColumnType.BOOLEAN)
+                        .col("l", ColumnType.BINARY);
+                CairoTestUtils.create(model);
+            }
+
+            final int N = 1000;
+            final Rnd rnd = new Rnd();
+            TestRecord.ArrayBinarySequence binarySequence = new TestRecord.ArrayBinarySequence();
+
+            createTestTable(N, rnd, binarySequence);
+
+            BytecodeAssembler asm = new BytecodeAssembler();
+
+            try (TableReader reader = new TableReader(configuration, "x")) {
+                IntList columns = new IntList();
+                columns.add(0);
+                columns.add(1);
+                columns.add(2);
+                columns.add(3);
+                columns.add(4);
+                columns.add(5);
+                columns.add(6);
+                columns.add(7);
+                columns.add(8);
+                columns.add(9);
+                columns.add(10);
+                columns.add(11);
+
+                try (DirectMap map = new DirectMap(
+                        Numbers.SIZE_1MB,
+                        new SymbolAsStrTypes(reader.getMetadata()),
+                        new ArrayColumnTypes().reset()
+                                .add(ColumnType.LONG)
+                                .add(ColumnType.INT)
+                                .add(ColumnType.SHORT)
+                                .add(ColumnType.BYTE)
+                                .add(ColumnType.FLOAT)
+                                .add(ColumnType.DOUBLE)
+                                .add(ColumnType.DATE)
+                                .add(ColumnType.TIMESTAMP)
+                                .add(ColumnType.BOOLEAN)
+                        ,
+                        N,
+                        0.9f)) {
+
+                    RecordSink sink = RecordSinkFactory.newInstance(asm, reader.getMetadata(), columns, true);
+
+                    // this random will be populating values
+                    Rnd rnd2 = new Rnd();
+
+                    RecordCursor cursor = reader.getCursor();
+                    populateMap(map, rnd2, cursor, sink);
+
+                    cursor.toTop();
+                    rnd2.reset();
+                    long c = 0;
+                    while (cursor.hasNext()) {
+                        map.withKey().putRecord(cursor.next(), sink);
+                        DirectMap.Value value = map.findValue();
+                        Assert.assertNotNull(value);
+                        Assert.assertEquals(++c, value.getLong(0));
+                        Assert.assertEquals(rnd2.nextInt(), value.getInt(1));
+                        Assert.assertEquals(rnd2.nextShort(), value.getShort(2));
+                        Assert.assertEquals(rnd2.nextByte(), value.getByte(3));
+                        Assert.assertEquals(rnd2.nextFloat2(), value.getFloat(4), 0.000001f);
+                        Assert.assertEquals(rnd2.nextDouble2(), value.getDouble(5), 0.000000001);
+                        Assert.assertEquals(rnd2.nextLong(), value.getDate(6));
+                        Assert.assertEquals(rnd2.nextLong(), value.getTimestamp(7));
+                        Assert.assertEquals(rnd2.nextBoolean(), value.getBool(8));
+                    }
+                }
             }
         });
+    }
+
+    @Test
+    public void testValueRandomWrite() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+
+            final int N = 10000;
+            final Rnd rnd = new Rnd();
+            TestRecord.ArrayBinarySequence binarySequence = new TestRecord.ArrayBinarySequence();
+
+            createTestTable(N, rnd, binarySequence);
+
+            BytecodeAssembler asm = new BytecodeAssembler();
+
+            try (TableReader reader = new TableReader(configuration, "x")) {
+                IntList columns = new IntList();
+                columns.add(0);
+                columns.add(1);
+                columns.add(2);
+                columns.add(3);
+                columns.add(4);
+                columns.add(5);
+                columns.add(6);
+                columns.add(7);
+                columns.add(8);
+                columns.add(9);
+                columns.add(10);
+                columns.add(11);
+
+                try (DirectMap map = new DirectMap(
+                        Numbers.SIZE_1MB,
+                        new SymbolAsIntTypes(reader.getMetadata()),
+                        new ArrayColumnTypes().reset()
+                                .add(ColumnType.LONG)
+                                .add(ColumnType.INT)
+                                .add(ColumnType.SHORT)
+                                .add(ColumnType.BYTE)
+                                .add(ColumnType.FLOAT)
+                                .add(ColumnType.DOUBLE)
+                                .add(ColumnType.DATE)
+                                .add(ColumnType.TIMESTAMP)
+                                .add(ColumnType.BOOLEAN)
+                        ,
+                        N,
+                        0.9f)) {
+
+                    RecordSink sink = RecordSinkFactory.newInstance(asm, reader.getMetadata(), columns, false);
+
+                    // this random will be populating values
+                    Rnd rnd2 = new Rnd();
+
+                    RecordCursor cursor = reader.getCursor();
+                    long counter = 0;
+                    while (cursor.hasNext()) {
+                        map.withKey().putRecord(cursor.next(), sink);
+                        DirectMap.Value value = map.createValue();
+                        Assert.assertTrue(value.isNew());
+                        value.putFloat(4, rnd2.nextFloat2());
+                        value.putDouble(5, rnd2.nextDouble2());
+                        value.putDate(6, rnd2.nextLong());
+                        value.putTimestamp(7, rnd2.nextLong());
+                        value.putBool(8, rnd2.nextBoolean());
+
+                        value.putLong(0, ++counter);
+                        value.putInt(1, rnd2.nextInt());
+                        value.putShort(2, rnd2.nextShort());
+                        value.putByte(3, rnd2.nextByte());
+                    }
+
+                    cursor.toTop();
+                    rnd2.reset();
+                    long c = 0;
+                    while (cursor.hasNext()) {
+                        map.withKey().putRecord(cursor.next(), sink);
+                        DirectMap.Value value = map.findValue();
+                        Assert.assertNotNull(value);
+
+                        Assert.assertEquals(rnd2.nextFloat2(), value.getFloat(4), 0.000001f);
+                        Assert.assertEquals(rnd2.nextDouble2(), value.getDouble(5), 0.000000001);
+                        Assert.assertEquals(rnd2.nextLong(), value.getDate(6));
+                        Assert.assertEquals(rnd2.nextLong(), value.getTimestamp(7));
+                        Assert.assertEquals(rnd2.nextBoolean(), value.getBool(8));
+
+                        Assert.assertEquals(++c, value.getLong(0));
+                        Assert.assertEquals(rnd2.nextInt(), value.getInt(1));
+                        Assert.assertEquals(rnd2.nextShort(), value.getShort(2));
+                        Assert.assertEquals(rnd2.nextByte(), value.getByte(3));
+                    }
+                }
+            }
+        });
+    }
+
+    private void assertDupes(DirectMap map, Rnd rnd, int n) {
+        for (int i = 0; i < n; i++) {
+            int key = rnd.nextInt() & (16 - 1);
+            map.withKey().putInt(key);
+            DirectMap.Value values = map.createValue();
+            if (values.isNew()) {
+                values.putInt(0, 0);
+            } else {
+                values.putInt(0, values.getInt(0) + 1);
+            }
+        }
+        Assert.assertEquals(map.size(), 16);
+
+        // attempt to read keys higher than bucket value
+        // this must yield null values
+        for (int i = 0; i < n * 2; i++) {
+            int key = (rnd.nextInt() & (16 - 1)) + 16;
+            map.withKey().putInt(key);
+            Assert.assertTrue(map.excludesKey());
+        }
     }
 
     private void createTestTable(int n, Rnd rnd, TestRecord.ArrayBinarySequence binarySequence) {
@@ -473,192 +776,11 @@ public class DirectMapTest extends AbstractCairoTest {
         }
     }
 
-    @Test
-    public void testValueAccess() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)) {
-                model
-                        .col("a", ColumnType.BYTE)
-                        .col("b", ColumnType.SHORT)
-                        .col("c", ColumnType.INT)
-                        .col("d", ColumnType.LONG)
-                        .col("e", ColumnType.DATE)
-                        .col("f", ColumnType.TIMESTAMP)
-                        .col("g", ColumnType.FLOAT)
-                        .col("h", ColumnType.DOUBLE)
-                        .col("i", ColumnType.STRING)
-                        .col("j", ColumnType.SYMBOL)
-                        .col("k", ColumnType.BOOLEAN)
-                        .col("l", ColumnType.BINARY);
-                CairoTestUtils.create(model);
-            }
-
-            final int N = 1000;
-            final Rnd rnd = new Rnd();
-            TestRecord.ArrayBinarySequence binarySequence = new TestRecord.ArrayBinarySequence();
-
-            createTestTable(N, rnd, binarySequence);
-
-            BytecodeAssembler asm = new BytecodeAssembler();
-
-            try (TableReader reader = new TableReader(configuration, "x")) {
-                IntList columns = new IntList();
-                columns.add(0);
-                columns.add(1);
-                columns.add(2);
-                columns.add(3);
-                columns.add(4);
-                columns.add(5);
-                columns.add(6);
-                columns.add(7);
-                columns.add(8);
-                columns.add(9);
-                columns.add(10);
-                columns.add(11);
-
-                try (DirectMap map = new DirectMap(
-                        Numbers.SIZE_1MB,
-                        new SymbolAsStrTypes(reader.getMetadata()),
-                        new ArrayColumnTypes().reset()
-                                .add(ColumnType.LONG)
-                                .add(ColumnType.INT)
-                                .add(ColumnType.SHORT)
-                                .add(ColumnType.BYTE)
-                                .add(ColumnType.FLOAT)
-                                .add(ColumnType.DOUBLE)
-                                .add(ColumnType.DATE)
-                                .add(ColumnType.TIMESTAMP)
-                                .add(ColumnType.BOOLEAN)
-                        ,
-                        N,
-                        0.9f)) {
-
-                    RecordSink sink = RecordSinkFactory.newInstance(asm, reader.getMetadata(), columns, true);
-
-                    // this random will be populating values
-                    Rnd rnd2 = new Rnd();
-
-                    RecordCursor cursor = reader.getCursor();
-                    populateMap(map, rnd2, cursor, sink);
-
-                    cursor.toTop();
-                    rnd2.reset();
-                    long c = 0;
-                    while (cursor.hasNext()) {
-                        map.withKey().putRecord(cursor.next(), sink);
-                        DirectMapValues value = map.getValues();
-                        Assert.assertNotNull(value);
-                        Assert.assertEquals(++c, value.getLong(0));
-                        Assert.assertEquals(rnd2.nextInt(), value.getInt(1));
-                        Assert.assertEquals(rnd2.nextShort(), value.getShort(2));
-                        Assert.assertEquals(rnd2.nextByte(), value.getByte(3));
-                        Assert.assertEquals(rnd2.nextFloat2(), value.getFloat(4), 0.000001f);
-                        Assert.assertEquals(rnd2.nextDouble2(), value.getDouble(5), 0.000000001);
-                        Assert.assertEquals(rnd2.nextLong(), value.getDate(6));
-                        Assert.assertEquals(rnd2.nextLong(), value.getTimestamp(7));
-                        Assert.assertEquals(rnd2.nextBoolean(), value.getBool(8));
-                    }
-                }
-            }
-        });
-    }
-
-    @Test
-    public void testValueRandomWrite() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-
-            final int N = 10000;
-            final Rnd rnd = new Rnd();
-            TestRecord.ArrayBinarySequence binarySequence = new TestRecord.ArrayBinarySequence();
-
-            createTestTable(N, rnd, binarySequence);
-
-            BytecodeAssembler asm = new BytecodeAssembler();
-
-            try (TableReader reader = new TableReader(configuration, "x")) {
-                IntList columns = new IntList();
-                columns.add(0);
-                columns.add(1);
-                columns.add(2);
-                columns.add(3);
-                columns.add(4);
-                columns.add(5);
-                columns.add(6);
-                columns.add(7);
-                columns.add(8);
-                columns.add(9);
-                columns.add(10);
-                columns.add(11);
-
-                try (DirectMap map = new DirectMap(
-                        Numbers.SIZE_1MB,
-                        new SymbolAsIntTypes(reader.getMetadata()),
-                        new ArrayColumnTypes().reset()
-                                .add(ColumnType.LONG)
-                                .add(ColumnType.INT)
-                                .add(ColumnType.SHORT)
-                                .add(ColumnType.BYTE)
-                                .add(ColumnType.FLOAT)
-                                .add(ColumnType.DOUBLE)
-                                .add(ColumnType.DATE)
-                                .add(ColumnType.TIMESTAMP)
-                                .add(ColumnType.BOOLEAN)
-                        ,
-                        N,
-                        0.9f)) {
-
-                    RecordSink sink = RecordSinkFactory.newInstance(asm, reader.getMetadata(), columns, false);
-
-                    // this random will be populating values
-                    Rnd rnd2 = new Rnd();
-
-                    RecordCursor cursor = reader.getCursor();
-                    long counter = 0;
-                    while (cursor.hasNext()) {
-                        map.withKey().putRecord(cursor.next(), sink);
-                        DirectMapValues value = map.getOrCreateValues();
-                        Assert.assertTrue(value.isNew());
-                        value.putFloat(4, rnd2.nextFloat2());
-                        value.putDouble(5, rnd2.nextDouble2());
-                        value.putDate(6, rnd2.nextLong());
-                        value.putTimestamp(7, rnd2.nextLong());
-                        value.putBool(8, rnd2.nextBoolean());
-
-                        value.putLong(0, ++counter);
-                        value.putInt(1, rnd2.nextInt());
-                        value.putShort(2, rnd2.nextShort());
-                        value.putByte(3, rnd2.nextByte());
-                    }
-
-                    cursor.toTop();
-                    rnd2.reset();
-                    long c = 0;
-                    while (cursor.hasNext()) {
-                        map.withKey().putRecord(cursor.next(), sink);
-                        DirectMapValues value = map.getValues();
-                        Assert.assertNotNull(value);
-
-                        Assert.assertEquals(rnd2.nextFloat2(), value.getFloat(4), 0.000001f);
-                        Assert.assertEquals(rnd2.nextDouble2(), value.getDouble(5), 0.000000001);
-                        Assert.assertEquals(rnd2.nextLong(), value.getDate(6));
-                        Assert.assertEquals(rnd2.nextLong(), value.getTimestamp(7));
-                        Assert.assertEquals(rnd2.nextBoolean(), value.getBool(8));
-
-                        Assert.assertEquals(++c, value.getLong(0));
-                        Assert.assertEquals(rnd2.nextInt(), value.getInt(1));
-                        Assert.assertEquals(rnd2.nextShort(), value.getShort(2));
-                        Assert.assertEquals(rnd2.nextByte(), value.getByte(3));
-                    }
-                }
-            }
-        });
-    }
-
     private void populateMap(DirectMap map, Rnd rnd2, RecordCursor cursor, RecordSink sink) {
         long counter = 0;
         while (cursor.hasNext()) {
             map.withKey().putRecord(cursor.next(), sink);
-            DirectMapValues value = map.getOrCreateValues();
+            DirectMap.Value value = map.createValue();
             Assert.assertTrue(value.isNew());
             value.putLong(0, ++counter);
             value.putInt(1, rnd2.nextInt());
@@ -672,56 +794,13 @@ public class DirectMapTest extends AbstractCairoTest {
         }
     }
 
-    @Test
-    public void testRowIdAccess() throws Exception {
+    private void testUnsupportedValueType(int columnType) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            ColumnTypes types = new SingleColumnType(ColumnType.INT);
-            final int N = 10000;
-            final Rnd rnd = new Rnd();
-            try (DirectMap map = new DirectMap(Numbers.SIZE_1MB, types, types, 64, 0.5)) {
-
-
-                for (int i = 0; i < N; i++) {
-                    map.withKey().putInt(rnd.nextInt());
-                    DirectMapValues values = map.getOrCreateValues();
-                    Assert.assertTrue(values.isNew());
-                    values.putInt(0, i + 1);
-                }
-
-                // reset random generator and iterate map to double the value
-                rnd.reset();
-                LongList list = new LongList();
-                for (DirectMapRecord record : map) {
-                    list.add(record.getRowId());
-                    Assert.assertEquals(rnd.nextInt(), record.getInt(1));
-                    DirectMapValues values = record.values();
-                    values.putInt(0, values.getInt(0) * 2);
-                }
-
-                // access map by rowid now
-                rnd.reset();
-                for (int i = 0, n = list.size(); i < n; i++) {
-                    DirectMapRecord record = map.recordAt(list.getQuick(i));
-                    Assert.assertEquals((i + 1) * 2, record.getInt(0));
-                    Assert.assertEquals(rnd.nextInt(), record.getInt(1));
-                }
-            }
-        });
-    }
-
-    @Test
-    public void testConstructorRecovery() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            TestRecord.ArrayBinarySequence binarySequence = new TestRecord.ArrayBinarySequence();
-            createTestTable(10, new Rnd(), binarySequence);
-
-            try (TableReader reader = new TableReader(configuration, "x")) {
-                try {
-                    new QMap(1024, reader.getMetadata(), new SingleColumnType(ColumnType.LONG), 16, 0.75);
-                    Assert.fail();
-                } catch (Exception e) {
-                    TestUtils.assertContains(e.getMessage(), "Unsupported column type");
-                }
+            try {
+                new DirectMap(Numbers.SIZE_1MB, new SingleColumnType(ColumnType.LONG), new SingleColumnType(columnType), 64, 0.5);
+                Assert.fail();
+            } catch (CairoException e) {
+                Assert.assertTrue(Chars.contains(e.getMessage(), "value type is not supported"));
             }
         });
     }

@@ -79,7 +79,7 @@ class LatestByUnindexedRecordCursor extends AbstractDataFrameRecordCursor {
             for (long row = rowHi; row >= rowLo; row--) {
                 record.setRecordIndex(row);
                 map.withKey().putRecord(record, recordSink);
-                if (map.getOrCreateValues().isNew()) {
+                if (map.createValue().isNew()) {
                     treeSet.put(Rows.toRowID(frame.getPartitionIndex(), row));
                 }
             }
