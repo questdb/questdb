@@ -23,8 +23,35 @@
 
 package com.questdb.cairo.map;
 
-import com.questdb.cairo.sql.Record;
+import com.questdb.std.ImmutableIterator;
 
-public interface RecordSink {
-    void copy(Record r, MapKey w);
+public class CompactMapCursor implements ImmutableIterator<MapRecord> {
+
+    private final CompactMapRecord record;
+    private long offsetHi;
+    private long nextOffset;
+
+    public CompactMapCursor(CompactMapRecord record) {
+        this.record = record;
+    }
+
+    @Override
+    public boolean hasNext() {
+        if (nextOffset < offsetHi) {
+            record.of(nextOffset);
+            return true;
+        }
+        return false;
+    }
+
+    @Override
+    public MapRecord next() {
+        nextOffset = record.getNextRecordOffset();
+        return record;
+    }
+
+    void of(long offsetHi) {
+        this.nextOffset = 0;
+        this.offsetHi = offsetHi;
+    }
 }

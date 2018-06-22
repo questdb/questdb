@@ -21,10 +21,37 @@
  *
  ******************************************************************************/
 
-package com.questdb.cairo.map2;
+package com.questdb.cairo.map;
 
-import com.questdb.cairo.sql.Record;
+import com.questdb.std.ImmutableIterator;
+import com.questdb.std.Unsafe;
 
-public interface RecordSink {
-    void copy(Record r, DirectMap.Key w);
+public final class FastMapCursor implements ImmutableIterator<MapRecord> {
+    private final FastMapRecord record;
+    private int count;
+    private long address;
+
+    FastMapCursor(FastMapRecord record) {
+        this.record = record;
+    }
+
+    @Override
+    public boolean hasNext() {
+        return count > 0;
+    }
+
+    @Override
+    public MapRecord next() {
+        long address = this.address;
+        this.address = address + Unsafe.getUnsafe().getInt(address);
+        count--;
+        return record.of(address);
+    }
+
+    FastMapCursor init(long address, int count) {
+        this.address = address;
+        this.count = count;
+        return this;
+    }
+
 }

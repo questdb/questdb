@@ -21,11 +21,10 @@
  *
  ******************************************************************************/
 
-package com.questdb.cairo.map2;
+package com.questdb.cairo.map;
 
 import com.questdb.cairo.ColumnTypes;
 import com.questdb.cairo.TableUtils;
-import com.questdb.cairo.sql.Record;
 import com.questdb.common.ColumnType;
 import com.questdb.std.BinarySequence;
 import com.questdb.std.Transient;
@@ -33,7 +32,7 @@ import com.questdb.std.Unsafe;
 import com.questdb.std.str.CharSink;
 import com.questdb.std.str.DirectCharSequence;
 
-public final class DirectMapRecord implements Record {
+final class FastMapRecord implements MapRecord {
     private final int split;
     private final int keyDataOffset;
     private final int keyBlockOffset;
@@ -41,23 +40,23 @@ public final class DirectMapRecord implements Record {
     private final DirectCharSequence csA[];
     private final DirectCharSequence csB[];
     private final DirectBinarySequence bs[];
-    private final DirectMapValue values;
+    private final FastMapValue value;
     private long address0;
     private long address1;
     private long address2;
 
-    DirectMapRecord(
+    FastMapRecord(
             int valueOffsets[],
             int split,
             int keyDataOffset,
             int keyBlockOffset,
-            DirectMapValue values,
+            FastMapValue value,
             @Transient ColumnTypes keyTypes) {
         this.valueOffsets = valueOffsets;
         this.split = split;
         this.keyBlockOffset = keyBlockOffset;
         this.keyDataOffset = keyDataOffset;
-        this.values = values;
+        this.value = value;
 
         int n = keyTypes.getColumnCount();
 
@@ -175,8 +174,9 @@ public final class DirectMapRecord implements Record {
         return Unsafe.getUnsafe().getInt(addressOfColumn(columnIndex));
     }
 
-    public DirectMapValue values() {
-        return values.of(address0, false);
+    @Override
+    public MapValue getValue() {
+        return value.of(address0, false);
     }
 
     private long addressOfColumn(int index) {
@@ -198,7 +198,7 @@ public final class DirectMapRecord implements Record {
         return len == TableUtils.NULL_LEN ? null : cs.of(address + 4, address + 4 + len * 2);
     }
 
-    DirectMapRecord of(long address) {
+    FastMapRecord of(long address) {
         this.address0 = address;
         this.address1 = address + keyDataOffset;
         this.address2 = address + keyBlockOffset;

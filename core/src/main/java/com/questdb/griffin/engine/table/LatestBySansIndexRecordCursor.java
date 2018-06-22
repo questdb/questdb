@@ -23,8 +23,9 @@
 
 package com.questdb.griffin.engine.table;
 
-import com.questdb.cairo.map2.DirectMap;
-import com.questdb.cairo.map2.RecordSink;
+import com.questdb.cairo.map.Map;
+import com.questdb.cairo.map.MapKey;
+import com.questdb.cairo.map.RecordSink;
 import com.questdb.cairo.sql.DataFrame;
 import com.questdb.cairo.sql.DataFrameCursor;
 import com.questdb.cairo.sql.Record;
@@ -33,12 +34,12 @@ import com.questdb.std.Rows;
 
 class LatestBySansIndexRecordCursor extends AbstractDataFrameRecordCursor {
 
-    private final DirectMap map;
+    private final Map map;
     private final RecordSink recordSink;
     private final LongTreeSet treeSet;
     private LongTreeSet.TreeCursor treeCursor;
 
-    public LatestBySansIndexRecordCursor(DirectMap map, LongTreeSet treeSet, RecordSink recordSink) {
+    public LatestBySansIndexRecordCursor(Map map, LongTreeSet treeSet, RecordSink recordSink) {
         this.map = map;
         this.treeSet = treeSet;
         this.recordSink = recordSink;
@@ -80,8 +81,9 @@ class LatestBySansIndexRecordCursor extends AbstractDataFrameRecordCursor {
             record.jumpTo(frame.getPartitionIndex(), rowHi);
             for (long row = rowHi; row >= rowLo; row--) {
                 record.setRecordIndex(row);
-                map.withKey().putRecord(record, recordSink);
-                if (map.createKey()) {
+                MapKey key = map.withKey();
+                key.putRecord(record, recordSink);
+                if (key.create()) {
                     treeSet.put(Rows.toRowID(partitionIndex, row));
                 }
             }

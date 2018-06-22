@@ -24,7 +24,44 @@
 package com.questdb.cairo.map;
 
 import com.questdb.cairo.sql.Record;
+import com.questdb.std.BinarySequence;
 
-public interface RecordSink {
-    void copy(Record r, MapKey w);
+public interface MapKey {
+
+    default boolean create() {
+        return createValue().isNew();
+    }
+
+    MapValue createValue();
+
+    MapValue findValue();
+
+    default boolean notFound() {
+        return findValue() == null;
+    }
+
+    void putBin(BinarySequence value);
+
+    void putBool(boolean value);
+
+    void putByte(byte value);
+
+    void putDate(long value);
+
+    void putDouble(double value);
+
+    void putFloat(float value);
+
+    void putInt(int value);
+
+    void putLong(long value);
+
+    void putRecord(Record record, RecordSink sink);
+
+    void putShort(short value);
+
+    void putStr(CharSequence value);
+
+    @SuppressWarnings("unused")
+    void putTimestamp(long value);
 }

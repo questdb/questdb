@@ -23,8 +23,43 @@
 
 package com.questdb.cairo.map;
 
-import com.questdb.cairo.sql.Record;
+public interface MapValue {
 
-public interface RecordSink {
-    void copy(Record r, MapKey w);
+    boolean getBool(int columnIndex);
+
+    byte getByte(int index);
+
+    long getDate(int columnIndex);
+
+    double getDouble(int index);
+
+    float getFloat(int index);
+
+    int getInt(int index);
+
+    long getLong(int index);
+
+    short getShort(int index);
+
+    long getTimestamp(int columnIndex);
+
+    boolean isNew();
+
+    void putBool(int columnIndex, boolean value);
+
+    void putByte(int index, byte value);
+
+    void putDate(int index, long value);
+
+    void putDouble(int index, double value);
+
+    void putFloat(int index, float value);
+
+    void putInt(int index, int value);
+
+    void putLong(int index, long value);
+
+    void putShort(int index, short value);
+
+    void putTimestamp(int columnIndex, long value);
 }

@@ -21,16 +21,16 @@
  *
  ******************************************************************************/
 
-package com.questdb.cairo.map2;
+package com.questdb.cairo.map;
 
 import com.questdb.std.Unsafe;
 
-final class DirectMapValue implements DirectMap.Value {
+final class FastMapValue implements MapValue {
     private final int valueOffsets[];
     private long address;
     private boolean _new;
 
-    public DirectMapValue(int[] valueOffsets) {
+    public FastMapValue(int[] valueOffsets) {
         this.valueOffsets = valueOffsets;
     }
 
@@ -133,7 +133,7 @@ final class DirectMapValue implements DirectMap.Value {
         return address + Unsafe.arrayGet(valueOffsets, index);
     }
 
-    DirectMapValue of(long address, boolean _new) {
+    FastMapValue of(long address, boolean _new) {
         this.address = address;
         this._new = _new;
         return this;

@@ -21,7 +21,7 @@
  *
  ******************************************************************************/
 
-package com.questdb.cairo.map2;
+package com.questdb.cairo.map;
 
 import com.questdb.cairo.CairoException;
 import com.questdb.cairo.ColumnTypes;
@@ -31,17 +31,17 @@ import com.questdb.common.ColumnType;
 import com.questdb.std.*;
 import org.jetbrains.annotations.NotNull;
 
-import java.io.Closeable;
+import java.util.Iterator;
 
-public class DirectMap implements Mutable, Iterable<DirectMapRecord>, Closeable {
+public class FastMap implements Map {
 
     private static final HashFunction DEFAULT_HASH = Hash::hashMem;
     private static final int MIN_INITIAL_CAPACITY = 128;
     private final double loadFactor;
-    private final Key keyWriter = new Key();
-    private final DirectMapValue values;
-    private final DirectMapIterator iterator;
-    private final DirectMapRecord record;
+    private final Key key = new Key();
+    private final FastMapValue value;
+    private final FastMapCursor iterator;
+    private final FastMapRecord record;
     private final int valueColumnCount;
     private final HashFunction hashFunction;
     private long address;
@@ -57,30 +57,30 @@ public class DirectMap implements Mutable, Iterable<DirectMapRecord>, Closeable 
     private int size = 0;
     private int mask;
 
-    public DirectMap(int pageSize,
-                     @Transient @NotNull ColumnTypes keyTypes,
-                     int keyCapacity,
-                     double loadFactor
+    public FastMap(int pageSize,
+                   @Transient @NotNull ColumnTypes keyTypes,
+                   int keyCapacity,
+                   double loadFactor
     ) {
         this(pageSize, keyTypes, null, keyCapacity, loadFactor, DEFAULT_HASH);
     }
 
 
-    public DirectMap(int pageSize,
-                     @Transient @NotNull ColumnTypes keyTypes,
-                     @Transient @NotNull ColumnTypes valueTypes,
-                     int keyCapacity,
-                     double loadFactor
+    public FastMap(int pageSize,
+                   @Transient @NotNull ColumnTypes keyTypes,
+                   @Transient @NotNull ColumnTypes valueTypes,
+                   int keyCapacity,
+                   double loadFactor
     ) {
         this(pageSize, keyTypes, valueTypes, keyCapacity, loadFactor, DEFAULT_HASH);
     }
 
-    DirectMap(int pageSize,
-              @Transient ColumnTypes keyTypes,
-              @Transient ColumnTypes valueTypes,
-              int keyCapacity,
-              double loadFactor,
-              HashFunction hashFunction
+    FastMap(int pageSize,
+            @Transient ColumnTypes keyTypes,
+            @Transient ColumnTypes valueTypes,
+            int keyCapacity,
+            double loadFactor,
+            HashFunction hashFunction
 
     ) {
         assert pageSize > 3;
@@ -132,20 +132,21 @@ public class DirectMap implements Mutable, Iterable<DirectMapRecord>, Closeable 
                         throw CairoException.instance(0).put("value type is not supported: ").put(ColumnType.nameOf(valueTypes.getColumnType(i)));
                 }
             }
-            this.values = new DirectMapValue(valueOffsets);
+            this.value = new FastMapValue(valueOffsets);
             this.keyBlockOffset = offset;
             this.keyDataOffset = this.keyBlockOffset + 4 * keyTypes.getColumnCount();
-            this.record = new DirectMapRecord(valueOffsets, columnSplit, keyDataOffset, keyBlockOffset, values, keyTypes);
+            this.record = new FastMapRecord(valueOffsets, columnSplit, keyDataOffset, keyBlockOffset, value, keyTypes);
         } else {
             this.valueColumnCount = 0;
-            this.values = new DirectMapValue(null);
+            this.value = new FastMapValue(null);
             this.keyBlockOffset = offset;
             this.keyDataOffset = this.keyBlockOffset + 4 * keyTypes.getColumnCount();
-            this.record = new DirectMapRecord(null, 0, keyDataOffset, keyBlockOffset, values, keyTypes);
+            this.record = new FastMapRecord(null, 0, keyDataOffset, keyBlockOffset, value, keyTypes);
         }
-        this.iterator = new DirectMapIterator(record);
+        this.iterator = new FastMapCursor(record);
     }
 
+    @Override
     public void clear() {
         kPos = kStart;
         free = (int) (keyCapacity * loadFactor);
@@ -162,80 +163,47 @@ public class DirectMap implements Mutable, Iterable<DirectMapRecord>, Closeable 
         }
     }
 
-    public boolean createKey() {
-        return createValue().isNew();
-    }
-
-    public Value createValue() {
-        keyWriter.commit();
-        // calculate hash remembering "key" structure
-        // [ len | value block | key offset block | key data block ]
-        int index = keyIndex();
-        long offset = offsets.get(index);
-
-        if (offset == -1) {
-            return asNew(keyWriter, index);
-        } else if (eq(keyWriter, offset)) {
-            return values.of(kStart + offset, false);
-        } else {
-            return probe0(keyWriter, index);
-        }
-    }
-
-    public boolean excludesKey() {
-        return findValue() == null;
-    }
-
-    public Value findValue() {
-        keyWriter.commit();
-        int index = keyIndex();
-        long offset = offsets.get(index);
-
-        if (offset == -1) {
-            return null;
-        } else if (eq(keyWriter, offset)) {
-            return values.of(kStart + offset, false);
-        } else {
-            return probeReadOnly(keyWriter, index);
-        }
-    }
-
     @Override
     @NotNull
-    public DirectMapIterator iterator() {
+    public Iterator<MapRecord> iterator() {
         return iterator.init(kStart, size);
     }
 
-    public DirectMapRecord recordAt(long rowid) {
+    @Override
+    public MapRecord recordAt(long rowid) {
         return record.of(rowid);
     }
 
-    public int size() {
+    @Override
+    public long size() {
         return size;
     }
 
-    public Key withKey() {
-        return keyWriter.init();
+    @Override
+    public MapKey withKey() {
+        return key.init();
     }
 
-    public void withKeyAsLong(long value) {
-        keyWriter.startAddress = kPos;
-        keyWriter.appendAddress = keyWriter.startAddress + keyDataOffset;
-        if (keyWriter.appendAddress + 8 > kLimit) {
+    @Override
+    public MapKey withKeyAsLong(long value) {
+        key.startAddress = kPos;
+        key.appendAddress = key.startAddress + keyDataOffset;
+        if (key.appendAddress + 8 > kLimit) {
             resize(8);
         }
-        Unsafe.getUnsafe().putLong(keyWriter.appendAddress, value);
-        keyWriter.appendAddress += 8;
+        Unsafe.getUnsafe().putLong(key.appendAddress, value);
+        key.appendAddress += 8;
+        return key;
     }
 
-    private DirectMapValue asNew(Key keyWriter, int index) {
+    private FastMapValue asNew(Key keyWriter, int index) {
         kPos = keyWriter.appendAddress;
         offsets.set(index, keyWriter.startAddress - kStart);
         if (--free == 0) {
             rehash();
         }
         size++;
-        return values.of(keyWriter.startAddress, true);
+        return value.of(keyWriter.startAddress, true);
     }
 
     private boolean eq(Key keyWriter, long offset) {
@@ -278,24 +246,24 @@ public class DirectMap implements Mutable, Iterable<DirectMapRecord>, Closeable 
     }
 
     private int keyIndex() {
-        return hashFunction.hash(keyWriter.startAddress + keyDataOffset, keyWriter.len - keyDataOffset) & mask;
+        return hashFunction.hash(key.startAddress + keyDataOffset, key.len - keyDataOffset) & mask;
     }
 
-    private DirectMapValue probe0(Key keyWriter, int index) {
+    private FastMapValue probe0(Key keyWriter, int index) {
         long offset;
         while ((offset = offsets.get(index = (++index & mask))) != -1) {
             if (eq(keyWriter, offset)) {
-                return values.of(kStart + offset, false);
+                return value.of(kStart + offset, false);
             }
         }
         return asNew(keyWriter, index);
     }
 
-    private DirectMapValue probeReadOnly(Key keyWriter, int index) {
+    private FastMapValue probeReadOnly(Key keyWriter, int index) {
         long offset;
         while ((offset = offsets.get(index = (++index & mask))) != -1) {
             if (eq(keyWriter, offset)) {
-                return values.of(kStart + offset, false);
+                return value.of(kStart + offset, false);
             }
         }
         return null;
@@ -327,7 +295,7 @@ public class DirectMap implements Mutable, Iterable<DirectMapRecord>, Closeable 
 
     private void resize(int size) {
         long kCapacity = (kLimit - kStart) << 1;
-        long target = keyWriter.appendAddress + size - kStart;
+        long target = key.appendAddress + size - kStart;
         if (kCapacity < target) {
             kCapacity = Numbers.ceilPow2(target);
         }
@@ -341,14 +309,14 @@ public class DirectMap implements Mutable, Iterable<DirectMapRecord>, Closeable 
         this.capacity = kCapacity + Unsafe.CACHE_LINE_SIZE;
         long d = kStart - this.kStart;
         kPos += d;
-        keyWriter.startAddress += d;
-        keyWriter.appendAddress += d;
-        keyWriter.nextColOffset = keyWriter.startAddress + keyBlockOffset;
+        key.startAddress += d;
+        key.appendAddress += d;
+        key.nextColOffset = key.startAddress + keyBlockOffset;
 
         assert kPos > 0;
-        assert keyWriter.startAddress > 0;
-        assert keyWriter.appendAddress > 0;
-        assert keyWriter.nextColOffset > 0;
+        assert key.startAddress > 0;
+        assert key.appendAddress > 0;
+        assert key.nextColOffset > 0;
 
         this.address = kAddress;
         this.kStart = kStart;
@@ -360,60 +328,43 @@ public class DirectMap implements Mutable, Iterable<DirectMapRecord>, Closeable 
         int hash(long address, int len);
     }
 
-    public interface Value {
-
-        boolean getBool(int columnIndex);
-
-        byte getByte(int index);
-
-        long getDate(int columnIndex);
-
-        double getDouble(int index);
-
-        float getFloat(int index);
-
-        int getInt(int index);
-
-        long getLong(int index);
-
-        short getShort(int index);
-
-        long getTimestamp(int columnIndex);
-
-        boolean isNew();
-
-        void putBool(int columnIndex, boolean value);
-
-        void putByte(int index, byte value);
-
-        void putDate(int index, long value);
-
-        void putDouble(int index, double value);
-
-        void putFloat(int index, float value);
-
-        void putInt(int index, int value);
-
-        void putLong(int index, long value);
-
-        void putShort(int index, short value);
-
-        void putTimestamp(int columnIndex, long value);
-    }
-
-    public class Key {
+    public class Key implements MapKey {
         private long startAddress;
         private long appendAddress;
         private int len;
         private long nextColOffset;
 
-        public Key init() {
-            startAddress = kPos;
-            appendAddress = kPos + keyDataOffset;
-            nextColOffset = kPos + keyBlockOffset;
-            return this;
+        public MapValue createValue() {
+            commit();
+            // calculate hash remembering "key" structure
+            // [ len | value block | key offset block | key data block ]
+            int index = keyIndex();
+            long offset = offsets.get(index);
+
+            if (offset == -1) {
+                return asNew(this, index);
+            } else if (eq(this, offset)) {
+                return value.of(kStart + offset, false);
+            } else {
+                return probe0(this, index);
+            }
         }
 
+        public MapValue findValue() {
+            commit();
+            int index = keyIndex();
+            long offset = offsets.get(index);
+
+            if (offset == -1) {
+                return null;
+            } else if (eq(this, offset)) {
+                return value.of(kStart + offset, false);
+            } else {
+                return probeReadOnly(this, index);
+            }
+        }
+
+        @Override
         public void putBin(BinarySequence value) {
             if (value == null) {
                 putNull();
@@ -445,6 +396,7 @@ public class DirectMap implements Mutable, Iterable<DirectMapRecord>, Closeable 
             }
         }
 
+        @Override
         public void putBool(boolean value) {
             checkSize(1);
             Unsafe.getUnsafe().putByte(appendAddress, (byte) (value ? 1 : 0));
@@ -452,6 +404,7 @@ public class DirectMap implements Mutable, Iterable<DirectMapRecord>, Closeable 
             writeOffset();
         }
 
+        @Override
         public void putByte(byte value) {
             checkSize(1);
             Unsafe.getUnsafe().putByte(appendAddress, value);
@@ -459,10 +412,12 @@ public class DirectMap implements Mutable, Iterable<DirectMapRecord>, Closeable 
             writeOffset();
         }
 
+        @Override
         public void putDate(long value) {
             putLong(value);
         }
 
+        @Override
         public void putDouble(double value) {
             checkSize(8);
             Unsafe.getUnsafe().putDouble(appendAddress, value);
@@ -470,6 +425,7 @@ public class DirectMap implements Mutable, Iterable<DirectMapRecord>, Closeable 
             writeOffset();
         }
 
+        @Override
         public void putFloat(float value) {
             checkSize(4);
             Unsafe.getUnsafe().putFloat(appendAddress, value);
@@ -477,6 +433,7 @@ public class DirectMap implements Mutable, Iterable<DirectMapRecord>, Closeable 
             writeOffset();
         }
 
+        @Override
         public void putInt(int value) {
             checkSize(4);
             Unsafe.getUnsafe().putInt(appendAddress, value);
@@ -484,6 +441,7 @@ public class DirectMap implements Mutable, Iterable<DirectMapRecord>, Closeable 
             writeOffset();
         }
 
+        @Override
         public void putLong(long value) {
             checkSize(8);
             Unsafe.getUnsafe().putLong(appendAddress, value);
@@ -491,10 +449,12 @@ public class DirectMap implements Mutable, Iterable<DirectMapRecord>, Closeable 
             writeOffset();
         }
 
+        @Override
         public void putRecord(Record record, RecordSink sink) {
             sink.copy(record, this);
         }
 
+        @Override
         public void putShort(short value) {
             checkSize(2);
             Unsafe.getUnsafe().putShort(appendAddress, value);
@@ -502,6 +462,7 @@ public class DirectMap implements Mutable, Iterable<DirectMapRecord>, Closeable 
             writeOffset();
         }
 
+        @Override
         public void putStr(CharSequence value) {
             if (value == null) {
                 putNull();
@@ -519,9 +480,17 @@ public class DirectMap implements Mutable, Iterable<DirectMapRecord>, Closeable 
             writeOffset();
         }
 
+        @Override
         @SuppressWarnings("unused")
         public void putTimestamp(long value) {
             putLong(value);
+        }
+
+        public Key init() {
+            startAddress = kPos;
+            appendAddress = kPos + keyDataOffset;
+            nextColOffset = kPos + keyBlockOffset;
+            return this;
         }
 
         private void checkSize(int size) {

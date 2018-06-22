@@ -33,8 +33,9 @@ import com.questdb.std.BinarySequence;
 import com.questdb.std.Misc;
 import com.questdb.std.Numbers;
 import com.questdb.std.Unsafe;
+import org.jetbrains.annotations.NotNull;
 
-import java.io.Closeable;
+import java.util.Iterator;
 
 /**
  * Storage structure to support queries such as "select distinct ...",
@@ -94,7 +95,7 @@ import java.io.Closeable;
  * entry will be stored in bucket, which can be computed directly from
  * this hash code.
  */
-public class QMap implements Closeable {
+public class CompactMap implements Map {
     public static final byte BITS_DIRECT_HIT = (byte) 0b10000000;
     public static final byte BITS_DISTANCE = 0b01111111;
     public static final int jumpDistancesLen = 126;
@@ -120,33 +121,29 @@ public class QMap implements Closeable {
             };
 
     private static final HashFunction DEFAULT_HASH = VirtualMemory::hash;
-
     private final VirtualMemory entries;
     private final VirtualMemory entrySlots;
     private final Key key = new Key();
-    private final Value value = new Value();
+    private final CompactMapValue value;
     private final double loadFactor;
     private final long entryFixedSize;
     private final HashFunction hashFunction;
-    private final QMapCursor cursor;
+    private final CompactMapCursor cursor;
     private final long columnOffsets[];
     private final long entryKeyOffset;
     private final int valueColumnCount;
+    private final CompactMapRecord record;
     private long currentEntryOffset;
     private long currentEntrySize = 0;
     private long keyCapacity;
     private long mask;
     private long size;
-    private long currentValueOffset;
-    private long countChains = 0;
-    private long countClashes = 0;
-    private long countRecursions = 0;
 
-    public QMap(int pageSize, ColumnTypes keyTypes, ColumnTypes valueTypes, long keyCapacity, double loadFactor) {
+    public CompactMap(int pageSize, ColumnTypes keyTypes, ColumnTypes valueTypes, long keyCapacity, double loadFactor) {
         this(pageSize, keyTypes, valueTypes, keyCapacity, loadFactor, DEFAULT_HASH);
     }
 
-    QMap(int pageSize, ColumnTypes keyTypes, ColumnTypes valueTypes, long keyCapacity, double loadFactor, HashFunction hashFunction) {
+    CompactMap(int pageSize, ColumnTypes keyTypes, ColumnTypes valueTypes, long keyCapacity, double loadFactor, HashFunction hashFunction) {
         this.entries = new VirtualMemory(pageSize);
         this.entrySlots = new VirtualMemory(pageSize);
         try {
@@ -158,7 +155,9 @@ public class QMap implements Closeable {
             this.keyCapacity = Math.max(keyCapacity, 16);
             this.hashFunction = hashFunction;
             configureCapacity();
-            this.cursor = new QMapCursor(entries, columnOffsets);
+            this.value = new CompactMapValue(entries, columnOffsets);
+            this.record = new CompactMapRecord(entries, columnOffsets, value);
+            this.cursor = new CompactMapCursor(record);
         } catch (CairoException e) {
             Misc.free(this.entries);
             Misc.free(entrySlots);
@@ -166,8 +165,67 @@ public class QMap implements Closeable {
         }
     }
 
+    public void clear() {
+        entrySlots.jumpTo((mask + 1) * 8);
+        entrySlots.zero();
+        currentEntryOffset = 0;
+        currentEntrySize = 0;
+        size = 0;
+    }
+
+    @Override
+    public void close() {
+        entries.close();
+        entrySlots.close();
+    }
+
+    @Override
+    public MapRecord recordAt(long rowid) {
+        record.of(rowid);
+        return record;
+    }
+
+    public long size() {
+        return size;
+    }
+
+    public MapKey withKey() {
+        currentEntryOffset = currentEntryOffset + currentEntrySize;
+        entries.jumpTo(currentEntryOffset + columnOffsets[valueColumnCount]);
+
+        // each entry cell is 8-byte value, which either holds cell value
+        // or reference, relative to entry start, where value is kept in size-prefixed format
+        // Variable size key cells are stored right behind entry.
+        // Value (as in key-Value pair) is stored first. It is always fixed length and when
+        // it is out of the way we can calculate key hash on contiguous memory.
+
+        // entry actual size always starts with sum of fixed size columns we have
+        // and may grow when we add variable key values.
+        currentEntrySize = entryFixedSize;
+
+        return key;
+    }
+
+    @Override
+    public MapKey withKeyAsLong(long value) {
+        withKey();
+        key.putLong(value);
+        return key;
+    }
+
+    public long getKeyCapacity() {
+        return keyCapacity;
+    }
+
     public int getValueColumnCount() {
         return valueColumnCount;
+    }
+
+    @NotNull
+    @Override
+    public Iterator<MapRecord> iterator() {
+        cursor.of(currentEntryOffset + currentEntrySize);
+        return cursor;
     }
 
     private long calcColumnOffsets(ColumnTypes valueTypes, long startOffset, int startPosition) {
@@ -205,66 +263,10 @@ public class QMap implements Closeable {
         return o;
     }
 
-    public QMapCursor getCursor() {
-        cursor.of(currentEntryOffset + currentEntrySize);
-        return cursor;
-    }
-
-    @Override
-    public void close() {
-        entries.close();
-        entrySlots.close();
-    }
-
-    public Key withKey() {
-        currentEntryOffset = currentEntryOffset + currentEntrySize;
-        entries.jumpTo(currentEntryOffset + columnOffsets[valueColumnCount]);
-
-        // each entry cell is 8-byte value, which either holds cell value
-        // or reference, relative to entry start, where value is kept in size-prefixed format
-        // Variable size key cells are stored right behind entry.
-        // Value (as in key-Value pair) is stored first. It is always fixed length and when
-        // it is out of the way we can calculate key hash on contiguous memory.
-
-        // entry actual size always starts with sum of fixed size columns we have
-        // and may grow when we add variable key values.
-        currentEntrySize = entryFixedSize;
-
-        // make sure values are not read or written before we finish with key
-        currentValueOffset = -1;
-        return key;
-    }
-
-    public long size() {
-        return size;
-    }
-
     private void configureCapacity() {
         this.mask = Numbers.ceilPow2((long) (keyCapacity / loadFactor)) - 1;
         entrySlots.jumpTo((mask + 1) * 8);
         entrySlots.zero();
-    }
-
-    public void clear() {
-        entrySlots.zero();
-        currentEntryOffset = 0;
-        currentEntrySize = 0;
-        size = 0;
-        countChains = 0;
-        countClashes = 0;
-        countRecursions = 0;
-    }
-
-    public long getCountChains() {
-        return countChains;
-    }
-
-    public long getCountClashes() {
-        return countClashes;
-    }
-
-    public long getCountRecursions() {
-        return countRecursions;
     }
 
     long getActualCapacity() {
@@ -275,166 +277,14 @@ public class QMap implements Closeable {
         return currentEntryOffset + currentEntrySize;
     }
 
-    public long getKeyCapacity() {
-        return keyCapacity;
-    }
-
     @FunctionalInterface
     public interface HashFunction {
         long hash(VirtualMemory mem, long offset, long size);
     }
 
-    public class Value {
+    public class Key implements MapKey {
 
-        long getOffset() {
-            return currentValueOffset;
-        }
-
-        private long getValueColumnOffset(int columnIndex) {
-            return currentValueOffset + Unsafe.arrayGet(columnOffsets, columnIndex);
-        }
-
-        public byte getByte(int columnIndex) {
-            assert currentValueOffset != -1;
-            return entries.getByte(getValueColumnOffset(columnIndex));
-        }
-
-        public float getFloat(int columnIndex) {
-            assert currentValueOffset != -1;
-            return entries.getFloat(getValueColumnOffset(columnIndex));
-        }
-
-        public double getDouble(int columnIndex) {
-            assert currentValueOffset != -1;
-            return entries.getDouble(getValueColumnOffset(columnIndex));
-        }
-
-        public int getInt(int columnIndex) {
-            assert currentValueOffset != -1;
-            return entries.getInt(getValueColumnOffset(columnIndex));
-        }
-
-        public long getLong(int columnIndex) {
-            assert currentValueOffset != -1;
-            return entries.getLong(getValueColumnOffset(columnIndex));
-        }
-
-        public void putLong(int columnIndex, long value) {
-            assert currentValueOffset != -1;
-            entries.putLong(getValueColumnOffset(columnIndex), value);
-        }
-
-        public void putInt(int columnIndex, int value) {
-            assert currentValueOffset != -1;
-            entries.putInt(getValueColumnOffset(columnIndex), value);
-        }
-
-        public void putShort(int columnIndex, short value) {
-            assert currentValueOffset != -1;
-            entries.putShort(getValueColumnOffset(columnIndex), value);
-        }
-
-        public void putByte(int columnIndex, byte value) {
-            assert currentValueOffset != -1;
-            entries.putByte(getValueColumnOffset(columnIndex), value);
-        }
-
-        public void putBool(int columnIndex, boolean value) {
-            assert currentValueOffset != -1;
-            entries.putBool(getValueColumnOffset(columnIndex), value);
-        }
-
-        public void putFloat(int columnIndex, float value) {
-            assert currentValueOffset != -1;
-            entries.putFloat(getValueColumnOffset(columnIndex), value);
-        }
-
-        public void putDouble(int columnIndex, double value) {
-            assert currentValueOffset != -1;
-            entries.putDouble(getValueColumnOffset(columnIndex), value);
-        }
-
-        public void putDate(int columnIndex, long value) {
-            putLong(columnIndex, value);
-        }
-
-        public void putTimestamp(int columnIndex, long value) {
-            putLong(columnIndex, value);
-        }
-
-        public long getDate(int columnIndex) {
-            return getLong(columnIndex);
-        }
-
-        public long getTimestamp(int columnIndex) {
-            return getLong(columnIndex);
-        }
-
-        public boolean getBool(int columnIndex) {
-            assert currentValueOffset != -1;
-            return entries.getBool(getValueColumnOffset(columnIndex));
-        }
-
-        public short getShort(int columnIndex) {
-            assert currentValueOffset != -1;
-            return entries.getShort(getValueColumnOffset(columnIndex));
-        }
-
-        public boolean isNew() {
-            return currentEntrySize != 0;
-        }
-
-        public void putDouble(double value) {
-            assert currentValueOffset != -1;
-            entries.putDouble(value);
-        }
-
-        public void putLong(long value) {
-            assert currentValueOffset != -1;
-            entries.putLong(value);
-        }
-
-        public void putInt(int value) {
-            assert currentValueOffset != -1;
-            entries.putInt(value);
-        }
-
-        public void putByte(byte value) {
-            assert currentValueOffset != -1;
-            entries.putByte(value);
-        }
-
-        public void putShort(short value) {
-            assert currentValueOffset != -1;
-            entries.putShort(value);
-        }
-
-        public void putFloat(float value) {
-            assert currentValueOffset != -1;
-            entries.putFloat(value);
-        }
-
-        public void putDate(long value) {
-            putLong(value);
-        }
-
-        public void putTimestamp(long value) {
-            putLong(value);
-        }
-
-        public void putBool(boolean value) {
-            assert currentValueOffset != -1;
-            entries.putBool(value);
-        }
-    }
-
-    public class Key {
-
-        public void putRecord(Record record, RecordSink sink) {
-            sink.copy(record, key);
-        }
-
-        public Value createValue() {
+        public CompactMapValue createValue() {
             long slot = calculateEntrySlot(currentEntryOffset, currentEntrySize);
             long offset = getOffsetAt(slot);
 
@@ -464,11 +314,9 @@ public class QMap implements Closeable {
                 // entry we originally set out to free
 
                 if (moveForeignEntries(slot, offset)) {
-                    countClashes++;
                     return putNewEntryAt(slot, BITS_DIRECT_HIT);
                 }
 
-                countRecursions++;
                 grow();
                 return createValue();
             }
@@ -480,92 +328,48 @@ public class QMap implements Closeable {
                 return found(offset);
             }
 
-            countChains++;
             return appendEntry(offset, slot, flag);
         }
 
-        public Value findValue() {
-            if (currentValueOffset == -1) {
-                long slot = calculateEntrySlot(currentEntryOffset, currentEntrySize);
-                long offset = getOffsetAt(slot);
+        public CompactMapValue findValue() {
+            long slot = calculateEntrySlot(currentEntryOffset, currentEntrySize);
+            long offset = getOffsetAt(slot);
 
-                if (offset == -1) {
+            if (offset == -1) {
+                return null;
+            } else {
+                // check if this was a direct hit
+                byte flag = entries.getByte(offset);
+                if ((flag & BITS_DIRECT_HIT) == 0) {
+                    // not a direct hit? not our value
                     return null;
                 } else {
-                    // check if this was a direct hit
-                    byte flag = entries.getByte(offset);
-                    if ((flag & BITS_DIRECT_HIT) == 0) {
-                        // not a direct hit? not our value
-                        return null;
+                    // this is direct hit, scroll down all keys with same hashcode
+                    // and exit this loop as soon as equality operator scores
+
+                    // in simple terms check key equality on this key
+                    if (cmp(offset)) {
+                        return found(offset);
                     } else {
-                        // this is direct hit, scroll down all keys with same hashcode
-                        // and exit this loop as soon as equality operator scores
 
-                        // in simple terms check key equality on this key
-                        if (cmp(offset)) {
-                            return found(offset);
-                        } else {
+                        // then go down the list until either list ends or we find value
+                        int distance = flag & BITS_DISTANCE;
+                        while (distance > 0) {
+                            slot = nextSlot(slot, distance);
+                            offset = getOffsetAt(slot);
 
-                            // then go down the list until either list ends or we find value
-                            int distance = flag & BITS_DISTANCE;
-                            while (distance > 0) {
-                                slot = nextSlot(slot, distance);
-                                offset = getOffsetAt(slot);
+                            // this offset cannot be 0 when data structure is consistent
+                            assert offset != 0;
 
-                                // this offset cannot be 0 when data structure is consistent
-                                assert offset != 0;
-
-                                if (cmp(offset)) {
-                                    return found(offset);
-                                }
-                                distance = entries.getByte(offset) & BITS_DISTANCE;
+                            if (cmp(offset)) {
+                                return found(offset);
                             }
-                            // reached the end of the list, nothing found
-                            return null;
+                            distance = entries.getByte(offset) & BITS_DISTANCE;
                         }
+                        // reached the end of the list, nothing found
+                        return null;
                     }
                 }
-            }
-            return value;
-        }
-
-        public void putDouble(double value) {
-            entries.putDouble(value);
-        }
-
-        public void putBool(boolean value) {
-            entries.putBool(value);
-        }
-
-        public void putLong(long value) {
-            entries.putLong(value);
-        }
-
-        public void putShort(short value) {
-            entries.putShort(value);
-        }
-
-        public void putByte(byte value) {
-            entries.putByte(value);
-        }
-
-        public void putInt(int value) {
-            entries.putInt(value);
-        }
-
-        public void putFloat(float value) {
-            entries.putFloat(value);
-        }
-
-        public void putStr(CharSequence value) {
-            if (value == null) {
-                entries.putLong(TableUtils.NULL_LEN);
-            } else {
-                // offset of string value relative to record start
-                entries.putLong(currentEntrySize);
-                int len = value.length();
-                entries.putStr(currentEntryOffset + currentEntrySize, value, 0, len);
-                currentEntrySize += len * 2 + 4;
             }
         }
 
@@ -582,7 +386,61 @@ public class QMap implements Closeable {
             }
         }
 
-        private Value appendEntry(long offset, long slot, byte flag) {
+        public void putBool(boolean value) {
+            entries.putBool(value);
+        }
+
+        public void putByte(byte value) {
+            entries.putByte(value);
+        }
+
+        @Override
+        public void putDate(long value) {
+            putLong(value);
+        }
+
+        public void putDouble(double value) {
+            entries.putDouble(value);
+        }
+
+        public void putFloat(float value) {
+            entries.putFloat(value);
+        }
+
+        public void putInt(int value) {
+            entries.putInt(value);
+        }
+
+        public void putLong(long value) {
+            entries.putLong(value);
+        }
+
+        public void putRecord(Record record, RecordSink sink) {
+            sink.copy(record, key);
+        }
+
+        public void putShort(short value) {
+            entries.putShort(value);
+        }
+
+        public void putStr(CharSequence value) {
+            if (value == null) {
+                entries.putLong(TableUtils.NULL_LEN);
+            } else {
+                // offset of string value relative to record start
+                entries.putLong(currentEntrySize);
+                int len = value.length();
+                entries.putStr(currentEntryOffset + currentEntrySize, value, 0, len);
+                currentEntrySize += len * 2 + 4;
+            }
+        }
+
+        @Override
+        public void putTimestamp(long value) {
+            putLong(value);
+        }
+
+        private CompactMapValue appendEntry(long offset, long slot, byte flag) {
             int distance = flag & BITS_DISTANCE;
             long original = offset;
 
@@ -681,11 +539,10 @@ public class QMap implements Closeable {
             } while (true);
         }
 
-        private Value found(long offset) {
+        private CompactMapValue found(long offset) {
             // found key
             // values offset will be
-            currentValueOffset = offset;
-            entries.jumpTo(currentEntryOffset);
+            value.of(offset, false);
             // undo this key append
             currentEntrySize = 0;
             return value;
@@ -777,7 +634,7 @@ public class QMap implements Closeable {
             entries.putByte(entryOffset, flag);
         }
 
-        private Value putNewEntryAt(long slot, byte flag) {
+        private CompactMapValue putNewEntryAt(long slot, byte flag) {
             // entry size is now known
             // values are always fixed size and already accounted for
             // so go ahead and finalize
@@ -794,7 +651,7 @@ public class QMap implements Closeable {
                 setOffsetAt(slot, currentEntryOffset);
             }
             // this would be offset of entry values
-            currentValueOffset = currentEntryOffset;
+            value.of(currentEntryOffset, true);
             return value;
         }
 

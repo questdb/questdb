@@ -21,10 +21,9 @@
  *
  ******************************************************************************/
 
-package com.questdb.cairo.map2;
+package com.questdb.cairo.map;
 
 import com.questdb.cairo.*;
-import com.questdb.cairo.map.*;
 import com.questdb.cairo.sql.Record;
 import com.questdb.cairo.sql.RecordCursor;
 import com.questdb.common.ColumnType;
@@ -34,14 +33,14 @@ import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class DirectMapTest extends AbstractCairoTest {
+public class FastMapTest extends AbstractCairoTest {
 
     @Test
     public void testAppendExisting() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             Rnd rnd = new Rnd();
             int N = 10;
-            try (DirectMap map = new DirectMap(
+            try (FastMap map = new FastMap(
                     Numbers.SIZE_1MB,
                     new SingleColumnType(ColumnType.STRING),
                     new SingleColumnType(ColumnType.LONG),
@@ -51,20 +50,20 @@ public class DirectMapTest extends AbstractCairoTest {
                 for (int i = 0; i < N; i++) {
                     CharSequence s = rnd.nextChars(11);
                     keys.add(s.toString());
-                    DirectMap.Key key = map.withKey();
+                    MapKey key = map.withKey();
                     key.putStr(s);
 
-                    DirectMap.Value value = map.createValue();
+                    MapValue value = key.createValue();
                     Assert.assertTrue(value.isNew());
                     value.putLong(0, i + 1);
                 }
                 Assert.assertEquals(N, map.size());
 
                 for (int i = 0, n = keys.size(); i < n; i++) {
-                    DirectMap.Key key = map.withKey();
+                    MapKey key = map.withKey();
                     CharSequence s = keys.getQuick(i);
                     key.putStr(s);
-                    DirectMap.Value value = map.createValue();
+                    MapValue value = key.createValue();
                     Assert.assertFalse(value.isNew());
                     Assert.assertEquals(i + 1, value.getLong(0));
                 }
@@ -78,16 +77,16 @@ public class DirectMapTest extends AbstractCairoTest {
             Rnd rnd = new Rnd();
             int N = 100000;
             int M = 25;
-            try (DirectMap map = new DirectMap(
+            try (FastMap map = new FastMap(
                     Numbers.SIZE_1MB,
                     new SingleColumnType(ColumnType.STRING),
                     new SingleColumnType(ColumnType.LONG),
                     N / 4, 0.5f)) {
                 for (int i = 0; i < N; i++) {
                     CharSequence s = rnd.nextChars(M);
-                    DirectMap.Key key = map.withKey();
+                    MapKey key = map.withKey();
                     key.putStr(s);
-                    DirectMap.Value value = map.createValue();
+                    MapValue value = key.createValue();
                     value.putLong(0, i + 1);
                 }
                 Assert.assertEquals(N, map.size());
@@ -97,9 +96,9 @@ public class DirectMapTest extends AbstractCairoTest {
                 rnd.reset();
                 for (int i = 0; i < N; i++) {
                     CharSequence s = rnd.nextChars(M);
-                    DirectMap.Key key = map.withKey();
+                    MapKey key = map.withKey();
                     key.putStr(s);
-                    DirectMap.Value value = map.findValue();
+                    MapValue value = key.findValue();
                     Assert.assertNotNull(value);
                     Assert.assertEquals(i + 1, value.getLong(0));
                 }
@@ -117,7 +116,7 @@ public class DirectMapTest extends AbstractCairoTest {
 
             try (TableReader reader = new TableReader(configuration, "x")) {
                 try {
-                    new QMap(1024, reader.getMetadata(), new SingleColumnType(ColumnType.LONG), 16, 0.75);
+                    new CompactMap(1024, reader.getMetadata(), new SingleColumnType(ColumnType.LONG), 16, 0.75);
                     Assert.fail();
                 } catch (Exception e) {
                     TestUtils.assertContains(e.getMessage(), "Unsupported column type");
@@ -134,13 +133,14 @@ public class DirectMapTest extends AbstractCairoTest {
             ColumnTypes types = new SingleColumnType(ColumnType.INT);
 
             // hash everything into the same slot simulating collisions
-            DirectMap.HashFunction hash = (address, len) -> 0;
+            FastMap.HashFunction hash = (address, len) -> 0;
 
 
-            try (DirectMap map = new DirectMap(1024, types, types, N / 4, 0.5f, hash)) {
+            try (FastMap map = new FastMap(1024, types, types, N / 4, 0.5f, hash)) {
                 // lookup key that doesn't exist
-                map.withKey().putInt(10);
-                Assert.assertTrue(map.excludesKey());
+                MapKey key = map.withKey();
+                key.putInt(10);
+                Assert.assertTrue(key.notFound());
                 assertDupes(map, rnd, N);
                 map.clear();
                 assertDupes(map, rnd, N);
@@ -155,10 +155,11 @@ public class DirectMapTest extends AbstractCairoTest {
             ColumnTypes keyTypes = new SingleColumnType(ColumnType.BINARY);
             ColumnTypes valueTypes = new SingleColumnType(ColumnType.INT);
             TestRecord.ArrayBinarySequence binarySequence = new TestRecord.ArrayBinarySequence();
-            try (DirectMap map = new DirectMap(Numbers.SIZE_1MB, keyTypes, valueTypes, 64, 0.5)) {
+            try (FastMap map = new FastMap(Numbers.SIZE_1MB, keyTypes, valueTypes, 64, 0.5)) {
                 final Rnd rnd = new Rnd();
-                map.withKey().putBin(binarySequence.of(rnd.nextBytes(10)));
-                DirectMap.Value value = map.createValue();
+                MapKey key = map.withKey();
+                key.putBin(binarySequence.of(rnd.nextBytes(10)));
+                MapValue value = key.createValue();
                 value.putInt(0, rnd.nextInt());
 
                 BinarySequence bad = new BinarySequence() {
@@ -180,19 +181,22 @@ public class DirectMapTest extends AbstractCairoTest {
                     TestUtils.assertContains(e.getMessage(), "binary column is too large");
                 }
 
-                map.withKey().putBin(binarySequence.of(rnd.nextBytes(20)));
-                value = map.createValue();
+                key = map.withKey();
+                key.putBin(binarySequence.of(rnd.nextBytes(20)));
+                value = key.createValue();
                 value.putInt(0, rnd.nextInt());
 
                 Assert.assertEquals(2, map.size());
 
                 // and read
                 rnd.reset();
-                map.withKey().putBin(binarySequence.of(rnd.nextBytes(10)));
-                Assert.assertEquals(rnd.nextInt(), map.findValue().getInt(0));
+                key = map.withKey();
+                key.putBin(binarySequence.of(rnd.nextBytes(10)));
+                Assert.assertEquals(rnd.nextInt(), key.findValue().getInt(0));
 
-                map.withKey().putBin(binarySequence.of(rnd.nextBytes(20)));
-                Assert.assertEquals(rnd.nextInt(), map.findValue().getInt(0));
+                key = map.withKey();
+                key.putBin(binarySequence.of(rnd.nextBytes(20)));
+                Assert.assertEquals(rnd.nextInt(), key.findValue().getInt(0));
             }
         });
     }
@@ -211,13 +215,13 @@ public class DirectMapTest extends AbstractCairoTest {
                 }
 
                 final Rnd rnd = new Rnd();
-                try (DirectMap map = new DirectMap(Numbers.SIZE_1MB, keyTypes, valueTypes, 1024, 0.5f)) {
+                try (FastMap map = new FastMap(Numbers.SIZE_1MB, keyTypes, valueTypes, 1024, 0.5f)) {
                     try {
-                        DirectMap.Key key = map.withKey();
+                        MapKey key = map.withKey();
                         for (int i = 0; i < N; i++) {
                             key.putStr(rnd.nextChars(1024));
                         }
-                        map.createValue();
+                        key.createValue();
                         Assert.fail();
                     } catch (CairoException e) {
                         TestUtils.assertContains(e.getMessage(), "row data is too large");
@@ -230,13 +234,14 @@ public class DirectMapTest extends AbstractCairoTest {
     @Test
     public void testNoValueColumns() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            final ColumnTypes keyTypes = new SingleColumnType(ColumnType.INT);
+            final SingleColumnType keyTypes = new SingleColumnType();
             final Rnd rnd = new Rnd();
             final int N = 100;
-            try (DirectMap map = new DirectMap(2 * Numbers.SIZE_1MB, keyTypes, 128, 0.7f)) {
+            try (FastMap map = new FastMap(2 * Numbers.SIZE_1MB, keyTypes.of(ColumnType.INT), 128, 0.7f)) {
                 for (int i = 0; i < N; i++) {
-                    map.withKey().putInt(rnd.nextInt());
-                    Assert.assertTrue(map.createKey());
+                    MapKey key = map.withKey();
+                    key.putInt(rnd.nextInt());
+                    Assert.assertTrue(key.create());
                 }
 
                 Assert.assertEquals(N, map.size());
@@ -244,8 +249,9 @@ public class DirectMapTest extends AbstractCairoTest {
                 rnd.reset();
 
                 for (int i = 0; i < N; i++) {
-                    map.withKey().putInt(rnd.nextInt());
-                    Assert.assertFalse(map.excludesKey());
+                    MapKey key = map.withKey();
+                    key.putInt(rnd.nextInt());
+                    Assert.assertFalse(key.notFound());
                 }
                 Assert.assertEquals(N, map.size());
             }
@@ -278,7 +284,7 @@ public class DirectMapTest extends AbstractCairoTest {
                 columns.add(10);
                 columns.add(11);
 
-                try (DirectMap map = new DirectMap(
+                try (FastMap map = new FastMap(
                         Numbers.SIZE_1MB,
                         new SymbolAsStrTypes(reader.getMetadata()),
                         new ArrayColumnTypes().reset()
@@ -295,7 +301,7 @@ public class DirectMapTest extends AbstractCairoTest {
                         N,
                         0.9f)) {
 
-                    RecordSink sink = RecordSinkFactory.newInstance(asm, reader.getMetadata(), columns, true);
+                    RecordSink sink = RecordSinkFactory.getInstance(asm, reader.getMetadata(), columns, true);
 
                     final int keyColumnOffset = map.getValueColumnCount();
 
@@ -405,12 +411,12 @@ public class DirectMapTest extends AbstractCairoTest {
             ColumnTypes types = new SingleColumnType(ColumnType.INT);
             final int N = 10000;
             final Rnd rnd = new Rnd();
-            try (DirectMap map = new DirectMap(Numbers.SIZE_1MB, types, types, 64, 0.5)) {
-
+            try (FastMap map = new FastMap(Numbers.SIZE_1MB, types, types, 64, 0.5)) {
 
                 for (int i = 0; i < N; i++) {
-                    map.withKey().putInt(rnd.nextInt());
-                    DirectMap.Value values = map.createValue();
+                    MapKey key = map.withKey();
+                    key.putInt(rnd.nextInt());
+                    MapValue values = key.createValue();
                     Assert.assertTrue(values.isNew());
                     values.putInt(0, i + 1);
                 }
@@ -418,17 +424,17 @@ public class DirectMapTest extends AbstractCairoTest {
                 // reset random generator and iterate map to double the value
                 rnd.reset();
                 LongList list = new LongList();
-                for (DirectMapRecord record : map) {
+                for (MapRecord record : map) {
                     list.add(record.getRowId());
                     Assert.assertEquals(rnd.nextInt(), record.getInt(1));
-                    DirectMap.Value values = record.values();
-                    values.putInt(0, values.getInt(0) * 2);
+                    MapValue value = record.getValue();
+                    value.putInt(0, value.getInt(0) * 2);
                 }
 
                 // access map by rowid now
                 rnd.reset();
                 for (int i = 0, n = list.size(); i < n; i++) {
-                    DirectMapRecord record = map.recordAt(list.getQuick(i));
+                    MapRecord record = map.recordAt(list.getQuick(i));
                     Assert.assertEquals((i + 1) * 2, record.getInt(0));
                     Assert.assertEquals(rnd.nextInt(), record.getInt(1));
                 }
@@ -446,7 +452,7 @@ public class DirectMapTest extends AbstractCairoTest {
 
             ColumnTypes types = new SingleColumnType(ColumnType.LONG);
 
-            try (DirectMap map = new DirectMap(1024, types, types, N / 4, 0.5f)) {
+            try (FastMap map = new FastMap(1024, types, types, N / 4, 0.5f)) {
 
                 try (TableReader reader = new TableReader(configuration, "x")) {
                     RecordCursor cursor = reader.getCursor();
@@ -454,8 +460,8 @@ public class DirectMapTest extends AbstractCairoTest {
                     long counter = 0;
                     while (cursor.hasNext()) {
                         Record record = cursor.next();
-                        map.withKeyAsLong(record.getRowId());
-                        DirectMap.Value values = map.createValue();
+                        MapKey key = map.withKeyAsLong(record.getRowId());
+                        MapValue values = key.createValue();
                         Assert.assertTrue(values.isNew());
                         values.putLong(0, ++counter);
                     }
@@ -464,8 +470,8 @@ public class DirectMapTest extends AbstractCairoTest {
                     counter = 0;
                     while (cursor.hasNext()) {
                         Record record = cursor.next();
-                        map.withKeyAsLong(record.getRowId());
-                        DirectMap.Value values = map.findValue();
+                        MapKey key = map.withKeyAsLong(record.getRowId());
+                        MapValue values = key.findValue();
                         Assert.assertNotNull(values);
                         Assert.assertEquals(++counter, values.getLong(0));
                     }
@@ -529,7 +535,7 @@ public class DirectMapTest extends AbstractCairoTest {
                 columns.add(10);
                 columns.add(11);
 
-                try (DirectMap map = new DirectMap(
+                try (FastMap map = new FastMap(
                         Numbers.SIZE_1MB,
                         new SymbolAsStrTypes(reader.getMetadata()),
                         new ArrayColumnTypes().reset()
@@ -546,7 +552,7 @@ public class DirectMapTest extends AbstractCairoTest {
                         N,
                         0.9f)) {
 
-                    RecordSink sink = RecordSinkFactory.newInstance(asm, reader.getMetadata(), columns, true);
+                    RecordSink sink = RecordSinkFactory.getInstance(asm, reader.getMetadata(), columns, true);
 
                     // this random will be populating values
                     Rnd rnd2 = new Rnd();
@@ -558,8 +564,9 @@ public class DirectMapTest extends AbstractCairoTest {
                     rnd2.reset();
                     long c = 0;
                     while (cursor.hasNext()) {
-                        map.withKey().putRecord(cursor.next(), sink);
-                        DirectMap.Value value = map.findValue();
+                        MapKey key = map.withKey();
+                        key.putRecord(cursor.next(), sink);
+                        MapValue value = key.findValue();
                         Assert.assertNotNull(value);
                         Assert.assertEquals(++c, value.getLong(0));
                         Assert.assertEquals(rnd2.nextInt(), value.getInt(1));
@@ -603,7 +610,7 @@ public class DirectMapTest extends AbstractCairoTest {
                 columns.add(10);
                 columns.add(11);
 
-                try (DirectMap map = new DirectMap(
+                try (FastMap map = new FastMap(
                         Numbers.SIZE_1MB,
                         new SymbolAsIntTypes(reader.getMetadata()),
                         new ArrayColumnTypes().reset()
@@ -620,7 +627,7 @@ public class DirectMapTest extends AbstractCairoTest {
                         N,
                         0.9f)) {
 
-                    RecordSink sink = RecordSinkFactory.newInstance(asm, reader.getMetadata(), columns, false);
+                    RecordSink sink = RecordSinkFactory.getInstance(asm, reader.getMetadata(), columns, false);
 
                     // this random will be populating values
                     Rnd rnd2 = new Rnd();
@@ -628,8 +635,9 @@ public class DirectMapTest extends AbstractCairoTest {
                     RecordCursor cursor = reader.getCursor();
                     long counter = 0;
                     while (cursor.hasNext()) {
-                        map.withKey().putRecord(cursor.next(), sink);
-                        DirectMap.Value value = map.createValue();
+                        MapKey key = map.withKey();
+                        key.putRecord(cursor.next(), sink);
+                        MapValue value = key.createValue();
                         Assert.assertTrue(value.isNew());
                         value.putFloat(4, rnd2.nextFloat2());
                         value.putDouble(5, rnd2.nextDouble2());
@@ -647,8 +655,9 @@ public class DirectMapTest extends AbstractCairoTest {
                     rnd2.reset();
                     long c = 0;
                     while (cursor.hasNext()) {
-                        map.withKey().putRecord(cursor.next(), sink);
-                        DirectMap.Value value = map.findValue();
+                        MapKey key = map.withKey();
+                        key.putRecord(cursor.next(), sink);
+                        MapValue value = key.findValue();
                         Assert.assertNotNull(value);
 
                         Assert.assertEquals(rnd2.nextFloat2(), value.getFloat(4), 0.000001f);
@@ -667,11 +676,12 @@ public class DirectMapTest extends AbstractCairoTest {
         });
     }
 
-    private void assertDupes(DirectMap map, Rnd rnd, int n) {
+    private void assertDupes(FastMap map, Rnd rnd, int n) {
         for (int i = 0; i < n; i++) {
             int key = rnd.nextInt() & (16 - 1);
-            map.withKey().putInt(key);
-            DirectMap.Value values = map.createValue();
+            MapKey k = map.withKey();
+            k.putInt(key);
+            MapValue values = k.createValue();
             if (values.isNew()) {
                 values.putInt(0, 0);
             } else {
@@ -684,8 +694,9 @@ public class DirectMapTest extends AbstractCairoTest {
         // this must yield null values
         for (int i = 0; i < n * 2; i++) {
             int key = (rnd.nextInt() & (16 - 1)) + 16;
-            map.withKey().putInt(key);
-            Assert.assertTrue(map.excludesKey());
+            MapKey k = map.withKey();
+            k.putInt(key);
+            Assert.assertTrue(k.notFound());
         }
     }
 
@@ -776,11 +787,12 @@ public class DirectMapTest extends AbstractCairoTest {
         }
     }
 
-    private void populateMap(DirectMap map, Rnd rnd2, RecordCursor cursor, RecordSink sink) {
+    private void populateMap(FastMap map, Rnd rnd2, RecordCursor cursor, RecordSink sink) {
         long counter = 0;
         while (cursor.hasNext()) {
-            map.withKey().putRecord(cursor.next(), sink);
-            DirectMap.Value value = map.createValue();
+            MapKey key = map.withKey();
+            key.putRecord(cursor.next(), sink);
+            MapValue value = key.createValue();
             Assert.assertTrue(value.isNew());
             value.putLong(0, ++counter);
             value.putInt(1, rnd2.nextInt());
@@ -797,7 +809,7 @@ public class DirectMapTest extends AbstractCairoTest {
     private void testUnsupportedValueType(int columnType) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try {
-                new DirectMap(Numbers.SIZE_1MB, new SingleColumnType(ColumnType.LONG), new SingleColumnType(columnType), 64, 0.5);
+                new FastMap(Numbers.SIZE_1MB, new SingleColumnType(ColumnType.LONG), new SingleColumnType(columnType), 64, 0.5);
                 Assert.fail();
             } catch (CairoException e) {
                 Assert.assertTrue(Chars.contains(e.getMessage(), "value type is not supported"));

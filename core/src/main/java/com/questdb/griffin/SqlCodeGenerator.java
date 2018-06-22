@@ -24,8 +24,8 @@
 package com.questdb.griffin;
 
 import com.questdb.cairo.*;
+import com.questdb.cairo.map.RecordSinkFactory;
 import com.questdb.cairo.map.SingleColumnType;
-import com.questdb.cairo.map2.RecordSinkFactory;
 import com.questdb.cairo.sql.*;
 import com.questdb.common.ColumnType;
 import com.questdb.common.SymbolTable;
@@ -334,7 +334,7 @@ public class SqlCodeGenerator {
                     return new LatestBySansIndexRecordCursorFactory(
                             configuration,
                             new FullBwdDataFrameCursorFactory(engine, model.getTableName().token.toString(), model.getTableVersion()),
-                            RecordSinkFactory.newInstance(asm, metadata, latestByColumns, false),
+                            RecordSinkFactory.getInstance(asm, metadata, latestByColumns, false),
                             latestByColumnTypes.of(metadata.getColumnType(latestByIndex))
                     );
                 }

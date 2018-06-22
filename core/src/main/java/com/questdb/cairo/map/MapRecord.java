@@ -25,6 +25,6 @@ package com.questdb.cairo.map;
 
 import com.questdb.cairo.sql.Record;
 
-public interface RecordSink {
-    void copy(Record r, MapKey w);
+public interface MapRecord extends Record {
+    MapValue getValue();
 }

@@ -21,35 +21,21 @@
  *
  ******************************************************************************/
 
-package com.questdb.cairo.map2;
+package com.questdb.cairo.map;
 
-import com.questdb.std.Unsafe;
+import com.questdb.std.Mutable;
 
-public final class DirectMapIterator implements com.questdb.std.ImmutableIterator<DirectMapRecord> {
-    private final DirectMapRecord record;
-    private int count;
-    private long address;
+import java.io.Closeable;
 
-    DirectMapIterator(DirectMapRecord record) {
-        this.record = record;
-    }
-
+public interface Map extends Mutable, Closeable, Iterable<MapRecord> {
     @Override
-    public boolean hasNext() {
-        return count > 0;
-    }
+    void close();
 
-    @Override
-    public DirectMapRecord next() {
-        long address = this.address;
-        this.address = address + Unsafe.getUnsafe().getInt(address);
-        count--;
-        return record.of(address);
-    }
+    MapRecord recordAt(long rowid);
 
-    DirectMapIterator init(long address, int count) {
-        this.address = address;
-        this.count = count;
-        return this;
-    }
+    long size();
+
+    MapKey withKey();
+
+    MapKey withKeyAsLong(long value);
 }

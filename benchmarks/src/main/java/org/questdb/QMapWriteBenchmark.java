@@ -23,9 +23,7 @@
 
 package org.questdb;
 
-import com.questdb.cairo.map.QMap;
-import com.questdb.cairo.map.SingleColumnType;
-import com.questdb.cairo.map2.DirectMap;
+import com.questdb.cairo.map.*;
 import com.questdb.common.ColumnType;
 import com.questdb.std.Rnd;
 import org.openjdk.jmh.annotations.*;
@@ -44,8 +42,8 @@ public class QMapWriteBenchmark {
     private static final int N = 5000000;
     private static final double loadFactor = 0.5;
     private static final int M = 25;
-    private static QMap qmap = new QMap(1024 * 1024, new SingleColumnType(ColumnType.STRING), new SingleColumnType(ColumnType.LONG), 64, loadFactor);
-    private static DirectMap map = new DirectMap(1024 * 1024, new SingleColumnType(ColumnType.STRING), new SingleColumnType(ColumnType.LONG), 64, loadFactor);
+    private static CompactMap qmap = new CompactMap(1024 * 1024, new SingleColumnType(ColumnType.STRING), new SingleColumnType(ColumnType.LONG), 64, loadFactor);
+    private static FastMap map = new FastMap(1024 * 1024, new SingleColumnType(ColumnType.STRING), new SingleColumnType(ColumnType.LONG), 64, loadFactor);
 
 
     private final Rnd rnd = new Rnd();
@@ -68,7 +66,7 @@ public class QMapWriteBenchmark {
 
     @Setup(Level.Iteration)
     public void reset() {
-        System.out.print(" [q=" + qmap.size() + ", l=" + map.size() + ", clash=" + qmap.getCountClashes() + ", chains=" + qmap.getCountChains() + ", recurs=" + qmap.getCountRecursions() + ", cap=" + qmap.getKeyCapacity() + "] ");
+        System.out.print(" [q=" + qmap.size() + ", l=" + map.size() + ", cap=" + qmap.getKeyCapacity() + "] ");
         map.clear();
         qmap.clear();
         rnd.reset();
@@ -76,17 +74,17 @@ public class QMapWriteBenchmark {
 
     @Benchmark
     public void testDirectMap() {
-        DirectMap.Key kw = map.withKey();
-        kw.putStr(rnd.nextChars(M));
-        DirectMap.Value values = map.createValue();
+        MapKey key = map.withKey();
+        key.putStr(rnd.nextChars(M));
+        MapValue values = key.createValue();
         values.putLong(0, 20);
     }
 
     @Benchmark
     public void testQMap() {
-        QMap.Key key = qmap.withKey();
+        MapKey key = qmap.withKey();
         key.putStr(rnd.nextChars(M));
-        QMap.Value value = key.createValue();
+        MapValue value = key.createValue();
         value.putLong(0, 20);
     }
 }
