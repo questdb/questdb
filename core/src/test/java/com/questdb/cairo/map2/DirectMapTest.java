@@ -233,7 +233,7 @@ public class DirectMapTest extends AbstractCairoTest {
             final ColumnTypes keyTypes = new SingleColumnType(ColumnType.INT);
             final Rnd rnd = new Rnd();
             final int N = 100;
-            try (DirectMap map = new DirectMap(Numbers.SIZE_1MB, keyTypes, 64, 0.5f)) {
+            try (DirectMap map = new DirectMap(2 * Numbers.SIZE_1MB, keyTypes, 128, 0.7f)) {
                 for (int i = 0; i < N; i++) {
                     map.withKey().putInt(rnd.nextInt());
                     Assert.assertTrue(map.createKey());

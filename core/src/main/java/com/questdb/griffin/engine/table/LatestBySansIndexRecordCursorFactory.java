@@ -23,26 +23,43 @@
 
 package com.questdb.griffin.engine.table;
 
+import com.questdb.cairo.CairoConfiguration;
+import com.questdb.cairo.ColumnTypes;
+import com.questdb.cairo.map2.DirectMap;
+import com.questdb.cairo.map2.RecordSink;
 import com.questdb.cairo.sql.DataFrameCursorFactory;
 import com.questdb.cairo.sql.RecordCursor;
 import com.questdb.cairo.sql.RecordCursorFactory;
 import com.questdb.griffin.engine.LongTreeSet;
+import com.questdb.std.Transient;
 
-public class LatestByUnindexedRecordCursorFactory implements RecordCursorFactory {
+public class LatestBySansIndexRecordCursorFactory implements RecordCursorFactory {
     private final DataFrameCursorFactory dataFrameCursorFactory;
-    private final LatestByUnindexedRecordCursor cursor;
+    private final LatestBySansIndexRecordCursor cursor;
+    private final DirectMap map;
     private final LongTreeSet treeSet;
 
-    public LatestByUnindexedRecordCursorFactory(DataFrameCursorFactory dataFrameCursorFactory, int columnIndex) {
-        //todo: derive page size from key count for symbol and configuration
-        this.treeSet = new LongTreeSet(4 * 1024);
-        this.cursor = new LatestByUnindexedRecordCursor(treeSet, null, null);
+    public LatestBySansIndexRecordCursorFactory(
+            CairoConfiguration configuration,
+            DataFrameCursorFactory dataFrameCursorFactory,
+            RecordSink recordSink,
+            @Transient ColumnTypes columnTypes) {
+        this.treeSet = new LongTreeSet(configuration.getSqlTreeDefaultPageSize());
+        this.map = new DirectMap(
+                configuration.getSqlMapDefaultPageSize(),
+                columnTypes,
+                configuration.getSqlMapDefaultKeyCapacity(),
+                configuration.getSqlFastMapLoadFactor()
+        );
+        this.cursor = new LatestBySansIndexRecordCursor(map, treeSet, recordSink);
         this.dataFrameCursorFactory = dataFrameCursorFactory;
     }
 
     @Override
     public void close() {
+        cursor.close();
         treeSet.close();
+        map.close();
     }
 
     @Override

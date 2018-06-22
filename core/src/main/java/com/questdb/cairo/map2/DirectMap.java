@@ -58,7 +58,7 @@ public class DirectMap implements Mutable, Iterable<DirectMapRecord>, Closeable 
     private int mask;
 
     public DirectMap(int pageSize,
-                     @NotNull ColumnTypes keyTypes,
+                     @Transient @NotNull ColumnTypes keyTypes,
                      int keyCapacity,
                      double loadFactor
     ) {
@@ -67,8 +67,8 @@ public class DirectMap implements Mutable, Iterable<DirectMapRecord>, Closeable 
 
 
     public DirectMap(int pageSize,
-                     @NotNull ColumnTypes keyTypes,
-                     @NotNull ColumnTypes valueTypes,
+                     @Transient @NotNull ColumnTypes keyTypes,
+                     @Transient @NotNull ColumnTypes valueTypes,
                      int keyCapacity,
                      double loadFactor
     ) {
@@ -76,8 +76,8 @@ public class DirectMap implements Mutable, Iterable<DirectMapRecord>, Closeable 
     }
 
     DirectMap(int pageSize,
-              ColumnTypes keyTypes,
-              ColumnTypes valueTypes,
+              @Transient ColumnTypes keyTypes,
+              @Transient ColumnTypes valueTypes,
               int keyCapacity,
               double loadFactor,
               HashFunction hashFunction

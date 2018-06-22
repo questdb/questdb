@@ -31,23 +31,23 @@ import com.questdb.cairo.sql.Record;
 import com.questdb.griffin.engine.LongTreeSet;
 import com.questdb.std.Rows;
 
-class LatestByUnindexedRecordCursor extends AbstractDataFrameRecordCursor {
+class LatestBySansIndexRecordCursor extends AbstractDataFrameRecordCursor {
 
     private final DirectMap map;
     private final RecordSink recordSink;
-    private LongTreeSet treeSet;
+    private final LongTreeSet treeSet;
     private LongTreeSet.TreeCursor treeCursor;
 
-    public LatestByUnindexedRecordCursor(LongTreeSet treeSet, DirectMap map, RecordSink recordSink) {
-        this.treeSet = treeSet;
+    public LatestBySansIndexRecordCursor(DirectMap map, LongTreeSet treeSet, RecordSink recordSink) {
         this.map = map;
+        this.treeSet = treeSet;
         this.recordSink = recordSink;
     }
 
     @Override
     public void close() {
-        super.close();
         treeCursor = null;
+        dataFrameCursor.close();
     }
 
     @Override
@@ -69,9 +69,11 @@ class LatestByUnindexedRecordCursor extends AbstractDataFrameRecordCursor {
 
     private void buildTreeMap() {
         treeSet.clear();
+        map.clear();
 
         while (this.dataFrameCursor.hasNext()) {
             final DataFrame frame = this.dataFrameCursor.next();
+            final int partitionIndex = frame.getPartitionIndex();
             final long rowLo = frame.getRowLo();
             final long rowHi = frame.getRowHi() - 1;
 
@@ -79,13 +81,13 @@ class LatestByUnindexedRecordCursor extends AbstractDataFrameRecordCursor {
             for (long row = rowHi; row >= rowLo; row--) {
                 record.setRecordIndex(row);
                 map.withKey().putRecord(record, recordSink);
-                if (map.createValue().isNew()) {
-                    treeSet.put(Rows.toRowID(frame.getPartitionIndex(), row));
+                if (map.createKey()) {
+                    treeSet.put(Rows.toRowID(partitionIndex, row));
                 }
             }
-
         }
 
+        map.clear();
         this.treeCursor = treeSet.getCursor();
     }
 

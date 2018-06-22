@@ -73,7 +73,7 @@ public class SqlCompiler {
         this.characterStore = new CharacterStore();
         this.lexer = new GenericLexer();
         final FunctionParser functionParser = new FunctionParser(configuration, ServiceLoader.load(FunctionFactory.class));
-        this.codeGenerator = new SqlCodeGenerator(engine, functionParser);
+        this.codeGenerator = new SqlCodeGenerator(engine, configuration, functionParser);
         this.configuration = configuration;
 
         configureLexer(lexer);

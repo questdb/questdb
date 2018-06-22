@@ -37,7 +37,6 @@ import com.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 import org.junit.Before;
-import org.junit.Ignore;
 import org.junit.Test;
 
 import java.io.IOException;
@@ -220,6 +219,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     public void testLatestByKey() throws Exception {
         assertQuery("a\tb\tk\n" +
                         "23.905290108465\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
+                        "12.026122412833\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
                         "48.820511018587\tVTJW\t1970-01-12T13:46:40.000000Z\n" +
                         "49.005104498852\tPEHN\t1970-01-18T08:40:00.000000Z\n" +
                         "40.455469747939\t\t1970-01-22T23:46:40.000000Z\n",
@@ -237,11 +237,10 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     }
 
     @Test
-    @Ignore
-    //todo: implement
     public void testLatestByKeyNoIndex() throws Exception {
         assertQuery("a\tb\tk\n" +
                         "23.905290108465\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
+                        "12.026122412833\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
                         "48.820511018587\tVTJW\t1970-01-12T13:46:40.000000Z\n" +
                         "49.005104498852\tPEHN\t1970-01-18T08:40:00.000000Z\n" +
                         "40.455469747939\t\t1970-01-22T23:46:40.000000Z\n",

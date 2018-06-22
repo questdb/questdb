@@ -26,6 +26,7 @@ package com.questdb.cairo;
 import com.questdb.std.Chars;
 import com.questdb.std.FilesFacade;
 import com.questdb.std.FilesFacadeImpl;
+import com.questdb.std.Numbers;
 import com.questdb.std.microtime.MicrosecondClock;
 import com.questdb.std.microtime.MicrosecondClockImpl;
 import com.questdb.std.time.MillisecondClock;
@@ -132,5 +133,25 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public boolean isParallelIndexingEnabled() {
         return true;
+    }
+
+    @Override
+    public double getSqlFastMapLoadFactor() {
+        return 0.5;
+    }
+
+    @Override
+    public int getSqlMapDefaultKeyCapacity() {
+        return 128;
+    }
+
+    @Override
+    public int getSqlMapDefaultPageSize() {
+        return 4 * Numbers.SIZE_1MB;
+    }
+
+    @Override
+    public int getSqlTreeDefaultPageSize() {
+        return Numbers.SIZE_1MB;
     }
 }

@@ -26,10 +26,13 @@ package com.questdb.cairo.map;
 import com.questdb.cairo.ColumnTypes;
 
 public class SingleColumnType implements ColumnTypes {
-    private final int type;
+    private int type;
 
     public SingleColumnType(int type) {
         this.type = type;
+    }
+
+    public SingleColumnType() {
     }
 
     @Override
@@ -40,5 +43,10 @@ public class SingleColumnType implements ColumnTypes {
     @Override
     public int getColumnCount() {
         return 1;
+    }
+
+    public ColumnTypes of(int columnType) {
+        this.type = columnType;
+        return this;
     }
 }

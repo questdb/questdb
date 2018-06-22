@@ -24,6 +24,8 @@
 package com.questdb.griffin;
 
 import com.questdb.cairo.*;
+import com.questdb.cairo.map.SingleColumnType;
+import com.questdb.cairo.map2.RecordSinkFactory;
 import com.questdb.cairo.sql.*;
 import com.questdb.common.ColumnType;
 import com.questdb.common.SymbolTable;
@@ -31,16 +33,24 @@ import com.questdb.griffin.engine.functions.bind.BindVariableService;
 import com.questdb.griffin.engine.table.*;
 import com.questdb.griffin.model.IntrinsicModel;
 import com.questdb.griffin.model.QueryModel;
+import com.questdb.std.BytecodeAssembler;
 import com.questdb.std.Chars;
+import com.questdb.std.IntList;
 import com.questdb.std.ObjList;
 
 public class SqlCodeGenerator {
     private final WhereClauseParser filterAnalyser = new WhereClauseParser();
     private final FunctionParser functionParser;
     private final CairoEngine engine;
+    private final BytecodeAssembler asm = new BytecodeAssembler();
+    // this list is used to generate record sinks
+    private final IntList latestByColumns = new IntList();
+    private final SingleColumnType latestByColumnTypes = new SingleColumnType();
+    private final CairoConfiguration configuration;
 
-    public SqlCodeGenerator(CairoEngine engine, FunctionParser functionParser) {
+    public SqlCodeGenerator(CairoEngine engine, CairoConfiguration configuration, FunctionParser functionParser) {
         this.engine = engine;
+        this.configuration = configuration;
         this.functionParser = functionParser;
     }
 
@@ -318,7 +328,15 @@ public class SqlCodeGenerator {
                                 new FullBwdDataFrameCursorFactory(engine, model.getTableName().token.toString(), model.getTableVersion()),
                                 latestByIndex);
                     }
-                    return null;
+
+                    latestByColumns.clear();
+                    latestByColumns.add(latestByIndex);
+                    return new LatestBySansIndexRecordCursorFactory(
+                            configuration,
+                            new FullBwdDataFrameCursorFactory(engine, model.getTableName().token.toString(), model.getTableVersion()),
+                            RecordSinkFactory.newInstance(asm, metadata, latestByColumns, false),
+                            latestByColumnTypes.of(metadata.getColumnType(latestByIndex))
+                    );
                 }
             }
         }

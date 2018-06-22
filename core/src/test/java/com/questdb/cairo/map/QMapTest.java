@@ -107,7 +107,23 @@ public class QMapTest extends AbstractCairoTest {
                 }
                 Assert.assertEquals(N, map.size());
                 Assert.assertEquals(expectedAppendOffset, map.getAppendOffset());
-                System.out.println(map.getCountChains());
+            }
+        });
+    }
+
+    @Test
+    public void testConstructorRecovery() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            TestRecord.ArrayBinarySequence binarySequence = new TestRecord.ArrayBinarySequence();
+            createTestTable(10, new Rnd(), binarySequence);
+
+            try (TableReader reader = new TableReader(configuration, "x")) {
+                try {
+                    new QMap(1024, reader.getMetadata(), new SingleColumnType(ColumnType.LONG), 16, 0.75);
+                    Assert.fail();
+                } catch (Exception e) {
+                    TestUtils.assertContains(e.getMessage(), "Unsupported column type");
+                }
             }
         });
     }
@@ -163,160 +179,6 @@ public class QMapTest extends AbstractCairoTest {
             key = map.withKey();
             key.putStr("033-ABCDE");
             Assert.assertNull(key.findValue());
-        }
-    }
-
-    @Test
-    public void testUnableToFindFreeSlot() {
-
-        // test what happens when map runs out of free slots while trying to
-        // reshuffle "foreign" entries out of the way
-
-        Rnd rnd = new Rnd();
-
-        // these have to be power of two for on the limit testing
-        // QMap will round capacity to next highest power of two!
-
-        int N = 256;
-        int M = 32;
-
-
-        // This function must know about entry structure.
-        // To make hash consistent we will assume that first character of
-        // string is always a number and this number will be hash code of string.
-        class MockHash implements QMap.HashFunction {
-            @Override
-            public long hash(VirtualMemory mem, long offset, long size) {
-                // we have singe key field, which is string
-                // the offset of string is 8 bytes for key cell + 4 bytes for string length, total is 12
-                char c = mem.getChar(offset + 12);
-                return c - '0';
-            }
-        }
-
-        StringSink sink = new StringSink();
-        // tweak capacity in such a way that we only have one spare slot before resize is needed
-        // this way algo that shuffles "foreign" slots away should face problems
-        double loadFactor = 0.9999999;
-        try (QMap map = new QMap(
-                1024 * 1024,
-                new SingleColumnType(ColumnType.STRING),
-                new SingleColumnType(ColumnType.LONG),
-                (long) (N * loadFactor), loadFactor, new MockHash())) {
-
-            // assert that key capacity is what we expect, otherwise this test would be useless
-            Assert.assertEquals(N, map.getActualCapacity());
-
-            long target = map.getKeyCapacity();
-
-            sink.clear();
-            sink.put('0');
-            populate(rnd, sink, map, 0, target - 1, 1);
-
-            sink.clear();
-            sink.put('1');
-
-            populate(rnd, sink, map, target - 1, M + N, 1);
-
-            // assert result
-
-            rnd.reset();
-
-            sink.clear();
-            sink.put('0');
-            assertMap(rnd, sink, map, 0, target - 1, 1);
-
-            sink.clear();
-            sink.put('1');
-
-            assertMap(rnd, sink, map, target - 1, M + N, 1);
-        }
-    }
-
-    private void assertMap(Rnd rnd, StringSink sink, QMap map, long lo, long hi, int prefixLen) {
-        for (long i = lo; i < hi; i++) {
-            // keep the first character
-            sink.clear(prefixLen);
-            rnd.nextChars(sink, 5);
-            QMap.Key key = map.withKey();
-            key.putStr(sink);
-            QMap.Value value = key.createValue();
-            Assert.assertFalse(value.isNew());
-            Assert.assertEquals(i + 1, value.getLong(0));
-        }
-    }
-
-    private void populate(Rnd rnd, StringSink sink, QMap map, long lo, long hi, int prefixLen) {
-        for (long i = lo; i < hi; i++) {
-            // keep the first few characters
-            sink.clear(prefixLen);
-            rnd.nextChars(sink, 5);
-            QMap.Key key = map.withKey();
-            key.putStr(sink);
-            QMap.Value value = key.createValue();
-            Assert.assertTrue(value.isNew());
-            value.putLong(i + 1);
-        }
-    }
-
-    @Test
-    public void testUnableToFindFreeSlot2() {
-
-        // test that code that deals with key collection is always
-        // protected by map capacity check.
-
-        Rnd rnd = new Rnd();
-
-        // these have to be power of two for on the limit testing
-        // QMap will round capacity to next highest power of two!
-
-        int N = 256;
-        int M = 32;
-
-        StringSink sink = new StringSink();
-        // tweak capacity in such a way that we only have one spare slot before resize is needed
-        // this way algo that shuffles "foreign" slots away should face problems
-        double loadFactor = 0.9999999;
-        try (QMap map = new QMap(
-                1024 * 1024,
-                new SingleColumnType(ColumnType.STRING),
-                new SingleColumnType(ColumnType.LONG),
-                (long) (N * loadFactor), loadFactor, new MockHash())) {
-
-            // assert that key capacity is what we expect, otherwise this test would be useless
-            Assert.assertEquals(N, map.getActualCapacity());
-
-            long target = map.getKeyCapacity();
-
-            sink.clear();
-            sink.put("000");
-            for (long i = 0; i < target - 2; i++) {
-                // keep the first character
-                sink.clear(3);
-                rnd.nextChars(sink, 5);
-                QMap.Key key = map.withKey();
-                key.putStr(sink);
-                QMap.Value value = key.createValue();
-                Assert.assertTrue(value.isNew());
-                value.putLong(i + 1);
-            }
-
-            sink.clear();
-            sink.put(target - 2);
-
-            populate(rnd, sink, map, target - 1, M + N, 3);
-
-            // assert result
-
-            rnd.reset();
-
-            sink.clear();
-            sink.put("000");
-            assertMap(rnd, sink, map, 0, target - 2, 3);
-
-            sink.clear();
-            sink.put(target - 2);
-            assertMap(rnd, sink, map, target - 1, M + N, 3);
         }
     }
 
@@ -460,90 +322,131 @@ public class QMapTest extends AbstractCairoTest {
         });
     }
 
-    private void createTestTable(int n, Rnd rnd, TestRecord.ArrayBinarySequence binarySequence) {
+    @Test
+    public void testUnableToFindFreeSlot() {
 
-        try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)) {
-            model
-                    .col("a", ColumnType.BYTE)
-                    .col("b", ColumnType.SHORT)
-                    .col("c", ColumnType.INT)
-                    .col("d", ColumnType.LONG)
-                    .col("e", ColumnType.DATE)
-                    .col("f", ColumnType.TIMESTAMP)
-                    .col("g", ColumnType.FLOAT)
-                    .col("h", ColumnType.DOUBLE)
-                    .col("i", ColumnType.STRING)
-                    .col("j", ColumnType.SYMBOL)
-                    .col("k", ColumnType.BOOLEAN)
-                    .col("l", ColumnType.BINARY);
-            CairoTestUtils.create(model);
+        // test what happens when map runs out of free slots while trying to
+        // reshuffle "foreign" entries out of the way
+
+        Rnd rnd = new Rnd();
+
+        // these have to be power of two for on the limit testing
+        // QMap will round capacity to next highest power of two!
+
+        int N = 256;
+        int M = 32;
+
+
+        // This function must know about entry structure.
+        // To make hash consistent we will assume that first character of
+        // string is always a number and this number will be hash code of string.
+        class MockHash implements QMap.HashFunction {
+            @Override
+            public long hash(VirtualMemory mem, long offset, long size) {
+                // we have singe key field, which is string
+                // the offset of string is 8 bytes for key cell + 4 bytes for string length, total is 12
+                char c = mem.getChar(offset + 12);
+                return c - '0';
+            }
         }
 
-        try (TableWriter writer = new TableWriter(configuration, "x")) {
-            for (int i = 0; i < n; i++) {
-                TableWriter.Row row = writer.newRow(0);
-                row.putByte(0, rnd.nextByte());
-                row.putShort(1, rnd.nextShort());
+        StringSink sink = new StringSink();
+        // tweak capacity in such a way that we only have one spare slot before resize is needed
+        // this way algo that shuffles "foreign" slots away should face problems
+        double loadFactor = 0.9999999;
+        try (QMap map = new QMap(
+                1024 * 1024,
+                new SingleColumnType(ColumnType.STRING),
+                new SingleColumnType(ColumnType.LONG),
+                (long) (N * loadFactor), loadFactor, new MockHash())) {
 
-                if (rnd.nextInt() % 4 == 0) {
-                    row.putInt(2, Numbers.INT_NaN);
-                } else {
-                    row.putInt(2, rnd.nextInt());
-                }
+            // assert that key capacity is what we expect, otherwise this test would be useless
+            Assert.assertEquals(N, map.getActualCapacity());
 
-                if (rnd.nextInt() % 4 == 0) {
-                    row.putLong(3, Numbers.LONG_NaN);
-                } else {
-                    row.putLong(3, rnd.nextLong());
-                }
+            long target = map.getKeyCapacity();
 
-                if (rnd.nextInt() % 4 == 0) {
-                    row.putLong(4, Numbers.LONG_NaN);
-                } else {
-                    row.putDate(4, rnd.nextLong());
-                }
+            sink.clear();
+            sink.put('0');
+            populate(rnd, sink, map, 0, target - 1, 1);
 
-                if (rnd.nextInt() % 4 == 0) {
-                    row.putLong(5, Numbers.LONG_NaN);
-                } else {
-                    row.putTimestamp(5, rnd.nextLong());
-                }
+            sink.clear();
+            sink.put('1');
 
-                if (rnd.nextInt() % 4 == 0) {
-                    row.putFloat(6, Float.NaN);
-                } else {
-                    row.putFloat(6, rnd.nextFloat2());
-                }
+            populate(rnd, sink, map, target - 1, M + N, 1);
 
-                if (rnd.nextInt() % 4 == 0) {
-                    row.putDouble(7, Double.NaN);
-                } else {
-                    row.putDouble(7, rnd.nextDouble2());
-                }
+            // assert result
 
-                if (rnd.nextInt() % 4 == 0) {
-                    row.putStr(8, null);
-                } else {
-                    row.putStr(8, rnd.nextChars(5));
-                }
+            rnd.reset();
 
-                if (rnd.nextInt() % 4 == 0) {
-                    row.putSym(9, null);
-                } else {
-                    row.putSym(9, rnd.nextChars(3));
-                }
+            sink.clear();
+            sink.put('0');
+            assertMap(rnd, sink, map, 0, target - 1, 1);
 
-                row.putBool(10, rnd.nextBoolean());
+            sink.clear();
+            sink.put('1');
 
-                if (rnd.nextInt() % 4 == 0) {
-                    row.putBin(11, null);
-                } else {
-                    binarySequence.of(rnd.nextBytes(25));
-                    row.putBin(11, binarySequence);
-                }
-                row.append();
+            assertMap(rnd, sink, map, target - 1, M + N, 1);
+        }
+    }
+
+    @Test
+    public void testUnableToFindFreeSlot2() {
+
+        // test that code that deals with key collection is always
+        // protected by map capacity check.
+
+        Rnd rnd = new Rnd();
+
+        // these have to be power of two for on the limit testing
+        // QMap will round capacity to next highest power of two!
+
+        int N = 256;
+        int M = 32;
+
+        StringSink sink = new StringSink();
+        // tweak capacity in such a way that we only have one spare slot before resize is needed
+        // this way algo that shuffles "foreign" slots away should face problems
+        double loadFactor = 0.9999999;
+        try (QMap map = new QMap(
+                1024 * 1024,
+                new SingleColumnType(ColumnType.STRING),
+                new SingleColumnType(ColumnType.LONG),
+                (long) (N * loadFactor), loadFactor, new MockHash())) {
+
+            // assert that key capacity is what we expect, otherwise this test would be useless
+            Assert.assertEquals(N, map.getActualCapacity());
+
+            long target = map.getKeyCapacity();
+
+            sink.clear();
+            sink.put("000");
+            for (long i = 0; i < target - 2; i++) {
+                // keep the first character
+                sink.clear(3);
+                rnd.nextChars(sink, 5);
+                QMap.Key key = map.withKey();
+                key.putStr(sink);
+                QMap.Value value = key.createValue();
+                Assert.assertTrue(value.isNew());
+                value.putLong(i + 1);
             }
-            writer.commit();
+
+            sink.clear();
+            sink.put(target - 2);
+
+            populate(rnd, sink, map, target - 1, M + N, 3);
+
+            // assert result
+
+            rnd.reset();
+
+            sink.clear();
+            sink.put("000");
+            assertMap(rnd, sink, map, 0, target - 2, 3);
+
+            sink.clear();
+            sink.put(target - 2);
+            assertMap(rnd, sink, map, target - 1, M + N, 3);
         }
     }
 
@@ -731,6 +634,119 @@ public class QMapTest extends AbstractCairoTest {
         });
     }
 
+    private void assertMap(Rnd rnd, StringSink sink, QMap map, long lo, long hi, int prefixLen) {
+        for (long i = lo; i < hi; i++) {
+            // keep the first character
+            sink.clear(prefixLen);
+            rnd.nextChars(sink, 5);
+            QMap.Key key = map.withKey();
+            key.putStr(sink);
+            QMap.Value value = key.createValue();
+            Assert.assertFalse(value.isNew());
+            Assert.assertEquals(i + 1, value.getLong(0));
+        }
+    }
+
+    private void createTestTable(int n, Rnd rnd, TestRecord.ArrayBinarySequence binarySequence) {
+
+        try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)) {
+            model
+                    .col("a", ColumnType.BYTE)
+                    .col("b", ColumnType.SHORT)
+                    .col("c", ColumnType.INT)
+                    .col("d", ColumnType.LONG)
+                    .col("e", ColumnType.DATE)
+                    .col("f", ColumnType.TIMESTAMP)
+                    .col("g", ColumnType.FLOAT)
+                    .col("h", ColumnType.DOUBLE)
+                    .col("i", ColumnType.STRING)
+                    .col("j", ColumnType.SYMBOL)
+                    .col("k", ColumnType.BOOLEAN)
+                    .col("l", ColumnType.BINARY);
+            CairoTestUtils.create(model);
+        }
+
+        try (TableWriter writer = new TableWriter(configuration, "x")) {
+            for (int i = 0; i < n; i++) {
+                TableWriter.Row row = writer.newRow(0);
+                row.putByte(0, rnd.nextByte());
+                row.putShort(1, rnd.nextShort());
+
+                if (rnd.nextInt() % 4 == 0) {
+                    row.putInt(2, Numbers.INT_NaN);
+                } else {
+                    row.putInt(2, rnd.nextInt());
+                }
+
+                if (rnd.nextInt() % 4 == 0) {
+                    row.putLong(3, Numbers.LONG_NaN);
+                } else {
+                    row.putLong(3, rnd.nextLong());
+                }
+
+                if (rnd.nextInt() % 4 == 0) {
+                    row.putLong(4, Numbers.LONG_NaN);
+                } else {
+                    row.putDate(4, rnd.nextLong());
+                }
+
+                if (rnd.nextInt() % 4 == 0) {
+                    row.putLong(5, Numbers.LONG_NaN);
+                } else {
+                    row.putTimestamp(5, rnd.nextLong());
+                }
+
+                if (rnd.nextInt() % 4 == 0) {
+                    row.putFloat(6, Float.NaN);
+                } else {
+                    row.putFloat(6, rnd.nextFloat2());
+                }
+
+                if (rnd.nextInt() % 4 == 0) {
+                    row.putDouble(7, Double.NaN);
+                } else {
+                    row.putDouble(7, rnd.nextDouble2());
+                }
+
+                if (rnd.nextInt() % 4 == 0) {
+                    row.putStr(8, null);
+                } else {
+                    row.putStr(8, rnd.nextChars(5));
+                }
+
+                if (rnd.nextInt() % 4 == 0) {
+                    row.putSym(9, null);
+                } else {
+                    row.putSym(9, rnd.nextChars(3));
+                }
+
+                row.putBool(10, rnd.nextBoolean());
+
+                if (rnd.nextInt() % 4 == 0) {
+                    row.putBin(11, null);
+                } else {
+                    binarySequence.of(rnd.nextBytes(25));
+                    row.putBin(11, binarySequence);
+                }
+                row.append();
+            }
+            writer.commit();
+        }
+    }
+
+    private void populate(Rnd rnd, StringSink sink, QMap map, long lo, long hi, int prefixLen) {
+        for (long i = lo; i < hi; i++) {
+            // keep the first few characters
+            sink.clear(prefixLen);
+            rnd.nextChars(sink, 5);
+            QMap.Key key = map.withKey();
+            key.putStr(sink);
+            QMap.Value value = key.createValue();
+            Assert.assertTrue(value.isNew());
+            value.putLong(i + 1);
+        }
+    }
+
     private void populateMap(QMap map, Rnd rnd2, RecordCursor cursor, RecordSink sink) {
         long counter = 0;
         while (cursor.hasNext()) {
@@ -748,23 +764,6 @@ public class QMapTest extends AbstractCairoTest {
             value.putTimestamp(rnd2.nextLong());
             value.putBool(rnd2.nextBoolean());
         }
-    }
-
-    @Test
-    public void testConstructorRecovery() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            TestRecord.ArrayBinarySequence binarySequence = new TestRecord.ArrayBinarySequence();
-            createTestTable(10, new Rnd(), binarySequence);
-
-            try (TableReader reader = new TableReader(configuration, "x")) {
-                try {
-                    new QMap(1024, reader.getMetadata(), new SingleColumnType(ColumnType.LONG), 16, 0.75);
-                    Assert.fail();
-                } catch (Exception e) {
-                    TestUtils.assertContains(e.getMessage(), "Unsupported column type");
-                }
-            }
-        });
     }
 
     // This hash function will use first three characters as hash code

@@ -72,7 +72,7 @@ class LatestByRecordCursor extends AbstractDataFrameRecordCursor {
         treeSet.clear();
 
         int keyLo = 0;
-        int keyHi = keyCount;
+        int keyHi = ++keyCount;
 
         int localLo = Integer.MAX_VALUE;
         int localHi = Integer.MIN_VALUE;

@@ -66,4 +66,12 @@ public interface CairoConfiguration {
     long getWorkStealTimeoutNanos();
 
     boolean isParallelIndexingEnabled();
+
+    double getSqlFastMapLoadFactor();
+
+    int getSqlMapDefaultKeyCapacity();
+
+    int getSqlMapDefaultPageSize();
+
+    int getSqlTreeDefaultPageSize();
 }
