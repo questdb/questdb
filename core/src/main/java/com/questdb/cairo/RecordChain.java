@@ -76,17 +76,13 @@ public class RecordChain implements Closeable, RecordCursor, Mutable {
     }
 
     public long beginRecord(long prevOffset) {
-        mem.jumpTo(varAppendOffset);
         // no next record
-        mem.putLong(-1);
+        mem.putLong(varAppendOffset, -1);
         recordOffset = varAppendOffset;
         if (prevOffset != -1) {
-            mem.jumpTo(prevOffset);
-            mem.putLong(recordOffset);
-            mem.jumpTo(rowToDataOffset(recordOffset + varOffset));
-        } else {
-            mem.skip(varOffset);
+            mem.putLong(prevOffset, recordOffset);
         }
+        mem.jumpTo(rowToDataOffset(recordOffset + varOffset));
         varAppendOffset = rowToDataOffset(recordOffset + varOffset + fixOffset);
         return recordOffset;
     }
@@ -151,10 +147,10 @@ public class RecordChain implements Closeable, RecordCursor, Mutable {
     }
 
     public void putBin(BinarySequence value) {
-        long offset = mem.getAppendOffset();
         if (value == null) {
-            putNull(offset);
+            putNull();
         } else {
+            long offset = mem.getAppendOffset();
             mem.jumpTo(rowToDataOffset(recordOffset));
             mem.putLong(varAppendOffset);
             recordOffset += 8;
@@ -180,17 +176,13 @@ public class RecordChain implements Closeable, RecordCursor, Mutable {
     }
 
     public void putStr(CharSequence value) {
-        long offset = mem.getAppendOffset();
         if (value == null) {
-            putNull(offset);
+            putNull();
         } else {
-            mem.jumpTo(rowToDataOffset(recordOffset));
-            mem.putLong(varAppendOffset);
+            mem.putLong(rowToDataOffset(recordOffset), varAppendOffset);
             recordOffset += 8;
-            mem.jumpTo(varAppendOffset);
-            mem.putStr(value);
-            varAppendOffset = mem.getAppendOffset();
-            mem.jumpTo(offset);
+            mem.putStr(varAppendOffset, value);
+            varAppendOffset += value.length() * 2 + 4;
         }
     }
 
@@ -218,11 +210,9 @@ public class RecordChain implements Closeable, RecordCursor, Mutable {
         mem.putLong(value);
     }
 
-    private void putNull(long offset) {
-        mem.jumpTo(rowToDataOffset(recordOffset));
-        mem.putLong(TableUtils.NULL_LEN);
+    private void putNull() {
+        mem.putLong(rowToDataOffset(recordOffset), TableUtils.NULL_LEN);
         recordOffset += 8;
-        mem.jumpTo(offset);
     }
 
     private void putRecord0(Record record) {
@@ -317,12 +307,6 @@ public class RecordChain implements Closeable, RecordCursor, Mutable {
         }
 
         @Override
-        public CharSequence getStrB(int col) {
-            long offset = varWidthColumnOffset(col);
-            return offset == -1 ? null : mem.getStr2(offset);
-        }
-
-        @Override
         public int getInt(int col) {
             return mem.getInt(fixedWithColumnOffset(col));
         }
@@ -340,6 +324,12 @@ public class RecordChain implements Closeable, RecordCursor, Mutable {
         @Override
         public short getShort(int col) {
             return mem.getShort(fixedWithColumnOffset(col));
+        }
+
+        @Override
+        public CharSequence getStrB(int col) {
+            long offset = varWidthColumnOffset(col);
+            return offset == -1 ? null : mem.getStr2(offset);
         }
 
         @Override

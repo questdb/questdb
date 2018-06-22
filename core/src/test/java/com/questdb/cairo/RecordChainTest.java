@@ -34,30 +34,6 @@ public class RecordChainTest extends AbstractCairoTest {
     public static final long SIZE_4M = 4 * 1024 * 1024L;
     private static final GenericRecordMetadata metadata;
 
-    static {
-        metadata = new GenericRecordMetadata();
-        metadata.add(new TableColumnMetadata("int", ColumnType.INT));
-        metadata.add(new TableColumnMetadata("long", ColumnType.LONG));
-        metadata.add(new TableColumnMetadata("short", ColumnType.SHORT));
-        metadata.add(new TableColumnMetadata("double", ColumnType.DOUBLE));
-        metadata.add(new TableColumnMetadata("float", ColumnType.FLOAT));
-        metadata.add(new TableColumnMetadata("str", ColumnType.STRING));
-        metadata.add(new TableColumnMetadata("byte", ColumnType.BYTE));
-        metadata.add(new TableColumnMetadata("date", ColumnType.DATE));
-        metadata.add(new TableColumnMetadata("bool", ColumnType.BOOLEAN));
-        metadata.add(new TableColumnMetadata("str2", ColumnType.STRING));
-        metadata.add(new TableColumnMetadata("sym", ColumnType.SYMBOL));
-        metadata.add(new TableColumnMetadata("bin", ColumnType.BINARY));
-        metadata.add(new TableColumnMetadata("ts", ColumnType.TIMESTAMP));
-    }
-
-    private static void populateChain(RecordChain chain, Record record) {
-        long o = -1L;
-        for (int i = 0; i < 10000; i++) {
-            o = chain.putRecord(record, o);
-        }
-    }
-
     @Test
     public void testClear() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
@@ -143,19 +119,36 @@ public class RecordChainTest extends AbstractCairoTest {
                 () -> {
                     final int N = 10000;
                     Record record = new TestRecord();
+                    //3686831118
+                    //2768496651
 
-//        try (RecordList records = new RecordList(metadata, 1024 * 1024 * 1024)) {
-//            long o = -1L;
-//            long t = 0;
-//            for (int i = -N; i < N; i++) {
-//                if (i == 0) {
-//                    t = System.nanoTime();
-//                }
-//                o = records.append(record, o);
-//            }
-//            System.out.println(System.nanoTime() - t);
-//        }
-
+//                    CollectionRecordMetadata mm = new CollectionRecordMetadata();
+//                    mm.add(new RecordColumnMetadataImpl("int", ColumnType.INT));
+//                    mm.add(new RecordColumnMetadataImpl("long", ColumnType.LONG));
+//                    mm.add(new RecordColumnMetadataImpl("short", ColumnType.SHORT));
+//                    mm.add(new RecordColumnMetadataImpl("double", ColumnType.DOUBLE));
+//                    mm.add(new RecordColumnMetadataImpl("float", ColumnType.FLOAT));
+//                    mm.add(new RecordColumnMetadataImpl("str", ColumnType.STRING));
+//                    mm.add(new RecordColumnMetadataImpl("byte", ColumnType.BYTE));
+//                    mm.add(new RecordColumnMetadataImpl("date", ColumnType.DATE));
+//                    mm.add(new RecordColumnMetadataImpl("bool", ColumnType.BOOLEAN));
+//                    mm.add(new RecordColumnMetadataImpl("str2", ColumnType.STRING));
+//                    mm.add(new RecordColumnMetadataImpl("sym", ColumnType.SYMBOL));
+//
+//
+//                    TestRecord2 rec2 = new TestRecord2();
+//                    try (RecordList records = new RecordList(mm, 4 * 1024 * 1024)) {
+//                        long o = -1L;
+//                        long t = 0;
+//                        for (int i = -N; i < N; i++) {
+//                            if (i == 0) {
+//                                t = System.nanoTime();
+//                            }
+//                            o = records.append(rec2, o);
+//                        }
+//                        System.out.println(System.nanoTime() - t);
+//                    }
+//
                     try (RecordChain chain = new RecordChain(metadata, 4 * 1024 * 1024L)) {
                         long o = -1L;
                         long t = 0;
@@ -186,6 +179,13 @@ public class RecordChainTest extends AbstractCairoTest {
             } catch (CairoException ignored) {
             }
         });
+    }
+
+    private static void populateChain(RecordChain chain, Record record) {
+        long o = -1L;
+        for (int i = 0; i < 10000; i++) {
+            o = chain.putRecord(record, o);
+        }
     }
 
     private void assertChain(RecordChain chain, Record r2, long expectedCount) {
@@ -277,5 +277,94 @@ public class RecordChainTest extends AbstractCairoTest {
     @FunctionalInterface
     private interface ClearFunc {
         void clear(RecordChain chain);
+    }
+/*
+
+    public class TestRecord2 implements com.questdb.common.Record {
+        final Rnd rnd = new Rnd();
+
+
+        @Override
+        public boolean getBool(int col) {
+            return rnd.nextBoolean();
+        }
+
+        @Override
+        public byte getByte(int col) {
+            return rnd.nextByte();
+        }
+
+        @Override
+        public long getDate(int col) {
+            return rnd.nextPositiveLong();
+        }
+
+        @Override
+        public double getDouble(int col) {
+            return rnd.nextDouble2();
+        }
+
+        @Override
+        public float getFloat(int col) {
+            return rnd.nextFloat2();
+        }
+
+        @Override
+        public CharSequence getFlyweightStr(int col) {
+            return rnd.nextInt() % 16 == 0 ? null : rnd.nextChars(15);
+        }
+
+        @Override
+        public CharSequence getFlyweightStrB(int col) {
+            return rnd.nextInt() % 16 == 0 ? null : rnd.nextChars(15);
+        }
+
+        @Override
+        public int getInt(int col) {
+            return rnd.nextInt();
+        }
+
+        @Override
+        public long getLong(int col) {
+            return rnd.nextLong();
+        }
+
+        @Override
+        public long getRowId() {
+            return -1;
+        }
+
+        @Override
+        public short getShort(int col) {
+            return rnd.nextShort();
+        }
+
+        @Override
+        public int getStrLen(int col) {
+            return 15;
+        }
+
+        @Override
+        public CharSequence getSym(int col) {
+            return rnd.nextChars(10);
+        }
+    }
+*/
+
+    static {
+        metadata = new GenericRecordMetadata();
+        metadata.add(new TableColumnMetadata("int", ColumnType.INT));
+        metadata.add(new TableColumnMetadata("long", ColumnType.LONG));
+        metadata.add(new TableColumnMetadata("short", ColumnType.SHORT));
+        metadata.add(new TableColumnMetadata("double", ColumnType.DOUBLE));
+        metadata.add(new TableColumnMetadata("float", ColumnType.FLOAT));
+        metadata.add(new TableColumnMetadata("str", ColumnType.STRING));
+        metadata.add(new TableColumnMetadata("byte", ColumnType.BYTE));
+        metadata.add(new TableColumnMetadata("date", ColumnType.DATE));
+        metadata.add(new TableColumnMetadata("bool", ColumnType.BOOLEAN));
+        metadata.add(new TableColumnMetadata("str2", ColumnType.STRING));
+        metadata.add(new TableColumnMetadata("sym", ColumnType.SYMBOL));
+        metadata.add(new TableColumnMetadata("bin", ColumnType.BINARY));
+        metadata.add(new TableColumnMetadata("ts", ColumnType.TIMESTAMP));
     }
 }
