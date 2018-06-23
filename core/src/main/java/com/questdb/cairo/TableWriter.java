@@ -714,10 +714,10 @@ public class TableWriter implements Closeable {
 
         txMem.putLong(TableUtils.TX_OFFSET_STRUCT_VERSION, ++structVersion);
 
-        int count = denseSymbolMapWriters.size();
+        final int count = denseSymbolMapWriters.size();
         txMem.putInt(TableUtils.TX_OFFSET_MAP_WRITER_COUNT, count);
         for (int i = 0; i < count; i++) {
-            txMem.putInt(TableUtils.TX_OFFSET_MAP_WRITER_COUNT + 4 * i * 4, denseSymbolMapWriters.getQuick(i).getSymbolCount());
+            txMem.putInt(TableUtils.TX_OFFSET_MAP_WRITER_COUNT + 4 + i * 4, denseSymbolMapWriters.getQuick(i).getSymbolCount());
         }
         Unsafe.getUnsafe().storeFence();
 
