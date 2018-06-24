@@ -263,7 +263,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
 
             sink.clear();
             try (TableReader r = new TableReader(configuration, names[i])) {
-                printer.print(r.getCursor(), true);
+                printer.print(r.getCursor(), r.getMetadata(), true);
             }
             expectedRows[i] = sink.toString();
             expectedRowMap.put(names[i], expectedRows[i]);
@@ -314,7 +314,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
 
                                 // read rows
                                 sink.clear();
-                                printer.print(reader.getCursor(), true);
+                                printer.print(reader.getCursor(), reader.getMetadata(), true);
                                 TestUtils.assertEquals(expectedRowMap.get(reader.getTableName()), sink);
 
                                 Thread.yield();
@@ -553,7 +553,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
 
             sink.clear();
             try (TableReader r = new TableReader(configuration, names[i])) {
-                printer.print(r.getCursor(), true);
+                printer.print(r.getCursor(), r.getMetadata(), true);
             }
             expectedRows[i] = sink.toString();
         }
@@ -601,7 +601,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
                         String name = names[index];
                         try (TableReader r = pool.get(name)) {
                             sink.clear();
-                            printer.print(r.getCursor(), true);
+                            printer.print(r.getCursor(), r.getMetadata(), true);
                             TestUtils.assertEquals(expectedRows[index], sink);
 
                             if (name.equals(names[readerCount - 1]) && barrier.getNumberWaiting() > 0) {

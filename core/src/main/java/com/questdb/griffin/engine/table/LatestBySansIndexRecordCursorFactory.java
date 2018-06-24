@@ -23,6 +23,7 @@
 
 package com.questdb.griffin.engine.table;
 
+import com.questdb.cairo.AbstractRecordCursorFactory;
 import com.questdb.cairo.CairoConfiguration;
 import com.questdb.cairo.ColumnTypes;
 import com.questdb.cairo.map.FastMap;
@@ -30,21 +31,23 @@ import com.questdb.cairo.map.Map;
 import com.questdb.cairo.map.RecordSink;
 import com.questdb.cairo.sql.DataFrameCursorFactory;
 import com.questdb.cairo.sql.RecordCursor;
-import com.questdb.cairo.sql.RecordCursorFactory;
+import com.questdb.cairo.sql.RecordMetadata;
 import com.questdb.griffin.engine.LongTreeSet;
 import com.questdb.std.Transient;
 
-public class LatestBySansIndexRecordCursorFactory implements RecordCursorFactory {
+public class LatestBySansIndexRecordCursorFactory extends AbstractRecordCursorFactory {
     private final DataFrameCursorFactory dataFrameCursorFactory;
     private final LatestBySansIndexRecordCursor cursor;
     private final Map map;
     private final LongTreeSet treeSet;
 
     public LatestBySansIndexRecordCursorFactory(
+            RecordMetadata metadata,
             CairoConfiguration configuration,
             DataFrameCursorFactory dataFrameCursorFactory,
             RecordSink recordSink,
             @Transient ColumnTypes columnTypes) {
+        super(metadata);
         this.treeSet = new LongTreeSet(configuration.getSqlTreeDefaultPageSize());
         this.map = new FastMap(
                 configuration.getSqlMapDefaultPageSize(),

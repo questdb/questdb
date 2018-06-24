@@ -25,7 +25,6 @@ package com.questdb.cairo;
 
 import com.questdb.cairo.sql.Record;
 import com.questdb.cairo.sql.RecordCursor;
-import com.questdb.cairo.sql.RecordMetadata;
 import com.questdb.std.Rows;
 
 public class TableReaderRecordCursor implements RecordCursor {
@@ -42,11 +41,6 @@ public class TableReaderRecordCursor implements RecordCursor {
             reader.close();
             reader = null;
         }
-    }
-
-    @Override
-    public RecordMetadata getMetadata() {
-        return reader.getMetadata();
     }
 
     @Override

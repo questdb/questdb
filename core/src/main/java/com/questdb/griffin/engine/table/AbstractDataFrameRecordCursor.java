@@ -27,7 +27,6 @@ import com.questdb.cairo.TableReaderRecord;
 import com.questdb.cairo.sql.DataFrameCursor;
 import com.questdb.cairo.sql.Record;
 import com.questdb.cairo.sql.RecordCursor;
-import com.questdb.cairo.sql.RecordMetadata;
 import com.questdb.std.Rows;
 
 public abstract class AbstractDataFrameRecordCursor implements RecordCursor {
@@ -40,11 +39,6 @@ public abstract class AbstractDataFrameRecordCursor implements RecordCursor {
             dataFrameCursor.close();
             dataFrameCursor = null;
         }
-    }
-
-    @Override
-    public RecordMetadata getMetadata() {
-        return dataFrameCursor.getTableReader().getMetadata();
     }
 
     @Override

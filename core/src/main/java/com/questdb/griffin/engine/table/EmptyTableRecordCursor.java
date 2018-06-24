@@ -27,7 +27,6 @@ import com.questdb.cairo.TableReader;
 import com.questdb.cairo.TableReaderRecord;
 import com.questdb.cairo.sql.Record;
 import com.questdb.cairo.sql.RecordCursor;
-import com.questdb.cairo.sql.RecordMetadata;
 
 final public class EmptyTableRecordCursor implements RecordCursor {
     private final Record record = new TableReaderRecord();
@@ -39,11 +38,6 @@ final public class EmptyTableRecordCursor implements RecordCursor {
             reader.close();
             reader = null;
         }
-    }
-
-    @Override
-    public RecordMetadata getMetadata() {
-        return reader.getMetadata();
     }
 
     @Override

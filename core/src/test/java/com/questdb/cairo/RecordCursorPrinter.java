@@ -42,8 +42,7 @@ public class RecordCursorPrinter {
         this.delimiter = '\t';
     }
 
-    public void print(RecordCursor cursor, boolean header) throws IOException {
-        final RecordMetadata metadata = cursor.getMetadata();
+    public void print(RecordCursor cursor, RecordMetadata metadata, boolean header) throws IOException {
         if (header) {
             printHeader(metadata);
         }

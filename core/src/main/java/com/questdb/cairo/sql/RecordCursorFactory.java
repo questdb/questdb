@@ -25,11 +25,12 @@ package com.questdb.cairo.sql;
 
 import java.io.Closeable;
 
-@FunctionalInterface
 public interface RecordCursorFactory extends Closeable {
     @Override
     default void close() {
     }
+
+    RecordMetadata getMetadata();
 
     RecordCursor getCursor();
 }

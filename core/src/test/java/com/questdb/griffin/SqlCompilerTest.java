@@ -2136,7 +2136,7 @@ public class SqlCompilerTest extends AbstractCairoTest {
 
         try (TableReader reader = engine.getReader("миллионы", -1)) {
             sink.clear();
-            printer.print(reader.getCursor(), true);
+            printer.print(reader.getCursor(), reader.getMetadata(), true);
         }
 
         final String expected = "экспорт\n" +
@@ -2256,7 +2256,7 @@ public class SqlCompilerTest extends AbstractCairoTest {
             TestUtils.assertEquals(expectedMeta, sink);
 
             sink.clear();
-            printer.print(reader.getCursor(), true);
+            printer.print(reader.getCursor(), reader.getMetadata(), true);
             TestUtils.assertEquals(expectedData, sink);
         }
     }

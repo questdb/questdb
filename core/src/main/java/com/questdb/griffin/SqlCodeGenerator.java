@@ -63,8 +63,8 @@ public class SqlCodeGenerator {
         return generateQuery(model, bindVariableService);
     }
 
-    private RecordCursorFactory generateFunctionQuery(QueryModel model, BindVariableService bindVariableService) throws SqlException {
-        Function function = model.getTableNameFunction();
+    private RecordCursorFactory generateFunctionQuery(QueryModel model) throws SqlException {
+        final Function function = model.getTableNameFunction();
         assert function != null;
         if (function.getType() != TypeEx.CURSOR) {
             throw SqlException.position(model.getTableName().position).put("function must return CURSOR [actual=").put(ColumnType.nameOf(function.getType())).put(']');
@@ -77,7 +77,7 @@ public class SqlCodeGenerator {
         SqlNode tableName = model.getTableName();
         if (tableName != null) {
             if (tableName.type == SqlNode.FUNCTION) {
-                return generateFunctionQuery(model, bindVariableService);
+                return generateFunctionQuery(model);
             } else {
                 return generateTableQuery(model, bindVariableService);
             }
@@ -122,6 +122,11 @@ public class SqlCodeGenerator {
         return generateQuery(model.getNestedModel(), bindVariableService);
     }
 
+    private RecordMetadata copyMetadata(RecordMetadata that) {
+        // todo: this metadata is ummutable. Ideally we shouldn't be creating metadata for the same table over and over
+        return GenericRecordMetadata.copyOf(that);
+    }
+
     @SuppressWarnings("ConstantConditions")
     private RecordCursorFactory generateTableQuery(QueryModel model, BindVariableService bindVariableService) throws SqlException {
 
@@ -157,7 +162,7 @@ public class SqlCodeGenerator {
                 final IntrinsicModel intrinsicModel = filterAnalyser.extract(model, whereClause, metadata, latestBy != null ? latestBy.token : null, timestampIndex);
 
                 if (intrinsicModel.intrinsicValue == IntrinsicModel.FALSE) {
-                    return new EmptyTableRecordCursorFactory(engine, model.getTableName().token.toString(), model.getTableVersion());
+                    return new EmptyTableRecordCursorFactory(copyMetadata(metadata), engine, model.getTableName().token.toString(), model.getTableVersion());
                 }
 
                 Function filter;
@@ -180,7 +185,7 @@ public class SqlCodeGenerator {
                             // filter is constant "true", do not evaluate for every row
                             filter = null;
                         } else {
-                            return new EmptyTableRecordCursorFactory(engine, model.getTableName().token.toString(), model.getTableVersion());
+                            return new EmptyTableRecordCursorFactory(copyMetadata(metadata), engine, model.getTableName().token.toString(), model.getTableVersion());
                         }
                     }
                 }
@@ -224,7 +229,7 @@ public class SqlCodeGenerator {
                                     } else {
                                         rcf = new SymbolIndexLatestValueRowCursorFactory(keyColumnIndex, symbolKey, false);
                                     }
-                                    return new DataFrameRecordCursorFactory(dfcFactory, rcf);
+                                    return new DataFrameRecordCursorFactory(copyMetadata(metadata), dfcFactory, rcf);
                                 }
                             }
                         } else {
@@ -277,7 +282,7 @@ public class SqlCodeGenerator {
                                         rcf = new SymbolIndexFilteredRowCursorFactory(keyColumnIndex, symbolKey, filter, true);
                                     }
                                 }
-                                return new DataFrameRecordCursorFactory(dfcFactory, rcf);
+                                return new DataFrameRecordCursorFactory(copyMetadata(metadata), dfcFactory, rcf);
                             }
                             // multiple key values
                             final ObjList<RowCursorFactory> cursorFactories = new ObjList<>(nKeyValues);
@@ -300,10 +305,10 @@ public class SqlCodeGenerator {
                                     }
                                 }
                             }
-                            return new DataFrameRecordCursorFactory(dfcFactory, new HeapRowCursorFactory(cursorFactories));
+                            return new DataFrameRecordCursorFactory(copyMetadata(metadata), dfcFactory, new HeapRowCursorFactory(cursorFactories));
                         }
                     } else {
-                        RecordCursorFactory factory = new DataFrameRecordCursorFactory(dfcFactory, new DataFrameRowCursorFactory());
+                        RecordCursorFactory factory = new DataFrameRecordCursorFactory(copyMetadata(metadata), dfcFactory, new DataFrameRowCursorFactory());
                         if (filter != null) {
                             return new FilteredRecordCursorFactory(factory, filter);
                         }
@@ -321,10 +326,11 @@ public class SqlCodeGenerator {
 
             } else {
                 if (latestByIndex == -1) {
-                    return new TableReaderRecordCursorFactory(engine, Chars.toString(model.getTableName().token), model.getTableVersion());
+                    return new TableReaderRecordCursorFactory(copyMetadata(metadata), engine, Chars.toString(model.getTableName().token), model.getTableVersion());
                 } else {
                     if (metadata.isColumnIndexed(latestByIndex)) {
                         return new LatestByRecordCursorFactory(
+                                copyMetadata(metadata),
                                 new FullBwdDataFrameCursorFactory(engine, model.getTableName().token.toString(), model.getTableVersion()),
                                 latestByIndex);
                     }
@@ -332,6 +338,7 @@ public class SqlCodeGenerator {
                     latestByColumns.clear();
                     latestByColumns.add(latestByIndex);
                     return new LatestBySansIndexRecordCursorFactory(
+                            copyMetadata(metadata),
                             configuration,
                             new FullBwdDataFrameCursorFactory(engine, model.getTableName().token.toString(), model.getTableVersion()),
                             RecordSinkFactory.getInstance(asm, metadata, latestByColumns, false),

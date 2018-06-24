@@ -44,6 +44,23 @@ import static com.questdb.cairo.TableUtils.TXN_FILE_NAME;
 public class SqlCompiler {
     private final static Log LOG = LogFactory.getLog(SqlCompiler.class);
     private static final IntList castGroups = new IntList();
+
+    static {
+        castGroups.extendAndSet(ColumnType.BOOLEAN, 2);
+
+        castGroups.extendAndSet(ColumnType.BYTE, 1);
+        castGroups.extendAndSet(ColumnType.SHORT, 1);
+        castGroups.extendAndSet(ColumnType.INT, 1);
+        castGroups.extendAndSet(ColumnType.LONG, 1);
+        castGroups.extendAndSet(ColumnType.FLOAT, 1);
+        castGroups.extendAndSet(ColumnType.DOUBLE, 1);
+        castGroups.extendAndSet(ColumnType.DATE, 1);
+        castGroups.extendAndSet(ColumnType.TIMESTAMP, 1);
+        castGroups.extendAndSet(ColumnType.STRING, 3);
+        castGroups.extendAndSet(ColumnType.SYMBOL, 3);
+        castGroups.extendAndSet(ColumnType.BINARY, 4);
+    }
+
     private final SqlOptimiser optimiser;
     private final SqlParser parser;
     private final ObjectPool<SqlNode> sqlNodePool;
@@ -108,33 +125,6 @@ public class SqlCompiler {
             if (op.symbol) {
                 lexer.defineSymbol(op.token);
             }
-        }
-    }
-
-    public RecordCursorFactory compile(CharSequence query, BindVariableService bindVariableService) throws SqlException {
-        ExecutionModel executionModel = compileExecutionModel(query, bindVariableService, true);
-        switch (executionModel.getModelType()) {
-            case ExecutionModel.QUERY:
-                return generate((QueryModel) executionModel, bindVariableService);
-            case ExecutionModel.CREATE_TABLE:
-                createTable0(query, executionModel, bindVariableService);
-                break;
-            default:
-                break;
-        }
-        return null;
-    }
-
-    public void execute(CharSequence query, BindVariableService bindVariableService) throws SqlException {
-        ExecutionModel executionModel = compileExecutionModel(query, bindVariableService, false);
-        switch (executionModel.getModelType()) {
-            case ExecutionModel.QUERY:
-                break;
-            case ExecutionModel.CREATE_TABLE:
-                createTable0(query, executionModel, bindVariableService);
-                break;
-            default:
-                break;
         }
     }
 
@@ -552,6 +542,33 @@ public class SqlCompiler {
         return castGroups.getQuick(from) == castGroups.getQuick(to);
     }
 
+    public RecordCursorFactory compile(CharSequence query, BindVariableService bindVariableService) throws SqlException {
+        ExecutionModel executionModel = compileExecutionModel(query, bindVariableService, true);
+        switch (executionModel.getModelType()) {
+            case ExecutionModel.QUERY:
+                return generate((QueryModel) executionModel, bindVariableService);
+            case ExecutionModel.CREATE_TABLE:
+                createTable0(query, executionModel, bindVariableService);
+                break;
+            default:
+                break;
+        }
+        return null;
+    }
+
+    public void execute(CharSequence query, BindVariableService bindVariableService) throws SqlException {
+        ExecutionModel executionModel = compileExecutionModel(query, bindVariableService, false);
+        switch (executionModel.getModelType()) {
+            case ExecutionModel.QUERY:
+                break;
+            case ExecutionModel.CREATE_TABLE:
+                createTable0(query, executionModel, bindVariableService);
+                break;
+            default:
+                break;
+        }
+    }
+
     private void clear() {
         sqlNodePool.clear();
         characterStore.clear();
@@ -575,11 +592,11 @@ public class SqlCompiler {
         return compileExecutionModel(lexer, bindVariableService, optimise);
     }
 
-    private TableWriter copyTableData(CreateTableModel model, RecordCursor cursor) {
+    private TableWriter copyTableData(CreateTableModel model, RecordCursor cursor, RecordMetadata metadata) {
         TableWriter writer = new TableWriter(configuration, model.getName().token, workScheduler, false, DefaultLifecycleManager.INSTANCE);
         try {
             RecordMetadata writerMetadata = writer.getMetadata();
-            RecordToRowCopier recordToRowCopier = assembleRecordToRowCopier(asm, cursor.getMetadata(), writerMetadata);
+            RecordToRowCopier recordToRowCopier = assembleRecordToRowCopier(asm, metadata, writerMetadata);
 
             int timestampIndex = writerMetadata.getTimestampIndex();
             if (timestampIndex == -1) {
@@ -741,15 +758,21 @@ public class SqlCompiler {
     }
 
     private TableWriter createTableFromCursor(CreateTableModel model, BindVariableService bindVariableService) throws SqlException {
-        try (RecordCursor cursor = generate(model.getQueryModel(), bindVariableService).getCursor()) {
-            IntIntHashMap typeCast = new IntIntHashMap();
-            validateTableModelAndCreateTypeCast(model, cursor, typeCast);
-            createTableMetaFile(model, cursor.getMetadata(), typeCast);
-            return copyTableData(model, cursor);
+        try (final RecordCursorFactory factory = generate(model.getQueryModel(), bindVariableService);
+             final RecordCursor cursor = factory.getCursor()) {
+            // todo: reuse the map below
+            final IntIntHashMap typeCast = new IntIntHashMap();
+            final RecordMetadata metadata = factory.getMetadata();
+            validateTableModelAndCreateTypeCast(model, metadata, typeCast);
+            createTableMetaFile(model, metadata, typeCast);
+            return copyTableData(model, cursor, metadata);
         }
     }
 
-    private void createTableMetaFile(CreateTableModel model, RecordMetadata metadata, IntIntHashMap typeCast) {
+    private void createTableMetaFile(
+            CreateTableModel model,
+            RecordMetadata metadata,
+            @Transient IntIntHashMap typeCast) {
         final FilesFacade ff = configuration.getFilesFacade();
         path.of(configuration.getRoot()).concat(model.getName().token);
         final int rootLen = path.length();
@@ -853,8 +876,10 @@ public class SqlCompiler {
         return false;
     }
 
-    private void validateTableModelAndCreateTypeCast(CreateTableModel model, RecordCursor cursor, IntIntHashMap typeCast) throws SqlException {
-        RecordMetadata metadata = cursor.getMetadata();
+    private void validateTableModelAndCreateTypeCast(
+            CreateTableModel model,
+            RecordMetadata metadata,
+            @Transient IntIntHashMap typeCast) throws SqlException {
         CharSequenceObjHashMap<ColumnCastModel> castModels = model.getColumnCastModels();
         ObjList<CharSequence> castColumnNames = castModels.keys();
 
@@ -889,21 +914,5 @@ public class SqlCompiler {
 
     public interface RecordToRowCopier {
         void copy(Record record, TableWriter.Row row);
-    }
-
-    static {
-        castGroups.extendAndSet(ColumnType.BOOLEAN, 2);
-
-        castGroups.extendAndSet(ColumnType.BYTE, 1);
-        castGroups.extendAndSet(ColumnType.SHORT, 1);
-        castGroups.extendAndSet(ColumnType.INT, 1);
-        castGroups.extendAndSet(ColumnType.LONG, 1);
-        castGroups.extendAndSet(ColumnType.FLOAT, 1);
-        castGroups.extendAndSet(ColumnType.DOUBLE, 1);
-        castGroups.extendAndSet(ColumnType.DATE, 1);
-        castGroups.extendAndSet(ColumnType.TIMESTAMP, 1);
-        castGroups.extendAndSet(ColumnType.STRING, 3);
-        castGroups.extendAndSet(ColumnType.SYMBOL, 3);
-        castGroups.extendAndSet(ColumnType.BINARY, 4);
     }
 }

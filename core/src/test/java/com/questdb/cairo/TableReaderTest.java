@@ -1662,7 +1662,7 @@ public class TableReaderTest extends AbstractCairoTest {
 
             try (TableReader r = new TableReader(configuration, "all")) {
                 sink.clear();
-                printer.print(r.getCursor(), true);
+                printer.print(r.getCursor(), r.getMetadata(), true);
                 TestUtils.assertEquals(expected, sink);
             }
         });

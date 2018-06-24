@@ -23,16 +23,18 @@
 
 package com.questdb.griffin.engine.table;
 
+import com.questdb.cairo.AbstractRecordCursorFactory;
 import com.questdb.cairo.sql.DataFrameCursorFactory;
 import com.questdb.cairo.sql.RecordCursor;
-import com.questdb.cairo.sql.RecordCursorFactory;
+import com.questdb.cairo.sql.RecordMetadata;
 import com.questdb.cairo.sql.RowCursorFactory;
 
-public class DataFrameRecordCursorFactory implements RecordCursorFactory {
+public class DataFrameRecordCursorFactory extends AbstractRecordCursorFactory {
     private final DataFrameCursorFactory dataFrameCursorFactory;
     private final DataFrameRecordCursor cursor;
 
-    public DataFrameRecordCursorFactory(DataFrameCursorFactory dataFrameCursorFactory, RowCursorFactory rowCursorFactory) {
+    public DataFrameRecordCursorFactory(RecordMetadata metadata, DataFrameCursorFactory dataFrameCursorFactory, RowCursorFactory rowCursorFactory) {
+        super(metadata);
         this.dataFrameCursorFactory = dataFrameCursorFactory;
         this.cursor = new DataFrameRecordCursor(rowCursorFactory);
     }
@@ -42,5 +44,4 @@ public class DataFrameRecordCursorFactory implements RecordCursorFactory {
         cursor.of(dataFrameCursorFactory.getCursor());
         return cursor;
     }
-
 }

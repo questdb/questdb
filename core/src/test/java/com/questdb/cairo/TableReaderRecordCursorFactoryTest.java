@@ -26,6 +26,7 @@ package com.questdb.cairo;
 import com.questdb.cairo.sql.Record;
 import com.questdb.cairo.sql.RecordCursor;
 import com.questdb.cairo.sql.RecordCursorFactory;
+import com.questdb.cairo.sql.RecordMetadata;
 import com.questdb.common.ColumnType;
 import com.questdb.common.PartitionBy;
 import com.questdb.std.Rnd;
@@ -78,7 +79,12 @@ public class TableReaderRecordCursorFactoryTest extends AbstractCairoTest {
 
 
             try (Engine engine = new Engine(configuration)) {
-                try (RecordCursorFactory factory = new TableReaderRecordCursorFactory(engine, "x", -1)) {
+
+                final RecordMetadata metadata;
+                try (TableReader reader = engine.getReader("x", -1)) {
+                    metadata = GenericRecordMetadata.copyOf(reader.getMetadata());
+                }
+                try (RecordCursorFactory factory = new TableReaderRecordCursorFactory(metadata, engine, "x", -1)) {
 
                     long count = 0;
                     try (RecordCursor cursor = factory.getCursor()) {
@@ -92,7 +98,7 @@ public class TableReaderRecordCursorFactoryTest extends AbstractCairoTest {
                             count++;
                         }
                         sink.clear();
-                        cursor.getMetadata().toJson(sink);
+                        factory.getMetadata().toJson(sink);
                         TestUtils.assertEquals(expectedMetadata, sink);
                     }
                     Assert.assertEquals(0, engine.getBusyReaderCount());

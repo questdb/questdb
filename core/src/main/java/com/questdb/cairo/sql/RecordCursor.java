@@ -25,7 +25,9 @@ package com.questdb.cairo.sql;
 
 import com.questdb.std.ImmutableIterator;
 
-public interface RecordCursor extends ImmutableIterator<Record>, MetadataContainer {
+import java.io.Closeable;
+
+public interface RecordCursor extends ImmutableIterator<Record>, Closeable {
 
     Record getRecord();
 
@@ -36,4 +38,7 @@ public interface RecordCursor extends ImmutableIterator<Record>, MetadataContain
     void recordAt(Record record, long atRowId);
 
     void toTop();
+
+    @Override
+    void close();
 }

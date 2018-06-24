@@ -24,6 +24,7 @@
 package com.questdb.cairo;
 
 import com.questdb.cairo.sql.RecordCursor;
+import com.questdb.cairo.sql.RecordMetadata;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.std.Files;
@@ -76,15 +77,15 @@ public class AbstractCairoTest {
         }
     }
 
-    protected void assertOnce(CharSequence expected, RecordCursor cursor, boolean header) throws IOException {
+    protected void assertOnce(CharSequence expected, RecordCursor cursor, RecordMetadata metadata, boolean header) throws IOException {
         sink.clear();
-        printer.print(cursor, header);
+        printer.print(cursor, metadata, header);
         TestUtils.assertEquals(expected, sink);
     }
 
-    protected void assertThat(CharSequence expected, RecordCursor cursor, boolean header) throws IOException {
-        assertOnce(expected, cursor, header);
+    protected void assertThat(CharSequence expected, RecordCursor cursor, RecordMetadata metadata, boolean header) throws IOException {
+        assertOnce(expected, cursor, metadata, header);
         cursor.toTop();
-        assertOnce(expected, cursor, header);
+        assertOnce(expected, cursor, metadata, header);
     }
 }

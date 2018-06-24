@@ -26,7 +26,6 @@ package com.questdb.griffin.engine.table;
 import com.questdb.cairo.sql.Function;
 import com.questdb.cairo.sql.Record;
 import com.questdb.cairo.sql.RecordCursor;
-import com.questdb.cairo.sql.RecordMetadata;
 
 class FilteredRecordCursor implements RecordCursor {
     private final Function filter;
@@ -39,11 +38,6 @@ class FilteredRecordCursor implements RecordCursor {
     @Override
     public void close() {
         base.close();
-    }
-
-    @Override
-    public RecordMetadata getMetadata() {
-        return base.getMetadata();
     }
 
     @Override

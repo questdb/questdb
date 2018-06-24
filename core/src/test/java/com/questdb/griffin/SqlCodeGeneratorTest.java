@@ -295,7 +295,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
         try (RecordCursor cursor = factory.getCursor()) {
             sink.clear();
             rows.clear();
-            printer.print(cursor, true);
+            printer.print(cursor, factory.getMetadata(), true);
 
             if (expected == null) {
                 return;
@@ -309,7 +309,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 rows.add(cursor.next().getRowId());
             }
 
-            final RecordMetadata metadata = cursor.getMetadata();
+            final RecordMetadata metadata = factory.getMetadata();
 
             // test external record
             Record record = cursor.getRecord();

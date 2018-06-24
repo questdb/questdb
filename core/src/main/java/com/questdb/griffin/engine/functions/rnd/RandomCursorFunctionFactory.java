@@ -23,6 +23,7 @@
 
 package com.questdb.griffin.engine.functions.rnd;
 
+import com.questdb.cairo.AbstractRecordCursorFactory;
 import com.questdb.cairo.CairoConfiguration;
 import com.questdb.cairo.GenericRecordMetadata;
 import com.questdb.cairo.TableColumnMetadata;
@@ -87,9 +88,15 @@ public class RandomCursorFunctionFactory implements FunctionFactory {
 
         RandomRecord record = new RandomRecord(functions);
 
-        RecordCursor recordCursor = new RandomRecordCursor(recordCount, record, metadata);
+        RecordCursor recordCursor = new RandomRecordCursor(recordCount, record);
 
-        RecordCursorFactory recordCursorFactory = () -> recordCursor;
+        RecordCursorFactory recordCursorFactory = new AbstractRecordCursorFactory(metadata) {
+            @Override
+            public RecordCursor getCursor() {
+                return recordCursor;
+            }
+        };
+
 
         return new CursorFunction(position) {
             @Override

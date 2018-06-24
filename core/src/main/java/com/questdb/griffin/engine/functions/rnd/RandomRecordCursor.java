@@ -23,32 +23,23 @@
 
 package com.questdb.griffin.engine.functions.rnd;
 
-import com.questdb.cairo.GenericRecordMetadata;
 import com.questdb.cairo.sql.Record;
 import com.questdb.cairo.sql.RecordCursor;
-import com.questdb.cairo.sql.RecordMetadata;
 
 class RandomRecordCursor implements RecordCursor {
     private final long recordCount;
     private final RandomRecord record;
-    private final GenericRecordMetadata metadata;
 
     private long recordIndex;
 
-    public RandomRecordCursor(long recordCount, RandomRecord record, GenericRecordMetadata metadata) {
+    public RandomRecordCursor(long recordCount, RandomRecord record) {
         this.recordCount = recordCount;
         this.record = record;
-        this.metadata = metadata;
         recordIndex = 0;
     }
 
     @Override
     public void close() {
-    }
-
-    @Override
-    public RecordMetadata getMetadata() {
-        return metadata;
     }
 
     @Override

@@ -23,6 +23,7 @@
 
 package com.questdb.cairo;
 
+import com.questdb.cairo.sql.RecordMetadata;
 import com.questdb.std.CharSequenceIntHashMap;
 import com.questdb.std.ObjList;
 
@@ -31,6 +32,20 @@ public class GenericRecordMetadata extends BaseRecordMetadata {
         this.columnMetadata = new ObjList<>();
         this.columnNameIndexMap = new CharSequenceIntHashMap();
         this.timestampIndex = -1;
+    }
+
+    public static GenericRecordMetadata copyOf(RecordMetadata that) {
+        GenericRecordMetadata metadata = new GenericRecordMetadata();
+        for (int i = 0, n = that.getColumnCount(); i < n; i++) {
+            metadata.add(new TableColumnMetadata(
+                    that.getColumnName(i).toString(),
+                    that.getColumnType(i),
+                    that.isColumnIndexed(i),
+                    that.getIndexValueBlockCapacity(i)
+            ));
+        }
+        metadata.setTimestampIndex(that.getTimestampIndex());
+        return metadata;
     }
 
     public GenericRecordMetadata add(TableColumnMetadata meta) {

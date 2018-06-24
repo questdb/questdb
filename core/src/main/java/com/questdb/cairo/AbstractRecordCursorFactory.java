@@ -23,26 +23,18 @@
 
 package com.questdb.cairo;
 
-import com.questdb.cairo.sql.CairoEngine;
-import com.questdb.cairo.sql.RecordCursor;
+import com.questdb.cairo.sql.RecordCursorFactory;
 import com.questdb.cairo.sql.RecordMetadata;
 
-public class TableReaderRecordCursorFactory extends AbstractRecordCursorFactory {
-    private final TableReaderRecordCursor cursor = new TableReaderRecordCursor();
-    private final CairoEngine engine;
-    private final String tableName;
-    private final long tableVersion;
+public abstract class AbstractRecordCursorFactory implements RecordCursorFactory {
+    private final RecordMetadata metadata;
 
-    public TableReaderRecordCursorFactory(RecordMetadata metadata, CairoEngine engine, String tableName, long tableVersion) {
-        super(metadata);
-        this.engine = engine;
-        this.tableName = tableName;
-        this.tableVersion = tableVersion;
+    public AbstractRecordCursorFactory(RecordMetadata metadata) {
+        this.metadata = metadata;
     }
 
     @Override
-    public RecordCursor getCursor() {
-        cursor.of(engine.getReader(tableName, tableVersion));
-        return cursor;
+    public RecordMetadata getMetadata() {
+        return metadata;
     }
 }

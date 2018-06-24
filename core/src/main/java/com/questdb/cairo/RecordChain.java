@@ -75,6 +75,10 @@ public class RecordChain implements Closeable, RecordCursor, Mutable {
         this.columnCount = count;
     }
 
+    private static long rowToDataOffset(long row) {
+        return row + 8;
+    }
+
     public long beginRecord(long prevOffset) {
         // no next record
         mem.putLong(varAppendOffset, -1);
@@ -99,8 +103,6 @@ public class RecordChain implements Closeable, RecordCursor, Mutable {
         varAppendOffset = 0L;
     }
 
-    //todo: not hit
-    @Override
     public RecordMetadata getMetadata() {
         return metadata;
     }
@@ -184,10 +186,6 @@ public class RecordChain implements Closeable, RecordCursor, Mutable {
             mem.putStr(varAppendOffset, value);
             varAppendOffset += value.length() * 2 + 4;
         }
-    }
-
-    private static long rowToDataOffset(long row) {
-        return row + 8;
     }
 
     private void putByte(byte value) {

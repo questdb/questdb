@@ -26,6 +26,7 @@ package com.questdb.griffin.engine.table;
 import com.questdb.cairo.sql.Function;
 import com.questdb.cairo.sql.RecordCursor;
 import com.questdb.cairo.sql.RecordCursorFactory;
+import com.questdb.cairo.sql.RecordMetadata;
 
 public class FilteredRecordCursorFactory implements RecordCursorFactory {
     private final RecordCursorFactory base;
@@ -47,4 +48,8 @@ public class FilteredRecordCursorFactory implements RecordCursorFactory {
         return cursor;
     }
 
+    @Override
+    public RecordMetadata getMetadata() {
+        return base.getMetadata();
+    }
 }

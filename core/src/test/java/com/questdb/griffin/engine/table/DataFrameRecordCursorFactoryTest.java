@@ -26,6 +26,7 @@ package com.questdb.griffin.engine.table;
 import com.questdb.cairo.*;
 import com.questdb.cairo.sql.Record;
 import com.questdb.cairo.sql.RecordCursor;
+import com.questdb.cairo.sql.RecordMetadata;
 import com.questdb.common.ColumnType;
 import com.questdb.common.PartitionBy;
 import com.questdb.std.Rnd;
@@ -77,13 +78,15 @@ public class DataFrameRecordCursorFactoryTest extends AbstractCairoTest {
                 String value = symbols[N - 10];
                 int columnIndex;
                 int symbolKey;
+                RecordMetadata metadata;
                 try (TableReader reader = engine.getReader("x", -1)) {
                     columnIndex = reader.getMetadata().getColumnIndexQuiet("b");
                     symbolKey = reader.getSymbolMapReader(columnIndex).getQuick(value);
+                    metadata = GenericRecordMetadata.copyOf(reader.getMetadata());
                 }
                 SymbolIndexRowCursorFactory symbolIndexRowCursorFactory = new SymbolIndexRowCursorFactory(columnIndex, symbolKey, true);
                 FullFwdDataFrameCursorFactory dataFrameFactory = new FullFwdDataFrameCursorFactory(engine, "x", -1);
-                DataFrameRecordCursorFactory factory = new DataFrameRecordCursorFactory(dataFrameFactory, symbolIndexRowCursorFactory);
+                DataFrameRecordCursorFactory factory = new DataFrameRecordCursorFactory(metadata, dataFrameFactory, symbolIndexRowCursorFactory);
 
                 try (RecordCursor cursor = factory.getCursor()) {
                     while (cursor.hasNext()) {
