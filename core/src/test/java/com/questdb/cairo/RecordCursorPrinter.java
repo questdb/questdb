@@ -27,6 +27,7 @@ import com.questdb.cairo.sql.Record;
 import com.questdb.cairo.sql.RecordCursor;
 import com.questdb.cairo.sql.RecordMetadata;
 import com.questdb.common.ColumnType;
+import com.questdb.std.Chars;
 import com.questdb.std.Numbers;
 import com.questdb.std.str.CharSink;
 import com.questdb.std.time.DateFormatUtils;
@@ -107,6 +108,9 @@ public class RecordCursorPrinter {
                 break;
             case ColumnType.BOOLEAN:
                 sink.put(r.getBool(i) ? "true" : "false");
+                break;
+            case ColumnType.BINARY:
+                Chars.toSink(r.getBin(i), sink);
                 break;
             default:
                 break;

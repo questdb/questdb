@@ -29,13 +29,11 @@ import com.questdb.cairo.sql.Record;
 import com.questdb.griffin.FunctionFactory;
 import com.questdb.griffin.engine.functions.StrFunction;
 import com.questdb.std.BinarySequence;
-import com.questdb.std.Numbers;
+import com.questdb.std.Chars;
 import com.questdb.std.ObjList;
 import com.questdb.std.str.CharSink;
 import com.questdb.std.str.StringSink;
 import org.jetbrains.annotations.Nullable;
-
-import static com.questdb.std.Numbers.hexDigits;
 
 public class ToCharBinVFunctionFactory implements FunctionFactory {
     @Override
@@ -70,11 +68,7 @@ public class ToCharBinVFunctionFactory implements FunctionFactory {
 
         @Override
         public void getStr(Record rec, CharSink sink) {
-            final BinarySequence sequence = func.getBin(rec);
-            if (sequence == null) {
-                return;
-            }
-            toSink(sequence, sink);
+            Chars.toSink(func.getBin(rec), sink);
         }
 
         @Override
@@ -103,40 +97,9 @@ public class ToCharBinVFunctionFactory implements FunctionFactory {
                 return null;
             }
             sink.clear();
-            toSink(sequence, sink);
+            Chars.toSink(sequence, sink);
             return sink;
         }
 
-        private void toSink(BinarySequence sequence, CharSink sink) {
-            // limit what we print
-            int len = (int) sequence.length();
-            for (int i = 0; i < len; i++) {
-                if (i > 0) {
-                    if ((i % 16) == 0) {
-                        sink.put('\n');
-                        Numbers.appendHexPadded(sink, i);
-                    }
-                } else {
-                    Numbers.appendHexPadded(sink, i);
-                }
-                sink.put(' ');
-
-                final byte b = sequence.byteAt(i);
-                final int v;
-                if (b < 0) {
-                    v = 256 + b;
-                } else {
-                    v = b;
-                }
-
-                if (v < 0x10) {
-                    sink.put('0');
-                    sink.put(hexDigits[b]);
-                } else {
-                    sink.put(hexDigits[v / 0x10]);
-                    sink.put(hexDigits[v % 0x10]);
-                }
-            }
-        }
     }
 }

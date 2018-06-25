@@ -27,6 +27,8 @@ import com.questdb.std.str.CharSink;
 import com.questdb.std.str.DirectBytes;
 import com.questdb.std.str.Path;
 
+import static com.questdb.std.Numbers.hexDigits;
+
 public final class Chars {
     private Chars() {
     }
@@ -524,5 +526,41 @@ public final class Chars {
 
     private static boolean isMalformed4(int b2, int b3, int b4) {
         return (b2 & 192) != 128 || (b3 & 192) != 128 || (b4 & 192) != 128;
+    }
+
+    public static void toSink(BinarySequence sequence, CharSink sink) {
+        if (sequence == null) {
+            return;
+        }
+
+        // limit what we print
+        int len = (int) sequence.length();
+        for (int i = 0; i < len; i++) {
+            if (i > 0) {
+                if ((i % 16) == 0) {
+                    sink.put('\n');
+                    Numbers.appendHexPadded(sink, i);
+                }
+            } else {
+                Numbers.appendHexPadded(sink, i);
+            }
+            sink.put(' ');
+
+            final byte b = sequence.byteAt(i);
+            final int v;
+            if (b < 0) {
+                v = 256 + b;
+            } else {
+                v = b;
+            }
+
+            if (v < 0x10) {
+                sink.put('0');
+                sink.put(hexDigits[b]);
+            } else {
+                sink.put(hexDigits[v / 0x10]);
+                sink.put(hexDigits[v % 0x10]);
+            }
+        }
     }
 }

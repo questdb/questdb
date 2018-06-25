@@ -67,7 +67,7 @@ public class GenericRecordMetadata extends BaseRecordMetadata {
         timestampIndex = -1;
     }
 
-    void setTimestampIndex(int index) {
+    public void setTimestampIndex(int index) {
         this.timestampIndex = index;
     }
 }

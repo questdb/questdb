@@ -109,7 +109,48 @@ public class SqlCodeGenerator {
 
     private RecordCursorFactory generateSelectChoose(QueryModel model, BindVariableService bindVariableService) throws SqlException {
         assert model.getNestedModel() != null;
-        return generateQuery(model.getNestedModel(), bindVariableService);
+        final RecordCursorFactory factory = generateQuery(model.getNestedModel(), bindVariableService);
+        final RecordMetadata metadata = factory.getMetadata();
+        final int selectColumnCount = model.getColumns().size();
+
+        boolean trivial;
+        if (metadata.getColumnCount() == selectColumnCount) {
+            trivial = true;
+            for (int i = 0; i < selectColumnCount; i++) {
+                if (!Chars.equals(metadata.getColumnName(i), model.getColumns().getQuick(i).getAst().token)) {
+                    trivial = false;
+                    break;
+                }
+            }
+        } else {
+            trivial = false;
+        }
+
+        if (trivial) {
+            return factory;
+        }
+
+        IntList columnCrossIndex = new IntList(selectColumnCount);
+        GenericRecordMetadata selectMetadata = new GenericRecordMetadata();
+        final int timestampIndex = metadata.getTimestampIndex();
+        for (int i = 0; i < selectColumnCount; i++) {
+            int index = metadata.getColumnIndex(model.getColumns().getQuick(i).getAst().token);
+            assert index > -1;
+            columnCrossIndex.add(index);
+
+            selectMetadata.add(new TableColumnMetadata(
+                    model.getColumns().getQuick(i).getName().toString(),
+                    metadata.getColumnType(index),
+                    metadata.isColumnIndexed(index),
+                    metadata.getIndexValueBlockCapacity(index)
+            ));
+
+            if (index == timestampIndex) {
+                selectMetadata.setTimestampIndex(i);
+            }
+        }
+
+        return new SelectedRecordCursorFactory(selectMetadata, columnCrossIndex, factory);
     }
 
     private RecordCursorFactory generateSelectGroupBy(QueryModel model, BindVariableService bindVariableService) throws SqlException {
