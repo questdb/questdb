@@ -32,6 +32,7 @@ import com.questdb.common.SymbolTable;
 import com.questdb.griffin.engine.functions.bind.BindVariableService;
 import com.questdb.griffin.engine.table.*;
 import com.questdb.griffin.model.IntrinsicModel;
+import com.questdb.griffin.model.QueryColumn;
 import com.questdb.griffin.model.QueryModel;
 import com.questdb.std.BytecodeAssembler;
 import com.questdb.std.Chars;
@@ -160,7 +161,39 @@ public class SqlCodeGenerator {
 
     private RecordCursorFactory generateSelectVirtual(QueryModel model, BindVariableService bindVariableService) throws SqlException {
         assert model.getNestedModel() != null;
-        return generateQuery(model.getNestedModel(), bindVariableService);
+        RecordCursorFactory factory = generateQuery(model.getNestedModel(), bindVariableService);
+
+        final int columnCount = model.getColumns().size();
+        final RecordMetadata metadata = factory.getMetadata();
+        final ObjList<Function> functions = new ObjList<>(columnCount);
+        final GenericRecordMetadata virtualMetadata = new GenericRecordMetadata();
+
+        // attempt to preserve timestamp on new data set
+        CharSequence timestampColumn;
+        final int timestampIndex = metadata.getTimestampIndex();
+        if (timestampIndex > -1) {
+            timestampColumn = metadata.getColumnName(timestampIndex);
+        } else {
+            timestampColumn = null;
+        }
+
+        for (int i = 0; i < columnCount; i++) {
+            final QueryColumn column = model.getColumns().getQuick(i);
+            SqlNode node = column.getAst();
+            if (timestampColumn != null && node.type == SqlNode.LITERAL && Chars.equals(timestampColumn, node.token)) {
+                virtualMetadata.setTimestampIndex(i);
+            }
+
+            Function function = functionParser.parseFunction(column.getAst(), metadata, bindVariableService);
+            functions.add(function);
+
+            virtualMetadata.add(new TableColumnMetadata(
+                    column.getAlias().toString(),
+                    function.getType()
+            ));
+        }
+
+        return new VirtualRecordCursorFactory(virtualMetadata, functions, factory);
     }
 
     private RecordMetadata copyMetadata(RecordMetadata that) {
