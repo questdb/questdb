@@ -1221,8 +1221,21 @@ class SqlOptimiser {
         optimiseJoins(rewrittenModel);
         moveWhereInsideSubQueries(rewrittenModel);
         eraseColumnPrefixInWhereClauses(rewrittenModel);
+        moveTimestampToChooseModel(rewrittenModel);
         // todo: extract constant where clauses from non-join SQL statements
         return rewrittenModel;
+    }
+
+    private void moveTimestampToChooseModel(QueryModel model) {
+        QueryModel nested = model.getNestedModel();
+        if (nested != null) {
+            moveTimestampToChooseModel(nested);
+            SqlNode timestamp = nested.getTimestamp();
+            if (timestamp != null && nested.getSelectModelType() == QueryModel.SELECT_MODEL_NONE && nested.getTableName() == null && nested.getTableNameFunction() == null) {
+                model.setTimestamp(timestamp);
+                nested.setTimestamp(null);
+            }
+        }
     }
 
     private SqlNode optimiseBooleanNot(final SqlNode node, boolean reverse) throws SqlException {

@@ -57,6 +57,7 @@ public final class OperatorExpression {
             put(op.token, op);
         }
     }};
+
     final String token;
     final int precedence;
     final boolean leftAssociative;
@@ -85,5 +86,9 @@ public final class OperatorExpression {
             return opMap.valueAt(index).type;
         }
         return 0;
+    }
+
+    public static boolean isOperator(CharSequence name) {
+        return opMap.keyIndex(name) < 0;
     }
 }

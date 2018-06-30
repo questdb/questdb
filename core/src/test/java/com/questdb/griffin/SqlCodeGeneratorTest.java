@@ -392,6 +392,64 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLongCursor() throws Exception {
+        assertQuery("x\n" +
+                        "1\n" +
+                        "2\n" +
+                        "3\n" +
+                        "4\n" +
+                        "5\n" +
+                        "6\n" +
+                        "7\n" +
+                        "8\n" +
+                        "9\n" +
+                        "10\n",
+                "select * from long_sequence(10)",
+                null,
+                null);
+
+
+        // test another record count
+
+        assertQuery("x\n" +
+                        "1\n" +
+                        "2\n" +
+                        "3\n" +
+                        "4\n" +
+                        "5\n" +
+                        "6\n" +
+                        "7\n" +
+                        "8\n" +
+                        "9\n" +
+                        "10\n" +
+                        "11\n" +
+                        "12\n" +
+                        "13\n" +
+                        "14\n" +
+                        "15\n" +
+                        "16\n" +
+                        "17\n" +
+                        "18\n" +
+                        "19\n" +
+                        "20\n",
+                "select * from long_sequence(20)",
+                null,
+                null);
+
+        // test 0 record count
+
+        assertQuery("x\n",
+                "select * from long_sequence(0)",
+                null,
+                null);
+
+        assertQuery("x\n",
+                "select * from long_sequence(-2)",
+                null,
+                null);
+    }
+
+    @Test
     public void testVirtualColumns() throws Exception {
         assertQuery("a\ta1\tb\tc\tcolumn\tf1\tf\tg\th\ti\tj\tj1\tk\tl\tm\n" +
                         "NaN\t1569490116\tfalse\t\tNaN\t-1593\t428\t2015-04-04T16:34:47.226Z\t\t\t185\t7039584373105579285\t1970-01-01T00:00:00.000000Z\t4\t00000000 af 19 c4 95 94 36 53 49 b4 59 7e\n" +
@@ -564,10 +622,12 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     }
 
     @SuppressWarnings("SameParameterValue")
-    private void assertQuery(CharSequence expected, CharSequence query, CharSequence ddl, @Nullable CharSequence verify, @Nullable CharSequence expectedTimestamp) throws Exception {
+    private void assertQuery(CharSequence expected, CharSequence query, @Nullable CharSequence ddl, @Nullable CharSequence verify, @Nullable CharSequence expectedTimestamp) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try {
-                compiler.execute(ddl, bindVariableService);
+                if (ddl != null) {
+                    compiler.execute(ddl, bindVariableService);
+                }
                 if (verify != null) {
                     printSqlResult(null, verify, expectedTimestamp);
                     System.out.println(sink);

@@ -23,17 +23,19 @@
 
 package com.questdb.griffin.engine.functions;
 
-import com.questdb.cairo.sql.Function;
-import com.questdb.cairo.sql.Record;
+import com.questdb.cairo.AbstractRecordCursorFactory;
+import com.questdb.cairo.sql.*;
 import com.questdb.griffin.TypeEx;
 import com.questdb.std.BinarySequence;
 import com.questdb.std.str.CharSink;
 
-public abstract class CursorFunction implements Function {
+public class CursorFunction implements Function {
     private final int position;
+    private final GenericRecordCursorFactory factory;
 
-    public CursorFunction(int position) {
+    public CursorFunction(int position, RecordMetadata metadata, RecordCursor cursor) {
         this.position = position;
+        this.factory = new GenericRecordCursorFactory(metadata, cursor);
     }
 
     @Override
@@ -120,4 +122,30 @@ public abstract class CursorFunction implements Function {
     public final int getType() {
         return TypeEx.CURSOR;
     }
+
+    @Override
+    public RecordMetadata getMetadata() {
+        return factory.getMetadata();
+    }
+
+    @Override
+    public RecordCursorFactory getRecordCursorFactory(Record record) {
+        return factory;
+    }
+
+    private static class GenericRecordCursorFactory extends AbstractRecordCursorFactory {
+        private final RecordCursor cursor;
+
+        public GenericRecordCursorFactory(RecordMetadata metadata, RecordCursor cursor) {
+            super(metadata);
+            this.cursor = cursor;
+        }
+
+        @Override
+        public RecordCursor getCursor() {
+            cursor.toTop();
+            return cursor;
+        }
+    }
+
 }

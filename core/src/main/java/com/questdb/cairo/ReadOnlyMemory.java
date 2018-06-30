@@ -155,6 +155,7 @@ public class ReadOnlyMemory extends VirtualMemory implements ReadOnlyColumn {
             if (lastPageSize < getMapPageSize()) {
                 int lastIndex = pages.size() - 1;
                 if (lastIndex > -1) {
+                    //todo: not hit by Cairo tests (on windows)
                     long address = pages.getQuick(lastIndex);
                     if (address != 0) {
                         release(lastIndex, address);

@@ -97,22 +97,48 @@ public class SqlNode implements Mutable, Sinkable {
                 sink.put(')');
                 break;
             case 2:
-                lhs.toSink(sink);
-                sink.put(' ');
-                sink.put(token);
-                sink.put(' ');
-                rhs.toSink(sink);
+                if (OperatorExpression.isOperator(token)) {
+                    lhs.toSink(sink);
+                    sink.put(' ');
+                    sink.put(token);
+                    sink.put(' ');
+                    rhs.toSink(sink);
+                } else {
+                    sink.put(token);
+                    sink.put('(');
+                    lhs.toSink(sink);
+                    sink.put(',');
+                    rhs.toSink(sink);
+                    sink.put(')');
+                }
                 break;
             default:
-                sink.put(token);
-                sink.put('(');
-                for (int i = 0, n = args.size(); i < n; i++) {
-                    if (i > 0) {
-                        sink.put(',');
+                int n = args.size();
+                if (OperatorExpression.isOperator(token) && n > 0) {
+                    // special case for "in"
+                    args.getQuick(n - 1).toSink(sink);
+                    sink.put(' ');
+                    sink.put(token);
+                    sink.put(' ');
+                    sink.put('(');
+                    for (int i = n - 2; i > -1; i--) {
+                        if (i < n - 2) {
+                            sink.put(',');
+                        }
+                        args.getQuick(i).toSink(sink);
                     }
-                    args.getQuick(i).toSink(sink);
+                    sink.put(')');
+                } else {
+                    sink.put(token);
+                    sink.put('(');
+                    for (int i = n - 1; i > -1; i--) {
+                        if (i < n - 1) {
+                            sink.put(',');
+                        }
+                        args.getQuick(i).toSink(sink);
+                    }
+                    sink.put(')');
                 }
-                sink.put(')');
                 break;
         }
     }

@@ -21,44 +21,10 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.model;
+package com.questdb.cairo;
 
-import com.questdb.griffin.SqlNode;
-import com.questdb.std.Mutable;
-import com.questdb.std.ObjectFactory;
+public interface ColumnFilter {
+    int getColumnIndex(int position);
 
-public class RenameTableModel implements Mutable, ExecutionModel {
-    public static final ObjectFactory<RenameTableModel> FACTORY = RenameTableModel::new;
-
-    private SqlNode from;
-    private SqlNode to;
-
-    private RenameTableModel() {
-    }
-
-    @Override
-    public void clear() {
-        from = to = null;
-    }
-
-    public SqlNode getFrom() {
-        return from;
-    }
-
-    public void setFrom(SqlNode from) {
-        this.from = from;
-    }
-
-    @Override
-    public int getModelType() {
-        return ExecutionModel.RENAME_TABLE;
-    }
-
-    public SqlNode getTo() {
-        return to;
-    }
-
-    public void setTo(SqlNode to) {
-        this.to = to;
-    }
+    int getColumnCount();
 }

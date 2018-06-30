@@ -48,6 +48,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private final ObjList<QueryColumn> columns = new ObjList<>();
     private final CharSequenceObjHashMap<CharSequence> aliasToColumnMap = new CharSequenceObjHashMap<>();
     private final CharSequenceObjHashMap<CharSequence> columnToAliasMap = new CharSequenceObjHashMap<>();
+    private final ObjList<CharSequence> columnNames = new ObjList<>();
     private final ObjList<QueryModel> joinModels = new ObjList<>();
     private final ObjList<SqlNode> orderBy = new ObjList<>();
     private final IntList orderByDirection = new IntList();
@@ -91,6 +92,16 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         joinModels.add(this);
     }
 
+    private static void aliasToSink(CharSequence alias, CharSink sink) {
+        sink.put(' ');
+        boolean quote = Chars.indexOf(alias, ' ') != -1;
+        if (quote) {
+            sink.put('\'').put(alias).put('\'');
+        } else {
+            sink.put(alias);
+        }
+    }
+
     public boolean addAliasIndex(SqlNode node, int index) {
         return aliasIndexes.put(node.token, index);
     }
@@ -103,6 +114,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         aliasToColumnMap.put(alias, ast.token);
         columnToAliasMap.put(ast.token, alias);
         columnNameTypeMap.put(alias, ast.type);
+        columnNames.add(alias);
     }
 
     public void addDependency(int index) {
@@ -112,6 +124,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     public void addField(CharSequence name) {
         columnNameTypeMap.put(name, SqlNode.LITERAL);
         aliasToColumnMap.put(name, name);
+        columnNames.add(name);
     }
 
     public void addJoinColumn(SqlNode node) {
@@ -171,6 +184,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         columnToAliasMap.clear();
         tableNameFunction = null;
         tableVersion = -1;
+        columnNames.clear();
     }
 
     public void clearOrderBy() {
@@ -181,8 +195,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     public void copyColumnsFrom(QueryModel other) {
         this.columnNameTypeMap.clear();
         this.aliasToColumnMap.clear();
+        this.columnNames.clear();
         this.columnNameTypeMap.putAll(other.columnNameTypeMap);
         this.aliasToColumnMap.putAll(other.aliasToColumnMap);
+        this.columnNames.addAll(other.columnNames);
     }
 
     public SqlNode getAlias() {
@@ -210,7 +226,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     }
 
     public ObjList<CharSequence> getColumnNames() {
-        return aliasToColumnMap.keys();
+        return columnNames;
     }
 
     public CharSequenceObjHashMap<CharSequence> getColumnToAliasMap() {
@@ -462,16 +478,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     @Override
     public CharSequence translateAlias(CharSequence column) {
         return aliasToColumnMap.get(column);
-    }
-
-    private static void aliasToSink(CharSequence alias, CharSink sink) {
-        sink.put(' ');
-        boolean quote = Chars.indexOf(alias, ' ') != -1;
-        if (quote) {
-            sink.put('\'').put(alias).put('\'');
-        } else {
-            sink.put(alias);
-        }
     }
 
     private String getSelectModelTypeText() {

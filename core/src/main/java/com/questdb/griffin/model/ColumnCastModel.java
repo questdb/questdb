@@ -36,6 +36,9 @@ public class ColumnCastModel implements Mutable {
     private int columnNamePos;
     private int symbolCapacity;
 
+    private ColumnCastModel() {
+    }
+
     @Override
     public void clear() {
         symbolCapacity = 0;

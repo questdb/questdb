@@ -232,6 +232,7 @@ public class VirtualMemory implements Closeable {
             return null;
         }
 
+        // todo: not hit by test
         if (len == 0) {
             return "";
         }
@@ -376,6 +377,7 @@ public class VirtualMemory implements Closeable {
         return offset;
     }
 
+    //todo: not hit by test
     public final void putNullStr(long offset) {
         putInt(offset, TableUtils.NULL_LEN);
     }
@@ -402,6 +404,7 @@ public class VirtualMemory implements Closeable {
 
     public void putStr(long offset, CharSequence value) {
         if (value == null) {
+            //todo: not hist by test
             putNullStr(offset);
         } else {
             putStr(offset, value, 0, value.length());

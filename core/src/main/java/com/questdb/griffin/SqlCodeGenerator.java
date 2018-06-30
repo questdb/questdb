@@ -113,30 +113,38 @@ public class SqlCodeGenerator {
         final RecordCursorFactory factory = generateQuery(model.getNestedModel(), bindVariableService);
         final RecordMetadata metadata = factory.getMetadata();
         final int selectColumnCount = model.getColumns().size();
+        final SqlNode timestamp = model.getTimestamp();
 
-        boolean trivial;
-        if (metadata.getColumnCount() == selectColumnCount) {
-            trivial = true;
+        boolean entity;
+        // the model is considered entity when it doesn't add any value to its nested model
+        //
+        if (timestamp == null && metadata.getColumnCount() == selectColumnCount) {
+            entity = true;
             for (int i = 0; i < selectColumnCount; i++) {
                 if (!Chars.equals(metadata.getColumnName(i), model.getColumns().getQuick(i).getAst().token)) {
-                    trivial = false;
+                    entity = false;
                     break;
                 }
             }
         } else {
-            trivial = false;
+            entity = false;
         }
 
-        if (trivial) {
+        if (entity) {
             return factory;
         }
 
         IntList columnCrossIndex = new IntList(selectColumnCount);
         GenericRecordMetadata selectMetadata = new GenericRecordMetadata();
-        final int timestampIndex = metadata.getTimestampIndex();
+        final int timestampIndex;
+        if (timestamp == null) {
+            timestampIndex = metadata.getTimestampIndex();
+        } else {
+            timestampIndex = metadata.getColumnIndex(timestamp.token);
+        }
         for (int i = 0; i < selectColumnCount; i++) {
-            int index = metadata.getColumnIndex(model.getColumns().getQuick(i).getAst().token);
-            assert index > -1;
+            int index = metadata.getColumnIndexQuiet(model.getColumns().getQuick(i).getAst().token);
+            assert index > -1 : "wtf? " + model.getColumns().getQuick(i).getAst().token;
             columnCrossIndex.add(index);
 
             selectMetadata.add(new TableColumnMetadata(

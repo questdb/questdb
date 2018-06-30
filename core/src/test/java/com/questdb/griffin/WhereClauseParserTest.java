@@ -247,7 +247,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         TestUtils.assertEquals("sym", m.keyColumn);
         Assert.assertNotNull(m.keySubQuery);
         Assert.assertNotNull(m.filter);
-        TestUtils.assertEquals("in(2,1,ex)", GriffinParserTestUtils.toRpn(m.filter));
+        TestUtils.assertEquals("ex in (1,2)", GriffinParserTestUtils.toRpn(m.filter));
     }
 
     @Test
@@ -256,7 +256,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         TestUtils.assertEquals("sym", m.keyColumn);
         Assert.assertNotNull(m.keySubQuery);
         Assert.assertNotNull(m.filter);
-        TestUtils.assertEquals("in(2,1,sym)", GriffinParserTestUtils.toRpn(m.filter));
+        TestUtils.assertEquals("sym in (1,2)", GriffinParserTestUtils.toRpn(m.filter));
     }
 
     @Test
@@ -635,7 +635,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         TestUtils.assertEquals("sym", m.keyColumn);
         Assert.assertNotNull(m.keySubQuery);
         Assert.assertNotNull(m.filter);
-        TestUtils.assertEquals("in(2,1,ex)", GriffinParserTestUtils.toRpn(m.filter));
+        TestUtils.assertEquals("ex in (1,2)", GriffinParserTestUtils.toRpn(m.filter));
     }
 
     @Test

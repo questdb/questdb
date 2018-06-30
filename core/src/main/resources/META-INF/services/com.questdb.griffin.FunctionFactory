@@ -61,6 +61,9 @@ com.questdb.griffin.engine.functions.math.AddLongFunctionFactory
 com.questdb.griffin.engine.functions.math.AddFloatFunctionFactory
 com.questdb.griffin.engine.functions.math.AddDoubleFunctionFactory
 
+# '-' operator
+com.questdb.griffin.engine.functions.math.NegIntFunctionFactory
+
 # '*' operator
 com.questdb.griffin.engine.functions.math.MulFloatFunctionFactory
 com.questdb.griffin.engine.functions.math.MulDoubleFunctionFactory
@@ -76,6 +79,7 @@ com.questdb.griffin.engine.functions.str.LengthSymbolVFunctionFactory
 
 # random generator functions
 
+com.questdb.griffin.engine.functions.rnd.LongSequenceFunctionFactory
 com.questdb.griffin.engine.functions.rnd.RandomCursorFunctionFactory
 com.questdb.griffin.engine.functions.rnd.RndBooleanFunctionFactory
 com.questdb.griffin.engine.functions.rnd.RndIntFunctionFactory

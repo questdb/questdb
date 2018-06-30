@@ -37,6 +37,37 @@ final class SqlParser {
     private static final CharSequenceHashSet columnAliasStop = new CharSequenceHashSet();
     private static final CharSequenceHashSet groupByStopSet = new CharSequenceHashSet();
     private static final CharSequenceIntHashMap joinStartSet = new CharSequenceIntHashMap();
+
+    static {
+        tableAliasStop.add("where");
+        tableAliasStop.add("latest");
+        tableAliasStop.add("join");
+        tableAliasStop.add("inner");
+        tableAliasStop.add("outer");
+        tableAliasStop.add("asof");
+        tableAliasStop.add("cross");
+        tableAliasStop.add("sample");
+        tableAliasStop.add("order");
+        tableAliasStop.add("on");
+        tableAliasStop.add("timestamp");
+        tableAliasStop.add("limit");
+        tableAliasStop.add(")");
+        //
+        columnAliasStop.add("from");
+        columnAliasStop.add(",");
+        columnAliasStop.add("over");
+        //
+        groupByStopSet.add("order");
+        groupByStopSet.add(")");
+        groupByStopSet.add(",");
+
+        joinStartSet.put("join", QueryModel.JOIN_INNER);
+        joinStartSet.put("inner", QueryModel.JOIN_INNER);
+        joinStartSet.put("outer", QueryModel.JOIN_OUTER);
+        joinStartSet.put("cross", QueryModel.JOIN_CROSS);
+        joinStartSet.put("asof", QueryModel.JOIN_ASOF);
+    }
+
     private final ObjectPool<SqlNode> sqlNodePool;
     private final ExpressionASTBuilder expressionASTBuilder = new ExpressionASTBuilder();
     private final ObjectPool<QueryModel> queryModelPool;
@@ -46,6 +77,7 @@ final class SqlParser {
     private final ObjectPool<ColumnCastModel> columnCastModelPool = new ObjectPool<>(ColumnCastModel.FACTORY, 8);
     private final ObjectPool<RenameTableModel> renameTableModelPool = new ObjectPool<>(RenameTableModel.FACTORY, 8);
     private final ObjectPool<WithClauseModel> withClauseModelPool = new ObjectPool<>(WithClauseModel.FACTORY, 16);
+    private final ObjectPool<InsertAsSelectModel> insertAsSelectModelPool = new ObjectPool<>(InsertAsSelectModel.FACTORY, 2);
     private final ExpressionParser expressionParser;
     private final CairoConfiguration configuration;
     private final PostOrderTreeTraversalAlgo traversalAlgo;
@@ -87,6 +119,7 @@ final class SqlParser {
         withClauseModelPool.clear();
         subQueryMode = false;
         characterStore.clear();
+        insertAsSelectModelPool.clear();
     }
 
     private CharSequence createColumnAlias(SqlNode node, QueryModel model) {
@@ -220,7 +253,47 @@ final class SqlParser {
             return parseRenameStatement(lexer);
         }
 
+        if (Chars.equals(tok, "insert")) {
+            return parseInsertAsSelect(lexer);
+        }
+
         return parseSelect(lexer);
+    }
+
+    private ExecutionModel parseInsertAsSelect(GenericLexer lexer) throws SqlException {
+        expectTok(lexer, "into");
+
+        final InsertAsSelectModel model = insertAsSelectModelPool.next();
+        model.setTableName(expectLiteral(lexer));
+
+        CharSequence tok = tok(lexer, "'(' or 'select'");
+
+
+        if (Chars.equals(tok, '(')) {
+            do {
+                tok = tok(lexer, "column");
+                if (Chars.equals(tok, ')')) {
+                    throw err(lexer, "missing column name");
+                }
+
+                if (!model.addColumn(GenericLexer.immutableOf(tok), lexer.lastTokenPosition())) {
+                    throw SqlException.position(lexer.lastTokenPosition()).put("duplicate column name: ").put(tok);
+                }
+
+            } while (Chars.equals((tok = tok(lexer, "','")), ','));
+
+            expectTok(tok, lexer.lastTokenPosition(), ')');
+            tok = optTok(lexer);
+        }
+
+        if (Chars.equals(tok, "select")) {
+            lexer.unparse();
+            final QueryModel queryModel = parseDml(lexer);
+            model.setQueryModel(queryModel);
+            return model;
+        }
+
+        throw err(lexer, "'select' expected");
     }
 
     private ExecutionModel parseCreateStatement(GenericLexer lexer, BindVariableService bindVariableService) throws SqlException {
@@ -448,6 +521,7 @@ final class SqlParser {
         parseFromClause(lexer, nestedModel, model);
         model.setSelectModelType(QueryModel.SELECT_MODEL_CHOOSE);
         model.setNestedModel(nestedModel);
+
         return model;
     }
 
@@ -875,7 +949,6 @@ final class SqlParser {
         } while (true);
     }
 
-
     private SqlNode rewriteCase(SqlNode node) throws SqlException {
         traversalAlgo.traverse(node, node1 -> {
             if (node1.type == SqlNode.FUNCTION && Chars.equals("case", node1.token)) {
@@ -933,11 +1006,15 @@ final class SqlParser {
                 }
 
                 if (convertToSwitch) {
+                    int n = tempExprNodes.size();
                     node1.token = "switch";
                     node1.args.clear();
-                    node1.args.add(literal);
                     node1.args.add(elseExpr);
-                    node1.args.addAll(tempExprNodes);
+                    for (int i = n - 1; i > -1; i--) {
+                        node1.args.add(tempExprNodes.getQuick(i));
+                    }
+                    node1.args.add(literal);
+                    node1.paramCount = n + 2;
                 }
             }
         });
@@ -973,35 +1050,5 @@ final class SqlParser {
                 break;
 
         }
-    }
-
-    static {
-        tableAliasStop.add("where");
-        tableAliasStop.add("latest");
-        tableAliasStop.add("join");
-        tableAliasStop.add("inner");
-        tableAliasStop.add("outer");
-        tableAliasStop.add("asof");
-        tableAliasStop.add("cross");
-        tableAliasStop.add("sample");
-        tableAliasStop.add("order");
-        tableAliasStop.add("on");
-        tableAliasStop.add("timestamp");
-        tableAliasStop.add("limit");
-        tableAliasStop.add(")");
-        //
-        columnAliasStop.add("from");
-        columnAliasStop.add(",");
-        columnAliasStop.add("over");
-        //
-        groupByStopSet.add("order");
-        groupByStopSet.add(")");
-        groupByStopSet.add(",");
-
-        joinStartSet.put("join", QueryModel.JOIN_INNER);
-        joinStartSet.put("inner", QueryModel.JOIN_INNER);
-        joinStartSet.put("outer", QueryModel.JOIN_OUTER);
-        joinStartSet.put("cross", QueryModel.JOIN_CROSS);
-        joinStartSet.put("asof", QueryModel.JOIN_ASOF);
     }
 }

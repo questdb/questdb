@@ -28,13 +28,9 @@ import com.questdb.cairo.sql.CairoEngine;
 import com.questdb.common.ColumnType;
 import com.questdb.common.PartitionBy;
 import com.questdb.griffin.engine.functions.bind.BindVariableService;
-import com.questdb.griffin.model.CreateTableModel;
 import com.questdb.griffin.model.ExecutionModel;
 import com.questdb.griffin.model.QueryModel;
-import com.questdb.std.Chars;
-import com.questdb.std.Files;
-import com.questdb.std.FilesFacade;
-import com.questdb.std.FilesFacadeImpl;
+import com.questdb.std.*;
 import com.questdb.std.str.LPSZ;
 import com.questdb.std.str.Path;
 import com.questdb.test.tools.TestUtils;
@@ -52,6 +48,37 @@ public class SqlParserTest extends AbstractCairoTest {
     @AfterClass
     public static void tearDown() throws IOException {
         engine.close();
+    }
+
+    private static void assertSyntaxError(String query, int position, String contains, TableModel... tableModels) {
+        assertSyntaxError(sqlCompiler, engine, query, position, contains, tableModels);
+    }
+
+    private static void assertSyntaxError(
+            SqlCompiler compiler,
+            CairoEngine engine,
+            String query,
+            int position,
+            String contains,
+            TableModel... tableModels) {
+        try {
+            for (int i = 0, n = tableModels.length; i < n; i++) {
+                CairoTestUtils.create(tableModels[i]);
+            }
+            compiler.compileExecutionModel(query, bindVariableService, true);
+            Assert.fail("Exception expected");
+        } catch (SqlException e) {
+            Assert.assertEquals(position, e.getPosition());
+            TestUtils.assertContains(e.getMessage(), contains);
+        } finally {
+            Assert.assertTrue(engine.releaseAllReaders());
+            for (int i = 0, n = tableModels.length; i < n; i++) {
+                TableModel tableModel = tableModels[i];
+                Path path = tableModel.getPath().of(tableModel.getCairoCfg().getRoot()).concat(tableModel.getName()).put(Files.SEPARATOR).$();
+                Assert.assertTrue(configuration.getFilesFacade().rmdir(path));
+                tableModel.close();
+            }
+        }
     }
 
     @Test
@@ -152,9 +179,9 @@ public class SqlParserTest extends AbstractCairoTest {
         assertQuery(
                 "select-choose" +
                         " c.customerId customerId," +
+                        " e.blah blah," +
                         " e.lastName lastName," +
                         " e.employeeId employeeId," +
-                        " e.blah blah," +
                         " e.timestamp timestamp," +
                         " o.customerId customerId1" +
                         " from (" +
@@ -188,10 +215,10 @@ public class SqlParserTest extends AbstractCairoTest {
         assertQuery(
                 "select-choose" +
                         " c.customerId customerId," +
-                        " a.lastName lastName," +
                         " a.blah blah," +
-                        " a.timestamp timestamp," +
-                        " a.customerId customerId1" +
+                        " a.lastName lastName," +
+                        " a.customerId customerId1," +
+                        " a.timestamp timestamp" +
                         " from " +
                         "(" +
                         "customers c" +
@@ -218,14 +245,68 @@ public class SqlParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInsertAsSelect() throws SqlException {
+        assertModel(
+                "insert into x select-choose c, d from (y)",
+                "insert into x select * from y",
+                ExecutionModel.INSERT_AS_SELECT,
+                modelOf("x")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.STRING),
+                modelOf("y")
+                        .col("c", ColumnType.INT)
+                        .col("d", ColumnType.STRING)
+        );
+    }
+
+    @Test
+    public void testInsertAsSelectColumnList() throws SqlException {
+        assertModel(
+                "insert into x (a, b) select-choose c, d from (y)",
+                "insert into x (a,b) select * from y",
+                ExecutionModel.INSERT_AS_SELECT,
+                modelOf("x")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.STRING),
+                modelOf("y")
+                        .col("c", ColumnType.INT)
+                        .col("d", ColumnType.STRING)
+        );
+    }
+
+    @Test
+    public void testInsertAsSelectDuplicateColumns() {
+        assertSyntaxError("insert into x (b,b) select * from y",
+                17, "duplicate column name",
+                modelOf("x")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.STRING),
+                modelOf("y")
+                        .col("c", ColumnType.INT)
+                        .col("d", ColumnType.STRING));
+    }
+
+    @Test
+    public void testInsertAsSelectColumnCountMismatch() {
+        assertSyntaxError("insert into x (b) select * from y",
+                12, "column count mismatch",
+                modelOf("x")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.STRING),
+                modelOf("y")
+                        .col("c", ColumnType.INT)
+                        .col("d", ColumnType.STRING));
+    }
+
+    @Test
     public void testAsOfJoinSubQuerySimpleNoAlias() throws Exception {
         assertQuery(
                 "select-choose" +
                         " c.customerId customerId," +
-                        " _xQdbA1.lastName lastName," +
                         " _xQdbA1.blah blah," +
-                        " _xQdbA1.timestamp timestamp," +
-                        " _xQdbA1.customerId customerId1" +
+                        " _xQdbA1.lastName lastName," +
+                        " _xQdbA1.customerId customerId1," +
+                        " _xQdbA1.timestamp timestamp" +
                         " from (" +
                         "customers c" +
                         " asof join (select-virtual '1' blah, lastName, customerId, timestamp" +
@@ -245,7 +326,7 @@ public class SqlParserTest extends AbstractCairoTest {
     public void testBlockCommentAtMiddle() throws Exception {
         assertQuery(
                 "select-choose" +
-                        " a, x" +
+                        " x, a" +
                         " from (" +
                         "(x where a > 1 and x > 1) 'b a')",
                 "(x where /*this is a random comment */a > 1) 'b a' where x > 1",
@@ -258,7 +339,7 @@ public class SqlParserTest extends AbstractCairoTest {
     public void testBlockCommentNested() throws Exception {
         assertQuery(
                 "select-choose" +
-                        " a, x" +
+                        " x, a" +
                         " from (" +
                         "(x where a > 1 and x > 1) 'b a')",
                 "(x where a > 1) /* comment /* ok */  whatever */'b a' where x > 1",
@@ -271,7 +352,7 @@ public class SqlParserTest extends AbstractCairoTest {
     public void testBlockCommentUnclosed() throws Exception {
         assertQuery(
                 "select-choose" +
-                        " a, x" +
+                        " x, a" +
                         " from (" +
                         "(x where a > 1 and x > 1) 'b a')",
                 "(x where a > 1) 'b a' where x > 1 /* this block comment",
@@ -284,7 +365,7 @@ public class SqlParserTest extends AbstractCairoTest {
     public void testCaseImpossibleRewrite1() throws SqlException {
         // referenced columns in 'when' clauses are different
         assertQuery(
-                "select-virtual case('C','B',2 = b,'A',a = 1) + 1 column, b from (tab)",
+                "select-virtual case(a = 1,'A',2 = b,'B','C') + 1 column, b from (tab)",
                 "select case when a = 1 then 'A' when 2 = b then 'B' else 'C' end+1, b from tab",
                 modelOf("tab").col("a", ColumnType.INT).col("b", ColumnType.INT)
         );
@@ -294,7 +375,7 @@ public class SqlParserTest extends AbstractCairoTest {
     public void testCaseImpossibleRewrite2() throws SqlException {
         // 'when' is non-constant
         assertQuery(
-                "select-virtual case('C','B',2 + b = a,'A',a = 1) + 1 column, b from (tab)",
+                "select-virtual case(a = 1,'A',2 + b = a,'B','C') + 1 column, b from (tab)",
                 "select case when a = 1 then 'A' when 2 + b = a then 'B' else 'C' end+1, b from tab",
                 modelOf("tab").col("a", ColumnType.INT).col("b", ColumnType.INT)
         );
@@ -304,7 +385,7 @@ public class SqlParserTest extends AbstractCairoTest {
     public void testCaseNoElseClause() throws SqlException {
         // referenced columns in 'when' clauses are different
         assertQuery(
-                "select-virtual case('B',2 = b,'A',a = 1) + 1 column, b from (tab)",
+                "select-virtual case(a = 1,'A',2 = b,'B') + 1 column, b from (tab)",
                 "select case when a = 1 then 'A' when 2 = b then 'B' end+1, b from tab",
                 modelOf("tab").col("a", ColumnType.INT).col("b", ColumnType.INT)
         );
@@ -313,7 +394,7 @@ public class SqlParserTest extends AbstractCairoTest {
     @Test
     public void testCaseToSwitchExpression() throws SqlException {
         assertQuery(
-                "select-virtual switch(a,'C',1,'A',2,'B') + 1 column, b from (tab)",
+                "select-virtual switch(a,1,'A',2,'B','C') + 1 column, b from (tab)",
                 "select case when a = 1 then 'A' when a = 2 then 'B' else 'C' end+1, b from tab",
                 modelOf("tab").col("a", ColumnType.INT).col("b", ColumnType.INT)
         );
@@ -323,7 +404,7 @@ public class SqlParserTest extends AbstractCairoTest {
     public void testCaseToSwitchExpression2() throws SqlException {
         // this test has inverted '=' arguments but should still be rewritten to 'switch'
         assertQuery(
-                "select-virtual switch(a,'C',1,'A',2,'B') + 1 column, b from (tab)",
+                "select-virtual switch(a,1,'A',2,'B','C') + 1 column, b from (tab)",
                 "select case when a = 1 then 'A' when 2 = a then 'B' else 'C' end+1, b from tab",
                 modelOf("tab").col("a", ColumnType.INT).col("b", ColumnType.INT)
         );
@@ -1031,11 +1112,11 @@ public class SqlParserTest extends AbstractCairoTest {
     public void testCrossJoinWithClause() throws SqlException {
         assertQuery(
                 "select-choose" +
-                        " c.name name," +
                         " c.customerId customerId," +
+                        " c.name name," +
                         " c.age age," +
-                        " c1.name name1," +
                         " c1.customerId customerId1," +
+                        " c1.name name1," +
                         " c1.age age1" +
                         " from (" +
                         "(customers where name ~ 'X') c" +
@@ -1150,8 +1231,8 @@ public class SqlParserTest extends AbstractCairoTest {
         assertQuery(
                 "select-choose" +
                         " c.customerId customerId," +
-                        " o.x x," +
-                        " o.customerId customerId1" +
+                        " o.customerId customerId1," +
+                        " o.x x" +
                         " from " +
                         "(" +
                         "customers c" +
@@ -1167,7 +1248,6 @@ public class SqlParserTest extends AbstractCairoTest {
                         .col("x", ColumnType.INT)
         );
     }
-
 
     @Test
     public void testExpressionSyntaxError() {
@@ -1199,9 +1279,9 @@ public class SqlParserTest extends AbstractCairoTest {
     public void testFilterOnSubQuery() throws Exception {
         assertQuery(
                 "select-choose" +
+                        " c.customerId customerId," +
                         " c.customerName customerName," +
                         " c.count count," +
-                        " c.customerId customerId," +
                         " o.orderId orderId," +
                         " o.customerId customerId1" +
                         " from (" +
@@ -1475,7 +1555,7 @@ public class SqlParserTest extends AbstractCairoTest {
     @Test
     public void testJoin3() throws Exception {
         assertQuery(
-                "select-choose x from ((select-choose tab2.x x from (tab join tab2 on tab2.x = tab.x cross join tab3 post-join-where tab3.x f tab2.x = tab.x)) _xQdbA1)",
+                "select-choose x from ((select-choose tab2.x x from (tab join tab2 on tab2.x = tab.x cross join tab3 post-join-where f(tab3.x,tab2.x) = tab.x)) _xQdbA1)",
                 "select x from (select tab2.x from tab join tab2 on tab.x=tab2.x join tab3 on f(tab3.x,tab2.x) = tab.x)",
                 modelOf("tab").col("x", ColumnType.INT),
                 modelOf("tab2").col("x", ColumnType.INT),
@@ -1643,8 +1723,8 @@ public class SqlParserTest extends AbstractCairoTest {
     public void testJoinGroupByFilter() throws Exception {
         assertQuery(
                 "select-choose" +
-                        " avg," +
-                        " country " +
+                        " country," +
+                        " avg " +
                         "from" +
                         " ((select-group-by country," +
                         " avg(quantity) avg" +
@@ -1762,7 +1842,7 @@ public class SqlParserTest extends AbstractCairoTest {
     @Test
     public void testJoinOnCase() throws Exception {
         assertQuery(
-                "select-choose a.x x from (a a cross join b where switch(x,15,1,10))",
+                "select-choose a.x x from (a a cross join b where switch(x,1,10,15))",
                 "select a.x from a a join b on (case when a.x = 1 then 10 else 15 end)",
                 modelOf("a").col("x", ColumnType.INT),
                 modelOf("b").col("x", ColumnType.INT));
@@ -2045,8 +2125,8 @@ public class SqlParserTest extends AbstractCairoTest {
         assertQuery(
                 "select-choose" +
                         " orders.orderId orderId," +
-                        " _xQdbA1.customerName customerName," +
-                        " _xQdbA1.customerId customerId" +
+                        " _xQdbA1.customerId customerId," +
+                        " _xQdbA1.customerName customerName" +
                         " from (" +
                         "orders" +
                         " join (select-choose customerId, customerName from (customers where customerName ~ 'X')) _xQdbA1 on customerName = orderId)",
@@ -2153,8 +2233,8 @@ public class SqlParserTest extends AbstractCairoTest {
     public void testJoinWithClausesExplicitAlias() throws SqlException {
         assertQuery(
                 "select-choose" +
-                        " c.name name," +
                         " c.customerId customerId," +
+                        " c.name name," +
                         " o.customerId customerId1" +
                         " from ((customers where name ~ 'X') c" +
                         " outer join (select-choose customerId from (orders where amount > 100)) o on o.customerId = c.customerId" +
@@ -2214,7 +2294,7 @@ public class SqlParserTest extends AbstractCairoTest {
 
     @Test
     public void testJoinWithFunction() throws SqlException {
-        assertQuery("select-choose x1.a a, x1.s s, x2.a a1, x2.s s1 from ((select-choose a, s from (random_cursor(rnd_symbol(2,4,4,4),'s',rnd_int(),'a',10))) x1 join (select-choose a, s from (random_cursor(rnd_symbol(2,4,4,4),'s',rnd_int(),'a',10))) x2 on x2.s = x1.s)",
+        assertQuery("select-choose x1.a a, x1.s s, x2.a a1, x2.s s1 from ((select-choose a, s from (random_cursor(10,'a',rnd_int(),'s',rnd_symbol(4,4,4,2)))) x1 join (select-choose a, s from (random_cursor(10,'a',rnd_int(),'s',rnd_symbol(4,4,4,2)))) x2 on x2.s = x1.s)",
                 "with x as (select * from random_cursor(10, 'a', rnd_int(), 's', rnd_symbol(4,4,4,2))) " +
                         "select * from x x1 join x x2 on (s)");
     }
@@ -2250,7 +2330,7 @@ public class SqlParserTest extends AbstractCairoTest {
     public void testLineCommentAtEnd() throws Exception {
         assertQuery(
                 "select-choose" +
-                        " a, x" +
+                        " x, a" +
                         " from (" +
                         "(x where a > 1 and x > 1) 'b a')",
                 "(x where a > 1) 'b a' where x > 1\n--this is comment",
@@ -2263,7 +2343,7 @@ public class SqlParserTest extends AbstractCairoTest {
     public void testLineCommentAtMiddle() throws Exception {
         assertQuery(
                 "select-choose" +
-                        " a, x" +
+                        " x, a" +
                         " from (" +
                         "(x where a > 1 and x > 1) 'b a')",
                 "(x where a > 1) \n" +
@@ -2278,7 +2358,7 @@ public class SqlParserTest extends AbstractCairoTest {
     public void testLineCommentAtStart() throws Exception {
         assertQuery(
                 "select-choose" +
-                        " a, x" +
+                        " x, a" +
                         " from (" +
                         "(x where a > 1 and x > 1) 'b a')",
                 "-- hello, this is a comment\n (x where a > 1) 'b a' where x > 1",
@@ -2337,7 +2417,7 @@ public class SqlParserTest extends AbstractCairoTest {
     @Test
     public void testMostRecentWhereClause() throws Exception {
         assertQuery(
-                "select-virtual x, sum + 25 ohoh from (select-group-by x, sum(z) sum from (select-virtual a + b * c x, z from (zyzy latest by x where in(y,x,a) and b = 10)))",
+                "select-virtual x, sum + 25 ohoh from (select-group-by x, sum(z) sum from (select-virtual a + b * c x, z from (zyzy latest by x where a in (x,y) and b = 10)))",
                 "select a+b*c x, sum(z)+25 ohoh from zyzy latest by x where a in (x,y) and b = 10",
                 modelOf("zyzy")
                         .col("a", ColumnType.INT)
@@ -3012,6 +3092,15 @@ public class SqlParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSelectWildcardAndTimestamp() throws SqlException {
+        assertQuery(
+                "select-choose x, y from ((select-choose x, y from (tab1)) _xQdbA1) timestamp (y)",
+                "select * from (select x, y from tab1) timestamp(y)",
+                modelOf("tab1").col("x", ColumnType.INT).col("y", ColumnType.TIMESTAMP)
+        );
+    }
+
+    @Test
     public void testSelectWildcardAndExpr() throws SqlException {
         // todo: Y column is selected twice, code should be able to tell that y and tab1.y is the same column
         assertQuery(
@@ -3154,7 +3243,7 @@ public class SqlParserTest extends AbstractCairoTest {
     public void testSubQueryAliasWithSpace() throws Exception {
         assertQuery(
                 "select-choose" +
-                        " a, x" +
+                        " x, a" +
                         " from (" +
                         "(x where a > 1 and x > 1) 'b a')",
                 "(x where a > 1) 'b a' where x > 1",
@@ -3280,9 +3369,73 @@ public class SqlParserTest extends AbstractCairoTest {
 
     @Test
     public void testTimestampOnSubQuery() throws Exception {
-        assertQuery("select-choose x from ((a b where x > y) _xQdbA1 timestamp (x))",
+        assertQuery("select-choose x from ((a b where x > y) _xQdbA1) timestamp (x)",
                 "select x from (a b) timestamp(x) where x > y",
                 modelOf("a").col("x", ColumnType.INT).col("y", ColumnType.INT));
+    }
+
+    @Test
+    public void testConsistentColumnOrder() throws SqlException {
+        assertQuery(
+                "select-choose" +
+                        " rnd_int," +
+                        " rnd_int1," +
+                        " rnd_boolean," +
+                        " rnd_str," +
+                        " rnd_double," +
+                        " rnd_float," +
+                        " rnd_short," +
+                        " rnd_short1," +
+                        " rnd_date," +
+                        " rnd_timestamp," +
+                        " rnd_symbol," +
+                        " rnd_long," +
+                        " rnd_long1," +
+                        " ts," +
+                        " rnd_byte," +
+                        " rnd_bin" +
+                        " from " +
+                        "(" +
+                        "(" +
+                        "select-virtual" +
+                        " rnd_int() rnd_int," +
+                        " rnd_int(0,30,2) rnd_int1," +
+                        " rnd_boolean() rnd_boolean," +
+                        " rnd_str(3,3,2) rnd_str," +
+                        " rnd_double(2) rnd_double," +
+                        " rnd_float(2) rnd_float," +
+                        " rnd_short(10,1024) rnd_short," +
+                        " rnd_short() rnd_short1," +
+                        " rnd_date(to_date('2015','yyyy'),to_date('2016','yyyy'),2) rnd_date," +
+                        " rnd_timestamp(to_timestamp('2015','yyyy'),to_timestamp('2016','yyyy'),2) rnd_timestamp," +
+                        " rnd_symbol(4,4,4,2) rnd_symbol," +
+                        " rnd_long(100,200,2) rnd_long," +
+                        " rnd_long() rnd_long1," +
+                        " timestamp_sequence(to_timestamp(0),1000000000) ts," +
+                        " rnd_byte(2,50) rnd_byte," +
+                        " rnd_bin(10,20,2) rnd_bin" +
+                        " from (long_sequence(20))" +
+                        ") _xQdbA1" +
+                        ")",
+                "select * from (select" +
+                        " rnd_int()," +
+                        " rnd_int(0, 30, 2)," +
+                        " rnd_boolean()," +
+                        " rnd_str(3,3,2)," +
+                        " rnd_double(2)," +
+                        " rnd_float(2)," +
+                        " rnd_short(10,1024)," +
+                        " rnd_short()," +
+                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2)," +
+                        " rnd_timestamp(to_timestamp('2015', 'yyyy'), to_timestamp('2016', 'yyyy'), 2)," +
+                        " rnd_symbol(4,4,4,2)," +
+                        " rnd_long(100,200,2)," +
+                        " rnd_long()," +
+                        " timestamp_sequence(to_timestamp(0), 1000000000) ts," +
+                        " rnd_byte(2,50)," +
+                        " rnd_bin(10, 20, 2)" +
+                        " from long_sequence(20))"
+        );
     }
 
     @Test
@@ -3365,7 +3518,7 @@ public class SqlParserTest extends AbstractCairoTest {
     @Test
     public void testWhereClause() throws Exception {
         assertQuery(
-                "select-virtual x, sum + 25 ohoh from (select-group-by x, sum(z) sum from (select-virtual a + b * c x, z from (zyzy where in(10,0,a) and b = 10)))",
+                "select-virtual x, sum + 25 ohoh from (select-group-by x, sum(z) sum from (select-virtual a + b * c x, z from (zyzy where a in (0,10) and b = 10)))",
                 "select a+b*c x, sum(z)+25 ohoh from zyzy where a in (0,10) and b = 10",
                 modelOf("zyzy")
                         .col("a", ColumnType.INT)
@@ -3423,54 +3576,20 @@ public class SqlParserTest extends AbstractCairoTest {
         );
     }
 
-    private static void assertSyntaxError(String query, int position, String contains, TableModel... tableModels) {
-        assertSyntaxError(sqlCompiler, engine, query, position, contains, tableModels);
-    }
-
-    private static void assertSyntaxError(
-            SqlCompiler compiler,
-            CairoEngine engine,
-            String query,
-            int position,
-            String contains,
-            TableModel... tableModels) {
-        try {
-            for (int i = 0, n = tableModels.length; i < n; i++) {
-                CairoTestUtils.create(tableModels[i]);
-            }
-            compiler.compileExecutionModel(query, bindVariableService, true);
-            Assert.fail("Exception expected");
-        } catch (SqlException e) {
-            Assert.assertEquals(position, e.getPosition());
-            TestUtils.assertContains(e.getMessage(), contains);
-        } finally {
-            Assert.assertTrue(engine.releaseAllReaders());
-            for (int i = 0, n = tableModels.length; i < n; i++) {
-                TableModel tableModel = tableModels[i];
-                Path path = tableModel.getPath().of(tableModel.getCairoCfg().getRoot()).concat(tableModel.getName()).put(Files.SEPARATOR).$();
-                Assert.assertTrue(configuration.getFilesFacade().rmdir(path));
-                tableModel.close();
-            }
-        }
-    }
-
     private void assertCreateTable(String expected, String ddl, TableModel... tableModels) throws SqlException {
-        createModelsAndRun(() -> {
-            ExecutionModel model = sqlCompiler.compileExecutionModel(ddl, bindVariableService, true);
-            Assert.assertEquals(ExecutionModel.CREATE_TABLE, model.getModelType());
-            Assert.assertTrue(model instanceof CreateTableModel);
-            sink.clear();
-            ((CreateTableModel) model).toSink(sink);
-            TestUtils.assertEquals(expected, sink);
-        }, tableModels);
+        assertModel(expected, ddl, ExecutionModel.CREATE_TABLE, tableModels);
     }
 
     private void assertQuery(String expected, String query, TableModel... tableModels) throws SqlException {
+        assertModel(expected, query, ExecutionModel.QUERY, tableModels);
+    }
+
+    private void assertModel(String expected, String query, int modelType, TableModel... tableModels) throws SqlException {
         createModelsAndRun(() -> {
             sink.clear();
             ExecutionModel model = sqlCompiler.compileExecutionModel(query, bindVariableService, true);
-            Assert.assertEquals(model.getModelType(), ExecutionModel.QUERY);
-            ((QueryModel) model).toSink(sink);
+            Assert.assertEquals(model.getModelType(), modelType);
+            ((Sinkable) model).toSink(sink);
             TestUtils.assertEquals(expected, sink);
         }, tableModels);
     }
