@@ -23,16 +23,16 @@
 
 package com.questdb.cairo.map;
 
+import com.questdb.cairo.ColumnFilter;
 import com.questdb.cairo.sql.Record;
 import com.questdb.cairo.sql.RecordMetadata;
 import com.questdb.common.ColumnType;
 import com.questdb.std.BytecodeAssembler;
-import com.questdb.std.IntList;
 import com.questdb.std.Transient;
 
 public class RecordSinkFactory {
 
-    public static RecordSink getInstance(BytecodeAssembler asm, RecordMetadata meta, @Transient IntList columns, boolean symAsString) {
+    public static RecordSink getInstance(BytecodeAssembler asm, RecordMetadata meta, @Transient ColumnFilter columnFilter, boolean symAsString) {
         asm.init(RecordSink.class);
         asm.setupPool();
         int thisClassIndex = asm.poolClass(asm.poolUtf8("questdbasm"));
@@ -78,10 +78,10 @@ public class RecordSinkFactory {
 
         asm.startMethod(copyNameIndex, copySigIndex, 4, 3);
 
-        int n = columns.size();
+        int n = columnFilter.getColumnCount();
         for (int i = 0; i < n; i++) {
 
-            int index = columns.getQuick(i);
+            int index = columnFilter.getColumnIndex(i);
             asm.aload(2);
             asm.aload(1);
             asm.iconst(index);

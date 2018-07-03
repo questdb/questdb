@@ -45,23 +45,6 @@ import static com.questdb.cairo.TableUtils.TXN_FILE_NAME;
 public class SqlCompiler implements Closeable {
     private final static Log LOG = LogFactory.getLog(SqlCompiler.class);
     private static final IntList castGroups = new IntList();
-
-    static {
-        castGroups.extendAndSet(ColumnType.BOOLEAN, 2);
-
-        castGroups.extendAndSet(ColumnType.BYTE, 1);
-        castGroups.extendAndSet(ColumnType.SHORT, 1);
-        castGroups.extendAndSet(ColumnType.INT, 1);
-        castGroups.extendAndSet(ColumnType.LONG, 1);
-        castGroups.extendAndSet(ColumnType.FLOAT, 1);
-        castGroups.extendAndSet(ColumnType.DOUBLE, 1);
-        castGroups.extendAndSet(ColumnType.DATE, 1);
-        castGroups.extendAndSet(ColumnType.TIMESTAMP, 1);
-        castGroups.extendAndSet(ColumnType.STRING, 3);
-        castGroups.extendAndSet(ColumnType.SYMBOL, 3);
-        castGroups.extendAndSet(ColumnType.BINARY, 4);
-    }
-
     private final SqlOptimiser optimiser;
     private final SqlParser parser;
     private final ObjectPool<SqlNode> sqlNodePool;
@@ -79,6 +62,7 @@ public class SqlCompiler implements Closeable {
     private final ListColumnFilter listColumnFilter = new ListColumnFilter();
     private final EntityColumnFilter entityColumnFilter = new EntityColumnFilter();
     private final ExecutableMethod insertAsSelectMethod = this::insertAsSelect;
+    private final IntIntHashMap typeCast = new IntIntHashMap();
     private final ExecutableMethod createTableMethod = this::createTable;
 
     public SqlCompiler(CairoEngine engine, CairoConfiguration configuration) {
@@ -130,6 +114,55 @@ public class SqlCompiler implements Closeable {
             if (op.symbol) {
                 lexer.defineSymbol(op.token);
             }
+        }
+    }
+
+    @Override
+    public void close() {
+        Misc.free(path);
+    }
+
+    public RecordCursorFactory compile(CharSequence query, BindVariableService bindVariableService) throws SqlException {
+        ExecutionModel executionModel = compileExecutionModel(query, bindVariableService, true);
+        switch (executionModel.getModelType()) {
+            case ExecutionModel.QUERY:
+                return generate((QueryModel) executionModel, bindVariableService);
+            case ExecutionModel.CREATE_TABLE:
+                createTableWithRetries(query, executionModel, bindVariableService);
+                break;
+            case ExecutionModel.INSERT_AS_SELECT:
+                executeWithRetries(
+                        query,
+                        insertAsSelectMethod,
+                        executionModel,
+                        bindVariableService,
+                        configuration.getCreateAsSelectRetryCount());
+                break;
+            default:
+                break;
+        }
+        return null;
+    }
+
+    public void execute(CharSequence query, BindVariableService bindVariableService) throws SqlException {
+        ExecutionModel executionModel = compileExecutionModel(query, bindVariableService, false);
+        switch (executionModel.getModelType()) {
+            case ExecutionModel.QUERY:
+                break;
+            case ExecutionModel.CREATE_TABLE:
+                createTableWithRetries(query, executionModel, bindVariableService);
+                break;
+            case ExecutionModel.INSERT_AS_SELECT:
+                executeWithRetries(
+                        query,
+                        insertAsSelectMethod,
+                        executionModel,
+                        bindVariableService,
+                        configuration.getCreateAsSelectRetryCount()
+                );
+                break;
+            default:
+                break;
         }
     }
 
@@ -561,164 +594,6 @@ public class SqlCompiler implements Closeable {
                 || (from == ColumnType.SYMBOL && to == ColumnType.STRING);
     }
 
-    @Override
-    public void close() {
-        Misc.free(path);
-    }
-
-    public RecordCursorFactory compile(CharSequence query, BindVariableService bindVariableService) throws SqlException {
-        ExecutionModel executionModel = compileExecutionModel(query, bindVariableService, true);
-        switch (executionModel.getModelType()) {
-            case ExecutionModel.QUERY:
-                return generate((QueryModel) executionModel, bindVariableService);
-            case ExecutionModel.CREATE_TABLE:
-                createTableWithRetries(query, executionModel, bindVariableService);
-                break;
-            case ExecutionModel.INSERT_AS_SELECT:
-                executeWithRetries(
-                        query,
-                        insertAsSelectMethod,
-                        executionModel,
-                        bindVariableService,
-                        configuration.getCreateAsSelectRetryCount());
-                break;
-            default:
-                break;
-        }
-        return null;
-    }
-
-    private void insertAsSelect(ExecutionModel executionModel, BindVariableService bindVariableService) throws SqlException {
-        InsertAsSelectModel model = (InsertAsSelectModel) executionModel;
-
-        final FilesFacade ff = configuration.getFilesFacade();
-        final SqlNode name = model.getTableName();
-
-        if (TableUtils.exists(ff, path, configuration.getRoot(), name.token) == TableUtils.TABLE_DOES_NOT_EXIST) {
-            throw SqlException.$(name.position, "table does not exist");
-        }
-
-        try (TableWriter writer = engine.getWriter(name.token);
-             RecordCursorFactory factory = generate(model.getQueryModel(), bindVariableService)) {
-
-            final RecordMetadata cursorMetadata = factory.getMetadata();
-            final RecordMetadata writerMetadata = writer.getMetadata();
-            final int writerTimestampIndex = writerMetadata.getTimestampIndex();
-            final int cursorTimestampIndex = cursorMetadata.getTimestampIndex();
-
-            // fail when target table requires chronological data and cursor cannot provide it
-            if (writerTimestampIndex > -1 && cursorTimestampIndex == -1) {
-                throw SqlException.$(name.position, "select clause must provide timestamp column");
-            }
-
-            final RecordToRowCopier copier;
-
-            boolean noTimestampColumn = true;
-
-            CharSequenceHashSet columnSet = model.getColumnSet();
-            final int columnSetSize = columnSet.size();
-            if (columnSetSize > 0) {
-                // validate type cast
-
-                // clear list column filter to re-populate it again
-                listColumnFilter.clear();
-
-                for (int i = 0; i < columnSetSize; i++) {
-                    CharSequence columnName = columnSet.get(i);
-                    int index = writerMetadata.getColumnIndexQuiet(columnName);
-                    if (index == -1) {
-                        throw SqlException.invalidColumn(model.getColumnPosition(i), columnName);
-                    }
-
-                    if (index == writerTimestampIndex) {
-                        noTimestampColumn = false;
-                    }
-
-                    int fromType = cursorMetadata.getColumnType(i);
-                    int toType = writerMetadata.getColumnType(index);
-                    if (isAssignableFrom(toType, fromType)) {
-                        listColumnFilter.add(index);
-                    } else {
-                        throw SqlException.$(model.getColumnPosition(i), "inconvertible types: ").put(ColumnType.nameOf(fromType)).put(" -> ").put(ColumnType.nameOf(toType));
-                    }
-                }
-
-                // fail when target table requires chronological data and timestamp column
-                // is not in the list of columns to be updated
-                if (writerTimestampIndex > -1 && noTimestampColumn) {
-                    throw SqlException.$(model.getColumnPosition(0), "column list must include timestamp");
-                }
-
-                copier = assembleRecordToRowCopier(asm, cursorMetadata, writerMetadata, listColumnFilter);
-            } else {
-
-                for (int i = 0, n = writerMetadata.getColumnCount(); i < n; i++) {
-                    int fromType = cursorMetadata.getColumnType(i);
-                    int toType = writerMetadata.getColumnType(i);
-                    if (isAssignableFrom(toType, fromType)) {
-                        continue;
-                    }
-
-                    // We are going on a limp here. There is nowhere to position this error in our model.
-                    // We will try to position on column (i) inside cursor's query model. Assumption is that
-                    // it will always have a column, e.g. has been processed by optimiser
-                    assert i < model.getQueryModel().getColumns().size();
-                    throw SqlException.$(model.getQueryModel().getColumns().getQuick(i).getAst().position, "inconvertible types: ").put(ColumnType.nameOf(fromType)).put(" -> ").put(ColumnType.nameOf(toType));
-                }
-
-                entityColumnFilter.of(writerMetadata.getColumnCount());
-
-                copier = assembleRecordToRowCopier(asm, cursorMetadata, writerMetadata, entityColumnFilter);
-            }
-
-            try (RecordCursor cursor = factory.getCursor()) {
-                try {
-                    if (writerTimestampIndex == -1) {
-                        copyUnordered(cursor, writer, copier);
-                    } else {
-                        copyOrdered(writer, cursor, copier, cursorTimestampIndex);
-                    }
-                } catch (CairoException e) {
-                    // rollback data when system error occurs
-                    writer.rollback();
-                    throw e;
-                }
-            }
-        }
-    }
-
-    private void copyOrdered(TableWriter writer, RecordCursor cursor, RecordToRowCopier copier, int cursorTimestampIndex) {
-        while (cursor.hasNext()) {
-            Record record = cursor.next();
-            TableWriter.Row row = writer.newRow(record.getTimestamp(cursorTimestampIndex));
-            copier.copy(record, row);
-            row.append();
-        }
-        writer.commit();
-    }
-
-    public void execute(CharSequence query, BindVariableService bindVariableService) throws SqlException {
-        ExecutionModel executionModel = compileExecutionModel(query, bindVariableService, false);
-        switch (executionModel.getModelType()) {
-            case ExecutionModel.QUERY:
-                break;
-            case ExecutionModel.CREATE_TABLE:
-                createTableWithRetries(query, executionModel, bindVariableService);
-                break;
-            case ExecutionModel.INSERT_AS_SELECT:
-                executeWithRetries(
-                        query,
-                        insertAsSelectMethod,
-                        executionModel,
-                        bindVariableService,
-                        configuration.getCreateAsSelectRetryCount()
-                );
-                break;
-            default:
-                break;
-        }
-    }
-
     private void clear() {
         sqlNodePool.clear();
         characterStore.clear();
@@ -744,22 +619,20 @@ public class SqlCompiler implements Closeable {
         }
     }
 
-    private InsertAsSelectModel validateAndOptimiseInsertAsSelect(
-            InsertAsSelectModel model,
-            BindVariableService bindVariableService) throws SqlException {
-        final QueryModel queryModel = optimiser.optimise(model.getQueryModel(), bindVariableService);
-        int targetColumnCount = model.getColumnSet().size();
-        if (targetColumnCount > 0 && queryModel.getColumns().size() != targetColumnCount) {
-            throw SqlException.$(model.getTableName().position, "column count mismatch");
-        }
-        model.setQueryModel(queryModel);
-        return model;
-    }
-
     ExecutionModel compileExecutionModel(CharSequence query, BindVariableService bindVariableService, boolean willUseCursor) throws SqlException {
         clear();
         lexer.of(query);
         return compileExecutionModel(lexer, bindVariableService, willUseCursor);
+    }
+
+    private void copyOrdered(TableWriter writer, RecordCursor cursor, RecordToRowCopier copier, int cursorTimestampIndex) {
+        while (cursor.hasNext()) {
+            Record record = cursor.next();
+            TableWriter.Row row = writer.newRow(record.getTimestamp(cursorTimestampIndex));
+            copier.copy(record, row);
+            row.append();
+        }
+        writer.commit();
     }
 
     private TableWriter copyTableData(CharSequence tableName, RecordCursor cursor, RecordMetadata cursorMetadata) {
@@ -890,58 +763,10 @@ public class SqlCompiler implements Closeable {
         }
     }
 
-    /**
-     * Creates new table.
-     * <p>
-     * Table name must not exist. Existence check relies on directory existence followed by attempt to clarify what
-     * that directory is. Sometimes it can be just empty directory, which prevents new table from being created.
-     * <p>
-     * Table name can be utf8 encoded but must not contain '.' (dot). Dot is used to separate table and field name,
-     * where table is uses as an alias.
-     * <p>
-     * Creating table from column definition looks like:
-     * <code>
-     * create table x (column_name column_type, ...) [timestamp(column_name)] [partition by ...]
-     * </code>
-     * For non-partitioned table partition by value would be NONE. For any other type of partition timestamp
-     * has to be defined as reference to TIMESTAMP (type) column.
-     *
-     * @param query               SQL text. When concurrent modification is detected SQL text is re-parsed and re-executed
-     * @param executionModel      created from parsed sql.
-     * @param bindVariableService bind variables for the 'select' statement
-     * @throws SqlException contains text of error and error position in SQL text.
-     */
-    private void createTableWithRetries(CharSequence query, ExecutionModel executionModel, BindVariableService bindVariableService) throws SqlException {
-        executeWithRetries(query, createTableMethod, executionModel, bindVariableService, configuration.getCreateAsSelectRetryCount());
-    }
-
-    private void executeWithRetries(
-            CharSequence query,
-            ExecutableMethod method,
-            ExecutionModel executionModel,
-            BindVariableService bindVariableService,
-            int retries) throws SqlException {
-        int attemptsLeft = retries;
-        do {
-            try {
-                method.execute(executionModel, bindVariableService);
-                break;
-            } catch (ReaderOutOfDateException e) {
-                attemptsLeft--;
-                executionModel = compileExecutionModel(query, bindVariableService, false);
-            }
-        } while (attemptsLeft > 0);
-
-        if (attemptsLeft < 1) {
-            throw SqlException.position(0).put("underlying cursor is extremely volatile");
-        }
-    }
-
     private TableWriter createTableFromCursor(CreateTableModel model, BindVariableService bindVariableService) throws SqlException {
         try (final RecordCursorFactory factory = generate(model.getQueryModel(), bindVariableService);
              final RecordCursor cursor = factory.getCursor()) {
-            // todo: reuse the map below
-            final IntIntHashMap typeCast = new IntIntHashMap();
+            typeCast.clear();
             final RecordMetadata metadata = factory.getMetadata();
             validateTableModelAndCreateTypeCast(model, metadata, typeCast);
             createTableMetaFile(model, metadata, typeCast);
@@ -1028,8 +853,154 @@ public class SqlCompiler implements Closeable {
         }
     }
 
+    /**
+     * Creates new table.
+     * <p>
+     * Table name must not exist. Existence check relies on directory existence followed by attempt to clarify what
+     * that directory is. Sometimes it can be just empty directory, which prevents new table from being created.
+     * <p>
+     * Table name can be utf8 encoded but must not contain '.' (dot). Dot is used to separate table and field name,
+     * where table is uses as an alias.
+     * <p>
+     * Creating table from column definition looks like:
+     * <code>
+     * create table x (column_name column_type, ...) [timestamp(column_name)] [partition by ...]
+     * </code>
+     * For non-partitioned table partition by value would be NONE. For any other type of partition timestamp
+     * has to be defined as reference to TIMESTAMP (type) column.
+     *
+     * @param query               SQL text. When concurrent modification is detected SQL text is re-parsed and re-executed
+     * @param executionModel      created from parsed sql.
+     * @param bindVariableService bind variables for the 'select' statement
+     * @throws SqlException contains text of error and error position in SQL text.
+     */
+    private void createTableWithRetries(CharSequence query, ExecutionModel executionModel, BindVariableService bindVariableService) throws SqlException {
+        executeWithRetries(query, createTableMethod, executionModel, bindVariableService, configuration.getCreateAsSelectRetryCount());
+    }
+
+    private void executeWithRetries(
+            CharSequence query,
+            ExecutableMethod method,
+            ExecutionModel executionModel,
+            BindVariableService bindVariableService,
+            int retries) throws SqlException {
+        int attemptsLeft = retries;
+        do {
+            try {
+                method.execute(executionModel, bindVariableService);
+                break;
+            } catch (ReaderOutOfDateException e) {
+                attemptsLeft--;
+                executionModel = compileExecutionModel(query, bindVariableService, false);
+            }
+        } while (attemptsLeft > 0);
+
+        if (attemptsLeft < 1) {
+            throw SqlException.position(0).put("underlying cursor is extremely volatile");
+        }
+    }
+
     RecordCursorFactory generate(QueryModel queryModel, BindVariableService bindVariableService) throws SqlException {
         return codeGenerator.generate(queryModel, bindVariableService);
+    }
+
+    private void insertAsSelect(ExecutionModel executionModel, BindVariableService bindVariableService) throws SqlException {
+        InsertAsSelectModel model = (InsertAsSelectModel) executionModel;
+
+        final FilesFacade ff = configuration.getFilesFacade();
+        final SqlNode name = model.getTableName();
+
+        if (TableUtils.exists(ff, path, configuration.getRoot(), name.token) == TableUtils.TABLE_DOES_NOT_EXIST) {
+            throw SqlException.$(name.position, "table does not exist");
+        }
+
+        try (TableWriter writer = engine.getWriter(name.token);
+             RecordCursorFactory factory = generate(model.getQueryModel(), bindVariableService)) {
+
+            final RecordMetadata cursorMetadata = factory.getMetadata();
+            final RecordMetadata writerMetadata = writer.getMetadata();
+            final int writerTimestampIndex = writerMetadata.getTimestampIndex();
+            final int cursorTimestampIndex = cursorMetadata.getTimestampIndex();
+
+            // fail when target table requires chronological data and cursor cannot provide it
+            if (writerTimestampIndex > -1 && cursorTimestampIndex == -1) {
+                throw SqlException.$(name.position, "select clause must provide timestamp column");
+            }
+
+            final RecordToRowCopier copier;
+
+            boolean noTimestampColumn = true;
+
+            CharSequenceHashSet columnSet = model.getColumnSet();
+            final int columnSetSize = columnSet.size();
+            if (columnSetSize > 0) {
+                // validate type cast
+
+                // clear list column filter to re-populate it again
+                listColumnFilter.clear();
+
+                for (int i = 0; i < columnSetSize; i++) {
+                    CharSequence columnName = columnSet.get(i);
+                    int index = writerMetadata.getColumnIndexQuiet(columnName);
+                    if (index == -1) {
+                        throw SqlException.invalidColumn(model.getColumnPosition(i), columnName);
+                    }
+
+                    if (index == writerTimestampIndex) {
+                        noTimestampColumn = false;
+                    }
+
+                    int fromType = cursorMetadata.getColumnType(i);
+                    int toType = writerMetadata.getColumnType(index);
+                    if (isAssignableFrom(toType, fromType)) {
+                        listColumnFilter.add(index);
+                    } else {
+                        throw SqlException.$(model.getColumnPosition(i), "inconvertible types: ").put(ColumnType.nameOf(fromType)).put(" -> ").put(ColumnType.nameOf(toType));
+                    }
+                }
+
+                // fail when target table requires chronological data and timestamp column
+                // is not in the list of columns to be updated
+                if (writerTimestampIndex > -1 && noTimestampColumn) {
+                    throw SqlException.$(model.getColumnPosition(0), "column list must include timestamp");
+                }
+
+                copier = assembleRecordToRowCopier(asm, cursorMetadata, writerMetadata, listColumnFilter);
+            } else {
+
+                for (int i = 0, n = writerMetadata.getColumnCount(); i < n; i++) {
+                    int fromType = cursorMetadata.getColumnType(i);
+                    int toType = writerMetadata.getColumnType(i);
+                    if (isAssignableFrom(toType, fromType)) {
+                        continue;
+                    }
+
+                    // We are going on a limp here. There is nowhere to position this error in our model.
+                    // We will try to position on column (i) inside cursor's query model. Assumption is that
+                    // it will always have a column, e.g. has been processed by optimiser
+                    assert i < model.getQueryModel().getColumns().size();
+                    throw SqlException.$(model.getQueryModel().getColumns().getQuick(i).getAst().position, "inconvertible types: ").put(ColumnType.nameOf(fromType)).put(" -> ").put(ColumnType.nameOf(toType));
+                }
+
+                entityColumnFilter.of(writerMetadata.getColumnCount());
+
+                copier = assembleRecordToRowCopier(asm, cursorMetadata, writerMetadata, entityColumnFilter);
+            }
+
+            try (RecordCursor cursor = factory.getCursor()) {
+                try {
+                    if (writerTimestampIndex == -1) {
+                        copyUnordered(cursor, writer, copier);
+                    } else {
+                        copyOrdered(writer, cursor, copier, cursorTimestampIndex);
+                    }
+                } catch (CairoException e) {
+                    // rollback data when system error occurs
+                    writer.rollback();
+                    throw e;
+                }
+            }
+        }
     }
 
     // this exposed for testing only
@@ -1054,6 +1025,18 @@ public class SqlCompiler implements Closeable {
         }
         LOG.error().$("failed to clean up after create table failure [path=").$(path).$(", errno=").$(ff.errno()).$(']').$();
         return false;
+    }
+
+    private InsertAsSelectModel validateAndOptimiseInsertAsSelect(
+            InsertAsSelectModel model,
+            BindVariableService bindVariableService) throws SqlException {
+        final QueryModel queryModel = optimiser.optimise(model.getQueryModel(), bindVariableService);
+        int targetColumnCount = model.getColumnSet().size();
+        if (targetColumnCount > 0 && queryModel.getColumns().size() != targetColumnCount) {
+            throw SqlException.$(model.getTableName().position, "column count mismatch");
+        }
+        model.setQueryModel(queryModel);
+        return model;
     }
 
     private void validateTableModelAndCreateTypeCast(
@@ -1099,5 +1082,21 @@ public class SqlCompiler implements Closeable {
 
     public interface RecordToRowCopier {
         void copy(Record record, TableWriter.Row row);
+    }
+
+    static {
+        castGroups.extendAndSet(ColumnType.BOOLEAN, 2);
+
+        castGroups.extendAndSet(ColumnType.BYTE, 1);
+        castGroups.extendAndSet(ColumnType.SHORT, 1);
+        castGroups.extendAndSet(ColumnType.INT, 1);
+        castGroups.extendAndSet(ColumnType.LONG, 1);
+        castGroups.extendAndSet(ColumnType.FLOAT, 1);
+        castGroups.extendAndSet(ColumnType.DOUBLE, 1);
+        castGroups.extendAndSet(ColumnType.DATE, 1);
+        castGroups.extendAndSet(ColumnType.TIMESTAMP, 1);
+        castGroups.extendAndSet(ColumnType.STRING, 3);
+        castGroups.extendAndSet(ColumnType.SYMBOL, 3);
+        castGroups.extendAndSet(ColumnType.BINARY, 4);
     }
 }

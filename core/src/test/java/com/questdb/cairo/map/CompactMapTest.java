@@ -193,19 +193,8 @@ public class CompactMapTest extends AbstractCairoTest {
             BytecodeAssembler asm = new BytecodeAssembler();
 
             try (TableReader reader = new TableReader(configuration, "x")) {
-                IntList columns = new IntList();
-                columns.add(0);
-                columns.add(1);
-                columns.add(2);
-                columns.add(3);
-                columns.add(4);
-                columns.add(5);
-                columns.add(6);
-                columns.add(7);
-                columns.add(8);
-                columns.add(9);
-                columns.add(10);
-                columns.add(11);
+                EntityColumnFilter entityColumnFilter = new EntityColumnFilter();
+                entityColumnFilter.of(reader.getMetadata().getColumnCount());
 
                 try (CompactMap map = new CompactMap(
                         1024 * 1024,
@@ -224,7 +213,7 @@ public class CompactMapTest extends AbstractCairoTest {
                         N,
                         0.9)) {
 
-                    RecordSink sink = RecordSinkFactory.getInstance(asm, reader.getMetadata(), columns, true);
+                    RecordSink sink = RecordSinkFactory.getInstance(asm, reader.getMetadata(), entityColumnFilter, true);
 
                     final int keyColumnOffset = map.getValueColumnCount();
 
@@ -535,19 +524,8 @@ public class CompactMapTest extends AbstractCairoTest {
             BytecodeAssembler asm = new BytecodeAssembler();
 
             try (TableReader reader = new TableReader(configuration, "x")) {
-                IntList columns = new IntList();
-                columns.add(0);
-                columns.add(1);
-                columns.add(2);
-                columns.add(3);
-                columns.add(4);
-                columns.add(5);
-                columns.add(6);
-                columns.add(7);
-                columns.add(8);
-                columns.add(9);
-                columns.add(10);
-                columns.add(11);
+                EntityColumnFilter entityColumnFilter = new EntityColumnFilter();
+                entityColumnFilter.of(reader.getMetadata().getColumnCount());
 
                 try (CompactMap map = new CompactMap(
                         1024 * 1024,
@@ -566,7 +544,7 @@ public class CompactMapTest extends AbstractCairoTest {
                         N,
                         0.9)) {
 
-                    RecordSink sink = RecordSinkFactory.getInstance(asm, reader.getMetadata(), columns, true);
+                    RecordSink sink = RecordSinkFactory.getInstance(asm, reader.getMetadata(), entityColumnFilter, true);
 
                     // this random will be populating values
                     Rnd rnd2 = new Rnd();
@@ -610,19 +588,8 @@ public class CompactMapTest extends AbstractCairoTest {
             BytecodeAssembler asm = new BytecodeAssembler();
 
             try (TableReader reader = new TableReader(configuration, "x")) {
-                IntList columns = new IntList();
-                columns.add(0);
-                columns.add(1);
-                columns.add(2);
-                columns.add(3);
-                columns.add(4);
-                columns.add(5);
-                columns.add(6);
-                columns.add(7);
-                columns.add(8);
-                columns.add(9);
-                columns.add(10);
-                columns.add(11);
+                EntityColumnFilter entityColumnFilter = new EntityColumnFilter();
+                entityColumnFilter.of(reader.getMetadata().getColumnCount());
 
                 try (CompactMap map = new CompactMap(
                         1024 * 1024,
@@ -641,7 +608,7 @@ public class CompactMapTest extends AbstractCairoTest {
                         N,
                         0.9)) {
 
-                    RecordSink sink = RecordSinkFactory.getInstance(asm, reader.getMetadata(), columns, false);
+                    RecordSink sink = RecordSinkFactory.getInstance(asm, reader.getMetadata(), entityColumnFilter, false);
 
                     // this random will be populating values
                     Rnd rnd2 = new Rnd();

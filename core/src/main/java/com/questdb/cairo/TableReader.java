@@ -860,7 +860,6 @@ public class TableReader implements Closeable {
                     case ColumnType.STRING:
                         TableUtils.iFile(path.trimTo(plen), name);
                         if (mem2 instanceof ReadOnlyMemory) {
-                            //todo: not hit by test
                             ((ReadOnlyMemory) mem2).of(ff, path, ff.getMapPageSize(), 0);
                         } else {
                             mem2 = new ReadOnlyMemory(ff, path, ff.getMapPageSize(), 0);
@@ -879,13 +878,11 @@ public class TableReader implements Closeable {
                 if (metadata.isColumnIndexed(columnIndex)) {
                     BitmapIndexReader indexReader = indexReaders.getQuick(primaryIndex);
                     if (indexReader instanceof BitmapIndexBwdReader) {
-                        //todo: not hit by test
                         ((BitmapIndexBwdReader) indexReader).of(configuration, path.trimTo(plen), name, columnTop);
                     }
 
                     indexReader = indexReaders.getQuick(secondaryIndex);
                     if (indexReader instanceof BitmapIndexFwdReader) {
-                        // todo: not hit by test
                         ((BitmapIndexFwdReader) indexReader).of(configuration, path.trimTo(plen), name, columnTop);
                     }
 

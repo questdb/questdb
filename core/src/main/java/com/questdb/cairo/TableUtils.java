@@ -125,7 +125,6 @@ public final class TableUtils {
             return -1L;
         }
 
-        //todo: not hit by test
         if (ff.lock(fd) != 0) {
             LOG.error().$("cannot lock '").$(path).$("' [errno=").$(ff.errno()).$(", fd=").$(fd).$(']').$();
             ff.close(fd);

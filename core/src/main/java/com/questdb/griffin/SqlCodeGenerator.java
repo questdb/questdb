@@ -45,7 +45,7 @@ public class SqlCodeGenerator {
     private final CairoEngine engine;
     private final BytecodeAssembler asm = new BytecodeAssembler();
     // this list is used to generate record sinks
-    private final IntList latestByColumns = new IntList();
+    private final ListColumnFilter listColumnFilter = new ListColumnFilter();
     private final SingleColumnType latestByColumnTypes = new SingleColumnType();
     private final CairoConfiguration configuration;
 
@@ -57,6 +57,11 @@ public class SqlCodeGenerator {
 
     private void clearState() {
         // todo: clear
+    }
+
+    private RecordMetadata copyMetadata(RecordMetadata that) {
+        // todo: this metadata is ummutable. Ideally we shouldn't be creating metadata for the same table over and over
+        return GenericRecordMetadata.copyOf(that);
     }
 
     RecordCursorFactory generate(QueryModel model, BindVariableService bindVariableService) throws SqlException {
@@ -202,11 +207,6 @@ public class SqlCodeGenerator {
         }
 
         return new VirtualRecordCursorFactory(virtualMetadata, functions, factory);
-    }
-
-    private RecordMetadata copyMetadata(RecordMetadata that) {
-        // todo: this metadata is ummutable. Ideally we shouldn't be creating metadata for the same table over and over
-        return GenericRecordMetadata.copyOf(that);
     }
 
     @SuppressWarnings("ConstantConditions")
@@ -417,13 +417,13 @@ public class SqlCodeGenerator {
                                 latestByIndex);
                     }
 
-                    latestByColumns.clear();
-                    latestByColumns.add(latestByIndex);
+                    listColumnFilter.clear();
+                    listColumnFilter.add(latestByIndex);
                     return new LatestBySansIndexRecordCursorFactory(
                             copyMetadata(metadata),
                             configuration,
                             new FullBwdDataFrameCursorFactory(engine, model.getTableName().token.toString(), model.getTableVersion()),
-                            RecordSinkFactory.getInstance(asm, metadata, latestByColumns, false),
+                            RecordSinkFactory.getInstance(asm, metadata, listColumnFilter, false),
                             latestByColumnTypes.of(metadata.getColumnType(latestByIndex))
                     );
                 }

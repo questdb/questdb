@@ -270,19 +270,8 @@ public class FastMapTest extends AbstractCairoTest {
             BytecodeAssembler asm = new BytecodeAssembler();
 
             try (TableReader reader = new TableReader(configuration, "x")) {
-                IntList columns = new IntList();
-                columns.add(0);
-                columns.add(1);
-                columns.add(2);
-                columns.add(3);
-                columns.add(4);
-                columns.add(5);
-                columns.add(6);
-                columns.add(7);
-                columns.add(8);
-                columns.add(9);
-                columns.add(10);
-                columns.add(11);
+                EntityColumnFilter entityColumnFilter = new EntityColumnFilter();
+                entityColumnFilter.of(reader.getMetadata().getColumnCount());
 
                 try (FastMap map = new FastMap(
                         Numbers.SIZE_1MB,
@@ -301,7 +290,7 @@ public class FastMapTest extends AbstractCairoTest {
                         N,
                         0.9f)) {
 
-                    RecordSink sink = RecordSinkFactory.getInstance(asm, reader.getMetadata(), columns, true);
+                    RecordSink sink = RecordSinkFactory.getInstance(asm, reader.getMetadata(), entityColumnFilter, true);
 
                     final int keyColumnOffset = map.getValueColumnCount();
 
@@ -521,19 +510,8 @@ public class FastMapTest extends AbstractCairoTest {
             BytecodeAssembler asm = new BytecodeAssembler();
 
             try (TableReader reader = new TableReader(configuration, "x")) {
-                IntList columns = new IntList();
-                columns.add(0);
-                columns.add(1);
-                columns.add(2);
-                columns.add(3);
-                columns.add(4);
-                columns.add(5);
-                columns.add(6);
-                columns.add(7);
-                columns.add(8);
-                columns.add(9);
-                columns.add(10);
-                columns.add(11);
+                EntityColumnFilter entityColumnFilter = new EntityColumnFilter();
+                entityColumnFilter.of(reader.getMetadata().getColumnCount());
 
                 try (FastMap map = new FastMap(
                         Numbers.SIZE_1MB,
@@ -552,7 +530,7 @@ public class FastMapTest extends AbstractCairoTest {
                         N,
                         0.9f)) {
 
-                    RecordSink sink = RecordSinkFactory.getInstance(asm, reader.getMetadata(), columns, true);
+                    RecordSink sink = RecordSinkFactory.getInstance(asm, reader.getMetadata(), entityColumnFilter, true);
 
                     // this random will be populating values
                     Rnd rnd2 = new Rnd();
@@ -596,19 +574,10 @@ public class FastMapTest extends AbstractCairoTest {
             BytecodeAssembler asm = new BytecodeAssembler();
 
             try (TableReader reader = new TableReader(configuration, "x")) {
-                IntList columns = new IntList();
-                columns.add(0);
-                columns.add(1);
-                columns.add(2);
-                columns.add(3);
-                columns.add(4);
-                columns.add(5);
-                columns.add(6);
-                columns.add(7);
-                columns.add(8);
-                columns.add(9);
-                columns.add(10);
-                columns.add(11);
+                ListColumnFilter listColumnFilter = new ListColumnFilter();
+                for (int i = 0, n = reader.getMetadata().getColumnCount(); i < n; i++) {
+                    listColumnFilter.add(i);
+                }
 
                 try (FastMap map = new FastMap(
                         Numbers.SIZE_1MB,
@@ -627,7 +596,7 @@ public class FastMapTest extends AbstractCairoTest {
                         N,
                         0.9f)) {
 
-                    RecordSink sink = RecordSinkFactory.getInstance(asm, reader.getMetadata(), columns, false);
+                    RecordSink sink = RecordSinkFactory.getInstance(asm, reader.getMetadata(), listColumnFilter, false);
 
                     // this random will be populating values
                     Rnd rnd2 = new Rnd();
