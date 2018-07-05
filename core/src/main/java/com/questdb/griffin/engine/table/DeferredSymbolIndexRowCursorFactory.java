@@ -23,16 +23,43 @@
 
 package com.questdb.griffin.engine.table;
 
+import com.questdb.cairo.BitmapIndexReader;
 import com.questdb.cairo.EmptyRowCursor;
+import com.questdb.cairo.TableReader;
 import com.questdb.cairo.sql.DataFrame;
 import com.questdb.cairo.sql.RowCursorFactory;
 import com.questdb.common.RowCursor;
+import com.questdb.common.SymbolTable;
 
-public class EmptyRowCursorFactory implements RowCursorFactory {
-    public static final RowCursorFactory INSTANCE = new EmptyRowCursorFactory();
+public class DeferredSymbolIndexRowCursorFactory implements RowCursorFactory {
+    private final int columnIndex;
+    private final boolean cachedIndexReaderCursor;
+    private final String symbol;
+    private int symbolKey;
+
+    public DeferredSymbolIndexRowCursorFactory(int columnIndex, String symbol, boolean cachedIndexReaderCursor) {
+        this.columnIndex = columnIndex;
+        this.symbolKey = SymbolTable.VALUE_NOT_FOUND;
+        this.symbol = symbol;
+        this.cachedIndexReaderCursor = cachedIndexReaderCursor;
+    }
 
     @Override
     public RowCursor getCursor(DataFrame dataFrame) {
-        return EmptyRowCursor.INSTANCE;
+        if (symbolKey == SymbolTable.VALUE_NOT_FOUND) {
+            return EmptyRowCursor.INSTANCE;
+        }
+
+        return dataFrame
+                .getBitmapIndexReader(columnIndex, BitmapIndexReader.DIR_FORWARD)
+                .getCursor(cachedIndexReaderCursor, symbolKey, dataFrame.getRowLo(), dataFrame.getRowHi() - 1);
+    }
+
+    @Override
+    public void prepareCursor(TableReader tableReader) {
+        int symbolKey = tableReader.getSymbolMapReader(columnIndex).getQuick(symbol);
+        if (symbolKey != SymbolTable.VALUE_NOT_FOUND) {
+            this.symbolKey = symbolKey + 1;
+        }
     }
 }

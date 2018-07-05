@@ -62,6 +62,6 @@ public class SubStrVVFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
     @Override
     protected FunctionFactory getFunctionFactory() {
-        return new SubStrVVFunctionFactory();
+        return new SubStrFunctionFactory();
     }
 }

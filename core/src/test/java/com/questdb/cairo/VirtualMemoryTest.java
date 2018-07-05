@@ -908,7 +908,7 @@ public class VirtualMemoryTest {
             for (int i = 0; i < N; i++) {
                 int flag = rnd.nextInt();
                 if ((flag % 4) == 0) {
-                    Assert.assertNull(mem.getStr(o));
+                    assertNull(mem.getStr(o));
                     o += 4;
                 } else if ((flag % 2) == 0) {
                     TestUtils.assertEquals("", mem.getStr(o));

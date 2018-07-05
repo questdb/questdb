@@ -239,7 +239,7 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
         bindVariableService.setInt("start", 1);
 
         Function func = expr("substr(:str, :start)")
-                .withFunction(new SubStrVVFunctionFactory())
+                .withFunction(new SubStrFunctionFactory())
                 .$();
 
         TestUtils.assertEquals("bcd", func.getStr(builder.getRecord()));

@@ -29,7 +29,7 @@ import com.questdb.cairo.sql.Record;
 import com.questdb.griffin.FunctionFactory;
 import com.questdb.griffin.SqlException;
 import com.questdb.griffin.engine.functions.TimestampFunction;
-import com.questdb.griffin.engine.functions.constants.LongConstant;
+import com.questdb.griffin.engine.functions.constants.TimestampConstant;
 import com.questdb.std.Numbers;
 import com.questdb.std.ObjList;
 
@@ -48,7 +48,7 @@ public class TimestampSequenceFunctionFactory implements FunctionFactory {
         }
 
         if (start == Numbers.LONG_NaN) {
-            return new LongConstant(args.getQuick(0).getPosition(), Numbers.LONG_NaN);
+            return new TimestampConstant(args.getQuick(0).getPosition(), Numbers.LONG_NaN);
         }
 
         return new Func(position, start, increment);

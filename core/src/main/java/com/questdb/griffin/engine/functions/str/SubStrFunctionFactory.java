@@ -33,7 +33,7 @@ import com.questdb.std.ObjList;
 import com.questdb.std.str.CharSink;
 import com.questdb.std.str.StringSink;
 
-public class SubStrVVFunctionFactory implements FunctionFactory {
+public class SubStrFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
         return "substr(SI)";

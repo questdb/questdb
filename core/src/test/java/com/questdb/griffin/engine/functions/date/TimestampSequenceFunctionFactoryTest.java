@@ -46,7 +46,7 @@ public class TimestampSequenceFunctionFactoryTest extends AbstractFunctionFactor
 
     @Test
     public void testNaN() throws SqlException {
-        call(Numbers.LONG_NaN, 1000L).andAssert(Numbers.LONG_NaN);
+        call(Numbers.LONG_NaN, 1000L).andAssertTimestamp(Numbers.LONG_NaN);
     }
 
     @Test

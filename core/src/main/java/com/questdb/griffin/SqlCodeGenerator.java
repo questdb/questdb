@@ -307,7 +307,7 @@ public class SqlCodeGenerator {
                                     final RowCursorFactory rcf;
                                     final int symbolKey = reader.getSymbolMapReader(keyColumnIndex).getQuick(intrinsicModel.keyValues.get(0));
                                     if (symbolKey == SymbolTable.VALUE_NOT_FOUND) {
-                                        rcf = EmptyRowCursorFactory.INSTANCE;
+                                        rcf = new DeferredSymbolIndexLatestValueRowCursorFactory(keyColumnIndex, Chars.toString(intrinsicModel.keyValues.get(0)), false);
                                     } else {
                                         rcf = new SymbolIndexLatestValueRowCursorFactory(keyColumnIndex, symbolKey, false);
                                     }
@@ -356,7 +356,11 @@ public class SqlCodeGenerator {
                                 final RowCursorFactory rcf;
                                 final int symbolKey = reader.getSymbolMapReader(keyColumnIndex).getQuick(intrinsicModel.keyValues.get(0));
                                 if (symbolKey == SymbolTable.VALUE_NOT_FOUND) {
-                                    rcf = EmptyRowCursorFactory.INSTANCE;
+                                    if (filter == null) {
+                                        rcf = new DeferredSymbolIndexRowCursorFactory(keyColumnIndex, Chars.toString(intrinsicModel.keyValues.get(0)), true);
+                                    } else {
+                                        rcf = new DeferredSymbolIndexFilteredRowCursorFactory(keyColumnIndex, Chars.toString(intrinsicModel.keyValues.get(0)), filter, true);
+                                    }
                                 } else {
                                     if (filter == null) {
                                         rcf = new SymbolIndexRowCursorFactory(keyColumnIndex, symbolKey, true);

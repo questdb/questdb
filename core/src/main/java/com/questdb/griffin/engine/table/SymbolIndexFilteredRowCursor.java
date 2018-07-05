@@ -34,14 +34,18 @@ class SymbolIndexFilteredRowCursor implements RowCursor {
     private final Function filter;
     private final TableReaderRecord record = new TableReaderRecord();
     private final int columnIndex;
-    private final int symbolKey;
     private final boolean cachedIndexReaderCursor;
+    private int symbolKey;
     private RowCursor dataFrameCursor;
     private long rowid;
 
     public SymbolIndexFilteredRowCursor(int columnIndex, int symbolKey, Function filter, boolean cachedIndexReaderCursor) {
+        this(columnIndex, filter, cachedIndexReaderCursor);
+        of(symbolKey);
+    }
+
+    public SymbolIndexFilteredRowCursor(int columnIndex, Function filter, boolean cachedIndexReaderCursor) {
         this.columnIndex = columnIndex;
-        this.symbolKey = symbolKey + 1;
         this.filter = filter;
         this.cachedIndexReaderCursor = cachedIndexReaderCursor;
     }
@@ -62,6 +66,10 @@ class SymbolIndexFilteredRowCursor implements RowCursor {
     @Override
     public long next() {
         return rowid;
+    }
+
+    public final void of(int symbolKey) {
+        this.symbolKey = symbolKey + 1;
     }
 
     public SymbolIndexFilteredRowCursor of(DataFrame dataFrame) {

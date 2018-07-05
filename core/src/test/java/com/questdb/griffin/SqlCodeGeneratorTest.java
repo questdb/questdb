@@ -58,7 +58,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testFilterConstantFalse() throws Exception {
-        assertQuery("a\tb\tk\n",
+        final String expected = "a\tb\tk\n";
+        assertQuery(expected,
                 "select * from x o where 10 < 8",
                 "create table x as " +
                         "(" +
@@ -70,7 +71,15 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         " 'k', timestamp_sequence(to_timestamp(0), 1000000000)" +
                         ")" +
                         "), index(b) timestamp(k)",
-                "k");
+                "k",
+                "insert into x select * from (" +
+                        "select" +
+                        " rnd_double(0)*100," +
+                        " rnd_symbol(5,4,4,1)," +
+                        " timestamp_sequence(to_timestamp('2019', 'yyyy'), 1000000000) timestamp" +
+                        " from long_sequence(50)" +
+                        ") timestamp(timestamp)",
+                expected);
     }
 
     @Test
@@ -131,8 +140,29 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         "45.634456960908\t\t1970-01-01T05:00:00.000000Z\n" +
                         "40.455469747939\t\t1970-01-01T05:16:40.000000Z\n",
                 "select * from x o where o.b in ('HYRX','PEHN', null) and a < 50",
-                "create table x as (select * from random_cursor(20, 'a', rnd_double(0)*100, 'b', rnd_symbol(5,4,4,1), 'k', timestamp_sequence(to_timestamp(0), 1000000000))), index(b)",
-                null);
+                "create table x as (" +
+                        "select" +
+                        " *" +
+                        " from" +
+                        " random_cursor(20, 'a', rnd_double(0)*100, 'b', rnd_symbol(5,4,4,1), 'k', timestamp_sequence(to_timestamp(0), 1000000000))" +
+                        ")," +
+                        " index(b)",
+                null,
+                "insert into x (a,b)" +
+                        " select" +
+                        " rnd_double(0)*100," +
+                        " rnd_symbol(5,4,4,1)" +
+                        " from" +
+                        " long_sequence(10)",
+                "a\tb\tk\n" +
+                        "11.427984775756\t\t1970-01-01T00:00:00.000000Z\n" +
+                        "32.881769076795\t\t1970-01-01T01:23:20.000000Z\n" +
+                        "12.026122412833\tHYRX\t1970-01-01T02:30:00.000000Z\n" +
+                        "26.922103479745\t\t1970-01-01T03:03:20.000000Z\n" +
+                        "49.005104498852\tPEHN\t1970-01-01T04:10:00.000000Z\n" +
+                        "45.634456960908\t\t1970-01-01T05:00:00.000000Z\n" +
+                        "40.455469747939\t\t1970-01-01T05:16:40.000000Z\n" +
+                        "44.804689668614\t\t\n");
     }
 
     @Test
@@ -157,68 +187,111 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testFilterMultipleKeyValues() throws Exception {
-        assertQuery("a\tb\tk\n" +
-                        "11.427984775756\t\t1970-01-01T00:00:00.000000Z\n" +
-                        "70.943604871712\tPEHN\t1970-01-01T00:50:00.000000Z\n" +
-                        "87.996347253916\t\t1970-01-01T01:06:40.000000Z\n" +
-                        "32.881769076795\t\t1970-01-01T01:23:20.000000Z\n" +
-                        "97.711031460512\tHYRX\t1970-01-01T01:40:00.000000Z\n" +
-                        "81.468079445006\tPEHN\t1970-01-01T01:56:40.000000Z\n" +
-                        "57.934663268622\t\t1970-01-01T02:13:20.000000Z\n" +
-                        "12.026122412833\tHYRX\t1970-01-01T02:30:00.000000Z\n" +
-                        "26.922103479745\t\t1970-01-01T03:03:20.000000Z\n" +
-                        "52.984059417621\t\t1970-01-01T03:20:00.000000Z\n" +
-                        "84.452581772111\tPEHN\t1970-01-01T03:36:40.000000Z\n" +
-                        "97.501988537251\t\t1970-01-01T03:53:20.000000Z\n" +
-                        "49.005104498852\tPEHN\t1970-01-01T04:10:00.000000Z\n" +
-                        "80.011211397392\t\t1970-01-01T04:26:40.000000Z\n" +
-                        "92.050039469858\t\t1970-01-01T04:43:20.000000Z\n" +
-                        "45.634456960908\t\t1970-01-01T05:00:00.000000Z\n" +
-                        "40.455469747939\t\t1970-01-01T05:16:40.000000Z\n",
+        final String expected1 = "a\tb\tk\n" +
+                "11.427984775756\t\t1970-01-01T00:00:00.000000Z\n" +
+                "70.943604871712\tPEHN\t1970-01-01T00:50:00.000000Z\n" +
+                "87.996347253916\t\t1970-01-01T01:06:40.000000Z\n" +
+                "32.881769076795\t\t1970-01-01T01:23:20.000000Z\n" +
+                "97.711031460512\tHYRX\t1970-01-01T01:40:00.000000Z\n" +
+                "81.468079445006\tPEHN\t1970-01-01T01:56:40.000000Z\n" +
+                "57.934663268622\t\t1970-01-01T02:13:20.000000Z\n" +
+                "12.026122412833\tHYRX\t1970-01-01T02:30:00.000000Z\n" +
+                "26.922103479745\t\t1970-01-01T03:03:20.000000Z\n" +
+                "52.984059417621\t\t1970-01-01T03:20:00.000000Z\n" +
+                "84.452581772111\tPEHN\t1970-01-01T03:36:40.000000Z\n" +
+                "97.501988537251\t\t1970-01-01T03:53:20.000000Z\n" +
+                "49.005104498852\tPEHN\t1970-01-01T04:10:00.000000Z\n" +
+                "80.011211397392\t\t1970-01-01T04:26:40.000000Z\n" +
+                "92.050039469858\t\t1970-01-01T04:43:20.000000Z\n" +
+                "45.634456960908\t\t1970-01-01T05:00:00.000000Z\n" +
+                "40.455469747939\t\t1970-01-01T05:16:40.000000Z\n";
+
+        assertQuery(expected1,
                 "select * from x o where o.b in ('HYRX','PEHN', null)",
                 "create table x as (select * from random_cursor(20, 'a', rnd_double(0)*100, 'b', rnd_symbol(5,4,4,1), 'k', timestamp_sequence(to_timestamp(0), 1000000000))), index(b)",
-                null);
+                null,
+                "insert into x (a,b)" +
+                        " select" +
+                        " rnd_double(0)*100," +
+                        " rnd_symbol(5,4,4,1)" +
+                        " from" +
+                        " long_sequence(10)",
+                expected1 +
+                        "54.491550215189\t\t\n" +
+                        "76.923818943378\t\t\n" +
+                        "58.912164838798\t\t\n" +
+                        "44.804689668614\t\t\n" +
+                        "89.409171265819\t\t\n");
     }
 
     @Test
     public void testFilterNullKeyValue() throws Exception {
-        assertQuery("a\tb\n" +
-                        "11.427984775756\t\n" +
-                        "87.996347253916\t\n" +
-                        "32.881769076795\t\n" +
-                        "57.934663268622\t\n" +
-                        "26.922103479745\t\n" +
-                        "52.984059417621\t\n" +
-                        "97.501988537251\t\n" +
-                        "80.011211397392\t\n" +
-                        "92.050039469858\t\n" +
-                        "45.634456960908\t\n" +
-                        "40.455469747939\t\n",
+        final String expected = "a\tb\n" +
+                "11.427984775756\t\n" +
+                "87.996347253916\t\n" +
+                "32.881769076795\t\n" +
+                "57.934663268622\t\n" +
+                "26.922103479745\t\n" +
+                "52.984059417621\t\n" +
+                "97.501988537251\t\n" +
+                "80.011211397392\t\n" +
+                "92.050039469858\t\n" +
+                "45.634456960908\t\n" +
+                "40.455469747939\t\n";
+        assertQuery(expected,
                 "select * from x where b = null",
                 "create table x as (select * from random_cursor(20, 'a', rnd_double(0)*100, 'b', rnd_symbol(5,4,4,1))), index(b)",
-                null);
+                null,
+                "insert into x (a,b)" +
+                        " select" +
+                        " rnd_double(0)*100, " +
+                        " rnd_symbol(5,4,4,1)" +
+                        " from long_sequence(15)",
+                expected +
+                        "54.491550215189\t\n" +
+                        "76.923818943378\t\n" +
+                        "58.912164838798\t\n" +
+                        "44.804689668614\t\n" +
+                        "89.409171265819\t\n" +
+                        "3.993124821273\t\n");
     }
 
     @Test
     public void testFilterSingleKeyValue() throws Exception {
-        assertQuery("a\tb\n" +
-                        "11.427984775756\tHYRX\n" +
-                        "52.984059417621\tHYRX\n" +
-                        "40.455469747939\tHYRX\n" +
-                        "72.300157631336\tHYRX\n",
+        final String expected = "a\tb\n" +
+                "11.427984775756\tHYRX\n" +
+                "52.984059417621\tHYRX\n" +
+                "40.455469747939\tHYRX\n" +
+                "72.300157631336\tHYRX\n";
+        assertQuery(expected,
                 "select * from x where b = 'HYRX'",
                 "create table x as (select * from random_cursor(20, 'a', rnd_double(0)*100, 'b', rnd_symbol(5,4,4,0))), index(b)",
-                null);
+                null,
+                "insert into x select" +
+                        " rnd_double(0)*100," +
+                        " 'HYRX'" +
+                        " from long_sequence(2)",
+                expected +
+                        "75.881754034549\tHYRX\n" +
+                        "57.789479151824\tHYRX\n");
     }
 
     @Test
     public void testFilterSingleKeyValueAndField() throws Exception {
-        assertQuery("a\tb\n" +
-                        "52.984059417621\tHYRX\n" +
-                        "72.300157631336\tHYRX\n",
+        final String expected = "a\tb\n" +
+                "52.984059417621\tHYRX\n" +
+                "72.300157631336\tHYRX\n";
+        assertQuery(expected,
                 "select * from x where b = 'HYRX' and a > 41",
                 "create table x as (select * from random_cursor(20, 'a', rnd_double(0)*100, 'b', rnd_symbol(5,4,4,0))), index(b)",
-                null);
+                null,
+                "insert into x select" +
+                        " rnd_double(0)*100," +
+                        " 'HYRX'" +
+                        " from long_sequence(2)",
+                expected +
+                        "75.881754034549\tHYRX\n" +
+                        "57.789479151824\tHYRX\n");
     }
 
     @Test
@@ -226,17 +299,40 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
         assertQuery("a\tb\n",
                 "select * from x where b = 'ABC'",
                 "create table x as (select * from random_cursor(20, 'a', rnd_double(0)*100, 'b', rnd_symbol(5,4,4,0))), index(b)",
-                null);
+                null,
+                "insert into x select" +
+                        " rnd_double(0)*100," +
+                        " 'ABC'" +
+                        " from long_sequence(2)",
+                "a\tb\n" +
+                        "75.881754034549\tABC\n" +
+                        "57.789479151824\tABC\n");
+    }
+
+    @Test
+    public void testFilterSingleNonExistingSymbolAndFilter() throws Exception {
+        assertQuery("a\tb\n",
+                "select * from x where b = 'ABC' and a > 30",
+                "create table x as (select * from random_cursor(20, 'a', rnd_double(0)*100, 'b', rnd_symbol(5,4,4,0))), index(b)",
+                null,
+                "insert into x select" +
+                        " rnd_double(0)*100," +
+                        " 'ABC'" +
+                        " from long_sequence(2)",
+                "a\tb\n" +
+                        "75.881754034549\tABC\n" +
+                        "57.789479151824\tABC\n");
     }
 
     @Test
     public void testLatestByKey() throws Exception {
-        assertQuery("a\tb\tk\n" +
-                        "23.905290108465\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
-                        "12.026122412833\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
-                        "48.820511018587\tVTJW\t1970-01-12T13:46:40.000000Z\n" +
-                        "49.005104498852\tPEHN\t1970-01-18T08:40:00.000000Z\n" +
-                        "40.455469747939\t\t1970-01-22T23:46:40.000000Z\n",
+        final String expected = "a\tb\tk\n" +
+                "23.905290108465\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
+                "12.026122412833\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
+                "48.820511018587\tVTJW\t1970-01-12T13:46:40.000000Z\n" +
+                "49.005104498852\tPEHN\t1970-01-18T08:40:00.000000Z\n" +
+                "40.455469747939\t\t1970-01-22T23:46:40.000000Z\n";
+        assertQuery(expected,
                 "select * from x latest by b",
                 "create table x as " +
                         "(" +
@@ -248,7 +344,20 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         " 'k', timestamp_sequence(to_timestamp(0), 100000000000)" +
                         ")" +
                         "), index(b) timestamp(k) partition by DAY",
-                "k");
+                "k",
+                "insert into x select * from (" +
+                        " select" +
+                        " rnd_double(0)*100," +
+                        " 'VTJW'," +
+                        " to_timestamp('2019', 'yyyy') t" +
+                        " from long_sequence(1)" +
+                        ") timestamp (t)",
+                "a\tb\tk\n" +
+                        "23.905290108465\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
+                        "12.026122412833\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
+                        "49.005104498852\tPEHN\t1970-01-18T08:40:00.000000Z\n" +
+                        "40.455469747939\t\t1970-01-22T23:46:40.000000Z\n" +
+                        "56.594291398612\tVTJW\t2019-01-01T00:00:00.000000Z\n");
     }
 
     @Test
@@ -270,14 +379,54 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         " 'k', timestamp_sequence(to_timestamp(0), 100000000000)" +
                         ")" +
                         ") timestamp(k) partition by DAY",
-                "k");
+                "k",
+                "insert into x select * from (" +
+                        " select" +
+                        " rnd_double(0)*100," +
+                        " 'VTJW'," +
+                        " to_timestamp('2019', 'yyyy') t" +
+                        " from long_sequence(1)" +
+                        ") timestamp (t)",
+                "a\tb\tk\n" +
+                        "23.905290108465\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
+                        "12.026122412833\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
+                        "49.005104498852\tPEHN\t1970-01-18T08:40:00.000000Z\n" +
+                        "40.455469747939\t\t1970-01-22T23:46:40.000000Z\n" +
+                        "56.594291398612\tVTJW\t2019-01-01T00:00:00.000000Z\n");
     }
 
     @Test
     public void testLatestByKeyValue() throws Exception {
         assertQuery("a\tb\tk\n" +
-                        "49.005104498852\tPEHN\t1970-01-18T08:40:00.000000Z\n",
-                "select * from x latest by b where b = 'PEHN'",
+                        "23.905290108465\tRXGZ\t1970-01-03T07:33:20.000000Z\n",
+                "select * from x latest by b where b = 'RXGZ'",
+                "create table x as " +
+                        "(" +
+                        "select * from" +
+                        " random_cursor" +
+                        "(20," +
+                        " 'a', rnd_double(0)*100," +
+                        " 'b', rnd_symbol(5,4,4,1)," +
+                        " 'k', timestamp_sequence(to_timestamp(0), 100000000000)" +
+                        ")" +
+                        "), index(b) timestamp(k) partition by DAY",
+                "k",
+                "insert into x select * from (" +
+                        "select" +
+                        " rnd_double(0)*100," +
+                        " 'RXGZ'," +
+                        " to_timestamp('1971', 'yyyy') t" +
+                        " from long_sequence(1)" +
+                        ") timestamp(t)",
+                "a\tb\tk\n" +
+                        "56.594291398612\tRXGZ\t1971-01-01T00:00:00.000000Z\n");
+    }
+
+    @Test
+    public void testLatestByKeyValueInterval() throws Exception {
+        assertQuery("a\tb\tk\n" +
+                        "84.452581772111\tPEHN\t1970-01-16T01:06:40.000000Z\n",
+                "select * from x latest by b where b = 'PEHN' and k = '1970-01-06T18:53:20;11d'",
                 "create table x as " +
                         "(" +
                         "select * from" +
@@ -289,6 +438,90 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         ")" +
                         "), index(b) timestamp(k) partition by DAY",
                 "k");
+    }
+
+    @Test
+    public void testLatestByMissingKeyValue() throws Exception {
+        assertQuery("a\tb\tk\n",
+                "select * from x latest by b where b = 'XYZ'",
+                "create table x as " +
+                        "(" +
+                        "select * from" +
+                        " random_cursor" +
+                        "(20," +
+                        " 'a', rnd_double(0)*100," +
+                        " 'b', rnd_symbol(5,4,4,1)," +
+                        " 'k', timestamp_sequence(to_timestamp(0), 100000000000)" +
+                        ")" +
+                        "), index(b) timestamp(k) partition by DAY",
+                "k",
+                "insert into x select * from (" +
+                        "select" +
+                        " rnd_double(0)*100," +
+                        " 'XYZ'," +
+                        " to_timestamp('1971', 'yyyy') t" +
+                        " from long_sequence(1)" +
+                        ") timestamp(t)",
+                "a\tb\tk\n" +
+                        "56.594291398612\tXYZ\t1971-01-01T00:00:00.000000Z\n");
+    }
+
+    @Test
+    public void testLongCursor() throws Exception {
+        assertQuery("x\n" +
+                        "1\n" +
+                        "2\n" +
+                        "3\n" +
+                        "4\n" +
+                        "5\n" +
+                        "6\n" +
+                        "7\n" +
+                        "8\n" +
+                        "9\n" +
+                        "10\n",
+                "select * from long_sequence(10)",
+                null,
+                null);
+
+
+        // test another record count
+
+        assertQuery("x\n" +
+                        "1\n" +
+                        "2\n" +
+                        "3\n" +
+                        "4\n" +
+                        "5\n" +
+                        "6\n" +
+                        "7\n" +
+                        "8\n" +
+                        "9\n" +
+                        "10\n" +
+                        "11\n" +
+                        "12\n" +
+                        "13\n" +
+                        "14\n" +
+                        "15\n" +
+                        "16\n" +
+                        "17\n" +
+                        "18\n" +
+                        "19\n" +
+                        "20\n",
+                "select * from long_sequence(20)",
+                null,
+                null);
+
+        // test 0 record count
+
+        assertQuery("x\n",
+                "select * from long_sequence(0)",
+                null,
+                null);
+
+        assertQuery("x\n",
+                "select * from long_sequence(-2)",
+                null,
+                null);
     }
 
     @Test
@@ -392,64 +625,6 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testLongCursor() throws Exception {
-        assertQuery("x\n" +
-                        "1\n" +
-                        "2\n" +
-                        "3\n" +
-                        "4\n" +
-                        "5\n" +
-                        "6\n" +
-                        "7\n" +
-                        "8\n" +
-                        "9\n" +
-                        "10\n",
-                "select * from long_sequence(10)",
-                null,
-                null);
-
-
-        // test another record count
-
-        assertQuery("x\n" +
-                        "1\n" +
-                        "2\n" +
-                        "3\n" +
-                        "4\n" +
-                        "5\n" +
-                        "6\n" +
-                        "7\n" +
-                        "8\n" +
-                        "9\n" +
-                        "10\n" +
-                        "11\n" +
-                        "12\n" +
-                        "13\n" +
-                        "14\n" +
-                        "15\n" +
-                        "16\n" +
-                        "17\n" +
-                        "18\n" +
-                        "19\n" +
-                        "20\n",
-                "select * from long_sequence(20)",
-                null,
-                null);
-
-        // test 0 record count
-
-        assertQuery("x\n",
-                "select * from long_sequence(0)",
-                null,
-                null);
-
-        assertQuery("x\n",
-                "select * from long_sequence(-2)",
-                null,
-                null);
-    }
-
-    @Test
     public void testVirtualColumns() throws Exception {
         assertQuery("a\ta1\tb\tc\tcolumn\tf1\tf\tg\th\ti\tj\tj1\tk\tl\tm\n" +
                         "NaN\t1569490116\tfalse\t\tNaN\t-1593\t428\t2015-04-04T16:34:47.226Z\t\t\t185\t7039584373105579285\t1970-01-01T00:00:00.000000Z\t4\t00000000 af 19 c4 95 94 36 53 49 b4 59 7e\n" +
@@ -549,24 +724,6 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 null);
     }
 
-    @Test
-    public void testLatestByKeyValueInterval() throws Exception {
-        assertQuery("a\tb\tk\n" +
-                        "84.452581772111\tPEHN\t1970-01-16T01:06:40.000000Z\n",
-                "select * from x latest by b where b = 'PEHN' and k = '1970-01-06T18:53:20;11d'",
-                "create table x as " +
-                        "(" +
-                        "select * from" +
-                        " random_cursor" +
-                        "(20," +
-                        " 'a', rnd_double(0)*100," +
-                        " 'b', rnd_symbol(5,4,4,1)," +
-                        " 'k', timestamp_sequence(to_timestamp(0), 100000000000)" +
-                        ")" +
-                        "), index(b) timestamp(k) partition by DAY",
-                "k");
-    }
-
     private void assertCursor(CharSequence expected, RecordCursorFactory factory) throws IOException {
         try (RecordCursor cursor = factory.getCursor()) {
             sink.clear();
@@ -622,17 +779,25 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     }
 
     @SuppressWarnings("SameParameterValue")
-    private void assertQuery(CharSequence expected, CharSequence query, @Nullable CharSequence ddl, @Nullable CharSequence verify, @Nullable CharSequence expectedTimestamp) throws Exception {
+    private void assertQuery(
+            CharSequence expected,
+            CharSequence query,
+            @Nullable CharSequence ddl,
+            @Nullable CharSequence verify,
+            @Nullable CharSequence expectedTimestamp,
+            @Nullable CharSequence ddl2,
+            @Nullable CharSequence expected2
+    ) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try {
                 if (ddl != null) {
                     compiler.execute(ddl, bindVariableService);
                 }
                 if (verify != null) {
-                    printSqlResult(null, verify, expectedTimestamp);
+                    printSqlResult(null, verify, expectedTimestamp, ddl2, expected2);
                     System.out.println(sink);
                 }
-                printSqlResult(expected, query, expectedTimestamp);
+                printSqlResult(expected, query, expectedTimestamp, ddl2, expected2);
                 Assert.assertEquals(0, engine.getBusyReaderCount());
                 Assert.assertEquals(0, engine.getBusyWriterCount());
             } finally {
@@ -642,25 +807,33 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
         });
     }
 
-    private void assertQuery(CharSequence expected, CharSequence query, CharSequence ddl, @Nullable CharSequence expectedTimestamp) throws Exception {
-        assertQuery(expected, query, ddl, null, expectedTimestamp);
+    private void assertQuery(
+            CharSequence expected,
+            CharSequence query,
+            CharSequence ddl,
+            @Nullable CharSequence expectedTimestamp) throws Exception {
+        assertQuery(expected, query, ddl, null, expectedTimestamp, null, null);
     }
 
-    private void printSqlResult(CharSequence expected, CharSequence query, CharSequence expectedTimestamp) throws IOException, SqlException {
-        try (final RecordCursorFactory factory = compiler.compile(query, bindVariableService)) {
-            if (expectedTimestamp == null) {
-                Assert.assertEquals(-1, factory.getMetadata().getTimestampIndex());
-            } else {
-                int index = factory.getMetadata().getColumnIndex(expectedTimestamp);
-                Assert.assertNotEquals(-1, index);
-                Assert.assertEquals(index, factory.getMetadata().getTimestampIndex());
-                assertTimestampColumnValues(factory);
+    private void assertQuery(
+            CharSequence expected,
+            CharSequence query,
+            CharSequence ddl,
+            @Nullable CharSequence expectedTimestamp,
+            @Nullable CharSequence ddl2,
+            @Nullable CharSequence expected2) throws Exception {
+        assertQuery(expected, query, ddl, null, expectedTimestamp, ddl2, expected2);
+    }
+
+    private void assertTimestampColumnValues(RecordCursorFactory factory) {
+        int index = factory.getMetadata().getTimestampIndex();
+        long timestamp = Long.MIN_VALUE;
+        try (RecordCursor cursor = factory.getCursor()) {
+            while (cursor.hasNext()) {
+                long ts = cursor.next().getTimestamp(index);
+                Assert.assertTrue(timestamp <= ts);
+                timestamp = ts;
             }
-            assertCursor(expected, factory);
-            // make sure we get the same outcome when we get factory to create new cursor
-            assertCursor(expected, factory);
-            // make sure strings, binary fields and symbols are compliant with expected record behaviour
-            assertVariableColumns(factory);
         }
     }
 
@@ -700,14 +873,33 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
         }
     }
 
-    private void assertTimestampColumnValues(RecordCursorFactory factory) {
-        int index = factory.getMetadata().getTimestampIndex();
-        long timestamp = Long.MIN_VALUE;
-        try (RecordCursor cursor = factory.getCursor()) {
-            while (cursor.hasNext()) {
-                long ts = cursor.next().getTimestamp(index);
-                Assert.assertTrue(timestamp <= ts);
-                timestamp = ts;
+    private void printSqlResult(
+            CharSequence expected,
+            CharSequence query,
+            CharSequence expectedTimestamp,
+            CharSequence ddl2,
+            CharSequence expected2
+    ) throws IOException, SqlException {
+        try (final RecordCursorFactory factory = compiler.compile(query, bindVariableService)) {
+            if (expectedTimestamp == null) {
+                Assert.assertEquals(-1, factory.getMetadata().getTimestampIndex());
+            } else {
+                int index = factory.getMetadata().getColumnIndex(expectedTimestamp);
+                Assert.assertNotEquals(-1, index);
+                Assert.assertEquals(index, factory.getMetadata().getTimestampIndex());
+                assertTimestampColumnValues(factory);
+            }
+            assertCursor(expected, factory);
+            // make sure we get the same outcome when we get factory to create new cursor
+            assertCursor(expected, factory);
+            // make sure strings, binary fields and symbols are compliant with expected record behaviour
+            assertVariableColumns(factory);
+
+            if (ddl2 != null) {
+                compiler.execute(ddl2, bindVariableService);
+                assertCursor(expected2, factory);
+                // and again
+                assertCursor(expected2, factory);
             }
         }
     }
