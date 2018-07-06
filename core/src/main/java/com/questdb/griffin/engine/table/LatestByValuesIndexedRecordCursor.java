@@ -23,32 +23,33 @@
 
 package com.questdb.griffin.engine.table;
 
-import com.questdb.cairo.map.Map;
-import com.questdb.cairo.map.MapKey;
-import com.questdb.cairo.map.RecordSink;
+import com.questdb.cairo.BitmapIndexReader;
 import com.questdb.cairo.sql.DataFrame;
 import com.questdb.cairo.sql.DataFrameCursor;
 import com.questdb.cairo.sql.Record;
+import com.questdb.common.RowCursor;
 import com.questdb.griffin.engine.LongTreeSet;
+import com.questdb.std.IntHashSet;
 import com.questdb.std.Rows;
 
-class LatestBySansIndexRecordCursor extends AbstractDataFrameRecordCursor {
+class LatestByValuesIndexedRecordCursor extends AbstractDataFrameRecordCursor {
 
-    private final Map map;
-    private final RecordSink recordSink;
-    private final LongTreeSet treeSet;
+    private final int columnIndex;
+    private final IntHashSet found = new IntHashSet();
+    private final IntHashSet symbolKeys;
+    private LongTreeSet treeSet;
     private LongTreeSet.TreeCursor treeCursor;
 
-    public LatestBySansIndexRecordCursor(Map map, LongTreeSet treeSet, RecordSink recordSink) {
-        this.map = map;
+    public LatestByValuesIndexedRecordCursor(int columnIndex, LongTreeSet treeSet, IntHashSet symbolKeys) {
+        this.columnIndex = columnIndex;
         this.treeSet = treeSet;
-        this.recordSink = recordSink;
+        this.symbolKeys = symbolKeys;
     }
 
     @Override
     public void close() {
+        super.close();
         treeCursor = null;
-        dataFrameCursor.close();
     }
 
     @Override
@@ -68,34 +69,34 @@ class LatestBySansIndexRecordCursor extends AbstractDataFrameRecordCursor {
         treeCursor.toTop();
     }
 
-    private void buildTreeMap() {
+    private void buildTreeMap(int keyCount) {
+        found.clear();
         treeSet.clear();
-        map.clear();
-
-        while (this.dataFrameCursor.hasNext()) {
+        while (this.dataFrameCursor.hasNext() && found.size() < keyCount) {
             final DataFrame frame = this.dataFrameCursor.next();
-            final int partitionIndex = frame.getPartitionIndex();
+            final BitmapIndexReader indexReader = frame.getBitmapIndexReader(columnIndex, BitmapIndexReader.DIR_BACKWARD);
             final long rowLo = frame.getRowLo();
             final long rowHi = frame.getRowHi() - 1;
 
-            record.jumpTo(frame.getPartitionIndex(), rowHi);
-            for (long row = rowHi; row >= rowLo; row--) {
-                record.setRecordIndex(row);
-                MapKey key = map.withKey();
-                key.putRecord(record, recordSink);
-                if (key.create()) {
-                    treeSet.put(Rows.toRowID(partitionIndex, row));
+            for (int i = 0, n = symbolKeys.size(); i < n; i++) {
+                int symbolKey = symbolKeys.get(i);
+                int index = found.keyIndex(symbolKey);
+                if (index > -1) {
+                    RowCursor cursor = indexReader.getCursor(false, symbolKey, rowLo, rowHi);
+                    if (cursor.hasNext()) {
+                        treeSet.put(Rows.toRowID(frame.getPartitionIndex(), cursor.next()));
+                        found.addAt(index, symbolKey);
+                    }
                 }
             }
         }
 
-        map.clear();
         this.treeCursor = treeSet.getCursor();
     }
 
     void of(DataFrameCursor dataFrameCursor) {
         this.dataFrameCursor = dataFrameCursor;
         this.record.of(dataFrameCursor.getTableReader());
-        buildTreeMap();
+        buildTreeMap(symbolKeys.size());
     }
 }

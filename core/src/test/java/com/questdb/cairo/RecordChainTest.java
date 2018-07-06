@@ -151,14 +151,14 @@ public class RecordChainTest extends AbstractCairoTest {
 //
                     try (RecordChain chain = new RecordChain(metadata, 4 * 1024 * 1024L)) {
                         long o = -1L;
-                        long t = 0;
+//                        long t = 0;
                         for (int i = -N; i < N; i++) {
-                            if (i == 0) {
-                                t = System.nanoTime();
-                            }
+//                            if (i == 0) {
+//                                t = System.nanoTime();
+//                            }
                             o = chain.putRecord(record, o);
                         }
-                        System.out.println("RecordChain append time: " + (System.nanoTime() - t));
+//                        System.out.println("RecordChain append time: " + (System.nanoTime() - t));
                         assertChain(chain, new TestRecord(), N * 2);
                         assertChain(chain, new TestRecord(), N * 2);
                         Assert.assertSame(metadata, chain.getMetadata());

@@ -31,14 +31,14 @@ import com.questdb.cairo.sql.RowCursorFactory;
 import com.questdb.common.RowCursor;
 import com.questdb.common.SymbolTable;
 
-public class DeferredSymbolIndexLatestValueRowCursorFactory implements RowCursorFactory {
+public class LatestByValueDeferredIndexedRowCursorFactory implements RowCursorFactory {
     private final int columnIndex;
     private final String symbol;
     private final boolean cachedIndexReaderCursor;
-    private final SymbolIndexLatestValueRowCursor cursor = new SymbolIndexLatestValueRowCursor();
+    private final LatestByValueIndexedRowCursor cursor = new LatestByValueIndexedRowCursor();
     private int symbolKey;
 
-    public DeferredSymbolIndexLatestValueRowCursorFactory(int columnIndex, String symbol, boolean cachedIndexReaderCursor) {
+    public LatestByValueDeferredIndexedRowCursorFactory(int columnIndex, String symbol, boolean cachedIndexReaderCursor) {
         this.columnIndex = columnIndex;
         this.symbol = symbol;
         this.symbolKey = SymbolTable.VALUE_NOT_FOUND;

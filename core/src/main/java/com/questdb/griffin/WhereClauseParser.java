@@ -90,23 +90,28 @@ final class WhereClauseParser {
                     case ColumnType.STRING:
                     case ColumnType.LONG:
                     case ColumnType.INT:
-                        if (m.isColumnIndexed(index)) {
-
-                            // check if we are limited by preferred column
-                            if (preferredKeyColumn != null && !Chars.equals(preferredKeyColumn, column)) {
-                                return false;
-                            }
-
-                            boolean newColumn = true;
-                            // check if we already have indexed column and it is of worse selectivity
-                            if (model.keyColumn != null
-                                    && (newColumn = !Chars.equals(model.keyColumn, column))
-                                    && m.getIndexValueBlockCapacity(index) <= m.getIndexValueBlockCapacity(model.keyColumn)) {
-                                return false;
-                            }
-
+                        final boolean preferred = Chars.equalsNc(column, preferredKeyColumn);
+                        final boolean indexed = m.isColumnIndexed(index);
+                        if (preferred || (indexed && preferredKeyColumn == null)) {
                             CharSequence value = Chars.equals("null", b.token) ? null : unquote(b.token);
-                            if (newColumn) {
+                            if (Chars.equalsNc(column, model.keyColumn)) {
+                                // compute overlap of values
+                                // if values do overlap, keep only our value
+                                // otherwise invalidate entire model
+                                if (model.keyValues.contains(value)) {
+                                    // when we have "x in ('a,'b') and x = 'a')" the x='b' can never happen
+                                    // so we have to clear all other key values
+                                    if (model.keyValues.size() > 1) {
+                                        model.keyValues.clear();
+                                        model.keyValuePositions.clear();
+                                        model.keyValues.add(value);
+                                        model.keyValuePositions.add(b.position);
+                                    }
+                                } else {
+                                    model.intrinsicValue = IntrinsicModel.FALSE;
+                                    return false;
+                                }
+                            } else {
                                 model.keyColumn = column;
                                 model.keyValues.clear();
                                 model.keyValuePositions.clear();
@@ -116,19 +121,6 @@ final class WhereClauseParser {
                                     keyNodes.getQuick(n).intrinsicValue = IntrinsicModel.UNDEFINED;
                                 }
                                 keyNodes.clear();
-                            } else {
-                                // compute overlap of values
-                                // if values do overlap, keep only our value
-                                // otherwise invalidate entire model
-                                if (model.keyValues.contains(value)) {
-                                    model.keyValues.clear();
-                                    model.keyValuePositions.clear();
-                                    model.keyValues.add(value);
-                                    model.keyValuePositions.add(b.position);
-                                } else {
-                                    model.intrinsicValue = IntrinsicModel.FALSE;
-                                    return false;
-                                }
                             }
 
                             keyNodes.add(node);
@@ -158,7 +150,7 @@ final class WhereClauseParser {
             return false;
         }
 
-        if (node.lhs.type == SqlNode.LITERAL && node.lhs.token.equals(timestamp)) {
+        if (node.lhs.type == SqlNode.LITERAL && Chars.equals(node.lhs.token, timestamp)) {
 
             if (node.rhs.type != SqlNode.CONSTANT) {
                 return false;
@@ -173,7 +165,7 @@ final class WhereClauseParser {
             }
         }
 
-        if (node.rhs.type == SqlNode.LITERAL && node.rhs.token.equals(timestamp)) {
+        if (node.rhs.type == SqlNode.LITERAL && Chars.equals(node.rhs.token, timestamp)) {
 
             if (node.lhs.type != SqlNode.CONSTANT) {
                 return false;
@@ -254,7 +246,7 @@ final class WhereClauseParser {
 //        RecordColumnMetadata colMeta = meta.getColumn(columnName);
         int columnIndex = meta.getColumnIndex(columnName);
         if (meta.isColumnIndexed(columnIndex)) {
-            if (preferredKeyColumn != null && !columnName.equals(preferredKeyColumn)) {
+            if (preferredKeyColumn != null && !Chars.equals(columnName, preferredKeyColumn)) {
                 return false;
             }
 
@@ -269,7 +261,7 @@ final class WhereClauseParser {
                 return false;
             }
 
-            if ((columnName.equals(model.keyColumn) && model.keySubQuery != null) || node.paramCount > 2) {
+            if ((Chars.equalsNc(columnName, model.keyColumn) && model.keySubQuery != null) || node.paramCount > 2) {
                 throw SqlException.$(node.position, "Multiple lambda expressions not supported");
             }
 
@@ -304,7 +296,7 @@ final class WhereClauseParser {
             return false;
         }
 
-        if (node.lhs.type == SqlNode.LITERAL && node.lhs.token.equals(timestamp)) {
+        if (node.lhs.type == SqlNode.LITERAL && Chars.equals(node.lhs.token, timestamp)) {
             try {
 
                 if (node.rhs.type != SqlNode.CONSTANT) {
@@ -320,7 +312,7 @@ final class WhereClauseParser {
             }
         }
 
-        if (node.rhs.type == SqlNode.LITERAL && node.rhs.token.equals(timestamp)) {
+        if (node.rhs.type == SqlNode.LITERAL && Chars.equals(node.rhs.token, timestamp)) {
             try {
                 if (node.lhs.type != SqlNode.CONSTANT) {
                     return false;
@@ -339,14 +331,15 @@ final class WhereClauseParser {
 
     private boolean analyzeListOfValues(IntrinsicModel model, CharSequence columnName, RecordMetadata meta, SqlNode node) {
         final int columnIndex = meta.getColumnIndex(columnName);
-        if (meta.isColumnIndexed(columnIndex)) {
-            boolean newColumn = true;
+        boolean newColumn = true;
+        boolean preferred = preferredKeyColumn != null && Chars.equals(columnName, preferredKeyColumn);
 
-            if (preferredKeyColumn != null && !columnName.equals(preferredKeyColumn)) {
-                return false;
-            }
+        if (preferred || (preferredKeyColumn == null && meta.isColumnIndexed(columnIndex))) {
 
             // check if we already have indexed column and it is of worse selectivity
+            // todo: this logic is incorrect in case of "preferred" column
+            // "preferred" is an unfortunate name, this column is from "latest by" clause, I should name it better
+            //
             if (model.keyColumn != null
                     && (newColumn = !Chars.equals(model.keyColumn, columnName))
                     && meta.getIndexValueBlockCapacity(columnIndex) <= meta.getIndexValueBlockCapacity(model.keyColumn)) {

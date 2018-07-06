@@ -23,27 +23,31 @@
 
 package com.questdb.griffin.engine.table;
 
-import com.questdb.common.RowCursor;
+import com.questdb.cairo.AbstractRecordCursorFactory;
+import com.questdb.cairo.sql.DataFrameCursorFactory;
+import com.questdb.cairo.sql.Function;
+import com.questdb.cairo.sql.RecordCursor;
+import com.questdb.cairo.sql.RecordMetadata;
+import org.jetbrains.annotations.NotNull;
 
-class SymbolIndexLatestValueRowCursor implements RowCursor {
-    private long next;
+public class LatestByValueIndexedFilteredRecordCursorFactory extends AbstractRecordCursorFactory {
+    private final LatestByValueIndexedFilteredRecordCursor cursor;
+    private final DataFrameCursorFactory dataFrameCursorFactory;
 
-    @Override
-    public boolean hasNext() {
-        if (next == -1) {
-            throw NoMoreFramesException.INSTANCE;
-        }
-        return true;
+    public LatestByValueIndexedFilteredRecordCursorFactory(
+            @NotNull RecordMetadata metadata,
+            @NotNull DataFrameCursorFactory dataFrameCursorFactory,
+            int columnIndex,
+            int symbolKey,
+            @NotNull Function filter) {
+        super(metadata);
+        this.dataFrameCursorFactory = dataFrameCursorFactory;
+        this.cursor = new LatestByValueIndexedFilteredRecordCursor(columnIndex, symbolKey + 1, filter);
     }
 
     @Override
-    public long next() {
-        long next = this.next;
-        this.next = -1;
-        return next;
-    }
-
-    void of(long rowid) {
-        this.next = rowid;
+    public RecordCursor getCursor() {
+        cursor.of(dataFrameCursorFactory.getCursor());
+        return cursor;
     }
 }

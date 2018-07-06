@@ -26,22 +26,31 @@ package com.questdb.griffin.engine.table;
 import com.questdb.cairo.BitmapIndexReader;
 import com.questdb.cairo.sql.DataFrame;
 import com.questdb.cairo.sql.DataFrameCursor;
+import com.questdb.cairo.sql.Function;
 import com.questdb.cairo.sql.Record;
 import com.questdb.common.RowCursor;
 import com.questdb.griffin.engine.LongTreeSet;
 import com.questdb.std.IntHashSet;
 import com.questdb.std.Rows;
 
-class LatestByRecordCursor extends AbstractDataFrameRecordCursor {
+class LatestByValuesIndexedFilteredRecordCursor extends AbstractDataFrameRecordCursor {
 
     private final int columnIndex;
     private final IntHashSet found = new IntHashSet();
+    private final IntHashSet symbolKeys;
+    private final Function filter;
     private LongTreeSet treeSet;
     private LongTreeSet.TreeCursor treeCursor;
 
-    public LatestByRecordCursor(int columnIndex, LongTreeSet treeSet) {
+    public LatestByValuesIndexedFilteredRecordCursor(
+            int columnIndex,
+            LongTreeSet treeSet,
+            IntHashSet symbolKeys,
+            Function filter) {
         this.columnIndex = columnIndex;
         this.treeSet = treeSet;
+        this.symbolKeys = symbolKeys;
+        this.filter = filter;
     }
 
     @Override
@@ -70,43 +79,29 @@ class LatestByRecordCursor extends AbstractDataFrameRecordCursor {
     private void buildTreeMap(int keyCount) {
         found.clear();
         treeSet.clear();
-
-        int keyLo = 0;
-        int keyHi = ++keyCount;
-
-        int localLo = Integer.MAX_VALUE;
-        int localHi = Integer.MIN_VALUE;
-
         while (this.dataFrameCursor.hasNext() && found.size() < keyCount) {
             final DataFrame frame = this.dataFrameCursor.next();
+            final int partitionIndex = frame.getPartitionIndex();
             final BitmapIndexReader indexReader = frame.getBitmapIndexReader(columnIndex, BitmapIndexReader.DIR_BACKWARD);
             final long rowLo = frame.getRowLo();
             final long rowHi = frame.getRowHi() - 1;
+            this.record.jumpTo(partitionIndex, 0);
 
-            for (int i = keyLo; i < keyHi; i++) {
-                int index = found.keyIndex(i);
+            for (int i = 0, n = symbolKeys.size(); i < n; i++) {
+                int symbolKey = symbolKeys.get(i);
+                int index = found.keyIndex(symbolKey);
                 if (index > -1) {
-                    RowCursor cursor = indexReader.getCursor(false, i, rowLo, rowHi);
-                    if (cursor.hasNext()) {
-                        treeSet.put(Rows.toRowID(frame.getPartitionIndex(), cursor.next()));
-                        found.addAt(index, i);
-                    } else {
-                        // adjust range
-                        if (i < localLo) {
-                            localLo = i;
-                        }
-
-                        if (i > localHi) {
-                            localHi = i;
+                    RowCursor cursor = indexReader.getCursor(false, symbolKey, rowLo, rowHi);
+                    while (cursor.hasNext()) {
+                        final long row = cursor.next();
+                        record.setRecordIndex(row);
+                        if (filter.getBool(record)) {
+                            treeSet.put(Rows.toRowID(partitionIndex, row));
+                            found.addAt(index, symbolKey);
                         }
                     }
                 }
             }
-
-            keyLo = localLo;
-            keyHi = localHi + 1;
-            localLo = Integer.MAX_VALUE;
-            localHi = Integer.MIN_VALUE;
         }
 
         this.treeCursor = treeSet.getCursor();
@@ -115,6 +110,6 @@ class LatestByRecordCursor extends AbstractDataFrameRecordCursor {
     void of(DataFrameCursor dataFrameCursor) {
         this.dataFrameCursor = dataFrameCursor;
         this.record.of(dataFrameCursor.getTableReader());
-        buildTreeMap(dataFrameCursor.getTableReader().getSymbolMapReader(columnIndex).size());
+        buildTreeMap(symbolKeys.size());
     }
 }

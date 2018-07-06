@@ -63,6 +63,10 @@ public class IntHashSet implements Mutable {
         clear();
     }
 
+    public int[] getKeys() {
+        return keys;
+    }
+
     public boolean add(int key) {
         int index = keyIndex(key);
         if (index < 0) {
@@ -96,6 +100,10 @@ public class IntHashSet implements Mutable {
 
     public int get(int index) {
         return list.getQuick(index);
+    }
+
+    public int getNoEntryValue() {
+        return noEntryValue;
     }
 
     public int keyIndex(int key) {

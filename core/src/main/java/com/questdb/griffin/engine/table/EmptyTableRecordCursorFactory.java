@@ -24,26 +24,16 @@
 package com.questdb.griffin.engine.table;
 
 import com.questdb.cairo.AbstractRecordCursorFactory;
-import com.questdb.cairo.sql.CairoEngine;
 import com.questdb.cairo.sql.RecordCursor;
 import com.questdb.cairo.sql.RecordMetadata;
 
 public class EmptyTableRecordCursorFactory extends AbstractRecordCursorFactory {
-    private final EmptyTableRecordCursor cursor = new EmptyTableRecordCursor();
-    private final CairoEngine engine;
-    private final String tableName;
-    private final long tableVersion;
-
-    public EmptyTableRecordCursorFactory(RecordMetadata metadata, CairoEngine engine, String tableName, long tableVersion) {
+    public EmptyTableRecordCursorFactory(RecordMetadata metadata) {
         super(metadata);
-        this.engine = engine;
-        this.tableName = tableName;
-        this.tableVersion = tableVersion;
     }
 
     @Override
     public RecordCursor getCursor() {
-        cursor.of(engine.getReader(tableName, tableVersion));
-        return cursor;
+        return EmptyTableRecordCursor.INSTANCE;
     }
 }

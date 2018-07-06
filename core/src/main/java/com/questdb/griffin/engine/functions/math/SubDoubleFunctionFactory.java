@@ -21,39 +21,39 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.engine.functions.bool;
+package com.questdb.griffin.engine.functions.math;
 
 import com.questdb.cairo.CairoConfiguration;
 import com.questdb.cairo.sql.Function;
 import com.questdb.cairo.sql.Record;
 import com.questdb.griffin.FunctionFactory;
-import com.questdb.griffin.engine.functions.BooleanFunction;
+import com.questdb.griffin.engine.functions.DoubleFunction;
 import com.questdb.std.ObjList;
 
-public class OrVVFunctionFactory implements FunctionFactory {
+public class SubDoubleFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "or(TT)";
+        return "-(DD)";
     }
 
     @Override
     public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
-        return new MyBooleanFunction(position, args.getQuick(0), args.getQuick(1));
+        return new Func(position, args.getQuick(0), args.getQuick(1));
     }
 
-    private static class MyBooleanFunction extends BooleanFunction {
-        final Function left;
-        final Function right;
+    private static class Func extends DoubleFunction {
+        private final Function left;
+        private final Function right;
 
-        public MyBooleanFunction(int position, Function left, Function right) {
+        public Func(int position, Function left, Function right) {
             super(position);
             this.left = left;
             this.right = right;
         }
 
         @Override
-        public boolean getBool(Record rec) {
-            return left.getBool(rec) || right.getBool(rec);
+        public double getDouble(Record rec) {
+            return left.getDouble(rec) - right.getDouble(rec);
         }
 
         @Override

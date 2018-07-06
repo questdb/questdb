@@ -24,51 +24,42 @@
 package com.questdb.griffin.engine.table;
 
 import com.questdb.cairo.AbstractRecordCursorFactory;
-import com.questdb.cairo.CairoConfiguration;
-import com.questdb.cairo.ColumnTypes;
-import com.questdb.cairo.map.FastMap;
-import com.questdb.cairo.map.Map;
-import com.questdb.cairo.map.RecordSink;
+import com.questdb.cairo.sql.DataFrameCursor;
 import com.questdb.cairo.sql.DataFrameCursorFactory;
 import com.questdb.cairo.sql.RecordCursor;
 import com.questdb.cairo.sql.RecordMetadata;
-import com.questdb.griffin.engine.LongTreeSet;
-import com.questdb.std.Transient;
+import com.questdb.common.SymbolTable;
 
-public class LatestBySansIndexRecordCursorFactory extends AbstractRecordCursorFactory {
+public class LatestByValueDeferredRecordCursorFactory extends AbstractRecordCursorFactory {
+
     private final DataFrameCursorFactory dataFrameCursorFactory;
-    private final LatestBySansIndexRecordCursor cursor;
-    private final Map map;
-    private final LongTreeSet treeSet;
+    private final String symbol;
+    private final int columnIndex;
+    private LatestByValueRecordCursor cursor;
 
-    public LatestBySansIndexRecordCursorFactory(
-            RecordMetadata metadata,
-            CairoConfiguration configuration,
-            DataFrameCursorFactory dataFrameCursorFactory,
-            RecordSink recordSink,
-            @Transient ColumnTypes columnTypes) {
+    public LatestByValueDeferredRecordCursorFactory(RecordMetadata metadata, DataFrameCursorFactory dataFrameCursorFactory, int columnIndex, String symbol) {
         super(metadata);
-        this.treeSet = new LongTreeSet(configuration.getSqlTreeDefaultPageSize());
-        this.map = new FastMap(
-                configuration.getSqlMapDefaultPageSize(),
-                columnTypes,
-                configuration.getSqlMapDefaultKeyCapacity(),
-                configuration.getSqlFastMapLoadFactor()
-        );
-        this.cursor = new LatestBySansIndexRecordCursor(map, treeSet, recordSink);
         this.dataFrameCursorFactory = dataFrameCursorFactory;
-    }
-
-    @Override
-    public void close() {
-        cursor.close();
-        treeSet.close();
-        map.close();
+        this.columnIndex = columnIndex;
+        this.symbol = symbol;
     }
 
     @Override
     public RecordCursor getCursor() {
-        cursor.of(dataFrameCursorFactory.getCursor());
-        return cursor;
+        DataFrameCursor dataFrameCursor = dataFrameCursorFactory.getCursor();
+        if (cursor != null) {
+            cursor.of(dataFrameCursor);
+            return cursor;
+        }
+
+        int symbolKey = dataFrameCursor.getSymbolTable(columnIndex).getQuick(symbol);
+        if (symbolKey != SymbolTable.VALUE_NOT_FOUND) {
+            cursor = new LatestByValueRecordCursor(columnIndex, symbolKey);
+            cursor.of(dataFrameCursor);
+            return cursor;
+        }
+
+        dataFrameCursor.close();
+        return EmptyTableRecordCursor.INSTANCE;
     }
 }

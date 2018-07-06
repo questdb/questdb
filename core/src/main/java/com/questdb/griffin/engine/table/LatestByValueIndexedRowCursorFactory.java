@@ -29,13 +29,13 @@ import com.questdb.cairo.sql.DataFrame;
 import com.questdb.cairo.sql.RowCursorFactory;
 import com.questdb.common.RowCursor;
 
-public class SymbolIndexLatestValueRowCursorFactory implements RowCursorFactory {
+public class LatestByValueIndexedRowCursorFactory implements RowCursorFactory {
     private final int columnIndex;
     private final int symbolKey;
     private final boolean cachedIndexReaderCursor;
-    private final SymbolIndexLatestValueRowCursor cursor = new SymbolIndexLatestValueRowCursor();
+    private final LatestByValueIndexedRowCursor cursor = new LatestByValueIndexedRowCursor();
 
-    public SymbolIndexLatestValueRowCursorFactory(int columnIndex, int symbolKey, boolean cachedIndexReaderCursor) {
+    public LatestByValueIndexedRowCursorFactory(int columnIndex, int symbolKey, boolean cachedIndexReaderCursor) {
         this.columnIndex = columnIndex;
         this.symbolKey = symbolKey + 1;
         this.cachedIndexReaderCursor = cachedIndexReaderCursor;

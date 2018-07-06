@@ -23,50 +23,33 @@
 
 package com.questdb.griffin.engine.table;
 
-import com.questdb.cairo.TableReaderRecord;
-import com.questdb.cairo.sql.Record;
+import com.questdb.cairo.AbstractRecordCursorFactory;
+import com.questdb.cairo.sql.DataFrameCursorFactory;
 import com.questdb.cairo.sql.RecordCursor;
+import com.questdb.cairo.sql.RecordMetadata;
+import com.questdb.griffin.engine.LongTreeSet;
 
-final public class EmptyTableRecordCursor implements RecordCursor {
-    public static final EmptyTableRecordCursor INSTANCE = new EmptyTableRecordCursor();
+public class LatestByAllIndexedRecordCursorFactory extends AbstractRecordCursorFactory {
+    private final DataFrameCursorFactory dataFrameCursorFactory;
+    private final LatestByAllIndexedRecordCursor cursor;
+    private final LongTreeSet treeSet;
 
-    private final Record record = new TableReaderRecord();
-
-    @Override
-    public Record getRecord() {
-        return record;
-    }
-
-    @Override
-    public Record newRecord() {
-        return new TableReaderRecord();
-    }
-
-    @Override
-    public Record recordAt(long rowId) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public void recordAt(Record record, long atRowId) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public void toTop() {
+    public LatestByAllIndexedRecordCursorFactory(RecordMetadata metadata, DataFrameCursorFactory dataFrameCursorFactory, int columnIndex) {
+        super(metadata);
+        //todo: derive page size from key count for symbol and configuration
+        this.treeSet = new LongTreeSet(4 * 1024);
+        this.cursor = new LatestByAllIndexedRecordCursor(columnIndex, treeSet);
+        this.dataFrameCursorFactory = dataFrameCursorFactory;
     }
 
     @Override
     public void close() {
+        treeSet.close();
     }
 
     @Override
-    public boolean hasNext() {
-        return false;
-    }
-
-    @Override
-    public Record next() {
-        throw new UnsupportedOperationException();
+    public RecordCursor getCursor() {
+        cursor.of(dataFrameCursorFactory.getCursor());
+        return cursor;
     }
 }

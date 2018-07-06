@@ -23,33 +23,28 @@
 
 package com.questdb.griffin.engine.table;
 
-import com.questdb.cairo.AbstractRecordCursorFactory;
-import com.questdb.cairo.sql.DataFrameCursorFactory;
-import com.questdb.cairo.sql.RecordCursor;
-import com.questdb.cairo.sql.RecordMetadata;
-import com.questdb.griffin.engine.LongTreeSet;
+import com.questdb.common.RowCursor;
 
-public class LatestByRecordCursorFactory extends AbstractRecordCursorFactory {
-    private final DataFrameCursorFactory dataFrameCursorFactory;
-    private final LatestByRecordCursor cursor;
-    private final LongTreeSet treeSet;
+class LatestByValueIndexedRowCursor implements RowCursor {
+    private long next;
 
-    public LatestByRecordCursorFactory(RecordMetadata metadata, DataFrameCursorFactory dataFrameCursorFactory, int columnIndex) {
-        super(metadata);
-        //todo: derive page size from key count for symbol and configuration
-        this.treeSet = new LongTreeSet(4 * 1024);
-        this.cursor = new LatestByRecordCursor(columnIndex, treeSet);
-        this.dataFrameCursorFactory = dataFrameCursorFactory;
+    @Override
+    public boolean hasNext() {
+        if (next == -1) {
+            // it is essential and this cursor interrupts further data frame processing
+            throw NoMoreFramesException.INSTANCE;
+        }
+        return true;
     }
 
     @Override
-    public void close() {
-        treeSet.close();
+    public long next() {
+        long next = this.next;
+        this.next = -1;
+        return next;
     }
 
-    @Override
-    public RecordCursor getCursor() {
-        cursor.of(dataFrameCursorFactory.getCursor());
-        return cursor;
+    void of(long rowid) {
+        this.next = rowid;
     }
 }

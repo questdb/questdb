@@ -45,8 +45,8 @@ public class GtDoubleFunctionFactory implements FunctionFactory {
         private final Function left;
         private final Function right;
 
-        public FuncVV(int posititon, Function left, Function right) {
-            super(posititon);
+        public FuncVV(int position, Function left, Function right) {
+            super(position);
             this.left = left;
             this.right = right;
         }
@@ -54,6 +54,11 @@ public class GtDoubleFunctionFactory implements FunctionFactory {
         @Override
         public boolean getBool(Record rec) {
             return left.getDouble(rec) > right.getDouble(rec);
+        }
+
+        @Override
+        public boolean isConstant() {
+            return left.isConstant() && right.isConstant();
         }
     }
 }

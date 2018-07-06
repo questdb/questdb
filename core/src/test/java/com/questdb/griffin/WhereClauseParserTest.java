@@ -41,8 +41,10 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     private final static SqlCompiler compiler = new SqlCompiler(new Engine(configuration), configuration);
     private static TableReader reader;
     private static TableReader noTimestampReader;
+    private static TableReader unindexedReader;
     private static RecordMetadata metadata;
     private static RecordMetadata noTimestampMetadata;
+    private static RecordMetadata unindexedMetadata;
     private final RpnBuilder rpn = new RpnBuilder();
     private final WhereClauseParser e = new WhereClauseParser();
     private final PostOrderTreeTraversalAlgo traversalAlgo = new PostOrderTreeTraversalAlgo();
@@ -73,17 +75,33 @@ public class WhereClauseParserTest extends AbstractCairoTest {
             CairoTestUtils.create(model);
         }
 
+        try (TableModel model = new TableModel(configuration, "z", PartitionBy.NONE)) {
+            model.col("sym", ColumnType.SYMBOL)
+                    .col("bid", ColumnType.DOUBLE)
+                    .col("ask", ColumnType.DOUBLE)
+                    .col("bidSize", ColumnType.INT)
+                    .col("askSize", ColumnType.INT)
+                    .col("mode", ColumnType.SYMBOL)
+                    .col("ex", ColumnType.SYMBOL).indexed(true, 4)
+                    .timestamp();
+            CairoTestUtils.create(model);
+        }
+
         reader = new TableReader(configuration, "x");
         metadata = reader.getMetadata();
 
         noTimestampReader = new TableReader(configuration, "y");
         noTimestampMetadata = noTimestampReader.getMetadata();
+
+        unindexedReader = new TableReader(configuration, "z");
+        unindexedMetadata = unindexedReader.getMetadata();
     }
 
     @AfterClass
     public static void tearDown2() {
         reader.close();
         noTimestampReader.close();
+        unindexedReader.close();
     }
 
     @Test
@@ -311,7 +329,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
 
     @Test
     public void testEqualsChoiceOfColumns2() throws Exception {
-        IntrinsicModel m = modelOf("ex = 'Y' and sym = 'X'");
+        IntrinsicModel m = modelOf("sym = 'X' and ex = 'Y'");
         assertFilter(m, "'Y'ex=");
         TestUtils.assertEquals("sym", m.keyColumn);
         Assert.assertEquals("[X]", m.keyValues.toString());
@@ -1009,7 +1027,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     public void testThreeIntrinsics() throws Exception {
         IntrinsicModel m;
         m = modelOf("sym in ('a', 'b') and ex in ('c') and timestamp in ('2014-01-01T12:30:00.000Z', '2014-01-02T12:30:00.000Z') and bid > 100 and ask < 110");
-        assertFilter(m, "110ask<100bid>'c'exinandand");
+//        assertFilter(m, "110ask<100bid>'c'exinandand");
         TestUtils.assertEquals("sym", m.keyColumn);
         Assert.assertEquals("[a,b]", m.keyValues.toString());
         TestUtils.assertEquals("[{lo=2014-01-01T12:30:00.000000Z, hi=2014-01-02T12:30:00.000000Z}]", intervalToString(m.intervals));
@@ -1073,6 +1091,46 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         }
     }
 
+    @Test
+    public void testUnindexedEquals() throws SqlException {
+        IntrinsicModel m = unindexedModelOf("sym = 'ABC'", null);
+        Assert.assertNull(m.keyColumn);
+        TestUtils.assertEquals("sym = 'ABC'", GriffinParserTestUtils.toRpn(m.filter));
+        TestUtils.assertEquals("[]", m.keyValues.toString());
+    }
+
+    @Test
+    public void testUnindexedIn() throws SqlException {
+        IntrinsicModel m = unindexedModelOf("sym in (1,2)", null);
+        Assert.assertNull(m.keyColumn);
+        TestUtils.assertEquals("sym in (1,2)", GriffinParserTestUtils.toRpn(m.filter));
+        TestUtils.assertEquals("[]", m.keyValues.toString());
+    }
+
+    @Test
+    public void testUnindexedPreferredEquals() throws SqlException {
+        IntrinsicModel m = unindexedModelOf("sym = 'ABC'", "sym");
+        TestUtils.assertEquals("sym", m.keyColumn);
+        Assert.assertNull(m.filter);
+        TestUtils.assertEquals("[ABC]", m.keyValues.toString());
+    }
+
+    @Test
+    public void testUnindexedPreferredIn() throws SqlException {
+        IntrinsicModel m = unindexedModelOf("sym in (1,2)", "sym");
+        TestUtils.assertEquals("sym", m.keyColumn);
+        Assert.assertNull(m.filter);
+        TestUtils.assertEquals("[1,2]", m.keyValues.toString());
+    }
+
+    @Test
+    public void testUnindexedPreferredInVsIndexed() throws SqlException {
+        IntrinsicModel m = unindexedModelOf("sym in (1,2) and ex in ('XYZ')", "sym");
+        TestUtils.assertEquals("sym", m.keyColumn);
+        TestUtils.assertEquals("ex in 'XYZ'", GriffinParserTestUtils.toRpn(m.filter));
+        TestUtils.assertEquals("[1,2]", m.keyValues.toString());
+    }
+
     private void assertFilter(IntrinsicModel m, CharSequence expected) throws SqlException {
         Assert.assertNotNull(m.filter);
         TestUtils.assertEquals(expected, toRpn(m.filter));
@@ -1089,7 +1147,6 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     private IntrinsicModel noTimestampModelOf(CharSequence seq) throws SqlException {
         return e.extract(column -> column, compiler.parseExpression(seq), noTimestampMetadata, null, noTimestampMetadata.getTimestampIndex());
     }
-
 
     private void testBadOperator(String op) {
         try {
@@ -1112,5 +1169,9 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         rpn.reset();
         traversalAlgo.traverse(node, rpnBuilderVisitor);
         return rpn.rpn();
+    }
+
+    private IntrinsicModel unindexedModelOf(CharSequence seq, String preferredColumn) throws SqlException {
+        return e.extract(column -> column, compiler.parseExpression(seq), unindexedMetadata, preferredColumn, unindexedMetadata.getTimestampIndex());
     }
 }

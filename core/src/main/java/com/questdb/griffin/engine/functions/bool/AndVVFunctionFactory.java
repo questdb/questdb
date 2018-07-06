@@ -30,10 +30,10 @@ import com.questdb.griffin.FunctionFactory;
 import com.questdb.griffin.engine.functions.BooleanFunction;
 import com.questdb.std.ObjList;
 
-public class OrVVFunctionFactory implements FunctionFactory {
+public class AndVVFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "or(TT)";
+        return "and(TT)";
     }
 
     @Override
@@ -53,7 +53,7 @@ public class OrVVFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return left.getBool(rec) || right.getBool(rec);
+            return left.getBool(rec) && right.getBool(rec);
         }
 
         @Override

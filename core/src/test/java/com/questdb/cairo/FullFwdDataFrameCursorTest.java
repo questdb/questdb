@@ -839,14 +839,6 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
             // Assert that index cursor contains offset of current row
             boolean offsetFound = false;
             long target = record.getRecordIndex();
-/*
-
-            if (*/
-            /*direction == BitmapIndexReader.DIR_FORWARD &&*//*
- sym == null && recordIndex == 0) {
-                System.out.println("ok");
-            }
-*/
 
             // Get index cursor for each symbol in data frame
             RowCursor ic = indexReader.getCursor(true, symbolTable.getQuick(sym) + 1, frame.getRowLo(), hi - 1);

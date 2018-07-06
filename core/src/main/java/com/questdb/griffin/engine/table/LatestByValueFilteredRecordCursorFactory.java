@@ -23,50 +23,32 @@
 
 package com.questdb.griffin.engine.table;
 
-import com.questdb.cairo.TableReaderRecord;
-import com.questdb.cairo.sql.Record;
+import com.questdb.cairo.AbstractRecordCursorFactory;
+import com.questdb.cairo.sql.DataFrameCursorFactory;
+import com.questdb.cairo.sql.Function;
 import com.questdb.cairo.sql.RecordCursor;
+import com.questdb.cairo.sql.RecordMetadata;
+import org.jetbrains.annotations.NotNull;
 
-final public class EmptyTableRecordCursor implements RecordCursor {
-    public static final EmptyTableRecordCursor INSTANCE = new EmptyTableRecordCursor();
+public class LatestByValueFilteredRecordCursorFactory extends AbstractRecordCursorFactory {
 
-    private final Record record = new TableReaderRecord();
+    private final LatestByValueFilteredRecordCursor cursor;
+    private final DataFrameCursorFactory dataFrameCursorFactory;
 
-    @Override
-    public Record getRecord() {
-        return record;
+    public LatestByValueFilteredRecordCursorFactory(
+            RecordMetadata metadata,
+            DataFrameCursorFactory dataFrameCursorFactory,
+            int columnIndex,
+            int symbolKey,
+            @NotNull Function filter) {
+        super(metadata);
+        this.cursor = new LatestByValueFilteredRecordCursor(columnIndex, symbolKey, filter);
+        this.dataFrameCursorFactory = dataFrameCursorFactory;
     }
 
     @Override
-    public Record newRecord() {
-        return new TableReaderRecord();
-    }
-
-    @Override
-    public Record recordAt(long rowId) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public void recordAt(Record record, long atRowId) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public void toTop() {
-    }
-
-    @Override
-    public void close() {
-    }
-
-    @Override
-    public boolean hasNext() {
-        return false;
-    }
-
-    @Override
-    public Record next() {
-        throw new UnsupportedOperationException();
+    public RecordCursor getCursor() {
+        cursor.of(dataFrameCursorFactory.getCursor());
+        return cursor;
     }
 }

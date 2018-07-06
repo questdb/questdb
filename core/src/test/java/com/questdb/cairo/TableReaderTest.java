@@ -3272,10 +3272,6 @@ public class TableReaderTest extends AbstractCairoTest {
                             reader.closeColumnForRemove("int");
                         }
 
-//                        writer.getMetadata().toJson(sink);
-//                        System.out.println("before:");
-//                        System.out.println(sink);
-
                         // remove first column and add new column by same name
                         writer.removeColumn("int");
                         writer.addColumn("int", ColumnType.INT);
