@@ -449,7 +449,7 @@ public class SqlCodeGenerator {
                             if (metadata.isColumnIndexed(latestByIndex)) {
                                 return new LatestByAllIndexedRecordCursorFactory(
                                         copyMetadata(metadata),
-                                        new FullBwdDataFrameCursorFactory(engine, model.getTableName().token.toString(), model.getTableVersion()),
+                                        dfcFactory,
                                         latestByIndex);
                             }
 
@@ -458,12 +458,28 @@ public class SqlCodeGenerator {
                             return new LatestByAllRecordCursorFactory(
                                     copyMetadata(metadata),
                                     configuration,
-                                    new FullBwdDataFrameCursorFactory(engine, model.getTableName().token.toString(), model.getTableVersion()),
+                                    dfcFactory,
                                     RecordSinkFactory.getInstance(asm, metadata, listColumnFilter, false),
                                     latestByColumnTypes.of(metadata.getColumnType(latestByIndex))
                             );
                         } else {
-                            assert false : "not implemented";
+                            if (metadata.isColumnIndexed(latestByIndex)) {
+                                return new LatestByAllIndexedFilteredRecordCursorFactory(
+                                        copyMetadata(metadata),
+                                        dfcFactory,
+                                        latestByIndex,
+                                        filter);
+                            }
+                            listColumnFilter.clear();
+                            listColumnFilter.add(latestByIndex);
+                            return new LatestByAllFilteredRecordCursorFactory(
+                                    copyMetadata(metadata),
+                                    configuration,
+                                    dfcFactory,
+                                    RecordSinkFactory.getInstance(asm, metadata, listColumnFilter, false),
+                                    latestByColumnTypes.of(metadata.getColumnType(latestByIndex)),
+                                    filter
+                            );
                         }
                     }
                 } else {
