@@ -24,52 +24,24 @@
 package com.questdb.griffin.engine.table;
 
 import com.questdb.cairo.sql.DataFrame;
-import com.questdb.cairo.sql.DataFrameCursor;
-import com.questdb.cairo.sql.Record;
 import com.questdb.griffin.engine.LongTreeSet;
 import com.questdb.std.*;
 
-class LatestByValuesRecordCursor extends AbstractDataFrameRecordCursor {
+class LatestByValuesRecordCursor extends AbstractTreeSetRecordCursor {
 
     private final int columnIndex;
-    private final LongTreeSet treeSet;
     private final IntIntHashMap map;
     private final IntHashSet symbolKeys;
-    private LongTreeSet.TreeCursor treeCursor;
-
 
     public LatestByValuesRecordCursor(int columnIndex, LongTreeSet treeSet, IntHashSet symbolKeys) {
+        super(treeSet);
         this.columnIndex = columnIndex;
-        this.treeSet = treeSet;
         this.symbolKeys = symbolKeys;
         this.map = new IntIntHashMap(Numbers.ceilPow2(symbolKeys.size()));
     }
 
-    @Override
-    public void close() {
-        treeCursor = null;
-        dataFrameCursor.close();
-    }
-
-    @Override
-    public boolean hasNext() {
-        return treeCursor.hasNext();
-    }
-
-    @Override
-    public Record next() {
-        long row = treeCursor.next();
-        record.jumpTo(Rows.toPartitionIndex(row), Rows.toLocalRowID(row));
-        return record;
-    }
-
-    @Override
-    public void toTop() {
-        treeCursor.toTop();
-    }
-
-    private void buildTreeMap() {
-        prpepare();
+    protected void buildTreeMap() {
+        prepare();
 
         while (this.dataFrameCursor.hasNext()) {
             final DataFrame frame = this.dataFrameCursor.next();
@@ -90,17 +62,9 @@ class LatestByValuesRecordCursor extends AbstractDataFrameRecordCursor {
                 }
             }
         }
-        this.treeCursor = treeSet.getCursor();
     }
 
-    void of(DataFrameCursor dataFrameCursor) {
-        this.dataFrameCursor = dataFrameCursor;
-        this.record.of(dataFrameCursor.getTableReader());
-        buildTreeMap();
-    }
-
-    private void prpepare() {
-        treeSet.clear();
+    private void prepare() {
         final int keys[] = symbolKeys.getKeys();
         final int noEntryValue = symbolKeys.getNoEntryValue();
         for (int i = 0, n = keys.length; i < n; i++) {

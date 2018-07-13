@@ -872,12 +872,12 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "insert into x select * from (" +
                         "select" +
                         " rnd_double(0)*100," +
-                        " 'XYZ'," +
-                        " to_timestamp('1971', 'yyyy') t" +
-                        " from long_sequence(1)" +
+                        " rnd_symbol('XYZ', 'PEHN', 'ZZNK')," +
+                        " timestamp_sequence(to_timestamp('1971', 'yyyy'), 100000000000) t" +
+                        " from long_sequence(10)" +
                         ") timestamp(t)",
                 "a\tb\tk\n" +
-                        "56.594291398612\tXYZ\t1971-01-01T00:00:00.000000Z\n");
+                        "81.641825924675\tXYZ\t1971-01-05T15:06:40.000000Z\n");
     }
 
     @Test

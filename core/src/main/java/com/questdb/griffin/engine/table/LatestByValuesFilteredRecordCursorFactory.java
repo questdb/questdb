@@ -34,7 +34,7 @@ import org.jetbrains.annotations.Nullable;
 
 public class LatestByValuesFilteredRecordCursorFactory extends AbstractRecordCursorFactory {
     private final DataFrameCursorFactory dataFrameCursorFactory;
-    private final LatestByValuesFilteredRecordCursor cursor;
+    private final AbstractDataFrameRecordCursor cursor;
     private final LongTreeSet treeSet;
     private final int columnIndex;
     // this instance is shared between factory and cursor
@@ -48,12 +48,16 @@ public class LatestByValuesFilteredRecordCursorFactory extends AbstractRecordCur
             @NotNull DataFrameCursorFactory dataFrameCursorFactory,
             int columnIndex,
             @NotNull IntHashSet symbolKeys,
-            @NotNull Function filter,
+            @Nullable Function filter,
             @Nullable CharSequenceHashSet deferredSymbols) {
         super(metadata);
         //todo: derive page size from key count for symbol and configuration
         this.treeSet = new LongTreeSet(4 * 1024);
-        this.cursor = new LatestByValuesFilteredRecordCursor(columnIndex, treeSet, symbolKeys, filter);
+        if (filter != null) {
+            this.cursor = new LatestByValuesFilteredRecordCursor(columnIndex, treeSet, symbolKeys, filter);
+        } else {
+            this.cursor = new LatestByValuesRecordCursor(columnIndex, treeSet, symbolKeys);
+        }
         this.dataFrameCursorFactory = dataFrameCursorFactory;
         this.columnIndex = columnIndex;
         this.symbolKeys = symbolKeys;

@@ -29,11 +29,12 @@ import com.questdb.common.SymbolTable;
 import com.questdb.griffin.engine.LongTreeSet;
 import com.questdb.std.CharSequenceHashSet;
 import com.questdb.std.IntHashSet;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 public class LatestByValuesIndexedFilteredRecordCursorFactory extends AbstractRecordCursorFactory {
     private final DataFrameCursorFactory dataFrameCursorFactory;
-    private final LatestByValuesIndexedFilteredRecordCursor cursor;
+    private final AbstractDataFrameRecordCursor cursor;
     private final LongTreeSet treeSet;
     private final int columnIndex;
     // this instance is shared between factory and cursor
@@ -43,16 +44,20 @@ public class LatestByValuesIndexedFilteredRecordCursorFactory extends AbstractRe
     private final CharSequenceHashSet deferredSymbols;
 
     public LatestByValuesIndexedFilteredRecordCursorFactory(
-            RecordMetadata metadata,
-            DataFrameCursorFactory dataFrameCursorFactory,
+            @NotNull RecordMetadata metadata,
+            @NotNull DataFrameCursorFactory dataFrameCursorFactory,
             int columnIndex,
-            IntHashSet symbolKeys,
-            @Nullable CharSequenceHashSet deferredSymbols,
-            Function filter) {
+            @NotNull IntHashSet symbolKeys,
+            @Nullable Function filter,
+            @Nullable CharSequenceHashSet deferredSymbols) {
         super(metadata);
         //todo: derive page size from key count for symbol and configuration
         this.treeSet = new LongTreeSet(4 * 1024);
-        this.cursor = new LatestByValuesIndexedFilteredRecordCursor(columnIndex, treeSet, symbolKeys, filter);
+        if (filter != null) {
+            this.cursor = new LatestByValuesIndexedFilteredRecordCursor(columnIndex, treeSet, symbolKeys, filter);
+        } else {
+            this.cursor = new LatestByValuesIndexedRecordCursor(columnIndex, treeSet, symbolKeys);
+        }
         this.dataFrameCursorFactory = dataFrameCursorFactory;
         this.columnIndex = columnIndex;
         this.symbolKeys = symbolKeys;

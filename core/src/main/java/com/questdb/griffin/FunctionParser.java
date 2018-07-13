@@ -359,7 +359,11 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
 
             // otherwise, is number of arguments the same?
             if (sigArgCount == argCount || (sigVarArg && argCount >= sigArgCount)) {
-                int match = 0; // no match
+                int match = MATCH_NO_MATCH; // no match
+                if (sigArgCount == 0) {
+                    match = MATCH_EXACT_MATCH;
+                }
+
                 for (int k = 0; k < sigArgCount; k++) {
                     final Function arg = args.getQuick(k);
                     final char c = signature.charAt(sigArgOffset + k);

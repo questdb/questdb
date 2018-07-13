@@ -23,46 +23,50 @@
 
 package com.questdb.griffin.engine.table;
 
-import com.questdb.cairo.TableReaderRecord;
 import com.questdb.cairo.sql.DataFrameCursor;
 import com.questdb.cairo.sql.Record;
-import com.questdb.cairo.sql.RecordCursor;
+import com.questdb.griffin.engine.LongTreeSet;
 import com.questdb.std.Rows;
 
-public abstract class AbstractDataFrameRecordCursor implements RecordCursor {
-    protected final TableReaderRecord record = new TableReaderRecord();
-    protected DataFrameCursor dataFrameCursor;
+abstract class AbstractTreeSetRecordCursor extends AbstractDataFrameRecordCursor {
 
-    @Override
-    public Record getRecord() {
-        return record;
-    }
+    protected final LongTreeSet treeSet;
+    private LongTreeSet.TreeCursor treeCursor;
 
-    @Override
-    public Record newRecord() {
-        TableReaderRecord record = new TableReaderRecord();
-        record.of(dataFrameCursor.getTableReader());
-        return record;
-    }
-
-    @Override
-    public Record recordAt(long rowId) {
-        recordAt(record, rowId);
-        return record;
-    }
-
-    @Override
-    public void recordAt(Record record, long atRowId) {
-        ((TableReaderRecord) record).jumpTo(Rows.toPartitionIndex(atRowId), Rows.toLocalRowID(atRowId));
+    public AbstractTreeSetRecordCursor(LongTreeSet treeSet) {
+        this.treeSet = treeSet;
     }
 
     @Override
     public void close() {
-        if (dataFrameCursor != null) {
-            dataFrameCursor.close();
-            dataFrameCursor = null;
-        }
+        super.close();
+        treeCursor = null;
     }
 
-    abstract void of(DataFrameCursor cursor);
+    final void of(DataFrameCursor dataFrameCursor) {
+        this.dataFrameCursor = dataFrameCursor;
+        this.record.of(dataFrameCursor.getTableReader());
+        treeSet.clear();
+        buildTreeMap();
+        treeCursor = treeSet.getCursor();
+    }
+
+    @Override
+    public final boolean hasNext() {
+        return treeCursor.hasNext();
+    }
+
+    @Override
+    public final Record next() {
+        long row = treeCursor.next();
+        record.jumpTo(Rows.toPartitionIndex(row), Rows.toLocalRowID(row));
+        return record;
+    }
+
+    @Override
+    public final void toTop() {
+        treeCursor.toTop();
+    }
+
+    abstract protected void buildTreeMap();
 }

@@ -25,61 +25,35 @@ package com.questdb.griffin.engine.table;
 
 import com.questdb.cairo.BitmapIndexReader;
 import com.questdb.cairo.sql.DataFrame;
-import com.questdb.cairo.sql.DataFrameCursor;
 import com.questdb.cairo.sql.Function;
-import com.questdb.cairo.sql.Record;
 import com.questdb.common.RowCursor;
 import com.questdb.griffin.engine.LongTreeSet;
 import com.questdb.std.IntHashSet;
 import com.questdb.std.Rows;
 import org.jetbrains.annotations.NotNull;
 
-class LatestByAllIndexedFilteredRecordCursor extends AbstractDataFrameRecordCursor {
+class LatestByAllIndexedFilteredRecordCursor extends AbstractTreeSetRecordCursor {
 
     private final int columnIndex;
     private final IntHashSet found = new IntHashSet();
     private final Function filter;
-    private LongTreeSet treeSet;
-    private LongTreeSet.TreeCursor treeCursor;
 
     public LatestByAllIndexedFilteredRecordCursor(
             int columnIndex,
             @NotNull LongTreeSet treeSet,
             @NotNull Function filter) {
+        super(treeSet);
         this.columnIndex = columnIndex;
-        this.treeSet = treeSet;
         this.filter = filter;
     }
 
     @Override
-    public void close() {
-        super.close();
-        treeCursor = null;
-    }
-
-    @Override
-    public boolean hasNext() {
-        return treeCursor.hasNext();
-    }
-
-    @Override
-    public Record next() {
-        long row = treeCursor.next();
-        record.jumpTo(Rows.toPartitionIndex(row), Rows.toLocalRowID(row));
-        return record;
-    }
-
-    @Override
-    public void toTop() {
-        treeCursor.toTop();
-    }
-
-    private void buildTreeMap(int keyCount) {
+    protected void buildTreeMap() {
         found.clear();
-        treeSet.clear();
 
+        final int keyCount = dataFrameCursor.getTableReader().getSymbolMapReader(columnIndex).size() + 1;
         int keyLo = 0;
-        int keyHi = ++keyCount;
+        int keyHi = keyCount;
 
         int localLo = Integer.MAX_VALUE;
         int localHi = Integer.MIN_VALUE;
@@ -121,13 +95,5 @@ class LatestByAllIndexedFilteredRecordCursor extends AbstractDataFrameRecordCurs
             localLo = Integer.MAX_VALUE;
             localHi = Integer.MIN_VALUE;
         }
-
-        this.treeCursor = treeSet.getCursor();
-    }
-
-    void of(DataFrameCursor dataFrameCursor) {
-        this.dataFrameCursor = dataFrameCursor;
-        this.record.of(dataFrameCursor.getTableReader());
-        buildTreeMap(dataFrameCursor.getTableReader().getSymbolMapReader(columnIndex).size());
     }
 }

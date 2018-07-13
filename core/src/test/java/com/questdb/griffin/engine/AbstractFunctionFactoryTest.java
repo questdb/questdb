@@ -99,8 +99,6 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
             constVarArg = false;
         }
 
-        final boolean setOperation = OperatorExpression.getOperatorType(name) == OperatorExpression.SET;
-
         if (hasVarArg) {
             argCount = signature.length() - pos - 3;
             Assert.assertTrue(args.length >= argCount);
@@ -112,52 +110,95 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
         final StringSink expression1 = new StringSink();
         final StringSink expression2 = new StringSink();
 
-        if (!setOperation) {
-            expression1.put(name).put('(');
-            expression2.put(name).put('(');
-        }
+        final boolean setOperation = OperatorExpression.getOperatorType(name) == OperatorExpression.SET;
+        final boolean operator = OperatorExpression.isOperator(name);
 
-        for (int i = 0, n = args.length; i < n; i++) {
-            final String columnName = "f" + i;
-            final Object arg = args[i];
-            final boolean constantArg;
-            final int argType;
-            if (i < argCount) {
-                final char c = signature.charAt(pos + i + 1);
-                constantArg = Character.isLowerCase(c);
-                argType = FunctionParser.getArgType(c);
-            } else {
-                constantArg = constVarArg;
-                argType = getArgType(arg);
+        if (operator && !setOperation) {
+            switch (argCount) {
+                case 0:
+                    expression1.put(name);
+                    expression2.put(name);
+                    break;
+                case 1:
+                    expression1.put(name).put(' ');
+                    expression2.put(name).put(' ');
+                    printArgument(
+                            signature,
+                            pos,
+                            forceConstant,
+                            metadata,
+                            true,
+                            constVarArg,
+                            expression1,
+                            expression2,
+                            0,
+                            args[0]);
+                    break;
+                default:
+                    // two args
+                    printArgument(
+                            signature,
+                            pos,
+                            forceConstant,
+                            metadata,
+                            true,
+                            constVarArg,
+                            expression1,
+                            expression2,
+                            0,
+                            args[0]);
+
+                    expression1.put(' ').put(name).put(' ');
+                    expression2.put(' ').put(name).put(' ');
+
+                    printArgument(
+                            signature,
+                            pos,
+                            forceConstant,
+                            metadata,
+                            true,
+                            constVarArg,
+                            expression1,
+                            expression2,
+                            1,
+                            args[1]);
+                    break;
+            }
+        } else {
+
+
+            if (!setOperation) {
+                expression1.put(name).put('(');
+                expression2.put(name).put('(');
             }
 
-            if ((setOperation && i > 1) || (!setOperation && i > 0)) {
-                expression1.put(',');
-                expression2.put(',');
-            }
+            for (int i = 0, n = args.length; i < n; i++) {
 
-            metadata.add(new TableColumnMetadata(columnName, argType));
+                if ((setOperation && i > 1) || (!setOperation && i > 0)) {
+                    expression1.put(',');
+                    expression2.put(',');
+                }
 
-            if (constantArg || forceConstant) {
-                printConstant(argType, expression1, arg);
-                printConstant(argType, expression2, arg);
-            } else {
-                expression1.put(columnName);
-                if (argType == ColumnType.SYMBOL || argType == ColumnType.BINARY || isNegative(argType, arg)) {
-                    // above types cannot be expressed as constant in SQL
-                    expression2.put(columnName);
-                } else {
-                    printConstant(argType, expression2, arg);
+                printArgument(
+                        signature,
+                        pos,
+                        forceConstant,
+                        metadata,
+                        i < argCount,
+                        constVarArg,
+                        expression1,
+                        expression2,
+                        i,
+                        args[i]);
+
+                if (i == 0 && setOperation) {
+                    expression1.put(' ').put(name).put(' ').put('(');
+                    expression2.put(' ').put(name).put(' ').put('(');
                 }
             }
-
-            if (i == 0 && setOperation) {
-                expression1.put(' ').put(name).put(' ').put('(');
-                expression2.put(' ').put(name).put(' ').put('(');
-            }
+            expression1.put(')');
+            expression2.put(')');
         }
-        expression1.put(')');
-        expression2.put(')');
 
         functions.add(functionFactory);
         if (toTimestampRefs > 0) {
@@ -236,6 +277,46 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
                 return (float) arg < 0;
             default:
                 return false;
+        }
+    }
+
+    private void printArgument(CharSequence signature,
+                               int signatureTypeOffset,
+                               boolean forceConstant,
+                               GenericRecordMetadata metadata,
+                               boolean b,
+                               boolean constVarArg,
+                               StringSink expression1,
+                               StringSink expression2,
+                               int i,
+                               Object arg) {
+        final String columnName = "f" + i;
+        final boolean constantArg;
+        final int argType;
+
+
+        if (b) {
+            final char typeChar = signature.charAt(signatureTypeOffset + i + 1);
+            constantArg = Character.isLowerCase(typeChar);
+            argType = FunctionParser.getArgType(typeChar);
+        } else {
+            constantArg = constVarArg;
+            argType = getArgType(arg);
+        }
+
+        metadata.add(new TableColumnMetadata(columnName, argType));
+
+        if (constantArg || forceConstant) {
+            printConstant(argType, expression1, arg);
+            printConstant(argType, expression2, arg);
+        } else {
+            expression1.put(columnName);
+            if (argType == ColumnType.SYMBOL || argType == ColumnType.BINARY || isNegative(argType, arg)) {
+                // above types cannot be expressed as constant in SQL
+                expression2.put(columnName);
+            } else {
+                printConstant(argType, expression2, arg);
+            }
         }
     }
 
@@ -328,6 +409,11 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
         public void andAssert(long expected) {
             Assert.assertEquals(expected, function1.getLong(record));
             Assert.assertEquals(expected, function2.getLong(record));
+        }
+
+        public void andAssert(double expected, double delta) {
+            Assert.assertEquals(expected, function1.getDouble(record), delta);
+            Assert.assertEquals(expected, function2.getDouble(record), delta);
         }
 
         public void andAssertDate(long expected) {

@@ -27,49 +27,21 @@ import com.questdb.cairo.map.Map;
 import com.questdb.cairo.map.MapKey;
 import com.questdb.cairo.map.RecordSink;
 import com.questdb.cairo.sql.DataFrame;
-import com.questdb.cairo.sql.DataFrameCursor;
-import com.questdb.cairo.sql.Record;
 import com.questdb.griffin.engine.LongTreeSet;
 import com.questdb.std.Rows;
 
-class LatestByAllRecordCursor extends AbstractDataFrameRecordCursor {
+class LatestByAllRecordCursor extends AbstractTreeSetRecordCursor {
 
     private final Map map;
     private final RecordSink recordSink;
-    private final LongTreeSet treeSet;
-    private LongTreeSet.TreeCursor treeCursor;
 
     public LatestByAllRecordCursor(Map map, LongTreeSet treeSet, RecordSink recordSink) {
+        super(treeSet);
         this.map = map;
-        this.treeSet = treeSet;
         this.recordSink = recordSink;
     }
 
-    @Override
-    public void close() {
-        treeCursor = null;
-        dataFrameCursor.close();
-    }
-
-    @Override
-    public boolean hasNext() {
-        return treeCursor.hasNext();
-    }
-
-    @Override
-    public Record next() {
-        long row = treeCursor.next();
-        record.jumpTo(Rows.toPartitionIndex(row), Rows.toLocalRowID(row));
-        return record;
-    }
-
-    @Override
-    public void toTop() {
-        treeCursor.toTop();
-    }
-
-    private void buildTreeMap() {
-        treeSet.clear();
+    protected void buildTreeMap() {
         map.clear();
 
         while (this.dataFrameCursor.hasNext()) {
@@ -90,12 +62,5 @@ class LatestByAllRecordCursor extends AbstractDataFrameRecordCursor {
         }
 
         map.clear();
-        this.treeCursor = treeSet.getCursor();
-    }
-
-    void of(DataFrameCursor dataFrameCursor) {
-        this.dataFrameCursor = dataFrameCursor;
-        this.record.of(dataFrameCursor.getTableReader());
-        buildTreeMap();
     }
 }
