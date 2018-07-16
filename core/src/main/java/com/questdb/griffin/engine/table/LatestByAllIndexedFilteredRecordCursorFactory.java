@@ -23,18 +23,25 @@
 
 package com.questdb.griffin.engine.table;
 
+import com.questdb.cairo.CairoConfiguration;
 import com.questdb.cairo.sql.DataFrameCursorFactory;
 import com.questdb.cairo.sql.Function;
 import com.questdb.cairo.sql.RecordMetadata;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 public class LatestByAllIndexedFilteredRecordCursorFactory extends AbstractTreeSetRecordCursorFactory {
     public LatestByAllIndexedFilteredRecordCursorFactory(
+            @NotNull CairoConfiguration configuration,
             @NotNull RecordMetadata metadata,
             @NotNull DataFrameCursorFactory dataFrameCursorFactory,
             int columnIndex,
-            @NotNull Function filter) {
-        super(metadata, dataFrameCursorFactory);
-        this.cursor = new LatestByAllIndexedFilteredRecordCursor(columnIndex, treeSet, filter);
+            @Nullable Function filter) {
+        super(metadata, dataFrameCursorFactory, configuration);
+        if (filter == null) {
+            this.cursor = new LatestByAllIndexedRecordCursor(columnIndex, treeSet);
+        } else {
+            this.cursor = new LatestByAllIndexedFilteredRecordCursor(columnIndex, treeSet, filter);
+        }
     }
 }

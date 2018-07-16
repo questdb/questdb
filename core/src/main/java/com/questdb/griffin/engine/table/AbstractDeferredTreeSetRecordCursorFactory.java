@@ -23,31 +23,59 @@
 
 package com.questdb.griffin.engine.table;
 
+import com.questdb.cairo.CairoConfiguration;
+import com.questdb.cairo.SymbolMapReader;
 import com.questdb.cairo.sql.DataFrameCursor;
 import com.questdb.cairo.sql.DataFrameCursorFactory;
 import com.questdb.cairo.sql.RecordCursor;
 import com.questdb.cairo.sql.RecordMetadata;
 import com.questdb.common.SymbolTable;
 import com.questdb.std.CharSequenceHashSet;
+import com.questdb.std.Chars;
 import com.questdb.std.IntHashSet;
+import com.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
 
 public class AbstractDeferredTreeSetRecordCursorFactory extends AbstractTreeSetRecordCursorFactory {
-    private final int columnIndex;
     // this instance is shared between factory and cursor
     // factory will be resolving symbols for cursor and if successful
     // symbol keys will be added to this hash set
-    private final IntHashSet symbolKeys;
+    protected final IntHashSet symbolKeys;
+    private final int columnIndex;
     private final CharSequenceHashSet deferredSymbols;
 
     public AbstractDeferredTreeSetRecordCursorFactory(
+            @NotNull CairoConfiguration configuration,
             @NotNull RecordMetadata metadata,
             @NotNull DataFrameCursorFactory dataFrameCursorFactory,
             int columnIndex,
-            @NotNull IntHashSet symbolKeys,
-            @Nullable CharSequenceHashSet deferredSymbols) {
-        super(metadata, dataFrameCursorFactory);
+            @Transient CharSequenceHashSet keyValues,
+            @Transient SymbolMapReader symbolMapReader
+    ) {
+        super(metadata, dataFrameCursorFactory, configuration);
+
+        // we need two data structures, int hash set for symbol keys we can resolve here
+        // and CharSequence hash set for symbols we cannot resolve
+        // we could pass all symbols to factory to resolve, but this would lead to
+        // creating Strings for symbols that we may be able to avoid doing so
+
+        final int nKeyValues = keyValues.size();
+        final IntHashSet symbolKeys = new IntHashSet(nKeyValues);
+        CharSequenceHashSet deferredSymbols = null;
+
+        for (int i = 0; i < nKeyValues; i++) {
+            CharSequence symbol = keyValues.get(i);
+            int symbolKey = symbolMapReader.getQuick(symbol);
+            if (symbolKey == SymbolTable.VALUE_NOT_FOUND) {
+                if (deferredSymbols == null) {
+                    deferredSymbols = new CharSequenceHashSet();
+                }
+                deferredSymbols.add(Chars.toString(symbol));
+            } else {
+                symbolKeys.add(symbolKey + 1);
+            }
+        }
+
         this.columnIndex = columnIndex;
         this.symbolKeys = symbolKeys;
         this.deferredSymbols = deferredSymbols;

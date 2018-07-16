@@ -23,6 +23,7 @@
 
 package com.questdb.griffin.engine.table;
 
+import com.questdb.cairo.CairoConfiguration;
 import com.questdb.cairo.sql.*;
 import com.questdb.common.SymbolTable;
 import com.questdb.std.IntHashSet;
@@ -39,16 +40,26 @@ public class LatestBySubQueryRecordCursorFactory extends AbstractTreeSetRecordCu
     private final RecordCursorFactory recordCursorFactory;
 
     public LatestBySubQueryRecordCursorFactory(
+            @NotNull CairoConfiguration configuration,
             @NotNull RecordMetadata metadata,
             @NotNull DataFrameCursorFactory dataFrameCursorFactory,
             int columnIndex,
             @NotNull RecordCursorFactory recordCursorFactory,
-            @Nullable Function filter) {
-        super(metadata, dataFrameCursorFactory);
-        if (filter != null) {
-            this.cursor = new LatestByValuesFilteredRecordCursor(columnIndex, treeSet, symbolKeys, filter);
+            @Nullable Function filter,
+            boolean indexed) {
+        super(metadata, dataFrameCursorFactory, configuration);
+        if (indexed) {
+            if (filter != null) {
+                this.cursor = new LatestByValuesIndexedFilteredRecordCursor(columnIndex, treeSet, symbolKeys, filter);
+            } else {
+                this.cursor = new LatestByValuesIndexedRecordCursor(columnIndex, treeSet, symbolKeys);
+            }
         } else {
-            this.cursor = new LatestByValuesRecordCursor(columnIndex, treeSet, symbolKeys);
+            if (filter != null) {
+                this.cursor = new LatestByValuesFilteredRecordCursor(columnIndex, treeSet, symbolKeys, filter);
+            } else {
+                this.cursor = new LatestByValuesRecordCursor(columnIndex, treeSet, symbolKeys);
+            }
         }
         this.columnIndex = columnIndex;
         this.recordCursorFactory = recordCursorFactory;

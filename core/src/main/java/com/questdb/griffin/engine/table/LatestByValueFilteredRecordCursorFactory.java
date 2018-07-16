@@ -28,11 +28,11 @@ import com.questdb.cairo.sql.DataFrameCursorFactory;
 import com.questdb.cairo.sql.Function;
 import com.questdb.cairo.sql.RecordCursor;
 import com.questdb.cairo.sql.RecordMetadata;
-import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 public class LatestByValueFilteredRecordCursorFactory extends AbstractRecordCursorFactory {
 
-    private final LatestByValueFilteredRecordCursor cursor;
+    private final AbstractDataFrameRecordCursor cursor;
     private final DataFrameCursorFactory dataFrameCursorFactory;
 
     public LatestByValueFilteredRecordCursorFactory(
@@ -40,9 +40,13 @@ public class LatestByValueFilteredRecordCursorFactory extends AbstractRecordCurs
             DataFrameCursorFactory dataFrameCursorFactory,
             int columnIndex,
             int symbolKey,
-            @NotNull Function filter) {
+            @Nullable Function filter) {
         super(metadata);
-        this.cursor = new LatestByValueFilteredRecordCursor(columnIndex, symbolKey, filter);
+        if (filter == null) {
+            this.cursor = new LatestByValueRecordCursor(columnIndex, symbolKey);
+        } else {
+            this.cursor = new LatestByValueFilteredRecordCursor(columnIndex, symbolKey, filter);
+        }
         this.dataFrameCursorFactory = dataFrameCursorFactory;
     }
 

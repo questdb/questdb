@@ -27,6 +27,7 @@ import com.questdb.cairo.AbstractRecordCursorFactory;
 import com.questdb.cairo.sql.*;
 import com.questdb.common.SymbolTable;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 public class LatestByValueDeferredFilteredRecordCursorFactory extends AbstractRecordCursorFactory {
 
@@ -34,14 +35,14 @@ public class LatestByValueDeferredFilteredRecordCursorFactory extends AbstractRe
     private final String symbol;
     private final int columnIndex;
     private final Function filter;
-    private LatestByValueFilteredRecordCursor cursor;
+    private AbstractDataFrameRecordCursor cursor;
 
     public LatestByValueDeferredFilteredRecordCursorFactory(
             @NotNull RecordMetadata metadata,
             @NotNull DataFrameCursorFactory dataFrameCursorFactory,
             int columnIndex,
             String symbol,
-            @NotNull Function filter
+            @Nullable Function filter
     ) {
         super(metadata);
         this.dataFrameCursorFactory = dataFrameCursorFactory;
@@ -60,7 +61,11 @@ public class LatestByValueDeferredFilteredRecordCursorFactory extends AbstractRe
 
         int symbolKey = dataFrameCursor.getSymbolTable(columnIndex).getQuick(symbol);
         if (symbolKey != SymbolTable.VALUE_NOT_FOUND) {
-            cursor = new LatestByValueFilteredRecordCursor(columnIndex, symbolKey, filter);
+            if (filter == null) {
+                cursor = new LatestByValueRecordCursor(columnIndex, symbolKey);
+            } else {
+                cursor = new LatestByValueFilteredRecordCursor(columnIndex, symbolKey, filter);
+            }
             cursor.of(dataFrameCursor);
             return cursor;
         }

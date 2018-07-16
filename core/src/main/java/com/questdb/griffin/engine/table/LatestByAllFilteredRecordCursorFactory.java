@@ -23,7 +23,6 @@
 
 package com.questdb.griffin.engine.table;
 
-import com.questdb.cairo.AbstractRecordCursorFactory;
 import com.questdb.cairo.CairoConfiguration;
 import com.questdb.cairo.ColumnTypes;
 import com.questdb.cairo.map.FastMap;
@@ -31,17 +30,13 @@ import com.questdb.cairo.map.Map;
 import com.questdb.cairo.map.RecordSink;
 import com.questdb.cairo.sql.DataFrameCursorFactory;
 import com.questdb.cairo.sql.Function;
-import com.questdb.cairo.sql.RecordCursor;
 import com.questdb.cairo.sql.RecordMetadata;
-import com.questdb.griffin.engine.LongTreeSet;
 import com.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
-public class LatestByAllFilteredRecordCursorFactory extends AbstractRecordCursorFactory {
-    private final DataFrameCursorFactory dataFrameCursorFactory;
-    private final LatestByAllFilteredRecordCursor cursor;
+public class LatestByAllFilteredRecordCursorFactory extends AbstractTreeSetRecordCursorFactory {
     private final Map map;
-    private final LongTreeSet treeSet;
 
     public LatestByAllFilteredRecordCursorFactory(
             @NotNull RecordMetadata metadata,
@@ -49,29 +44,24 @@ public class LatestByAllFilteredRecordCursorFactory extends AbstractRecordCursor
             @NotNull DataFrameCursorFactory dataFrameCursorFactory,
             @NotNull RecordSink recordSink,
             @Transient @NotNull ColumnTypes columnTypes,
-            @NotNull Function filter) {
-        super(metadata);
-        this.treeSet = new LongTreeSet(configuration.getSqlTreeDefaultPageSize());
+            @Nullable Function filter) {
+        super(metadata, dataFrameCursorFactory, configuration);
         this.map = new FastMap(
                 configuration.getSqlMapDefaultPageSize(),
                 columnTypes,
                 configuration.getSqlMapDefaultKeyCapacity(),
                 configuration.getSqlFastMapLoadFactor()
         );
-        this.cursor = new LatestByAllFilteredRecordCursor(map, treeSet, recordSink, filter);
-        this.dataFrameCursorFactory = dataFrameCursorFactory;
+        if (filter == null) {
+            this.cursor = new LatestByAllRecordCursor(map, treeSet, recordSink);
+        } else {
+            this.cursor = new LatestByAllFilteredRecordCursor(map, treeSet, recordSink, filter);
+        }
     }
 
     @Override
     public void close() {
-        cursor.close();
-        treeSet.close();
+        super.close();
         map.close();
-    }
-
-    @Override
-    public RecordCursor getCursor() {
-        cursor.of(dataFrameCursorFactory.getCursor());
-        return cursor;
     }
 }

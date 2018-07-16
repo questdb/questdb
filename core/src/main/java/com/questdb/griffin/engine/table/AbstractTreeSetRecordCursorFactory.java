@@ -24,6 +24,7 @@
 package com.questdb.griffin.engine.table;
 
 import com.questdb.cairo.AbstractRecordCursorFactory;
+import com.questdb.cairo.CairoConfiguration;
 import com.questdb.cairo.sql.DataFrameCursorFactory;
 import com.questdb.cairo.sql.RecordCursor;
 import com.questdb.cairo.sql.RecordMetadata;
@@ -34,16 +35,22 @@ abstract class AbstractTreeSetRecordCursorFactory extends AbstractRecordCursorFa
     protected final DataFrameCursorFactory dataFrameCursorFactory;
     protected AbstractTreeSetRecordCursor cursor;
 
-    public AbstractTreeSetRecordCursorFactory(RecordMetadata metadata, DataFrameCursorFactory dataFrameCursorFactory) {
+    public AbstractTreeSetRecordCursorFactory(
+            RecordMetadata metadata,
+            DataFrameCursorFactory dataFrameCursorFactory,
+            CairoConfiguration configuration) {
         super(metadata);
-        //todo: derive page size from key count for symbol and configuration
-        this.treeSet = new LongTreeSet(4 * 1024);
+        this.treeSet = new LongTreeSet(configuration.getSqlTreeDefaultPageSize());
         this.dataFrameCursorFactory = dataFrameCursorFactory;
     }
 
     @Override
     public void close() {
         treeSet.close();
+        if (cursor != null) {
+            cursor.close();
+            cursor = null;
+        }
     }
 
     @Override

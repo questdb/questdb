@@ -1048,6 +1048,37 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLatestBySubQueryDeferredIndexed() throws Exception {
+        assertQuery("a\tb\tk\n" +
+                        "23.905290108465\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
+                        "12.026122412833\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
+                        "40.455469747939\t\t1970-01-22T23:46:40.000000Z\n",
+                "select * from x latest by b where b in (select rnd_symbol('RXGZ', 'HYRX', null, 'UCLA') a from long_sequence(10))",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(to_timestamp(0), 100000000000) k" +
+                        " from" +
+                        " long_sequence(20)" +
+                        "), index(b) timestamp(k) partition by DAY",
+                "k",
+                "insert into x select * from (" +
+                        "select" +
+                        " rnd_double(0)*100," +
+                        " 'UCLA'," +
+                        " to_timestamp('1971', 'yyyy') t" +
+                        " from long_sequence(1)" +
+                        ") timestamp(t)",
+                "a\tb\tk\n" +
+                        "23.905290108465\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
+                        "12.026122412833\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
+                        "40.455469747939\t\t1970-01-22T23:46:40.000000Z\n" +
+                        "95.400690890497\tUCLA\t1971-01-01T00:00:00.000000Z\n");
+    }
+
+    @Test
     public void testLatestBySubQueryDeferred() throws Exception {
         // no index
         assertQuery("a\tb\tk\n" +
@@ -1077,6 +1108,38 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         "12.026122412833\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
                         "40.455469747939\t\t1970-01-22T23:46:40.000000Z\n" +
                         "95.400690890497\tUCLA\t1971-01-01T00:00:00.000000Z\n");
+    }
+
+    @Test
+    public void testLatestBySubQueryDeferredIndexedFiltered() throws Exception {
+        assertQuery("a\tb\tk\n" +
+                        "23.905290108465\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
+                        "12.026122412833\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
+                        "40.455469747939\t\t1970-01-22T23:46:40.000000Z\n",
+                "select * from x latest by b where b in (select rnd_symbol('RXGZ', 'HYRX', null, 'UCLA') a from long_sequence(10))" +
+                        " and a > 12 and a < 50",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(to_timestamp(0), 100000000000) k" +
+                        " from" +
+                        " long_sequence(20)" +
+                        "), index(b) timestamp(k) partition by DAY",
+                "k",
+                "insert into x select * from (" +
+                        "select" +
+                        " 33.46," +
+                        " 'UCLA'," +
+                        " to_timestamp('1971', 'yyyy') t" +
+                        " from long_sequence(1)" +
+                        ") timestamp(t)",
+                "a\tb\tk\n" +
+                        "23.905290108465\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
+                        "12.026122412833\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
+                        "40.455469747939\t\t1970-01-22T23:46:40.000000Z\n" +
+                        "33.460000000000\tUCLA\t1971-01-01T00:00:00.000000Z\n");
     }
 
     @Test
@@ -1113,6 +1176,36 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLatestBySubQueryIndexed() throws Exception {
+        assertQuery("a\tb\tk\n" +
+                        "23.905290108465\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
+                        "12.026122412833\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
+                        "40.455469747939\t\t1970-01-22T23:46:40.000000Z\n",
+                "select * from x latest by b where b in (select rnd_symbol('RXGZ', 'HYRX', null) a from long_sequence(10))",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(to_timestamp(0), 100000000000) k" +
+                        " from" +
+                        " long_sequence(20)" +
+                        "), index(b) timestamp(k) partition by DAY",
+                "k",
+                "insert into x select * from (" +
+                        "select" +
+                        " rnd_double(0)*100," +
+                        " 'RXGZ'," +
+                        " to_timestamp('1971', 'yyyy') t" +
+                        " from long_sequence(1)" +
+                        ") timestamp(t)",
+                "a\tb\tk\n" +
+                        "12.026122412833\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
+                        "40.455469747939\t\t1970-01-22T23:46:40.000000Z\n" +
+                        "95.400690890497\tRXGZ\t1971-01-01T00:00:00.000000Z\n");
+    }
+
+    @Test
     public void testLatestBySubQueryFiltered() throws Exception {
         // no index
         assertQuery("a\tb\tk\n" +
@@ -1130,6 +1223,37 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by DAY",
+                "k",
+                "insert into x select * from (" +
+                        "select" +
+                        " 33.46," +
+                        " 'RXGZ'," +
+                        " to_timestamp('1971', 'yyyy') t" +
+                        " from long_sequence(1)" +
+                        ") timestamp(t)",
+                "a\tb\tk\n" +
+                        "12.026122412833\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
+                        "40.455469747939\t\t1970-01-22T23:46:40.000000Z\n" +
+                        "33.460000000000\tRXGZ\t1971-01-01T00:00:00.000000Z\n");
+    }
+
+    @Test
+    public void testLatestBySubQueryIndexedFiltered() throws Exception {
+        assertQuery("a\tb\tk\n" +
+                        "23.905290108465\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
+                        "12.026122412833\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
+                        "40.455469747939\t\t1970-01-22T23:46:40.000000Z\n",
+                "select * from x latest by b where b in (select rnd_symbol('RXGZ', 'HYRX', null) a from long_sequence(10))" +
+                        " and a > 12 and a < 50",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(to_timestamp(0), 100000000000) k" +
+                        " from" +
+                        " long_sequence(20)" +
+                        "),index(b) timestamp(k) partition by DAY",
                 "k",
                 "insert into x select * from (" +
                         "select" +

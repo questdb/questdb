@@ -35,7 +35,10 @@ import com.questdb.griffin.model.ExpressionNode;
 import com.questdb.griffin.model.IntrinsicModel;
 import com.questdb.griffin.model.QueryColumn;
 import com.questdb.griffin.model.QueryModel;
-import com.questdb.std.*;
+import com.questdb.std.BytecodeAssembler;
+import com.questdb.std.Chars;
+import com.questdb.std.IntList;
+import com.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
 
 public class SqlCodeGenerator {
@@ -101,15 +104,19 @@ public class SqlCodeGenerator {
             assert latestByIndex == metadata.getColumnIndexQuiet(intrinsicModel.keyColumn);
             int nKeyValues = intrinsicModel.keyValues.size();
 
+            if (intrinsicModel.keySubQuery != null) {
+                return new LatestBySubQueryRecordCursorFactory(
+                        configuration,
+                        metadata,
+                        dataFrameCursorFactory,
+                        latestByIndex,
+                        generate(intrinsicModel.keySubQuery, bindVariableService),
+                        filter,
+                        indexed
+                );
+            }
+
             if (indexed) {
-                // we somewhat in luck
-                if (intrinsicModel.keySubQuery != null) {
-                    // treat key values as lambda
-                    // 1. get lambda cursor
-                    // 2. for each value of first column of lambda: resolve to "int" of symbol, find first row in index
-                    assert nKeyValues == 1;
-                    assert false : "not implemented";
-                }
 
                 assert nKeyValues > 0;
                 // deal with key values as a list
@@ -147,41 +154,13 @@ public class SqlCodeGenerator {
                             filter);
                 }
 
-                // we need two data structures, int hash set for symbol keys we can resolve here
-                // and CharSequence hash set for symbols we cannot resolve
-                // we could pass all symbols to factory to resolve, but this would lead to
-                // creating Strings for symbols that we may be able to avoid doing so
-
-                final IntHashSet symbolKeys = new IntHashSet(nKeyValues);
-                CharSequenceHashSet deferredSymbols = null;
-
-                for (int i = 0; i < nKeyValues; i++) {
-                    CharSequence symbol = intrinsicModel.keyValues.get(i);
-                    int symbolKey = symbolMapReader.getQuick(symbol);
-                    if (symbolKey == SymbolTable.VALUE_NOT_FOUND) {
-                        if (deferredSymbols == null) {
-                            deferredSymbols = new CharSequenceHashSet();
-                        }
-                        deferredSymbols.add(Chars.toString(symbol));
-                    } else {
-                        symbolKeys.add(symbolKey + 1);
-                    }
-                }
-
                 return new LatestByValuesIndexedFilteredRecordCursorFactory(
+                        configuration,
                         copyMetadata(metadata),
                         dataFrameCursorFactory,
                         latestByIndex,
-                        symbolKeys,
-                        filter, deferredSymbols
-                );
-            }
-            if (intrinsicModel.keySubQuery != null) {
-                return new LatestBySubQueryRecordCursorFactory(
-                        metadata,
-                        dataFrameCursorFactory,
-                        latestByIndex,
-                        generate(intrinsicModel.keySubQuery, bindVariableService),
+                        intrinsicModel.keyValues,
+                        symbolMapReader,
                         filter
                 );
             }
@@ -192,49 +171,19 @@ public class SqlCodeGenerator {
             final SymbolMapReader symbolMapReader = reader.getSymbolMapReader(latestByIndex);
 
             if (nKeyValues > 1) {
-
-                // we need two data structures, int hash set for symbol keys we can resolve here
-                // and CharSequence hash set for symbols we cannot resolve
-                // we could pass all symbols to factory to resolve, but this would lead to
-                // creating Strings for symbols that we may be able to avoid doing so
-
-                final IntHashSet symbolKeys = new IntHashSet(nKeyValues);
-                CharSequenceHashSet deferredSymbols = null;
-
-                for (int i = 0; i < nKeyValues; i++) {
-                    CharSequence symbol = intrinsicModel.keyValues.get(i);
-                    int symbolKey = symbolMapReader.getQuick(symbol);
-                    if (symbolKey == SymbolTable.VALUE_NOT_FOUND) {
-                        if (deferredSymbols == null) {
-                            deferredSymbols = new CharSequenceHashSet();
-                        }
-                        deferredSymbols.add(Chars.toString(symbol));
-                    } else {
-                        symbolKeys.add(symbolKey + 1);
-                    }
-                }
-
                 return new LatestByValuesFilteredRecordCursorFactory(
+                        configuration,
                         copyMetadata(metadata),
                         dataFrameCursorFactory,
                         latestByIndex,
-                        symbolKeys,
-                        filter,
-                        deferredSymbols
+                        intrinsicModel.keyValues,
+                        symbolMapReader,
+                        filter
                 );
             }
 
             // we have a single symbol key
             int symbolKey = symbolMapReader.getQuick(intrinsicModel.keyValues.get(0));
-
-            if (filter == null) {
-                if (symbolKey == SymbolTable.VALUE_NOT_FOUND) {
-                    return new LatestByValueDeferredRecordCursorFactory(copyMetadata(metadata), dataFrameCursorFactory, latestByIndex, Chars.toString(intrinsicModel.keyValues.get(0)));
-                }
-
-                return new LatestByValueRecordCursorFactory(copyMetadata(metadata), dataFrameCursorFactory, latestByIndex, symbolKey);
-            }
-
             if (symbolKey == SymbolTable.VALUE_NOT_FOUND) {
                 return new LatestByValueDeferredFilteredRecordCursorFactory(
                         copyMetadata(metadata),
@@ -252,34 +201,15 @@ public class SqlCodeGenerator {
         assert intrinsicModel.keyValues.size() == 0;
         // get latest rows for all values of "latest by" column
 
-        if (filter == null) {
-            // this is almost the same code when we don't have where clause at all
-            if (indexed) {
-                return new LatestByAllIndexedRecordCursorFactory(
-                        copyMetadata(metadata),
-                        dataFrameCursorFactory,
-                        latestByIndex);
-            }
-
-            listColumnFilter.clear();
-            listColumnFilter.add(latestByIndex);
-            return new LatestByAllRecordCursorFactory(
-                    copyMetadata(metadata),
-                    configuration,
-                    dataFrameCursorFactory,
-                    RecordSinkFactory.getInstance(asm, metadata, listColumnFilter, false),
-                    latestByColumnTypes.of(metadata.getColumnType(latestByIndex))
-            );
-        }
-
-
         if (indexed) {
             return new LatestByAllIndexedFilteredRecordCursorFactory(
+                    configuration,
                     copyMetadata(metadata),
                     dataFrameCursorFactory,
                     latestByIndex,
                     filter);
         }
+
         listColumnFilter.clear();
         listColumnFilter.add(latestByIndex);
         return new LatestByAllFilteredRecordCursorFactory(
@@ -576,20 +506,23 @@ public class SqlCodeGenerator {
             }
 
             if (metadata.isColumnIndexed(latestByIndex)) {
-                return new LatestByAllIndexedRecordCursorFactory(
+                return new LatestByAllIndexedFilteredRecordCursorFactory(
+                        configuration,
                         copyMetadata(metadata),
                         new FullBwdDataFrameCursorFactory(engine, tableName, model.getTableVersion()),
-                        latestByIndex);
+                        latestByIndex,
+                        null);
             }
 
             listColumnFilter.clear();
             listColumnFilter.add(latestByIndex);
-            return new LatestByAllRecordCursorFactory(
+            return new LatestByAllFilteredRecordCursorFactory(
                     copyMetadata(metadata),
                     configuration,
                     new FullBwdDataFrameCursorFactory(engine, tableName, model.getTableVersion()),
                     RecordSinkFactory.getInstance(asm, metadata, listColumnFilter, false),
-                    latestByColumnTypes.of(metadata.getColumnType(latestByIndex))
+                    latestByColumnTypes.of(metadata.getColumnType(latestByIndex)),
+                    null
             );
         }
     }

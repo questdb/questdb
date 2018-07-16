@@ -23,24 +23,27 @@
 
 package com.questdb.griffin.engine.table;
 
+import com.questdb.cairo.CairoConfiguration;
+import com.questdb.cairo.SymbolMapReader;
 import com.questdb.cairo.sql.DataFrameCursorFactory;
 import com.questdb.cairo.sql.Function;
 import com.questdb.cairo.sql.RecordMetadata;
 import com.questdb.std.CharSequenceHashSet;
-import com.questdb.std.IntHashSet;
+import com.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 public class LatestByValuesIndexedFilteredRecordCursorFactory extends AbstractDeferredTreeSetRecordCursorFactory {
 
     public LatestByValuesIndexedFilteredRecordCursorFactory(
+            @NotNull CairoConfiguration configuration,
             @NotNull RecordMetadata metadata,
             @NotNull DataFrameCursorFactory dataFrameCursorFactory,
             int columnIndex,
-            @NotNull IntHashSet symbolKeys,
-            @Nullable Function filter,
-            @Nullable CharSequenceHashSet deferredSymbols) {
-        super(metadata, dataFrameCursorFactory, columnIndex, symbolKeys, deferredSymbols);
+            @Transient CharSequenceHashSet keyValues,
+            @Transient SymbolMapReader symbolMapReader,
+            @Nullable Function filter) {
+        super(configuration, metadata, dataFrameCursorFactory, columnIndex, keyValues, symbolMapReader);
         if (filter != null) {
             this.cursor = new LatestByValuesIndexedFilteredRecordCursor(columnIndex, treeSet, symbolKeys, filter);
         } else {
