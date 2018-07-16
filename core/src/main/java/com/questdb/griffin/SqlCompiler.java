@@ -47,7 +47,7 @@ public class SqlCompiler implements Closeable {
     private static final IntList castGroups = new IntList();
     private final SqlOptimiser optimiser;
     private final SqlParser parser;
-    private final ObjectPool<SqlNode> sqlNodePool;
+    private final ObjectPool<ExpressionNode> sqlNodePool;
     private final CharacterStore characterStore;
     private final ObjectPool<QueryColumn> queryColumnPool;
     private final ObjectPool<QueryModel> queryModelPool;
@@ -73,7 +73,7 @@ public class SqlCompiler implements Closeable {
         //todo: apply configuration to all storage parameters
         this.engine = engine;
         this.workScheduler = workScheduler;
-        this.sqlNodePool = new ObjectPool<>(SqlNode.FACTORY, 128);
+        this.sqlNodePool = new ObjectPool<>(ExpressionNode.FACTORY, 128);
         this.queryColumnPool = new ObjectPool<>(QueryColumn.FACTORY, 64);
         this.queryModelPool = new ObjectPool<>(QueryModel.FACTORY, 16);
         this.characterStore = new CharacterStore();
@@ -676,14 +676,14 @@ public class SqlCompiler implements Closeable {
 
             int count = model.getColumnCount();
             mem.putInt(count);
-            final SqlNode partitionBy = model.getPartitionBy();
+            final ExpressionNode partitionBy = model.getPartitionBy();
             if (partitionBy == null) {
                 mem.putInt(PartitionBy.NONE);
             } else {
                 mem.putInt(PartitionBy.fromString(partitionBy.token));
             }
 
-            final SqlNode timestamp = model.getTimestamp();
+            final ExpressionNode timestamp = model.getTimestamp();
             if (timestamp == null) {
                 mem.putInt(-1);
             } else {
@@ -724,7 +724,7 @@ public class SqlCompiler implements Closeable {
     private void createTable(final ExecutionModel model, BindVariableService bindVariableService) throws SqlException {
         final CreateTableModel createTableModel = (CreateTableModel) model;
         final FilesFacade ff = configuration.getFilesFacade();
-        final SqlNode name = createTableModel.getName();
+        final ExpressionNode name = createTableModel.getName();
 
         if (TableUtils.exists(ff, path, configuration.getRoot(), name.token) != TableUtils.TABLE_DOES_NOT_EXIST) {
             throw SqlException.$(name.position, "table already exists");
@@ -788,14 +788,14 @@ public class SqlCompiler implements Closeable {
 
             int count = model.getColumnCount();
             mem.putInt(count);
-            final SqlNode partitionBy = model.getPartitionBy();
+            final ExpressionNode partitionBy = model.getPartitionBy();
             if (partitionBy == null) {
                 mem.putInt(PartitionBy.NONE);
             } else {
                 mem.putInt(PartitionBy.fromString(partitionBy.token));
             }
 
-            SqlNode timestamp = model.getTimestamp();
+            ExpressionNode timestamp = model.getTimestamp();
             if (timestamp == null) {
                 mem.putInt(-1);
             } else {
@@ -908,7 +908,7 @@ public class SqlCompiler implements Closeable {
         InsertAsSelectModel model = (InsertAsSelectModel) executionModel;
 
         final FilesFacade ff = configuration.getFilesFacade();
-        final SqlNode name = model.getTableName();
+        final ExpressionNode name = model.getTableName();
 
         if (TableUtils.exists(ff, path, configuration.getRoot(), name.token) == TableUtils.TABLE_DOES_NOT_EXIST) {
             throw SqlException.$(name.position, "table does not exist");
@@ -1004,10 +1004,10 @@ public class SqlCompiler implements Closeable {
     }
 
     // this exposed for testing only
-    SqlNode parseExpression(CharSequence expression) throws SqlException {
+    ExpressionNode parseExpression(CharSequence expression, QueryModel model) throws SqlException {
         clear();
         lexer.of(expression);
-        return parser.expr(lexer);
+        return parser.expr(lexer, model);
     }
 
     // test only
@@ -1069,7 +1069,7 @@ public class SqlCompiler implements Closeable {
 
         // validate type of timestamp column
         // no need to worry that column will not resolve
-        SqlNode timestamp = model.getTimestamp();
+        ExpressionNode timestamp = model.getTimestamp();
         if (timestamp != null && metadata.getColumnType(timestamp.token) != ColumnType.TIMESTAMP) {
             throw SqlException.position(timestamp.position).put("TIMESTAMP column expected [actual=").put(ColumnType.nameOf(metadata.getColumnType(timestamp.token))).put(']');
         }

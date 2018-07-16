@@ -26,6 +26,7 @@ package com.questdb.griffin;
 import com.questdb.cairo.sql.RecordMetadata;
 import com.questdb.common.ColumnType;
 import com.questdb.griffin.model.AliasTranslator;
+import com.questdb.griffin.model.ExpressionNode;
 import com.questdb.griffin.model.IntrinsicModel;
 import com.questdb.std.*;
 import com.questdb.std.microtime.DateFormatUtils;
@@ -44,9 +45,9 @@ final class WhereClauseParser {
     private static final int INTRINCIC_OP_NOT_EQ = 7;
     private static final int INTRINCIC_OP_NOT = 8;
     private static final CharSequenceIntHashMap intrinsicOps = new CharSequenceIntHashMap();
-    private final ArrayDeque<SqlNode> stack = new ArrayDeque<>();
-    private final ObjList<SqlNode> keyNodes = new ObjList<>();
-    private final ObjList<SqlNode> keyExclNodes = new ObjList<>();
+    private final ArrayDeque<ExpressionNode> stack = new ArrayDeque<>();
+    private final ObjList<ExpressionNode> keyNodes = new ObjList<>();
+    private final ObjList<ExpressionNode> keyExclNodes = new ObjList<>();
     private final ObjectPool<IntrinsicModel> models = new ObjectPool<>(IntrinsicModel.FACTORY, 8);
     private final CharSequenceHashSet tempKeys = new CharSequenceHashSet();
     private final IntList tempPos = new IntList();
@@ -56,24 +57,24 @@ final class WhereClauseParser {
     private CharSequence timestamp;
     private CharSequence preferredKeyColumn;
 
-    private static void checkNodeValid(SqlNode node) throws SqlException {
+    private static void checkNodeValid(ExpressionNode node) throws SqlException {
         if (node.lhs == null || node.rhs == null) {
             throw SqlException.$(node.position, "Argument expected");
         }
     }
 
-    private boolean analyzeEquals(AliasTranslator translator, IntrinsicModel model, SqlNode node, RecordMetadata m) throws SqlException {
+    private boolean analyzeEquals(AliasTranslator translator, IntrinsicModel model, ExpressionNode node, RecordMetadata m) throws SqlException {
         checkNodeValid(node);
         return analyzeEquals0(translator, model, node, node.lhs, node.rhs, m) || analyzeEquals0(translator, model, node, node.rhs, node.lhs, m);
     }
 
-    private boolean analyzeEquals0(AliasTranslator translator, IntrinsicModel model, SqlNode node, SqlNode a, SqlNode b, RecordMetadata m) throws SqlException {
+    private boolean analyzeEquals0(AliasTranslator translator, IntrinsicModel model, ExpressionNode node, ExpressionNode a, ExpressionNode b, RecordMetadata m) throws SqlException {
         if (Chars.equals(a.token, b.token)) {
             node.intrinsicValue = IntrinsicModel.TRUE;
             return true;
         }
 
-        if (a.type == SqlNode.LITERAL && b.type == SqlNode.CONSTANT) {
+        if (a.type == ExpressionNode.LITERAL && b.type == ExpressionNode.CONSTANT) {
             if (isTimestamp(a)) {
                 model.intersectIntervals(b.token, 1, b.token.length() - 1, b.position);
                 node.intrinsicValue = IntrinsicModel.TRUE;
@@ -138,7 +139,7 @@ final class WhereClauseParser {
         return false;
     }
 
-    private boolean analyzeGreater(IntrinsicModel model, SqlNode node, int increment) throws SqlException {
+    private boolean analyzeGreater(IntrinsicModel model, ExpressionNode node, int increment) throws SqlException {
         checkNodeValid(node);
 
         if (Chars.equals(node.lhs.token, node.rhs.token)) {
@@ -150,9 +151,9 @@ final class WhereClauseParser {
             return false;
         }
 
-        if (node.lhs.type == SqlNode.LITERAL && Chars.equals(node.lhs.token, timestamp)) {
+        if (node.lhs.type == ExpressionNode.LITERAL && Chars.equals(node.lhs.token, timestamp)) {
 
-            if (node.rhs.type != SqlNode.CONSTANT) {
+            if (node.rhs.type != ExpressionNode.CONSTANT) {
                 return false;
             }
 
@@ -165,9 +166,9 @@ final class WhereClauseParser {
             }
         }
 
-        if (node.rhs.type == SqlNode.LITERAL && Chars.equals(node.rhs.token, timestamp)) {
+        if (node.rhs.type == ExpressionNode.LITERAL && Chars.equals(node.rhs.token, timestamp)) {
 
-            if (node.lhs.type != SqlNode.CONSTANT) {
+            if (node.lhs.type != ExpressionNode.CONSTANT) {
                 return false;
             }
 
@@ -181,15 +182,15 @@ final class WhereClauseParser {
         return false;
     }
 
-    private boolean analyzeIn(AliasTranslator translator, IntrinsicModel model, SqlNode node, RecordMetadata metadata) throws SqlException {
+    private boolean analyzeIn(AliasTranslator translator, IntrinsicModel model, ExpressionNode node, RecordMetadata metadata) throws SqlException {
 
         if (node.paramCount < 2) {
             throw SqlException.$(node.position, "Too few arguments for 'in'");
         }
 
-        SqlNode col = node.paramCount < 3 ? node.lhs : node.args.getLast();
+        ExpressionNode col = node.paramCount < 3 ? node.lhs : node.args.getLast();
 
-        if (col.type != SqlNode.LITERAL) {
+        if (col.type != ExpressionNode.LITERAL) {
             throw SqlException.$(col.position, "Column name expected");
         }
 
@@ -203,7 +204,7 @@ final class WhereClauseParser {
                 || analyzeInLambda(model, column, metadata, node);
     }
 
-    private boolean analyzeInInterval(IntrinsicModel model, SqlNode col, SqlNode in) throws SqlException {
+    private boolean analyzeInInterval(IntrinsicModel model, ExpressionNode col, ExpressionNode in) throws SqlException {
         if (!isTimestamp(col)) {
             return false;
         }
@@ -216,10 +217,10 @@ final class WhereClauseParser {
             throw SqlException.$(in.position, "Too few args");
         }
 
-        SqlNode lo = in.args.getQuick(1);
-        SqlNode hi = in.args.getQuick(0);
+        ExpressionNode lo = in.args.getQuick(1);
+        ExpressionNode hi = in.args.getQuick(0);
 
-        if (lo.type == SqlNode.CONSTANT && hi.type == SqlNode.CONSTANT) {
+        if (lo.type == ExpressionNode.CONSTANT && hi.type == ExpressionNode.CONSTANT) {
             long loMillis;
             long hiMillis;
 
@@ -242,15 +243,17 @@ final class WhereClauseParser {
         return false;
     }
 
-    private boolean analyzeInLambda(IntrinsicModel model, CharSequence columnName, RecordMetadata meta, SqlNode node) throws SqlException {
+    private boolean analyzeInLambda(IntrinsicModel model, CharSequence columnName, RecordMetadata meta, ExpressionNode node) throws SqlException {
 //        RecordColumnMetadata colMeta = meta.getColumn(columnName);
         int columnIndex = meta.getColumnIndex(columnName);
-        if (meta.isColumnIndexed(columnIndex)) {
+        boolean preferred = Chars.equalsNc(columnName, preferredKeyColumn);
+
+        if (preferred || (preferredKeyColumn == null && meta.isColumnIndexed(columnIndex))) {
             if (preferredKeyColumn != null && !Chars.equals(columnName, preferredKeyColumn)) {
                 return false;
             }
 
-            if (node.rhs == null || node.rhs.type != SqlNode.LAMBDA) {
+            if (node.rhs == null || node.rhs.type != ExpressionNode.LAMBDA) {
                 return false;
             }
 
@@ -283,7 +286,7 @@ final class WhereClauseParser {
         return false;
     }
 
-    private boolean analyzeLess(IntrinsicModel model, SqlNode node, int inc) throws SqlException {
+    private boolean analyzeLess(IntrinsicModel model, ExpressionNode node, int inc) throws SqlException {
 
         checkNodeValid(node);
 
@@ -296,10 +299,10 @@ final class WhereClauseParser {
             return false;
         }
 
-        if (node.lhs.type == SqlNode.LITERAL && Chars.equals(node.lhs.token, timestamp)) {
+        if (node.lhs.type == ExpressionNode.LITERAL && Chars.equals(node.lhs.token, timestamp)) {
             try {
 
-                if (node.rhs.type != SqlNode.CONSTANT) {
+                if (node.rhs.type != ExpressionNode.CONSTANT) {
                     return false;
                 }
 
@@ -312,9 +315,9 @@ final class WhereClauseParser {
             }
         }
 
-        if (node.rhs.type == SqlNode.LITERAL && Chars.equals(node.rhs.token, timestamp)) {
+        if (node.rhs.type == ExpressionNode.LITERAL && Chars.equals(node.rhs.token, timestamp)) {
             try {
-                if (node.lhs.type != SqlNode.CONSTANT) {
+                if (node.lhs.type != ExpressionNode.CONSTANT) {
                     return false;
                 }
 
@@ -329,10 +332,10 @@ final class WhereClauseParser {
         return false;
     }
 
-    private boolean analyzeListOfValues(IntrinsicModel model, CharSequence columnName, RecordMetadata meta, SqlNode node) {
+    private boolean analyzeListOfValues(IntrinsicModel model, CharSequence columnName, RecordMetadata meta, ExpressionNode node) {
         final int columnIndex = meta.getColumnIndex(columnName);
         boolean newColumn = true;
-        boolean preferred = preferredKeyColumn != null && Chars.equals(columnName, preferredKeyColumn);
+        boolean preferred = Chars.equalsNc(columnName, preferredKeyColumn);
 
         if (preferred || (preferredKeyColumn == null && meta.isColumnIndexed(columnIndex))) {
 
@@ -354,7 +357,7 @@ final class WhereClauseParser {
             // collect and analyze values of indexed field
             // if any of values is not an indexed constant - bail out
             if (i == 1) {
-                if (node.rhs == null || node.rhs.type != SqlNode.CONSTANT) {
+                if (node.rhs == null || node.rhs.type != ExpressionNode.CONSTANT) {
                     return false;
                 }
                 if (tempKeys.add(unquote(node.rhs.token))) {
@@ -362,8 +365,8 @@ final class WhereClauseParser {
                 }
             } else {
                 for (i--; i > -1; i--) {
-                    SqlNode c = node.args.getQuick(i);
-                    if (c.type != SqlNode.CONSTANT) {
+                    ExpressionNode c = node.args.getQuick(i);
+                    if (c.type != ExpressionNode.CONSTANT) {
                         return false;
                     }
 
@@ -407,20 +410,20 @@ final class WhereClauseParser {
         return false;
     }
 
-    private boolean analyzeNotEquals(AliasTranslator translator, IntrinsicModel model, SqlNode node, RecordMetadata m) throws SqlException {
+    private boolean analyzeNotEquals(AliasTranslator translator, IntrinsicModel model, ExpressionNode node, RecordMetadata m) throws SqlException {
         checkNodeValid(node);
         return analyzeNotEquals0(translator, model, node, node.lhs, node.rhs, m)
                 || analyzeNotEquals0(translator, model, node, node.rhs, node.lhs, m);
     }
 
-    private boolean analyzeNotEquals0(AliasTranslator translator, IntrinsicModel model, SqlNode node, SqlNode a, SqlNode b, RecordMetadata m) throws SqlException {
+    private boolean analyzeNotEquals0(AliasTranslator translator, IntrinsicModel model, ExpressionNode node, ExpressionNode a, ExpressionNode b, RecordMetadata m) throws SqlException {
 
         if (Chars.equals(a.token, b.token)) {
             model.intrinsicValue = IntrinsicModel.FALSE;
             return true;
         }
 
-        if (a.type == SqlNode.LITERAL && b.type == SqlNode.CONSTANT) {
+        if (a.type == ExpressionNode.LITERAL && b.type == ExpressionNode.CONSTANT) {
             if (isTimestamp(a)) {
                 model.subtractIntervals(b.token, 1, b.token.length() - 1, b.position);
                 node.intrinsicValue = IntrinsicModel.TRUE;
@@ -457,17 +460,17 @@ final class WhereClauseParser {
         return false;
     }
 
-    private boolean analyzeNotIn(AliasTranslator translator, IntrinsicModel model, SqlNode notNode, RecordMetadata m) throws SqlException {
+    private boolean analyzeNotIn(AliasTranslator translator, IntrinsicModel model, ExpressionNode notNode, RecordMetadata m) throws SqlException {
 
-        SqlNode node = notNode.rhs;
+        ExpressionNode node = notNode.rhs;
 
         if (node.paramCount < 2) {
             throw SqlException.$(node.position, "Too few arguments for 'in'");
         }
 
-        SqlNode col = node.paramCount < 3 ? node.lhs : node.args.getLast();
+        ExpressionNode col = node.paramCount < 3 ? node.lhs : node.args.getLast();
 
-        if (col.type != SqlNode.LITERAL) {
+        if (col.type != ExpressionNode.LITERAL) {
             throw SqlException.$(col.position, "Column name expected");
         }
 
@@ -487,7 +490,7 @@ final class WhereClauseParser {
         return ok;
     }
 
-    private boolean analyzeNotInInterval(IntrinsicModel model, SqlNode col, SqlNode in) throws SqlException {
+    private boolean analyzeNotInInterval(IntrinsicModel model, ExpressionNode col, ExpressionNode in) throws SqlException {
         if (!isTimestamp(col)) {
             return false;
         }
@@ -500,10 +503,10 @@ final class WhereClauseParser {
             throw SqlException.$(in.position, "Too few args");
         }
 
-        SqlNode lo = in.args.getQuick(1);
-        SqlNode hi = in.args.getQuick(0);
+        ExpressionNode lo = in.args.getQuick(1);
+        ExpressionNode hi = in.args.getQuick(0);
 
-        if (lo.type == SqlNode.CONSTANT && hi.type == SqlNode.CONSTANT) {
+        if (lo.type == ExpressionNode.CONSTANT && hi.type == ExpressionNode.CONSTANT) {
             long loMillis;
             long hiMillis;
 
@@ -526,7 +529,7 @@ final class WhereClauseParser {
         return false;
     }
 
-    private void analyzeNotListOfValues(CharSequence columnName, RecordMetadata m, SqlNode notNode) {
+    private void analyzeNotListOfValues(CharSequence columnName, RecordMetadata m, ExpressionNode notNode) {
         final int columnIndex = m.getColumnIndex(columnName);
 
         switch (m.getColumnType(columnIndex)) {
@@ -547,17 +550,17 @@ final class WhereClauseParser {
         if (model.keyColumn != null && keyExclNodes.size() > 0) {
             OUT:
             for (int i = 0, n = keyExclNodes.size(); i < n; i++) {
-                SqlNode parent = keyExclNodes.getQuick(i);
+                ExpressionNode parent = keyExclNodes.getQuick(i);
 
 
-                SqlNode node = Chars.equals("not", parent.token) ? parent.rhs : parent;
+                ExpressionNode node = Chars.equals("not", parent.token) ? parent.rhs : parent;
                 // this could either be '=' or 'in'
 
                 if (node.paramCount == 2) {
-                    SqlNode col;
-                    SqlNode val;
+                    ExpressionNode col;
+                    ExpressionNode val;
 
-                    if (node.lhs.type == SqlNode.LITERAL) {
+                    if (node.lhs.type == ExpressionNode.LITERAL) {
                         col = node.lhs;
                         val = node.rhs;
                     } else {
@@ -576,11 +579,11 @@ final class WhereClauseParser {
                 }
 
                 if (node.paramCount > 2) {
-                    SqlNode col = node.args.getQuick(node.paramCount - 1);
+                    ExpressionNode col = node.args.getQuick(node.paramCount - 1);
                     final CharSequence column = translator.translateAlias(col.token);
                     if (Chars.equals(column, model.keyColumn)) {
                         for (int j = node.paramCount - 2; j > -1; j--) {
-                            SqlNode val = node.args.getQuick(j);
+                            ExpressionNode val = node.args.getQuick(j);
                             model.excludeValue(val);
                             if (model.intrinsicValue == IntrinsicModel.FALSE) {
                                 break OUT;
@@ -595,7 +598,7 @@ final class WhereClauseParser {
         keyExclNodes.clear();
     }
 
-    private SqlNode collapseIntrinsicNodes(SqlNode node) {
+    private ExpressionNode collapseIntrinsicNodes(ExpressionNode node) {
         if (node == null || node.intrinsicValue == IntrinsicModel.TRUE) {
             return null;
         }
@@ -604,7 +607,7 @@ final class WhereClauseParser {
         return collapseNulls0(node);
     }
 
-    private SqlNode collapseNulls0(SqlNode node) {
+    private ExpressionNode collapseNulls0(ExpressionNode node) {
         if (node == null || node.intrinsicValue == IntrinsicModel.TRUE) {
             return null;
         }
@@ -619,7 +622,7 @@ final class WhereClauseParser {
         return node;
     }
 
-    IntrinsicModel extract(AliasTranslator translator, SqlNode node, RecordMetadata m, CharSequence preferredKeyColumn, int timestampIndex) throws SqlException {
+    IntrinsicModel extract(AliasTranslator translator, ExpressionNode node, RecordMetadata m, CharSequence preferredKeyColumn, int timestampIndex) throws SqlException {
         reset();
         this.timestamp = timestampIndex < 0 ? null : m.getColumnName(timestampIndex);
         this.preferredKeyColumn = preferredKeyColumn;
@@ -632,7 +635,7 @@ final class WhereClauseParser {
         if (removeAndIntrinsics(translator, model, node, m)) {
             return model;
         }
-        SqlNode root = node;
+        ExpressionNode root = node;
 
         while (!stack.isEmpty() || node != null) {
             if (node != null) {
@@ -653,11 +656,11 @@ final class WhereClauseParser {
         return model;
     }
 
-    private boolean isTimestamp(SqlNode n) {
+    private boolean isTimestamp(ExpressionNode n) {
         return timestamp != null && Chars.equals(timestamp, n.token);
     }
 
-    private boolean removeAndIntrinsics(AliasTranslator translator, IntrinsicModel model, SqlNode node, RecordMetadata m) throws SqlException {
+    private boolean removeAndIntrinsics(AliasTranslator translator, IntrinsicModel model, ExpressionNode node, RecordMetadata m) throws SqlException {
         switch (intrinsicOps.get(node.token)) {
             case INTRINCIC_OP_IN:
                 return analyzeIn(translator, model, node, m);

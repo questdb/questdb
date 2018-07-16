@@ -23,6 +23,7 @@
 
 package com.questdb.griffin;
 
+import com.questdb.griffin.model.ExpressionNode;
 import com.questdb.std.*;
 
 import java.util.ArrayDeque;
@@ -41,12 +42,12 @@ class ExpressionParser {
     private static final int BRANCH_LAMBDA = 7;
     private static final int BRANCH_CASE_CONTROL = 9;
     private static final CharSequenceIntHashMap caseKeywords = new CharSequenceIntHashMap();
-    private final Deque<SqlNode> opStack = new ArrayDeque<>();
+    private final Deque<ExpressionNode> opStack = new ArrayDeque<>();
     private final IntStack paramCountStack = new IntStack();
-    private final ObjectPool<SqlNode> sqlNodePool;
+    private final ObjectPool<ExpressionNode> sqlNodePool;
     private final SqlParser sqlParser;
 
-    ExpressionParser(ObjectPool<SqlNode> sqlNodePool, SqlParser sqlParser) {
+    ExpressionParser(ObjectPool<ExpressionNode> sqlNodePool, SqlParser sqlParser) {
         this.sqlNodePool = sqlNodePool;
         this.sqlParser = sqlParser;
     }
@@ -62,7 +63,7 @@ class ExpressionParser {
             int braceCount = 0;
             int caseCount = 0;
 
-            SqlNode node;
+            ExpressionNode node;
             CharSequence tok;
             char thisChar;
             int prevBranch;
@@ -110,7 +111,7 @@ class ExpressionParser {
                         paramCount = 0;
                         // precedence must be max value to make sure control node isn't
                         // consumed as parameter to a greedy function
-                        opStack.push(sqlNodePool.next().of(SqlNode.CONTROL, "(", Integer.MAX_VALUE, lexer.lastTokenPosition()));
+                        opStack.push(sqlNodePool.next().of(ExpressionNode.CONTROL, "(", Integer.MAX_VALUE, lexer.lastTokenPosition()));
                         break;
 
                     case ')':
@@ -135,9 +136,9 @@ class ExpressionParser {
                         }
 
                         // enable operation or literal absorb parameters
-                        if ((node = opStack.peek()) != null && (node.type == SqlNode.LITERAL || (node.type == SqlNode.SET_OPERATION))) {
+                        if ((node = opStack.peek()) != null && (node.type == ExpressionNode.LITERAL || (node.type == ExpressionNode.SET_OPERATION))) {
                             node.paramCount = (prevBranch == BRANCH_LEFT_BRACE ? 0 : paramCount + 1) + (node.paramCount == 2 ? 1 : 0);
-                            node.type = SqlNode.FUNCTION;
+                            node.type = ExpressionNode.FUNCTION;
                             listener.onNode(node);
                             opStack.poll();
                         }
@@ -156,20 +157,20 @@ class ExpressionParser {
 
                             // precedence must be max value to make sure control node isn't
                             // consumed as parameter to a greedy function
-                            opStack.push(sqlNodePool.next().of(SqlNode.CONTROL, "|", Integer.MAX_VALUE, lexer.lastTokenPosition()));
+                            opStack.push(sqlNodePool.next().of(ExpressionNode.CONTROL, "|", Integer.MAX_VALUE, lexer.lastTokenPosition()));
 
 
                             int pos = lexer.lastTokenPosition();
                             // allow sub-query to parse "select" keyword
                             lexer.unparse();
 
-                            SqlNode n = sqlNodePool.next().of(SqlNode.LAMBDA, null, 0, pos);
+                            ExpressionNode n = sqlNodePool.next().of(ExpressionNode.LAMBDA, null, 0, pos);
                             n.queryModel = sqlParser.parseSubQuery(lexer);
                             listener.onNode(n);
 
                             // pop our control node if sub-query hasn't done it
-                            SqlNode control = opStack.peek();
-                            if (control != null && control.type == SqlNode.CONTROL && Chars.equals(control.token, '|')) {
+                            ExpressionNode control = opStack.peek();
+                            if (control != null && control.type == ExpressionNode.CONTROL && Chars.equals(control.token, '|')) {
                                 opStack.poll();
                             }
 
@@ -194,7 +195,7 @@ class ExpressionParser {
                         if (nonLiteralBranches.excludes(thisBranch)) {
                             thisBranch = BRANCH_CONSTANT;
                             // If the token is a number, then add it to the output queue.
-                            listener.onNode(sqlNodePool.next().of(SqlNode.CONSTANT, GenericLexer.immutableOf(tok), 0, lexer.lastTokenPosition()));
+                            listener.onNode(sqlNodePool.next().of(ExpressionNode.CONSTANT, GenericLexer.immutableOf(tok), 0, lexer.lastTokenPosition()));
                             break;
                         } else {
                             lexer.unparse();
@@ -210,7 +211,7 @@ class ExpressionParser {
                                 || Chars.equalsIgnoreCase(tok, "true") || Chars.equalsIgnoreCase(tok, "false")) {
                             thisBranch = BRANCH_CONSTANT;
                             // If the token is a number, then add it to the output queue.
-                            listener.onNode(sqlNodePool.next().of(SqlNode.CONSTANT, GenericLexer.immutableOf(tok), 0, lexer.lastTokenPosition()));
+                            listener.onNode(sqlNodePool.next().of(ExpressionNode.CONSTANT, GenericLexer.immutableOf(tok), 0, lexer.lastTokenPosition()));
                             break;
                         }
                     default:
@@ -252,7 +253,7 @@ class ExpressionParser {
                                 break;
                         }
 
-                        SqlNode other;
+                        ExpressionNode other;
                         // UNARY operators must never pop BINARY ones regardless of precedence
                         // this is to maintain correctness of -a^b
                         while ((other = opStack.peek()) != null) {
@@ -266,7 +267,7 @@ class ExpressionParser {
                             }
                         }
                         node = sqlNodePool.next().of(
-                                op.type == OperatorExpression.SET ? SqlNode.SET_OPERATION : SqlNode.OPERATION,
+                                op.type == OperatorExpression.SET ? ExpressionNode.SET_OPERATION : ExpressionNode.OPERATION,
                                 op.token,
                                 op.precedence,
                                 lexer.lastTokenPosition()
@@ -290,7 +291,7 @@ class ExpressionParser {
                             caseCount++;
                             paramCountStack.push(paramCount);
                             paramCount = 0;
-                            opStack.push(sqlNodePool.next().of(SqlNode.FUNCTION, GenericLexer.immutableOf(tok), Integer.MAX_VALUE, lexer.lastTokenPosition()));
+                            opStack.push(sqlNodePool.next().of(ExpressionNode.FUNCTION, GenericLexer.immutableOf(tok), Integer.MAX_VALUE, lexer.lastTokenPosition()));
                             continue;
                         }
 
@@ -363,7 +364,7 @@ class ExpressionParser {
                         }
 
                         // If the token is a function token, then push it onto the stack.
-                        opStack.push(sqlNodePool.next().of(SqlNode.LITERAL, GenericLexer.immutableOf(tok), Integer.MIN_VALUE, lexer.lastTokenPosition()));
+                        opStack.push(sqlNodePool.next().of(ExpressionNode.LITERAL, GenericLexer.immutableOf(tok), Integer.MIN_VALUE, lexer.lastTokenPosition()));
                     } else {
                         // literal can be at start of input, after a bracket or part of an operator
                         // all other cases are illegal and will be considered end-of-input
@@ -383,7 +384,7 @@ class ExpressionParser {
                     throw SqlException.$(node.position, "unbalanced 'case'");
                 }
 
-                if (node.type == SqlNode.CONTROL) {
+                if (node.type == ExpressionNode.CONTROL) {
                     // break on any other control node to allow parser to be reenterable
                     // put control node back on stack because we don't own it
                     opStack.push(node);

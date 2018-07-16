@@ -31,6 +31,7 @@ import com.questdb.common.ColumnType;
 import com.questdb.common.SymbolTable;
 import com.questdb.griffin.engine.functions.bind.BindVariableService;
 import com.questdb.griffin.engine.table.*;
+import com.questdb.griffin.model.ExpressionNode;
 import com.questdb.griffin.model.IntrinsicModel;
 import com.questdb.griffin.model.QueryColumn;
 import com.questdb.griffin.model.QueryModel;
@@ -58,7 +59,7 @@ public class SqlCodeGenerator {
     }
 
     private RecordMetadata copyMetadata(RecordMetadata that) {
-        // todo: this metadata is ummutable. Ideally we shouldn't be creating metadata for the same table over and over
+        // todo: this metadata is immutable. Ideally we shouldn't be creating metadata for the same table over and over
         return GenericRecordMetadata.copyOf(that);
     }
 
@@ -77,42 +78,16 @@ public class SqlCodeGenerator {
         return function.getRecordCursorFactory(null);
     }
 
-    private RecordCursorFactory generateNoSelect(QueryModel model, BindVariableService bindVariableService) throws SqlException {
-        SqlNode tableName = model.getTableName();
-        if (tableName != null) {
-            if (tableName.type == SqlNode.FUNCTION) {
-                return generateFunctionQuery(model);
-            } else {
-                return generateTableQuery(model, bindVariableService);
-            }
-
-        }
-        assert model.getNestedModel() != null;
-        return generateQuery(model.getNestedModel(), bindVariableService);
-    }
-
-    private RecordCursorFactory generateQuery(QueryModel model, BindVariableService bindVariableService) throws SqlException {
-        switch (model.getSelectModelType()) {
-            case QueryModel.SELECT_MODEL_CHOOSE:
-                return generateSelectChoose(model, bindVariableService);
-            case QueryModel.SELECT_MODEL_GROUP_BY:
-                return generateSelectGroupBy(model, bindVariableService);
-            case QueryModel.SELECT_MODEL_VIRTUAL:
-                return generateSelectVirtual(model, bindVariableService);
-            case QueryModel.SELECT_MODEL_ANALYTIC:
-                return generateSelectAnalytic(model, bindVariableService);
-            default:
-                return generateNoSelect(model, bindVariableService);
-        }
-    }
-
-    private RecordCursorFactory generateSelectAnalytic(QueryModel model, BindVariableService bindVariableService) throws SqlException {
-        assert model.getNestedModel() != null;
-        return generateQuery(model.getNestedModel(), bindVariableService);
-    }
-
     @NotNull
-    private RecordCursorFactory generateLatestByQuery(QueryModel model, TableReader reader, RecordMetadata metadata, int latestByIndex, String tableName, IntrinsicModel intrinsicModel, Function filter) {
+    private RecordCursorFactory generateLatestByQuery(
+            QueryModel model,
+            TableReader reader,
+            RecordMetadata metadata,
+            int latestByIndex,
+            String tableName,
+            IntrinsicModel intrinsicModel,
+            Function filter,
+            BindVariableService bindVariableService) throws SqlException {
         final boolean indexed = metadata.isColumnIndexed(latestByIndex);
         final DataFrameCursorFactory dataFrameCursorFactory;
         if (intrinsicModel.intervals != null) {
@@ -201,10 +176,20 @@ public class SqlCodeGenerator {
                         filter, deferredSymbols
                 );
             }
-            // we have "latest by" column values, but no index
-            final SymbolMapReader symbolMapReader = reader.getSymbolMapReader(latestByIndex);
+            if (intrinsicModel.keySubQuery != null) {
+                return new LatestBySubQueryRecordCursorFactory(
+                        metadata,
+                        dataFrameCursorFactory,
+                        latestByIndex,
+                        generate(intrinsicModel.keySubQuery, bindVariableService),
+                        filter
+                );
+            }
 
             assert nKeyValues > 0;
+
+            // we have "latest by" column values, but no index
+            final SymbolMapReader symbolMapReader = reader.getSymbolMapReader(latestByIndex);
 
             if (nKeyValues > 1) {
 
@@ -225,7 +210,7 @@ public class SqlCodeGenerator {
                         }
                         deferredSymbols.add(Chars.toString(symbol));
                     } else {
-                        symbolKeys.add(symbolKey);
+                        symbolKeys.add(symbolKey + 1);
                     }
                 }
 
@@ -307,7 +292,36 @@ public class SqlCodeGenerator {
         );
     }
 
-    private RecordCursorFactory generateSelectGroupBy(QueryModel model, BindVariableService bindVariableService) throws SqlException {
+    private RecordCursorFactory generateNoSelect(QueryModel model, BindVariableService bindVariableService) throws SqlException {
+        ExpressionNode tableName = model.getTableName();
+        if (tableName != null) {
+            if (tableName.type == ExpressionNode.FUNCTION) {
+                return generateFunctionQuery(model);
+            } else {
+                return generateTableQuery(model, bindVariableService);
+            }
+
+        }
+        assert model.getNestedModel() != null;
+        return generateQuery(model.getNestedModel(), bindVariableService);
+    }
+
+    private RecordCursorFactory generateQuery(QueryModel model, BindVariableService bindVariableService) throws SqlException {
+        switch (model.getSelectModelType()) {
+            case QueryModel.SELECT_MODEL_CHOOSE:
+                return generateSelectChoose(model, bindVariableService);
+            case QueryModel.SELECT_MODEL_GROUP_BY:
+                return generateSelectGroupBy(model, bindVariableService);
+            case QueryModel.SELECT_MODEL_VIRTUAL:
+                return generateSelectVirtual(model, bindVariableService);
+            case QueryModel.SELECT_MODEL_ANALYTIC:
+                return generateSelectAnalytic(model, bindVariableService);
+            default:
+                return generateNoSelect(model, bindVariableService);
+        }
+    }
+
+    private RecordCursorFactory generateSelectAnalytic(QueryModel model, BindVariableService bindVariableService) throws SqlException {
         assert model.getNestedModel() != null;
         return generateQuery(model.getNestedModel(), bindVariableService);
     }
@@ -317,7 +331,7 @@ public class SqlCodeGenerator {
         final RecordCursorFactory factory = generateQuery(model.getNestedModel(), bindVariableService);
         final RecordMetadata metadata = factory.getMetadata();
         final int selectColumnCount = model.getColumns().size();
-        final SqlNode timestamp = model.getTimestamp();
+        final ExpressionNode timestamp = model.getTimestamp();
 
         boolean entity;
         // the model is considered entity when it doesn't add any value to its nested model
@@ -366,6 +380,11 @@ public class SqlCodeGenerator {
         return new SelectedRecordCursorFactory(selectMetadata, columnCrossIndex, factory);
     }
 
+    private RecordCursorFactory generateSelectGroupBy(QueryModel model, BindVariableService bindVariableService) throws SqlException {
+        assert model.getNestedModel() != null;
+        return generateQuery(model.getNestedModel(), bindVariableService);
+    }
+
     private RecordCursorFactory generateSelectVirtual(QueryModel model, BindVariableService bindVariableService) throws SqlException {
         assert model.getNestedModel() != null;
         RecordCursorFactory factory = generateQuery(model.getNestedModel(), bindVariableService);
@@ -386,8 +405,8 @@ public class SqlCodeGenerator {
 
         for (int i = 0; i < columnCount; i++) {
             final QueryColumn column = model.getColumns().getQuick(i);
-            SqlNode node = column.getAst();
-            if (timestampColumn != null && node.type == SqlNode.LITERAL && Chars.equals(timestampColumn, node.token)) {
+            ExpressionNode node = column.getAst();
+            if (timestampColumn != null && node.type == ExpressionNode.LITERAL && Chars.equals(timestampColumn, node.token)) {
                 virtualMetadata.setTimestampIndex(i);
             }
 
@@ -408,8 +427,8 @@ public class SqlCodeGenerator {
 
 //        applyLimit(model);
 
-        final SqlNode latestBy = model.getLatestBy();
-        final SqlNode whereClause = model.getWhereClause();
+        final ExpressionNode latestBy = model.getLatestBy();
+        final ExpressionNode whereClause = model.getWhereClause();
 
         try (TableReader reader = engine.getReader(model.getTableName().token, model.getTableVersion())) {
             final RecordMetadata metadata = reader.getMetadata();
@@ -429,7 +448,7 @@ public class SqlCodeGenerator {
 
                 final int timestampIndex;
 
-                final SqlNode timestamp = model.getTimestamp();
+                final ExpressionNode timestamp = model.getTimestamp();
                 if (timestamp != null) {
                     timestampIndex = metadata.getColumnIndexQuiet(timestamp.token);
                 } else {
@@ -467,7 +486,15 @@ public class SqlCodeGenerator {
                 DataFrameCursorFactory dfcFactory;
 
                 if (latestByIndex > -1) {
-                    return generateLatestByQuery(model, reader, metadata, latestByIndex, tableName, intrinsicModel, filter);
+                    return generateLatestByQuery(
+                            model,
+                            reader,
+                            metadata,
+                            latestByIndex,
+                            tableName,
+                            intrinsicModel,
+                            filter,
+                            bindVariableService);
                 }
 
                 if (intrinsicModel.intervals != null) {

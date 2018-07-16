@@ -23,7 +23,6 @@
 
 package com.questdb.griffin.model;
 
-import com.questdb.griffin.SqlNode;
 import com.questdb.std.*;
 import com.questdb.std.str.CharSink;
 
@@ -31,17 +30,17 @@ public class InsertAsSelectModel implements ExecutionModel, Mutable, Sinkable {
     public static final ObjectFactory<InsertAsSelectModel> FACTORY = InsertAsSelectModel::new;
     private final CharSequenceHashSet columnSet = new CharSequenceHashSet();
     private final IntList columnPositions = new IntList();
-    private SqlNode tableName;
+    private ExpressionNode tableName;
     private QueryModel queryModel;
 
     private InsertAsSelectModel() {
     }
 
-    public SqlNode getTableName() {
+    public ExpressionNode getTableName() {
         return tableName;
     }
 
-    public void setTableName(SqlNode tableName) {
+    public void setTableName(ExpressionNode tableName) {
         this.tableName = tableName;
     }
 

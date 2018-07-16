@@ -23,14 +23,13 @@
 
 package com.questdb.griffin.model;
 
-import com.questdb.griffin.SqlNode;
 import com.questdb.std.Mutable;
 import com.questdb.std.ObjectFactory;
 
 public class ColumnCastModel implements Mutable {
     public static final ObjectFactory<ColumnCastModel> FACTORY = ColumnCastModel::new;
 
-    private SqlNode name;
+    private ExpressionNode name;
     private int columnType;
     private int columnTypePos;
     private int columnNamePos;
@@ -56,11 +55,11 @@ public class ColumnCastModel implements Mutable {
         return columnTypePos;
     }
 
-    public SqlNode getName() {
+    public ExpressionNode getName() {
         return name;
     }
 
-    public void setName(SqlNode name) {
+    public void setName(ExpressionNode name) {
         this.name = name;
     }
 

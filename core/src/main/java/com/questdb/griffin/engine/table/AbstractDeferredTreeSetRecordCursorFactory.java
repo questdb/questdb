@@ -23,28 +23,54 @@
 
 package com.questdb.griffin.engine.table;
 
+import com.questdb.cairo.sql.DataFrameCursor;
 import com.questdb.cairo.sql.DataFrameCursorFactory;
-import com.questdb.cairo.sql.Function;
+import com.questdb.cairo.sql.RecordCursor;
 import com.questdb.cairo.sql.RecordMetadata;
+import com.questdb.common.SymbolTable;
 import com.questdb.std.CharSequenceHashSet;
 import com.questdb.std.IntHashSet;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-public class LatestByValuesIndexedFilteredRecordCursorFactory extends AbstractDeferredTreeSetRecordCursorFactory {
+public class AbstractDeferredTreeSetRecordCursorFactory extends AbstractTreeSetRecordCursorFactory {
+    private final int columnIndex;
+    // this instance is shared between factory and cursor
+    // factory will be resolving symbols for cursor and if successful
+    // symbol keys will be added to this hash set
+    private final IntHashSet symbolKeys;
+    private final CharSequenceHashSet deferredSymbols;
 
-    public LatestByValuesIndexedFilteredRecordCursorFactory(
+    public AbstractDeferredTreeSetRecordCursorFactory(
             @NotNull RecordMetadata metadata,
             @NotNull DataFrameCursorFactory dataFrameCursorFactory,
             int columnIndex,
             @NotNull IntHashSet symbolKeys,
-            @Nullable Function filter,
             @Nullable CharSequenceHashSet deferredSymbols) {
-        super(metadata, dataFrameCursorFactory, columnIndex, symbolKeys, deferredSymbols);
-        if (filter != null) {
-            this.cursor = new LatestByValuesIndexedFilteredRecordCursor(columnIndex, treeSet, symbolKeys, filter);
-        } else {
-            this.cursor = new LatestByValuesIndexedRecordCursor(columnIndex, treeSet, symbolKeys);
+        super(metadata, dataFrameCursorFactory);
+        this.columnIndex = columnIndex;
+        this.symbolKeys = symbolKeys;
+        this.deferredSymbols = deferredSymbols;
+    }
+
+    @Override
+    public RecordCursor getCursor() {
+        DataFrameCursor frameCursor = dataFrameCursorFactory.getCursor();
+        if (deferredSymbols != null && deferredSymbols.size() > 0) {
+            SymbolTable symbolTable = frameCursor.getSymbolTable(columnIndex);
+            for (int i = 0, n = deferredSymbols.size(); i < n; ) {
+                CharSequence symbol = deferredSymbols.get(i);
+                int symbolKey = symbolTable.getQuick(symbol);
+                if (symbolKey != SymbolTable.VALUE_NOT_FOUND) {
+                    symbolKeys.add(symbolKey + 1);
+                    deferredSymbols.removeAt(0);
+                    n--;
+                } else {
+                    i++;
+                }
+            }
         }
+        cursor.of(frameCursor);
+        return cursor;
     }
 }

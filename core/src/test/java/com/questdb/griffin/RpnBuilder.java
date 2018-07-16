@@ -23,13 +23,14 @@
 
 package com.questdb.griffin;
 
+import com.questdb.griffin.model.ExpressionNode;
 import com.questdb.std.str.StringSink;
 
 public class RpnBuilder implements ExpressionParserListener {
     private final StringSink sink = new StringSink();
 
     @Override
-    public void onNode(SqlNode node) {
+    public void onNode(ExpressionNode node) {
         if (node.queryModel != null) {
             sink.put('(').put(node.queryModel).put(')');
         } else {

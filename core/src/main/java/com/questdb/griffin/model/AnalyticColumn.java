@@ -23,21 +23,20 @@
 
 package com.questdb.griffin.model;
 
-import com.questdb.griffin.SqlNode;
 import com.questdb.std.IntList;
 import com.questdb.std.ObjList;
 import com.questdb.std.ObjectFactory;
 
 public final class AnalyticColumn extends QueryColumn {
     public final static ObjectFactory<AnalyticColumn> FACTORY = AnalyticColumn::new;
-    private final ObjList<SqlNode> partitionBy = new ObjList<>(2);
-    private final ObjList<SqlNode> orderBy = new ObjList<>(2);
+    private final ObjList<ExpressionNode> partitionBy = new ObjList<>(2);
+    private final ObjList<ExpressionNode> orderBy = new ObjList<>(2);
     private final IntList orderByDirection = new IntList(2);
 
     private AnalyticColumn() {
     }
 
-    public void addOrderBy(SqlNode node, int direction) {
+    public void addOrderBy(ExpressionNode node, int direction) {
         orderBy.add(node);
         orderByDirection.add(direction);
     }
@@ -50,11 +49,11 @@ public final class AnalyticColumn extends QueryColumn {
         orderByDirection.clear();
     }
 
-    public ObjList<SqlNode> getOrderBy() {
+    public ObjList<ExpressionNode> getOrderBy() {
         return orderBy;
     }
 
-    public ObjList<SqlNode> getPartitionBy() {
+    public ObjList<ExpressionNode> getPartitionBy() {
         return partitionBy;
     }
 
@@ -63,7 +62,7 @@ public final class AnalyticColumn extends QueryColumn {
     }
 
     @Override
-    public AnalyticColumn of(CharSequence alias, SqlNode ast) {
+    public AnalyticColumn of(CharSequence alias, ExpressionNode ast) {
         return (AnalyticColumn) super.of(alias, ast);
     }
 }

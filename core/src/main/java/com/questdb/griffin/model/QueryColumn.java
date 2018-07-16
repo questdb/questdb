@@ -23,14 +23,13 @@
 
 package com.questdb.griffin.model;
 
-import com.questdb.griffin.SqlNode;
 import com.questdb.std.Mutable;
 import com.questdb.std.ObjectFactory;
 
 public class QueryColumn implements Mutable {
     public final static ObjectFactory<QueryColumn> FACTORY = QueryColumn::new;
     private CharSequence alias;
-    private SqlNode ast;
+    private ExpressionNode ast;
 
     protected QueryColumn() {
     }
@@ -45,7 +44,7 @@ public class QueryColumn implements Mutable {
         return alias;
     }
 
-    public SqlNode getAst() {
+    public ExpressionNode getAst() {
         return ast;
     }
 
@@ -53,7 +52,7 @@ public class QueryColumn implements Mutable {
         return alias != null ? alias : ast.token;
     }
 
-    public QueryColumn of(CharSequence alias, SqlNode ast) {
+    public QueryColumn of(CharSequence alias, ExpressionNode ast) {
         this.alias = alias;
         this.ast = ast;
         return this;

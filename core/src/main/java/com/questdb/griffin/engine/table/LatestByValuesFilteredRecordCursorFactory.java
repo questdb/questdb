@@ -23,25 +23,15 @@
 
 package com.questdb.griffin.engine.table;
 
-import com.questdb.cairo.AbstractRecordCursorFactory;
-import com.questdb.cairo.sql.*;
-import com.questdb.common.SymbolTable;
-import com.questdb.griffin.engine.LongTreeSet;
+import com.questdb.cairo.sql.DataFrameCursorFactory;
+import com.questdb.cairo.sql.Function;
+import com.questdb.cairo.sql.RecordMetadata;
 import com.questdb.std.CharSequenceHashSet;
 import com.questdb.std.IntHashSet;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-public class LatestByValuesFilteredRecordCursorFactory extends AbstractRecordCursorFactory {
-    private final DataFrameCursorFactory dataFrameCursorFactory;
-    private final AbstractDataFrameRecordCursor cursor;
-    private final LongTreeSet treeSet;
-    private final int columnIndex;
-    // this instance is shared between factory and cursor
-    // factory will be resolving symbols for cursor and if successful
-    // symbol keys will be added to this hash set
-    private final IntHashSet symbolKeys;
-    private final CharSequenceHashSet deferredSymbols;
+public class LatestByValuesFilteredRecordCursorFactory extends AbstractDeferredTreeSetRecordCursorFactory {
 
     public LatestByValuesFilteredRecordCursorFactory(
             @NotNull RecordMetadata metadata,
@@ -50,43 +40,11 @@ public class LatestByValuesFilteredRecordCursorFactory extends AbstractRecordCur
             @NotNull IntHashSet symbolKeys,
             @Nullable Function filter,
             @Nullable CharSequenceHashSet deferredSymbols) {
-        super(metadata);
-        //todo: derive page size from key count for symbol and configuration
-        this.treeSet = new LongTreeSet(4 * 1024);
+        super(metadata, dataFrameCursorFactory, columnIndex, symbolKeys, deferredSymbols);
         if (filter != null) {
             this.cursor = new LatestByValuesFilteredRecordCursor(columnIndex, treeSet, symbolKeys, filter);
         } else {
             this.cursor = new LatestByValuesRecordCursor(columnIndex, treeSet, symbolKeys);
         }
-        this.dataFrameCursorFactory = dataFrameCursorFactory;
-        this.columnIndex = columnIndex;
-        this.symbolKeys = symbolKeys;
-        this.deferredSymbols = deferredSymbols;
-    }
-
-    @Override
-    public void close() {
-        treeSet.close();
-    }
-
-    @Override
-    public RecordCursor getCursor() {
-        DataFrameCursor frameCursor = dataFrameCursorFactory.getCursor();
-        if (deferredSymbols != null && deferredSymbols.size() > 0) {
-            SymbolTable symbolTable = frameCursor.getSymbolTable(columnIndex);
-            for (int i = 0, n = deferredSymbols.size(); i < n; ) {
-                CharSequence symbol = deferredSymbols.get(i);
-                int symbolKey = symbolTable.getQuick(symbol);
-                if (symbolKey != SymbolTable.VALUE_NOT_FOUND) {
-                    symbolKeys.add(symbolKey);
-                    deferredSymbols.removeAt(0);
-                    n--;
-                } else {
-                    i++;
-                }
-            }
-        }
-        cursor.of(frameCursor);
-        return cursor;
     }
 }

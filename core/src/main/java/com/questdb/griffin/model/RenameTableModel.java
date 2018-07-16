@@ -23,15 +23,14 @@
 
 package com.questdb.griffin.model;
 
-import com.questdb.griffin.SqlNode;
 import com.questdb.std.Mutable;
 import com.questdb.std.ObjectFactory;
 
 public class RenameTableModel implements Mutable, ExecutionModel {
     public static final ObjectFactory<RenameTableModel> FACTORY = RenameTableModel::new;
 
-    private SqlNode from;
-    private SqlNode to;
+    private ExpressionNode from;
+    private ExpressionNode to;
 
     private RenameTableModel() {
     }
@@ -41,11 +40,11 @@ public class RenameTableModel implements Mutable, ExecutionModel {
         from = to = null;
     }
 
-    public SqlNode getFrom() {
+    public ExpressionNode getFrom() {
         return from;
     }
 
-    public void setFrom(SqlNode from) {
+    public void setFrom(ExpressionNode from) {
         this.from = from;
     }
 
@@ -54,11 +53,11 @@ public class RenameTableModel implements Mutable, ExecutionModel {
         return ExecutionModel.RENAME_TABLE;
     }
 
-    public SqlNode getTo() {
+    public ExpressionNode getTo() {
         return to;
     }
 
-    public void setTo(SqlNode to) {
+    public void setTo(ExpressionNode to) {
         this.to = to;
     }
 }

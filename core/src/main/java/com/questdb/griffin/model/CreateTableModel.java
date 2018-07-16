@@ -24,7 +24,6 @@
 package com.questdb.griffin.model;
 
 import com.questdb.common.ColumnType;
-import com.questdb.griffin.SqlNode;
 import com.questdb.std.*;
 import com.questdb.std.str.CharSink;
 
@@ -36,10 +35,10 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable {
     private final LongList columnBits = new LongList();
     private final ObjList<CharSequence> columnNames = new ObjList<>();
     private final CharSequenceIntHashMap columnNameIndexMap = new CharSequenceIntHashMap();
-    private SqlNode name;
+    private ExpressionNode name;
     private QueryModel queryModel;
-    private SqlNode timestamp;
-    private SqlNode partitionBy;
+    private ExpressionNode timestamp;
+    private ExpressionNode partitionBy;
 
     private CreateTableModel() {
     }
@@ -116,19 +115,19 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable {
         return ExecutionModel.CREATE_TABLE;
     }
 
-    public SqlNode getName() {
+    public ExpressionNode getName() {
         return name;
     }
 
-    public void setName(SqlNode name) {
+    public void setName(ExpressionNode name) {
         this.name = name;
     }
 
-    public SqlNode getPartitionBy() {
+    public ExpressionNode getPartitionBy() {
         return partitionBy;
     }
 
-    public void setPartitionBy(SqlNode partitionBy) {
+    public void setPartitionBy(ExpressionNode partitionBy) {
         this.partitionBy = partitionBy;
     }
 
@@ -148,11 +147,11 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable {
         return (int) (columnBits.getQuick(index * 2) >> 32);
     }
 
-    public SqlNode getTimestamp() {
+    public ExpressionNode getTimestamp() {
         return timestamp;
     }
 
-    public void setTimestamp(SqlNode timestamp) {
+    public void setTimestamp(ExpressionNode timestamp) {
         this.timestamp = timestamp;
     }
 

@@ -32,10 +32,7 @@ import com.questdb.cairo.sql.Function;
 import com.questdb.cairo.sql.RecordMetadata;
 import com.questdb.common.ColumnType;
 import com.questdb.griffin.engine.functions.bind.BindVariableService;
-import com.questdb.griffin.model.AnalyticColumn;
-import com.questdb.griffin.model.JoinContext;
-import com.questdb.griffin.model.QueryColumn;
-import com.questdb.griffin.model.QueryModel;
+import com.questdb.griffin.model.*;
 import com.questdb.ql.ops.FunctionFactories;
 import com.questdb.std.*;
 import com.questdb.std.str.FlyweightCharSequence;
@@ -67,7 +64,7 @@ class SqlOptimiser {
     private static final int JOIN_OP_REGEX = 4;
     private final CairoEngine engine;
     private final FlyweightCharSequence tableLookupSequence = new FlyweightCharSequence();
-    private final ObjectPool<SqlNode> sqlNodePool;
+    private final ObjectPool<ExpressionNode> sqlNodePool;
     private final CharacterStore characterStore;
     private final ObjList<JoinContext> joinClausesSwap1 = new ObjList<>();
     private final ObjList<JoinContext> joinClausesSwap2 = new ObjList<>();
@@ -84,12 +81,12 @@ class SqlOptimiser {
     private final IntList literalCollectorBIndexes = new IntList();
     private final ObjList<CharSequence> literalCollectorBNames = new ObjList<>();
     private final PostOrderTreeTraversalAlgo traversalAlgo;
-    private final ArrayDeque<SqlNode> sqlNodeStack = new ArrayDeque<>();
+    private final ArrayDeque<ExpressionNode> sqlNodeStack = new ArrayDeque<>();
     private final ObjectPool<JoinContext> contextPool = new ObjectPool<>(JoinContext.FACTORY, 16);
     private final IntHashSet deletedContexts = new IntHashSet();
     private final CharSequenceObjHashMap<CharSequence> constNameToToken = new CharSequenceObjHashMap<>();
     private final CharSequenceIntHashMap constNameToIndex = new CharSequenceIntHashMap();
-    private final CharSequenceObjHashMap<SqlNode> constNameToNode = new CharSequenceObjHashMap<>();
+    private final CharSequenceObjHashMap<ExpressionNode> constNameToNode = new CharSequenceObjHashMap<>();
     private final IntList tempCrossIndexes = new IntList();
     private final IntList clausesToSteal = new IntList();
     private final ObjectPool<IntList> intListPool = new ObjectPool<>(IntList::new, 16);
@@ -104,7 +101,7 @@ class SqlOptimiser {
     SqlOptimiser(
             CairoEngine engine,
             CharacterStore characterStore,
-            ObjectPool<SqlNode> sqlNodePool,
+            ObjectPool<ExpressionNode> sqlNodePool,
             ObjectPool<QueryColumn> queryColumnPool,
             ObjectPool<QueryModel> queryModelPool,
             PostOrderTreeTraversalAlgo traversalAlgo,
@@ -118,7 +115,7 @@ class SqlOptimiser {
         this.functionParser = functionParser;
     }
 
-    private static void assertNotNull(SqlNode node, int position, String message) throws SqlException {
+    private static void assertNotNull(ExpressionNode node, int position, String message) throws SqlException {
         if (node == null) {
             throw SqlException.$(position, message);
         }
@@ -143,7 +140,7 @@ class SqlOptimiser {
         translatingModel.addColumn(column);
     }
 
-    private void addFilterOrEmitJoin(QueryModel parent, int idx, int ai, CharSequence an, SqlNode ao, int bi, CharSequence bn, SqlNode bo) {
+    private void addFilterOrEmitJoin(QueryModel parent, int idx, int ai, CharSequence an, ExpressionNode ao, int bi, CharSequence bn, ExpressionNode bo) {
         if (ai == bi && Chars.equals(an, bn)) {
             deletedContexts.add(idx);
             return;
@@ -151,7 +148,7 @@ class SqlOptimiser {
 
         if (ai == bi) {
             // (same table)
-            SqlNode node = sqlNodePool.next().of(SqlNode.OPERATION, "=", 0, 0);
+            ExpressionNode node = sqlNodePool.next().of(ExpressionNode.OPERATION, "=", 0, 0);
             node.paramCount = 2;
             node.lhs = ao;
             node.rhs = bo;
@@ -204,7 +201,7 @@ class SqlOptimiser {
                 for (int k = 0, kn = jc.bNames.size(); k < kn; k++) {
                     CharSequence name = jc.bNames.getQuick(k);
                     if (constNameToIndex.get(name) == jc.bIndexes.getQuick(k)) {
-                        SqlNode node = sqlNodePool.next().of(SqlNode.OPERATION, constNameToToken.get(name), 0, 0);
+                        ExpressionNode node = sqlNodePool.next().of(ExpressionNode.OPERATION, constNameToToken.get(name), 0, 0);
                         node.lhs = jc.aNodes.getQuick(k);
                         node.rhs = constNameToNode.get(name);
                         node.paramCount = 2;
@@ -215,11 +212,11 @@ class SqlOptimiser {
         }
     }
 
-    private void addWhereNode(QueryModel model, int joinModelIndex, SqlNode node) {
+    private void addWhereNode(QueryModel model, int joinModelIndex, ExpressionNode node) {
         addWhereNode(model.getJoinModels().getQuick(joinModelIndex), node);
     }
 
-    private void addWhereNode(QueryModel model, SqlNode node) {
+    private void addWhereNode(QueryModel model, ExpressionNode node) {
         if (model.getColumns().size() > 0) {
             model.getNestedModel().setWhereClause(concatFilters(model.getNestedModel().getWhereClause(), node));
         } else {
@@ -242,7 +239,7 @@ class SqlOptimiser {
                     if (jc.aIndexes.getQuick(k) != index) {
                         int idx = jc.aIndexes.getQuick(k);
                         CharSequence name = jc.aNames.getQuick(k);
-                        SqlNode node = jc.aNodes.getQuick(k);
+                        ExpressionNode node = jc.aNodes.getQuick(k);
 
                         jc.aIndexes.setQuick(k, jc.bIndexes.getQuick(k));
                         jc.aNames.setQuick(k, jc.bNames.getQuick(k));
@@ -258,7 +255,7 @@ class SqlOptimiser {
         }
     }
 
-    private void analyseEquals(QueryModel parent, SqlNode node) throws SqlException {
+    private void analyseEquals(QueryModel parent, ExpressionNode node) throws SqlException {
         traverseNamesAndIndices(parent, node);
 
         int aSize = literalCollectorAIndexes.size();
@@ -332,7 +329,7 @@ class SqlOptimiser {
         }
     }
 
-    private void analyseRegex(QueryModel parent, SqlNode node) throws SqlException {
+    private void analyseRegex(QueryModel parent, ExpressionNode node) throws SqlException {
         traverseNamesAndIndices(parent, node);
 
         if (literalCollector.nullCount == 0) {
@@ -354,7 +351,7 @@ class SqlOptimiser {
         nullCounts.clear();
 
         literalCollector.withModel(parent);
-        ObjList<SqlNode> filterNodes = parent.getParsedWhere();
+        ObjList<ExpressionNode> filterNodes = parent.getParsedWhere();
         // collect table indexes from each part of global filter
         int pc = filterNodes.size();
         for (int i = 0; i < pc; i++) {
@@ -427,18 +424,18 @@ class SqlOptimiser {
     }
 
     private void collectAlias(QueryModel parent, int modelIndex, QueryModel model) throws SqlException {
-        final SqlNode alias = model.getAlias() != null ? model.getAlias() : model.getTableName();
+        final ExpressionNode alias = model.getAlias() != null ? model.getAlias() : model.getTableName();
         if (parent.addAliasIndex(alias, modelIndex)) {
             return;
         }
         throw SqlException.position(alias.position).put("duplicate table or alias: ").put(alias.token);
     }
 
-    private SqlNode concatFilters(SqlNode old, SqlNode filter) {
+    private ExpressionNode concatFilters(ExpressionNode old, ExpressionNode filter) {
         if (old == null) {
             return filter;
         } else {
-            SqlNode n = sqlNodePool.next().of(SqlNode.OPERATION, "and", 0, 0);
+            ExpressionNode n = sqlNodePool.next().of(ExpressionNode.OPERATION, "and", 0, 0);
             n.paramCount = 2;
             n.lhs = old;
             n.rhs = filter;
@@ -453,10 +450,10 @@ class SqlOptimiser {
         }
 
         // validate explicitly defined timestamp, if it exists
-        SqlNode timestamp = model.getTimestamp();
+        ExpressionNode timestamp = model.getTimestamp();
         if (timestamp == null) {
             if (m.getTimestampIndex() != -1) {
-                model.setTimestamp(sqlNodePool.next().of(SqlNode.LITERAL, m.getColumnName(m.getTimestampIndex()), 0, 0));
+                model.setTimestamp(sqlNodePool.next().of(ExpressionNode.LITERAL, m.getColumnName(m.getTimestampIndex()), 0, 0));
             }
         } else {
             int index = m.getColumnIndexQuiet(timestamp.token);
@@ -472,7 +469,7 @@ class SqlOptimiser {
         return SqlUtil.createColumnAlias(characterStore, name, -1, model.getColumnNameTypeMap());
     }
 
-    private CharSequence createColumnAlias(SqlNode node, QueryModel model) {
+    private CharSequence createColumnAlias(ExpressionNode node, QueryModel model) {
         return SqlUtil.createColumnAlias(characterStore, node.token, Chars.indexOf(node.token, '.'), model.getColumnNameTypeMap());
     }
 
@@ -506,7 +503,7 @@ class SqlOptimiser {
         CharSequenceIntHashMap hash = model.getOrderHash();
         hash.clear();
 
-        final ObjList<SqlNode> orderBy = model.getOrderBy();
+        final ObjList<ExpressionNode> orderBy = model.getOrderBy();
         final int n = orderBy.size();
         final ObjList<QueryColumn> columns = model.getColumns();
         final int m = columns.size();
@@ -523,8 +520,8 @@ class SqlOptimiser {
             if (thatHash.size() > 0) {
                 for (int i = 0; i < m; i++) {
                     QueryColumn column = columns.getQuick(i);
-                    SqlNode node = column.getAst();
-                    if (node.type == SqlNode.LITERAL) {
+                    ExpressionNode node = column.getAst();
+                    if (node.type == ExpressionNode.LITERAL) {
                         int direction = thatHash.get(node.token);
                         if (direction != -1) {
                             hash.put(column.getName(), direction);
@@ -537,7 +534,7 @@ class SqlOptimiser {
 
     private void createSelectColumn(
             CharSequence columnName,
-            SqlNode columnAst,
+            ExpressionNode columnAst,
             QueryModel validatingModel,
             QueryModel translatingModel,
             QueryModel innerModel,
@@ -710,7 +707,7 @@ class SqlOptimiser {
         return cost;
     }
 
-    private void emitAggregates(@Transient SqlNode node, QueryModel model) {
+    private void emitAggregates(@Transient ExpressionNode node, QueryModel model) {
 
         this.sqlNodeStack.clear();
 
@@ -721,7 +718,7 @@ class SqlOptimiser {
             if (node != null) {
 
                 if (node.rhs != null) {
-                    SqlNode n = replaceIfAggregate(node.rhs, model);
+                    ExpressionNode n = replaceIfAggregate(node.rhs, model);
                     if (node.rhs == n) {
                         this.sqlNodeStack.push(node.rhs);
                     } else {
@@ -729,7 +726,7 @@ class SqlOptimiser {
                     }
                 }
 
-                SqlNode n = replaceIfAggregate(node.lhs, model);
+                ExpressionNode n = replaceIfAggregate(node.lhs, model);
                 if (n == node.lhs) {
                     node = node.lhs;
                 } else {
@@ -743,7 +740,7 @@ class SqlOptimiser {
     }
 
     private void emitLiterals(
-            @Transient SqlNode node,
+            @Transient ExpressionNode node,
             QueryModel translatingModel,
             QueryModel innerModel,
             QueryModel validatingModel
@@ -758,7 +755,7 @@ class SqlOptimiser {
             if (node != null) {
 
                 if (node.rhs != null) {
-                    SqlNode n = replaceLiteral(node.rhs, translatingModel, innerModel, validatingModel);
+                    ExpressionNode n = replaceLiteral(node.rhs, translatingModel, innerModel, validatingModel);
                     if (node.rhs == n) {
                         this.sqlNodeStack.push(node.rhs);
                     } else {
@@ -766,7 +763,7 @@ class SqlOptimiser {
                     }
                 }
 
-                SqlNode n = replaceLiteral(node.lhs, translatingModel, innerModel, validatingModel);
+                ExpressionNode n = replaceLiteral(node.lhs, translatingModel, innerModel, validatingModel);
                 if (n == node.lhs) {
                     node = node.lhs;
                 } else {
@@ -784,9 +781,9 @@ class SqlOptimiser {
 
         // we have plain tables and possibly joins
         // deal with _this_ model first, it will always be the first element in join model list
-        final SqlNode tableName = model.getTableName();
+        final ExpressionNode tableName = model.getTableName();
         if (tableName != null) {
-            if (tableName.type == SqlNode.FUNCTION) {
+            if (tableName.type == ExpressionNode.FUNCTION) {
                 parseFunctionAndEnumerateColumns(model, bindVariableService);
             } else {
                 openReaderAndEnumerateColumns(model);
@@ -809,7 +806,7 @@ class SqlOptimiser {
         ObjList<QueryModel> joinModels = model.getJoinModels();
         for (int i = 0, n = joinModels.size(); i < n; i++) {
             QueryModel m = joinModels.getQuick(i);
-            SqlNode where = m.getWhereClause();
+            ExpressionNode where = m.getWhereClause();
 
             // join models can have "where" clause
             // although in context of SQL where is executed after joins, this model
@@ -818,7 +815,7 @@ class SqlOptimiser {
             // executed in line with standard SQL behaviour.
 
             if (where != null) {
-                if (where.type == SqlNode.LITERAL) {
+                if (where.type == ExpressionNode.LITERAL) {
                     m.setWhereClause(columnPrefixEraser.rewrite(where));
                 } else {
                     traversalAlgo.traverse(where, columnPrefixEraser);
@@ -866,7 +863,7 @@ class SqlOptimiser {
         }
     }
 
-    private boolean hasAggregates(SqlNode node) {
+    private boolean hasAggregates(ExpressionNode node) {
 
         this.sqlNodeStack.clear();
 
@@ -876,10 +873,10 @@ class SqlOptimiser {
         while (!this.sqlNodeStack.isEmpty() || node != null) {
             if (node != null) {
                 switch (node.type) {
-                    case SqlNode.LITERAL:
+                    case ExpressionNode.LITERAL:
                         node = null;
                         continue;
-                    case SqlNode.FUNCTION:
+                    case ExpressionNode.FUNCTION:
                         if (FunctionFactories.isAggregate(node.token)) {
                             return true;
                         }
@@ -915,20 +912,20 @@ class SqlOptimiser {
         }
     }
 
-    private SqlNode makeJoinAlias(int index) {
+    private ExpressionNode makeJoinAlias(int index) {
         CharacterStoreEntry characterStoreEntry = characterStore.newEntry();
         characterStoreEntry.put(QueryModel.SUB_QUERY_ALIAS_PREFIX).put(index);
         return nextLiteral(characterStoreEntry.toImmutable());
     }
 
-    private SqlNode makeModelAlias(CharSequence modelAlias, SqlNode node) {
+    private ExpressionNode makeModelAlias(CharSequence modelAlias, ExpressionNode node) {
         CharacterStoreEntry characterStoreEntry = characterStore.newEntry();
         characterStoreEntry.put(modelAlias).put('.').put(node.token);
         return nextLiteral(characterStoreEntry.toImmutable(), node.position);
     }
 
-    private SqlNode makeOperation(CharSequence token, SqlNode lhs, SqlNode rhs) {
-        SqlNode expr = sqlNodePool.next().of(SqlNode.OPERATION, token, 0, 0);
+    private ExpressionNode makeOperation(CharSequence token, ExpressionNode lhs, ExpressionNode rhs) {
+        ExpressionNode expr = sqlNodePool.next().of(ExpressionNode.OPERATION, token, 0, 0);
         expr.paramCount = 2;
         expr.lhs = lhs;
         expr.rhs = rhs;
@@ -946,11 +943,11 @@ class SqlOptimiser {
 
             CharSequence ban = b.aNames.getQuick(i);
             int bai = b.aIndexes.getQuick(i);
-            SqlNode bao = b.aNodes.getQuick(i);
+            ExpressionNode bao = b.aNodes.getQuick(i);
 
             CharSequence bbn = b.bNames.getQuick(i);
             int bbi = b.bIndexes.getQuick(i);
-            SqlNode bbo = b.bNodes.getQuick(i);
+            ExpressionNode bbo = b.bNodes.getQuick(i);
 
             for (int k = 0, z = a.aNames.size(); k < z; k++) {
 
@@ -961,10 +958,10 @@ class SqlOptimiser {
 
                 final CharSequence aan = a.aNames.getQuick(k);
                 final int aai = a.aIndexes.getQuick(k);
-                final SqlNode aao = a.aNodes.getQuick(k);
+                final ExpressionNode aao = a.aNodes.getQuick(k);
                 final CharSequence abn = a.bNames.getQuick(k);
                 final int abi = a.bIndexes.getQuick(k);
-                final SqlNode abo = a.bNodes.getQuick(k);
+                final ExpressionNode abo = a.bNodes.getQuick(k);
 
                 if (aai == bai && Chars.equals(aan, ban)) {
                     // a.x = ?.x
@@ -1078,15 +1075,27 @@ class SqlOptimiser {
         return result;
     }
 
+    private void moveTimestampToChooseModel(QueryModel model) {
+        QueryModel nested = model.getNestedModel();
+        if (nested != null) {
+            moveTimestampToChooseModel(nested);
+            ExpressionNode timestamp = nested.getTimestamp();
+            if (timestamp != null && nested.getSelectModelType() == QueryModel.SELECT_MODEL_NONE && nested.getTableName() == null && nested.getTableNameFunction() == null) {
+                model.setTimestamp(timestamp);
+                nested.setTimestamp(null);
+            }
+        }
+    }
+
     private void moveWhereInsideSubQueries(QueryModel model) throws SqlException {
         model.getParsedWhere().clear();
-        final ObjList<SqlNode> nodes = model.parseWhereClause();
+        final ObjList<ExpressionNode> nodes = model.parseWhereClause();
         model.setWhereClause(null);
 
         final int n = nodes.size();
         if (n > 0) {
             for (int i = 0; i < n; i++) {
-                final SqlNode node = nodes.getQuick(i);
+                final ExpressionNode node = nodes.getQuick(i);
                 // collect table references this where clause element
                 literalCollectorAIndexes.clear();
                 literalCollectorANames.clear();
@@ -1166,16 +1175,16 @@ class SqlOptimiser {
         return SqlUtil.nextColumn(queryColumnPool, sqlNodePool, alias, column);
     }
 
-    private SqlNode nextLiteral(CharSequence token, int position) {
+    private ExpressionNode nextLiteral(CharSequence token, int position) {
         return SqlUtil.nextLiteral(sqlNodePool, token, position);
     }
 
-    private SqlNode nextLiteral(CharSequence token) {
+    private ExpressionNode nextLiteral(CharSequence token) {
         return nextLiteral(token, 0);
     }
 
     private void openReaderAndEnumerateColumns(QueryModel model) throws SqlException {
-        final SqlNode tableNameNode = model.getTableName();
+        final ExpressionNode tableNameNode = model.getTableName();
 
         // table name must not contain quotes by now
         final CharSequence tableName = tableNameNode.token;
@@ -1212,6 +1221,7 @@ class SqlOptimiser {
     }
 
     QueryModel optimise(QueryModel model, BindVariableService bindVariableService) throws SqlException {
+        optimiseExpressionModels(model, bindVariableService);
         enumerateTableColumns(model, bindVariableService);
         resolveJoinColumns(model);
         optimiseBooleanNot(model);
@@ -1226,27 +1236,15 @@ class SqlOptimiser {
         return rewrittenModel;
     }
 
-    private void moveTimestampToChooseModel(QueryModel model) {
-        QueryModel nested = model.getNestedModel();
-        if (nested != null) {
-            moveTimestampToChooseModel(nested);
-            SqlNode timestamp = nested.getTimestamp();
-            if (timestamp != null && nested.getSelectModelType() == QueryModel.SELECT_MODEL_NONE && nested.getTableName() == null && nested.getTableNameFunction() == null) {
-                model.setTimestamp(timestamp);
-                nested.setTimestamp(null);
-            }
-        }
-    }
-
-    private SqlNode optimiseBooleanNot(final SqlNode node, boolean reverse) throws SqlException {
+    private ExpressionNode optimiseBooleanNot(final ExpressionNode node, boolean reverse) throws SqlException {
         switch (notOps.get(node.token)) {
             case NOT_OP_NOT:
                 if (reverse) {
                     return optimiseBooleanNot(node.rhs, false);
                 } else {
                     switch (node.rhs.type) {
-                        case SqlNode.LITERAL:
-                        case SqlNode.CONSTANT:
+                        case ExpressionNode.LITERAL:
+                        case ExpressionNode.CONSTANT:
                             return node;
                         default:
                             assertNotNull(node.rhs, node.position, "Missing right argument");
@@ -1304,11 +1302,11 @@ class SqlOptimiser {
                 return node;
             default:
                 if (reverse) {
-                    SqlNode n = sqlNodePool.next();
+                    ExpressionNode n = sqlNodePool.next();
                     n.token = "not";
                     n.paramCount = 1;
                     n.rhs = node;
-                    n.type = SqlNode.OPERATION;
+                    n.type = ExpressionNode.OPERATION;
                     return n;
                 }
                 return node;
@@ -1316,7 +1314,7 @@ class SqlOptimiser {
     }
 
     private void optimiseBooleanNot(QueryModel model) throws SqlException {
-        SqlNode where = model.getWhereClause();
+        ExpressionNode where = model.getWhereClause();
         if (where != null) {
             model.setWhereClause(optimiseBooleanNot(where, false));
         }
@@ -1328,6 +1326,34 @@ class SqlOptimiser {
         ObjList<QueryModel> joinModels = model.getJoinModels();
         for (int i = 1, n = joinModels.size(); i < n; i++) {
             optimiseBooleanNot(joinModels.getQuick(i));
+        }
+    }
+
+    private void optimiseExpressionModels(QueryModel model, BindVariableService bindVariableService) throws SqlException {
+        ObjList<ExpressionNode> expressionModels = model.getExpressionModels();
+        final int n = expressionModels.size();
+        if (n > 0) {
+            for (int i = 0; i < n; i++) {
+                final ExpressionNode node = expressionModels.getQuick(i);
+                assert node.queryModel != null;
+                QueryModel optimised = optimise(node.queryModel, bindVariableService);
+                if (optimised != node.queryModel) {
+                    node.queryModel = optimised;
+                }
+            }
+        }
+
+        if (model.getNestedModel() != null) {
+            optimiseExpressionModels(model.getNestedModel(), bindVariableService);
+        }
+
+        final ObjList<QueryModel> joinModels = model.getJoinModels();
+        final int m = joinModels.size();
+        // as usual, we already optimised self (index=0), now optimised others
+        if (m > 1) {
+            for (int i = 1; i < m; i++) {
+                optimiseExpressionModels(joinModels.getQuick(i), bindVariableService);
+            }
         }
     }
 
@@ -1346,7 +1372,7 @@ class SqlOptimiser {
             // in case one of joinModels is subquery, its entire query model will be set as
             // nestedModel, e.g. "where" clause is still null there as well
 
-            SqlNode where = model.getWhereClause();
+            ExpressionNode where = model.getWhereClause();
 
             // clear where clause of model so that
             // optimiser can assign there correct nodes
@@ -1451,8 +1477,8 @@ class SqlOptimiser {
      *
      * @param node expression n
      */
-    private void processJoinConditions(QueryModel parent, SqlNode node) throws SqlException {
-        SqlNode n = node;
+    private void processJoinConditions(QueryModel parent, ExpressionNode node) throws SqlException {
+        ExpressionNode n = node;
         // pre-order traversal
         sqlNodeStack.clear();
         while (!sqlNodeStack.isEmpty() || n != null) {
@@ -1519,7 +1545,7 @@ class SqlOptimiser {
      * join c on a.x = c.x
      * join b on c.y = b.y
      */
-    private void processOrConditions(QueryModel parent, SqlNode node) {
+    private void processOrConditions(QueryModel parent, ExpressionNode node) {
         // stub: use filter
         parent.addParsedWhereNode(node);
     }
@@ -1577,7 +1603,7 @@ class SqlOptimiser {
         assert root != -1;
     }
 
-    private SqlNode replaceIfAggregate(@Transient SqlNode node, QueryModel model) {
+    private ExpressionNode replaceIfAggregate(@Transient ExpressionNode node, QueryModel model) {
         if (node != null && FunctionFactories.isAggregate(node.token)) {
             QueryColumn c = queryColumnPool.next().of(createColumnAlias(node, model), node);
             model.addColumn(c);
@@ -1586,9 +1612,9 @@ class SqlOptimiser {
         return node;
     }
 
-    private SqlNode replaceLiteral(@Transient SqlNode node, QueryModel translatingModel, QueryModel
+    private ExpressionNode replaceLiteral(@Transient ExpressionNode node, QueryModel translatingModel, QueryModel
             innerModel, QueryModel validatingModel) throws SqlException {
-        if (node != null && node.type == SqlNode.LITERAL) {
+        if (node != null && node.type == ExpressionNode.LITERAL) {
             final CharSequenceObjHashMap<CharSequence> map = translatingModel.getColumnToAliasMap();
             int index = map.keyIndex(node.token);
             if (index > -1) {
@@ -1616,15 +1642,15 @@ class SqlOptimiser {
         if (size > 1) {
             for (int i = 1; i < size; i++) {
                 final QueryModel jm = joinModels.getQuick(i);
-                final ObjList<SqlNode> jc = jm.getJoinColumns();
+                final ObjList<ExpressionNode> jc = jm.getJoinColumns();
                 final int joinColumnsSize = jc.size();
 
                 if (joinColumnsSize > 0) {
                     final CharSequence jmAlias = setAndGetModelAlias(jm);
-                    SqlNode joinCriteria = jm.getJoinCriteria();
+                    ExpressionNode joinCriteria = jm.getJoinCriteria();
                     for (int j = 0; j < joinColumnsSize; j++) {
-                        SqlNode node = jc.getQuick(j);
-                        SqlNode eq = makeOperation("=", makeModelAlias(modelAlias, node), makeModelAlias(jmAlias, node));
+                        ExpressionNode node = jc.getQuick(j);
+                        ExpressionNode eq = makeOperation("=", makeModelAlias(modelAlias, node), makeModelAlias(jmAlias, node));
                         if (joinCriteria == null) {
                             joinCriteria = eq;
                         } else {
@@ -1681,13 +1707,13 @@ class SqlOptimiser {
         }
 
         // find out how "order by" columns are referenced
-        ObjList<SqlNode> orderByNodes = base.getOrderBy();
+        ObjList<ExpressionNode> orderByNodes = base.getOrderBy();
         int sz = orderByNodes.size();
         if (sz > 0) {
             boolean ascendColumns = true;
             // for each order by column check how deep we need to go between "model" and "base"
             for (int i = 0; i < sz; i++) {
-                final SqlNode orderBy = orderByNodes.getQuick(i);
+                final ExpressionNode orderBy = orderByNodes.getQuick(i);
                 final CharSequence column = orderBy.token;
                 final int dot = Chars.indexOf(column, '.');
                 // is this a table reference?
@@ -1845,9 +1871,9 @@ class SqlOptimiser {
         final boolean hasJoins = baseModel.getJoinModels().size() > 1;
 
         // sample by clause should be promoted to all of the models as well as validated
-        final SqlNode sampleBy = baseModel.getSampleBy();
+        final ExpressionNode sampleBy = baseModel.getSampleBy();
         if (sampleBy != null) {
-            final SqlNode timestamp = baseModel.getTimestamp();
+            final ExpressionNode timestamp = baseModel.getTimestamp();
             if (timestamp == null) {
                 throw SqlException.$(sampleBy.position, "TIMESTAMP column is not defined");
             }
@@ -1875,11 +1901,11 @@ class SqlOptimiser {
             final boolean analytic = qc instanceof AnalyticColumn;
 
             // fail-fast if this is an arithmetic expression where we expect analytic function
-            if (analytic && qc.getAst().type != SqlNode.FUNCTION) {
+            if (analytic && qc.getAst().type != ExpressionNode.FUNCTION) {
                 throw SqlException.$(qc.getAst().position, "Analytic function expected");
             }
 
-            if (qc.getAst().type == SqlNode.LITERAL) {
+            if (qc.getAst().type == ExpressionNode.LITERAL) {
                 // in general sense we need to create new column in case
                 // there is change of alias, for example we may have something as simple as
                 // select a.f, b.f from ....
@@ -1901,7 +1927,7 @@ class SqlOptimiser {
                 // when column is direct call to aggregation function, such as
                 // select sum(x) ...
                 // we can add it to group-by model right away
-                if (qc.getAst().type == SqlNode.FUNCTION) {
+                if (qc.getAst().type == ExpressionNode.FUNCTION) {
                     if (analytic) {
                         analyticModel.addColumn(qc);
 
@@ -2014,7 +2040,7 @@ class SqlOptimiser {
         if (name != null) {
             return name;
         }
-        SqlNode alias = makeJoinAlias(defaultAliasCount++);
+        ExpressionNode alias = makeJoinAlias(defaultAliasCount++);
         model.setAlias(alias);
         return alias.token;
     }
@@ -2068,7 +2094,7 @@ class SqlOptimiser {
         }
     }
 
-    private void traverseNamesAndIndices(QueryModel parent, SqlNode node) throws SqlException {
+    private void traverseNamesAndIndices(QueryModel parent, ExpressionNode node) throws SqlException {
         literalCollectorAIndexes.clear();
         literalCollectorBIndexes.clear();
 
@@ -2089,12 +2115,12 @@ class SqlOptimiser {
         private CharSequenceIntHashMap nameTypeMap;
 
         @Override
-        public void visit(SqlNode node) throws SqlException {
-            if (node.type == SqlNode.LITERAL) {
+        public void visit(ExpressionNode node) throws SqlException {
+            if (node.type == ExpressionNode.LITERAL) {
                 final int dot = Chars.indexOf(node.token, '.');
                 int index = dot == -1 ? nameTypeMap.keyIndex(node.token) : nameTypeMap.keyIndex(node.token, dot + 1, node.token.length());
                 if (index < 0) {
-                    if (nameTypeMap.valueAt(index) != SqlNode.LITERAL) {
+                    if (nameTypeMap.valueAt(index) != ExpressionNode.LITERAL) {
                         throw NonLiteralException.INSTANCE;
                     }
                 } else {
@@ -2118,8 +2144,8 @@ class SqlOptimiser {
         }
 
         @Override
-        public void visit(SqlNode node) {
-            if (node.type == SqlNode.LITERAL) {
+        public void visit(ExpressionNode node) {
+            if (node.type == ExpressionNode.LITERAL) {
                 int dot = Chars.indexOf(node.token, '.');
                 int index = dot == -1 ? nameTypeMap.keyIndex(node.token) : nameTypeMap.keyIndex(node.token, dot + 1, node.token.length());
                 // we have table column hit when alias is not found
@@ -2138,12 +2164,22 @@ class SqlOptimiser {
 
     private class ColumnPrefixEraser implements PostOrderTreeTraversalAlgo.Visitor {
 
+        private ExpressionNode rewrite(ExpressionNode node) {
+            if (node != null && node.type == ExpressionNode.LITERAL) {
+                final int dot = Chars.indexOf(node.token, '.');
+                if (dot != -1) {
+                    return nextLiteral(node.token.subSequence(dot + 1, node.token.length()));
+                }
+            }
+            return node;
+        }
+
         @Override
-        public void visit(SqlNode node) {
+        public void visit(ExpressionNode node) {
             switch (node.type) {
-                case SqlNode.FUNCTION:
-                case SqlNode.OPERATION:
-                case SqlNode.SET_OPERATION:
+                case ExpressionNode.FUNCTION:
+                case ExpressionNode.OPERATION:
+                case ExpressionNode.SET_OPERATION:
                     if (node.paramCount < 3) {
                         node.lhs = rewrite(node.lhs);
                         node.rhs = rewrite(node.rhs);
@@ -2156,16 +2192,6 @@ class SqlOptimiser {
                 default:
                     break;
             }
-        }
-
-        private SqlNode rewrite(SqlNode node) {
-            if (node != null && node.type == SqlNode.LITERAL) {
-                final int dot = Chars.indexOf(node.token, '.');
-                if (dot != -1) {
-                    return nextLiteral(node.token.subSequence(dot + 1, node.token.length()));
-                }
-            }
-            return node;
         }
 
 
@@ -2208,9 +2234,9 @@ class SqlOptimiser {
         }
 
         @Override
-        public void visit(SqlNode node) throws SqlException {
+        public void visit(ExpressionNode node) throws SqlException {
             switch (node.type) {
-                case SqlNode.LITERAL:
+                case ExpressionNode.LITERAL:
                     int dot = Chars.indexOf(node.token, '.');
                     CharSequence name = extractColumnName(node.token, dot);
                     indexes.add(getIndexOfTableForColumn(model, node.token, dot, node.position));
@@ -2218,7 +2244,7 @@ class SqlOptimiser {
                         names.add(name);
                     }
                     break;
-                case SqlNode.CONSTANT:
+                case ExpressionNode.CONSTANT:
                     if (nullConstants.contains(node.token)) {
                         nullCount++;
                     }

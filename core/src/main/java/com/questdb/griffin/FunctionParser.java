@@ -30,6 +30,7 @@ import com.questdb.common.ColumnType;
 import com.questdb.griffin.engine.functions.bind.BindVariableService;
 import com.questdb.griffin.engine.functions.columns.*;
 import com.questdb.griffin.engine.functions.constants.*;
+import com.questdb.griffin.model.ExpressionNode;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.std.*;
@@ -149,7 +150,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
         return openBraceIndex;
     }
 
-    public Function createParameter(SqlNode node) throws SqlException {
+    public Function createParameter(ExpressionNode node) throws SqlException {
         Function function = bindVariableService.getFunction(node.token);
         if (function == null) {
             throw SqlException.position(node.position).put("undefined bind variable: ").put(node.token);
@@ -157,7 +158,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
         return function;
     }
 
-    public Function parseFunction(SqlNode node, RecordMetadata metadata, BindVariableService bindVariableService) throws SqlException {
+    public Function parseFunction(ExpressionNode node, RecordMetadata metadata, BindVariableService bindVariableService) throws SqlException {
         this.bindVariableService = bindVariableService;
         this.metadata = metadata;
         algo.traverse(node, this);
@@ -165,11 +166,11 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
     }
 
     @Override
-    public void visit(SqlNode node) throws SqlException {
+    public void visit(ExpressionNode node) throws SqlException {
         int argCount = node.paramCount;
         if (argCount == 0) {
             switch (node.type) {
-                case SqlNode.LITERAL:
+                case ExpressionNode.LITERAL:
                     if (Chars.startsWith(node.token, ':')) {
                         stack.push(createParameter(node));
                     } else {
@@ -177,7 +178,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
                         stack.push(createColumn(node));
                     }
                     break;
-                case SqlNode.CONSTANT:
+                case ExpressionNode.CONSTANT:
                     stack.push(createConstant(node));
                     break;
                 default:
@@ -199,7 +200,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
         }
     }
 
-    private static SqlException invalidFunction(CharSequence message, SqlNode node, ObjList<Function> args) {
+    private static SqlException invalidFunction(CharSequence message, ExpressionNode node, ObjList<Function> args) {
         SqlException ex = SqlException.position(node.position);
         ex.put(message);
         ex.put(": ");
@@ -238,7 +239,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
         return function;
     }
 
-    private Function createColumn(SqlNode node) throws SqlException {
+    private Function createColumn(ExpressionNode node) throws SqlException {
         final int index = metadata.getColumnIndexQuiet(node.token);
 
         if (index == -1) {
@@ -273,7 +274,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
         }
     }
 
-    private Function createConstant(SqlNode node) throws SqlException {
+    private Function createConstant(ExpressionNode node) throws SqlException {
 
         if (Chars.equalsIgnoreCase(node.token, "null")) {
             return new NullConstant(node.position);
@@ -309,7 +310,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
         throw SqlException.position(node.position).put("invalid constant: ").put(node.token);
     }
 
-    private Function createFunction(SqlNode node, ObjList<Function> args) throws SqlException {
+    private Function createFunction(ExpressionNode node, ObjList<Function> args) throws SqlException {
         ObjList<FunctionFactory> overload = factories.get(node.token);
         if (overload == null) {
             throw invalidFunction("unknown function name", node, args);

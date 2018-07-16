@@ -23,15 +23,25 @@
 
 package com.questdb.griffin;
 
+import com.questdb.griffin.model.ExpressionNode;
+import com.questdb.griffin.model.QueryModel;
+
 import java.util.ArrayDeque;
 import java.util.Deque;
 
-final class ExpressionASTBuilder implements ExpressionParserListener {
+final class ExpressionTreeBuilder implements ExpressionParserListener {
 
-    private final Deque<SqlNode> stack = new ArrayDeque<>();
+    private final Deque<ExpressionNode> stack = new ArrayDeque<>();
+    private final Deque<QueryModel> modelStack = new ArrayDeque<>();
+    private QueryModel model;
 
     @Override
-    public void onNode(SqlNode node) {
+    public void onNode(ExpressionNode node) {
+
+        if (node.queryModel != null) {
+            model.addExpressionModel(node);
+        }
+
         switch (node.paramCount) {
             case 0:
                 break;
@@ -51,12 +61,24 @@ final class ExpressionASTBuilder implements ExpressionParserListener {
         stack.push(node);
     }
 
-    SqlNode poll() {
+    ExpressionNode poll() {
         return stack.poll();
+    }
+
+    void popModel() {
+        this.model = modelStack.poll();
+    }
+
+    void pushModel(QueryModel model) {
+        if (this.model != null) {
+            modelStack.push(this.model);
+        }
+        this.model = model;
     }
 
     void reset() {
         stack.clear();
+        modelStack.clear();
     }
 
     int size() {

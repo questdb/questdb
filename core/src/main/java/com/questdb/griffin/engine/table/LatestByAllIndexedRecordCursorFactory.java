@@ -23,33 +23,14 @@
 
 package com.questdb.griffin.engine.table;
 
-import com.questdb.cairo.AbstractRecordCursorFactory;
 import com.questdb.cairo.sql.DataFrameCursorFactory;
-import com.questdb.cairo.sql.RecordCursor;
 import com.questdb.cairo.sql.RecordMetadata;
-import com.questdb.griffin.engine.LongTreeSet;
 
-public class LatestByAllIndexedRecordCursorFactory extends AbstractRecordCursorFactory {
-    private final DataFrameCursorFactory dataFrameCursorFactory;
-    private final LatestByAllIndexedRecordCursor cursor;
-    private final LongTreeSet treeSet;
+public class LatestByAllIndexedRecordCursorFactory extends AbstractTreeSetRecordCursorFactory {
 
     public LatestByAllIndexedRecordCursorFactory(RecordMetadata metadata, DataFrameCursorFactory dataFrameCursorFactory, int columnIndex) {
-        super(metadata);
-        //todo: derive page size from key count for symbol and configuration
-        this.treeSet = new LongTreeSet(4 * 1024);
+        super(metadata, dataFrameCursorFactory);
         this.cursor = new LatestByAllIndexedRecordCursor(columnIndex, treeSet);
-        this.dataFrameCursorFactory = dataFrameCursorFactory;
     }
 
-    @Override
-    public void close() {
-        treeSet.close();
-    }
-
-    @Override
-    public RecordCursor getCursor() {
-        cursor.of(dataFrameCursorFactory.getCursor());
-        return cursor;
-    }
 }

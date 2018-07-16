@@ -27,7 +27,9 @@ import com.questdb.cairo.*;
 import com.questdb.cairo.sql.RecordMetadata;
 import com.questdb.common.ColumnType;
 import com.questdb.common.PartitionBy;
+import com.questdb.griffin.model.ExpressionNode;
 import com.questdb.griffin.model.IntrinsicModel;
+import com.questdb.griffin.model.QueryModel;
 import com.questdb.test.tools.TestUtils;
 import org.junit.AfterClass;
 import org.junit.Assert;
@@ -1043,14 +1045,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         TestUtils.assertEquals("[{lo=2014-01-01T12:30:00.000000Z, hi=2014-01-02T12:30:00.000000Z}]", intervalToString(m.intervals));
     }
 
-    @Test
-    public void testTwoDiffColLambdas() throws Exception {
-        IntrinsicModel m = modelOf("sym in (select * from xyz) and ex in (select  * from kkk)");
-        TestUtils.assertEquals("sym", m.keyColumn);
-        Assert.assertNotNull(m.keySubQuery);
-        Assert.assertNotNull(m.filter);
-        Assert.assertEquals(SqlNode.LAMBDA, m.filter.rhs.type);
-    }
+    private final QueryModel queryModel = QueryModel.FACTORY.newInstance();
 
     @Test
     public void testTwoExactMatchDifferentDates() throws Exception {
@@ -1140,12 +1135,23 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         return modelOf(seq, null);
     }
 
+    @Test
+    public void testTwoDiffColLambdas() throws Exception {
+        IntrinsicModel m = modelOf("sym in (select * from xyz) and ex in (select  * from kkk)");
+        TestUtils.assertEquals("sym", m.keyColumn);
+        Assert.assertNotNull(m.keySubQuery);
+        Assert.assertNotNull(m.filter);
+        Assert.assertEquals(ExpressionNode.LAMBDA, m.filter.rhs.type);
+    }
+
     private IntrinsicModel modelOf(CharSequence seq, String preferredColumn) throws SqlException {
-        return e.extract(column -> column, compiler.parseExpression(seq), metadata, preferredColumn, metadata.getTimestampIndex());
+        queryModel.clear();
+        return e.extract(column -> column, compiler.parseExpression(seq, queryModel), metadata, preferredColumn, metadata.getTimestampIndex());
     }
 
     private IntrinsicModel noTimestampModelOf(CharSequence seq) throws SqlException {
-        return e.extract(column -> column, compiler.parseExpression(seq), noTimestampMetadata, null, noTimestampMetadata.getTimestampIndex());
+        queryModel.clear();
+        return e.extract(column -> column, compiler.parseExpression(seq, queryModel), noTimestampMetadata, null, noTimestampMetadata.getTimestampIndex());
     }
 
     private void testBadOperator(String op) {
@@ -1165,13 +1171,14 @@ public class WhereClauseParserTest extends AbstractCairoTest {
 
     }
 
-    private CharSequence toRpn(SqlNode node) throws SqlException {
+    private CharSequence toRpn(ExpressionNode node) throws SqlException {
         rpn.reset();
         traversalAlgo.traverse(node, rpnBuilderVisitor);
         return rpn.rpn();
     }
 
     private IntrinsicModel unindexedModelOf(CharSequence seq, String preferredColumn) throws SqlException {
-        return e.extract(column -> column, compiler.parseExpression(seq), unindexedMetadata, preferredColumn, unindexedMetadata.getTimestampIndex());
+        queryModel.clear();
+        return e.extract(column -> column, compiler.parseExpression(seq, queryModel), unindexedMetadata, preferredColumn, unindexedMetadata.getTimestampIndex());
     }
 }

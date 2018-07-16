@@ -62,7 +62,7 @@ class LatestByValuesFilteredRecordCursor extends AbstractTreeSetRecordCursor {
             for (long row = rowHi; row >= rowLo; row--) {
                 record.setRecordIndex(row);
                 if (filter.getBool(record)) {
-                    int key = record.getInt(columnIndex);
+                    int key = record.getInt(columnIndex) + 1;
                     int index = map.keyIndex(key);
                     if (index < 0) {
                         if (map.valueAt(index) == 0) {

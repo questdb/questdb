@@ -23,6 +23,8 @@
 
 package com.questdb.griffin;
 
+import com.questdb.griffin.model.ExpressionNode;
+
 public interface ExpressionParserListener {
-    void onNode(SqlNode node);
+    void onNode(ExpressionNode node);
 }

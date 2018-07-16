@@ -24,7 +24,6 @@
 package com.questdb.griffin.model;
 
 import com.questdb.cairo.sql.Function;
-import com.questdb.griffin.SqlNode;
 import com.questdb.std.*;
 import com.questdb.std.str.CharSink;
 
@@ -50,41 +49,42 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private final CharSequenceObjHashMap<CharSequence> columnToAliasMap = new CharSequenceObjHashMap<>();
     private final ObjList<CharSequence> columnNames = new ObjList<>();
     private final ObjList<QueryModel> joinModels = new ObjList<>();
-    private final ObjList<SqlNode> orderBy = new ObjList<>();
+    private final ObjList<ExpressionNode> orderBy = new ObjList<>();
     private final IntList orderByDirection = new IntList();
     private final IntHashSet dependencies = new IntHashSet();
     private final IntList orderedJoinModels1 = new IntList();
     private final IntList orderedJoinModels2 = new IntList();
     private final CharSequenceIntHashMap aliasIndexes = new CharSequenceIntHashMap();
+    private final ObjList<ExpressionNode> expressionModels = new ObjList<>();
     // collect frequency of column names from each join model
     // and check if any of columns with frequency > 0 are selected
     // column name frequency of 1 corresponds to map value 0
     // column name frequency of 0 corresponds to map value -1
     private final CharSequenceIntHashMap columnNameTypeMap = new CharSequenceIntHashMap();
     // list of "and" concatenated expressions
-    private final ObjList<SqlNode> parsedWhere = new ObjList<>();
+    private final ObjList<ExpressionNode> parsedWhere = new ObjList<>();
     private final IntHashSet parsedWhereConsts = new IntHashSet();
-    private final ArrayDeque<SqlNode> sqlNodeStack = new ArrayDeque<>();
+    private final ArrayDeque<ExpressionNode> sqlNodeStack = new ArrayDeque<>();
     private final CharSequenceIntHashMap orderHash = new CharSequenceIntHashMap(4, 0.5, -1);
-    private final ObjList<SqlNode> joinColumns = new ObjList<>(4);
+    private final ObjList<ExpressionNode> joinColumns = new ObjList<>(4);
     private final CharSequenceObjHashMap<WithClauseModel> withClauses = new CharSequenceObjHashMap<>();
-    private SqlNode whereClause;
-    private SqlNode postJoinWhereClause;
-    private SqlNode constWhereClause;
+    private ExpressionNode whereClause;
+    private ExpressionNode postJoinWhereClause;
+    private ExpressionNode constWhereClause;
     private QueryModel nestedModel;
-    private SqlNode tableName;
+    private ExpressionNode tableName;
     private long tableVersion;
     private Function tableNameFunction;
-    private SqlNode alias;
-    private SqlNode latestBy;
-    private SqlNode timestamp;
-    private SqlNode sampleBy;
+    private ExpressionNode alias;
+    private ExpressionNode latestBy;
+    private ExpressionNode timestamp;
+    private ExpressionNode sampleBy;
     private JoinContext context;
-    private SqlNode joinCriteria;
+    private ExpressionNode joinCriteria;
     private int joinType;
     private IntList orderedJoinModels = orderedJoinModels2;
-    private SqlNode limitLo;
-    private SqlNode limitHi;
+    private ExpressionNode limitLo;
+    private ExpressionNode limitHi;
     private int selectModelType = SELECT_MODEL_NONE;
 
 
@@ -92,24 +92,14 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         joinModels.add(this);
     }
 
-    private static void aliasToSink(CharSequence alias, CharSink sink) {
-        sink.put(' ');
-        boolean quote = Chars.indexOf(alias, ' ') != -1;
-        if (quote) {
-            sink.put('\'').put(alias).put('\'');
-        } else {
-            sink.put(alias);
-        }
-    }
-
-    public boolean addAliasIndex(SqlNode node, int index) {
+    public boolean addAliasIndex(ExpressionNode node, int index) {
         return aliasIndexes.put(node.token, index);
     }
 
     public void addColumn(QueryColumn column) {
         columns.add(column);
         final CharSequence alias = column.getAlias();
-        final SqlNode ast = column.getAst();
+        final ExpressionNode ast = column.getAst();
         assert alias != null;
         aliasToColumnMap.put(alias, ast.token);
         columnToAliasMap.put(ast.token, alias);
@@ -117,17 +107,22 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         columnNames.add(alias);
     }
 
+    public void addExpressionModel(ExpressionNode node) {
+        assert node.queryModel != null;
+        expressionModels.add(node);
+    }
+
     public void addDependency(int index) {
         dependencies.add(index);
     }
 
     public void addField(CharSequence name) {
-        columnNameTypeMap.put(name, SqlNode.LITERAL);
+        columnNameTypeMap.put(name, ExpressionNode.LITERAL);
         aliasToColumnMap.put(name, name);
         columnNames.add(name);
     }
 
-    public void addJoinColumn(SqlNode node) {
+    public void addJoinColumn(ExpressionNode node) {
         joinColumns.add(node);
     }
 
@@ -135,12 +130,12 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         joinModels.add(model);
     }
 
-    public void addOrderBy(SqlNode node, int direction) {
+    public void addOrderBy(ExpressionNode node, int direction) {
         orderBy.add(node);
         orderByDirection.add(direction);
     }
 
-    public void addParsedWhereNode(SqlNode node) {
+    public void addParsedWhereNode(ExpressionNode node) {
         parsedWhere.add(node);
     }
 
@@ -185,6 +180,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         tableNameFunction = null;
         tableVersion = -1;
         columnNames.clear();
+        expressionModels.clear();
     }
 
     public void clearOrderBy() {
@@ -201,11 +197,11 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         this.columnNames.addAll(other.columnNames);
     }
 
-    public SqlNode getAlias() {
+    public ExpressionNode getAlias() {
         return alias;
     }
 
-    public void setAlias(SqlNode alias) {
+    public void setAlias(ExpressionNode alias) {
         this.alias = alias;
     }
 
@@ -237,11 +233,11 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return columns;
     }
 
-    public SqlNode getConstWhereClause() {
+    public ExpressionNode getConstWhereClause() {
         return constWhereClause;
     }
 
-    public void setConstWhereClause(SqlNode constWhereClause) {
+    public void setConstWhereClause(ExpressionNode constWhereClause) {
         this.constWhereClause = constWhereClause;
     }
 
@@ -257,15 +253,19 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return dependencies;
     }
 
-    public ObjList<SqlNode> getJoinColumns() {
+    public ObjList<ExpressionNode> getExpressionModels() {
+        return expressionModels;
+    }
+
+    public ObjList<ExpressionNode> getJoinColumns() {
         return joinColumns;
     }
 
-    public SqlNode getJoinCriteria() {
+    public ExpressionNode getJoinCriteria() {
         return joinCriteria;
     }
 
-    public void setJoinCriteria(SqlNode joinCriteria) {
+    public void setJoinCriteria(ExpressionNode joinCriteria) {
         this.joinCriteria = joinCriteria;
     }
 
@@ -281,19 +281,19 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         this.joinType = joinType;
     }
 
-    public SqlNode getLatestBy() {
+    public ExpressionNode getLatestBy() {
         return latestBy;
     }
 
-    public void setLatestBy(SqlNode latestBy) {
+    public void setLatestBy(ExpressionNode latestBy) {
         this.latestBy = latestBy;
     }
 
-    public SqlNode getLimitHi() {
+    public ExpressionNode getLimitHi() {
         return limitHi;
     }
 
-    public SqlNode getLimitLo() {
+    public ExpressionNode getLimitLo() {
         return limitLo;
     }
 
@@ -322,7 +322,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         this.nestedModel = nestedModel;
     }
 
-    public ObjList<SqlNode> getOrderBy() {
+    public ObjList<ExpressionNode> getOrderBy() {
         return orderBy;
     }
 
@@ -343,23 +343,23 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         this.orderedJoinModels = that;
     }
 
-    public ObjList<SqlNode> getParsedWhere() {
+    public ObjList<ExpressionNode> getParsedWhere() {
         return parsedWhere;
     }
 
-    public SqlNode getPostJoinWhereClause() {
+    public ExpressionNode getPostJoinWhereClause() {
         return postJoinWhereClause;
     }
 
-    public void setPostJoinWhereClause(SqlNode postJoinWhereClause) {
+    public void setPostJoinWhereClause(ExpressionNode postJoinWhereClause) {
         this.postJoinWhereClause = postJoinWhereClause;
     }
 
-    public SqlNode getSampleBy() {
+    public ExpressionNode getSampleBy() {
         return sampleBy;
     }
 
-    public void setSampleBy(SqlNode sampleBy) {
+    public void setSampleBy(ExpressionNode sampleBy) {
         this.sampleBy = sampleBy;
     }
 
@@ -371,11 +371,11 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         this.selectModelType = selectModelType;
     }
 
-    public SqlNode getTableName() {
+    public ExpressionNode getTableName() {
         return tableName;
     }
 
-    public void setTableName(SqlNode tableName) {
+    public void setTableName(ExpressionNode tableName) {
         this.tableName = tableName;
     }
 
@@ -395,19 +395,19 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         this.tableVersion = tableVersion;
     }
 
-    public SqlNode getTimestamp() {
+    public ExpressionNode getTimestamp() {
         return timestamp;
     }
 
-    public void setTimestamp(SqlNode timestamp) {
+    public void setTimestamp(ExpressionNode timestamp) {
         this.timestamp = timestamp;
     }
 
-    public SqlNode getWhereClause() {
+    public ExpressionNode getWhereClause() {
         return whereClause;
     }
 
-    public void setWhereClause(SqlNode whereClause) {
+    public void setWhereClause(ExpressionNode whereClause) {
         this.whereClause = whereClause;
     }
 
@@ -434,8 +434,8 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     /*
      * Splits "where" clauses into "and" chunks
      */
-    public ObjList<SqlNode> parseWhereClause() {
-        SqlNode n = getWhereClause();
+    public ObjList<ExpressionNode> parseWhereClause() {
+        ExpressionNode n = getWhereClause();
         // pre-order traversal
         sqlNodeStack.clear();
         while (!sqlNodeStack.isEmpty() || n != null) {
@@ -465,7 +465,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         joinModels.setQuick(pos, model);
     }
 
-    public void setLimit(SqlNode lo, SqlNode hi) {
+    public void setLimit(ExpressionNode lo, ExpressionNode hi) {
         this.limitLo = lo;
         this.limitHi = hi;
     }
@@ -478,6 +478,16 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     @Override
     public CharSequence translateAlias(CharSequence column) {
         return aliasToColumnMap.get(column);
+    }
+
+    private static void aliasToSink(CharSequence alias, CharSink sink) {
+        sink.put(' ');
+        boolean quote = Chars.indexOf(alias, ' ') != -1;
+        if (quote) {
+            sink.put('\'').put(alias).put('\'');
+        } else {
+            sink.put(alias);
+        }
     }
 
     private String getSelectModelTypeText() {
@@ -503,7 +513,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                 QueryColumn column = columns.getQuick(i);
                 CharSequence name = column.getName();
                 CharSequence alias = column.getAlias();
-                SqlNode ast = column.getAst();
+                ExpressionNode ast = column.getAst();
                 if (column instanceof AnalyticColumn || name == null) {
                     ast.toSink(sink);
 
@@ -515,7 +525,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                     if (name != null) {
                         AnalyticColumn ac = (AnalyticColumn) column;
                         sink.put(" over (");
-                        final ObjList<SqlNode> partitionBy = ac.getPartitionBy();
+                        final ObjList<ExpressionNode> partitionBy = ac.getPartitionBy();
                         if (partitionBy.size() > 0) {
                             sink.put("partition by ");
                             for (int k = 0, z = partitionBy.size(); k < z; k++) {
@@ -526,7 +536,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                             }
                         }
 
-                        final ObjList<SqlNode> orderBy = ac.getOrderBy();
+                        final ObjList<ExpressionNode> orderBy = ac.getOrderBy();
                         if (orderBy.size() > 0) {
                             if (partitionBy.size() > 0) {
                                 sink.put(' ');
@@ -547,7 +557,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                 } else {
                     ast.toSink(sink);
                     // do not repeat alias when it is the same as AST token, provided AST is a literal
-                    if (alias != null && (ast.type != SqlNode.LITERAL || !ast.token.equals(alias))) {
+                    if (alias != null && (ast.type != ExpressionNode.LITERAL || !ast.token.equals(alias))) {
                         aliasToSink(alias, sink);
                     }
                 }
@@ -677,7 +687,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         }
     }
 
-    private static final class QueryModelFactory implements ObjectFactory<QueryModel> {
+    public static final class QueryModelFactory implements ObjectFactory<QueryModel> {
         @Override
         public QueryModel newInstance() {
             return new QueryModel();

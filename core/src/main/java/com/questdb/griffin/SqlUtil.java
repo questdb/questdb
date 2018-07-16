@@ -23,6 +23,7 @@
 
 package com.questdb.griffin;
 
+import com.questdb.griffin.model.ExpressionNode;
 import com.questdb.griffin.model.QueryColumn;
 import com.questdb.std.*;
 
@@ -65,8 +66,8 @@ public class SqlUtil {
         return null;
     }
 
-    static SqlNode nextLiteral(ObjectPool<SqlNode> pool, CharSequence token, int position) {
-        return pool.next().of(SqlNode.LITERAL, token, 0, position);
+    static ExpressionNode nextLiteral(ObjectPool<ExpressionNode> pool, CharSequence token, int position) {
+        return pool.next().of(ExpressionNode.LITERAL, token, 0, position);
     }
 
     static CharSequence createColumnAlias(CharacterStore store, CharSequence base, int indexOfDot, CharSequenceIntHashMap nameTypeMap) {
@@ -107,7 +108,7 @@ public class SqlUtil {
 
     static QueryColumn nextColumn(
             ObjectPool<QueryColumn> queryColumnPool,
-            ObjectPool<SqlNode> sqlNodePool,
+            ObjectPool<ExpressionNode> sqlNodePool,
             CharSequence alias,
             CharSequence column
     ) {

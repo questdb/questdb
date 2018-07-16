@@ -23,15 +23,16 @@
 
 package com.questdb.griffin;
 
+import com.questdb.griffin.model.ExpressionNode;
 import com.questdb.std.IntStack;
 
 import java.util.ArrayDeque;
 
 final public class PostOrderTreeTraversalAlgo {
-    private final ArrayDeque<SqlNode> stack = new ArrayDeque<>();
+    private final ArrayDeque<ExpressionNode> stack = new ArrayDeque<>();
     private final IntStack indexStack = new IntStack();
 
-    public void traverse(SqlNode node, Visitor visitor) throws SqlException {
+    public void traverse(ExpressionNode node, Visitor visitor) throws SqlException {
 
         // post-order iterative tree traversal
         // see http://en.wikipedia.org/wiki/Tree_traversal
@@ -39,7 +40,7 @@ final public class PostOrderTreeTraversalAlgo {
         stack.clear();
         indexStack.clear();
 
-        SqlNode lastVisited = null;
+        ExpressionNode lastVisited = null;
 
         while (!stack.isEmpty() || node != null) {
             if (node != null) {
@@ -47,7 +48,7 @@ final public class PostOrderTreeTraversalAlgo {
                 indexStack.push(0);
                 node = node.rhs;
             } else {
-                SqlNode peek = stack.peek();
+                ExpressionNode peek = stack.peek();
                 assert peek != null;
                 if (peek.paramCount < 3) {
                     if (peek.lhs != null && lastVisited != peek.lhs) {
@@ -73,6 +74,6 @@ final public class PostOrderTreeTraversalAlgo {
     }
 
     public interface Visitor {
-        void visit(SqlNode node) throws SqlException;
+        void visit(ExpressionNode node) throws SqlException;
     }
 }

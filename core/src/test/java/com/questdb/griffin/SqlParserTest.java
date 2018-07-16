@@ -3255,7 +3255,7 @@ public class SqlParserTest extends AbstractCairoTest {
     @Test
     public void testSubQueryAsArg() throws Exception {
         assertQuery(
-                "select-choose customerId from (customers where (select-choose * column from (orders)) > 1)",
+                "select-choose customerId from (customers where (select-choose orderId from (orders)) > 1)",
                 "select * from customers where (select * from orders) > 1",
                 modelOf("orders").col("orderId", ColumnType.INT),
                 modelOf("customers").col("customerId", ColumnType.INT)

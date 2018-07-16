@@ -24,7 +24,6 @@
 package com.questdb.griffin.model;
 
 import com.questdb.griffin.SqlException;
-import com.questdb.griffin.SqlNode;
 import com.questdb.std.*;
 import com.questdb.std.microtime.DateFormatUtils;
 import com.questdb.std.microtime.Dates;
@@ -41,7 +40,7 @@ public class IntrinsicModel implements Mutable {
     private final LongList intervalsB = new LongList();
     private final LongList intervalsC = new LongList();
     public CharSequence keyColumn;
-    public SqlNode filter;
+    public ExpressionNode filter;
     public LongList intervals;
     public int intrinsicValue = UNDEFINED;
     public QueryModel keySubQuery;
@@ -73,7 +72,7 @@ public class IntrinsicModel implements Mutable {
         this.intervals = null;
     }
 
-    public void excludeValue(SqlNode val) {
+    public void excludeValue(ExpressionNode val) {
 
         final int index;
         if (Chars.equals("null", val.token)) {

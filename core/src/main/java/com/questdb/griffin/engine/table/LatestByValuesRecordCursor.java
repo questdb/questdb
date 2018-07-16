@@ -52,7 +52,7 @@ class LatestByValuesRecordCursor extends AbstractTreeSetRecordCursor {
             record.jumpTo(frame.getPartitionIndex(), rowHi);
             for (long row = rowHi; row >= rowLo; row--) {
                 record.setRecordIndex(row);
-                int key = record.getInt(columnIndex);
+                int key = record.getInt(columnIndex) + 1;
                 int index = map.keyIndex(key);
                 if (index < 0) {
                     if (map.valueAt(index) == 0) {

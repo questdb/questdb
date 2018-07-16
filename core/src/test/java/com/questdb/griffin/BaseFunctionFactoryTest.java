@@ -28,6 +28,8 @@ import com.questdb.cairo.Engine;
 import com.questdb.cairo.GenericRecordMetadata;
 import com.questdb.cairo.sql.Function;
 import com.questdb.griffin.engine.functions.bind.BindVariableService;
+import com.questdb.griffin.model.ExpressionNode;
+import com.questdb.griffin.model.QueryModel;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Before;
 
@@ -36,6 +38,7 @@ import java.util.ArrayList;
 public class BaseFunctionFactoryTest extends AbstractCairoTest {
     protected static final ArrayList<FunctionFactory> functions = new ArrayList<>();
     protected static final BindVariableService bindVariableService = new BindVariableService();
+    protected final static QueryModel queryModel = QueryModel.FACTORY.newInstance();
     private static final SqlCompiler compiler = new SqlCompiler(new Engine(configuration), configuration);
 
     @Before
@@ -48,8 +51,9 @@ public class BaseFunctionFactoryTest extends AbstractCairoTest {
         return functionParser.parseFunction(expr(expression), metadata, bindVariableService);
     }
 
-    protected static SqlNode expr(CharSequence expression) throws SqlException {
-        return compiler.parseExpression(expression);
+    protected static ExpressionNode expr(CharSequence expression) throws SqlException {
+        queryModel.clear();
+        return compiler.parseExpression(expression, queryModel);
     }
 
     @NotNull

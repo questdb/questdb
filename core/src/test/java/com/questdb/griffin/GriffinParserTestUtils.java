@@ -23,6 +23,7 @@
 
 package com.questdb.griffin;
 
+import com.questdb.griffin.model.ExpressionNode;
 import com.questdb.std.LongList;
 import com.questdb.std.microtime.DateFormatUtils;
 import com.questdb.std.str.StringSink;
@@ -49,7 +50,7 @@ public class GriffinParserTestUtils {
         return sink;
     }
 
-    public static CharSequence toRpn(SqlNode node) {
+    public static CharSequence toRpn(ExpressionNode node) {
         sink.clear();
         sink.put(node);
         return sink;

@@ -21,19 +21,18 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin;
+package com.questdb.griffin.model;
 
-import com.questdb.griffin.model.IntrinsicModel;
-import com.questdb.griffin.model.QueryModel;
+import com.questdb.griffin.OperatorExpression;
 import com.questdb.std.Mutable;
 import com.questdb.std.ObjList;
 import com.questdb.std.ObjectFactory;
 import com.questdb.std.Sinkable;
 import com.questdb.std.str.CharSink;
 
-public class SqlNode implements Mutable, Sinkable {
+public class ExpressionNode implements Mutable, Sinkable {
 
-    public final static ExprNodeFactory FACTORY = new ExprNodeFactory();
+    public final static ExpressionNodeFactory FACTORY = new ExpressionNodeFactory();
     public static final int OPERATION = 1;
     public static final int CONSTANT = 2;
     public static final int LITERAL = 4;
@@ -42,18 +41,18 @@ public class SqlNode implements Mutable, Sinkable {
     public static final int SET_OPERATION = 32;
     public static final int LAMBDA = 65;
     public static final int UNKNOWN = 0;
-    public final ObjList<SqlNode> args = new ObjList<>(4);
+    public final ObjList<ExpressionNode> args = new ObjList<>(4);
     public CharSequence token;
     public QueryModel queryModel;
     public int precedence;
     public int position;
-    public SqlNode lhs;
-    public SqlNode rhs;
+    public ExpressionNode lhs;
+    public ExpressionNode rhs;
     public int type;
     public int paramCount;
     public int intrinsicValue = IntrinsicModel.UNDEFINED;
 
-    private SqlNode() {
+    private ExpressionNode() {
     }
 
     public void clear() {
@@ -69,7 +68,7 @@ public class SqlNode implements Mutable, Sinkable {
         queryModel = null;
     }
 
-    public SqlNode of(int type, CharSequence token, int precedence, int position) {
+    public ExpressionNode of(int type, CharSequence token, int precedence, int position) {
         this.type = type;
         this.precedence = precedence;
         this.token = token;
@@ -143,10 +142,10 @@ public class SqlNode implements Mutable, Sinkable {
         }
     }
 
-    private static final class ExprNodeFactory implements ObjectFactory<SqlNode> {
+    private static final class ExpressionNodeFactory implements ObjectFactory<ExpressionNode> {
         @Override
-        public SqlNode newInstance() {
-            return new SqlNode();
+        public ExpressionNode newInstance() {
+            return new ExpressionNode();
         }
     }
 }

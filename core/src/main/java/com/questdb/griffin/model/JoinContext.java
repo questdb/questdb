@@ -23,7 +23,6 @@
 
 package com.questdb.griffin.model;
 
-import com.questdb.griffin.SqlNode;
 import com.questdb.std.*;
 
 public class JoinContext implements Mutable {
@@ -34,8 +33,8 @@ public class JoinContext implements Mutable {
     public final IntList bIndexes = new IntList(TYPICAL_NUMBER_OF_JOIN_COLUMNS);
     public final ObjList<CharSequence> aNames = new ObjList<>(TYPICAL_NUMBER_OF_JOIN_COLUMNS);
     public final ObjList<CharSequence> bNames = new ObjList<>(TYPICAL_NUMBER_OF_JOIN_COLUMNS);
-    public final ObjList<SqlNode> aNodes = new ObjList<>(TYPICAL_NUMBER_OF_JOIN_COLUMNS);
-    public final ObjList<SqlNode> bNodes = new ObjList<>(TYPICAL_NUMBER_OF_JOIN_COLUMNS);
+    public final ObjList<ExpressionNode> aNodes = new ObjList<>(TYPICAL_NUMBER_OF_JOIN_COLUMNS);
+    public final ObjList<ExpressionNode> bNodes = new ObjList<>(TYPICAL_NUMBER_OF_JOIN_COLUMNS);
     // indexes of parent join clauses
     public final IntHashSet parents = new IntHashSet(4);
     public int inCount;

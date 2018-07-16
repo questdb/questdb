@@ -23,18 +23,32 @@
 
 package com.questdb.griffin.engine.table;
 
+import com.questdb.cairo.AbstractRecordCursorFactory;
 import com.questdb.cairo.sql.DataFrameCursorFactory;
-import com.questdb.cairo.sql.Function;
+import com.questdb.cairo.sql.RecordCursor;
 import com.questdb.cairo.sql.RecordMetadata;
-import org.jetbrains.annotations.NotNull;
+import com.questdb.griffin.engine.LongTreeSet;
 
-public class LatestByAllIndexedFilteredRecordCursorFactory extends AbstractTreeSetRecordCursorFactory {
-    public LatestByAllIndexedFilteredRecordCursorFactory(
-            @NotNull RecordMetadata metadata,
-            @NotNull DataFrameCursorFactory dataFrameCursorFactory,
-            int columnIndex,
-            @NotNull Function filter) {
-        super(metadata, dataFrameCursorFactory);
-        this.cursor = new LatestByAllIndexedFilteredRecordCursor(columnIndex, treeSet, filter);
+abstract class AbstractTreeSetRecordCursorFactory extends AbstractRecordCursorFactory {
+    protected final LongTreeSet treeSet;
+    protected final DataFrameCursorFactory dataFrameCursorFactory;
+    protected AbstractTreeSetRecordCursor cursor;
+
+    public AbstractTreeSetRecordCursorFactory(RecordMetadata metadata, DataFrameCursorFactory dataFrameCursorFactory) {
+        super(metadata);
+        //todo: derive page size from key count for symbol and configuration
+        this.treeSet = new LongTreeSet(4 * 1024);
+        this.dataFrameCursorFactory = dataFrameCursorFactory;
+    }
+
+    @Override
+    public void close() {
+        treeSet.close();
+    }
+
+    @Override
+    public RecordCursor getCursor() {
+        cursor.of(dataFrameCursorFactory.getCursor());
+        return cursor;
     }
 }
