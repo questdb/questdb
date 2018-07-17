@@ -28,24 +28,22 @@ import com.questdb.cairo.sql.DataFrame;
 import com.questdb.cairo.sql.RowCursorFactory;
 import com.questdb.common.RowCursor;
 import com.questdb.std.ObjList;
-import com.questdb.std.Unsafe;
 
 public class HeapRowCursorFactory implements RowCursorFactory {
     private final ObjList<RowCursorFactory> cursorFactories;
-    private final RowCursor[] cursors;
+    private final ObjList<RowCursor> cursors;
     private final HeapRowCursor cursor;
 
-    public HeapRowCursorFactory(ObjList<RowCursorFactory> cursorFactories) {
+    public HeapRowCursorFactory(ObjList<RowCursorFactory> cursorFactories, int nSources) {
         this.cursorFactories = cursorFactories;
-        int n = cursorFactories.size();
-        this.cursors = new RowCursor[n];
-        this.cursor = new HeapRowCursor(n);
+        this.cursors = new ObjList<>(nSources);
+        this.cursor = new HeapRowCursor();
     }
 
     @Override
     public RowCursor getCursor(DataFrame dataFrame) {
-        for (int i = 0, n = cursors.length; i < n; i++) {
-            Unsafe.arrayPut(cursors, i, cursorFactories.getQuick(i).getCursor(dataFrame));
+        for (int i = 0, n = cursorFactories.size(); i < n; i++) {
+            cursors.extendAndSet(i, cursorFactories.getQuick(i).getCursor(dataFrame));
         }
         cursor.of(cursors);
         return cursor;

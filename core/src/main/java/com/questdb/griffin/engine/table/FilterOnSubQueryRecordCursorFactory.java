@@ -23,67 +23,70 @@
 
 package com.questdb.griffin.engine.table;
 
-import com.questdb.cairo.CairoConfiguration;
 import com.questdb.cairo.sql.*;
 import com.questdb.common.SymbolTable;
 import com.questdb.std.IntHashSet;
+import com.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-public class LatestBySubQueryRecordCursorFactory extends AbstractTreeSetRecordCursorFactory {
+public class FilterOnSubQueryRecordCursorFactory extends AbstractDataFrameRecordCursorFactory {
+    private final DataFrameRecordCursor cursor;
     private final int columnIndex;
-    // this instance is shared between factory and cursor
-    // factory will be resolving symbols for cursor and if successful
-    // symbol keys will be added to this hash set
-    private final IntHashSet symbolKeys = new IntHashSet();
+    private final Function filter;
+    private final ObjList<RowCursorFactory> cursorFactories;
+    private final IntHashSet symbolKeys = new IntHashSet(16, 0.5, SymbolTable.VALUE_NOT_FOUND);
     private final RecordCursorFactory recordCursorFactory;
 
-    public LatestBySubQueryRecordCursorFactory(
-            @NotNull CairoConfiguration configuration,
+    public FilterOnSubQueryRecordCursorFactory(
             @NotNull RecordMetadata metadata,
             @NotNull DataFrameCursorFactory dataFrameCursorFactory,
-            int columnIndex,
             @NotNull RecordCursorFactory recordCursorFactory,
-            @Nullable Function filter,
-            boolean indexed) {
-        super(metadata, dataFrameCursorFactory, configuration);
-        if (indexed) {
-            if (filter != null) {
-                this.cursor = new LatestByValuesIndexedFilteredRecordCursor(columnIndex, treeSet, symbolKeys, filter);
-            } else {
-                this.cursor = new LatestByValuesIndexedRecordCursor(columnIndex, treeSet, symbolKeys);
-            }
-        } else {
-            if (filter != null) {
-                this.cursor = new LatestByValuesFilteredRecordCursor(columnIndex, treeSet, symbolKeys, filter);
-            } else {
-                this.cursor = new LatestByValuesRecordCursor(columnIndex, treeSet, symbolKeys);
-            }
-        }
-        this.columnIndex = columnIndex;
+            int columnIndex,
+            @Nullable Function filter
+    ) {
+        super(metadata, dataFrameCursorFactory);
         this.recordCursorFactory = recordCursorFactory;
+        this.columnIndex = columnIndex;
+        this.filter = filter;
+
+        cursorFactories = new ObjList<>();
+        this.cursor = new DataFrameRecordCursor(new HeapRowCursorFactory(cursorFactories, 0));
+    }
+
+    private void addSymbolKey(int symbolKey) {
+        final RowCursorFactory rowCursorFactory;
+        if (filter == null) {
+            rowCursorFactory = new SymbolIndexRowCursorFactory(columnIndex, symbolKey, cursorFactories.size() == 0);
+        } else {
+            rowCursorFactory = new SymbolIndexFilteredRowCursorFactory(columnIndex, symbolKey, filter, cursorFactories.size() == 0);
+        }
+        cursorFactories.add(rowCursorFactory);
     }
 
     @Override
-    public void close() {
-        super.close();
-        recordCursorFactory.close();
-    }
-
-    @Override
-    protected AbstractDataFrameRecordCursor getCursorInstance(DataFrameCursor dataFrameCursor) {
+    protected RecordCursor getCursorInstance(DataFrameCursor dataFrameCursor) {
         SymbolTable symbolTable = dataFrameCursor.getSymbolTable(columnIndex);
-        symbolKeys.clear();
         try (RecordCursor cursor = recordCursorFactory.getCursor()) {
             while (cursor.hasNext()) {
                 Record record = cursor.next();
-                // todo: test when first column is not a symbol
-                int symbolKey = symbolTable.getQuick(record.getSym(0));
+                // todo: what if this isn't a symbol?
+                final CharSequence symbol = record.getSym(0);
+                int symbolKey = symbolTable.getQuick(symbol);
                 if (symbolKey != SymbolTable.VALUE_NOT_FOUND) {
-                    symbolKeys.add(symbolKey + 1);
+                    if (symbolKeys.add(symbolKey)) {
+                        addSymbolKey(symbolKey);
+                    }
                 }
             }
         }
-        return super.getCursorInstance(dataFrameCursor);
+
+        if (symbolKeys.size() == 0) {
+            dataFrameCursor.close();
+            return EmptyTableRecordCursor.INSTANCE;
+        }
+
+        this.cursor.of(dataFrameCursor);
+        return this.cursor;
     }
 }

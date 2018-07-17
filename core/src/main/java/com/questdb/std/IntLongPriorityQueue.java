@@ -24,24 +24,26 @@
 package com.questdb.std;
 
 public class IntLongPriorityQueue {
-    private final long[] buf;
-    private final int[] src;
+    private final LongList buf;
+    private final IntList src;
     private int size;
 
-    public IntLongPriorityQueue(int nSources) {
-        this.buf = new long[nSources];
-        this.src = new int[nSources];
+    public IntLongPriorityQueue() {
+        this.buf = new LongList(8);
+        this.src = new IntList(8);
         this.size = 0;
     }
 
     public void add(int index, long value) {
         int p = binSearch(value);
         if (p < size) {
-            System.arraycopy(buf, p, buf, p + 1, size - p);
-            System.arraycopy(src, p, src, p + 1, size - p);
+            buf.ensureCapacity(size + 1);
+            src.ensureCapacity(size + 1);
+            buf.arrayCopy(p, p + 1, size - p);
+            src.arrayCopy(p, p + 1, size - p);
         }
-        Unsafe.arrayPut(src, p, index);
-        Unsafe.arrayPut(buf, p, value);
+        buf.extendAndSet(p, value);
+        src.extendAndSet(p, index);
         size++;
     }
 
@@ -54,35 +56,35 @@ public class IntLongPriorityQueue {
     }
 
     public int peekBottom() {
-        return Unsafe.arrayGet(src, size - 1);
+        return src.getQuick(size - 1);
     }
 
     public long popAndReplace(int index, long value) {
-        long v = Unsafe.arrayGet(buf, 0);
+        long v = buf.getQuick(0);
         int p = binSearch(value);
         if (p > 1) {
             p--;
-            System.arraycopy(buf, 1, buf, 0, p);
-            System.arraycopy(src, 1, src, 0, p);
+            buf.arrayCopy(1, 0, p);
+            src.arrayCopy(1, 0, p);
 
-            Unsafe.arrayPut(buf, p, value);
-            Unsafe.arrayPut(src, p, index);
+            buf.setQuick(p, value);
+            src.setQuick(p, index);
         } else {
-            Unsafe.arrayPut(buf, 0, value);
-            Unsafe.arrayPut(src, 0, index);
+            buf.setQuick(0, value);
+            src.setQuick(0, index);
         }
         return v;
     }
 
     public int popIndex() {
-        return Unsafe.arrayGet(src, 0);
+        return src.getQuick(0);
     }
 
     public long popValue() {
-        long v = Unsafe.arrayGet(buf, 0);
+        long v = buf.getQuick(0);
         if (--size > 0) {
-            System.arraycopy(buf, 1, buf, 0, size);
-            System.arraycopy(src, 1, src, 0, size);
+            buf.arrayCopy(1, 0, size);
+            src.arrayCopy(1, 0, size);
         }
         return v;
     }
@@ -107,14 +109,14 @@ public class IntLongPriorityQueue {
             }
 
             int mid = (low + high - 1) >>> 1;
-            long midVal = Unsafe.arrayGet(buf, mid);
+            long midVal = buf.getQuick(mid);
 
             if (midVal < v)
                 low = mid + 1;
             else if (midVal > v)
                 high = mid;
             else {
-                for (; ++mid < high && Unsafe.arrayGet(buf, mid) == v; ) ;
+                for (; ++mid < high && buf.getQuick(mid) == v; ) ;
                 return mid;
             }
         }
@@ -123,7 +125,7 @@ public class IntLongPriorityQueue {
 
     private int scanSearch(long v) {
         for (int i = 0; i < size; i++) {
-            if (Unsafe.arrayGet(buf, i) > v) {
+            if (buf.getQuick(i) > v) {
                 return i;
             }
         }

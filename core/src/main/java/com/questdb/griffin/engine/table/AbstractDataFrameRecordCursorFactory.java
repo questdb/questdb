@@ -23,36 +23,31 @@
 
 package com.questdb.griffin.engine.table;
 
-import com.questdb.cairo.CairoConfiguration;
+import com.questdb.cairo.AbstractRecordCursorFactory;
+import com.questdb.cairo.CairoException;
 import com.questdb.cairo.sql.DataFrameCursor;
 import com.questdb.cairo.sql.DataFrameCursorFactory;
+import com.questdb.cairo.sql.RecordCursor;
 import com.questdb.cairo.sql.RecordMetadata;
-import com.questdb.griffin.engine.LongTreeSet;
 
-abstract class AbstractTreeSetRecordCursorFactory extends AbstractDataFrameRecordCursorFactory {
-    protected final LongTreeSet treeSet;
-    protected AbstractTreeSetRecordCursor cursor;
+abstract class AbstractDataFrameRecordCursorFactory extends AbstractRecordCursorFactory {
+    protected final DataFrameCursorFactory dataFrameCursorFactory;
 
-    public AbstractTreeSetRecordCursorFactory(
-            RecordMetadata metadata,
-            DataFrameCursorFactory dataFrameCursorFactory,
-            CairoConfiguration configuration) {
-        super(metadata, dataFrameCursorFactory);
-        this.treeSet = new LongTreeSet(configuration.getSqlTreeDefaultPageSize());
+    public AbstractDataFrameRecordCursorFactory(RecordMetadata metadata, DataFrameCursorFactory dataFrameCursorFactory) {
+        super(metadata);
+        this.dataFrameCursorFactory = dataFrameCursorFactory;
     }
 
     @Override
-    public void close() {
-        treeSet.close();
-        if (cursor != null) {
-            cursor.close();
-            cursor = null;
+    public RecordCursor getCursor() {
+        DataFrameCursor dataFrameCursor = dataFrameCursorFactory.getCursor();
+        try {
+            return getCursorInstance(dataFrameCursor);
+        } catch (CairoException e) {
+            dataFrameCursor.close();
+            throw e;
         }
     }
 
-    @Override
-    protected AbstractDataFrameRecordCursor getCursorInstance(DataFrameCursor dataFrameCursor) {
-        cursor.of(dataFrameCursor);
-        return cursor;
-    }
+    protected abstract RecordCursor getCursorInstance(DataFrameCursor dataFrameCursor);
 }

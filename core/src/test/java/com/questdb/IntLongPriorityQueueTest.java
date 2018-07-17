@@ -81,7 +81,7 @@ public class IntLongPriorityQueueTest extends AbstractTest {
 
             Arrays.sort(expected);
 
-            IntLongPriorityQueue heap = new IntLongPriorityQueue(nStreams);
+            IntLongPriorityQueue heap = new IntLongPriorityQueue();
             IndexCursor cursors[] = new IndexCursor[nStreams];
 
             for (int i = 0; i < nStreams; i++) {

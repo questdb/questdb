@@ -23,25 +23,19 @@
 
 package com.questdb.griffin.engine.table;
 
-import com.questdb.cairo.AbstractRecordCursorFactory;
-import com.questdb.cairo.sql.DataFrameCursorFactory;
-import com.questdb.cairo.sql.RecordCursor;
-import com.questdb.cairo.sql.RecordMetadata;
-import com.questdb.cairo.sql.RowCursorFactory;
+import com.questdb.cairo.sql.*;
 
-public class DataFrameRecordCursorFactory extends AbstractRecordCursorFactory {
-    private final DataFrameCursorFactory dataFrameCursorFactory;
+public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorFactory {
     private final DataFrameRecordCursor cursor;
 
     public DataFrameRecordCursorFactory(RecordMetadata metadata, DataFrameCursorFactory dataFrameCursorFactory, RowCursorFactory rowCursorFactory) {
-        super(metadata);
-        this.dataFrameCursorFactory = dataFrameCursorFactory;
+        super(metadata, dataFrameCursorFactory);
         this.cursor = new DataFrameRecordCursor(rowCursorFactory);
     }
 
     @Override
-    public RecordCursor getCursor() {
-        cursor.of(dataFrameCursorFactory.getCursor());
+    protected RecordCursor getCursorInstance(DataFrameCursor dataFrameCursor) {
+        cursor.of(dataFrameCursor);
         return cursor;
     }
 }

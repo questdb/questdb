@@ -93,6 +93,10 @@ public class LongList implements Mutable {
         Unsafe.arrayPut(buffer, index, element);
     }
 
+    public void arrayCopy(int srcPos, int dstPos, int length) {
+        System.arraycopy(buffer, srcPos, buffer, dstPos, length);
+    }
+
     public int binarySearch(long v) {
         int low = 0;
         int high = pos;

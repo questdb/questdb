@@ -47,17 +47,16 @@ public class LatestByValueDeferredIndexedRowCursorFactory implements RowCursorFa
 
     @Override
     public RowCursor getCursor(DataFrame dataFrame) {
-        if (symbolKey == SymbolTable.VALUE_NOT_FOUND) {
-            return EmptyRowCursor.INSTANCE;
-        }
-        RowCursor cursor =
-                dataFrame
-                        .getBitmapIndexReader(columnIndex, BitmapIndexReader.DIR_BACKWARD)
-                        .getCursor(cachedIndexReaderCursor, symbolKey, dataFrame.getRowLo(), dataFrame.getRowHi() - 1);
+        if (symbolKey != SymbolTable.VALUE_NOT_FOUND) {
+            RowCursor cursor =
+                    dataFrame
+                            .getBitmapIndexReader(columnIndex, BitmapIndexReader.DIR_BACKWARD)
+                            .getCursor(cachedIndexReaderCursor, symbolKey, dataFrame.getRowLo(), dataFrame.getRowHi() - 1);
 
-        if (cursor.hasNext()) {
-            this.cursor.of(cursor.next());
-            return this.cursor;
+            if (cursor.hasNext()) {
+                this.cursor.of(cursor.next());
+                return this.cursor;
+            }
         }
         return EmptyRowCursor.INSTANCE;
     }

@@ -40,6 +40,7 @@ import com.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 import org.junit.Before;
+import org.junit.Ignore;
 import org.junit.Test;
 
 import java.io.IOException;
@@ -57,7 +58,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testFilterConstantFalse() throws Exception {
+    public void testFilterOnConstantFalse() throws Exception {
         final String expected = "a\tb\tk\n";
         assertQuery(expected,
                 "select * from x o where 10 < 8",
@@ -83,7 +84,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testFilterInterval() throws Exception {
+    public void testFilterOnInterval() throws Exception {
         assertQuery("a\tb\tk\n" +
                         "84.452581772111\tPEHN\t1970-01-01T03:36:40.000000Z\n" +
                         "97.501988537251\t\t1970-01-01T03:53:20.000000Z\n" +
@@ -103,7 +104,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testFilterIntervalAndField() throws Exception {
+    public void testFilterOnIntervalAndFilter() throws Exception {
         assertQuery("a\tb\tk\n" +
                         "84.452581772111\tPEHN\t1970-01-01T03:36:40.000000Z\n" +
                         "97.501988537251\t\t1970-01-01T03:53:20.000000Z\n",
@@ -122,7 +123,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testFilterIntrinsicFalse() throws Exception {
+    public void testFilterOnIntrinsicFalse() throws Exception {
         assertQuery("a\tb\tk\n",
                 "select * from x o where o.b in ('HYRX','PEHN', null) and a < a",
                 "create table x as (select * from random_cursor(20, 'a', rnd_double(0)*100, 'b', rnd_symbol(5,4,4,1), 'k', timestamp_sequence(to_timestamp(0), 1000000000))), index(b)",
@@ -130,7 +131,124 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testFilterKeyAndFields() throws Exception {
+    public void testFilterOnNull() throws Exception {
+        final String expected = "a\tb\n" +
+                "11.427984775756\t\n" +
+                "87.996347253916\t\n" +
+                "32.881769076795\t\n" +
+                "57.934663268622\t\n" +
+                "26.922103479745\t\n" +
+                "52.984059417621\t\n" +
+                "97.501988537251\t\n" +
+                "80.011211397392\t\n" +
+                "92.050039469858\t\n" +
+                "45.634456960908\t\n" +
+                "40.455469747939\t\n";
+        assertQuery(expected,
+                "select * from x where b = null",
+                "create table x as (select * from random_cursor(20, 'a', rnd_double(0)*100, 'b', rnd_symbol(5,4,4,1))), index(b)",
+                null,
+                "insert into x (a,b)" +
+                        " select" +
+                        " rnd_double(0)*100, " +
+                        " rnd_symbol(5,4,4,1)" +
+                        " from long_sequence(15)",
+                expected +
+                        "54.491550215189\t\n" +
+                        "76.923818943378\t\n" +
+                        "58.912164838798\t\n" +
+                        "44.804689668614\t\n" +
+                        "89.409171265819\t\n" +
+                        "3.993124821273\t\n");
+    }
+
+    @Test
+    public void testFilterOnSubQueryIndexed() throws Exception {
+        final String expected = "a\tb\tk\n" +
+                "11.427984775756\t\t1970-01-01T00:00:00.000000Z\n" +
+                "23.905290108465\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
+                "87.996347253916\t\t1970-01-05T15:06:40.000000Z\n" +
+                "32.881769076795\t\t1970-01-06T18:53:20.000000Z\n" +
+                "97.711031460512\tHYRX\t1970-01-07T22:40:00.000000Z\n" +
+                "57.934663268622\t\t1970-01-10T06:13:20.000000Z\n" +
+                "12.026122412833\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
+                "26.922103479745\t\t1970-01-13T17:33:20.000000Z\n" +
+                "52.984059417621\t\t1970-01-14T21:20:00.000000Z\n" +
+                "97.501988537251\t\t1970-01-17T04:53:20.000000Z\n" +
+                "80.011211397392\t\t1970-01-19T12:26:40.000000Z\n" +
+                "92.050039469858\t\t1970-01-20T16:13:20.000000Z\n" +
+                "45.634456960908\t\t1970-01-21T20:00:00.000000Z\n" +
+                "40.455469747939\t\t1970-01-22T23:46:40.000000Z\n";
+
+        assertQuery(expected,
+                "select * from x where b in (select rnd_symbol('RXGZ', 'HYRX', null, 'ABC') a from long_sequence(10))",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(to_timestamp(0), 100000000000) k" +
+                        " from" +
+                        " long_sequence(20)" +
+                        "),index(b) timestamp(k) partition by DAY",
+                "k",
+                "insert into x select * from (" +
+                        "select" +
+                        " rnd_double(0)*100," +
+                        " 'ABC'," +
+                        " to_timestamp('1971', 'yyyy') t" +
+                        " from long_sequence(1)" +
+                        ") timestamp(t)",
+                expected +
+                        "95.400690890497\tABC\t1971-01-01T00:00:00.000000Z\n");
+    }
+
+    @Test
+    public void testFilterOnValues() throws Exception {
+        final String expected1 = "a\tb\tk\n" +
+                "11.427984775756\t\t1970-01-01T00:00:00.000000Z\n" +
+                "70.943604871712\tPEHN\t1970-01-01T00:50:00.000000Z\n" +
+                "87.996347253916\t\t1970-01-01T01:06:40.000000Z\n" +
+                "32.881769076795\t\t1970-01-01T01:23:20.000000Z\n" +
+                "97.711031460512\tHYRX\t1970-01-01T01:40:00.000000Z\n" +
+                "81.468079445006\tPEHN\t1970-01-01T01:56:40.000000Z\n" +
+                "57.934663268622\t\t1970-01-01T02:13:20.000000Z\n" +
+                "12.026122412833\tHYRX\t1970-01-01T02:30:00.000000Z\n" +
+                "26.922103479745\t\t1970-01-01T03:03:20.000000Z\n" +
+                "52.984059417621\t\t1970-01-01T03:20:00.000000Z\n" +
+                "84.452581772111\tPEHN\t1970-01-01T03:36:40.000000Z\n" +
+                "97.501988537251\t\t1970-01-01T03:53:20.000000Z\n" +
+                "49.005104498852\tPEHN\t1970-01-01T04:10:00.000000Z\n" +
+                "80.011211397392\t\t1970-01-01T04:26:40.000000Z\n" +
+                "92.050039469858\t\t1970-01-01T04:43:20.000000Z\n" +
+                "45.634456960908\t\t1970-01-01T05:00:00.000000Z\n" +
+                "40.455469747939\t\t1970-01-01T05:16:40.000000Z\n";
+
+        assertQuery(expected1,
+                "select * from x o where o.b in ('HYRX','PEHN', null, 'ABCD')",
+                "create table x as (select * from random_cursor(20, 'a', rnd_double(0)*100, 'b', rnd_symbol(5,4,4,1), 'k', timestamp_sequence(to_timestamp(0), 1000000000))), index(b)",
+                null,
+                "insert into x (a,b)" +
+                        " select" +
+                        " rnd_double(0)*100," +
+                        " rnd_symbol('HYRX','PEHN', null, 'ABCD')" +
+                        " from" +
+                        " long_sequence(10)",
+                expected1 +
+                        "56.594291398612\tHYRX\t\n" +
+                        "68.216608610013\tPEHN\t\n" +
+                        "96.441838325644\t\t\n" +
+                        "11.585982949541\tABCD\t\n" +
+                        "81.641825924675\tABCD\t\n" +
+                        "54.491550215189\tPEHN\t\n" +
+                        "76.923818943378\tABCD\t\n" +
+                        "49.428905119585\tHYRX\t\n" +
+                        "65.513358397963\tABCD\t\n" +
+                        "28.200207166748\tABCD\t\n");
+    }
+
+    @Test
+    public void testFilterOnValuesAndFilter() throws Exception {
         assertQuery("a\tb\tk\n" +
                         "11.427984775756\t\t1970-01-01T00:00:00.000000Z\n" +
                         "32.881769076795\t\t1970-01-01T01:23:20.000000Z\n" +
@@ -166,7 +284,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testFilterKeyAndInterval() throws Exception {
+    public void testFilterOnValuesAndInterval() throws Exception {
         assertQuery("a\tb\tk\n" +
                         "84.452581772111\tPEHN\t1970-01-01T03:36:40.000000Z\n" +
                         "97.501988537251\t\t1970-01-01T03:53:20.000000Z\n" +
@@ -183,77 +301,6 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         ")" +
                         "), index(b) timestamp(k)",
                 "k");
-    }
-
-    @Test
-    public void testFilterMultipleKeyValues() throws Exception {
-        final String expected1 = "a\tb\tk\n" +
-                "11.427984775756\t\t1970-01-01T00:00:00.000000Z\n" +
-                "70.943604871712\tPEHN\t1970-01-01T00:50:00.000000Z\n" +
-                "87.996347253916\t\t1970-01-01T01:06:40.000000Z\n" +
-                "32.881769076795\t\t1970-01-01T01:23:20.000000Z\n" +
-                "97.711031460512\tHYRX\t1970-01-01T01:40:00.000000Z\n" +
-                "81.468079445006\tPEHN\t1970-01-01T01:56:40.000000Z\n" +
-                "57.934663268622\t\t1970-01-01T02:13:20.000000Z\n" +
-                "12.026122412833\tHYRX\t1970-01-01T02:30:00.000000Z\n" +
-                "26.922103479745\t\t1970-01-01T03:03:20.000000Z\n" +
-                "52.984059417621\t\t1970-01-01T03:20:00.000000Z\n" +
-                "84.452581772111\tPEHN\t1970-01-01T03:36:40.000000Z\n" +
-                "97.501988537251\t\t1970-01-01T03:53:20.000000Z\n" +
-                "49.005104498852\tPEHN\t1970-01-01T04:10:00.000000Z\n" +
-                "80.011211397392\t\t1970-01-01T04:26:40.000000Z\n" +
-                "92.050039469858\t\t1970-01-01T04:43:20.000000Z\n" +
-                "45.634456960908\t\t1970-01-01T05:00:00.000000Z\n" +
-                "40.455469747939\t\t1970-01-01T05:16:40.000000Z\n";
-
-        assertQuery(expected1,
-                "select * from x o where o.b in ('HYRX','PEHN', null)",
-                "create table x as (select * from random_cursor(20, 'a', rnd_double(0)*100, 'b', rnd_symbol(5,4,4,1), 'k', timestamp_sequence(to_timestamp(0), 1000000000))), index(b)",
-                null,
-                "insert into x (a,b)" +
-                        " select" +
-                        " rnd_double(0)*100," +
-                        " rnd_symbol(5,4,4,1)" +
-                        " from" +
-                        " long_sequence(10)",
-                expected1 +
-                        "54.491550215189\t\t\n" +
-                        "76.923818943378\t\t\n" +
-                        "58.912164838798\t\t\n" +
-                        "44.804689668614\t\t\n" +
-                        "89.409171265819\t\t\n");
-    }
-
-    @Test
-    public void testFilterNullKeyValue() throws Exception {
-        final String expected = "a\tb\n" +
-                "11.427984775756\t\n" +
-                "87.996347253916\t\n" +
-                "32.881769076795\t\n" +
-                "57.934663268622\t\n" +
-                "26.922103479745\t\n" +
-                "52.984059417621\t\n" +
-                "97.501988537251\t\n" +
-                "80.011211397392\t\n" +
-                "92.050039469858\t\n" +
-                "45.634456960908\t\n" +
-                "40.455469747939\t\n";
-        assertQuery(expected,
-                "select * from x where b = null",
-                "create table x as (select * from random_cursor(20, 'a', rnd_double(0)*100, 'b', rnd_symbol(5,4,4,1))), index(b)",
-                null,
-                "insert into x (a,b)" +
-                        " select" +
-                        " rnd_double(0)*100, " +
-                        " rnd_symbol(5,4,4,1)" +
-                        " from long_sequence(15)",
-                expected +
-                        "54.491550215189\t\n" +
-                        "76.923818943378\t\n" +
-                        "58.912164838798\t\n" +
-                        "44.804689668614\t\n" +
-                        "89.409171265819\t\n" +
-                        "3.993124821273\t\n");
     }
 
     @Test
@@ -322,6 +369,55 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "a\tb\n" +
                         "75.881754034549\tABC\n" +
                         "57.789479151824\tABC\n");
+    }
+
+    @Test
+    @Ignore
+    // todo: implement
+    public void testFilterSubQuery() throws Exception {
+        // no index
+        assertQuery("a\tb\tk\n" +
+                        "23.905290108465\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
+                        "12.026122412833\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
+                        "40.455469747939\t\t1970-01-22T23:46:40.000000Z\n",
+                "select * from x where b in (select rnd_symbol('RXGZ', 'HYRX', null) a from long_sequence(10))",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(to_timestamp(0), 100000000000) k" +
+                        " from" +
+                        " long_sequence(20)" +
+                        ") timestamp(k) partition by DAY",
+                "k",
+                "insert into x select * from (" +
+                        "select" +
+                        " rnd_double(0)*100," +
+                        " 'RXGZ'," +
+                        " to_timestamp('1971', 'yyyy') t" +
+                        " from long_sequence(1)" +
+                        ") timestamp(t)",
+                "a\tb\tk\n" +
+                        "12.026122412833\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
+                        "40.455469747939\t\t1970-01-22T23:46:40.000000Z\n" +
+                        "95.400690890497\tRXGZ\t1971-01-01T00:00:00.000000Z\n");
+    }
+
+    @Test
+    public void testFilterWrongType() throws Exception {
+        assertError("create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0) a," +
+                        " rnd_double(0) b," +
+                        " rnd_symbol(5,4,4,1) c" +
+                        " from long_sequence(10)" +
+                        "), index(c)",
+                "select * from x where b - a",
+                24,
+                "boolean expression expected"
+        );
     }
 
     @Test
@@ -1048,37 +1144,6 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testLatestBySubQueryDeferredIndexed() throws Exception {
-        assertQuery("a\tb\tk\n" +
-                        "23.905290108465\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
-                        "12.026122412833\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
-                        "40.455469747939\t\t1970-01-22T23:46:40.000000Z\n",
-                "select * from x latest by b where b in (select rnd_symbol('RXGZ', 'HYRX', null, 'UCLA') a from long_sequence(10))",
-                "create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_double(0)*100 a," +
-                        " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(to_timestamp(0), 100000000000) k" +
-                        " from" +
-                        " long_sequence(20)" +
-                        "), index(b) timestamp(k) partition by DAY",
-                "k",
-                "insert into x select * from (" +
-                        "select" +
-                        " rnd_double(0)*100," +
-                        " 'UCLA'," +
-                        " to_timestamp('1971', 'yyyy') t" +
-                        " from long_sequence(1)" +
-                        ") timestamp(t)",
-                "a\tb\tk\n" +
-                        "23.905290108465\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
-                        "12.026122412833\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
-                        "40.455469747939\t\t1970-01-22T23:46:40.000000Z\n" +
-                        "95.400690890497\tUCLA\t1971-01-01T00:00:00.000000Z\n");
-    }
-
-    @Test
     public void testLatestBySubQueryDeferred() throws Exception {
         // no index
         assertQuery("a\tb\tk\n" +
@@ -1095,6 +1160,70 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by DAY",
+                "k",
+                "insert into x select * from (" +
+                        "select" +
+                        " rnd_double(0)*100," +
+                        " 'UCLA'," +
+                        " to_timestamp('1971', 'yyyy') t" +
+                        " from long_sequence(1)" +
+                        ") timestamp(t)",
+                "a\tb\tk\n" +
+                        "23.905290108465\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
+                        "12.026122412833\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
+                        "40.455469747939\t\t1970-01-22T23:46:40.000000Z\n" +
+                        "95.400690890497\tUCLA\t1971-01-01T00:00:00.000000Z\n");
+    }
+
+    @Test
+    public void testLatestBySubQueryDeferredFiltered() throws Exception {
+        // no index
+        assertQuery("a\tb\tk\n" +
+                        "23.905290108465\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
+                        "12.026122412833\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
+                        "40.455469747939\t\t1970-01-22T23:46:40.000000Z\n",
+                "select * from x latest by b where b in (select rnd_symbol('RXGZ', 'HYRX', null, 'UCLA') a from long_sequence(10))" +
+                        " and a > 12 and a < 50",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(to_timestamp(0), 100000000000) k" +
+                        " from" +
+                        " long_sequence(20)" +
+                        ") timestamp(k) partition by DAY",
+                "k",
+                "insert into x select * from (" +
+                        "select" +
+                        " 33.46," +
+                        " 'UCLA'," +
+                        " to_timestamp('1971', 'yyyy') t" +
+                        " from long_sequence(1)" +
+                        ") timestamp(t)",
+                "a\tb\tk\n" +
+                        "23.905290108465\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
+                        "12.026122412833\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
+                        "40.455469747939\t\t1970-01-22T23:46:40.000000Z\n" +
+                        "33.460000000000\tUCLA\t1971-01-01T00:00:00.000000Z\n");
+    }
+
+    @Test
+    public void testLatestBySubQueryDeferredIndexed() throws Exception {
+        assertQuery("a\tb\tk\n" +
+                        "23.905290108465\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
+                        "12.026122412833\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
+                        "40.455469747939\t\t1970-01-22T23:46:40.000000Z\n",
+                "select * from x latest by b where b in (select rnd_symbol('RXGZ', 'HYRX', null, 'UCLA') a from long_sequence(10))",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(to_timestamp(0), 100000000000) k" +
+                        " from" +
+                        " long_sequence(20)" +
+                        "), index(b) timestamp(k) partition by DAY",
                 "k",
                 "insert into x select * from (" +
                         "select" +
@@ -1143,13 +1272,13 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testLatestBySubQueryDeferredFiltered() throws Exception {
+    public void testLatestBySubQueryFiltered() throws Exception {
         // no index
         assertQuery("a\tb\tk\n" +
                         "23.905290108465\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
                         "12.026122412833\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
                         "40.455469747939\t\t1970-01-22T23:46:40.000000Z\n",
-                "select * from x latest by b where b in (select rnd_symbol('RXGZ', 'HYRX', null, 'UCLA') a from long_sequence(10))" +
+                "select * from x latest by b where b in (select rnd_symbol('RXGZ', 'HYRX', null) a from long_sequence(10))" +
                         " and a > 12 and a < 50",
                 "create table x as " +
                         "(" +
@@ -1164,15 +1293,14 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "insert into x select * from (" +
                         "select" +
                         " 33.46," +
-                        " 'UCLA'," +
+                        " 'RXGZ'," +
                         " to_timestamp('1971', 'yyyy') t" +
                         " from long_sequence(1)" +
                         ") timestamp(t)",
                 "a\tb\tk\n" +
-                        "23.905290108465\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
                         "12.026122412833\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
                         "40.455469747939\t\t1970-01-22T23:46:40.000000Z\n" +
-                        "33.460000000000\tUCLA\t1971-01-01T00:00:00.000000Z\n");
+                        "33.460000000000\tRXGZ\t1971-01-01T00:00:00.000000Z\n");
     }
 
     @Test
@@ -1203,38 +1331,6 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         "12.026122412833\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
                         "40.455469747939\t\t1970-01-22T23:46:40.000000Z\n" +
                         "95.400690890497\tRXGZ\t1971-01-01T00:00:00.000000Z\n");
-    }
-
-    @Test
-    public void testLatestBySubQueryFiltered() throws Exception {
-        // no index
-        assertQuery("a\tb\tk\n" +
-                        "23.905290108465\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
-                        "12.026122412833\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
-                        "40.455469747939\t\t1970-01-22T23:46:40.000000Z\n",
-                "select * from x latest by b where b in (select rnd_symbol('RXGZ', 'HYRX', null) a from long_sequence(10))" +
-                        " and a > 12 and a < 50",
-                "create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_double(0)*100 a," +
-                        " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(to_timestamp(0), 100000000000) k" +
-                        " from" +
-                        " long_sequence(20)" +
-                        ") timestamp(k) partition by DAY",
-                "k",
-                "insert into x select * from (" +
-                        "select" +
-                        " 33.46," +
-                        " 'RXGZ'," +
-                        " to_timestamp('1971', 'yyyy') t" +
-                        " from long_sequence(1)" +
-                        ") timestamp(t)",
-                "a\tb\tk\n" +
-                        "12.026122412833\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
-                        "40.455469747939\t\t1970-01-22T23:46:40.000000Z\n" +
-                        "33.460000000000\tRXGZ\t1971-01-01T00:00:00.000000Z\n");
     }
 
     @Test
@@ -1324,22 +1420,6 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "select * from long_sequence(-2)",
                 null,
                 null);
-    }
-
-    @Test
-    public void testNonBooleanFilter() throws Exception {
-        assertError("create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_double(0) a," +
-                        " rnd_double(0) b," +
-                        " rnd_symbol(5,4,4,1) c" +
-                        " from long_sequence(10)" +
-                        "), index(c)",
-                "select * from x where b - a",
-                24,
-                "boolean expression expected"
-        );
     }
 
     @Test

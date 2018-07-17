@@ -427,13 +427,15 @@ public class SqlCodeGenerator {
                             bindVariableService);
                 }
 
+
+                // below code block generates index-based filter
+
                 if (intrinsicModel.intervals != null) {
                     dfcFactory = new IntervalFwdDataFrameCursorFactory(engine, tableName, model.getTableVersion(), intrinsicModel.intervals);
                 } else {
                     dfcFactory = new FullFwdDataFrameCursorFactory(engine, tableName, model.getTableVersion());
                 }
 
-                // no "latest by" clause
                 if (intrinsicModel.keyColumn != null) {
                     final int keyColumnIndex = reader.getMetadata().getColumnIndexQuiet(intrinsicModel.keyColumn);
                     if (keyColumnIndex == -1) {
@@ -443,61 +445,51 @@ public class SqlCodeGenerator {
 
                     final int nKeyValues = intrinsicModel.keyValues.size();
                     if (intrinsicModel.keySubQuery != null) {
-                        // perform lambda based key lookup
-                        assert nKeyValues == 1;
-                        assert false : "not implemented";
-                    } else {
-                        assert nKeyValues > 0;
+                        return new FilterOnSubQueryRecordCursorFactory(
+                                metadata,
+                                dfcFactory,
+                                generate(intrinsicModel.keySubQuery, bindVariableService),
+                                keyColumnIndex,
+                                filter
+                        );
+                    }
+                    assert nKeyValues > 0;
 
-                        if (nKeyValues == 1) {
-                            final RowCursorFactory rcf;
-                            final CharSequence symbol = intrinsicModel.keyValues.get(0);
-                            final int symbolKey = reader.getSymbolMapReader(keyColumnIndex).getQuick(symbol);
-                            if (symbolKey == SymbolTable.VALUE_NOT_FOUND) {
-                                if (filter == null) {
-                                    rcf = new DeferredSymbolIndexRowCursorFactory(keyColumnIndex, Chars.toString(symbol), true);
-                                } else {
-                                    rcf = new DeferredSymbolIndexFilteredRowCursorFactory(keyColumnIndex, Chars.toString(symbol), filter, true);
-                                }
+                    if (nKeyValues == 1) {
+                        final RowCursorFactory rcf;
+                        final CharSequence symbol = intrinsicModel.keyValues.get(0);
+                        final int symbolKey = reader.getSymbolMapReader(keyColumnIndex).getQuick(symbol);
+                        if (symbolKey == SymbolTable.VALUE_NOT_FOUND) {
+                            if (filter == null) {
+                                rcf = new DeferredSymbolIndexRowCursorFactory(keyColumnIndex, Chars.toString(symbol), true);
                             } else {
-                                if (filter == null) {
-                                    rcf = new SymbolIndexRowCursorFactory(keyColumnIndex, symbolKey, true);
-                                } else {
-                                    rcf = new SymbolIndexFilteredRowCursorFactory(keyColumnIndex, symbolKey, filter, true);
-                                }
-                            }
-                            return new DataFrameRecordCursorFactory(copyMetadata(metadata), dfcFactory, rcf);
-                        }
-                        // multiple key values
-                        final ObjList<RowCursorFactory> cursorFactories = new ObjList<>(nKeyValues);
-                        if (filter == null) {
-                            // without filter
-                            final SymbolMapReader symbolMapReader = reader.getSymbolMapReader(keyColumnIndex);
-                            for (int i = 0; i < nKeyValues; i++) {
-                                final int symbolKey = symbolMapReader.getQuick(intrinsicModel.keyValues.get(i));
-                                if (symbolKey != SymbolTable.VALUE_NOT_FOUND) {
-                                    cursorFactories.add(new SymbolIndexRowCursorFactory(keyColumnIndex, symbolKey, i == 0));
-                                }
+                                rcf = new DeferredSymbolIndexFilteredRowCursorFactory(keyColumnIndex, Chars.toString(symbol), filter, true);
                             }
                         } else {
-                            // with filter
-                            final SymbolMapReader symbolMapReader = reader.getSymbolMapReader(keyColumnIndex);
-                            for (int i = 0; i < nKeyValues; i++) {
-                                final int symbolKey = symbolMapReader.getQuick(intrinsicModel.keyValues.get(i));
-                                if (symbolKey != SymbolTable.VALUE_NOT_FOUND) {
-                                    cursorFactories.add(new SymbolIndexFilteredRowCursorFactory(keyColumnIndex, symbolKey, filter, i == 0));
-                                }
+                            if (filter == null) {
+                                rcf = new SymbolIndexRowCursorFactory(keyColumnIndex, symbolKey, true);
+                            } else {
+                                rcf = new SymbolIndexFilteredRowCursorFactory(keyColumnIndex, symbolKey, filter, true);
                             }
                         }
-                        return new DataFrameRecordCursorFactory(copyMetadata(metadata), dfcFactory, new HeapRowCursorFactory(cursorFactories));
+                        return new DataFrameRecordCursorFactory(copyMetadata(metadata), dfcFactory, rcf);
                     }
+
+                    return new FilterOnValuesRecordCursorFactory(
+                            metadata,
+                            dfcFactory,
+                            intrinsicModel.keyValues,
+                            keyColumnIndex,
+                            reader,
+                            filter
+                    );
                 }
+
                 RecordCursorFactory factory = new DataFrameRecordCursorFactory(copyMetadata(metadata), dfcFactory, new DataFrameRowCursorFactory());
                 if (filter != null) {
                     return new FilteredRecordCursorFactory(factory, filter);
                 }
                 return factory;
-
             }
 
             // no where clause

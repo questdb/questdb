@@ -61,6 +61,10 @@ public class IntList implements Mutable {
         System.arraycopy(that.buffer, 0, this.buffer, p, s);
     }
 
+    public void arrayCopy(int srcPos, int dstPos, int length) {
+        System.arraycopy(buffer, srcPos, buffer, dstPos, length);
+    }
+
     public int binarySearch(int v) {
         int low = 0;
         int high = pos;

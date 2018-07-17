@@ -25,16 +25,14 @@ package com.questdb.griffin.engine.table;
 
 import com.questdb.common.RowCursor;
 import com.questdb.std.IntLongPriorityQueue;
-import com.questdb.std.Unsafe;
+import com.questdb.std.ObjList;
 
 class HeapRowCursor implements RowCursor {
     private final IntLongPriorityQueue heap;
-    private RowCursor[] cursors;
-    private final int nCursors;
+    private ObjList<RowCursor> cursors;
 
-    public HeapRowCursor(int nCursors) {
-        this.heap = new IntLongPriorityQueue(nCursors);
-        this.nCursors = nCursors;
+    public HeapRowCursor() {
+        this.heap = new IntLongPriorityQueue();
     }
 
     @Override
@@ -45,16 +43,16 @@ class HeapRowCursor implements RowCursor {
     @Override
     public long next() {
         int idx = heap.popIndex();
-        RowCursor cursor = Unsafe.arrayGet(cursors, idx);
+        RowCursor cursor = cursors.getQuick(idx);
         return cursor.hasNext() ? heap.popAndReplace(idx, cursor.next()) : heap.popValue();
     }
 
-    public void of(RowCursor[] cursors) {
-        assert nCursors == cursors.length;
+    public void of(ObjList<RowCursor> cursors) {
+        int nCursors = cursors.size();
         this.cursors = cursors;
         this.heap.clear();
         for (int i = 0; i < nCursors; i++) {
-            RowCursor cursor = Unsafe.arrayGet(cursors, i);
+            final RowCursor cursor = cursors.getQuick(i);
             if (cursor.hasNext()) {
                 heap.add(i, cursor.next());
             }

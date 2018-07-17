@@ -24,29 +24,49 @@
 package com.questdb.griffin.engine.table;
 
 import com.questdb.cairo.sql.*;
+import com.questdb.common.SymbolTable;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-public class LatestByValueFilteredRecordCursorFactory extends AbstractDataFrameRecordCursorFactory {
+abstract class AbstractDeferredValueRecordCursorFactory extends AbstractDataFrameRecordCursorFactory {
 
-    private final AbstractDataFrameRecordCursor cursor;
+    protected final Function filter;
+    protected final int columnIndex;
+    private final String symbol;
+    private AbstractDataFrameRecordCursor cursor;
 
-    public LatestByValueFilteredRecordCursorFactory(
-            RecordMetadata metadata,
-            DataFrameCursorFactory dataFrameCursorFactory,
+    public AbstractDeferredValueRecordCursorFactory(
+            @NotNull RecordMetadata metadata,
+            @NotNull DataFrameCursorFactory dataFrameCursorFactory,
             int columnIndex,
-            int symbolKey,
-            @Nullable Function filter) {
+            String symbol,
+            @Nullable Function filter
+    ) {
         super(metadata, dataFrameCursorFactory);
-        if (filter == null) {
-            this.cursor = new LatestByValueRecordCursor(columnIndex, symbolKey);
-        } else {
-            this.cursor = new LatestByValueFilteredRecordCursor(columnIndex, symbolKey, filter);
-        }
+        this.columnIndex = columnIndex;
+        this.symbol = symbol;
+        this.filter = filter;
     }
+
+    protected abstract AbstractDataFrameRecordCursor createDataFrameCursorFor(int symbolKey);
 
     @Override
     protected RecordCursor getCursorInstance(DataFrameCursor dataFrameCursor) {
+        if (cursor == null && lookupDeferredSymbol(dataFrameCursor)) {
+            return EmptyTableRecordCursor.INSTANCE;
+        }
         cursor.of(dataFrameCursor);
         return cursor;
+    }
+
+    private boolean lookupDeferredSymbol(DataFrameCursor dataFrameCursor) {
+        int symbolKey = dataFrameCursor.getSymbolTable(columnIndex).getQuick(symbol);
+        if (symbolKey == SymbolTable.VALUE_NOT_FOUND) {
+            dataFrameCursor.close();
+            return true;
+        }
+
+        this.cursor = createDataFrameCursorFor(symbolKey);
+        return false;
     }
 }

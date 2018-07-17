@@ -23,16 +23,11 @@
 
 package com.questdb.griffin.engine.table;
 
-import com.questdb.cairo.AbstractRecordCursorFactory;
-import com.questdb.cairo.sql.DataFrameCursorFactory;
-import com.questdb.cairo.sql.Function;
-import com.questdb.cairo.sql.RecordCursor;
-import com.questdb.cairo.sql.RecordMetadata;
+import com.questdb.cairo.sql.*;
 import org.jetbrains.annotations.NotNull;
 
-public class LatestByValueIndexedFilteredRecordCursorFactory extends AbstractRecordCursorFactory {
+public class LatestByValueIndexedFilteredRecordCursorFactory extends AbstractDataFrameRecordCursorFactory {
     private final LatestByValueIndexedFilteredRecordCursor cursor;
-    private final DataFrameCursorFactory dataFrameCursorFactory;
 
     public LatestByValueIndexedFilteredRecordCursorFactory(
             @NotNull RecordMetadata metadata,
@@ -40,14 +35,13 @@ public class LatestByValueIndexedFilteredRecordCursorFactory extends AbstractRec
             int columnIndex,
             int symbolKey,
             @NotNull Function filter) {
-        super(metadata);
-        this.dataFrameCursorFactory = dataFrameCursorFactory;
+        super(metadata, dataFrameCursorFactory);
         this.cursor = new LatestByValueIndexedFilteredRecordCursor(columnIndex, symbolKey + 1, filter);
     }
 
     @Override
-    public RecordCursor getCursor() {
-        cursor.of(dataFrameCursorFactory.getCursor());
+    protected RecordCursor getCursorInstance(DataFrameCursor dataFrameCursor) {
+        cursor.of(dataFrameCursor);
         return cursor;
     }
 }

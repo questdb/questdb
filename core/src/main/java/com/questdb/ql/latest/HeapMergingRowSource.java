@@ -42,7 +42,7 @@ public class HeapMergingRowSource implements RowSource, RowCursor {
     public HeapMergingRowSource(RowSource... sources) {
         this.sources = sources;
         this.cursors = new RowCursor[sources.length];
-        this.heap = new IntLongPriorityQueue(sources.length);
+        this.heap = new IntLongPriorityQueue();
     }
 
     @Override

@@ -27,7 +27,6 @@ import com.questdb.cairo.CairoConfiguration;
 import com.questdb.cairo.SymbolMapReader;
 import com.questdb.cairo.sql.DataFrameCursor;
 import com.questdb.cairo.sql.DataFrameCursorFactory;
-import com.questdb.cairo.sql.RecordCursor;
 import com.questdb.cairo.sql.RecordMetadata;
 import com.questdb.common.SymbolTable;
 import com.questdb.std.CharSequenceHashSet;
@@ -82,23 +81,21 @@ public class AbstractDeferredTreeSetRecordCursorFactory extends AbstractTreeSetR
     }
 
     @Override
-    public RecordCursor getCursor() {
-        DataFrameCursor frameCursor = dataFrameCursorFactory.getCursor();
+    protected AbstractDataFrameRecordCursor getCursorInstance(DataFrameCursor dataFrameCursor) {
         if (deferredSymbols != null && deferredSymbols.size() > 0) {
-            SymbolTable symbolTable = frameCursor.getSymbolTable(columnIndex);
+            SymbolTable symbolTable = dataFrameCursor.getSymbolTable(columnIndex);
             for (int i = 0, n = deferredSymbols.size(); i < n; ) {
                 CharSequence symbol = deferredSymbols.get(i);
                 int symbolKey = symbolTable.getQuick(symbol);
                 if (symbolKey != SymbolTable.VALUE_NOT_FOUND) {
                     symbolKeys.add(symbolKey + 1);
-                    deferredSymbols.removeAt(0);
+                    deferredSymbols.remove(symbol);
                     n--;
                 } else {
                     i++;
                 }
             }
         }
-        cursor.of(frameCursor);
-        return cursor;
+        return super.getCursorInstance(dataFrameCursor);
     }
 }

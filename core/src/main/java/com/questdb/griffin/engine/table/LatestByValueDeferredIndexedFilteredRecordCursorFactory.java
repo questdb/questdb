@@ -23,17 +23,12 @@
 
 package com.questdb.griffin.engine.table;
 
-import com.questdb.cairo.AbstractRecordCursorFactory;
-import com.questdb.cairo.sql.*;
-import com.questdb.common.SymbolTable;
+import com.questdb.cairo.sql.DataFrameCursorFactory;
+import com.questdb.cairo.sql.Function;
+import com.questdb.cairo.sql.RecordMetadata;
 import org.jetbrains.annotations.NotNull;
 
-public class LatestByValueDeferredIndexedFilteredRecordCursorFactory extends AbstractRecordCursorFactory {
-    private final DataFrameCursorFactory dataFrameCursorFactory;
-    private final int columnIndex;
-    private final String symbol;
-    private final Function filter;
-    private LatestByValueIndexedFilteredRecordCursor cursor;
+public class LatestByValueDeferredIndexedFilteredRecordCursorFactory extends AbstractDeferredValueRecordCursorFactory {
 
     public LatestByValueDeferredIndexedFilteredRecordCursorFactory(
             @NotNull RecordMetadata metadata,
@@ -41,29 +36,11 @@ public class LatestByValueDeferredIndexedFilteredRecordCursorFactory extends Abs
             int columnIndex,
             String symbol,
             @NotNull Function filter) {
-        super(metadata);
-        this.dataFrameCursorFactory = dataFrameCursorFactory;
-        this.columnIndex = columnIndex;
-        this.symbol = symbol;
-        this.filter = filter;
+        super(metadata, dataFrameCursorFactory, columnIndex, symbol, filter);
     }
 
     @Override
-    public RecordCursor getCursor() {
-        DataFrameCursor dataFrameCursor = dataFrameCursorFactory.getCursor();
-        if (cursor != null) {
-            cursor.of(dataFrameCursor);
-            return cursor;
-        }
-
-        int symbolKey = dataFrameCursor.getSymbolTable(columnIndex).getQuick(symbol);
-        if (symbolKey != SymbolTable.VALUE_NOT_FOUND) {
-            this.cursor = new LatestByValueIndexedFilteredRecordCursor(columnIndex, symbolKey + 1, filter);
-            cursor.of(dataFrameCursor);
-            return cursor;
-        }
-
-        dataFrameCursor.close();
-        return EmptyTableRecordCursor.INSTANCE;
+    protected AbstractDataFrameRecordCursor createDataFrameCursorFor(int symbolKey) {
+        return new LatestByValueIndexedFilteredRecordCursor(columnIndex, symbolKey + 1, filter);
     }
 }
