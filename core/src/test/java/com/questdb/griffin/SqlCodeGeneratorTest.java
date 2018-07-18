@@ -204,6 +204,105 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFilterOnSubQueryIndexedDeferred() throws Exception {
+
+        final String expected = "a\tb\tk\n";
+
+        assertQuery(expected,
+                "select * from x where b in (select rnd_symbol('ABC') a from long_sequence(10))",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(to_timestamp(0), 100000000000) k" +
+                        " from" +
+                        " long_sequence(20)" +
+                        "),index(b) timestamp(k) partition by DAY",
+                "k",
+                "insert into x select * from (" +
+                        "select" +
+                        " rnd_double(0)*100," +
+                        " 'ABC'," +
+                        " to_timestamp('1971', 'yyyy') t" +
+                        " from long_sequence(5)" +
+                        ") timestamp(t)",
+                expected +
+                        "95.400690890497\tABC\t1971-01-01T00:00:00.000000Z\n" +
+                        "25.533193397031\tABC\t1971-01-01T00:00:00.000000Z\n" +
+                        "89.409171265819\tABC\t1971-01-01T00:00:00.000000Z\n" +
+                        "28.799739396819\tABC\t1971-01-01T00:00:00.000000Z\n" +
+                        "68.068731346264\tABC\t1971-01-01T00:00:00.000000Z\n");
+    }
+
+    @Test
+    public void testFilterOnSubQueryIndexedFiltered() throws Exception {
+
+        final String expected = "a\tb\tk\n" +
+                "11.427984775756\t\t1970-01-01T00:00:00.000000Z\n" +
+                "23.905290108465\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
+                "32.881769076795\t\t1970-01-06T18:53:20.000000Z\n" +
+                "57.934663268622\t\t1970-01-10T06:13:20.000000Z\n" +
+                "12.026122412833\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
+                "26.922103479745\t\t1970-01-13T17:33:20.000000Z\n" +
+                "52.984059417621\t\t1970-01-14T21:20:00.000000Z\n" +
+                "45.634456960908\t\t1970-01-21T20:00:00.000000Z\n" +
+                "40.455469747939\t\t1970-01-22T23:46:40.000000Z\n";
+
+        assertQuery(expected,
+                "select * from x where b in (select rnd_symbol('RXGZ', 'HYRX', null, 'ABC') a from long_sequence(10)) " +
+                        "and a < 80",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(to_timestamp(0), 100000000000) k" +
+                        " from" +
+                        " long_sequence(20)" +
+                        "),index(b) timestamp(k) partition by DAY",
+                "k",
+                "insert into x select * from (" +
+                        "select" +
+                        " rnd_double(0)*100," +
+                        " 'ABC'," +
+                        " to_timestamp('1971', 'yyyy') t" +
+                        " from long_sequence(5)" +
+                        ") timestamp(t)",
+                expected +
+                        "25.533193397031\tABC\t1971-01-01T00:00:00.000000Z\n" +
+                        "28.799739396819\tABC\t1971-01-01T00:00:00.000000Z\n" +
+                        "68.068731346264\tABC\t1971-01-01T00:00:00.000000Z\n");
+    }
+
+    @Test
+    public void testFilterOnSubQueryIndexedStrColumn() throws Exception {
+        final String expected = "a\tb\tk\n";
+
+        assertQuery(expected,
+                "select * from x where b in (select 'ABC' a from long_sequence(10))",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(to_timestamp(0), 100000000000) k" +
+                        " from" +
+                        " long_sequence(20)" +
+                        "),index(b) timestamp(k) partition by DAY",
+                "k",
+                "insert into x select * from (" +
+                        "select" +
+                        " rnd_double(0)*100," +
+                        " 'ABC'," +
+                        " to_timestamp('1971', 'yyyy') t" +
+                        " from long_sequence(1)" +
+                        ") timestamp(t)",
+                expected +
+                        "56.594291398612\tABC\t1971-01-01T00:00:00.000000Z\n");
+    }
+
+    @Test
     public void testFilterOnValues() throws Exception {
         final String expected1 = "a\tb\tk\n" +
                 "11.427984775756\t\t1970-01-01T00:00:00.000000Z\n" +
@@ -301,6 +400,28 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         ")" +
                         "), index(b) timestamp(k)",
                 "k");
+    }
+
+    @Test
+    public void testFilterOnValuesDeferred() throws Exception {
+        final String expected1 = "a\tb\tk\n";
+
+        assertQuery(expected1,
+                "select * from x o where o.b in ('ABCD', 'XYZ')",
+                "create table x as (select * from random_cursor(20, 'a', rnd_double(0)*100, 'b', rnd_symbol(5,4,4,1), 'k', timestamp_sequence(to_timestamp(0), 1000000000))), index(b)",
+                null,
+                "insert into x (a,b)" +
+                        " select" +
+                        " rnd_double(0)*100," +
+                        " rnd_symbol('HYRX','PEHN', null, 'ABCD')" +
+                        " from" +
+                        " long_sequence(10)",
+                expected1 +
+                        "11.585982949541\tABCD\t\n" +
+                        "81.641825924675\tABCD\t\n" +
+                        "76.923818943378\tABCD\t\n" +
+                        "65.513358397963\tABCD\t\n" +
+                        "28.200207166748\tABCD\t\n");
     }
 
     @Test

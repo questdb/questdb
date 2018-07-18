@@ -45,8 +45,8 @@ public class LtDoubleVVFunctionFactory implements FunctionFactory {
         private final Function left;
         private final Function right;
 
-        public FuncVV(int posititon, Function left, Function right) {
-            super(posititon);
+        public FuncVV(int position, Function left, Function right) {
+            super(position);
             this.left = left;
             this.right = right;
         }

@@ -67,7 +67,7 @@ public class FilterOnValuesRecordCursorFactory extends AbstractDataFrameRecordCu
                 deferredSymbols.add(Chars.toString(symbol));
             }
         }
-        this.cursor = new DataFrameRecordCursor(new HeapRowCursorFactory(cursorFactories, nKeyValues));
+        this.cursor = new DataFrameRecordCursor(new HeapRowCursorFactory(cursorFactories));
     }
 
     private void addSymbolKey(int symbolKey) {

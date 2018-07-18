@@ -40,11 +40,6 @@ class LatestByValueRecordCursor extends AbstractDataFrameRecordCursor {
     }
 
     @Override
-    public void close() {
-        dataFrameCursor.close();
-    }
-
-    @Override
     public boolean hasNext() {
         return hasNext;
     }

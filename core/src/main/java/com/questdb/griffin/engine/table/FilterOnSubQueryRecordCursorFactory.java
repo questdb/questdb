@@ -24,6 +24,7 @@
 package com.questdb.griffin.engine.table;
 
 import com.questdb.cairo.sql.*;
+import com.questdb.common.ColumnType;
 import com.questdb.common.SymbolTable;
 import com.questdb.std.IntHashSet;
 import com.questdb.std.ObjList;
@@ -37,13 +38,15 @@ public class FilterOnSubQueryRecordCursorFactory extends AbstractDataFrameRecord
     private final ObjList<RowCursorFactory> cursorFactories;
     private final IntHashSet symbolKeys = new IntHashSet(16, 0.5, SymbolTable.VALUE_NOT_FOUND);
     private final RecordCursorFactory recordCursorFactory;
+    private final TypeCaster typeCaster;
 
     public FilterOnSubQueryRecordCursorFactory(
             @NotNull RecordMetadata metadata,
             @NotNull DataFrameCursorFactory dataFrameCursorFactory,
             @NotNull RecordCursorFactory recordCursorFactory,
             int columnIndex,
-            @Nullable Function filter
+            @Nullable Function filter,
+            int firstColumnType
     ) {
         super(metadata, dataFrameCursorFactory);
         this.recordCursorFactory = recordCursorFactory;
@@ -51,7 +54,17 @@ public class FilterOnSubQueryRecordCursorFactory extends AbstractDataFrameRecord
         this.filter = filter;
 
         cursorFactories = new ObjList<>();
-        this.cursor = new DataFrameRecordCursor(new HeapRowCursorFactory(cursorFactories, 0));
+        this.cursor = new DataFrameRecordCursor(new HeapRowCursorFactory(cursorFactories));
+        if (firstColumnType == ColumnType.SYMBOL) {
+            typeCaster = SymbolTypeCaster.INSTANCE;
+        } else {
+            typeCaster = StrTypeCaster.INSTANCE;
+        }
+    }
+
+    @Override
+    public void close() {
+        recordCursorFactory.close();
     }
 
     private void addSymbolKey(int symbolKey) {
@@ -70,8 +83,8 @@ public class FilterOnSubQueryRecordCursorFactory extends AbstractDataFrameRecord
         try (RecordCursor cursor = recordCursorFactory.getCursor()) {
             while (cursor.hasNext()) {
                 Record record = cursor.next();
-                // todo: what if this isn't a symbol?
-                final CharSequence symbol = record.getSym(0);
+                // todo: this is also incorrect, we cannot expect query to return same symbols incrementally
+                final CharSequence symbol = typeCaster.getValue(record, 0);
                 int symbolKey = symbolTable.getQuick(symbol);
                 if (symbolKey != SymbolTable.VALUE_NOT_FOUND) {
                     if (symbolKeys.add(symbolKey)) {
@@ -88,5 +101,28 @@ public class FilterOnSubQueryRecordCursorFactory extends AbstractDataFrameRecord
 
         this.cursor.of(dataFrameCursor);
         return this.cursor;
+    }
+
+    @FunctionalInterface
+    private interface TypeCaster {
+        CharSequence getValue(Record record, int columnIndex);
+    }
+
+    private static class SymbolTypeCaster implements TypeCaster {
+        private static final SymbolTypeCaster INSTANCE = new SymbolTypeCaster();
+
+        @Override
+        public CharSequence getValue(Record record, int columnIndex) {
+            return record.getSym(columnIndex);
+        }
+    }
+
+    private static class StrTypeCaster implements TypeCaster {
+        private static final StrTypeCaster INSTANCE = new StrTypeCaster();
+
+        @Override
+        public CharSequence getValue(Record record, int columnIndex) {
+            return record.getStr(columnIndex);
+        }
     }
 }

@@ -36,7 +36,7 @@ class SymbolIndexFilteredRowCursor implements RowCursor {
     private final int columnIndex;
     private final boolean cachedIndexReaderCursor;
     private int symbolKey;
-    private RowCursor dataFrameCursor;
+    private RowCursor rowCursor;
     private long rowid;
 
     public SymbolIndexFilteredRowCursor(int columnIndex, int symbolKey, Function filter, boolean cachedIndexReaderCursor) {
@@ -52,8 +52,8 @@ class SymbolIndexFilteredRowCursor implements RowCursor {
 
     @Override
     public boolean hasNext() {
-        while (dataFrameCursor.hasNext()) {
-            final long rowid = dataFrameCursor.next();
+        while (rowCursor.hasNext()) {
+            final long rowid = rowCursor.next();
             record.setRecordIndex(rowid);
             if (filter.getBool(record)) {
                 this.rowid = rowid;
@@ -73,9 +73,10 @@ class SymbolIndexFilteredRowCursor implements RowCursor {
     }
 
     public SymbolIndexFilteredRowCursor of(DataFrame dataFrame) {
-        this.dataFrameCursor = dataFrame
+        this.rowCursor = dataFrame
                 .getBitmapIndexReader(columnIndex, BitmapIndexReader.DIR_FORWARD)
                 .getCursor(cachedIndexReaderCursor, symbolKey, dataFrame.getRowLo(), dataFrame.getRowHi() - 1);
+        record.jumpTo(dataFrame.getPartitionIndex(), 0);
         return this;
     }
 

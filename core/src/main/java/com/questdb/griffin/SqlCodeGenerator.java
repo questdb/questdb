@@ -445,12 +445,21 @@ public class SqlCodeGenerator {
 
                     final int nKeyValues = intrinsicModel.keyValues.size();
                     if (intrinsicModel.keySubQuery != null) {
+                        final RecordCursorFactory rcf = generate(intrinsicModel.keySubQuery, bindVariableService);
+                        final RecordMetadata rcfMetadata = rcf.getMetadata();
+                        int firstColumnType = rcfMetadata.getColumnType(0);
+                        if (firstColumnType != ColumnType.STRING && firstColumnType != ColumnType.SYMBOL) {
+                            // todo: we need correct position for column
+                            throw SqlException.position(-1).put("unsupported column type: ").put(rcfMetadata.getColumnName(keyColumnIndex)).put(": ").put(ColumnType.nameOf(firstColumnType));
+                        }
+
                         return new FilterOnSubQueryRecordCursorFactory(
                                 metadata,
                                 dfcFactory,
-                                generate(intrinsicModel.keySubQuery, bindVariableService),
+                                rcf,
                                 keyColumnIndex,
-                                filter
+                                filter,
+                                firstColumnType
                         );
                     }
                     assert nKeyValues > 0;

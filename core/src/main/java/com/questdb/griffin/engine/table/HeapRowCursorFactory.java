@@ -34,9 +34,9 @@ public class HeapRowCursorFactory implements RowCursorFactory {
     private final ObjList<RowCursor> cursors;
     private final HeapRowCursor cursor;
 
-    public HeapRowCursorFactory(ObjList<RowCursorFactory> cursorFactories, int nSources) {
+    public HeapRowCursorFactory(ObjList<RowCursorFactory> cursorFactories) {
         this.cursorFactories = cursorFactories;
-        this.cursors = new ObjList<>(nSources);
+        this.cursors = new ObjList<>();
         this.cursor = new HeapRowCursor();
     }
 
