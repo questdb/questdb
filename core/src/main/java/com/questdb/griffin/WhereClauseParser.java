@@ -340,7 +340,6 @@ final class WhereClauseParser {
         if (preferred || (preferredKeyColumn == null && meta.isColumnIndexed(columnIndex))) {
 
             // check if we already have indexed column and it is of worse selectivity
-            // todo: this logic is incorrect in case of "preferred" column
             // "preferred" is an unfortunate name, this column is from "latest by" clause, I should name it better
             //
             if (model.keyColumn != null

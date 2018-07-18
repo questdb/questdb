@@ -25,6 +25,7 @@ package com.questdb.griffin.engine.table;
 
 import com.questdb.cairo.CairoConfiguration;
 import com.questdb.cairo.sql.*;
+import com.questdb.common.ColumnType;
 import com.questdb.common.SymbolTable;
 import com.questdb.std.IntHashSet;
 import org.jetbrains.annotations.NotNull;
@@ -37,6 +38,7 @@ public class LatestBySubQueryRecordCursorFactory extends AbstractTreeSetRecordCu
     // symbol keys will be added to this hash set
     private final IntHashSet symbolKeys = new IntHashSet();
     private final RecordCursorFactory recordCursorFactory;
+    private final TypeCaster typeCaster;
 
     public LatestBySubQueryRecordCursorFactory(
             @NotNull CairoConfiguration configuration,
@@ -45,7 +47,8 @@ public class LatestBySubQueryRecordCursorFactory extends AbstractTreeSetRecordCu
             int columnIndex,
             @NotNull RecordCursorFactory recordCursorFactory,
             @Nullable Function filter,
-            boolean indexed) {
+            boolean indexed,
+            int firstColumnType) {
         super(metadata, dataFrameCursorFactory, configuration);
         if (indexed) {
             if (filter != null) {
@@ -62,6 +65,11 @@ public class LatestBySubQueryRecordCursorFactory extends AbstractTreeSetRecordCu
         }
         this.columnIndex = columnIndex;
         this.recordCursorFactory = recordCursorFactory;
+        if (firstColumnType == ColumnType.STRING) {
+            typeCaster = StrTypeCaster.INSTANCE;
+        } else {
+            typeCaster = SymbolTypeCaster.INSTANCE;
+        }
     }
 
     @Override
@@ -77,8 +85,7 @@ public class LatestBySubQueryRecordCursorFactory extends AbstractTreeSetRecordCu
         try (RecordCursor cursor = recordCursorFactory.getCursor()) {
             while (cursor.hasNext()) {
                 Record record = cursor.next();
-                // todo: test when first column is not a symbol
-                int symbolKey = symbolTable.getQuick(record.getSym(0));
+                int symbolKey = symbolTable.getQuick(typeCaster.getValue(record, 0));
                 if (symbolKey != SymbolTable.VALUE_NOT_FOUND) {
                     symbolKeys.add(symbolKey + 1);
                 }

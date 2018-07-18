@@ -102,20 +102,25 @@ public class SqlCodeGenerator {
         if (intrinsicModel.keyColumn != null) {
             // key column must always be the same as latest by column
             assert latestByIndex == metadata.getColumnIndexQuiet(intrinsicModel.keyColumn);
-            int nKeyValues = intrinsicModel.keyValues.size();
 
             if (intrinsicModel.keySubQuery != null) {
+
+                final RecordCursorFactory rcf = generate(intrinsicModel.keySubQuery, bindVariableService);
+                final int firstColumnType = validateSubQueryColumnAndGetType(intrinsicModel, rcf.getMetadata());
+
                 return new LatestBySubQueryRecordCursorFactory(
                         configuration,
                         metadata,
                         dataFrameCursorFactory,
                         latestByIndex,
-                        generate(intrinsicModel.keySubQuery, bindVariableService),
+                        rcf,
                         filter,
-                        indexed
+                        indexed,
+                        firstColumnType
                 );
             }
 
+            final int nKeyValues = intrinsicModel.keyValues.size();
             if (indexed) {
 
                 assert nKeyValues > 0;
@@ -368,6 +373,9 @@ public class SqlCodeGenerator {
                 // validate latest by against current reader
                 // first check if column is valid
                 latestByIndex = metadata.getColumnIndexQuiet(latestBy.token);
+                if (latestByIndex == -1) {
+                    throw SqlException.invalidColumn(latestBy.position, latestBy.token);
+                }
             } else {
                 latestByIndex = -1;
             }
@@ -437,21 +445,13 @@ public class SqlCodeGenerator {
                 }
 
                 if (intrinsicModel.keyColumn != null) {
+                    // existence of column would have been already validated
                     final int keyColumnIndex = reader.getMetadata().getColumnIndexQuiet(intrinsicModel.keyColumn);
-                    if (keyColumnIndex == -1) {
-                        // todo: obtain key column position
-                        throw SqlException.invalidColumn(0, intrinsicModel.keyColumn);
-                    }
-
                     final int nKeyValues = intrinsicModel.keyValues.size();
+
                     if (intrinsicModel.keySubQuery != null) {
                         final RecordCursorFactory rcf = generate(intrinsicModel.keySubQuery, bindVariableService);
-                        final RecordMetadata rcfMetadata = rcf.getMetadata();
-                        int firstColumnType = rcfMetadata.getColumnType(0);
-                        if (firstColumnType != ColumnType.STRING && firstColumnType != ColumnType.SYMBOL) {
-                            // todo: we need correct position for column
-                            throw SqlException.position(-1).put("unsupported column type: ").put(rcfMetadata.getColumnName(keyColumnIndex)).put(": ").put(ColumnType.nameOf(firstColumnType));
-                        }
+                        final int firstColumnType = validateSubQueryColumnAndGetType(intrinsicModel, rcf.getMetadata());
 
                         return new FilterOnSubQueryRecordCursorFactory(
                                 metadata,
@@ -526,5 +526,21 @@ public class SqlCodeGenerator {
                     null
             );
         }
+    }
+
+    private int validateSubQueryColumnAndGetType(IntrinsicModel intrinsicModel, RecordMetadata metadata) throws SqlException {
+        final int firstColumnType = metadata.getColumnType(0);
+        if (firstColumnType != ColumnType.STRING && firstColumnType != ColumnType.SYMBOL) {
+            assert intrinsicModel.keySubQuery.getColumns() != null;
+            assert intrinsicModel.keySubQuery.getColumns().size() > 0;
+
+            throw SqlException
+                    .position(intrinsicModel.keySubQuery.getColumns().getQuick(0).getAst().position)
+                    .put("unsupported column type: ")
+                    .put(metadata.getColumnName(0))
+                    .put(": ")
+                    .put(ColumnType.nameOf(firstColumnType));
+        }
+        return firstColumnType;
     }
 }

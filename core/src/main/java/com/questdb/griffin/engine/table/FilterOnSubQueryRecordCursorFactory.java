@@ -26,7 +26,7 @@ package com.questdb.griffin.engine.table;
 import com.questdb.cairo.sql.*;
 import com.questdb.common.ColumnType;
 import com.questdb.common.SymbolTable;
-import com.questdb.std.IntHashSet;
+import com.questdb.std.IntObjHashMap;
 import com.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -36,9 +36,11 @@ public class FilterOnSubQueryRecordCursorFactory extends AbstractDataFrameRecord
     private final int columnIndex;
     private final Function filter;
     private final ObjList<RowCursorFactory> cursorFactories;
-    private final IntHashSet symbolKeys = new IntHashSet(16, 0.5, SymbolTable.VALUE_NOT_FOUND);
+    private final IntObjHashMap<RowCursorFactory> factoriesA = new IntObjHashMap<>();
+    private final IntObjHashMap<RowCursorFactory> factoriesB = new IntObjHashMap<>();
     private final RecordCursorFactory recordCursorFactory;
     private final TypeCaster typeCaster;
+    private IntObjHashMap<RowCursorFactory> factories;
 
     public FilterOnSubQueryRecordCursorFactory(
             @NotNull RecordMetadata metadata,
@@ -52,7 +54,7 @@ public class FilterOnSubQueryRecordCursorFactory extends AbstractDataFrameRecord
         this.recordCursorFactory = recordCursorFactory;
         this.columnIndex = columnIndex;
         this.filter = filter;
-
+        this.factories = factoriesA;
         cursorFactories = new ObjList<>();
         this.cursor = new DataFrameRecordCursor(new HeapRowCursorFactory(cursorFactories));
         if (firstColumnType == ColumnType.SYMBOL) {
@@ -65,64 +67,60 @@ public class FilterOnSubQueryRecordCursorFactory extends AbstractDataFrameRecord
     @Override
     public void close() {
         recordCursorFactory.close();
-    }
-
-    private void addSymbolKey(int symbolKey) {
-        final RowCursorFactory rowCursorFactory;
-        if (filter == null) {
-            rowCursorFactory = new SymbolIndexRowCursorFactory(columnIndex, symbolKey, cursorFactories.size() == 0);
-        } else {
-            rowCursorFactory = new SymbolIndexFilteredRowCursorFactory(columnIndex, symbolKey, filter, cursorFactories.size() == 0);
-        }
-        cursorFactories.add(rowCursorFactory);
+        factoriesA.clear();
+        factoriesB.clear();
     }
 
     @Override
     protected RecordCursor getCursorInstance(DataFrameCursor dataFrameCursor) {
         SymbolTable symbolTable = dataFrameCursor.getSymbolTable(columnIndex);
+        IntObjHashMap<RowCursorFactory> targetFactories;
+        if (factories == factoriesA) {
+            targetFactories = factoriesB;
+        } else {
+            targetFactories = factoriesA;
+        }
+
+        cursorFactories.clear();
+        targetFactories.clear();
+
         try (RecordCursor cursor = recordCursorFactory.getCursor()) {
             while (cursor.hasNext()) {
                 Record record = cursor.next();
-                // todo: this is also incorrect, we cannot expect query to return same symbols incrementally
                 final CharSequence symbol = typeCaster.getValue(record, 0);
                 int symbolKey = symbolTable.getQuick(symbol);
                 if (symbolKey != SymbolTable.VALUE_NOT_FOUND) {
-                    if (symbolKeys.add(symbolKey)) {
-                        addSymbolKey(symbolKey);
+
+                    final RowCursorFactory rowCursorFactory;
+                    final int index = factories.keyIndex(symbolKey);
+                    if (index < 0) {
+                        rowCursorFactory = factories.valueAt(index);
+                    } else {
+                        if (filter == null) {
+                            rowCursorFactory = new SymbolIndexRowCursorFactory(columnIndex, symbolKey, cursorFactories.size() == 0);
+                        } else {
+                            rowCursorFactory = new SymbolIndexFilteredRowCursorFactory(columnIndex, symbolKey, filter, cursorFactories.size() == 0);
+                        }
+                    }
+
+                    final int targetIndex = targetFactories.keyIndex(symbolKey);
+                    if (targetIndex > -1) {
+                        targetFactories.putAt(targetIndex, symbolKey, rowCursorFactory);
+                        cursorFactories.add(rowCursorFactory);
                     }
                 }
             }
         }
 
-        if (symbolKeys.size() == 0) {
+        factories.clear();
+        factories = targetFactories;
+
+        if (targetFactories.size() == 0) {
             dataFrameCursor.close();
             return EmptyTableRecordCursor.INSTANCE;
         }
 
         this.cursor.of(dataFrameCursor);
         return this.cursor;
-    }
-
-    @FunctionalInterface
-    private interface TypeCaster {
-        CharSequence getValue(Record record, int columnIndex);
-    }
-
-    private static class SymbolTypeCaster implements TypeCaster {
-        private static final SymbolTypeCaster INSTANCE = new SymbolTypeCaster();
-
-        @Override
-        public CharSequence getValue(Record record, int columnIndex) {
-            return record.getSym(columnIndex);
-        }
-    }
-
-    private static class StrTypeCaster implements TypeCaster {
-        private static final StrTypeCaster INSTANCE = new StrTypeCaster();
-
-        @Override
-        public CharSequence getValue(Record record, int columnIndex) {
-            return record.getStr(columnIndex);
-        }
     }
 }

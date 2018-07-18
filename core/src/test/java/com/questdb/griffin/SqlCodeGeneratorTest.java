@@ -37,6 +37,7 @@ import com.questdb.std.BinarySequence;
 import com.questdb.std.LongList;
 import com.questdb.std.Rnd;
 import com.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 import org.junit.Before;
@@ -574,6 +575,35 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         "49.005104498852\tPEHN\t1970-01-18T08:40:00.000000Z\n" +
                         "40.455469747939\t\t1970-01-22T23:46:40.000000Z\n" +
                         "56.594291398612\tVTJW\t2019-01-01T00:00:00.000000Z\n");
+    }
+
+    @Test
+    public void testLatestByAllBool() throws Exception {
+        assertQuery("a\tb\tk\n" +
+                        "97.552635405680\ttrue\t1970-01-20T16:13:20.000000Z\n" +
+                        "37.625017094984\tfalse\t1970-01-22T23:46:40.000000Z\n",
+                "select * from x latest by b",
+                "create table x as " +
+                        "(" +
+                        "select * from" +
+                        " random_cursor" +
+                        "(20," +
+                        " 'a', rnd_double(0)*100," +
+                        " 'b', rnd_boolean()," +
+                        " 'k', timestamp_sequence(to_timestamp(0), 100000000000)" +
+                        ")" +
+                        ") timestamp(k) partition by DAY",
+                "k",
+                "insert into x select * from (" +
+                        " select" +
+                        " rnd_double(0)*100," +
+                        " false," +
+                        " to_timestamp('2019', 'yyyy') t" +
+                        " from long_sequence(1)" +
+                        ") timestamp (t)",
+                "a\tb\tk\n" +
+                        "97.552635405680\ttrue\t1970-01-20T16:13:20.000000Z\n" +
+                        "24.593452776060\tfalse\t2019-01-01T00:00:00.000000Z\n");
     }
 
     @Test
@@ -1234,6 +1264,23 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLatestByNonExistingColumn() throws Exception {
+        assertFailure(
+                "select * from x latest by y",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(to_timestamp(0), 100000000000) k" +
+                        " from" +
+                        " long_sequence(20)" +
+                        "), index(b) timestamp(k) partition by DAY",
+                26,
+                "Invalid column");
+    }
+
+    @Test
     public void testLatestBySubQuery() throws Exception {
         // no index
         assertQuery("a\tb\tk\n" +
@@ -1483,6 +1530,49 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         "12.026122412833\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
                         "40.455469747939\t\t1970-01-22T23:46:40.000000Z\n" +
                         "33.460000000000\tRXGZ\t1971-01-01T00:00:00.000000Z\n");
+    }
+
+    @Test
+    public void testLatestBySubQueryIndexedIntColumn() throws Exception {
+        assertFailure(
+                "select * from x latest by b where b in (select 1 a from long_sequence(4))",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(to_timestamp(0), 100000000000) k" +
+                        " from" +
+                        " long_sequence(20)" +
+                        "), index(b) timestamp(k) partition by DAY",
+                47,
+                "unsupported column type");
+    }
+
+    @Test
+    public void testLatestBySubQueryIndexedStrColumn() throws Exception {
+        assertQuery("a\tb\tk\n" +
+                        "23.905290108465\tRXGZ\t1970-01-03T07:33:20.000000Z\n",
+                "select * from x latest by b where b in (select 'RXGZ' from long_sequence(4))",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(to_timestamp(0), 100000000000) k" +
+                        " from" +
+                        " long_sequence(20)" +
+                        "), index(b) timestamp(k) partition by DAY",
+                "k",
+                "insert into x select * from (" +
+                        "select" +
+                        " rnd_double(0)*100," +
+                        " 'RXGZ'," +
+                        " to_timestamp('1971', 'yyyy') t" +
+                        " from long_sequence(1)" +
+                        ") timestamp(t)",
+                "a\tb\tk\n" +
+                        "56.594291398612\tRXGZ\t1971-01-01T00:00:00.000000Z\n");
     }
 
     @Test
@@ -1810,6 +1900,33 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                     TestUtils.assertContains(e.getFlyweightMessage(), message);
                 }
 
+                Assert.assertEquals(0, engine.getBusyReaderCount());
+                Assert.assertEquals(0, engine.getBusyWriterCount());
+            } finally {
+                engine.releaseAllWriters();
+                engine.releaseAllReaders();
+            }
+        });
+    }
+
+    private void assertFailure(
+            CharSequence query,
+            @Nullable CharSequence ddl,
+            int expectedPosition,
+            @NotNull CharSequence expectedMessage
+    ) throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try {
+                if (ddl != null) {
+                    compiler.execute(ddl, bindVariableService);
+                }
+                try {
+                    compiler.compile(query, bindVariableService);
+                    Assert.fail();
+                } catch (SqlException e) {
+                    Assert.assertEquals(expectedPosition, e.getPosition());
+                    TestUtils.assertContains(e.getFlyweightMessage(), expectedMessage);
+                }
                 Assert.assertEquals(0, engine.getBusyReaderCount());
                 Assert.assertEquals(0, engine.getBusyWriterCount());
             } finally {
