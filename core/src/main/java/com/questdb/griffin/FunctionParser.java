@@ -158,7 +158,37 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
         return function;
     }
 
-    public Function parseFunction(ExpressionNode node, RecordMetadata metadata, BindVariableService bindVariableService) throws SqlException {
+    /**
+     * Creates function instance. When node type is {@link ExpressionNode#LITERAL} a column or parameter
+     * function is returned. We will be using the supplied {@link #metadata} to resolve type of column. When node token
+     * begins with ':' parameter is looked up from the supplied bindVariableService.
+     * <p>
+     * When node type is {@link ExpressionNode#CONSTANT} a constant function is returned. Type of constant is
+     * inferred from value of node token.
+     * <p>
+     * When node type is {@link ExpressionNode#LAMBDA} a cursor function is returned. Cursor function can be wrapping
+     * stateful instance of {@link com.questdb.cairo.sql.RecordCursorFactory} that has to be closed when disposed of.
+     * Such instances are added to the supplied list of {@link java.io.Closeable} items.
+     * <p>
+     * For any other node type a function instance is created using {@link FunctionFactory}
+     *
+     * @param node                expression node
+     * @param metadata            metadata for resolving types of columns.
+     * @param bindVariableService service for resolving parameters, which are ':' prefixed literals.
+     * @return function instance
+     * @throws SqlException when function cannot be created. Can be one of list but not limited to
+     *                      <ul>
+     *                      <li>column not found</li>
+     *                      <li>parameter not found</li>
+     *                      <li>unknown function name</li>
+     *                      <li>function argument mismatch</li>
+     *                      <li>sql compilation errors in case of lambda</li>
+     *                      </ul>
+     */
+    public Function parseFunction(
+            ExpressionNode node,
+            RecordMetadata metadata,
+            BindVariableService bindVariableService) throws SqlException {
         this.bindVariableService = bindVariableService;
         this.metadata = metadata;
         algo.traverse(node, this);
