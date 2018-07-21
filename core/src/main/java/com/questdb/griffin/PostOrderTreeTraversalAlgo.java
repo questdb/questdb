@@ -29,47 +29,74 @@ import com.questdb.std.IntStack;
 import java.util.ArrayDeque;
 
 final public class PostOrderTreeTraversalAlgo {
+    private final ArrayDeque<ExpressionNode> stackBackup = new ArrayDeque<>();
+    private final IntStack indexStackBackup = new IntStack();
+    private final IntStack backupDepth = new IntStack();
     private final ArrayDeque<ExpressionNode> stack = new ArrayDeque<>();
     private final IntStack indexStack = new IntStack();
 
+    public void backup() {
+        int size = stack.size();
+        backupDepth.push(size);
+        for (int i = 0; i < size; i++) {
+            stackBackup.push(stack.poll());
+            indexStackBackup.push(indexStack.pop());
+        }
+    }
+
+    public void restore() {
+        if (backupDepth.size() > 0) {
+            int size = backupDepth.pop();
+            for (int i = 0; i < size; i++) {
+                stack.push(stackBackup.poll());
+                indexStack.push(indexStackBackup.pop());
+            }
+        }
+    }
+
     public void traverse(ExpressionNode node, Visitor visitor) throws SqlException {
 
-        // post-order iterative tree traversal
-        // see http://en.wikipedia.org/wiki/Tree_traversal
+        backup();
+        try {
+            // post-order iterative tree traversal
+            // see http://en.wikipedia.org/wiki/Tree_traversal
 
-        stack.clear();
-        indexStack.clear();
+            stack.clear();
+            indexStack.clear();
 
-        ExpressionNode lastVisited = null;
+            ExpressionNode lastVisited = null;
 
-        while (!stack.isEmpty() || node != null) {
-            if (node != null) {
-                stack.push(node);
-                indexStack.push(0);
-                node = node.rhs;
-            } else {
-                ExpressionNode peek = stack.peek();
-                assert peek != null;
-                if (peek.paramCount < 3) {
-                    if (peek.lhs != null && lastVisited != peek.lhs) {
-                        node = peek.lhs;
-                    } else {
-                        visitor.visit(peek);
-                        lastVisited = stack.poll();
-                        indexStack.pop();
-                    }
+            while (!stack.isEmpty() || node != null) {
+                if (node != null) {
+                    stack.push(node);
+                    indexStack.push(0);
+                    node = node.rhs;
                 } else {
-                    int index = indexStack.peek();
-                    if (index < peek.paramCount) {
-                        node = peek.args.getQuick(index);
-                        indexStack.update(index + 1);
+                    ExpressionNode peek = stack.peek();
+                    assert peek != null;
+                    if (peek.paramCount < 3) {
+                        if (peek.lhs != null && lastVisited != peek.lhs) {
+                            node = peek.lhs;
+                        } else {
+                            visitor.visit(peek);
+                            lastVisited = stack.poll();
+                            indexStack.pop();
+                        }
                     } else {
-                        visitor.visit(peek);
-                        lastVisited = stack.poll();
-                        indexStack.pop();
+                        int index = indexStack.peek();
+                        if (index < peek.paramCount) {
+                            node = peek.args.getQuick(index);
+                            indexStack.update(index + 1);
+                        } else {
+                            visitor.visit(peek);
+                            lastVisited = stack.poll();
+                            indexStack.pop();
+                        }
                     }
                 }
             }
+        } finally {
+            restore();
         }
     }
 

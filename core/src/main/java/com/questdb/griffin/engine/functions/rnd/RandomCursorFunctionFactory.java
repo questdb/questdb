@@ -31,6 +31,7 @@ import com.questdb.common.ColumnType;
 import com.questdb.griffin.FunctionFactory;
 import com.questdb.griffin.SqlException;
 import com.questdb.griffin.engine.functions.CursorFunction;
+import com.questdb.griffin.engine.functions.GenericRecordCursorFactory;
 import com.questdb.std.ObjList;
 
 public class RandomCursorFunctionFactory implements FunctionFactory {
@@ -86,6 +87,8 @@ public class RandomCursorFunctionFactory implements FunctionFactory {
         }
 
         final RandomRecord record = new RandomRecord(functions);
-        return new CursorFunction(position, metadata, new RandomRecordCursor(recordCount, record));
+        return new CursorFunction(position,
+                new GenericRecordCursorFactory(metadata, new RandomRecordCursor(recordCount, record))
+        );
     }
 }

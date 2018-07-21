@@ -27,7 +27,6 @@ import com.questdb.cairo.*;
 import com.questdb.cairo.sql.CairoEngine;
 import com.questdb.common.ColumnType;
 import com.questdb.common.PartitionBy;
-import com.questdb.griffin.engine.functions.bind.BindVariableService;
 import com.questdb.griffin.model.ExecutionModel;
 import com.questdb.griffin.model.QueryModel;
 import com.questdb.std.*;
@@ -43,42 +42,11 @@ import java.io.IOException;
 public class SqlParserTest extends AbstractCairoTest {
     private final static CairoEngine engine = new Engine(configuration);
     private final static SqlCompiler sqlCompiler = new SqlCompiler(engine, configuration);
-    private final static BindVariableService bindVariableService = new BindVariableService();
+    private final static TestExecutionContext sqlExecutionContext = new TestExecutionContext(sqlCompiler.getCodeGenerator());
 
     @AfterClass
     public static void tearDown() throws IOException {
         engine.close();
-    }
-
-    private static void assertSyntaxError(String query, int position, String contains, TableModel... tableModels) {
-        assertSyntaxError(sqlCompiler, engine, query, position, contains, tableModels);
-    }
-
-    private static void assertSyntaxError(
-            SqlCompiler compiler,
-            CairoEngine engine,
-            String query,
-            int position,
-            String contains,
-            TableModel... tableModels) {
-        try {
-            for (int i = 0, n = tableModels.length; i < n; i++) {
-                CairoTestUtils.create(tableModels[i]);
-            }
-            compiler.compileExecutionModel(query, bindVariableService, true);
-            Assert.fail("Exception expected");
-        } catch (SqlException e) {
-            Assert.assertEquals(position, e.getPosition());
-            TestUtils.assertContains(e.getMessage(), contains);
-        } finally {
-            Assert.assertTrue(engine.releaseAllReaders());
-            for (int i = 0, n = tableModels.length; i < n; i++) {
-                TableModel tableModel = tableModels[i];
-                Path path = tableModel.getPath().of(tableModel.getCairoCfg().getRoot()).concat(tableModel.getName()).put(Files.SEPARATOR).$();
-                Assert.assertTrue(configuration.getFilesFacade().rmdir(path));
-                tableModel.close();
-            }
-        }
     }
 
     @Test
@@ -245,60 +213,6 @@ public class SqlParserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testInsertAsSelect() throws SqlException {
-        assertModel(
-                "insert into x select-choose c, d from (y)",
-                "insert into x select * from y",
-                ExecutionModel.INSERT_AS_SELECT,
-                modelOf("x")
-                        .col("a", ColumnType.INT)
-                        .col("b", ColumnType.STRING),
-                modelOf("y")
-                        .col("c", ColumnType.INT)
-                        .col("d", ColumnType.STRING)
-        );
-    }
-
-    @Test
-    public void testInsertAsSelectColumnList() throws SqlException {
-        assertModel(
-                "insert into x (a, b) select-choose c, d from (y)",
-                "insert into x (a,b) select * from y",
-                ExecutionModel.INSERT_AS_SELECT,
-                modelOf("x")
-                        .col("a", ColumnType.INT)
-                        .col("b", ColumnType.STRING),
-                modelOf("y")
-                        .col("c", ColumnType.INT)
-                        .col("d", ColumnType.STRING)
-        );
-    }
-
-    @Test
-    public void testInsertAsSelectDuplicateColumns() {
-        assertSyntaxError("insert into x (b,b) select * from y",
-                17, "duplicate column name",
-                modelOf("x")
-                        .col("a", ColumnType.INT)
-                        .col("b", ColumnType.STRING),
-                modelOf("y")
-                        .col("c", ColumnType.INT)
-                        .col("d", ColumnType.STRING));
-    }
-
-    @Test
-    public void testInsertAsSelectColumnCountMismatch() {
-        assertSyntaxError("insert into x (b) select * from y",
-                12, "column count mismatch",
-                modelOf("x")
-                        .col("a", ColumnType.INT)
-                        .col("b", ColumnType.STRING),
-                modelOf("y")
-                        .col("c", ColumnType.INT)
-                        .col("d", ColumnType.STRING));
-    }
-
-    @Test
     public void testAsOfJoinSubQuerySimpleNoAlias() throws Exception {
         assertQuery(
                 "select-choose" +
@@ -407,6 +321,70 @@ public class SqlParserTest extends AbstractCairoTest {
                 "select-virtual switch(a,1,'A',2,'B','C') + 1 column, b from (tab)",
                 "select case when a = 1 then 'A' when 2 = a then 'B' else 'C' end+1, b from tab",
                 modelOf("tab").col("a", ColumnType.INT).col("b", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testConsistentColumnOrder() throws SqlException {
+        assertQuery(
+                "select-choose" +
+                        " rnd_int," +
+                        " rnd_int1," +
+                        " rnd_boolean," +
+                        " rnd_str," +
+                        " rnd_double," +
+                        " rnd_float," +
+                        " rnd_short," +
+                        " rnd_short1," +
+                        " rnd_date," +
+                        " rnd_timestamp," +
+                        " rnd_symbol," +
+                        " rnd_long," +
+                        " rnd_long1," +
+                        " ts," +
+                        " rnd_byte," +
+                        " rnd_bin" +
+                        " from " +
+                        "(" +
+                        "(" +
+                        "select-virtual" +
+                        " rnd_int() rnd_int," +
+                        " rnd_int(0,30,2) rnd_int1," +
+                        " rnd_boolean() rnd_boolean," +
+                        " rnd_str(3,3,2) rnd_str," +
+                        " rnd_double(2) rnd_double," +
+                        " rnd_float(2) rnd_float," +
+                        " rnd_short(10,1024) rnd_short," +
+                        " rnd_short() rnd_short1," +
+                        " rnd_date(to_date('2015','yyyy'),to_date('2016','yyyy'),2) rnd_date," +
+                        " rnd_timestamp(to_timestamp('2015','yyyy'),to_timestamp('2016','yyyy'),2) rnd_timestamp," +
+                        " rnd_symbol(4,4,4,2) rnd_symbol," +
+                        " rnd_long(100,200,2) rnd_long," +
+                        " rnd_long() rnd_long1," +
+                        " timestamp_sequence(to_timestamp(0),1000000000) ts," +
+                        " rnd_byte(2,50) rnd_byte," +
+                        " rnd_bin(10,20,2) rnd_bin" +
+                        " from (long_sequence(20))" +
+                        ") _xQdbA1" +
+                        ")",
+                "select * from (select" +
+                        " rnd_int()," +
+                        " rnd_int(0, 30, 2)," +
+                        " rnd_boolean()," +
+                        " rnd_str(3,3,2)," +
+                        " rnd_double(2)," +
+                        " rnd_float(2)," +
+                        " rnd_short(10,1024)," +
+                        " rnd_short()," +
+                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2)," +
+                        " rnd_timestamp(to_timestamp('2015', 'yyyy'), to_timestamp('2016', 'yyyy'), 2)," +
+                        " rnd_symbol(4,4,4,2)," +
+                        " rnd_long(100,200,2)," +
+                        " rnd_long()," +
+                        " timestamp_sequence(to_timestamp(0), 1000000000) ts," +
+                        " rnd_byte(2,50)," +
+                        " rnd_bin(10, 20, 2)" +
+                        " from long_sequence(20))"
         );
     }
 
@@ -1404,6 +1382,60 @@ public class SqlParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInsertAsSelect() throws SqlException {
+        assertModel(
+                "insert into x select-choose c, d from (y)",
+                "insert into x select * from y",
+                ExecutionModel.INSERT_AS_SELECT,
+                modelOf("x")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.STRING),
+                modelOf("y")
+                        .col("c", ColumnType.INT)
+                        .col("d", ColumnType.STRING)
+        );
+    }
+
+    @Test
+    public void testInsertAsSelectColumnCountMismatch() {
+        assertSyntaxError("insert into x (b) select * from y",
+                12, "column count mismatch",
+                modelOf("x")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.STRING),
+                modelOf("y")
+                        .col("c", ColumnType.INT)
+                        .col("d", ColumnType.STRING));
+    }
+
+    @Test
+    public void testInsertAsSelectColumnList() throws SqlException {
+        assertModel(
+                "insert into x (a, b) select-choose c, d from (y)",
+                "insert into x (a,b) select * from y",
+                ExecutionModel.INSERT_AS_SELECT,
+                modelOf("x")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.STRING),
+                modelOf("y")
+                        .col("c", ColumnType.INT)
+                        .col("d", ColumnType.STRING)
+        );
+    }
+
+    @Test
+    public void testInsertAsSelectDuplicateColumns() {
+        assertSyntaxError("insert into x (b,b) select * from y",
+                17, "duplicate column name",
+                modelOf("x")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.STRING),
+                modelOf("y")
+                        .col("c", ColumnType.INT)
+                        .col("d", ColumnType.STRING));
+    }
+
+    @Test
     public void testInvalidAlias() {
         assertSyntaxError("orders join customers on orders.customerId = c.customerId", 45, "alias",
                 modelOf("customers").col("customerId", ColumnType.INT),
@@ -2318,7 +2350,7 @@ public class SqlParserTest extends AbstractCairoTest {
                                 "-- from acc\n" +
                                 "from acc(Date) sample by 1d\n" +
                                 "-- where x = 10\n",
-                        bindVariableService, true);
+                        sqlExecutionContext, true);
                 Assert.fail();
             } catch (SqlException e) {
                 TestUtils.assertEquals("Invalid column: Date", e.getFlyweightMessage());
@@ -2399,7 +2431,7 @@ public class SqlParserTest extends AbstractCairoTest {
     @Test
     public void testMissingWhere() {
         try {
-            sqlCompiler.compileExecutionModel("select id, x + 10, x from tab id ~ 'HBRO'", bindVariableService, true);
+            sqlCompiler.compileExecutionModel("select id, x + 10, x from tab id ~ 'HBRO'", sqlExecutionContext, true);
             Assert.fail("Exception expected");
         } catch (SqlException e) {
             Assert.assertEquals(33, e.getPosition());
@@ -3092,15 +3124,6 @@ public class SqlParserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSelectWildcardAndTimestamp() throws SqlException {
-        assertQuery(
-                "select-choose x, y from ((select-choose x, y from (tab1)) _xQdbA1) timestamp (y)",
-                "select * from (select x, y from tab1) timestamp(y)",
-                modelOf("tab1").col("x", ColumnType.INT).col("y", ColumnType.TIMESTAMP)
-        );
-    }
-
-    @Test
     public void testSelectWildcardAndExpr() throws SqlException {
         // todo: Y column is selected twice, code should be able to tell that y and tab1.y is the same column
         assertQuery(
@@ -3121,6 +3144,15 @@ public class SqlParserTest extends AbstractCairoTest {
                 "select *, tab1.x + y from tab1 join tab2 on (x)",
                 modelOf("tab1").col("x", ColumnType.INT).col("y", ColumnType.INT),
                 modelOf("tab2").col("x", ColumnType.INT).col("z", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testSelectWildcardAndTimestamp() throws SqlException {
+        assertQuery(
+                "select-choose x, y from ((select-choose x, y from (tab1)) _xQdbA1) timestamp (y)",
+                "select * from (select x, y from tab1) timestamp(y)",
+                modelOf("tab1").col("x", ColumnType.INT).col("y", ColumnType.TIMESTAMP)
         );
     }
 
@@ -3375,70 +3407,6 @@ public class SqlParserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testConsistentColumnOrder() throws SqlException {
-        assertQuery(
-                "select-choose" +
-                        " rnd_int," +
-                        " rnd_int1," +
-                        " rnd_boolean," +
-                        " rnd_str," +
-                        " rnd_double," +
-                        " rnd_float," +
-                        " rnd_short," +
-                        " rnd_short1," +
-                        " rnd_date," +
-                        " rnd_timestamp," +
-                        " rnd_symbol," +
-                        " rnd_long," +
-                        " rnd_long1," +
-                        " ts," +
-                        " rnd_byte," +
-                        " rnd_bin" +
-                        " from " +
-                        "(" +
-                        "(" +
-                        "select-virtual" +
-                        " rnd_int() rnd_int," +
-                        " rnd_int(0,30,2) rnd_int1," +
-                        " rnd_boolean() rnd_boolean," +
-                        " rnd_str(3,3,2) rnd_str," +
-                        " rnd_double(2) rnd_double," +
-                        " rnd_float(2) rnd_float," +
-                        " rnd_short(10,1024) rnd_short," +
-                        " rnd_short() rnd_short1," +
-                        " rnd_date(to_date('2015','yyyy'),to_date('2016','yyyy'),2) rnd_date," +
-                        " rnd_timestamp(to_timestamp('2015','yyyy'),to_timestamp('2016','yyyy'),2) rnd_timestamp," +
-                        " rnd_symbol(4,4,4,2) rnd_symbol," +
-                        " rnd_long(100,200,2) rnd_long," +
-                        " rnd_long() rnd_long1," +
-                        " timestamp_sequence(to_timestamp(0),1000000000) ts," +
-                        " rnd_byte(2,50) rnd_byte," +
-                        " rnd_bin(10,20,2) rnd_bin" +
-                        " from (long_sequence(20))" +
-                        ") _xQdbA1" +
-                        ")",
-                "select * from (select" +
-                        " rnd_int()," +
-                        " rnd_int(0, 30, 2)," +
-                        " rnd_boolean()," +
-                        " rnd_str(3,3,2)," +
-                        " rnd_double(2)," +
-                        " rnd_float(2)," +
-                        " rnd_short(10,1024)," +
-                        " rnd_short()," +
-                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2)," +
-                        " rnd_timestamp(to_timestamp('2015', 'yyyy'), to_timestamp('2016', 'yyyy'), 2)," +
-                        " rnd_symbol(4,4,4,2)," +
-                        " rnd_long(100,200,2)," +
-                        " rnd_long()," +
-                        " timestamp_sequence(to_timestamp(0), 1000000000) ts," +
-                        " rnd_byte(2,50)," +
-                        " rnd_bin(10, 20, 2)" +
-                        " from long_sequence(20))"
-        );
-    }
-
-    @Test
     public void testTimestampOnTable() throws Exception {
         assertQuery(
                 "select-choose x from (a b timestamp (x) where x > y)",
@@ -3465,7 +3433,7 @@ public class SqlParserTest extends AbstractCairoTest {
             }
             b.append('f').append(i);
         }
-        QueryModel st = (QueryModel) sqlCompiler.compileExecutionModel(b, bindVariableService, true);
+        QueryModel st = (QueryModel) sqlCompiler.compileExecutionModel(b, sqlExecutionContext, true);
         Assert.assertEquals(SqlParser.MAX_ORDER_BY_COLUMNS - 1, st.getOrderBy().size());
     }
 
@@ -3480,7 +3448,7 @@ public class SqlParserTest extends AbstractCairoTest {
             b.append('f').append(i);
         }
         try {
-            sqlCompiler.compileExecutionModel(b, bindVariableService, true);
+            sqlCompiler.compileExecutionModel(b, sqlExecutionContext, true);
         } catch (SqlException e) {
             TestUtils.assertEquals("Too many columns", e.getFlyweightMessage());
         }
@@ -3576,22 +3544,53 @@ public class SqlParserTest extends AbstractCairoTest {
         );
     }
 
-    private void assertCreateTable(String expected, String ddl, TableModel... tableModels) throws SqlException {
-        assertModel(expected, ddl, ExecutionModel.CREATE_TABLE, tableModels);
+    private static void assertSyntaxError(String query, int position, String contains, TableModel... tableModels) {
+        assertSyntaxError(sqlCompiler, engine, query, position, contains, tableModels);
     }
 
-    private void assertQuery(String expected, String query, TableModel... tableModels) throws SqlException {
-        assertModel(expected, query, ExecutionModel.QUERY, tableModels);
+    private static void assertSyntaxError(
+            SqlCompiler compiler,
+            CairoEngine engine,
+            String query,
+            int position,
+            String contains,
+            TableModel... tableModels) {
+        try {
+            for (int i = 0, n = tableModels.length; i < n; i++) {
+                CairoTestUtils.create(tableModels[i]);
+            }
+            compiler.compileExecutionModel(query, sqlExecutionContext, true);
+            Assert.fail("Exception expected");
+        } catch (SqlException e) {
+            Assert.assertEquals(position, e.getPosition());
+            TestUtils.assertContains(e.getMessage(), contains);
+        } finally {
+            Assert.assertTrue(engine.releaseAllReaders());
+            for (int i = 0, n = tableModels.length; i < n; i++) {
+                TableModel tableModel = tableModels[i];
+                Path path = tableModel.getPath().of(tableModel.getCairoCfg().getRoot()).concat(tableModel.getName()).put(Files.SEPARATOR).$();
+                Assert.assertTrue(configuration.getFilesFacade().rmdir(path));
+                tableModel.close();
+            }
+        }
+    }
+
+    private void assertCreateTable(String expected, String ddl, TableModel... tableModels) throws SqlException {
+        assertModel(expected, ddl, ExecutionModel.CREATE_TABLE, tableModels);
     }
 
     private void assertModel(String expected, String query, int modelType, TableModel... tableModels) throws SqlException {
         createModelsAndRun(() -> {
             sink.clear();
-            ExecutionModel model = sqlCompiler.compileExecutionModel(query, bindVariableService, true);
+            ExecutionModel model = sqlCompiler.compileExecutionModel(query, sqlExecutionContext, true);
             Assert.assertEquals(model.getModelType(), modelType);
             ((Sinkable) model).toSink(sink);
             TestUtils.assertEquals(expected, sink);
         }, tableModels);
+    }
+
+    private void assertQuery(String expected, String query, TableModel... tableModels) throws SqlException {
+        assertModel(expected, query, ExecutionModel.QUERY, tableModels);
     }
 
     private void createModelsAndRun(CairoAware runnable, TableModel... tableModels) throws SqlException {

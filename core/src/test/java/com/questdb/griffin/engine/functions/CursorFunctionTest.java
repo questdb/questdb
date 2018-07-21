@@ -27,7 +27,7 @@ import org.junit.Assert;
 import org.junit.Test;
 
 public class CursorFunctionTest {
-    private static final CursorFunction function = new CursorFunction(25, null, null);
+    private static final CursorFunction function = new CursorFunction(25, null);
 
     @Test(expected = UnsupportedOperationException.class)
     public void testGetBin() {

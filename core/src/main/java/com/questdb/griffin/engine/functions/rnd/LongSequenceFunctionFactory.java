@@ -33,16 +33,11 @@ import com.questdb.cairo.sql.RecordMetadata;
 import com.questdb.common.ColumnType;
 import com.questdb.griffin.FunctionFactory;
 import com.questdb.griffin.engine.functions.CursorFunction;
+import com.questdb.griffin.engine.functions.GenericRecordCursorFactory;
 import com.questdb.std.ObjList;
 
 public class LongSequenceFunctionFactory implements FunctionFactory {
     private static final RecordMetadata METADATA;
-
-    static {
-        final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        metadata.add(new TableColumnMetadata("x", ColumnType.LONG));
-        METADATA = metadata;
-    }
 
     @Override
     public String getSignature() {
@@ -56,8 +51,8 @@ public class LongSequenceFunctionFactory implements FunctionFactory {
 
         return new CursorFunction(
                 position,
-                METADATA,
-                new LongSequenceRecordCursor(Math.max(0L, recordCount)));
+                new GenericRecordCursorFactory(METADATA, new LongSequenceRecordCursor(Math.max(0L, recordCount)))
+        );
     }
 
     static class LongSequenceRecordCursor implements RecordCursor {
@@ -120,6 +115,15 @@ public class LongSequenceFunctionFactory implements FunctionFactory {
             return value;
         }
 
+        @Override
+        public long getRowId() {
+            return value;
+        }
+
+        long getValue() {
+            return value;
+        }
+
         void next() {
             value++;
         }
@@ -127,14 +131,11 @@ public class LongSequenceFunctionFactory implements FunctionFactory {
         void of(long value) {
             this.value = value;
         }
+    }
 
-        long getValue() {
-            return value;
-        }
-
-        @Override
-        public long getRowId() {
-            return value;
-        }
+    static {
+        final GenericRecordMetadata metadata = new GenericRecordMetadata();
+        metadata.add(new TableColumnMetadata("x", ColumnType.LONG));
+        METADATA = metadata;
     }
 }

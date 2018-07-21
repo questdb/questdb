@@ -29,7 +29,6 @@ import com.questdb.cairo.map.SingleColumnType;
 import com.questdb.cairo.sql.*;
 import com.questdb.common.ColumnType;
 import com.questdb.common.SymbolTable;
-import com.questdb.griffin.engine.functions.bind.BindVariableService;
 import com.questdb.griffin.engine.table.*;
 import com.questdb.griffin.model.ExpressionNode;
 import com.questdb.griffin.model.IntrinsicModel;
@@ -66,9 +65,9 @@ public class SqlCodeGenerator {
         return GenericRecordMetadata.copyOf(that);
     }
 
-    RecordCursorFactory generate(QueryModel model, BindVariableService bindVariableService) throws SqlException {
+    RecordCursorFactory generate(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
         clearState();
-        return generateQuery(model, bindVariableService);
+        return generateQuery(model, executionContext);
     }
 
     private RecordCursorFactory generateFunctionQuery(QueryModel model) throws SqlException {
@@ -90,7 +89,7 @@ public class SqlCodeGenerator {
             String tableName,
             IntrinsicModel intrinsicModel,
             Function filter,
-            BindVariableService bindVariableService) throws SqlException {
+            SqlExecutionContext executionContext) throws SqlException {
         final boolean indexed = metadata.isColumnIndexed(latestByIndex);
         final DataFrameCursorFactory dataFrameCursorFactory;
         if (intrinsicModel.intervals != null) {
@@ -105,7 +104,7 @@ public class SqlCodeGenerator {
 
             if (intrinsicModel.keySubQuery != null) {
 
-                final RecordCursorFactory rcf = generate(intrinsicModel.keySubQuery, bindVariableService);
+                final RecordCursorFactory rcf = generate(intrinsicModel.keySubQuery, executionContext);
                 final int firstColumnType = validateSubQueryColumnAndGetType(intrinsicModel, rcf.getMetadata());
 
                 return new LatestBySubQueryRecordCursorFactory(
@@ -227,43 +226,43 @@ public class SqlCodeGenerator {
         );
     }
 
-    private RecordCursorFactory generateNoSelect(QueryModel model, BindVariableService bindVariableService) throws SqlException {
+    private RecordCursorFactory generateNoSelect(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
         ExpressionNode tableName = model.getTableName();
         if (tableName != null) {
             if (tableName.type == ExpressionNode.FUNCTION) {
                 return generateFunctionQuery(model);
             } else {
-                return generateTableQuery(model, bindVariableService);
+                return generateTableQuery(model, executionContext);
             }
 
         }
         assert model.getNestedModel() != null;
-        return generateQuery(model.getNestedModel(), bindVariableService);
+        return generateQuery(model.getNestedModel(), executionContext);
     }
 
-    private RecordCursorFactory generateQuery(QueryModel model, BindVariableService bindVariableService) throws SqlException {
+    private RecordCursorFactory generateQuery(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
         switch (model.getSelectModelType()) {
             case QueryModel.SELECT_MODEL_CHOOSE:
-                return generateSelectChoose(model, bindVariableService);
+                return generateSelectChoose(model, executionContext);
             case QueryModel.SELECT_MODEL_GROUP_BY:
-                return generateSelectGroupBy(model, bindVariableService);
+                return generateSelectGroupBy(model, executionContext);
             case QueryModel.SELECT_MODEL_VIRTUAL:
-                return generateSelectVirtual(model, bindVariableService);
+                return generateSelectVirtual(model, executionContext);
             case QueryModel.SELECT_MODEL_ANALYTIC:
-                return generateSelectAnalytic(model, bindVariableService);
+                return generateSelectAnalytic(model, executionContext);
             default:
-                return generateNoSelect(model, bindVariableService);
+                return generateNoSelect(model, executionContext);
         }
     }
 
-    private RecordCursorFactory generateSelectAnalytic(QueryModel model, BindVariableService bindVariableService) throws SqlException {
+    private RecordCursorFactory generateSelectAnalytic(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
         assert model.getNestedModel() != null;
-        return generateQuery(model.getNestedModel(), bindVariableService);
+        return generateQuery(model.getNestedModel(), executionContext);
     }
 
-    private RecordCursorFactory generateSelectChoose(QueryModel model, BindVariableService bindVariableService) throws SqlException {
+    private RecordCursorFactory generateSelectChoose(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
         assert model.getNestedModel() != null;
-        final RecordCursorFactory factory = generateQuery(model.getNestedModel(), bindVariableService);
+        final RecordCursorFactory factory = generateQuery(model.getNestedModel(), executionContext);
         final RecordMetadata metadata = factory.getMetadata();
         final int selectColumnCount = model.getColumns().size();
         final ExpressionNode timestamp = model.getTimestamp();
@@ -315,14 +314,14 @@ public class SqlCodeGenerator {
         return new SelectedRecordCursorFactory(selectMetadata, columnCrossIndex, factory);
     }
 
-    private RecordCursorFactory generateSelectGroupBy(QueryModel model, BindVariableService bindVariableService) throws SqlException {
+    private RecordCursorFactory generateSelectGroupBy(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
         assert model.getNestedModel() != null;
-        return generateQuery(model.getNestedModel(), bindVariableService);
+        return generateQuery(model.getNestedModel(), executionContext);
     }
 
-    private RecordCursorFactory generateSelectVirtual(QueryModel model, BindVariableService bindVariableService) throws SqlException {
+    private RecordCursorFactory generateSelectVirtual(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
         assert model.getNestedModel() != null;
-        RecordCursorFactory factory = generateQuery(model.getNestedModel(), bindVariableService);
+        RecordCursorFactory factory = generateQuery(model.getNestedModel(), executionContext);
 
         final int columnCount = model.getColumns().size();
         final RecordMetadata metadata = factory.getMetadata();
@@ -345,7 +344,11 @@ public class SqlCodeGenerator {
                 virtualMetadata.setTimestampIndex(i);
             }
 
-            Function function = functionParser.parseFunction(column.getAst(), metadata, bindVariableService);
+            final Function function = functionParser.parseFunction(
+                    column.getAst(),
+                    metadata,
+                    executionContext
+            );
             functions.add(function);
 
             virtualMetadata.add(new TableColumnMetadata(
@@ -358,7 +361,7 @@ public class SqlCodeGenerator {
     }
 
     @SuppressWarnings("ConstantConditions")
-    private RecordCursorFactory generateTableQuery(QueryModel model, BindVariableService bindVariableService) throws SqlException {
+    private RecordCursorFactory generateTableQuery(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
 
 //        applyLimit(model);
 
@@ -402,7 +405,7 @@ public class SqlCodeGenerator {
                 Function filter;
 
                 if (intrinsicModel.filter != null) {
-                    filter = functionParser.parseFunction(intrinsicModel.filter, metadata, bindVariableService);
+                    filter = functionParser.parseFunction(intrinsicModel.filter, metadata, executionContext);
 
                     if (filter.getType() != ColumnType.BOOLEAN) {
                         throw SqlException.$(intrinsicModel.filter.position, "boolean expression expected");
@@ -432,7 +435,7 @@ public class SqlCodeGenerator {
                             tableName,
                             intrinsicModel,
                             filter,
-                            bindVariableService);
+                            executionContext);
                 }
 
 
@@ -450,7 +453,7 @@ public class SqlCodeGenerator {
                     final int nKeyValues = intrinsicModel.keyValues.size();
 
                     if (intrinsicModel.keySubQuery != null) {
-                        final RecordCursorFactory rcf = generate(intrinsicModel.keySubQuery, bindVariableService);
+                        final RecordCursorFactory rcf = generate(intrinsicModel.keySubQuery, executionContext);
                         final int firstColumnType = validateSubQueryColumnAndGetType(intrinsicModel, rcf.getMetadata());
 
                         return new FilterOnSubQueryRecordCursorFactory(

@@ -26,7 +26,6 @@ package com.questdb.griffin;
 import com.questdb.cairo.CairoConfiguration;
 import com.questdb.common.ColumnType;
 import com.questdb.common.PartitionBy;
-import com.questdb.griffin.engine.functions.bind.BindVariableService;
 import com.questdb.griffin.model.*;
 import com.questdb.std.*;
 
@@ -54,6 +53,7 @@ final class SqlParser {
     private final CharacterStore characterStore;
     private final SqlOptimiser optimiser;
     private boolean subQueryMode = false;
+
     SqlParser(
             CairoConfiguration configuration,
             SqlOptimiser optimiser,
@@ -213,7 +213,7 @@ final class SqlParser {
         return tok;
     }
 
-    ExecutionModel parse(GenericLexer lexer, BindVariableService bindVariableService) throws SqlException {
+    ExecutionModel parse(GenericLexer lexer, SqlExecutionContext executionContext) throws SqlException {
         CharSequence tok = tok(lexer, "'create', 'rename' or 'select'");
 
         if (Chars.equals(tok, "select")) {
@@ -221,7 +221,7 @@ final class SqlParser {
         }
 
         if (Chars.equals(tok, "create")) {
-            return parseCreateStatement(lexer, bindVariableService);
+            return parseCreateStatement(lexer, executionContext);
         }
 
         if (Chars.equals(tok, "rename")) {
@@ -235,12 +235,12 @@ final class SqlParser {
         return parseSelect(lexer);
     }
 
-    private ExecutionModel parseCreateStatement(GenericLexer lexer, BindVariableService bindVariableService) throws SqlException {
+    private ExecutionModel parseCreateStatement(GenericLexer lexer, SqlExecutionContext executionContext) throws SqlException {
         expectTok(lexer, "table");
-        return parseCreateTable(lexer, bindVariableService);
+        return parseCreateTable(lexer, executionContext);
     }
 
-    private ExecutionModel parseCreateTable(GenericLexer lexer, BindVariableService bindVariableService) throws SqlException {
+    private ExecutionModel parseCreateTable(GenericLexer lexer, SqlExecutionContext executionContext) throws SqlException {
         final CreateTableModel model = createTableModelPool.next();
         final CharSequence tableName = tok(lexer, "table name");
         if (Chars.indexOf(tableName, '.') != -1) {
@@ -254,7 +254,7 @@ final class SqlParser {
             lexer.unparse();
             parseCreateTableColumns(lexer, model);
         } else if (Chars.equals(tok, "as")) {
-            parseCreateTableAsSelect(lexer, model, bindVariableService);
+            parseCreateTableAsSelect(lexer, model, executionContext);
         } else {
             throw errUnexpected(lexer, tok);
         }
@@ -293,9 +293,9 @@ final class SqlParser {
         return model;
     }
 
-    private void parseCreateTableAsSelect(GenericLexer lexer, CreateTableModel model, BindVariableService bindVariableService) throws SqlException {
+    private void parseCreateTableAsSelect(GenericLexer lexer, CreateTableModel model, SqlExecutionContext executionContext) throws SqlException {
         expectTok(lexer, '(');
-        QueryModel queryModel = optimiser.optimise(parseDml(lexer), bindVariableService);
+        QueryModel queryModel = optimiser.optimise(parseDml(lexer), executionContext);
         ObjList<QueryColumn> columns = queryModel.getColumns();
         assert columns.size() > 0;
 

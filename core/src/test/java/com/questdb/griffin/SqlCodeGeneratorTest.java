@@ -495,7 +495,6 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     @Ignore
-    // todo: implement
     public void testFilterSubQuery() throws Exception {
         // no index
         assertQuery("a\tb\tk\n" +

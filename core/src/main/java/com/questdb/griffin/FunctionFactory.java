@@ -28,6 +28,33 @@ import com.questdb.cairo.sql.Function;
 import com.questdb.std.ObjList;
 
 public interface FunctionFactory {
+
+    /**
+     * Function signature in a form of "name(type...)". Name is a literal that does not
+     * start with number and contains no control characters, which can be confused with
+     * SQL language punctuation. Control characters include but not limited to:
+     * ',', '(', ')', '*', '/', '%', '+', '-', '='.
+     * <p>
+     * Argument types are represented by single character from this table:
+     * <ul>
+     * <li>B = byte</li>
+     * <li>E = short</li>
+     * <li>I = int</li>
+     * <li>L = long</li>
+     * <li>F = float</li>
+     * <li>D = double</li>
+     * <li>S = string</li>
+     * <li>K = symbol</li>
+     * <li>T = boolean</li>
+     * <li>D = date</li>
+     * <li>N = timestamp</li>
+     * <li>U = binary</li>
+     * <li>V = variable argument list</li>
+     * <li>C = cursor</li>
+     * </ul>
+     *
+     * @return signature, for example "substr(SII)"
+     */
     String getSignature();
 
     Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) throws SqlException;

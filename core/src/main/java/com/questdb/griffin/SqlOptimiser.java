@@ -31,7 +31,6 @@ import com.questdb.cairo.sql.CairoEngine;
 import com.questdb.cairo.sql.Function;
 import com.questdb.cairo.sql.RecordMetadata;
 import com.questdb.common.ColumnType;
-import com.questdb.griffin.engine.functions.bind.BindVariableService;
 import com.questdb.griffin.model.*;
 import com.questdb.ql.ops.FunctionFactories;
 import com.questdb.std.*;
@@ -776,7 +775,7 @@ class SqlOptimiser {
         }
     }
 
-    private void enumerateTableColumns(QueryModel model, BindVariableService bindVariableService) throws SqlException {
+    private void enumerateTableColumns(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
         final ObjList<QueryModel> jm = model.getJoinModels();
 
         // we have plain tables and possibly joins
@@ -784,20 +783,20 @@ class SqlOptimiser {
         final ExpressionNode tableName = model.getTableName();
         if (tableName != null) {
             if (tableName.type == ExpressionNode.FUNCTION) {
-                parseFunctionAndEnumerateColumns(model, bindVariableService);
+                parseFunctionAndEnumerateColumns(model, executionContext);
             } else {
                 openReaderAndEnumerateColumns(model);
             }
         } else {
             if (model.getNestedModel() != null) {
-                enumerateTableColumns(model.getNestedModel(), bindVariableService);
+                enumerateTableColumns(model.getNestedModel(), executionContext);
                 // copy columns of nested model onto parent one
                 // we must treat sub-query just like we do a table
                 model.copyColumnsFrom(model.getNestedModel());
             }
         }
         for (int i = 1, n = jm.size(); i < n; i++) {
-            enumerateTableColumns(jm.getQuick(i), bindVariableService);
+            enumerateTableColumns(jm.getQuick(i), executionContext);
         }
     }
 
@@ -1220,9 +1219,9 @@ class SqlOptimiser {
         }
     }
 
-    QueryModel optimise(QueryModel model, BindVariableService bindVariableService) throws SqlException {
-        optimiseExpressionModels(model, bindVariableService);
-        enumerateTableColumns(model, bindVariableService);
+    QueryModel optimise(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
+        optimiseExpressionModels(model, executionContext);
+        enumerateTableColumns(model, executionContext);
         resolveJoinColumns(model);
         optimiseBooleanNot(model);
         final QueryModel rewrittenModel = rewriteOrderBy(rewriteSelectClause(model, true));
@@ -1329,14 +1328,14 @@ class SqlOptimiser {
         }
     }
 
-    private void optimiseExpressionModels(QueryModel model, BindVariableService bindVariableService) throws SqlException {
+    private void optimiseExpressionModels(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
         ObjList<ExpressionNode> expressionModels = model.getExpressionModels();
         final int n = expressionModels.size();
         if (n > 0) {
             for (int i = 0; i < n; i++) {
                 final ExpressionNode node = expressionModels.getQuick(i);
                 assert node.queryModel != null;
-                QueryModel optimised = optimise(node.queryModel, bindVariableService);
+                QueryModel optimised = optimise(node.queryModel, executionContext);
                 if (optimised != node.queryModel) {
                     node.queryModel = optimised;
                 }
@@ -1344,7 +1343,7 @@ class SqlOptimiser {
         }
 
         if (model.getNestedModel() != null) {
-            optimiseExpressionModels(model.getNestedModel(), bindVariableService);
+            optimiseExpressionModels(model.getNestedModel(), executionContext);
         }
 
         final ObjList<QueryModel> joinModels = model.getJoinModels();
@@ -1352,7 +1351,7 @@ class SqlOptimiser {
         // as usual, we already optimised self (index=0), now optimised others
         if (m > 1) {
             for (int i = 1; i < m; i++) {
-                optimiseExpressionModels(joinModels.getQuick(i), bindVariableService);
+                optimiseExpressionModels(joinModels.getQuick(i), executionContext);
             }
         }
     }
@@ -1451,12 +1450,12 @@ class SqlOptimiser {
         }
     }
 
-    private void parseFunctionAndEnumerateColumns(QueryModel model, BindVariableService bindVariableService) throws SqlException {
+    private void parseFunctionAndEnumerateColumns(@NotNull QueryModel model, @NotNull SqlExecutionContext executionContext) throws SqlException {
         Function function = model.getTableNameFunction();
 
         assert function == null;
 
-        function = functionParser.parseFunction(model.getTableName(), EmptyRecordMetadata.INSTANCE, bindVariableService);
+        function = functionParser.parseFunction(model.getTableName(), EmptyRecordMetadata.INSTANCE, executionContext);
         if (function.getType() != TypeEx.CURSOR) {
             throw SqlException.$(model.getTableName().position, "function must return CURSOR");
         }

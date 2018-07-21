@@ -25,9 +25,10 @@ package com.questdb.griffin;
 
 import com.questdb.cairo.CairoConfiguration;
 import com.questdb.cairo.sql.Function;
+import com.questdb.cairo.sql.RecordCursorFactory;
 import com.questdb.cairo.sql.RecordMetadata;
 import com.questdb.common.ColumnType;
-import com.questdb.griffin.engine.functions.bind.BindVariableService;
+import com.questdb.griffin.engine.functions.CursorFunction;
 import com.questdb.griffin.engine.functions.columns.*;
 import com.questdb.griffin.engine.functions.constants.*;
 import com.questdb.griffin.model.ExpressionNode;
@@ -36,6 +37,7 @@ import com.questdb.log.LogFactory;
 import com.questdb.std.*;
 import org.jetbrains.annotations.NotNull;
 
+import java.io.Closeable;
 import java.util.ArrayDeque;
 
 public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
@@ -53,8 +55,9 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
     private final PostOrderTreeTraversalAlgo algo = new PostOrderTreeTraversalAlgo();
     private final CairoConfiguration configuration;
     private final CharSequenceObjHashMap<ObjList<FunctionFactory>> factories = new CharSequenceObjHashMap<>();
+    private final ArrayDeque<RecordMetadata> metadataStack = new ArrayDeque<>();
     private RecordMetadata metadata;
-    private BindVariableService bindVariableService;
+    private SqlExecutionContext sqlExecutionContext;
 
     public FunctionParser(CairoConfiguration configuration, Iterable<FunctionFactory> functionFactories) {
         this.configuration = configuration;
@@ -103,6 +106,9 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
             case 'V':
                 sigArgType = TypeEx.VAR_ARG;
                 break;
+            case 'C':
+                sigArgType = TypeEx.CURSOR;
+                break;
             default:
                 sigArgType = -1;
                 break;
@@ -111,6 +117,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
     }
 
     public static int validateSignatureAndGetNameSeparator(String sig) throws SqlException {
+        //todo: can name have operator characters?
         if (sig == null) {
             throw SqlException.$(0, "NULL signature");
         }
@@ -151,7 +158,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
     }
 
     public Function createParameter(ExpressionNode node) throws SqlException {
-        Function function = bindVariableService.getFunction(node.token);
+        Function function = sqlExecutionContext.getBindVariableService().getFunction(node.token);
         if (function == null) {
             throw SqlException.position(node.position).put("undefined bind variable: ").put(node.token);
         }
@@ -172,9 +179,9 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
      * <p>
      * For any other node type a function instance is created using {@link FunctionFactory}
      *
-     * @param node                expression node
-     * @param metadata            metadata for resolving types of columns.
-     * @param bindVariableService service for resolving parameters, which are ':' prefixed literals.
+     * @param node             expression node
+     * @param metadata         metadata for resolving types of columns.
+     * @param executionContext for resolving parameters, which are ':' prefixed literals and creating cursors
      * @return function instance
      * @throws SqlException when function cannot be created. Can be one of list but not limited to
      *                      <ul>
@@ -188,11 +195,24 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
     public Function parseFunction(
             ExpressionNode node,
             RecordMetadata metadata,
-            BindVariableService bindVariableService) throws SqlException {
-        this.bindVariableService = bindVariableService;
-        this.metadata = metadata;
-        algo.traverse(node, this);
-        return stack.poll();
+            SqlExecutionContext executionContext) throws SqlException {
+
+        this.sqlExecutionContext = executionContext;
+
+        if (this.metadata != null) {
+            metadataStack.push(this.metadata);
+        }
+        try {
+            this.metadata = metadata;
+            algo.traverse(node, this);
+            return stack.poll();
+        } finally {
+            if (metadataStack.size() == 0) {
+                this.metadata = null;
+            } else {
+                this.metadata = metadataStack.poll();
+            }
+        }
     }
 
     @Override
@@ -210,6 +230,9 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
                     break;
                 case ExpressionNode.CONSTANT:
                     stack.push(createConstant(node));
+                    break;
+                case ExpressionNode.LAMBDA:
+                    stack.push(createCursorFunction(node));
                     break;
                 default:
                     // lookup zero arg function from symbol table
@@ -338,6 +361,14 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
         }
 
         throw SqlException.position(node.position).put("invalid constant: ").put(node.token);
+    }
+
+    private Function createCursorFunction(ExpressionNode node) throws SqlException {
+        assert node.queryModel != null;
+        final ObjList<Closeable> closeables = sqlExecutionContext.getCloseables();
+        final RecordCursorFactory factory = sqlExecutionContext.getCodeGenerator().generate(node.queryModel, sqlExecutionContext);
+        closeables.add(factory);
+        return new CursorFunction(node.position, factory);
     }
 
     private Function createFunction(ExpressionNode node, ObjList<Function> args) throws SqlException {

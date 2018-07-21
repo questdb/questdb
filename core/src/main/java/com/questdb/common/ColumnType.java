@@ -23,6 +23,7 @@
 
 package com.questdb.common;
 
+import com.questdb.griffin.TypeEx;
 import com.questdb.std.CharSequenceIntHashMap;
 import com.questdb.std.IntObjHashMap;
 import com.questdb.std.ObjIntHashMap;
@@ -148,6 +149,7 @@ public final class ColumnType {
         typeNameMap.put(DATE, "DATE");
         typeNameMap.put(PARAMETER, "PARAMETER");
         typeNameMap.put(TIMESTAMP, "TIMESTAMP");
+        typeNameMap.put(TypeEx.CURSOR, "CURSOR");
 
         nameTypeMap.put("BOOLEAN", BOOLEAN);
         nameTypeMap.put("BYTE", BYTE);
@@ -162,5 +164,6 @@ public final class ColumnType {
         nameTypeMap.put("DATE", DATE);
         nameTypeMap.put("PARAMETER", PARAMETER);
         nameTypeMap.put("TIMESTAMP", TIMESTAMP);
+        nameTypeMap.put("CURSOR", TypeEx.CURSOR);
     }
 }
