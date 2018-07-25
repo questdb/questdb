@@ -21,44 +21,44 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.engine.functions.bool;
+package com.questdb.griffin.engine.functions.str;
 
 import com.questdb.cairo.CairoConfiguration;
 import com.questdb.cairo.sql.Function;
 import com.questdb.cairo.sql.Record;
 import com.questdb.griffin.FunctionFactory;
-import com.questdb.griffin.engine.functions.BooleanFunction;
+import com.questdb.griffin.SqlException;
+import com.questdb.griffin.engine.functions.SymbolFunction;
+import com.questdb.griffin.engine.functions.UnaryFunction;
 import com.questdb.std.ObjList;
 
-public class AndVVFunctionFactory implements FunctionFactory {
+public class ToSymbolFuctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "and(TT)";
+        return "to_symbol(S)";
     }
 
     @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
-        return new MyBooleanFunction(position, args.getQuick(0), args.getQuick(1));
+    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) throws SqlException {
+        return new ToSymbolFunction(position, args.getQuick(0));
     }
 
-    private static class MyBooleanFunction extends BooleanFunction {
-        final Function left;
-        final Function right;
+    private static class ToSymbolFunction extends SymbolFunction implements UnaryFunction {
+        private final Function arg;
 
-        public MyBooleanFunction(int position, Function left, Function right) {
+        public ToSymbolFunction(int position, Function arg) {
             super(position);
-            this.left = left;
-            this.right = right;
+            this.arg = arg;
         }
 
         @Override
-        public boolean getBool(Record rec) {
-            return left.getBool(rec) && right.getBool(rec);
+        public Function getArg() {
+            return arg;
         }
 
         @Override
-        public boolean isConstant() {
-            return left.isConstant() && right.isConstant();
+        public CharSequence getSymbol(Record rec) {
+            return arg.getStr(rec);
         }
     }
 }

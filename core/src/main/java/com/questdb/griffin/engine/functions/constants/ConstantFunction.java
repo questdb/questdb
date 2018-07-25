@@ -21,11 +21,13 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.engine.table;
+package com.questdb.griffin.engine.functions.constants;
 
-import com.questdb.cairo.sql.Record;
+import com.questdb.griffin.engine.functions.StatelessFunction;
 
-@FunctionalInterface
-interface TypeCaster {
-    CharSequence getValue(Record record, int columnIndex);
+public interface ConstantFunction extends StatelessFunction {
+    @Override
+    default boolean isConstant() {
+        return true;
+    }
 }

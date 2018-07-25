@@ -91,7 +91,7 @@ public abstract class TimestampFunction implements Function {
     }
 
     @Override
-    public RecordCursorFactory getRecordCursorFactory(Record record) {
+    public RecordCursorFactory getRecordCursorFactory() {
         throw new UnsupportedOperationException();
     }
 

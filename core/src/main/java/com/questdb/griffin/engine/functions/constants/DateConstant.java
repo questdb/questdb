@@ -26,7 +26,7 @@ package com.questdb.griffin.engine.functions.constants;
 import com.questdb.cairo.sql.Record;
 import com.questdb.griffin.engine.functions.DateFunction;
 
-public class DateConstant extends DateFunction {
+public class DateConstant extends DateFunction implements ConstantFunction {
     private final long value;
 
     public DateConstant(int position, long value) {
@@ -38,10 +38,4 @@ public class DateConstant extends DateFunction {
     public long getDate(Record rec) {
         return value;
     }
-
-    @Override
-    public boolean isConstant() {
-        return true;
-    }
-
 }

@@ -30,6 +30,7 @@ import com.questdb.common.ColumnType;
 import com.questdb.griffin.FunctionFactory;
 import com.questdb.griffin.SqlException;
 import com.questdb.griffin.engine.functions.BooleanFunction;
+import com.questdb.griffin.engine.functions.UnaryFunction;
 import com.questdb.griffin.engine.functions.constants.BooleanConstant;
 import com.questdb.std.CharSequenceHashSet;
 import com.questdb.std.ObjList;
@@ -70,19 +71,24 @@ public class InFunctionFactory implements FunctionFactory {
         return new Func(position, var, set);
     }
 
-    private class Func extends BooleanFunction {
-        private final Function var;
+    private class Func extends BooleanFunction implements UnaryFunction {
+        private final Function arg;
         private final CharSequenceHashSet set;
 
-        public Func(int position, Function var, CharSequenceHashSet set) {
+        public Func(int position, Function arg, CharSequenceHashSet set) {
             super(position);
-            this.var = var;
+            this.arg = arg;
             this.set = set;
         }
 
         @Override
+        public Function getArg() {
+            return arg;
+        }
+
+        @Override
         public boolean getBool(Record rec) {
-            return set.contains(var.getStr(rec));
+            return set.contains(arg.getStr(rec));
         }
     }
 }

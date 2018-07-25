@@ -27,7 +27,7 @@ import com.questdb.cairo.sql.Record;
 import com.questdb.griffin.engine.functions.StrFunction;
 import com.questdb.std.Chars;
 
-public class StrConstant extends StrFunction {
+public class StrConstant extends StrFunction implements ConstantFunction {
     private final String value;
 
     public StrConstant(int position, CharSequence value) {
@@ -48,10 +48,5 @@ public class StrConstant extends StrFunction {
     @Override
     public CharSequence getStrB(Record rec) {
         return value;
-    }
-
-    @Override
-    public boolean isConstant() {
-        return true;
     }
 }

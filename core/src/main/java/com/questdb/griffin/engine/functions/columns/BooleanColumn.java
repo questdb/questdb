@@ -25,8 +25,9 @@ package com.questdb.griffin.engine.functions.columns;
 
 import com.questdb.cairo.sql.Record;
 import com.questdb.griffin.engine.functions.BooleanFunction;
+import com.questdb.griffin.engine.functions.StatelessFunction;
 
-public class BooleanColumn extends BooleanFunction {
+public class BooleanColumn extends BooleanFunction implements StatelessFunction {
     private final int columnIndex;
 
     public BooleanColumn(int position, int columnIndex) {

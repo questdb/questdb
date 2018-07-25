@@ -33,7 +33,7 @@ import com.questdb.griffin.FunctionFactory;
 import com.questdb.griffin.FunctionParser;
 import com.questdb.griffin.SqlException;
 import com.questdb.griffin.engine.TestBinarySequence;
-import com.questdb.griffin.engine.functions.bool.NotVFunctionFactory;
+import com.questdb.griffin.engine.functions.bool.NotFunctionFactory;
 import com.questdb.griffin.engine.functions.math.*;
 import com.questdb.griffin.engine.functions.str.*;
 import com.questdb.std.NumericException;
@@ -54,8 +54,8 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
         sqlExecutionContext.getBindVariableService().setDate("xyz", 0);
 
         Function func = expr("to_char(:xyz, 'yyyy-MM')")
-                .withFunction(new ToCharDateVCFunctionFactory())
-                .withFunction(new ToCharTimestampVCFunctionFactory())
+                .withFunction(new ToCharDateFunctionFactory())
+                .withFunction(new ToCharTimestampFunctionFactory())
                 .$();
 
         TestUtils.assertEquals("1970-01", func.getStr(builder.getRecord()));
@@ -69,8 +69,8 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
         sqlExecutionContext.getBindVariableService().setBin("x", sequence);
 
         Function func = expr("to_char(:x)")
-                .withFunction(new ToCharBinVFunctionFactory())
-                .withFunction(new ToCharTimestampVCFunctionFactory())
+                .withFunction(new ToCharBinFunctionFactory())
+                .withFunction(new ToCharTimestampFunctionFactory())
                 .$();
 
         TestUtils.assertEquals("00000000 56 54 4a 57 43 50 53 57 48 59 52 58 50 45 48 4e\n" +
@@ -109,7 +109,7 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
     public void testBoolean() throws SqlException {
         sqlExecutionContext.getBindVariableService().setBoolean("xyz", false);
         Function func = expr("not :xyz")
-                .withFunction(new NotVFunctionFactory())
+                .withFunction(new NotFunctionFactory())
                 .$();
 
         Assert.assertTrue(func.getBool(builder.getRecord()));
@@ -136,7 +136,7 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
     public void testDate() throws SqlException, NumericException {
         sqlExecutionContext.getBindVariableService().setDate("xyz", DateFormatUtils.parseDateTime("2015-04-10T10:00:00.000Z"));
         Function func = expr("to_char(:xyz, 'yyyy-MM')")
-                .withFunction(new ToCharDateVCFunctionFactory())
+                .withFunction(new ToCharDateFunctionFactory())
                 .$();
 
         TestUtils.assertEquals("2015-04", func.getStr(builder.getRecord()));
@@ -224,7 +224,7 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
     public void testStr() throws SqlException {
         sqlExecutionContext.getBindVariableService().setStr("str", "abc");
         Function func = expr("length(:str)")
-                .withFunction(new LengthStrVFunctionFactory())
+                .withFunction(new LengthStrFunctionFactory())
                 .$();
 
         Assert.assertEquals(3, func.getInt(builder.getRecord()));
@@ -250,7 +250,7 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
         sqlExecutionContext.getBindVariableService().setTimestamp("xyz", com.questdb.std.microtime.DateFormatUtils.parseDateTime("2015-04-10T10:00:00.000Z"));
 
         Function func = expr("to_char(:xyz, 'yyyy-MM')")
-                .withFunction(new ToCharTimestampVCFunctionFactory())
+                .withFunction(new ToCharTimestampFunctionFactory())
                 .$();
 
         TestUtils.assertEquals("2015-04", func.getStr(builder.getRecord()));
@@ -263,8 +263,8 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
     public void testUndefined() {
         try {
             expr("to_char(:xyz, 'yyyy-MM')")
-                    .withFunction(new ToCharDateVCFunctionFactory())
-                    .withFunction(new ToCharTimestampVCFunctionFactory())
+                    .withFunction(new ToCharDateFunctionFactory())
+                    .withFunction(new ToCharTimestampFunctionFactory())
                     .$();
         } catch (SqlException e) {
             Assert.assertEquals(8, e.getPosition());

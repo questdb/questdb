@@ -25,8 +25,9 @@ package com.questdb.griffin.engine.functions.bind;
 
 import com.questdb.cairo.sql.Record;
 import com.questdb.griffin.engine.functions.LongFunction;
+import com.questdb.griffin.engine.functions.StatelessFunction;
 
-class LongBindVariable extends LongFunction {
+class LongBindVariable extends LongFunction implements StatelessFunction {
     long value;
 
     public LongBindVariable(long value) {

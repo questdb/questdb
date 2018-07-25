@@ -28,6 +28,7 @@ import com.questdb.cairo.sql.Function;
 import com.questdb.cairo.sql.Record;
 import com.questdb.griffin.FunctionFactory;
 import com.questdb.griffin.engine.functions.TimestampFunction;
+import com.questdb.griffin.engine.functions.UnaryFunction;
 import com.questdb.griffin.engine.functions.constants.TimestampConstant;
 import com.questdb.std.ObjList;
 
@@ -46,17 +47,22 @@ public class ToTimestampLongFunctionFactory implements FunctionFactory {
         return new Func(position, var);
     }
 
-    private static class Func extends TimestampFunction {
-        private final Function var;
+    private static class Func extends TimestampFunction implements UnaryFunction {
+        private final Function arg;
 
-        public Func(int position, Function var) {
+        public Func(int position, Function arg) {
             super(position);
-            this.var = var;
+            this.arg = arg;
+        }
+
+        @Override
+        public Function getArg() {
+            return arg;
         }
 
         @Override
         public long getTimestamp(Record rec) {
-            return var.getLong(rec);
+            return arg.getLong(rec);
         }
     }
 }

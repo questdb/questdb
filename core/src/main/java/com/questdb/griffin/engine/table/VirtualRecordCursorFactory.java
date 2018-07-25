@@ -28,27 +28,42 @@ import com.questdb.cairo.sql.Function;
 import com.questdb.cairo.sql.RecordCursor;
 import com.questdb.cairo.sql.RecordCursorFactory;
 import com.questdb.cairo.sql.RecordMetadata;
+import com.questdb.std.IntList;
 import com.questdb.std.ObjList;
+import org.jetbrains.annotations.Nullable;
 
 public class VirtualRecordCursorFactory extends AbstractRecordCursorFactory {
     private final VirtualRecordCursor cursor;
+    private final ObjList<Function> functions;
     private RecordCursorFactory base;
 
-    public VirtualRecordCursorFactory(RecordMetadata metadata, ObjList<Function> functions, RecordCursorFactory baseFactory) {
+    public VirtualRecordCursorFactory(
+            RecordMetadata metadata,
+            ObjList<Function> functions,
+            RecordCursorFactory baseFactory,
+            @Nullable IntList symbolTableCrossIndex) {
         super(metadata);
-        this.cursor = new VirtualRecordCursor(functions);
+        this.functions = functions;
+        this.cursor = new VirtualRecordCursor(functions, symbolTableCrossIndex);
         this.base = baseFactory;
     }
 
     @Override
     public void close() {
+        for (int i = 0, n = functions.size(); i < n; i++) {
+            functions.getQuick(i).close();
+        }
         this.base.close();
     }
 
     @Override
     public RecordCursor getCursor() {
-        cursor.of(base.getCursor());
-        return cursor;
+        RecordCursor cursor = base.getCursor();
+        for (int i = 0, n = functions.size(); i < n; i++) {
+            functions.getQuick(i).open(cursor);
+        }
+        this.cursor.of(cursor);
+        return this.cursor;
     }
 
 }

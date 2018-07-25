@@ -52,6 +52,6 @@ public class ToDateVCFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
     @Override
     protected FunctionFactory getFunctionFactory() {
-        return new ToDateVCFunctionFactory();
+        return new ToDateFunctionFactory();
     }
 }

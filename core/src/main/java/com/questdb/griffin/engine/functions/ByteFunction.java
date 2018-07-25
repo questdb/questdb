@@ -85,7 +85,7 @@ public abstract class ByteFunction implements Function {
     }
 
     @Override
-    public RecordCursorFactory getRecordCursorFactory(Record record) {
+    public RecordCursorFactory getRecordCursorFactory() {
         throw new UnsupportedOperationException();
     }
 

@@ -21,22 +21,15 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.engine.functions.bind;
+package com.questdb.griffin.engine;
 
 import com.questdb.cairo.sql.Record;
-import com.questdb.griffin.engine.functions.DoubleFunction;
-import com.questdb.griffin.engine.functions.StatelessFunction;
 
-class DoubleBindVariable extends DoubleFunction implements StatelessFunction {
-    double value;
-
-    public DoubleBindVariable(double value) {
-        super(0);
-        this.value = value;
-    }
+public class StrTypeCaster implements TypeCaster {
+    public static final StrTypeCaster INSTANCE = new StrTypeCaster();
 
     @Override
-    public double getDouble(Record rec) {
-        return value;
+    public CharSequence getValue(Record record, int columnIndex) {
+        return record.getStr(columnIndex);
     }
 }

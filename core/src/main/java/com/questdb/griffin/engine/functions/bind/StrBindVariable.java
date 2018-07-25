@@ -24,10 +24,11 @@
 package com.questdb.griffin.engine.functions.bind;
 
 import com.questdb.cairo.sql.Record;
+import com.questdb.griffin.engine.functions.StatelessFunction;
 import com.questdb.griffin.engine.functions.StrFunction;
 import com.questdb.std.str.CharSink;
 
-class StrBindVariable extends StrFunction {
+class StrBindVariable extends StrFunction implements StatelessFunction {
     CharSequence value;
 
     public StrBindVariable(CharSequence value) {

@@ -28,6 +28,7 @@ import com.questdb.cairo.sql.Function;
 import com.questdb.cairo.sql.Record;
 import com.questdb.griffin.FunctionFactory;
 import com.questdb.griffin.engine.functions.BooleanFunction;
+import com.questdb.griffin.engine.functions.StatelessFunction;
 import com.questdb.std.ObjList;
 import com.questdb.std.Rnd;
 
@@ -43,7 +44,7 @@ public class RndBooleanFunctionFactory implements FunctionFactory {
         return new RndFunction(position, configuration);
     }
 
-    private static class RndFunction extends BooleanFunction {
+    private static class RndFunction extends BooleanFunction implements StatelessFunction {
 
         private final Rnd rnd;
 

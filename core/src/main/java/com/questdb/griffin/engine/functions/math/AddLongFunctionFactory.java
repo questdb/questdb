@@ -27,6 +27,7 @@ import com.questdb.cairo.CairoConfiguration;
 import com.questdb.cairo.sql.Function;
 import com.questdb.cairo.sql.Record;
 import com.questdb.griffin.FunctionFactory;
+import com.questdb.griffin.engine.functions.BinaryFunction;
 import com.questdb.griffin.engine.functions.LongFunction;
 import com.questdb.std.ObjList;
 
@@ -38,17 +39,27 @@ public class AddLongFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
-        return new AddLongVVFunc(position, args.getQuick(0), args.getQuick(1));
+        return new AddLongFunc(position, args.getQuick(0), args.getQuick(1));
     }
 
-    private static class AddLongVVFunc extends LongFunction {
+    private static class AddLongFunc extends LongFunction implements BinaryFunction {
         final Function left;
         final Function right;
 
-        public AddLongVVFunc(int position, Function left, Function right) {
+        public AddLongFunc(int position, Function left, Function right) {
             super(position);
             this.left = left;
             this.right = right;
+        }
+
+        @Override
+        public Function getLeft() {
+            return left;
+        }
+
+        @Override
+        public Function getRight() {
+            return right;
         }
 
         @Override

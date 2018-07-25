@@ -25,8 +25,9 @@ package com.questdb.griffin.engine.functions.bind;
 
 import com.questdb.cairo.sql.Record;
 import com.questdb.griffin.engine.functions.BooleanFunction;
+import com.questdb.griffin.engine.functions.StatelessFunction;
 
-public class BooleanBindVariable extends BooleanFunction {
+public class BooleanBindVariable extends BooleanFunction implements StatelessFunction {
     boolean value;
 
     public BooleanBindVariable(boolean value) {

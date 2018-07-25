@@ -29,6 +29,7 @@ import com.questdb.cairo.sql.Record;
 import com.questdb.griffin.FunctionFactory;
 import com.questdb.griffin.SqlException;
 import com.questdb.griffin.engine.functions.TimestampFunction;
+import com.questdb.griffin.engine.functions.UnaryFunction;
 import com.questdb.std.Numbers;
 import com.questdb.std.NumericException;
 import com.questdb.std.ObjList;
@@ -47,30 +48,35 @@ public class ToTimestampVCFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) throws SqlException {
-        final Function var = args.getQuick(0);
+        final Function arg = args.getQuick(0);
         final CharSequence pattern = args.getQuick(1).getStr(null);
         if (pattern == null) {
             throw SqlException.$(args.getQuick(1).getPosition(), "pattern is required");
         }
-        return new Func(position, var, tlCompiler.get().compile(pattern), DateLocaleFactory.INSTANCE.getDefaultDateLocale());
+        return new Func(position, arg, tlCompiler.get().compile(pattern), DateLocaleFactory.INSTANCE.getDefaultDateLocale());
     }
 
-    private static final class Func extends TimestampFunction {
+    private static final class Func extends TimestampFunction implements UnaryFunction {
 
-        private final Function var;
+        private final Function arg;
         private final DateFormat dateFormat;
         private final DateLocale locale;
 
-        public Func(int position, Function var, DateFormat dateFormat, DateLocale locale) {
+        public Func(int position, Function arg, DateFormat dateFormat, DateLocale locale) {
             super(position);
-            this.var = var;
+            this.arg = arg;
             this.dateFormat = dateFormat;
             this.locale = locale;
         }
 
         @Override
+        public Function getArg() {
+            return arg;
+        }
+
+        @Override
         public long getTimestamp(Record rec) {
-            CharSequence value = var.getStr(rec);
+            CharSequence value = arg.getStr(rec);
             try {
                 if (value != null) {
                     return dateFormat.parse(value, locale);
@@ -78,11 +84,6 @@ public class ToTimestampVCFunctionFactory implements FunctionFactory {
             } catch (NumericException ignore) {
             }
             return Numbers.LONG_NaN;
-        }
-
-        @Override
-        public boolean isConstant() {
-            return var.isConstant();
         }
     }
 }

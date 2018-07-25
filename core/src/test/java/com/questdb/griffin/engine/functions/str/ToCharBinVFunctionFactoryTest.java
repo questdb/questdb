@@ -75,6 +75,6 @@ public class ToCharBinVFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
     @Override
     protected FunctionFactory getFunctionFactory() {
-        return new ToCharBinVFunctionFactory();
+        return new ToCharBinFunctionFactory();
     }
 }

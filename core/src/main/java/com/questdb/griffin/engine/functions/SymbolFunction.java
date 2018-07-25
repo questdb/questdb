@@ -70,7 +70,7 @@ public abstract class SymbolFunction implements Function {
     }
 
     @Override
-    public final int getInt(Record rec) {
+    public int getInt(Record rec) {
         throw new UnsupportedOperationException();
     }
 
@@ -80,17 +80,17 @@ public abstract class SymbolFunction implements Function {
     }
 
     @Override
-    public int getPosition() {
-        return position;
-    }
-
-    @Override
     public RecordMetadata getMetadata() {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public RecordCursorFactory getRecordCursorFactory(Record record) {
+    public int getPosition() {
+        return position;
+    }
+
+    @Override
+    public RecordCursorFactory getRecordCursorFactory() {
         throw new UnsupportedOperationException();
     }
 

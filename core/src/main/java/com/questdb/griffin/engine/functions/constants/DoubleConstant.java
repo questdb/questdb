@@ -26,7 +26,7 @@ package com.questdb.griffin.engine.functions.constants;
 import com.questdb.cairo.sql.Record;
 import com.questdb.griffin.engine.functions.DoubleFunction;
 
-public class DoubleConstant extends DoubleFunction {
+public class DoubleConstant extends DoubleFunction implements ConstantFunction {
     private final double value;
 
     public DoubleConstant(int position, double value) {
@@ -37,10 +37,5 @@ public class DoubleConstant extends DoubleFunction {
     @Override
     public double getDouble(Record rec) {
         return value;
-    }
-
-    @Override
-    public boolean isConstant() {
-        return true;
     }
 }

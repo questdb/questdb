@@ -27,6 +27,7 @@ import com.questdb.cairo.CairoConfiguration;
 import com.questdb.cairo.sql.Function;
 import com.questdb.cairo.sql.Record;
 import com.questdb.griffin.FunctionFactory;
+import com.questdb.griffin.engine.functions.BinaryFunction;
 import com.questdb.griffin.engine.functions.IntFunction;
 import com.questdb.std.ObjList;
 
@@ -41,7 +42,7 @@ public class SubtractIntFunctionFactory implements FunctionFactory {
         return new SubtractIntVVFunc(position, args.getQuick(0), args.getQuick(1));
     }
 
-    private static class SubtractIntVVFunc extends IntFunction {
+    private static class SubtractIntVVFunc extends IntFunction implements BinaryFunction {
         final Function left;
         final Function right;
 
@@ -54,6 +55,16 @@ public class SubtractIntFunctionFactory implements FunctionFactory {
         @Override
         public int getInt(Record rec) {
             return left.getInt(rec) - right.getInt(rec);
+        }
+
+        @Override
+        public Function getLeft() {
+            return left;
+        }
+
+        @Override
+        public Function getRight() {
+            return right;
         }
     }
 }

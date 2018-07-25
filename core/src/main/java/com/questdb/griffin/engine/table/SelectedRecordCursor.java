@@ -25,19 +25,17 @@ package com.questdb.griffin.engine.table;
 
 import com.questdb.cairo.sql.Record;
 import com.questdb.cairo.sql.RecordCursor;
+import com.questdb.common.SymbolTable;
 import com.questdb.std.IntList;
 
 class SelectedRecordCursor implements RecordCursor {
     private final SelectedRecord record;
+    private final IntList columnCrossIndex;
     private RecordCursor baseCursor;
 
     public SelectedRecordCursor(IntList columnCrossIndex) {
         this.record = new SelectedRecord(columnCrossIndex);
-    }
-
-    void of(RecordCursor cursor) {
-        this.baseCursor = cursor;
-        record.of(cursor.getRecord());
+        this.columnCrossIndex = columnCrossIndex;
     }
 
     @Override
@@ -69,6 +67,11 @@ class SelectedRecordCursor implements RecordCursor {
     }
 
     @Override
+    public SymbolTable getSymbolTable(int columnIndex) {
+        return baseCursor.getSymbolTable(columnCrossIndex.getQuick(columnIndex));
+    }
+
+    @Override
     public void close() {
         baseCursor.close();
     }
@@ -82,5 +85,10 @@ class SelectedRecordCursor implements RecordCursor {
     public Record next() {
         baseCursor.next();
         return record;
+    }
+
+    void of(RecordCursor cursor) {
+        this.baseCursor = cursor;
+        record.of(cursor.getRecord());
     }
 }

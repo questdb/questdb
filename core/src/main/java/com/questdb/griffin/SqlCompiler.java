@@ -1100,11 +1100,6 @@ public class SqlCompiler implements Closeable {
         }
 
         @Override
-        public ObjList<Closeable> getCloseables() {
-            return closeables;
-        }
-
-        @Override
         public SqlCodeGenerator getCodeGenerator() {
             return codeGenerator;
         }

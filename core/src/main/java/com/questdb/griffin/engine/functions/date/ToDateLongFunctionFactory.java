@@ -28,6 +28,7 @@ import com.questdb.cairo.sql.Function;
 import com.questdb.cairo.sql.Record;
 import com.questdb.griffin.FunctionFactory;
 import com.questdb.griffin.engine.functions.DateFunction;
+import com.questdb.griffin.engine.functions.UnaryFunction;
 import com.questdb.griffin.engine.functions.constants.DateConstant;
 import com.questdb.std.ObjList;
 
@@ -39,24 +40,29 @@ public class ToDateLongFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
-        Function var = args.getQuick(0);
-        if (var.isConstant()) {
-            return new DateConstant(position, var.getLong(null));
+        Function arg = args.getQuick(0);
+        if (arg.isConstant()) {
+            return new DateConstant(position, arg.getLong(null));
         }
-        return new Func(position, var);
+        return new Func(position, arg);
     }
 
-    private static class Func extends DateFunction {
-        private final Function var;
+    private static class Func extends DateFunction implements UnaryFunction {
+        private final Function arg;
 
-        public Func(int position, Function var) {
+        public Func(int position, Function arg) {
             super(position);
-            this.var = var;
+            this.arg = arg;
+        }
+
+        @Override
+        public Function getArg() {
+            return arg;
         }
 
         @Override
         public long getDate(Record rec) {
-            return var.getLong(rec);
+            return arg.getLong(rec);
         }
     }
 }

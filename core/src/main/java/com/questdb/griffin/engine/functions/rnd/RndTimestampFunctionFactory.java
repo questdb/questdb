@@ -28,6 +28,7 @@ import com.questdb.cairo.sql.Function;
 import com.questdb.cairo.sql.Record;
 import com.questdb.griffin.FunctionFactory;
 import com.questdb.griffin.SqlException;
+import com.questdb.griffin.engine.functions.StatelessFunction;
 import com.questdb.griffin.engine.functions.TimestampFunction;
 import com.questdb.std.Numbers;
 import com.questdb.std.ObjList;
@@ -56,7 +57,7 @@ public class RndTimestampFunctionFactory implements FunctionFactory {
         throw SqlException.$(position, "invalid range");
     }
 
-    private static class Func extends TimestampFunction {
+    private static class Func extends TimestampFunction implements StatelessFunction {
         private final long lo;
         private final long range;
         private final int nanRate;

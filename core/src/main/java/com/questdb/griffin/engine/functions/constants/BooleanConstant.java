@@ -26,7 +26,7 @@ package com.questdb.griffin.engine.functions.constants;
 import com.questdb.cairo.sql.Record;
 import com.questdb.griffin.engine.functions.BooleanFunction;
 
-public class BooleanConstant extends BooleanFunction {
+public class BooleanConstant extends BooleanFunction implements ConstantFunction {
 
     private final boolean value;
 
@@ -38,10 +38,5 @@ public class BooleanConstant extends BooleanFunction {
     @Override
     public boolean getBool(Record rec) {
         return value;
-    }
-
-    @Override
-    public boolean isConstant() {
-        return true;
     }
 }

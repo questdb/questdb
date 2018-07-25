@@ -21,44 +21,44 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.engine.functions.bool;
+package com.questdb.griffin.engine.functions.str;
 
 import com.questdb.cairo.CairoConfiguration;
 import com.questdb.cairo.sql.Function;
 import com.questdb.cairo.sql.Record;
 import com.questdb.griffin.FunctionFactory;
-import com.questdb.griffin.engine.functions.BooleanFunction;
+import com.questdb.griffin.engine.functions.IntFunction;
+import com.questdb.griffin.engine.functions.UnaryFunction;
 import com.questdb.std.ObjList;
 
-public class OrVVFunctionFactory implements FunctionFactory {
+public class LengthSymbolFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "or(TT)";
+        return "length(K)";
     }
 
     @Override
     public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
-        return new MyBooleanFunction(position, args.getQuick(0), args.getQuick(1));
+        return new LengthSymbolVFunc(position, args.getQuick(0));
     }
 
-    private static class MyBooleanFunction extends BooleanFunction {
-        final Function left;
-        final Function right;
+    private static class LengthSymbolVFunc extends IntFunction implements UnaryFunction {
+        private final Function arg;
 
-        public MyBooleanFunction(int position, Function left, Function right) {
+        public LengthSymbolVFunc(int position, Function arg) {
             super(position);
-            this.left = left;
-            this.right = right;
+            this.arg = arg;
         }
 
         @Override
-        public boolean getBool(Record rec) {
-            return left.getBool(rec) || right.getBool(rec);
+        public Function getArg() {
+            return arg;
         }
 
         @Override
-        public boolean isConstant() {
-            return left.isConstant() && right.isConstant();
+        public int getInt(Record rec) {
+            CharSequence symbol = arg.getSymbol(rec);
+            return symbol == null ? -1 : symbol.length();
         }
     }
 }

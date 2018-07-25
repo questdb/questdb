@@ -25,8 +25,9 @@ package com.questdb.griffin.engine.functions.columns;
 
 import com.questdb.cairo.sql.Record;
 import com.questdb.griffin.engine.functions.ShortFunction;
+import com.questdb.griffin.engine.functions.StatelessFunction;
 
-public class ShortColumn extends ShortFunction {
+public class ShortColumn extends ShortFunction implements StatelessFunction {
     private final int columnIndex;
 
     public ShortColumn(int position, int columnIndex) {

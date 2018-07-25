@@ -28,6 +28,7 @@ import com.questdb.cairo.sql.Function;
 import com.questdb.cairo.sql.Record;
 import com.questdb.griffin.FunctionFactory;
 import com.questdb.griffin.engine.functions.ShortFunction;
+import com.questdb.griffin.engine.functions.UnaryFunction;
 import com.questdb.std.ObjList;
 
 public class ToShortIntFunctionFactory implements FunctionFactory {
@@ -41,22 +42,22 @@ public class ToShortIntFunctionFactory implements FunctionFactory {
         return new Func(position, args.getQuick(0));
     }
 
-    private static class Func extends ShortFunction {
-        private final Function var;
+    private static class Func extends ShortFunction implements UnaryFunction {
+        private final Function arg;
 
-        public Func(int position, Function var) {
+        public Func(int position, Function arg) {
             super(position);
-            this.var = var;
+            this.arg = arg;
+        }
+
+        @Override
+        public Function getArg() {
+            return arg;
         }
 
         @Override
         public short getShort(Record rec) {
-            return (short) var.getInt(rec);
-        }
-
-        @Override
-        public boolean isConstant() {
-            return var.isConstant();
+            return (short) arg.getInt(rec);
         }
     }
 }

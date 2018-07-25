@@ -28,6 +28,7 @@ import com.questdb.cairo.sql.Function;
 import com.questdb.cairo.sql.Record;
 import com.questdb.griffin.FunctionFactory;
 import com.questdb.griffin.engine.functions.ByteFunction;
+import com.questdb.griffin.engine.functions.UnaryFunction;
 import com.questdb.std.ObjList;
 
 public class ToByteIntFunctionFactory implements FunctionFactory {
@@ -41,22 +42,22 @@ public class ToByteIntFunctionFactory implements FunctionFactory {
         return new Func(position, args.getQuick(0));
     }
 
-    private static class Func extends ByteFunction {
-        private final Function var;
+    private static class Func extends ByteFunction implements UnaryFunction {
+        private final Function arg;
 
-        public Func(int position, Function var) {
+        public Func(int position, Function arg) {
             super(position);
-            this.var = var;
+            this.arg = arg;
+        }
+
+        @Override
+        public Function getArg() {
+            return arg;
         }
 
         @Override
         public byte getByte(Record rec) {
-            return (byte) var.getInt(rec);
-        }
-
-        @Override
-        public boolean isConstant() {
-            return var.isConstant();
+            return (byte) arg.getInt(rec);
         }
     }
 }

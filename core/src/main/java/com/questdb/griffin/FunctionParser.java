@@ -25,7 +25,6 @@ package com.questdb.griffin;
 
 import com.questdb.cairo.CairoConfiguration;
 import com.questdb.cairo.sql.Function;
-import com.questdb.cairo.sql.RecordCursorFactory;
 import com.questdb.cairo.sql.RecordMetadata;
 import com.questdb.common.ColumnType;
 import com.questdb.griffin.engine.functions.CursorFunction;
@@ -37,7 +36,6 @@ import com.questdb.log.LogFactory;
 import com.questdb.std.*;
 import org.jetbrains.annotations.NotNull;
 
-import java.io.Closeable;
 import java.util.ArrayDeque;
 
 public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
@@ -365,10 +363,9 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
 
     private Function createCursorFunction(ExpressionNode node) throws SqlException {
         assert node.queryModel != null;
-        final ObjList<Closeable> closeables = sqlExecutionContext.getCloseables();
-        final RecordCursorFactory factory = sqlExecutionContext.getCodeGenerator().generate(node.queryModel, sqlExecutionContext);
-        closeables.add(factory);
-        return new CursorFunction(node.position, factory);
+        return new CursorFunction(node.position,
+                sqlExecutionContext.getCodeGenerator().generate(node.queryModel, sqlExecutionContext)
+        );
     }
 
     private Function createFunction(ExpressionNode node, ObjList<Function> args) throws SqlException {

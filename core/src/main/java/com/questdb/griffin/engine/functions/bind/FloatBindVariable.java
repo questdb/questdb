@@ -25,8 +25,9 @@ package com.questdb.griffin.engine.functions.bind;
 
 import com.questdb.cairo.sql.Record;
 import com.questdb.griffin.engine.functions.FloatFunction;
+import com.questdb.griffin.engine.functions.StatelessFunction;
 
-class FloatBindVariable extends FloatFunction {
+class FloatBindVariable extends FloatFunction implements StatelessFunction {
     float value;
 
     public FloatBindVariable(float value) {

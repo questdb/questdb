@@ -21,22 +21,31 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.engine.functions.bind;
+package com.questdb.griffin.engine.functions;
 
-import com.questdb.cairo.sql.Record;
-import com.questdb.griffin.engine.functions.DoubleFunction;
-import com.questdb.griffin.engine.functions.StatelessFunction;
+import com.questdb.cairo.sql.Function;
+import com.questdb.cairo.sql.RecordCursor;
 
-class DoubleBindVariable extends DoubleFunction implements StatelessFunction {
-    double value;
-
-    public DoubleBindVariable(double value) {
-        super(0);
-        this.value = value;
+public interface UnaryFunction extends Function {
+    @Override
+    default void close() {
+        getArg().close();
     }
 
     @Override
-    public double getDouble(Record rec) {
-        return value;
+    default boolean isConstant() {
+        return getArg().isConstant();
     }
+
+    @Override
+    default void open(RecordCursor recordCursor) {
+        getArg().open(recordCursor);
+    }
+
+    @Override
+    default void toTop() {
+        getArg().toTop();
+    }
+
+    Function getArg();
 }

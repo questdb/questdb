@@ -26,7 +26,7 @@ package com.questdb.griffin.engine.functions.constants;
 import com.questdb.cairo.sql.Record;
 import com.questdb.griffin.engine.functions.FloatFunction;
 
-public class FloatConstant extends FloatFunction {
+public class FloatConstant extends FloatFunction implements ConstantFunction {
     private final float value;
 
     public FloatConstant(int position, float value) {
@@ -37,10 +37,5 @@ public class FloatConstant extends FloatFunction {
     @Override
     public float getFloat(Record rec) {
         return value;
-    }
-
-    @Override
-    public boolean isConstant() {
-        return true;
     }
 }

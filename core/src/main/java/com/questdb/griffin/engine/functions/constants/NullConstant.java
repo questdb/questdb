@@ -27,7 +27,7 @@ import com.questdb.cairo.sql.Record;
 import com.questdb.griffin.engine.functions.StrFunction;
 import com.questdb.std.str.CharSink;
 
-public class NullConstant extends StrFunction {
+public class NullConstant extends StrFunction implements ConstantFunction {
 
     public NullConstant(int position) {
         super(position);
@@ -41,11 +41,6 @@ public class NullConstant extends StrFunction {
     @Override
     public CharSequence getStrB(Record rec) {
         return null;
-    }
-
-    @Override
-    public boolean isConstant() {
-        return true;
     }
 
     @Override

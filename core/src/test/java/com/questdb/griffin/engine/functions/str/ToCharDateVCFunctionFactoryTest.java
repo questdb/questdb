@@ -50,6 +50,6 @@ public class ToCharDateVCFunctionFactoryTest extends AbstractFunctionFactoryTest
 
     @Override
     protected FunctionFactory getFunctionFactory() {
-        return new ToCharDateVCFunctionFactory();
+        return new ToCharDateFunctionFactory();
     }
 }

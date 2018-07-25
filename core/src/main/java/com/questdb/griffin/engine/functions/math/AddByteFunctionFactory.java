@@ -27,6 +27,7 @@ import com.questdb.cairo.CairoConfiguration;
 import com.questdb.cairo.sql.Function;
 import com.questdb.cairo.sql.Record;
 import com.questdb.griffin.FunctionFactory;
+import com.questdb.griffin.engine.functions.BinaryFunction;
 import com.questdb.griffin.engine.functions.ByteFunction;
 import com.questdb.std.ObjList;
 
@@ -41,7 +42,7 @@ public class AddByteFunctionFactory implements FunctionFactory {
         return new AddShortVVFunc(position, args.getQuick(0), args.getQuick(1));
     }
 
-    private static class AddShortVVFunc extends ByteFunction {
+    private static class AddShortVVFunc extends ByteFunction implements BinaryFunction {
         final Function left;
         final Function right;
 
@@ -57,8 +58,13 @@ public class AddByteFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public boolean isConstant() {
-            return left.isConstant() && right.isConstant();
+        public Function getLeft() {
+            return left;
+        }
+
+        @Override
+        public Function getRight() {
+            return right;
         }
     }
 }

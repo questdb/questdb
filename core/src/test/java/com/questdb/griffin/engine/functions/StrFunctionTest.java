@@ -94,7 +94,7 @@ public class StrFunctionTest {
 
     @Test(expected = UnsupportedOperationException.class)
     public void testGetRecordCursorFactory() {
-        function.getRecordCursorFactory(null);
+        function.getRecordCursorFactory();
     }
 
     @Test(expected = UnsupportedOperationException.class)

@@ -47,7 +47,7 @@ public class LengthSymbolVFunctionFactoryTest extends AbstractFunctionFactoryTes
 
     @Override
     protected FunctionFactory getFunctionFactory() {
-        return new LengthSymbolVFunctionFactory();
+        return new LengthSymbolFunctionFactory();
     }
 
 }

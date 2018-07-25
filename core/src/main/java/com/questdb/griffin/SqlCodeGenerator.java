@@ -29,6 +29,7 @@ import com.questdb.cairo.map.SingleColumnType;
 import com.questdb.cairo.sql.*;
 import com.questdb.common.ColumnType;
 import com.questdb.common.SymbolTable;
+import com.questdb.griffin.engine.functions.columns.SymbolColumn;
 import com.questdb.griffin.engine.table.*;
 import com.questdb.griffin.model.ExpressionNode;
 import com.questdb.griffin.model.IntrinsicModel;
@@ -77,7 +78,7 @@ public class SqlCodeGenerator {
             throw SqlException.position(model.getTableName().position).put("function must return CURSOR [actual=").put(ColumnType.nameOf(function.getType())).put(']');
         }
 
-        return function.getRecordCursorFactory(null);
+        return function.getRecordCursorFactory();
     }
 
     @NotNull
@@ -337,6 +338,8 @@ public class SqlCodeGenerator {
             timestampColumn = null;
         }
 
+        IntList symbolTableCrossIndex = null;
+
         for (int i = 0; i < columnCount; i++) {
             final QueryColumn column = model.getColumns().getQuick(i);
             ExpressionNode node = column.getAst();
@@ -351,13 +354,21 @@ public class SqlCodeGenerator {
             );
             functions.add(function);
 
+
             virtualMetadata.add(new TableColumnMetadata(
                     Chars.toString(column.getAlias()),
                     function.getType()
             ));
+
+            if (function instanceof SymbolColumn) {
+                if (symbolTableCrossIndex == null) {
+                    symbolTableCrossIndex = new IntList(columnCount);
+                }
+                symbolTableCrossIndex.extendAndSet(i, ((SymbolColumn) function).getColumnIndex());
+            }
         }
 
-        return new VirtualRecordCursorFactory(virtualMetadata, functions, factory);
+        return new VirtualRecordCursorFactory(virtualMetadata, functions, factory, symbolTableCrossIndex);
     }
 
     @SuppressWarnings("ConstantConditions")

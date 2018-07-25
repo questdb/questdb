@@ -25,6 +25,7 @@ package com.questdb.griffin.engine.functions.rnd;
 
 import com.questdb.cairo.sql.Record;
 import com.questdb.cairo.sql.RecordCursor;
+import com.questdb.common.SymbolTable;
 
 class RandomRecordCursor implements RecordCursor {
     private final long recordCount;
@@ -36,6 +37,11 @@ class RandomRecordCursor implements RecordCursor {
         this.recordCount = recordCount;
         this.record = record;
         recordIndex = 0;
+    }
+
+    @Override
+    public SymbolTable getSymbolTable(int columnIndex) {
+        throw new UnsupportedOperationException();
     }
 
     @Override

@@ -28,6 +28,7 @@ import com.questdb.cairo.sql.Function;
 import com.questdb.cairo.sql.Record;
 import com.questdb.griffin.FunctionFactory;
 import com.questdb.griffin.engine.functions.StrFunction;
+import com.questdb.griffin.engine.functions.UnaryFunction;
 import com.questdb.std.BinarySequence;
 import com.questdb.std.Chars;
 import com.questdb.std.ObjList;
@@ -35,7 +36,7 @@ import com.questdb.std.str.CharSink;
 import com.questdb.std.str.StringSink;
 import org.jetbrains.annotations.Nullable;
 
-public class ToCharBinVFunctionFactory implements FunctionFactory {
+public class ToCharBinFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
         return "to_char(U)";
@@ -43,17 +44,22 @@ public class ToCharBinVFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
-        return new ToCharBinVFunc(position, args.getQuick(0));
+        return new ToCharBinFunc(position, args.getQuick(0));
     }
 
-    private static class ToCharBinVFunc extends StrFunction {
-        private final Function func;
+    private static class ToCharBinFunc extends StrFunction implements UnaryFunction {
+        private final Function arg;
         private final StringSink sink1 = new StringSink();
         private final StringSink sink2 = new StringSink();
 
-        public ToCharBinVFunc(int position, Function func) {
+        public ToCharBinFunc(int position, Function arg) {
             super(position);
-            this.func = func;
+            this.arg = arg;
+        }
+
+        @Override
+        public Function getArg() {
+            return arg;
         }
 
         @Override
@@ -68,12 +74,12 @@ public class ToCharBinVFunctionFactory implements FunctionFactory {
 
         @Override
         public void getStr(Record rec, CharSink sink) {
-            Chars.toSink(func.getBin(rec), sink);
+            Chars.toSink(arg.getBin(rec), sink);
         }
 
         @Override
         public int getStrLen(Record rec) {
-            BinarySequence sequence = func.getBin(rec);
+            BinarySequence sequence = arg.getBin(rec);
             if (sequence == null) {
                 return -1;
             }
@@ -92,7 +98,7 @@ public class ToCharBinVFunctionFactory implements FunctionFactory {
 
         @Nullable
         private CharSequence toSink(Record rec, StringSink sink) {
-            final BinarySequence sequence = func.getBin(rec);
+            final BinarySequence sequence = arg.getBin(rec);
             if (sequence == null) {
                 return null;
             }

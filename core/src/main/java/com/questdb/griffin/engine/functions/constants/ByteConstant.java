@@ -26,7 +26,7 @@ package com.questdb.griffin.engine.functions.constants;
 import com.questdb.cairo.sql.Record;
 import com.questdb.griffin.engine.functions.ByteFunction;
 
-public class ByteConstant extends ByteFunction {
+public class ByteConstant extends ByteFunction implements ConstantFunction {
     private final byte value;
 
     public ByteConstant(int position, byte value) {
@@ -37,10 +37,5 @@ public class ByteConstant extends ByteFunction {
     @Override
     public byte getByte(Record rec) {
         return value;
-    }
-
-    @Override
-    public boolean isConstant() {
-        return true;
     }
 }

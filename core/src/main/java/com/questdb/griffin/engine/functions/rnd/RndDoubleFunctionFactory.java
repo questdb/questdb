@@ -29,6 +29,7 @@ import com.questdb.cairo.sql.Record;
 import com.questdb.griffin.FunctionFactory;
 import com.questdb.griffin.SqlException;
 import com.questdb.griffin.engine.functions.DoubleFunction;
+import com.questdb.griffin.engine.functions.StatelessFunction;
 import com.questdb.std.ObjList;
 import com.questdb.std.Rnd;
 
@@ -48,7 +49,7 @@ public class RndDoubleFunctionFactory implements FunctionFactory {
         return new RndFunction(position, nanRate, configuration);
     }
 
-    private static class RndFunction extends DoubleFunction {
+    private static class RndFunction extends DoubleFunction implements StatelessFunction {
 
         private final int nanRate;
         private final Rnd rnd;

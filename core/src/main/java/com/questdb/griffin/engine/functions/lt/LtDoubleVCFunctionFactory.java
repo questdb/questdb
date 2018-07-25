@@ -28,6 +28,7 @@ import com.questdb.cairo.sql.Function;
 import com.questdb.cairo.sql.Record;
 import com.questdb.griffin.FunctionFactory;
 import com.questdb.griffin.engine.functions.BooleanFunction;
+import com.questdb.griffin.engine.functions.UnaryFunction;
 import com.questdb.griffin.engine.functions.constants.BooleanConstant;
 import com.questdb.std.ObjList;
 
@@ -47,7 +48,7 @@ public class LtDoubleVCFunctionFactory implements FunctionFactory {
         return new FuncVC(position, args.getQuick(0), right);
     }
 
-    private static class FuncVC extends BooleanFunction {
+    private static class FuncVC extends BooleanFunction implements UnaryFunction {
         private final Function left;
         private final double right;
 
@@ -55,6 +56,11 @@ public class LtDoubleVCFunctionFactory implements FunctionFactory {
             super(position);
             this.left = left;
             this.right = right;
+        }
+
+        @Override
+        public Function getArg() {
+            return left;
         }
 
         @Override

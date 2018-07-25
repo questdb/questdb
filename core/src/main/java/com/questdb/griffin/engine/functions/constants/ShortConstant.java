@@ -26,7 +26,7 @@ package com.questdb.griffin.engine.functions.constants;
 import com.questdb.cairo.sql.Record;
 import com.questdb.griffin.engine.functions.ShortFunction;
 
-public class ShortConstant extends ShortFunction {
+public class ShortConstant extends ShortFunction implements ConstantFunction {
     private final short value;
 
     public ShortConstant(int position, short value) {
@@ -37,10 +37,5 @@ public class ShortConstant extends ShortFunction {
     @Override
     public short getShort(Record rec) {
         return value;
-    }
-
-    @Override
-    public boolean isConstant() {
-        return true;
     }
 }

@@ -21,37 +21,43 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.engine.functions.bool;
+package com.questdb.griffin.engine.functions.str;
 
 import com.questdb.cairo.CairoConfiguration;
 import com.questdb.cairo.sql.Function;
 import com.questdb.cairo.sql.Record;
 import com.questdb.griffin.FunctionFactory;
-import com.questdb.griffin.engine.functions.BooleanFunction;
+import com.questdb.griffin.engine.functions.IntFunction;
+import com.questdb.griffin.engine.functions.UnaryFunction;
 import com.questdb.std.ObjList;
 
-public class NotVFunctionFactory implements FunctionFactory {
+public class LengthStrFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "not(T)";
+        return "length(S)";
     }
 
     @Override
     public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
-        return new Func(position, args.getQuick(0));
+        return new LengthStrVFunc(position, args.getQuick(0));
     }
 
-    private static class Func extends BooleanFunction {
-        private final Function var;
+    private static class LengthStrVFunc extends IntFunction implements UnaryFunction {
+        private final Function arg;
 
-        public Func(int position, Function var) {
+        public LengthStrVFunc(int position, Function arg) {
             super(position);
-            this.var = var;
+            this.arg = arg;
         }
 
         @Override
-        public boolean getBool(Record rec) {
-            return !var.getBool(rec);
+        public Function getArg() {
+            return arg;
+        }
+
+        @Override
+        public int getInt(Record rec) {
+            return arg.getStrLen(rec);
         }
     }
 }

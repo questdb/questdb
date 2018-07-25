@@ -29,6 +29,7 @@ import com.questdb.cairo.sql.Record;
 import com.questdb.griffin.FunctionFactory;
 import com.questdb.griffin.SqlException;
 import com.questdb.griffin.engine.functions.ByteFunction;
+import com.questdb.griffin.engine.functions.StatelessFunction;
 import com.questdb.std.ObjList;
 import com.questdb.std.Rnd;
 
@@ -52,7 +53,7 @@ public class RndByteCCFunctionFactory implements FunctionFactory {
         throw SqlException.position(position).put("invalid range");
     }
 
-    private static class RndFunction extends ByteFunction {
+    private static class RndFunction extends ByteFunction implements StatelessFunction {
         private final byte lo;
         private final byte range;
         private final Rnd rnd;

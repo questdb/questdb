@@ -28,6 +28,7 @@ import com.questdb.cairo.sql.Function;
 import com.questdb.cairo.sql.Record;
 import com.questdb.griffin.FunctionFactory;
 import com.questdb.griffin.engine.functions.IntFunction;
+import com.questdb.griffin.engine.functions.UnaryFunction;
 import com.questdb.std.Numbers;
 import com.questdb.std.ObjList;
 
@@ -42,26 +43,26 @@ public class NegIntFunctionFactory implements FunctionFactory {
         return new Func(position, args.getQuick(0));
     }
 
-    private static class Func extends IntFunction {
-        final Function func;
+    private static class Func extends IntFunction implements UnaryFunction {
+        final Function arg;
 
-        public Func(int position, Function func) {
+        public Func(int position, Function arg) {
             super(position);
-            this.func = func;
+            this.arg = arg;
+        }
+
+        @Override
+        public Function getArg() {
+            return arg;
         }
 
         @Override
         public int getInt(Record rec) {
-            int value = func.getInt(rec);
+            int value = arg.getInt(rec);
             if (value == Numbers.INT_NaN) {
                 return Numbers.INT_NaN;
             }
             return -value;
-        }
-
-        @Override
-        public boolean isConstant() {
-            return func.isConstant();
         }
     }
 }

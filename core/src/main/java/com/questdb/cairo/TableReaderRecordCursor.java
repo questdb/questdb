@@ -25,6 +25,7 @@ package com.questdb.cairo;
 
 import com.questdb.cairo.sql.Record;
 import com.questdb.cairo.sql.RecordCursor;
+import com.questdb.common.SymbolTable;
 import com.questdb.std.Rows;
 
 public class TableReaderRecordCursor implements RecordCursor {
@@ -34,14 +35,6 @@ public class TableReaderRecordCursor implements RecordCursor {
     private int partitionIndex = 0;
     private int partitionCount;
     private long maxRecordIndex = -1;
-
-    @Override
-    public void close() {
-        if (reader != null) {
-            reader.close();
-            reader = null;
-        }
-    }
 
     @Override
     public Record getRecord() {
@@ -72,6 +65,19 @@ public class TableReaderRecordCursor implements RecordCursor {
         partitionCount = reader.getPartitionCount();
         record.jumpTo(0, -1);
         maxRecordIndex = -1;
+    }
+
+    @Override
+    public void close() {
+        if (reader != null) {
+            reader.close();
+            reader = null;
+        }
+    }
+
+    @Override
+    public SymbolTable getSymbolTable(int columnIndex) {
+        return reader.getSymbolMapReader(columnIndex);
     }
 
     @Override

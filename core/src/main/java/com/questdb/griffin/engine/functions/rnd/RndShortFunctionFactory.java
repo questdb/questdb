@@ -28,6 +28,7 @@ import com.questdb.cairo.sql.Function;
 import com.questdb.cairo.sql.Record;
 import com.questdb.griffin.FunctionFactory;
 import com.questdb.griffin.engine.functions.ShortFunction;
+import com.questdb.griffin.engine.functions.StatelessFunction;
 import com.questdb.std.ObjList;
 import com.questdb.std.Rnd;
 
@@ -43,7 +44,7 @@ public class RndShortFunctionFactory implements FunctionFactory {
         return new RndFunction(position, configuration);
     }
 
-    private static class RndFunction extends ShortFunction {
+    private static class RndFunction extends ShortFunction implements StatelessFunction {
 
         private final Rnd rnd;
 

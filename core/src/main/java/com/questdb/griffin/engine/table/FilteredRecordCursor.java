@@ -26,6 +26,7 @@ package com.questdb.griffin.engine.table;
 import com.questdb.cairo.sql.Function;
 import com.questdb.cairo.sql.Record;
 import com.questdb.cairo.sql.RecordCursor;
+import com.questdb.common.SymbolTable;
 
 class FilteredRecordCursor implements RecordCursor {
     private final Function filter;
@@ -58,6 +59,11 @@ class FilteredRecordCursor implements RecordCursor {
     @Override
     public void recordAt(Record record, long atRowId) {
         base.recordAt(record, atRowId);
+    }
+
+    @Override
+    public SymbolTable getSymbolTable(int columnIndex) {
+        return base.getSymbolTable(columnIndex);
     }
 
     @Override

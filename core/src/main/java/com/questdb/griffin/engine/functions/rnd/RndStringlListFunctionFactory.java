@@ -26,46 +26,55 @@ package com.questdb.griffin.engine.functions.rnd;
 import com.questdb.cairo.CairoConfiguration;
 import com.questdb.cairo.sql.Function;
 import com.questdb.cairo.sql.Record;
+import com.questdb.common.ColumnType;
 import com.questdb.griffin.FunctionFactory;
 import com.questdb.griffin.SqlException;
-import com.questdb.griffin.engine.functions.FloatFunction;
 import com.questdb.griffin.engine.functions.StatelessFunction;
+import com.questdb.griffin.engine.functions.StrFunction;
+import com.questdb.std.Chars;
 import com.questdb.std.ObjList;
 import com.questdb.std.Rnd;
 
-public class RndFloatFunctionFactory implements FunctionFactory {
-
+public class RndStringlListFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "rnd_float(i)";
+        return "rnd_str(V)";
     }
 
     @Override
     public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) throws SqlException {
-        int nanRate = args.getQuick(0).getInt(null);
-        if (nanRate < 0) {
-            throw SqlException.$(args.getQuick(0).getPosition(), "invalid NaN rate");
+        final ObjList<String> symbols = new ObjList<>(args.size());
+        for (int i = 0, n = args.size(); i < n; i++) {
+            Function f = args.getQuick(i);
+            if (f.getType() != ColumnType.STRING || !f.isConstant()) {
+                throw SqlException.$(f.getPosition(), "STRING constant expected");
+            }
+            symbols.add(Chars.toString(f.getStr(null)));
         }
-        return new RndFunction(position, nanRate, configuration);
+
+        return new Func(position, symbols, configuration);
     }
 
-    private static class RndFunction extends FloatFunction implements StatelessFunction {
-
-        private final int nanRate;
+    private static final class Func extends StrFunction implements StatelessFunction {
+        private final ObjList<String> symbols;
         private final Rnd rnd;
+        private final int count;
 
-        public RndFunction(int position, int nanRate, CairoConfiguration configuration) {
+        public Func(int position, ObjList<String> symbols, CairoConfiguration configuration) {
             super(position);
-            this.nanRate = nanRate + 1;
             this.rnd = SharedRandom.getRandom(configuration);
+            this.symbols = symbols;
+            this.count = symbols.size();
         }
 
         @Override
-        public float getFloat(Record rec) {
-            if ((rnd.nextInt() % nanRate) == 1) {
-                return Float.NaN;
-            }
-            return rnd.nextFloat2();
+        public CharSequence getStr(Record rec) {
+            return symbols.getQuick(rnd.nextPositiveInt() % count);
+        }
+
+        @Override
+        public CharSequence getStrB(Record rec) {
+            return getStr(rec);
         }
     }
 }

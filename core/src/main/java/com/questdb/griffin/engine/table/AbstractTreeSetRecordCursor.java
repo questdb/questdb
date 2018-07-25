@@ -64,7 +64,7 @@ abstract class AbstractTreeSetRecordCursor extends AbstractDataFrameRecordCursor
     }
 
     @Override
-    public final void toTop() {
+    public void toTop() {
         treeCursor.toTop();
     }
 

@@ -23,13 +23,18 @@
 
 package com.questdb.cairo.sql;
 
+import com.questdb.common.SymbolTable;
 import com.questdb.std.ImmutableIterator;
 
 import java.io.Closeable;
 
 public interface RecordCursor extends ImmutableIterator<Record>, Closeable {
+    @Override
+    void close();
 
     Record getRecord();
+
+    SymbolTable getSymbolTable(int columnIndex);
 
     Record newRecord();
 
@@ -38,7 +43,4 @@ public interface RecordCursor extends ImmutableIterator<Record>, Closeable {
     void recordAt(Record record, long atRowId);
 
     void toTop();
-
-    @Override
-    void close();
 }

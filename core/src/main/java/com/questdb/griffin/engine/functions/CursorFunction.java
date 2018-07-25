@@ -23,10 +23,7 @@
 
 package com.questdb.griffin.engine.functions;
 
-import com.questdb.cairo.sql.Function;
-import com.questdb.cairo.sql.Record;
-import com.questdb.cairo.sql.RecordCursorFactory;
-import com.questdb.cairo.sql.RecordMetadata;
+import com.questdb.cairo.sql.*;
 import com.questdb.griffin.TypeEx;
 import com.questdb.std.BinarySequence;
 import com.questdb.std.str.CharSink;
@@ -38,6 +35,11 @@ public class CursorFunction implements Function {
     public CursorFunction(int position, RecordCursorFactory factory) {
         this.position = position;
         this.factory = factory;
+    }
+
+    @Override
+    public void close() {
+        factory.close();
     }
 
     @Override
@@ -91,7 +93,7 @@ public class CursorFunction implements Function {
     }
 
     @Override
-    public RecordCursorFactory getRecordCursorFactory(Record record) {
+    public RecordCursorFactory getRecordCursorFactory() {
         return factory;
     }
 
@@ -133,5 +135,13 @@ public class CursorFunction implements Function {
     @Override
     public final int getType() {
         return TypeEx.CURSOR;
+    }
+
+    @Override
+    public void open(RecordCursor recordCursor) {
+    }
+
+    @Override
+    public void toTop() {
     }
 }

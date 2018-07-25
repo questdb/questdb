@@ -21,51 +21,50 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.engine.functions.rnd;
+package com.questdb.griffin.engine.functions.bool;
 
 import com.questdb.cairo.CairoConfiguration;
 import com.questdb.cairo.sql.Function;
 import com.questdb.cairo.sql.Record;
 import com.questdb.griffin.FunctionFactory;
-import com.questdb.griffin.SqlException;
-import com.questdb.griffin.engine.functions.FloatFunction;
-import com.questdb.griffin.engine.functions.StatelessFunction;
+import com.questdb.griffin.engine.functions.BinaryFunction;
+import com.questdb.griffin.engine.functions.BooleanFunction;
 import com.questdb.std.ObjList;
-import com.questdb.std.Rnd;
 
-public class RndFloatFunctionFactory implements FunctionFactory {
-
+public class AndFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "rnd_float(i)";
+        return "and(TT)";
     }
 
     @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) throws SqlException {
-        int nanRate = args.getQuick(0).getInt(null);
-        if (nanRate < 0) {
-            throw SqlException.$(args.getQuick(0).getPosition(), "invalid NaN rate");
-        }
-        return new RndFunction(position, nanRate, configuration);
+    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
+        return new MyBooleanFunction(position, args.getQuick(0), args.getQuick(1));
     }
 
-    private static class RndFunction extends FloatFunction implements StatelessFunction {
+    private static class MyBooleanFunction extends BooleanFunction implements BinaryFunction {
+        final Function left;
+        final Function right;
 
-        private final int nanRate;
-        private final Rnd rnd;
-
-        public RndFunction(int position, int nanRate, CairoConfiguration configuration) {
+        public MyBooleanFunction(int position, Function left, Function right) {
             super(position);
-            this.nanRate = nanRate + 1;
-            this.rnd = SharedRandom.getRandom(configuration);
+            this.left = left;
+            this.right = right;
         }
 
         @Override
-        public float getFloat(Record rec) {
-            if ((rnd.nextInt() % nanRate) == 1) {
-                return Float.NaN;
-            }
-            return rnd.nextFloat2();
+        public boolean getBool(Record rec) {
+            return left.getBool(rec) && right.getBool(rec);
+        }
+
+        @Override
+        public Function getLeft() {
+            return left;
+        }
+
+        @Override
+        public Function getRight() {
+            return right;
         }
     }
 }

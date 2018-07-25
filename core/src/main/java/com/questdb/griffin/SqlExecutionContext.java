@@ -24,15 +24,10 @@
 package com.questdb.griffin;
 
 import com.questdb.griffin.engine.functions.bind.BindVariableService;
-import com.questdb.std.ObjList;
-
-import java.io.Closeable;
 
 public interface SqlExecutionContext {
 
     BindVariableService getBindVariableService();
-
-    ObjList<Closeable> getCloseables();
 
     SqlCodeGenerator getCodeGenerator();
 }

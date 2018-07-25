@@ -24,14 +24,24 @@
 package com.questdb.griffin.engine.functions.columns;
 
 import com.questdb.cairo.sql.Record;
+import com.questdb.griffin.engine.functions.StatelessFunction;
 import com.questdb.griffin.engine.functions.SymbolFunction;
 
-public class SymbolColumn extends SymbolFunction {
+public class SymbolColumn extends SymbolFunction implements StatelessFunction {
     private final int columnIndex;
 
     public SymbolColumn(int position, int columnIndex) {
         super(position);
         this.columnIndex = columnIndex;
+    }
+
+    public int getColumnIndex() {
+        return columnIndex;
+    }
+
+    @Override
+    public int getInt(Record rec) {
+        return rec.getInt(columnIndex);
     }
 
     @Override

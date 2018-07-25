@@ -27,6 +27,7 @@ import com.questdb.cairo.CairoConfiguration;
 import com.questdb.cairo.sql.Function;
 import com.questdb.cairo.sql.Record;
 import com.questdb.griffin.FunctionFactory;
+import com.questdb.griffin.engine.functions.BinaryFunction;
 import com.questdb.griffin.engine.functions.StrFunction;
 import com.questdb.std.Numbers;
 import com.questdb.std.ObjList;
@@ -44,7 +45,7 @@ public class SubStrFunctionFactory implements FunctionFactory {
         return new Func(position, args.getQuick(0), args.getQuick(1));
     }
 
-    private static class Func extends StrFunction {
+    private static class Func extends StrFunction implements BinaryFunction {
 
         private final StringSink sink = new StringSink();
         private final StringSink sinkB = new StringSink();
@@ -55,6 +56,16 @@ public class SubStrFunctionFactory implements FunctionFactory {
             super(position);
             this.var = var;
             this.start = start;
+        }
+
+        @Override
+        public Function getLeft() {
+            return var;
+        }
+
+        @Override
+        public Function getRight() {
+            return start;
         }
 
         @Override

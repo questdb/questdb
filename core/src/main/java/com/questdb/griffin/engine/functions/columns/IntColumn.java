@@ -25,8 +25,9 @@ package com.questdb.griffin.engine.functions.columns;
 
 import com.questdb.cairo.sql.Record;
 import com.questdb.griffin.engine.functions.IntFunction;
+import com.questdb.griffin.engine.functions.StatelessFunction;
 
-public class IntColumn extends IntFunction {
+public class IntColumn extends IntFunction implements StatelessFunction {
     private final int columnIndex;
 
     public IntColumn(int position, int columnIndex) {

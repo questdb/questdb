@@ -25,8 +25,9 @@ package com.questdb.griffin.engine.functions.bind;
 
 import com.questdb.cairo.sql.Record;
 import com.questdb.griffin.engine.functions.IntFunction;
+import com.questdb.griffin.engine.functions.StatelessFunction;
 
-class IntBindVariable extends IntFunction {
+class IntBindVariable extends IntFunction implements StatelessFunction {
     int value;
 
     IntBindVariable(int value) {

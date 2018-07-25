@@ -29,6 +29,7 @@ import com.questdb.cairo.sql.Record;
 import com.questdb.common.ColumnType;
 import com.questdb.griffin.FunctionFactory;
 import com.questdb.griffin.SqlException;
+import com.questdb.griffin.engine.functions.StatelessFunction;
 import com.questdb.griffin.engine.functions.SymbolFunction;
 import com.questdb.std.Chars;
 import com.questdb.std.ObjList;
@@ -54,7 +55,7 @@ public class RndSymbolListFunctionFactory implements FunctionFactory {
         return new Func(position, symbols, configuration);
     }
 
-    private static final class Func extends SymbolFunction {
+    private static final class Func extends SymbolFunction implements StatelessFunction {
         private final ObjList<String> symbols;
         private final Rnd rnd;
         private final int count;

@@ -25,8 +25,9 @@ package com.questdb.griffin.engine.functions.bind;
 
 import com.questdb.cairo.sql.Record;
 import com.questdb.griffin.engine.functions.DateFunction;
+import com.questdb.griffin.engine.functions.StatelessFunction;
 
-class DateBindVariable extends DateFunction {
+class DateBindVariable extends DateFunction implements StatelessFunction {
     long value;
 
     public DateBindVariable(long value) {

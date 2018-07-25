@@ -50,11 +50,6 @@ public class TestExecutionContext implements SqlExecutionContext, Mutable {
     }
 
     @Override
-    public ObjList<Closeable> getCloseables() {
-        return closeables;
-    }
-
-    @Override
     public SqlCodeGenerator getCodeGenerator() {
         return sqlCodeGenerator;
     }

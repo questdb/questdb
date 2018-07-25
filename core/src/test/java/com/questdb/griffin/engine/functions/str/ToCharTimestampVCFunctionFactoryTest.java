@@ -50,7 +50,7 @@ public class ToCharTimestampVCFunctionFactoryTest extends AbstractFunctionFactor
 
     @Override
     protected FunctionFactory getFunctionFactory() {
-        return new ToCharTimestampVCFunctionFactory();
+        return new ToCharTimestampFunctionFactory();
     }
 
 }

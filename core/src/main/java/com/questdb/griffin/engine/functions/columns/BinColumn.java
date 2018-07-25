@@ -25,9 +25,10 @@ package com.questdb.griffin.engine.functions.columns;
 
 import com.questdb.cairo.sql.Record;
 import com.questdb.griffin.engine.functions.BinFunction;
+import com.questdb.griffin.engine.functions.StatelessFunction;
 import com.questdb.std.BinarySequence;
 
-public class BinColumn extends BinFunction {
+public class BinColumn extends BinFunction implements StatelessFunction {
     private final int columnIndex;
 
     public BinColumn(int position, int columnIndex) {

@@ -31,9 +31,11 @@ import com.questdb.cairo.sql.RecordMetadata;
 public class FilteredRecordCursorFactory implements RecordCursorFactory {
     private final RecordCursorFactory base;
     private final FilteredRecordCursor cursor;
+    private final Function filter;
 
     public FilteredRecordCursorFactory(RecordCursorFactory base, Function filter) {
         this.base = base;
+        this.filter = filter;
         this.cursor = new FilteredRecordCursor(filter);
     }
 
@@ -43,13 +45,15 @@ public class FilteredRecordCursorFactory implements RecordCursorFactory {
     }
 
     @Override
-    public RecordCursor getCursor() {
-        cursor.of(base.getCursor());
-        return cursor;
+    public RecordMetadata getMetadata() {
+        return base.getMetadata();
     }
 
     @Override
-    public RecordMetadata getMetadata() {
-        return base.getMetadata();
+    public RecordCursor getCursor() {
+        RecordCursor cursor = base.getCursor();
+        filter.open(cursor);
+        this.cursor.of(cursor);
+        return this.cursor;
     }
 }

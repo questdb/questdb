@@ -25,8 +25,9 @@ package com.questdb.griffin.engine.functions.columns;
 
 import com.questdb.cairo.sql.Record;
 import com.questdb.griffin.engine.functions.ByteFunction;
+import com.questdb.griffin.engine.functions.StatelessFunction;
 
-public class ByteColumn extends ByteFunction {
+public class ByteColumn extends ByteFunction implements StatelessFunction {
     private final int columnIndex;
 
     public ByteColumn(int position, int columnIndex) {

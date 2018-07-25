@@ -28,6 +28,7 @@ import com.questdb.cairo.sql.Function;
 import com.questdb.cairo.sql.Record;
 import com.questdb.griffin.FunctionFactory;
 import com.questdb.griffin.SqlException;
+import com.questdb.griffin.engine.functions.StatelessFunction;
 import com.questdb.griffin.engine.functions.StrFunction;
 import com.questdb.std.ObjList;
 import com.questdb.std.Rnd;
@@ -59,7 +60,7 @@ public class RndStrFunctionFactory implements FunctionFactory {
         throw SqlException.position(position).put("invalid range");
     }
 
-    private static class RndFunction extends StrFunction {
+    private static class RndFunction extends StrFunction implements StatelessFunction {
         private final int lo;
         private final int range;
         private final int nullRate;
@@ -87,7 +88,7 @@ public class RndStrFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class FixedFunction extends StrFunction {
+    private static class FixedFunction extends StrFunction implements StatelessFunction {
         private final int len;
         private final int nullRate;
         private final Rnd rnd;

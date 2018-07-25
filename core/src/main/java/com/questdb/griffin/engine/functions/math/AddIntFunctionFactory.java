@@ -27,6 +27,7 @@ import com.questdb.cairo.CairoConfiguration;
 import com.questdb.cairo.sql.Function;
 import com.questdb.cairo.sql.Record;
 import com.questdb.griffin.FunctionFactory;
+import com.questdb.griffin.engine.functions.BinaryFunction;
 import com.questdb.griffin.engine.functions.IntFunction;
 import com.questdb.std.Numbers;
 import com.questdb.std.ObjList;
@@ -39,14 +40,14 @@ public class AddIntFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
-        return new AddIntVVFunc(position, args.getQuick(0), args.getQuick(1));
+        return new AddIntFunc(position, args.getQuick(0), args.getQuick(1));
     }
 
-    private static class AddIntVVFunc extends IntFunction {
+    private static class AddIntFunc extends IntFunction implements BinaryFunction {
         final Function left;
         final Function right;
 
-        public AddIntVVFunc(int position, Function left, Function right) {
+        public AddIntFunc(int position, Function left, Function right) {
             super(position);
             this.left = left;
             this.right = right;
@@ -69,6 +70,16 @@ public class AddIntFunctionFactory implements FunctionFactory {
             return left.isConstant() && right.isConstant()
                     || (left.isConstant() && left.getInt(null) == Numbers.INT_NaN)
                     || (right.isConstant() && right.getInt(null) == Numbers.INT_NaN);
+        }
+
+        @Override
+        public Function getLeft() {
+            return left;
+        }
+
+        @Override
+        public Function getRight() {
+            return right;
         }
     }
 }

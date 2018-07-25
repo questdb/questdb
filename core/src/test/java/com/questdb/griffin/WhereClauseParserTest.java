@@ -51,6 +51,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     private final WhereClauseParser e = new WhereClauseParser();
     private final PostOrderTreeTraversalAlgo traversalAlgo = new PostOrderTreeTraversalAlgo();
     private final PostOrderTreeTraversalAlgo.Visitor rpnBuilderVisitor = rpn::onNode;
+    private final QueryModel queryModel = QueryModel.FACTORY.newInstance();
 
     @BeforeClass
     public static void setUp2() {
@@ -807,16 +808,6 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testNonLiteralColumn() {
-        try {
-            modelOf("10 in (\"2014-01-01T12:30:00.000Z\", \"2014-01-02T12:30:00.000Z\")");
-            Assert.fail("Exception expected");
-        } catch (SqlException e) {
-            TestUtils.assertContains(e.getMessage(), "Column name expected");
-        }
-    }
-
-    @Test
     public void testNotEqualInvalidColumn() {
         try {
             modelOf("ex != null and abb != 'blah'");
@@ -1045,7 +1036,14 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         TestUtils.assertEquals("[{lo=2014-01-01T12:30:00.000000Z, hi=2014-01-02T12:30:00.000000Z}]", intervalToString(m.intervals));
     }
 
-    private final QueryModel queryModel = QueryModel.FACTORY.newInstance();
+    @Test
+    public void testTwoDiffColLambdas() throws Exception {
+        IntrinsicModel m = modelOf("sym in (select * from xyz) and ex in (select  * from kkk)");
+        TestUtils.assertEquals("sym", m.keyColumn);
+        Assert.assertNotNull(m.keySubQuery);
+        Assert.assertNotNull(m.filter);
+        Assert.assertEquals(ExpressionNode.LAMBDA, m.filter.rhs.type);
+    }
 
     @Test
     public void testTwoExactMatchDifferentDates() throws Exception {
@@ -1133,15 +1131,6 @@ public class WhereClauseParserTest extends AbstractCairoTest {
 
     private IntrinsicModel modelOf(CharSequence seq) throws SqlException {
         return modelOf(seq, null);
-    }
-
-    @Test
-    public void testTwoDiffColLambdas() throws Exception {
-        IntrinsicModel m = modelOf("sym in (select * from xyz) and ex in (select  * from kkk)");
-        TestUtils.assertEquals("sym", m.keyColumn);
-        Assert.assertNotNull(m.keySubQuery);
-        Assert.assertNotNull(m.filter);
-        Assert.assertEquals(ExpressionNode.LAMBDA, m.filter.rhs.type);
     }
 
     private IntrinsicModel modelOf(CharSequence seq, String preferredColumn) throws SqlException {

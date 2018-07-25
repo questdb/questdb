@@ -26,7 +26,13 @@ package com.questdb.cairo.sql;
 import com.questdb.std.BinarySequence;
 import com.questdb.std.str.CharSink;
 
-public interface Function {
+import java.io.Closeable;
+
+public interface Function extends Closeable {
+
+    @Override
+    default void close() {
+    }
 
     BinarySequence getBin(Record rec);
 
@@ -48,7 +54,7 @@ public interface Function {
 
     int getPosition();
 
-    RecordCursorFactory getRecordCursorFactory(Record record);
+    RecordCursorFactory getRecordCursorFactory();
 
     short getShort(Record rec);
 
@@ -68,5 +74,11 @@ public interface Function {
 
     default boolean isConstant() {
         return false;
+    }
+
+    default void open(RecordCursor recordCursor) {
+    }
+
+    default void toTop() {
     }
 }

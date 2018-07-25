@@ -42,6 +42,6 @@ public class NotVFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
     @Override
     protected FunctionFactory getFunctionFactory() {
-        return new NotVFunctionFactory();
+        return new NotFunctionFactory();
     }
 }

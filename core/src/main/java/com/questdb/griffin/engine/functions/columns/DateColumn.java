@@ -25,8 +25,9 @@ package com.questdb.griffin.engine.functions.columns;
 
 import com.questdb.cairo.sql.Record;
 import com.questdb.griffin.engine.functions.DateFunction;
+import com.questdb.griffin.engine.functions.StatelessFunction;
 
-public class DateColumn extends DateFunction {
+public class DateColumn extends DateFunction implements StatelessFunction {
     private final int columnIndex;
 
     public DateColumn(int position, int columnIndex) {

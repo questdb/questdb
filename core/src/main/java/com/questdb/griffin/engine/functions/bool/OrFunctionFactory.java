@@ -21,38 +21,50 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.engine.functions.str;
+package com.questdb.griffin.engine.functions.bool;
 
 import com.questdb.cairo.CairoConfiguration;
 import com.questdb.cairo.sql.Function;
 import com.questdb.cairo.sql.Record;
 import com.questdb.griffin.FunctionFactory;
-import com.questdb.griffin.engine.functions.IntFunction;
+import com.questdb.griffin.engine.functions.BinaryFunction;
+import com.questdb.griffin.engine.functions.BooleanFunction;
 import com.questdb.std.ObjList;
 
-public class LengthSymbolVFunctionFactory implements FunctionFactory {
+public class OrFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "length(K)";
+        return "or(TT)";
     }
 
     @Override
     public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
-        return new LengthSymbolVFunc(position, args.getQuick(0));
+        return new MyBooleanFunction(position, args.getQuick(0), args.getQuick(1));
     }
 
-    private static class LengthSymbolVFunc extends IntFunction {
-        private final Function var;
+    private static class MyBooleanFunction extends BooleanFunction implements BinaryFunction {
+        final Function left;
+        final Function right;
 
-        public LengthSymbolVFunc(int position, Function var) {
+        public MyBooleanFunction(int position, Function left, Function right) {
             super(position);
-            this.var = var;
+            this.left = left;
+            this.right = right;
         }
 
         @Override
-        public int getInt(Record rec) {
-            CharSequence symbol = var.getSymbol(rec);
-            return symbol == null ? -1 : symbol.length();
+        public boolean getBool(Record rec) {
+            return left.getBool(rec) || right.getBool(rec);
+        }
+
+        @Override
+        public Function getLeft() {
+            return left;
+        }
+
+        @Override
+        public Function getRight() {
+            return right;
         }
     }
 }

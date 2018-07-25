@@ -49,6 +49,12 @@ class LatestByValuesFilteredRecordCursor extends AbstractTreeSetRecordCursor {
     }
 
     @Override
+    public void close() {
+        filter.close();
+        super.close();
+    }
+
+    @Override
     protected void buildTreeMap() {
         prepare();
 
@@ -76,6 +82,7 @@ class LatestByValuesFilteredRecordCursor extends AbstractTreeSetRecordCursor {
     }
 
     private void prepare() {
+        filter.open(this);
         final int keys[] = symbolKeys.getKeys();
         final int noEntryValue = symbolKeys.getNoEntryValue();
         for (int i = 0, n = keys.length; i < n; i++) {

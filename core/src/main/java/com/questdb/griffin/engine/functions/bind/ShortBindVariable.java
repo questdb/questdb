@@ -25,8 +25,9 @@ package com.questdb.griffin.engine.functions.bind;
 
 import com.questdb.cairo.sql.Record;
 import com.questdb.griffin.engine.functions.ShortFunction;
+import com.questdb.griffin.engine.functions.StatelessFunction;
 
-class ShortBindVariable extends ShortFunction {
+class ShortBindVariable extends ShortFunction implements StatelessFunction {
     short value;
 
     public ShortBindVariable(short value) {

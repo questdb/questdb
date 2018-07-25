@@ -26,7 +26,7 @@ package com.questdb.griffin.engine.functions.constants;
 import com.questdb.cairo.sql.Record;
 import com.questdb.griffin.engine.functions.TimestampFunction;
 
-public class TimestampConstant extends TimestampFunction {
+public class TimestampConstant extends TimestampFunction implements ConstantFunction {
     private final long value;
 
     public TimestampConstant(int position, long value) {
@@ -37,10 +37,5 @@ public class TimestampConstant extends TimestampFunction {
     @Override
     public long getTimestamp(Record rec) {
         return value;
-    }
-
-    @Override
-    public boolean isConstant() {
-        return true;
     }
 }

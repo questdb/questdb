@@ -21,15 +21,11 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.engine.table;
+package com.questdb.griffin.engine;
 
 import com.questdb.cairo.sql.Record;
 
-class SymbolTypeCaster implements TypeCaster {
-    static final SymbolTypeCaster INSTANCE = new SymbolTypeCaster();
-
-    @Override
-    public CharSequence getValue(Record record, int columnIndex) {
-        return record.getSym(columnIndex);
-    }
+@FunctionalInterface
+public interface TypeCaster {
+    CharSequence getValue(Record record, int columnIndex);
 }

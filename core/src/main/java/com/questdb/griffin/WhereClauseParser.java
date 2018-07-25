@@ -191,7 +191,7 @@ final class WhereClauseParser {
         ExpressionNode col = node.paramCount < 3 ? node.lhs : node.args.getLast();
 
         if (col.type != ExpressionNode.LITERAL) {
-            throw SqlException.$(col.position, "Column name expected");
+            return false;
         }
 
         CharSequence column = translator.translateAlias(col.token);

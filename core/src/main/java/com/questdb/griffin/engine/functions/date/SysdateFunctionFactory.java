@@ -28,6 +28,7 @@ import com.questdb.cairo.sql.Function;
 import com.questdb.cairo.sql.Record;
 import com.questdb.griffin.FunctionFactory;
 import com.questdb.griffin.engine.functions.DateFunction;
+import com.questdb.griffin.engine.functions.StatelessFunction;
 import com.questdb.std.ObjList;
 import com.questdb.std.time.MillisecondClock;
 
@@ -42,7 +43,7 @@ public class SysdateFunctionFactory implements FunctionFactory {
         return new Func(position, configuration.getMillisecondClock());
     }
 
-    private static class Func extends DateFunction {
+    private static class Func extends DateFunction implements StatelessFunction {
 
         private final MillisecondClock clock;
 

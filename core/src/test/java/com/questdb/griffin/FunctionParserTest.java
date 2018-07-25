@@ -29,8 +29,8 @@ import com.questdb.cairo.sql.Record;
 import com.questdb.common.ColumnType;
 import com.questdb.griffin.engine.functions.*;
 import com.questdb.griffin.engine.functions.bool.InFunctionFactory;
-import com.questdb.griffin.engine.functions.bool.NotVFunctionFactory;
-import com.questdb.griffin.engine.functions.bool.OrVVFunctionFactory;
+import com.questdb.griffin.engine.functions.bool.NotFunctionFactory;
+import com.questdb.griffin.engine.functions.bool.OrFunctionFactory;
 import com.questdb.griffin.engine.functions.constants.*;
 import com.questdb.griffin.engine.functions.date.SysdateFunctionFactory;
 import com.questdb.griffin.engine.functions.math.*;
@@ -140,8 +140,8 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
 
     @Test
     public void testBooleanConstants() throws SqlException {
-        functions.add(new NotVFunctionFactory());
-        functions.add(new OrVVFunctionFactory());
+        functions.add(new NotFunctionFactory());
+        functions.add(new OrFunctionFactory());
 
         final Record record = new Record() {
             @Override
@@ -165,8 +165,8 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
     @Test
     public void testBooleanFunctions() throws SqlException {
 
-        functions.add(new NotVFunctionFactory());
-        functions.add(new OrVVFunctionFactory());
+        functions.add(new NotFunctionFactory());
+        functions.add(new OrFunctionFactory());
 
         final Record record = new Record() {
             @Override
@@ -417,9 +417,9 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
 
     @Test
     public void testFunctionOverload() throws SqlException {
-        functions.add(new ToCharDateVCFunctionFactory());
-        functions.add(new ToCharTimestampVCFunctionFactory());
-        functions.add(new ToCharBinVFunctionFactory());
+        functions.add(new ToCharDateFunctionFactory());
+        functions.add(new ToCharTimestampFunctionFactory());
+        functions.add(new ToCharBinFunctionFactory());
 
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
         metadata.add(new TableColumnMetadata("a", ColumnType.DATE));
@@ -511,6 +511,10 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
     public void testImplicitConstantBin() throws SqlException {
         BinFunction function = new BinFunction(0) {
             @Override
+            public void close() {
+            }
+
+            @Override
             public BinarySequence getBin(Record rec) {
                 return null;
             }
@@ -556,6 +560,10 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
                     @Override
                     public boolean isConstant() {
                         return true;
+                    }
+
+                    @Override
+                    public void close() {
                     }
                 };
             }
@@ -977,7 +985,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
     @Test
     public void testNoArgFunction() throws SqlException {
         functions.add(new SysdateFunctionFactory());
-        functions.add(new ToCharDateVCFunctionFactory());
+        functions.add(new ToCharDateFunctionFactory());
         FunctionParser functionParser = new FunctionParser(
                 new DefaultCairoConfiguration(root) {
                     @Override
@@ -1119,8 +1127,8 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
 
     @Test
     public void testSymbolFunction() throws SqlException {
-        functions.add(new LengthStrVFunctionFactory());
-        functions.add(new LengthSymbolVFunctionFactory());
+        functions.add(new LengthStrFunctionFactory());
+        functions.add(new LengthSymbolFunctionFactory());
         functions.add(new SubtractIntFunctionFactory());
 
         FunctionParser functionParser = createFunctionParser();
@@ -1251,7 +1259,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
     }
 
     private void assertSignatureFailure(String signature) throws SqlException {
-        functions.add(new OrVVFunctionFactory());
+        functions.add(new OrFunctionFactory());
         functions.add(new FunctionFactory() {
             @Override
             public String getSignature() {
@@ -1263,7 +1271,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
                 return null;
             }
         });
-        functions.add(new NotVFunctionFactory());
+        functions.add(new NotFunctionFactory());
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
         metadata.add(new TableColumnMetadata("a", ColumnType.BOOLEAN));
         metadata.add(new TableColumnMetadata("b", ColumnType.BOOLEAN));

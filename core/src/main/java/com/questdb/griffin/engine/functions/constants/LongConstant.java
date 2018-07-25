@@ -26,7 +26,7 @@ package com.questdb.griffin.engine.functions.constants;
 import com.questdb.cairo.sql.Record;
 import com.questdb.griffin.engine.functions.LongFunction;
 
-public class LongConstant extends LongFunction {
+public class LongConstant extends LongFunction implements ConstantFunction {
     private final long value;
 
     public LongConstant(int position, long value) {
@@ -37,10 +37,5 @@ public class LongConstant extends LongFunction {
     @Override
     public long getLong(Record rec) {
         return value;
-    }
-
-    @Override
-    public boolean isConstant() {
-        return true;
     }
 }

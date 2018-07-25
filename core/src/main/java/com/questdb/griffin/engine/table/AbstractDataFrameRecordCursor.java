@@ -27,6 +27,7 @@ import com.questdb.cairo.TableReaderRecord;
 import com.questdb.cairo.sql.DataFrameCursor;
 import com.questdb.cairo.sql.Record;
 import com.questdb.cairo.sql.RecordCursor;
+import com.questdb.common.SymbolTable;
 import com.questdb.std.Rows;
 
 public abstract class AbstractDataFrameRecordCursor implements RecordCursor {
@@ -54,6 +55,11 @@ public abstract class AbstractDataFrameRecordCursor implements RecordCursor {
     @Override
     public void recordAt(Record record, long atRowId) {
         ((TableReaderRecord) record).jumpTo(Rows.toPartitionIndex(atRowId), Rows.toLocalRowID(atRowId));
+    }
+
+    @Override
+    public SymbolTable getSymbolTable(int columnIndex) {
+        return dataFrameCursor.getSymbolTable(columnIndex);
     }
 
     @Override

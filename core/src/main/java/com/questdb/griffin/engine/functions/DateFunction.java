@@ -85,7 +85,7 @@ public abstract class DateFunction implements Function {
     }
 
     @Override
-    public RecordCursorFactory getRecordCursorFactory(Record record) {
+    public RecordCursorFactory getRecordCursorFactory() {
         throw new UnsupportedOperationException();
     }
 

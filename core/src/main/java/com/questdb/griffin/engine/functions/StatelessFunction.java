@@ -21,15 +21,22 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.engine.table;
+package com.questdb.griffin.engine.functions;
 
-import com.questdb.cairo.sql.Record;
+import com.questdb.cairo.sql.Function;
+import com.questdb.cairo.sql.RecordCursor;
 
-class StrTypeCaster implements TypeCaster {
-    static final StrTypeCaster INSTANCE = new StrTypeCaster();
+public interface StatelessFunction extends Function {
 
     @Override
-    public CharSequence getValue(Record record, int columnIndex) {
-        return record.getStr(columnIndex);
+    default void close() {
+    }
+
+    @Override
+    default void open(RecordCursor recordCursor) {
+    }
+
+    @Override
+    default void toTop() {
     }
 }

@@ -26,24 +26,35 @@ package com.questdb.griffin.engine.table;
 import com.questdb.cairo.sql.Function;
 import com.questdb.cairo.sql.Record;
 import com.questdb.cairo.sql.RecordCursor;
+import com.questdb.common.SymbolTable;
+import com.questdb.std.IntList;
 import com.questdb.std.ObjList;
+import org.jetbrains.annotations.Nullable;
 
 class VirtualRecordCursor implements RecordCursor {
     private final VirtualRecord record;
+    private final IntList symbolTableCrossIndex;
     private RecordCursor baseCursor;
 
-    public VirtualRecordCursor(ObjList<Function> functions) {
+    public VirtualRecordCursor(ObjList<Function> functions, @Nullable IntList symbolTableCrossIndex) {
         this.record = new VirtualRecord(functions);
+        this.symbolTableCrossIndex = symbolTableCrossIndex;
     }
 
-    void of(RecordCursor cursor) {
-        this.baseCursor = cursor;
-        record.of(baseCursor.getRecord());
+    @Override
+    public void close() {
+        baseCursor.close();
     }
 
     @Override
     public Record getRecord() {
         return record;
+    }
+
+    @Override
+    public SymbolTable getSymbolTable(int columnIndex) {
+        assert symbolTableCrossIndex != null;
+        return baseCursor.getSymbolTable(symbolTableCrossIndex.getQuick(columnIndex));
     }
 
     @Override
@@ -70,11 +81,6 @@ class VirtualRecordCursor implements RecordCursor {
     }
 
     @Override
-    public void close() {
-        baseCursor.close();
-    }
-
-    @Override
     public boolean hasNext() {
         return baseCursor.hasNext();
     }
@@ -83,5 +89,10 @@ class VirtualRecordCursor implements RecordCursor {
     public Record next() {
         baseCursor.next();
         return record;
+    }
+
+    void of(RecordCursor cursor) {
+        this.baseCursor = cursor;
+        record.of(baseCursor.getRecord());
     }
 }

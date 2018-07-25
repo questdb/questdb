@@ -25,8 +25,9 @@ package com.questdb.griffin.engine.functions.bind;
 
 import com.questdb.cairo.sql.Record;
 import com.questdb.griffin.engine.functions.ByteFunction;
+import com.questdb.griffin.engine.functions.StatelessFunction;
 
-class ByteBindVariable extends ByteFunction {
+class ByteBindVariable extends ByteFunction implements StatelessFunction {
     byte value;
 
     public ByteBindVariable(byte value) {

@@ -50,8 +50,15 @@ class LatestByAllFilteredRecordCursor extends AbstractTreeSetRecordCursor {
     }
 
     @Override
+    public void close() {
+        filter.close();
+        super.close();
+    }
+
+    @Override
     protected void buildTreeMap() {
         map.clear();
+        filter.open(this);
 
         while (this.dataFrameCursor.hasNext()) {
             final DataFrame frame = this.dataFrameCursor.next();

@@ -25,8 +25,9 @@ package com.questdb.griffin.engine.functions.columns;
 
 import com.questdb.cairo.sql.Record;
 import com.questdb.griffin.engine.functions.FloatFunction;
+import com.questdb.griffin.engine.functions.StatelessFunction;
 
-public class FloatColumn extends FloatFunction {
+public class FloatColumn extends FloatFunction implements StatelessFunction {
     private final int columnIndex;
 
     public FloatColumn(int position, int columnIndex) {

@@ -39,6 +39,6 @@ public class OrVVFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
     @Override
     protected FunctionFactory getFunctionFactory() {
-        return new OrVVFunctionFactory();
+        return new OrFunctionFactory();
     }
 }

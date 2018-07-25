@@ -25,8 +25,9 @@ package com.questdb.griffin.engine.functions.columns;
 
 import com.questdb.cairo.sql.Record;
 import com.questdb.griffin.engine.functions.DoubleFunction;
+import com.questdb.griffin.engine.functions.StatelessFunction;
 
-public class DoubleColumn extends DoubleFunction {
+public class DoubleColumn extends DoubleFunction implements StatelessFunction {
     private final int columnIndex;
 
     public DoubleColumn(int position, int columnIndex) {

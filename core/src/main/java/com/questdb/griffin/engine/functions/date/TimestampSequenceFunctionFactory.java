@@ -26,6 +26,7 @@ package com.questdb.griffin.engine.functions.date;
 import com.questdb.cairo.CairoConfiguration;
 import com.questdb.cairo.sql.Function;
 import com.questdb.cairo.sql.Record;
+import com.questdb.cairo.sql.RecordCursor;
 import com.questdb.griffin.FunctionFactory;
 import com.questdb.griffin.SqlException;
 import com.questdb.griffin.engine.functions.TimestampFunction;
@@ -56,12 +57,18 @@ public class TimestampSequenceFunctionFactory implements FunctionFactory {
 
     private static final class Func extends TimestampFunction {
         private final long increment;
+        private final long start;
         private long next;
 
         public Func(int position, long start, long increment) {
             super(position);
+            this.start = start;
             this.next = start;
             this.increment = increment;
+        }
+
+        @Override
+        public void close() {
         }
 
         @Override
@@ -69,6 +76,16 @@ public class TimestampSequenceFunctionFactory implements FunctionFactory {
             final long result = next;
             next += increment;
             return result;
+        }
+
+        @Override
+        public void open(RecordCursor recordCursor) {
+            toTop();
+        }
+
+        @Override
+        public void toTop() {
+            next = start;
         }
     }
 }

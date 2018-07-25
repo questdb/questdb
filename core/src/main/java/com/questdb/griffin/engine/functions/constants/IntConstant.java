@@ -26,7 +26,7 @@ package com.questdb.griffin.engine.functions.constants;
 import com.questdb.cairo.sql.Record;
 import com.questdb.griffin.engine.functions.IntFunction;
 
-public class IntConstant extends IntFunction {
+public class IntConstant extends IntFunction implements ConstantFunction {
     private final int value;
 
     public IntConstant(int position, int value) {
@@ -37,10 +37,5 @@ public class IntConstant extends IntFunction {
     @Override
     public int getInt(Record rec) {
         return value;
-    }
-
-    @Override
-    public boolean isConstant() {
-        return true;
     }
 }

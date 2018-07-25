@@ -25,9 +25,10 @@ package com.questdb.griffin.engine.functions.bind;
 
 import com.questdb.cairo.sql.Record;
 import com.questdb.griffin.engine.functions.BinFunction;
+import com.questdb.griffin.engine.functions.StatelessFunction;
 import com.questdb.std.BinarySequence;
 
-public class BinBindVariable extends BinFunction {
+public class BinBindVariable extends BinFunction implements StatelessFunction {
     BinarySequence value;
 
     public BinBindVariable(BinarySequence value) {
