@@ -69,6 +69,7 @@ class FilteredRecordCursor implements RecordCursor {
     @Override
     public void toTop() {
         base.toTop();
+        filter.toTop();
     }
 
     @Override
@@ -88,5 +89,6 @@ class FilteredRecordCursor implements RecordCursor {
 
     void of(RecordCursor base) {
         this.base = base;
+        filter.withCursor(this);
     }
 }

@@ -38,6 +38,8 @@ import com.questdb.griffin.engine.TypeCaster;
 import com.questdb.griffin.engine.functions.BinaryFunction;
 import com.questdb.griffin.engine.functions.BooleanFunction;
 import com.questdb.griffin.engine.functions.columns.SymbolColumn;
+import com.questdb.std.CharSequenceHashSet;
+import com.questdb.std.Chars;
 import com.questdb.std.IntHashSet;
 import com.questdb.std.ObjList;
 
@@ -55,23 +57,23 @@ public class SymbolInCursorFunctionFactory implements FunctionFactory {
         // use first column to create list of values (over multiple records)
         // supported column types are STRING and SYMBOL
 
-        if (symbolFunction instanceof SymbolColumn) {
-            final int zeroColumnType = cursorFunction.getRecordCursorFactory().getMetadata().getColumnType(0);
-            final TypeCaster typeCaster;
-            switch (zeroColumnType) {
-                case ColumnType.STRING:
-                    typeCaster = StrTypeCaster.INSTANCE;
-                    break;
-                case ColumnType.SYMBOL:
-                    typeCaster = SymbolTypeCaster.INSTANCE;
-                    break;
-                default:
-                    throw SqlException.position(position).put("supported column types are STRING and SYMBOL, found: ").put(ColumnType.nameOf(zeroColumnType));
-            }
+        final int zeroColumnType = cursorFunction.getRecordCursorFactory().getMetadata().getColumnType(0);
+        final TypeCaster typeCaster;
+        switch (zeroColumnType) {
+            case ColumnType.STRING:
+                typeCaster = StrTypeCaster.INSTANCE;
+                break;
+            case ColumnType.SYMBOL:
+                typeCaster = SymbolTypeCaster.INSTANCE;
+                break;
+            default:
+                throw SqlException.position(position).put("supported column types are STRING and SYMBOL, found: ").put(ColumnType.nameOf(zeroColumnType));
+        }
 
+        if (symbolFunction instanceof SymbolColumn) {
             return new SymbolInCursorFunction(position, (SymbolColumn) symbolFunction, cursorFunction, typeCaster);
         }
-        return null;
+        return new StrInCursorFunction(position, symbolFunction, cursorFunction, typeCaster);
     }
 
     private static class SymbolInCursorFunction extends BooleanFunction implements BinaryFunction {
@@ -96,9 +98,19 @@ public class SymbolInCursorFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void open(RecordCursor recordCursor) {
-            valueArg.open(recordCursor);
-            cursorArg.open(recordCursor);
+        public Function getLeft() {
+            return valueArg;
+        }
+
+        @Override
+        public Function getRight() {
+            return cursorArg;
+        }
+
+        @Override
+        public void withCursor(RecordCursor recordCursor) {
+            valueArg.withCursor(recordCursor);
+            cursorArg.withCursor(recordCursor);
             symbolKeys.clear();
 
             SymbolTable symbolTable = recordCursor.getSymbolTable(columnIndex);
@@ -113,6 +125,70 @@ public class SymbolInCursorFunctionFactory implements FunctionFactory {
                     }
                 }
             }
+        }
+
+
+    }
+
+    private static class StrInCursorFunction extends BooleanFunction implements BinaryFunction {
+
+        private final Function valueArg;
+        private final Function cursorArg;
+        private final CharSequenceHashSet valueSetA = new CharSequenceHashSet();
+        private final CharSequenceHashSet valueSetB = new CharSequenceHashSet();
+        private final TypeCaster typeCaster;
+        private CharSequenceHashSet valueSet;
+
+        public StrInCursorFunction(int position, Function valueArg, Function cursorArg, TypeCaster typeCaster) {
+            super(position);
+            this.valueArg = valueArg;
+            this.cursorArg = cursorArg;
+            this.typeCaster = typeCaster;
+            this.valueSet = valueSetA;
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            return valueSet.contains(valueArg.getSymbol(rec));
+        }
+
+        @Override
+        public void withCursor(RecordCursor recordCursor) {
+            valueArg.withCursor(recordCursor);
+            cursorArg.withCursor(recordCursor);
+
+            CharSequenceHashSet valueSet;
+            if (this.valueSet == this.valueSetA) {
+                valueSet = this.valueSetB;
+            } else {
+                valueSet = this.valueSetA;
+            }
+
+            valueSet.clear();
+
+
+            RecordCursorFactory factory = cursorArg.getRecordCursorFactory();
+            try (RecordCursor cursor = factory.getCursor()) {
+                while (cursor.hasNext()) {
+                    Record record = cursor.next();
+
+                    CharSequence value = typeCaster.getValue(record, 0);
+                    if (value == null) {
+                        valueSet.addNull();
+                    } else {
+                        int toIndex = valueSet.keyIndex(value);
+                        if (toIndex > -1) {
+                            int index = this.valueSet.keyIndex(value);
+                            if (index < 0) {
+                                valueSet.addAt(toIndex, this.valueSet.keyAt(index));
+                            } else {
+                                valueSet.addAt(toIndex, Chars.toString(value));
+                            }
+                        }
+                    }
+                }
+            }
+            this.valueSet = valueSet;
         }
 
         @Override

@@ -24,18 +24,32 @@
 package com.questdb.griffin.engine.table;
 
 import com.questdb.cairo.sql.*;
+import org.jetbrains.annotations.Nullable;
 
 public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorFactory {
     private final DataFrameRecordCursor cursor;
+    private final Function filter;
 
-    public DataFrameRecordCursorFactory(RecordMetadata metadata, DataFrameCursorFactory dataFrameCursorFactory, RowCursorFactory rowCursorFactory) {
+    public DataFrameRecordCursorFactory(
+            RecordMetadata metadata,
+            DataFrameCursorFactory dataFrameCursorFactory,
+            RowCursorFactory rowCursorFactory,
+            @Nullable Function filter) {
         super(metadata, dataFrameCursorFactory);
-        this.cursor = new DataFrameRecordCursor(rowCursorFactory);
+        this.cursor = new DataFrameRecordCursor(rowCursorFactory, filter);
+        this.filter = filter;
     }
 
     @Override
     protected RecordCursor getCursorInstance(DataFrameCursor dataFrameCursor) {
         cursor.of(dataFrameCursor);
         return cursor;
+    }
+
+    @Override
+    public void close() {
+        if (filter != null) {
+            filter.close();
+        }
     }
 }

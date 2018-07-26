@@ -35,13 +35,14 @@ public class FilteredRecordCursorFactory implements RecordCursorFactory {
 
     public FilteredRecordCursorFactory(RecordCursorFactory base, Function filter) {
         this.base = base;
-        this.filter = filter;
         this.cursor = new FilteredRecordCursor(filter);
+        this.filter = filter;
     }
 
     @Override
     public void close() {
         base.close();
+        filter.close();
     }
 
     @Override
@@ -52,7 +53,6 @@ public class FilteredRecordCursorFactory implements RecordCursorFactory {
     @Override
     public RecordCursor getCursor() {
         RecordCursor cursor = base.getCursor();
-        filter.open(cursor);
         this.cursor.of(cursor);
         return this.cursor;
     }

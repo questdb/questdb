@@ -59,7 +59,7 @@ public class FilterOnSubQueryRecordCursorFactory extends AbstractDataFrameRecord
         this.filter = filter;
         this.factories = factoriesA;
         cursorFactories = new ObjList<>();
-        this.cursor = new DataFrameRecordCursor(new HeapRowCursorFactory(cursorFactories));
+        this.cursor = new DataFrameRecordCursor(new HeapRowCursorFactory(cursorFactories), filter);
         if (firstColumnType == ColumnType.SYMBOL) {
             typeCaster = SymbolTypeCaster.INSTANCE;
         } else {
@@ -69,6 +69,9 @@ public class FilterOnSubQueryRecordCursorFactory extends AbstractDataFrameRecord
 
     @Override
     public void close() {
+        if (filter != null) {
+            filter.close();
+        }
         recordCursorFactory.close();
         factoriesA.clear();
         factoriesB.clear();

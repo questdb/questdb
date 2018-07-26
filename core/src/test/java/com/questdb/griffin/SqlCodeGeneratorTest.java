@@ -34,6 +34,7 @@ import com.questdb.common.ColumnType;
 import com.questdb.common.SymbolTable;
 import com.questdb.griffin.engine.functions.bind.BindVariableService;
 import com.questdb.griffin.engine.functions.rnd.SharedRandom;
+import com.questdb.griffin.engine.functions.str.TestMatchFunctionFactory;
 import com.questdb.std.BinarySequence;
 import com.questdb.std.IntList;
 import com.questdb.std.LongList;
@@ -43,7 +44,6 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 import org.junit.Before;
-import org.junit.Ignore;
 import org.junit.Test;
 
 import java.io.IOException;
@@ -58,6 +58,81 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     @Before
     public void setUp2() {
         SharedRandom.RANDOM.set(new Rnd());
+    }
+
+    @Test
+    public void testFilterAPI() throws Exception {
+        TestMatchFunctionFactory.clear();
+        // no index
+        final String expected = "a\tb\tk\n" +
+                "80.432240999684\tCPSW\t1970-01-01T00:00:00.000000Z\n" +
+                "93.446048573940\tPEHN\t1970-01-02T03:46:40.000000Z\n" +
+                "88.992869122897\tSXUX\t1970-01-03T07:33:20.000000Z\n" +
+                "42.177688419694\tGPGW\t1970-01-04T11:20:00.000000Z\n" +
+                "66.938371476317\tDEYY\t1970-01-05T15:06:40.000000Z\n" +
+                "0.359836721543\tHFOW\t1970-01-06T18:53:20.000000Z\n" +
+                "21.583224269349\tYSBE\t1970-01-07T22:40:00.000000Z\n" +
+                "12.503042190293\tSHRU\t1970-01-09T02:26:40.000000Z\n" +
+                "67.004763918011\tQULO\t1970-01-10T06:13:20.000000Z\n" +
+                "81.016127417126\tTJRS\t1970-01-11T10:00:00.000000Z\n" +
+                "24.593452776060\tRFBV\t1970-01-12T13:46:40.000000Z\n" +
+                "49.005104498852\tOOZZ\t1970-01-13T17:33:20.000000Z\n" +
+                "18.769708157331\tMYIC\t1970-01-14T21:20:00.000000Z\n" +
+                "22.822335965268\tUICW\t1970-01-16T01:06:40.000000Z\n" +
+                "88.282283666977\t\t1970-01-17T04:53:20.000000Z\n" +
+                "45.659895188240\tDOTS\t1970-01-18T08:40:00.000000Z\n" +
+                "97.030608082441\tCTGQ\t1970-01-19T12:26:40.000000Z\n" +
+                "12.024160875735\tWCKY\t1970-01-20T16:13:20.000000Z\n" +
+                "63.591449938914\tDSWU\t1970-01-21T20:00:00.000000Z\n" +
+                "50.652283361564\tLNVT\t1970-01-22T23:46:40.000000Z\n";
+
+        assertQuery(expected,
+                "select * from x where test_match()",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_str(4,4,1) b," +
+                        " timestamp_sequence(to_timestamp(0), 100000000000) k" +
+                        " from" +
+                        " long_sequence(20)" +
+                        ") timestamp(k) partition by DAY",
+                "k");
+
+        // these values are assured to be correct for the scenario
+        Assert.assertEquals(4, TestMatchFunctionFactory.getOpenCount());
+        Assert.assertEquals(2, TestMatchFunctionFactory.getTopCount());
+        Assert.assertEquals(1, TestMatchFunctionFactory.getCloseCount());
+    }
+
+    @Test
+    public void testFilterFunctionOnSubQuery() throws Exception {
+        // no index
+        final String expected = "a\tb\tk\n" +
+                "93.446048573940\tPEHN\t1970-01-02T03:46:40.000000Z\n" +
+                "88.282283666977\t\t1970-01-17T04:53:20.000000Z\n";
+
+        assertQuery(expected,
+                "select * from x where to_symbol(b) in (select rnd_str('PEHN', 'HYRX', null) a from long_sequence(10))",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_str(4,4,1) b," +
+                        " timestamp_sequence(to_timestamp(0), 100000000000) k" +
+                        " from" +
+                        " long_sequence(20)" +
+                        ") timestamp(k) partition by DAY",
+                "k",
+                "insert into x select * from (" +
+                        "select" +
+                        " rnd_double(0)*100," +
+                        " 'HYRX'," +
+                        " to_timestamp('1971', 'yyyy') t" +
+                        " from long_sequence(1)" +
+                        ") timestamp(t)",
+                expected +
+                        "97.595346366902\tHYRX\t1971-01-01T00:00:00.000000Z\n");
     }
 
     @Test
@@ -108,10 +183,12 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testFilterOnIntervalAndFilter() throws Exception {
+        TestMatchFunctionFactory.clear();
+
         assertQuery("a\tb\tk\n" +
                         "84.452581772111\tPEHN\t1970-01-01T03:36:40.000000Z\n" +
                         "97.501988537251\t\t1970-01-01T03:53:20.000000Z\n",
-                "select * from x o where k = '1970-01-01T03:36:40;45m' and a > 50",
+                "select * from x o where k = '1970-01-01T03:36:40;45m' and a > 50 and test_match()",
                 "create table x as " +
                         "(" +
                         "select * from" +
@@ -123,6 +200,12 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         ")" +
                         "), index(b) timestamp(k)",
                 "k");
+
+        // also good numbers, extra top calls are due to symbol column API check
+        // tables without symbol columns will skip this check
+        Assert.assertEquals(4, TestMatchFunctionFactory.getOpenCount());
+        Assert.assertEquals(4, TestMatchFunctionFactory.getTopCount());
+        Assert.assertEquals(1, TestMatchFunctionFactory.getCloseCount());
     }
 
     @Test
@@ -241,6 +324,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     @Test
     public void testFilterOnSubQueryIndexedFiltered() throws Exception {
 
+        TestMatchFunctionFactory.clear();
+
         final String expected = "a\tb\tk\n" +
                 "11.427984775756\t\t1970-01-01T00:00:00.000000Z\n" +
                 "23.905290108465\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
@@ -253,7 +338,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "40.455469747939\t\t1970-01-22T23:46:40.000000Z\n";
 
         assertQuery(expected,
-                "select * from x where b in (select rnd_symbol('RXGZ', 'HYRX', null, 'ABC') a from long_sequence(10)) " +
+                "select * from x where b in (select rnd_symbol('RXGZ', 'HYRX', null, 'ABC') a from long_sequence(10)) and test_match()" +
                         "and a < 80",
                 "create table x as " +
                         "(" +
@@ -276,6 +361,12 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         "25.533193397031\tABC\t1971-01-01T00:00:00.000000Z\n" +
                         "28.799739396819\tABC\t1971-01-01T00:00:00.000000Z\n" +
                         "68.068731346264\tABC\t1971-01-01T00:00:00.000000Z\n");
+
+        // these value are also ok because ddl2 is present, there is another round of check for that
+        Assert.assertEquals(6, TestMatchFunctionFactory.getOpenCount());
+        Assert.assertEquals(8, TestMatchFunctionFactory.getTopCount());
+        Assert.assertEquals(1, TestMatchFunctionFactory.getCloseCount());
+
     }
 
     @Test
@@ -351,6 +442,9 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testFilterOnValuesAndFilter() throws Exception {
+
+        TestMatchFunctionFactory.clear();
+
         assertQuery("a\tb\tk\n" +
                         "11.427984775756\t\t1970-01-01T00:00:00.000000Z\n" +
                         "32.881769076795\t\t1970-01-01T01:23:20.000000Z\n" +
@@ -359,7 +453,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         "49.005104498852\tPEHN\t1970-01-01T04:10:00.000000Z\n" +
                         "45.634456960908\t\t1970-01-01T05:00:00.000000Z\n" +
                         "40.455469747939\t\t1970-01-01T05:16:40.000000Z\n",
-                "select * from x o where o.b in ('HYRX','PEHN', null) and a < 50",
+                "select * from x o where o.b in ('HYRX','PEHN', null) and a < 50 and test_match()",
                 "create table x as (" +
                         "select" +
                         " *" +
@@ -383,6 +477,11 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         "45.634456960908\t\t1970-01-01T05:00:00.000000Z\n" +
                         "40.455469747939\t\t1970-01-01T05:16:40.000000Z\n" +
                         "44.804689668614\t\t\n");
+
+        // 5 opens is good because we check variable lengh column API sanity
+        Assert.assertEquals(5, TestMatchFunctionFactory.getOpenCount());
+        Assert.assertEquals(8, TestMatchFunctionFactory.getTopCount());
+        Assert.assertEquals(1, TestMatchFunctionFactory.getCloseCount());
     }
 
     @Test
@@ -449,11 +548,13 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testFilterSingleKeyValueAndField() throws Exception {
+        TestMatchFunctionFactory.clear();
+
         final String expected = "a\tb\n" +
                 "52.984059417621\tHYRX\n" +
                 "72.300157631336\tHYRX\n";
         assertQuery(expected,
-                "select * from x where b = 'HYRX' and a > 41",
+                "select * from x where b = 'HYRX' and a > 41 and test_match()",
                 "create table x as (select * from random_cursor(20, 'a', rnd_double(0)*100, 'b', rnd_symbol(5,4,4,0))), index(b)",
                 null,
                 "insert into x select" +
@@ -463,6 +564,11 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 expected +
                         "75.881754034549\tHYRX\n" +
                         "57.789479151824\tHYRX\n");
+
+        // 5 opens is good because we check variable lengh column API sanity
+        Assert.assertEquals(5, TestMatchFunctionFactory.getOpenCount());
+        Assert.assertEquals(8, TestMatchFunctionFactory.getTopCount());
+        Assert.assertEquals(1, TestMatchFunctionFactory.getCloseCount());
     }
 
     @Test
@@ -482,8 +588,9 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testFilterSingleNonExistingSymbolAndFilter() throws Exception {
+        TestMatchFunctionFactory.clear();
         assertQuery("a\tb\n",
-                "select * from x where b = 'ABC' and a > 30",
+                "select * from x where b = 'ABC' and a > 30 and test_match()",
                 "create table x as (select * from random_cursor(20, 'a', rnd_double(0)*100, 'b', rnd_symbol(5,4,4,0))), index(b)",
                 null,
                 "insert into x select" +
@@ -493,50 +600,10 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "a\tb\n" +
                         "75.881754034549\tABC\n" +
                         "57.789479151824\tABC\n");
-    }
-
-    @Test
-    @Ignore
-    //todo: implement
-    public void testFilterFunctionOnSubQuery() throws Exception {
-        // no index
-        final String expected = "a\tb\tk\n" +
-                "11.427984775756\t\t1970-01-01T00:00:00.000000Z\n" +
-                "23.905290108465\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
-                "87.996347253916\t\t1970-01-05T15:06:40.000000Z\n" +
-                "32.881769076795\t\t1970-01-06T18:53:20.000000Z\n" +
-                "97.711031460512\tHYRX\t1970-01-07T22:40:00.000000Z\n" +
-                "57.934663268622\t\t1970-01-10T06:13:20.000000Z\n" +
-                "12.026122412833\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
-                "26.922103479745\t\t1970-01-13T17:33:20.000000Z\n" +
-                "52.984059417621\t\t1970-01-14T21:20:00.000000Z\n" +
-                "97.501988537251\t\t1970-01-17T04:53:20.000000Z\n" +
-                "80.011211397392\t\t1970-01-19T12:26:40.000000Z\n" +
-                "92.050039469858\t\t1970-01-20T16:13:20.000000Z\n" +
-                "45.634456960908\t\t1970-01-21T20:00:00.000000Z\n" +
-                "40.455469747939\t\t1970-01-22T23:46:40.000000Z\n";
-
-        assertQuery(expected,
-                "select * from x where to_symbol(b) in (select rnd_str('RXGZ', 'HYRX', null) a from long_sequence(10))",
-                "create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_double(0)*100 a," +
-                        " rnd_str(4,4,1) b," +
-                        " timestamp_sequence(to_timestamp(0), 100000000000) k" +
-                        " from" +
-                        " long_sequence(20)" +
-                        ") timestamp(k) partition by DAY",
-                "k",
-                "insert into x select * from (" +
-                        "select" +
-                        " rnd_double(0)*100," +
-                        " 'RXGZ'," +
-                        " to_timestamp('1971', 'yyyy') t" +
-                        " from long_sequence(1)" +
-                        ") timestamp(t)",
-                expected +
-                        "95.400690890497\tRXGZ\t1971-01-01T00:00:00.000000Z\n");
+        // 5 opens is good because we check variable length column API sanity
+        Assert.assertEquals(5, TestMatchFunctionFactory.getOpenCount());
+        Assert.assertEquals(8, TestMatchFunctionFactory.getTopCount());
+        Assert.assertEquals(1, TestMatchFunctionFactory.getCloseCount());
     }
 
     @Test
@@ -996,9 +1063,10 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testLatestByKeyValueFiltered() throws Exception {
+        TestMatchFunctionFactory.clear();
         assertQuery("a\tb\tk\n" +
                         "5.942010834028\tPEHN\t1970-08-03T02:53:20.000000Z\n",
-                "select * from x latest by b where b = 'PEHN' and a < 22",
+                "select * from x latest by b where b = 'PEHN' and a < 22 and test_match()",
                 "create table x as " +
                         "(" +
                         "select * from" +
@@ -1019,6 +1087,11 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         ") timestamp(t)",
                 "a\tb\tk\n" +
                         "11.300000000000\tPEHN\t1971-01-01T00:00:00.000000Z\n");
+
+        // this is good
+        Assert.assertEquals(6, TestMatchFunctionFactory.getOpenCount());
+        Assert.assertEquals(8, TestMatchFunctionFactory.getTopCount());
+        Assert.assertEquals(1, TestMatchFunctionFactory.getCloseCount());
     }
 
     @Test
@@ -1050,9 +1123,10 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testLatestByKeyValueIndexedFiltered() throws Exception {
+        TestMatchFunctionFactory.clear();
         assertQuery("a\tb\tk\n" +
                         "5.942010834028\tPEHN\t1970-08-03T02:53:20.000000Z\n",
-                "select * from x latest by b where b = 'PEHN' and a < 22",
+                "select * from x latest by b where b = 'PEHN' and a < 22 and test_match()",
                 "create table x as " +
                         "(" +
                         "select * from" +
@@ -1073,6 +1147,10 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         ") timestamp(t)",
                 "a\tb\tk\n" +
                         "11.300000000000\tPEHN\t1971-01-01T00:00:00.000000Z\n");
+
+        Assert.assertEquals(6, TestMatchFunctionFactory.getOpenCount());
+        Assert.assertEquals(8, TestMatchFunctionFactory.getTopCount());
+        Assert.assertEquals(1, TestMatchFunctionFactory.getCloseCount());
     }
 
     @Test
@@ -1124,12 +1202,13 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testLatestByKeyValuesFiltered() throws Exception {
+        TestMatchFunctionFactory.clear();
         // no index
         assertQuery("a\tb\tk\n" +
                         "23.905290108465\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
                         "12.026122412833\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
                         "40.455469747939\t\t1970-01-22T23:46:40.000000Z\n",
-                "select * from x latest by b where b in ('RXGZ','HYRX', null) and a > 12 and a < 50",
+                "select * from x latest by b where b in ('RXGZ','HYRX', null) and a > 12 and a < 50 and test_match()",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -1151,6 +1230,11 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         "12.026122412833\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
                         "40.455469747939\t\t1970-01-22T23:46:40.000000Z\n" +
                         "12.105630273556\tRXGZ\t1971-01-01T00:00:00.000000Z\n");
+
+        // this is good
+        Assert.assertEquals(6, TestMatchFunctionFactory.getOpenCount());
+        Assert.assertEquals(8, TestMatchFunctionFactory.getTopCount());
+        Assert.assertEquals(1, TestMatchFunctionFactory.getCloseCount());
     }
 
     @Test
@@ -1183,10 +1267,11 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testLatestByKeyValuesIndexedFiltered() throws Exception {
+        TestMatchFunctionFactory.clear();
         assertQuery("a\tb\tk\n" +
                         "23.905290108465\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
                         "97.711031460512\tHYRX\t1970-01-07T22:40:00.000000Z\n",
-                "select * from x latest by b where b in ('RXGZ','HYRX') and a > 20",
+                "select * from x latest by b where b in ('RXGZ','HYRX') and a > 20 and test_match()",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -1207,6 +1292,11 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "a\tb\tk\n" +
                         "97.711031460512\tHYRX\t1970-01-07T22:40:00.000000Z\n" +
                         "56.594291398612\tRXGZ\t1971-01-01T00:00:00.000000Z\n");
+
+        // this is good
+        Assert.assertEquals(6, TestMatchFunctionFactory.getOpenCount());
+        Assert.assertEquals(8, TestMatchFunctionFactory.getTopCount());
+        Assert.assertEquals(1, TestMatchFunctionFactory.getCloseCount());
     }
 
     @Test
@@ -1236,8 +1326,9 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testLatestByMissingKeyValueFiltered() throws Exception {
+        TestMatchFunctionFactory.clear();
         assertQuery("a\tb\tk\n",
-                "select * from x latest by b where b in ('XYZ') and a < 60",
+                "select * from x latest by b where b in ('XYZ') and a < 60 and test_match()",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -1257,6 +1348,11 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         ") timestamp(t)",
                 "a\tb\tk\n" +
                         "56.594291398612\tXYZ\t1971-01-01T00:00:00.000000Z\n");
+
+        // this is good
+        Assert.assertEquals(2, TestMatchFunctionFactory.getOpenCount());
+        Assert.assertEquals(4, TestMatchFunctionFactory.getTopCount());
+        Assert.assertEquals(1, TestMatchFunctionFactory.getCloseCount());
     }
 
     @Test
@@ -1286,8 +1382,9 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testLatestByMissingKeyValueIndexedFiltered() throws Exception {
+        TestMatchFunctionFactory.clear();
         assertQuery("a\tb\tk\n",
-                "select * from x latest by b where b in ('XYZ') and a < 60",
+                "select * from x latest by b where b in ('XYZ') and a < 60 and test_match()",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -1307,6 +1404,10 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         ") timestamp(t)",
                 "a\tb\tk\n" +
                         "56.594291398612\tXYZ\t1971-01-01T00:00:00.000000Z\n");
+        // good
+        Assert.assertEquals(2, TestMatchFunctionFactory.getOpenCount());
+        Assert.assertEquals(4, TestMatchFunctionFactory.getTopCount());
+        Assert.assertEquals(1, TestMatchFunctionFactory.getCloseCount());
     }
 
     @Test
@@ -1339,9 +1440,10 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testLatestByMissingKeyValuesFiltered() throws Exception {
+        TestMatchFunctionFactory.clear();
         assertQuery("a\tb\tk\n" +
                         "97.711031460512\tHYRX\t1970-01-07T22:40:00.000000Z\n",
-                "select * from x latest by b where b in ('XYZ', 'HYRX') and a > 30",
+                "select * from x latest by b where b in ('XYZ', 'HYRX') and a > 30 and test_match()",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -1362,6 +1464,11 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "a\tb\tk\n" +
                         "97.711031460512\tHYRX\t1970-01-07T22:40:00.000000Z\n" +
                         "56.594291398612\tXYZ\t1971-01-01T00:00:00.000000Z\n");
+
+        // good
+        Assert.assertEquals(6, TestMatchFunctionFactory.getOpenCount());
+        Assert.assertEquals(8, TestMatchFunctionFactory.getTopCount());
+        Assert.assertEquals(1, TestMatchFunctionFactory.getCloseCount());
     }
 
     @Test
@@ -1393,9 +1500,10 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testLatestByMissingKeyValuesIndexedFiltered() throws Exception {
+        TestMatchFunctionFactory.clear();
         assertQuery("a\tb\tk\n" +
                         "54.551753247857\tHYRX\t1970-01-05T13:16:48.248832Z\n",
-                "select * from x latest by b where b in ('XYZ', 'HYRX') and a > 30",
+                "select * from x latest by b where b in ('XYZ', 'HYRX') and a > 30 and test_match()",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -1416,6 +1524,11 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "a\tb\tk\n" +
                         "54.551753247857\tHYRX\t1970-01-05T13:16:48.248832Z\n" +
                         "88.100000000000\tXYZ\t1971-01-01T00:00:00.000000Z\n");
+
+        // good
+        Assert.assertEquals(6, TestMatchFunctionFactory.getOpenCount());
+        Assert.assertEquals(8, TestMatchFunctionFactory.getTopCount());
+        Assert.assertEquals(1, TestMatchFunctionFactory.getCloseCount());
     }
 
     @Test
@@ -1500,13 +1613,14 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testLatestBySubQueryDeferredFiltered() throws Exception {
+        TestMatchFunctionFactory.clear();
         // no index
         assertQuery("a\tb\tk\n" +
                         "23.905290108465\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
                         "12.026122412833\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
                         "40.455469747939\t\t1970-01-22T23:46:40.000000Z\n",
                 "select * from x latest by b where b in (select rnd_symbol('RXGZ', 'HYRX', null, 'UCLA') a from long_sequence(10))" +
-                        " and a > 12 and a < 50",
+                        " and a > 12 and a < 50 and test_match()",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -1529,6 +1643,11 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         "12.026122412833\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
                         "40.455469747939\t\t1970-01-22T23:46:40.000000Z\n" +
                         "33.460000000000\tUCLA\t1971-01-01T00:00:00.000000Z\n");
+
+        // good
+        Assert.assertEquals(6, TestMatchFunctionFactory.getOpenCount());
+        Assert.assertEquals(8, TestMatchFunctionFactory.getTopCount());
+        Assert.assertEquals(1, TestMatchFunctionFactory.getCloseCount());
     }
 
     @Test
@@ -1564,12 +1683,13 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testLatestBySubQueryDeferredIndexedFiltered() throws Exception {
+        TestMatchFunctionFactory.clear();
         assertQuery("a\tb\tk\n" +
                         "23.905290108465\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
                         "12.026122412833\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
                         "40.455469747939\t\t1970-01-22T23:46:40.000000Z\n",
                 "select * from x latest by b where b in (select rnd_symbol('RXGZ', 'HYRX', null, 'UCLA') a from long_sequence(10))" +
-                        " and a > 12 and a < 50",
+                        " and a > 12 and a < 50 and test_match()",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -1592,17 +1712,22 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         "12.026122412833\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
                         "40.455469747939\t\t1970-01-22T23:46:40.000000Z\n" +
                         "33.460000000000\tUCLA\t1971-01-01T00:00:00.000000Z\n");
+
+        Assert.assertEquals(6, TestMatchFunctionFactory.getOpenCount());
+        Assert.assertEquals(8, TestMatchFunctionFactory.getTopCount());
+        Assert.assertEquals(1, TestMatchFunctionFactory.getCloseCount());
     }
 
     @Test
     public void testLatestBySubQueryFiltered() throws Exception {
+        TestMatchFunctionFactory.clear();
         // no index
         assertQuery("a\tb\tk\n" +
                         "23.905290108465\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
                         "12.026122412833\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
                         "40.455469747939\t\t1970-01-22T23:46:40.000000Z\n",
                 "select * from x latest by b where b in (select rnd_symbol('RXGZ', 'HYRX', null) a from long_sequence(10))" +
-                        " and a > 12 and a < 50",
+                        " and a > 12 and a < 50 and test_match()",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -1624,6 +1749,10 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         "12.026122412833\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
                         "40.455469747939\t\t1970-01-22T23:46:40.000000Z\n" +
                         "33.460000000000\tRXGZ\t1971-01-01T00:00:00.000000Z\n");
+
+        Assert.assertEquals(6, TestMatchFunctionFactory.getOpenCount());
+        Assert.assertEquals(8, TestMatchFunctionFactory.getTopCount());
+        Assert.assertEquals(1, TestMatchFunctionFactory.getCloseCount());
     }
 
     @Test
@@ -1658,12 +1787,13 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testLatestBySubQueryIndexedFiltered() throws Exception {
+        TestMatchFunctionFactory.clear();
         assertQuery("a\tb\tk\n" +
                         "23.905290108465\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
                         "12.026122412833\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
                         "40.455469747939\t\t1970-01-22T23:46:40.000000Z\n",
                 "select * from x latest by b where b in (select rnd_symbol('RXGZ', 'HYRX', null) a from long_sequence(10))" +
-                        " and a > 12 and a < 50",
+                        " and a > 12 and a < 50 and test_match()",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -1685,6 +1815,10 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         "12.026122412833\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
                         "40.455469747939\t\t1970-01-22T23:46:40.000000Z\n" +
                         "33.460000000000\tRXGZ\t1971-01-01T00:00:00.000000Z\n");
+
+        Assert.assertEquals(6, TestMatchFunctionFactory.getOpenCount());
+        Assert.assertEquals(8, TestMatchFunctionFactory.getTopCount());
+        Assert.assertEquals(1, TestMatchFunctionFactory.getCloseCount());
     }
 
     @Test

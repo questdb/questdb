@@ -60,7 +60,7 @@ public class VirtualRecordCursorFactory extends AbstractRecordCursorFactory {
     public RecordCursor getCursor() {
         RecordCursor cursor = base.getCursor();
         for (int i = 0, n = functions.size(); i < n; i++) {
-            functions.getQuick(i).open(cursor);
+            functions.getQuick(i).withCursor(cursor);
         }
         this.cursor.of(cursor);
         return this.cursor;

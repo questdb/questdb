@@ -23,18 +23,18 @@
 
 package com.questdb.griffin.engine.table;
 
-import com.questdb.cairo.sql.DataFrame;
-import com.questdb.cairo.sql.DataFrameCursor;
-import com.questdb.cairo.sql.Record;
-import com.questdb.cairo.sql.RowCursorFactory;
+import com.questdb.cairo.sql.*;
 import com.questdb.common.RowCursor;
+import org.jetbrains.annotations.Nullable;
 
 class DataFrameRecordCursor extends AbstractDataFrameRecordCursor {
     private final RowCursorFactory rowCursorFactory;
     private RowCursor rowCursor;
+    private final Function filter;
 
-    public DataFrameRecordCursor(RowCursorFactory rowCursorFactory) {
+    public DataFrameRecordCursor(RowCursorFactory rowCursorFactory, @Nullable Function filter) {
         this.rowCursorFactory = rowCursorFactory;
+        this.filter = filter;
     }
 
     @Override
@@ -60,13 +60,19 @@ class DataFrameRecordCursor extends AbstractDataFrameRecordCursor {
         this.dataFrameCursor = dataFrameCursor;
         this.record.of(dataFrameCursor.getTableReader());
         this.rowCursorFactory.prepareCursor(dataFrameCursor.getTableReader());
-        toTop();
+        rowCursor = null;
+        if (filter != null) {
+            filter.withCursor(this);
+        }
     }
 
     @Override
     public void toTop() {
         dataFrameCursor.toTop();
         rowCursor = null;
+        if (filter != null) {
+            filter.toTop();
+        }
     }
 
     private boolean nextFrame() {

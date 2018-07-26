@@ -29,6 +29,7 @@ import com.questdb.cairo.sql.DataFrameCursor;
 import com.questdb.cairo.sql.Function;
 import com.questdb.cairo.sql.Record;
 import com.questdb.common.RowCursor;
+import org.jetbrains.annotations.NotNull;
 
 class LatestByValueIndexedFilteredRecordCursor extends AbstractDataFrameRecordCursor {
 
@@ -41,23 +42,10 @@ class LatestByValueIndexedFilteredRecordCursor extends AbstractDataFrameRecordCu
     public LatestByValueIndexedFilteredRecordCursor(
             int columnIndex,
             int symbolKey,
-            Function filter) {
+            @NotNull Function filter) {
         this.columnIndex = columnIndex;
         this.symbolKey = symbolKey;
         this.filter = filter;
-    }
-
-    @Override
-    public void close() {
-        filter.close();
-        super.close();
-    }
-
-    void of(DataFrameCursor dataFrameCursor) {
-        this.dataFrameCursor = dataFrameCursor;
-        this.record.of(dataFrameCursor.getTableReader());
-        findRecord();
-        toTop();
     }
 
     @Override
@@ -73,8 +61,8 @@ class LatestByValueIndexedFilteredRecordCursor extends AbstractDataFrameRecordCu
 
     @Override
     public void toTop() {
-        filter.toTop();
         hasNext = found;
+        filter.toTop();
     }
 
     private void findRecord() {
@@ -97,5 +85,13 @@ class LatestByValueIndexedFilteredRecordCursor extends AbstractDataFrameRecordCu
                 }
             }
         }
+    }
+
+    void of(DataFrameCursor dataFrameCursor) {
+        this.dataFrameCursor = dataFrameCursor;
+        this.record.of(dataFrameCursor.getTableReader());
+        findRecord();
+        hasNext = found;
+        filter.withCursor(this);
     }
 }

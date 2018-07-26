@@ -38,8 +38,8 @@ public interface UnaryFunction extends Function {
     }
 
     @Override
-    default void open(RecordCursor recordCursor) {
-        getArg().open(recordCursor);
+    default void withCursor(RecordCursor recordCursor) {
+        getArg().withCursor(recordCursor);
     }
 
     @Override

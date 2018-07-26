@@ -25,6 +25,7 @@ package com.questdb.griffin.engine.table;
 
 import com.questdb.cairo.CairoConfiguration;
 import com.questdb.cairo.SymbolMapReader;
+import com.questdb.cairo.sql.DataFrameCursor;
 import com.questdb.cairo.sql.DataFrameCursorFactory;
 import com.questdb.cairo.sql.Function;
 import com.questdb.cairo.sql.RecordMetadata;
@@ -34,6 +35,8 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 public class LatestByValuesFilteredRecordCursorFactory extends AbstractDeferredTreeSetRecordCursorFactory {
+
+    private final Function filter;
 
     public LatestByValuesFilteredRecordCursorFactory(
             @NotNull CairoConfiguration configuration,
@@ -50,5 +53,24 @@ public class LatestByValuesFilteredRecordCursorFactory extends AbstractDeferredT
         } else {
             this.cursor = new LatestByValuesRecordCursor(columnIndex, treeSet, symbolKeys);
         }
+        this.filter = filter;
+    }
+
+    @Override
+    public void close() {
+        super.close();
+        if (filter != null) {
+            filter.close();
+        }
+    }
+
+    @Override
+    protected AbstractDataFrameRecordCursor getCursorInstance(DataFrameCursor dataFrameCursor) {
+        if (filter != null) {
+            AbstractDataFrameRecordCursor cursor = super.getCursorInstance(dataFrameCursor);
+            filter.withCursor(cursor);
+            return cursor;
+        }
+        return super.getCursorInstance(dataFrameCursor);
     }
 }

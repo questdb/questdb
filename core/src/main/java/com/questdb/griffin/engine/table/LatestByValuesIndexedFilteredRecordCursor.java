@@ -50,16 +50,15 @@ class LatestByValuesIndexedFilteredRecordCursor extends AbstractTreeSetRecordCur
     }
 
     @Override
-    public void close() {
-        filter.close();
-        super.close();
+    public void toTop() {
+        super.toTop();
+        filter.toTop();
     }
 
     @Override
     protected void buildTreeMap() {
         final int keyCount = symbolKeys.size();
         found.clear();
-        filter.open(this);
         while (this.dataFrameCursor.hasNext() && found.size() < keyCount) {
             final DataFrame frame = this.dataFrameCursor.next();
             final int partitionIndex = frame.getPartitionIndex();

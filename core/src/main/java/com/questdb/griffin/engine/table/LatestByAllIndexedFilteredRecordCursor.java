@@ -56,7 +56,7 @@ class LatestByAllIndexedFilteredRecordCursor extends AbstractTreeSetRecordCursor
     @Override
     protected void buildTreeMap() {
         found.clear();
-        filter.open(this);
+        filter.withCursor(this);
 
         final int keyCount = dataFrameCursor.getTableReader().getSymbolMapReader(columnIndex).size() + 1;
         int keyLo = 0;

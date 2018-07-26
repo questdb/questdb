@@ -42,6 +42,7 @@ public class LatestBySubQueryRecordCursorFactory extends AbstractTreeSetRecordCu
     private final IntHashSet symbolKeys = new IntHashSet();
     private final RecordCursorFactory recordCursorFactory;
     private final TypeCaster typeCaster;
+    private final Function filter;
 
     public LatestBySubQueryRecordCursorFactory(
             @NotNull CairoConfiguration configuration,
@@ -73,12 +74,16 @@ public class LatestBySubQueryRecordCursorFactory extends AbstractTreeSetRecordCu
         } else {
             typeCaster = SymbolTypeCaster.INSTANCE;
         }
+        this.filter = filter;
     }
 
     @Override
     public void close() {
         super.close();
         recordCursorFactory.close();
+        if (filter != null) {
+            filter.close();
+        }
     }
 
     @Override
@@ -93,6 +98,12 @@ public class LatestBySubQueryRecordCursorFactory extends AbstractTreeSetRecordCu
                     symbolKeys.add(symbolKey + 1);
                 }
             }
+        }
+
+        if (filter != null) {
+            AbstractDataFrameRecordCursor cursor = super.getCursorInstance(dataFrameCursor);
+            filter.withCursor(cursor);
+            return cursor;
         }
         return super.getCursorInstance(dataFrameCursor);
     }

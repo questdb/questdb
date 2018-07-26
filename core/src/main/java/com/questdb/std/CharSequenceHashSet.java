@@ -41,6 +41,7 @@ public class CharSequenceHashSet implements Mutable {
         this(MIN_INITIAL_CAPACITY);
     }
 
+    @SuppressWarnings("CopyConstructorMissesField")
     public CharSequenceHashSet(CharSequenceHashSet that) {
         this(that.capacity, that.loadFactor, 0.3);
         addAll(that);
@@ -85,11 +86,7 @@ public class CharSequenceHashSet implements Mutable {
             return false;
         }
 
-        Unsafe.arrayPut(keys, index, key);
-        list.add(key);
-        if (--free < 1) {
-            resize();
-        }
+        addAt(index, key);
         return true;
     }
 
@@ -97,6 +94,24 @@ public class CharSequenceHashSet implements Mutable {
         for (int i = 0, k = that.size(); i < k; i++) {
             add(that.get(i));
         }
+    }
+
+    public void addAt(int index, CharSequence key) {
+        Unsafe.arrayPut(keys, index, key);
+        list.add(key);
+        if (--free < 1) {
+            resize();
+        }
+    }
+
+    public boolean addNull() {
+        if (hasNull) {
+            return false;
+        }
+        --free;
+        hasNull = true;
+        list.add(null);
+        return true;
     }
 
     public final void clear() {
@@ -120,6 +135,10 @@ public class CharSequenceHashSet implements Mutable {
 
     public CharSequence getLast() {
         return list.getLast();
+    }
+
+    public CharSequence keyAt(int index) {
+        return Unsafe.arrayGet(keys, -index - 1);
     }
 
     public int keyIndex(CharSequence key) {
@@ -184,16 +203,6 @@ public class CharSequenceHashSet implements Mutable {
     @Override
     public String toString() {
         return list.toString();
-    }
-
-    private boolean addNull() {
-        if (hasNull) {
-            return false;
-        }
-        --free;
-        hasNull = true;
-        list.add(null);
-        return true;
     }
 
     private boolean eq(int index, CharSequence key) {

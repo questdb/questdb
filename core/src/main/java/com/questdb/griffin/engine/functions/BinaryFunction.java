@@ -40,9 +40,9 @@ public interface BinaryFunction extends Function {
     }
 
     @Override
-    default void open(RecordCursor recordCursor) {
-        getLeft().open(recordCursor);
-        getRight().open(recordCursor);
+    default void withCursor(RecordCursor recordCursor) {
+        getLeft().withCursor(recordCursor);
+        getRight().withCursor(recordCursor);
     }
 
     @Override

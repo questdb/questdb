@@ -33,7 +33,7 @@ public interface StatelessFunction extends Function {
     }
 
     @Override
-    default void open(RecordCursor recordCursor) {
+    default void withCursor(RecordCursor recordCursor) {
     }
 
     @Override

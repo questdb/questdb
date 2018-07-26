@@ -48,6 +48,14 @@ abstract class AbstractDeferredValueRecordCursorFactory extends AbstractDataFram
         this.filter = filter;
     }
 
+    @Override
+    public void close() {
+        super.close();
+        if (filter != null) {
+            filter.close();
+        }
+    }
+
     protected abstract AbstractDataFrameRecordCursor createDataFrameCursorFor(int symbolKey);
 
     @Override

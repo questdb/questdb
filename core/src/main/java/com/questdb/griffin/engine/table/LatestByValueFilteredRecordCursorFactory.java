@@ -29,6 +29,7 @@ import org.jetbrains.annotations.Nullable;
 public class LatestByValueFilteredRecordCursorFactory extends AbstractDataFrameRecordCursorFactory {
 
     private final AbstractDataFrameRecordCursor cursor;
+    private final Function filter;
 
     public LatestByValueFilteredRecordCursorFactory(
             RecordMetadata metadata,
@@ -41,6 +42,15 @@ public class LatestByValueFilteredRecordCursorFactory extends AbstractDataFrameR
             this.cursor = new LatestByValueRecordCursor(columnIndex, symbolKey);
         } else {
             this.cursor = new LatestByValueFilteredRecordCursor(columnIndex, symbolKey, filter);
+        }
+        this.filter = filter;
+    }
+
+    @Override
+    public void close() {
+        super.close();
+        if (filter != null) {
+            filter.close();
         }
     }
 

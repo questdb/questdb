@@ -49,6 +49,12 @@ class LatestByValueFilteredRecordCursor extends AbstractDataFrameRecordCursor {
     }
 
     @Override
+    public void toTop() {
+        hasNext = !empty;
+        filter.toTop();
+    }
+
+    @Override
     public boolean hasNext() {
         return hasNext;
     }
@@ -59,9 +65,12 @@ class LatestByValueFilteredRecordCursor extends AbstractDataFrameRecordCursor {
         return record;
     }
 
-    @Override
-    public void toTop() {
+    void of(DataFrameCursor dataFrameCursor) {
+        this.dataFrameCursor = dataFrameCursor;
+        this.record.of(dataFrameCursor.getTableReader());
+        findRecord();
         hasNext = !empty;
+        filter.withCursor(this);
     }
 
     private void findRecord() {
@@ -84,12 +93,5 @@ class LatestByValueFilteredRecordCursor extends AbstractDataFrameRecordCursor {
                 }
             }
         }
-    }
-
-    void of(DataFrameCursor dataFrameCursor) {
-        this.dataFrameCursor = dataFrameCursor;
-        this.record.of(dataFrameCursor.getTableReader());
-        findRecord();
-        toTop();
     }
 }

@@ -76,7 +76,7 @@ public interface Function extends Closeable {
         return false;
     }
 
-    default void open(RecordCursor recordCursor) {
+    default void withCursor(RecordCursor recordCursor) {
     }
 
     default void toTop() {

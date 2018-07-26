@@ -140,7 +140,7 @@ public class SqlCodeGenerator {
                         } else {
                             rcf = new LatestByValueIndexedRowCursorFactory(latestByIndex, symbol, false);
                         }
-                        return new DataFrameRecordCursorFactory(copyMetadata(metadata), dataFrameCursorFactory, rcf);
+                        return new DataFrameRecordCursorFactory(copyMetadata(metadata), dataFrameCursorFactory, rcf, null);
                     }
 
                     if (symbol == SymbolTable.VALUE_NOT_FOUND) {
@@ -495,7 +495,7 @@ public class SqlCodeGenerator {
                                 rcf = new SymbolIndexFilteredRowCursorFactory(keyColumnIndex, symbolKey, filter, true);
                             }
                         }
-                        return new DataFrameRecordCursorFactory(copyMetadata(metadata), dfcFactory, rcf);
+                        return new DataFrameRecordCursorFactory(copyMetadata(metadata), dfcFactory, rcf, filter);
                     }
 
                     return new FilterOnValuesRecordCursorFactory(
@@ -508,11 +508,11 @@ public class SqlCodeGenerator {
                     );
                 }
 
-                RecordCursorFactory factory = new DataFrameRecordCursorFactory(copyMetadata(metadata), dfcFactory, new DataFrameRowCursorFactory());
                 if (filter != null) {
-                    return new FilteredRecordCursorFactory(factory, filter);
+                    // filter lifecycle is managed by top level
+                    return new FilteredRecordCursorFactory(new DataFrameRecordCursorFactory(copyMetadata(metadata), dfcFactory, new DataFrameRowCursorFactory(), null), filter);
                 }
-                return factory;
+                return new DataFrameRecordCursorFactory(copyMetadata(metadata), dfcFactory, new DataFrameRowCursorFactory(), filter);
             }
 
             // no where clause
