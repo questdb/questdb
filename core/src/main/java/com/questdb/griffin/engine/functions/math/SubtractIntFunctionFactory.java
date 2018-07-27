@@ -29,6 +29,7 @@ import com.questdb.cairo.sql.Record;
 import com.questdb.griffin.FunctionFactory;
 import com.questdb.griffin.engine.functions.BinaryFunction;
 import com.questdb.griffin.engine.functions.IntFunction;
+import com.questdb.std.Numbers;
 import com.questdb.std.ObjList;
 
 public class SubtractIntFunctionFactory implements FunctionFactory {
@@ -54,7 +55,14 @@ public class SubtractIntFunctionFactory implements FunctionFactory {
 
         @Override
         public int getInt(Record rec) {
-            return left.getInt(rec) - right.getInt(rec);
+            int l = left.getInt(rec);
+            int r = right.getInt(rec);
+
+            if (l == Numbers.INT_NaN || r == Numbers.INT_NaN) {
+                return Numbers.INT_NaN;
+            }
+
+            return l - r;
         }
 
         @Override

@@ -43,6 +43,16 @@ public class EmptyTableRecordCursorTest {
     }
 
     @Test(expected = UnsupportedOperationException.class)
+    public void testSymbolTable() {
+        CURSOR.getSymbolTable(0);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testSymbolTable2() {
+        CURSOR.getSymbolTable(2);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
     public void testRecordAt2() {
         // This cursor does not return row ids. Looking up records from cursor by rowid is most
         // likely a bug. Make sure we report it.

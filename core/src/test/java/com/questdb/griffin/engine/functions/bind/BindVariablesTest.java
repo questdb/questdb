@@ -173,6 +173,8 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
 
         sqlExecutionContext.getBindVariableService().setFloat("xyz", 0.78f);
         Assert.assertEquals(25.88f, func.getFloat(builder.getRecord()), 0.001f);
+
+        func.close();
     }
 
     @Test

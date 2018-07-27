@@ -389,41 +389,49 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
                 assertString(function1, expected);
                 assertString(function2, expected);
             }
+            closeFunctions();
         }
 
         public void andAssert(int expected) {
             Assert.assertEquals(expected, function1.getInt(record));
             Assert.assertEquals(expected, function2.getInt(record));
+            closeFunctions();
         }
 
         public void andAssert(byte expected) {
             Assert.assertEquals(expected, function1.getByte(record));
             Assert.assertEquals(expected, function2.getByte(record));
+            closeFunctions();
         }
 
         public void andAssert(short expected) {
             Assert.assertEquals(expected, function1.getShort(record));
             Assert.assertEquals(expected, function2.getShort(record));
+            closeFunctions();
         }
 
         public void andAssert(long expected) {
             Assert.assertEquals(expected, function1.getLong(record));
             Assert.assertEquals(expected, function2.getLong(record));
+            closeFunctions();
         }
 
         public void andAssert(double expected, double delta) {
             Assert.assertEquals(expected, function1.getDouble(record), delta);
             Assert.assertEquals(expected, function2.getDouble(record), delta);
+            closeFunctions();
         }
 
         public void andAssertDate(long expected) {
             Assert.assertEquals(expected, function1.getDate(record));
             Assert.assertEquals(expected, function2.getDate(record));
+            closeFunctions();
         }
 
         public void andAssertTimestamp(long expected) {
             Assert.assertEquals(expected, function1.getTimestamp(record));
             Assert.assertEquals(expected, function2.getTimestamp(record));
+            closeFunctions();
         }
 
         public Function getFunction1() {
@@ -464,6 +472,11 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
                 TestUtils.assertEquals(expected, sink);
                 Assert.assertEquals(expected.length(), func.getStrLen(record));
             }
+        }
+
+        private void closeFunctions() {
+            function1.close();
+            function2.close();
         }
     }
 
