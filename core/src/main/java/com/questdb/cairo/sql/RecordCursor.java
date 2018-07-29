@@ -34,7 +34,9 @@ public interface RecordCursor extends ImmutableIterator<Record>, Closeable {
 
     Record getRecord();
 
-    SymbolTable getSymbolTable(int columnIndex);
+    default SymbolTable getSymbolTable(int columnIndex) {
+        throw new UnsupportedOperationException();
+    }
 
     Record newRecord();
 

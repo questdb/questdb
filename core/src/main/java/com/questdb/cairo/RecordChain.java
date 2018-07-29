@@ -27,7 +27,6 @@ import com.questdb.cairo.sql.Record;
 import com.questdb.cairo.sql.RecordCursor;
 import com.questdb.cairo.sql.RecordMetadata;
 import com.questdb.common.ColumnType;
-import com.questdb.common.SymbolTable;
 import com.questdb.std.BinarySequence;
 import com.questdb.std.Mutable;
 import com.questdb.std.Unsafe;
@@ -76,10 +75,6 @@ public class RecordChain implements Closeable, RecordCursor, Mutable {
         this.columnCount = count;
     }
 
-    private static long rowToDataOffset(long row) {
-        return row + 8;
-    }
-
     public long beginRecord(long prevOffset) {
         // no next record
         mem.putLong(varAppendOffset, -1);
@@ -90,11 +85,6 @@ public class RecordChain implements Closeable, RecordCursor, Mutable {
         mem.jumpTo(rowToDataOffset(recordOffset + varOffset));
         varAppendOffset = rowToDataOffset(recordOffset + varOffset + fixOffset);
         return recordOffset;
-    }
-
-    @Override
-    public SymbolTable getSymbolTable(int columnIndex) {
-        throw new UnsupportedOperationException();
     }
 
     @Override
@@ -192,6 +182,10 @@ public class RecordChain implements Closeable, RecordCursor, Mutable {
             mem.putStr(varAppendOffset, value);
             varAppendOffset += value.length() * 2 + 4;
         }
+    }
+
+    private static long rowToDataOffset(long row) {
+        return row + 8;
     }
 
     private void putByte(byte value) {

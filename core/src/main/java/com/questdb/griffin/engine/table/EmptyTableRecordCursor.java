@@ -26,12 +26,15 @@ package com.questdb.griffin.engine.table;
 import com.questdb.cairo.TableReaderRecord;
 import com.questdb.cairo.sql.Record;
 import com.questdb.cairo.sql.RecordCursor;
-import com.questdb.common.SymbolTable;
 
 final public class EmptyTableRecordCursor implements RecordCursor {
     public static final EmptyTableRecordCursor INSTANCE = new EmptyTableRecordCursor();
 
     private final Record record = new TableReaderRecord();
+
+    @Override
+    public void close() {
+    }
 
     @Override
     public Record getRecord() {
@@ -55,15 +58,6 @@ final public class EmptyTableRecordCursor implements RecordCursor {
 
     @Override
     public void toTop() {
-    }
-
-    @Override
-    public void close() {
-    }
-
-    @Override
-    public SymbolTable getSymbolTable(int columnIndex) {
-        throw new UnsupportedOperationException();
     }
 
     @Override

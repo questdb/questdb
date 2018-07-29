@@ -31,7 +31,6 @@ import com.questdb.cairo.sql.Record;
 import com.questdb.cairo.sql.RecordCursor;
 import com.questdb.cairo.sql.RecordMetadata;
 import com.questdb.common.ColumnType;
-import com.questdb.common.SymbolTable;
 import com.questdb.griffin.FunctionFactory;
 import com.questdb.griffin.engine.functions.CursorFunction;
 import com.questdb.griffin.engine.functions.GenericRecordCursorFactory;
@@ -67,8 +66,7 @@ public class LongSequenceFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public SymbolTable getSymbolTable(int columnIndex) {
-            throw new UnsupportedOperationException();
+        public void close() {
         }
 
         @Override
@@ -95,10 +93,6 @@ public class LongSequenceFunctionFactory implements FunctionFactory {
         @Override
         public void toTop() {
             record.of(0);
-        }
-
-        @Override
-        public void close() {
         }
 
         @Override

@@ -23,9 +23,7 @@
 
 package com.questdb.griffin;
 
-import com.questdb.cairo.AbstractCairoTest;
-import com.questdb.cairo.Engine;
-import com.questdb.cairo.TableUtils;
+import com.questdb.cairo.*;
 import com.questdb.cairo.sql.Record;
 import com.questdb.cairo.sql.RecordCursor;
 import com.questdb.cairo.sql.RecordCursorFactory;
@@ -35,10 +33,8 @@ import com.questdb.common.SymbolTable;
 import com.questdb.griffin.engine.functions.bind.BindVariableService;
 import com.questdb.griffin.engine.functions.rnd.SharedRandom;
 import com.questdb.griffin.engine.functions.str.TestMatchFunctionFactory;
-import com.questdb.std.BinarySequence;
-import com.questdb.std.IntList;
-import com.questdb.std.LongList;
-import com.questdb.std.Rnd;
+import com.questdb.std.*;
+import com.questdb.std.str.LPSZ;
 import com.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -1031,6 +1027,59 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         ") timestamp (t)",
                 expected +
                         "56.594291398612\tCCKS\t2019-01-01T00:00:00.000000Z\n");
+    }
+
+    @Test
+    public void testLatestByIOFailure() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            FilesFacade ff = new FilesFacadeImpl() {
+
+                @Override
+                public long openRO(LPSZ name) {
+                    if (Chars.endsWith(name, "b.d")) {
+                        return -1;
+                    }
+                    return super.openRO(name);
+                }
+            };
+            CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+                @Override
+                public FilesFacade getFilesFacade() {
+                    return ff;
+                }
+            };
+
+            try (Engine engine = new Engine(configuration);
+                 SqlCompiler compiler = new SqlCompiler(engine, configuration)) {
+                try {
+                    compiler.execute(("create table x as " +
+                            "(" +
+                            "select * from" +
+                            " random_cursor" +
+                            "(200," +
+                            " 'a', rnd_double(0)*100," +
+                            " 'b', rnd_symbol(5,4,4,1)," +
+                            " 'k', timestamp_sequence(to_timestamp(0), 100000000000)" +
+                            ")" +
+                            ") timestamp(k) partition by DAY"), bindVariableService);
+
+                    try (final RecordCursorFactory factory = compiler.compile("select * from x latest by b where b = 'PEHN' and a < 22", bindVariableService)) {
+                        try {
+                            assertCursor(("a\tb\tk\n" +
+                                    "5.942010834028\tPEHN\t1970-08-03T02:53:20.000000Z\n"), factory);
+                            Assert.fail();
+                        } catch (CairoException e) {
+                            TestUtils.assertContains(e.getMessage(), "Cannot open file");
+                        }
+                    }
+                    Assert.assertEquals(0, engine.getBusyReaderCount());
+                    Assert.assertEquals(0, engine.getBusyWriterCount());
+                } finally {
+                    engine.releaseAllWriters();
+                    engine.releaseAllReaders();
+                }
+            }
+        });
     }
 
     @Test
