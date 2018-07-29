@@ -33,7 +33,7 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
     public static final CharSequenceHashSet WHITESPACE = new CharSequenceHashSet();
     private final IntObjHashMap<ObjList<CharSequence>> symbols = new IntObjHashMap<>();
     private final CharSequence flyweightSequence = new InternalFloatingSequence();
-    private final ObjectPool<FloatingSequence> csPool = new ObjectPool<>(FloatingSequence::new, 64);
+    private final ObjectPool<FloatingSequence> csPool;
     private CharSequence next = null;
     private int _lo;
     private int _hi;
@@ -43,7 +43,8 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
     private CharSequence unparsed;
     private CharSequence last;
 
-    public GenericLexer() {
+    public GenericLexer(int poolCapacity) {
+        this.csPool = new ObjectPool<>(FloatingSequence::new, poolCapacity);
         for (int i = 0, n = WHITESPACE.size(); i < n; i++) {
             defineSymbol(WHITESPACE.get(i).toString());
         }

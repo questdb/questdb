@@ -154,4 +154,29 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     public int getSqlTreeDefaultPageSize() {
         return Numbers.SIZE_1MB;
     }
+
+    @Override
+    public int getSqlColumnPoolCapacity() {
+        return 4096;
+    }
+
+    @Override
+    public int getSqlExpressionPoolCapacity() {
+        return 8192;
+    }
+
+    @Override
+    public int getSqlJoinContextPoolCapacity() {
+        return 64;
+    }
+
+    @Override
+    public int getSqlLexerPoolCapacity() {
+        return 2048;
+    }
+
+    @Override
+    public int getSqlModelPoolCapacity() {
+        return 1024;
+    }
 }

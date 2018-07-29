@@ -23,6 +23,7 @@
 
 package com.questdb.griffin;
 
+import com.questdb.cairo.CairoConfiguration;
 import com.questdb.cairo.CairoException;
 import com.questdb.cairo.TableReader;
 import com.questdb.cairo.TableUtils;
@@ -81,7 +82,7 @@ class SqlOptimiser {
     private final ObjList<CharSequence> literalCollectorBNames = new ObjList<>();
     private final PostOrderTreeTraversalAlgo traversalAlgo;
     private final ArrayDeque<ExpressionNode> sqlNodeStack = new ArrayDeque<>();
-    private final ObjectPool<JoinContext> contextPool = new ObjectPool<>(JoinContext.FACTORY, 16);
+    private final ObjectPool<JoinContext> contextPool;
     private final IntHashSet deletedContexts = new IntHashSet();
     private final CharSequenceObjHashMap<CharSequence> constNameToToken = new CharSequenceObjHashMap<>();
     private final CharSequenceIntHashMap constNameToIndex = new CharSequenceIntHashMap();
@@ -98,6 +99,7 @@ class SqlOptimiser {
     private ObjList<JoinContext> emittedJoinClauses;
 
     SqlOptimiser(
+            CairoConfiguration configuration,
             CairoEngine engine,
             CharacterStore characterStore,
             ObjectPool<ExpressionNode> sqlNodePool,
@@ -112,6 +114,7 @@ class SqlOptimiser {
         this.queryModelPool = queryModelPool;
         this.queryColumnPool = queryColumnPool;
         this.functionParser = functionParser;
+        this.contextPool = new ObjectPool<>(JoinContext.FACTORY, configuration.getSqlJoinContextPoolCapacity());
     }
 
     private static void assertNotNull(ExpressionNode node, int position, String message) throws SqlException {

@@ -62,7 +62,6 @@ public class SqlCompiler implements Closeable {
     private final ListColumnFilter listColumnFilter = new ListColumnFilter();
     private final EntityColumnFilter entityColumnFilter = new EntityColumnFilter();
     private final IntIntHashMap typeCast = new IntIntHashMap();
-    private final ObjList<Closeable> closeables = new ObjList<>();
     private final ExecutableMethod insertAsSelectMethod = this::insertAsSelect;
     private final ExecutableMethod createTableMethod = this::createTable;
     private final SqlExecutionContextImpl executionContext = new SqlExecutionContextImpl();
@@ -72,14 +71,13 @@ public class SqlCompiler implements Closeable {
     }
 
     public SqlCompiler(CairoEngine engine, CairoConfiguration configuration, @Nullable CairoWorkScheduler workScheduler) {
-        //todo: apply configuration to all storage parameters
         this.engine = engine;
         this.workScheduler = workScheduler;
-        this.sqlNodePool = new ObjectPool<>(ExpressionNode.FACTORY, 128);
-        this.queryColumnPool = new ObjectPool<>(QueryColumn.FACTORY, 64);
-        this.queryModelPool = new ObjectPool<>(QueryModel.FACTORY, 16);
+        this.sqlNodePool = new ObjectPool<>(ExpressionNode.FACTORY, configuration.getSqlExpressionPoolCapacity());
+        this.queryColumnPool = new ObjectPool<>(QueryColumn.FACTORY, configuration.getSqlColumnPoolCapacity());
+        this.queryModelPool = new ObjectPool<>(QueryModel.FACTORY, configuration.getSqlModelPoolCapacity());
         this.characterStore = new CharacterStore();
-        this.lexer = new GenericLexer();
+        this.lexer = new GenericLexer(configuration.getSqlLexerPoolCapacity());
         final FunctionParser functionParser = new FunctionParser(configuration, ServiceLoader.load(FunctionFactory.class));
         this.codeGenerator = new SqlCodeGenerator(engine, configuration, functionParser);
         this.configuration = configuration;
@@ -88,9 +86,14 @@ public class SqlCompiler implements Closeable {
 
         final PostOrderTreeTraversalAlgo postOrderTreeTraversalAlgo = new PostOrderTreeTraversalAlgo();
         optimiser = new SqlOptimiser(
+                configuration,
                 engine,
-                characterStore, sqlNodePool,
-                queryColumnPool, queryModelPool, postOrderTreeTraversalAlgo, functionParser
+                characterStore,
+                sqlNodePool,
+                queryColumnPool,
+                queryModelPool,
+                postOrderTreeTraversalAlgo,
+                functionParser
         );
 
         parser = new SqlParser(

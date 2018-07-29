@@ -23,6 +23,8 @@
 
 package com.questdb.std;
 
+import com.questdb.log.Log;
+import com.questdb.log.LogFactory;
 import org.jetbrains.annotations.NotNull;
 
 /**
@@ -30,6 +32,7 @@ import org.jetbrains.annotations.NotNull;
  */
 public class ObjectPool<T extends Mutable> implements Mutable {
 
+    private final static Log LOG = LogFactory.getLog(ObjectPool.class);
     private final ObjList<T> list;
     private final ObjectFactory<T> factory;
     private int pos = 0;
@@ -60,6 +63,7 @@ public class ObjectPool<T extends Mutable> implements Mutable {
     private void expand() {
         fill();
         size <<= 1;
+        LOG.info().$("pool resize [class=").$(factory.getClass().getName()).$(", size=").$(size).$();
     }
 
     private void fill() {

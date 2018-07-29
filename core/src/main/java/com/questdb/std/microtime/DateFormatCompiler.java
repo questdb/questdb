@@ -114,7 +114,7 @@ public class DateFormatCompiler {
     private static final int LOCAL_ERA = 19;
     private static final int LOCAL_MICROS = 20;
     private static final int FORMAT_METHOD_STACK_START = 6;
-    private final GenericLexer lexer = new GenericLexer();
+    private final GenericLexer lexer = new GenericLexer(2048);
     private final BytecodeAssembler asm = new BytecodeAssembler();
     private final IntList ops = new IntList();
     private final ObjList<String> delimiters = new ObjList<>();

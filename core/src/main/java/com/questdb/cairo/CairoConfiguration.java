@@ -74,4 +74,14 @@ public interface CairoConfiguration {
     int getSqlMapDefaultPageSize();
 
     int getSqlTreeDefaultPageSize();
+
+    int getSqlColumnPoolCapacity();
+
+    int getSqlExpressionPoolCapacity();
+
+    int getSqlJoinContextPoolCapacity();
+
+    int getSqlLexerPoolCapacity();
+
+    int getSqlModelPoolCapacity();
 }

@@ -35,7 +35,7 @@ public class GenericLexerTest {
 
     @Test
     public void testBlockComments() {
-        GenericLexer lex = new GenericLexer();
+        GenericLexer lex = new GenericLexer(64);
         lex.defineSymbol("+");
         lex.defineSymbol("++");
         lex.defineSymbol("*");
@@ -55,7 +55,7 @@ public class GenericLexerTest {
 
     @Test
     public void testEdgeSymbol() {
-        GenericLexer ts = new GenericLexer();
+        GenericLexer ts = new GenericLexer(64);
         ts.defineSymbol(" ");
         ts.defineSymbol("+");
         ts.defineSymbol("(");
@@ -73,7 +73,7 @@ public class GenericLexerTest {
 
     @Test
     public void testLineComment() {
-        GenericLexer lex = new GenericLexer();
+        GenericLexer lex = new GenericLexer(64);
         lex.defineSymbol("+");
         lex.defineSymbol("++");
         lex.defineSymbol("*");
@@ -94,7 +94,7 @@ public class GenericLexerTest {
 
     @Test
     public void testNullContent() {
-        GenericLexer ts = new GenericLexer();
+        GenericLexer ts = new GenericLexer(64);
         ts.defineSymbol(" ");
         ts.of(null);
         Assert.assertFalse(ts.iterator().hasNext());
@@ -102,7 +102,7 @@ public class GenericLexerTest {
 
     @Test
     public void testQuotedToken() {
-        GenericLexer ts = new GenericLexer();
+        GenericLexer ts = new GenericLexer(64);
         ts.defineSymbol("+");
         ts.defineSymbol("++");
         ts.defineSymbol("*");
@@ -119,7 +119,7 @@ public class GenericLexerTest {
 
     @Test
     public void testSingleQuotedToken() {
-        GenericLexer ts = new GenericLexer();
+        GenericLexer ts = new GenericLexer(64);
         ts.defineSymbol("+");
         ts.defineSymbol("++");
         ts.defineSymbol("*");
@@ -136,7 +136,7 @@ public class GenericLexerTest {
 
     @Test
     public void testSymbolLookup() {
-        GenericLexer ts = new GenericLexer();
+        GenericLexer ts = new GenericLexer(64);
         ts.defineSymbol("+");
         ts.defineSymbol("++");
         ts.defineSymbol("*");
@@ -153,7 +153,7 @@ public class GenericLexerTest {
 
     @Test
     public void testUnparse() {
-        GenericLexer ts = new GenericLexer();
+        GenericLexer ts = new GenericLexer(64);
         ts.defineSymbol("+");
         ts.defineSymbol("++");
         ts.defineSymbol("*");
