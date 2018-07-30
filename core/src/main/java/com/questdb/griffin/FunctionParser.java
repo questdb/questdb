@@ -48,6 +48,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
     private static final int MATCH_EXACT_MATCH = 3;
 
     private static final IntHashSet invalidFunctionNameChars = new IntHashSet();
+    private static final CharSequenceHashSet invalidFunctionNames = new CharSequenceHashSet();
     private final ObjList<Function> mutableArgs = new ObjList<>();
     private final ArrayDeque<Function> stack = new ArrayDeque<>();
     private final PostOrderTreeTraversalAlgo algo = new PostOrderTreeTraversalAlgo();
@@ -115,7 +116,6 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
     }
 
     public static int validateSignatureAndGetNameSeparator(String sig) throws SqlException {
-        //todo: can name have operator characters?
         if (sig == null) {
             throw SqlException.$(0, "NULL signature");
         }
@@ -143,6 +143,10 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
             if (invalidFunctionNameChars.contains(cc)) {
                 throw SqlException.position(0).put("invalid character: ").put(cc);
             }
+        }
+
+        if (invalidFunctionNames.keyIndex(sig, 0, openBraceIndex) < 0) {
+            throw SqlException.position(0).put("invalid function name character: ").put(sig);
         }
 
         // validate data types
@@ -653,8 +657,11 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
     }
 
     static {
+        for (int i = 0, n = SqlCompiler.sqlControlSymbols.size(); i < n; i++) {
+            invalidFunctionNames.add(SqlCompiler.sqlControlSymbols.getQuick(i));
+        }
+
         invalidFunctionNameChars.add('.');
-        invalidFunctionNameChars.add(',');
         invalidFunctionNameChars.add(' ');
         invalidFunctionNameChars.add('\"');
         invalidFunctionNameChars.add('\'');

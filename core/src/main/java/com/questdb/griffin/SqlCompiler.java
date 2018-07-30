@@ -43,6 +43,7 @@ import static com.questdb.cairo.TableUtils.TXN_FILE_NAME;
 
 
 public class SqlCompiler implements Closeable {
+    public static final ObjList<String> sqlControlSymbols = new ObjList<>(8);
     private final static Log LOG = LogFactory.getLog(SqlCompiler.class);
     private static final IntList castGroups = new IntList();
     private final SqlOptimiser optimiser;
@@ -76,7 +77,10 @@ public class SqlCompiler implements Closeable {
         this.sqlNodePool = new ObjectPool<>(ExpressionNode.FACTORY, configuration.getSqlExpressionPoolCapacity());
         this.queryColumnPool = new ObjectPool<>(QueryColumn.FACTORY, configuration.getSqlColumnPoolCapacity());
         this.queryModelPool = new ObjectPool<>(QueryModel.FACTORY, configuration.getSqlModelPoolCapacity());
-        this.characterStore = new CharacterStore();
+        this.characterStore = new CharacterStore(
+                configuration.getSqlCharacterStoreCapacity(),
+                configuration.getSqlCharacterStorePoolCapacity()
+        );
         this.lexer = new GenericLexer(configuration.getSqlLexerPoolCapacity());
         final FunctionParser functionParser = new FunctionParser(configuration, ServiceLoader.load(FunctionFactory.class));
         this.codeGenerator = new SqlCodeGenerator(engine, configuration, functionParser);
@@ -108,12 +112,9 @@ public class SqlCompiler implements Closeable {
     }
 
     public static void configureLexer(GenericLexer lexer) {
-        lexer.defineSymbol("(");
-        lexer.defineSymbol(")");
-        lexer.defineSymbol(",");
-        lexer.defineSymbol("/*");
-        lexer.defineSymbol("*/");
-        lexer.defineSymbol("--");
+        for (int i = 0, k = sqlControlSymbols.size(); i < k; i++) {
+            lexer.defineSymbol(sqlControlSymbols.getQuick(i));
+        }
         for (int i = 0, k = OperatorExpression.operators.size(); i < k; i++) {
             OperatorExpression op = OperatorExpression.operators.getQuick(i);
             if (op.symbol) {
@@ -1114,7 +1115,6 @@ public class SqlCompiler implements Closeable {
 
     static {
         castGroups.extendAndSet(ColumnType.BOOLEAN, 2);
-
         castGroups.extendAndSet(ColumnType.BYTE, 1);
         castGroups.extendAndSet(ColumnType.SHORT, 1);
         castGroups.extendAndSet(ColumnType.INT, 1);
@@ -1126,5 +1126,12 @@ public class SqlCompiler implements Closeable {
         castGroups.extendAndSet(ColumnType.STRING, 3);
         castGroups.extendAndSet(ColumnType.SYMBOL, 3);
         castGroups.extendAndSet(ColumnType.BINARY, 4);
+
+        sqlControlSymbols.add("(");
+        sqlControlSymbols.add(")");
+        sqlControlSymbols.add(",");
+        sqlControlSymbols.add("/*");
+        sqlControlSymbols.add("*/");
+        sqlControlSymbols.add("--");
     }
 }

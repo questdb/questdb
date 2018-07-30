@@ -179,4 +179,14 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     public int getSqlModelPoolCapacity() {
         return 1024;
     }
+
+    @Override
+    public int getSqlCharacterStoreCapacity() {
+        return 1024;
+    }
+
+    @Override
+    public int getSqlCharacterStorePoolCapacity() {
+        return 64;
+    }
 }

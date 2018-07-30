@@ -1103,6 +1103,16 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
     }
 
     @Test
+    public void testSignatureIllegalName1() throws SqlException {
+        assertSignatureFailure("/*()");
+    }
+
+    @Test
+    public void testSignatureIllegalName2() throws SqlException {
+        assertSignatureFailure("--()");
+    }
+
+    @Test
     public void testSignatureMissingCloseBrace() throws SqlException {
         assertSignatureFailure("a(");
     }

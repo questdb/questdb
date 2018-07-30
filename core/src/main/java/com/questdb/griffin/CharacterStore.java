@@ -23,7 +23,10 @@
 
 package com.questdb.griffin;
 
+import com.questdb.log.Log;
+import com.questdb.log.LogFactory;
 import com.questdb.std.Mutable;
+import com.questdb.std.Numbers;
 import com.questdb.std.ObjectPool;
 import com.questdb.std.Unsafe;
 import com.questdb.std.str.AbstractCharSequence;
@@ -31,11 +34,18 @@ import com.questdb.std.str.AbstractCharSink;
 import com.questdb.std.str.CharSink;
 
 public class CharacterStore extends AbstractCharSink implements CharacterStoreEntry, Mutable {
-    private final ObjectPool<NameAssemblerCharSequence> csPool = new ObjectPool<>(NameAssemblerCharSequence::new, 64);
-    private int capacity = 64;
-    private char[] chars = new char[capacity];
+    private static final Log LOG = LogFactory.getLog(CharacterStore.class);
+    private final ObjectPool<NameAssemblerCharSequence> csPool;
+    private int capacity;
+    private char[] chars;
     private int size = 0;
     private NameAssemblerCharSequence next = null;
+
+    public CharacterStore(int capacity, int poolCapacity) {
+        this.capacity = capacity;
+        this.chars = new char[Numbers.ceilPow2(capacity)];
+        csPool = new ObjectPool<>(NameAssemblerCharSequence::new, poolCapacity);
+    }
 
     @Override
     public int length() {
@@ -88,6 +98,7 @@ public class CharacterStore extends AbstractCharSink implements CharacterStoreEn
         chars = next;
         capacity *= 2;
         Unsafe.arrayPut(chars, size++, c);
+        LOG.info().$("resize [capacity=").$(capacity).$(']').$();
     }
 
     private class NameAssemblerCharSequence extends AbstractCharSequence implements Mutable {

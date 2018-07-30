@@ -84,4 +84,8 @@ public interface CairoConfiguration {
     int getSqlLexerPoolCapacity();
 
     int getSqlModelPoolCapacity();
+
+    int getSqlCharacterStoreCapacity();
+
+    int getSqlCharacterStorePoolCapacity();
 }
