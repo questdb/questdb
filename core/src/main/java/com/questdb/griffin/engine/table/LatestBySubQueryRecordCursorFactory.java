@@ -107,4 +107,9 @@ public class LatestBySubQueryRecordCursorFactory extends AbstractTreeSetRecordCu
         }
         return super.getCursorInstance(dataFrameCursor);
     }
+
+    @Override
+    public boolean isRandomAccessCursor() {
+        return true;
+    }
 }

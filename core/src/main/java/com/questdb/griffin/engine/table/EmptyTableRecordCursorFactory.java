@@ -36,4 +36,9 @@ public class EmptyTableRecordCursorFactory extends AbstractRecordCursorFactory {
     public RecordCursor getCursor() {
         return EmptyTableRecordCursor.INSTANCE;
     }
+
+    @Override
+    public boolean isRandomAccessCursor() {
+        return false;
+    }
 }

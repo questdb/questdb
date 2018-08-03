@@ -48,4 +48,9 @@ public class LatestByValueDeferredFilteredRecordCursorFactory extends AbstractDe
         }
         return new LatestByValueFilteredRecordCursor(columnIndex, symbolKey, filter);
     }
+
+    @Override
+    public boolean isRandomAccessCursor() {
+        return true;
+    }
 }

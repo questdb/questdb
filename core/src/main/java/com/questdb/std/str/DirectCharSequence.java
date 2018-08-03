@@ -23,9 +23,10 @@
 
 package com.questdb.std.str;
 
+import com.questdb.std.Mutable;
 import com.questdb.std.Unsafe;
 
-public class DirectCharSequence extends AbstractCharSequence implements DirectBytes {
+public class DirectCharSequence extends AbstractCharSequence implements DirectBytes, Mutable {
     private long lo;
     private long hi;
     private int len;
@@ -61,6 +62,10 @@ public class DirectCharSequence extends AbstractCharSequence implements DirectBy
         return h;
     }
 
+    @Override
+    public void clear() {
+        hi = lo = 0;
+    }
 
     @Override
     public int length() {

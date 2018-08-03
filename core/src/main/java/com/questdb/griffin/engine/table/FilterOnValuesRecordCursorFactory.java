@@ -121,4 +121,9 @@ public class FilterOnValuesRecordCursorFactory extends AbstractDataFrameRecordCu
         }
         return false;
     }
+
+    @Override
+    public boolean isRandomAccessCursor() {
+        return true;
+    }
 }

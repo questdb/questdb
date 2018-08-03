@@ -21,12 +21,30 @@
  *
  ******************************************************************************/
 
-package com.questdb.ex;
+package com.questdb.cairo;
 
-@SuppressWarnings("ThrowableInstanceNeverThrown")
-public final class TimeoutException extends RuntimeException {
-    public final static TimeoutException INSTANCE = new TimeoutException();
+import com.questdb.std.IntList;
 
-    private TimeoutException() {
+public class ArrayColumnTypes implements ColumnTypes {
+    private final IntList types = new IntList();
+
+    public ArrayColumnTypes reset() {
+        types.clear();
+        return this;
+    }
+
+    public ArrayColumnTypes add(int type) {
+        types.add(type);
+        return this;
+    }
+
+    @Override
+    public int getColumnType(int columnIndex) {
+        return types.getQuick(columnIndex);
+    }
+
+    @Override
+    public int getColumnCount() {
+        return types.size();
     }
 }

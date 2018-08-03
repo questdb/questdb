@@ -44,4 +44,9 @@ public class LatestByAllIndexedFilteredRecordCursorFactory extends AbstractTreeS
             this.cursor = new LatestByAllIndexedFilteredRecordCursor(columnIndex, treeSet, filter);
         }
     }
+
+    @Override
+    public boolean isRandomAccessCursor() {
+        return true;
+    }
 }

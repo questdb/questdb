@@ -50,4 +50,9 @@ public class SelectedRecordCursorFactory extends AbstractRecordCursorFactory {
         this.cursor.of(base.getCursor());
         return cursor;
     }
+
+    @Override
+    public boolean isRandomAccessCursor() {
+        return true;
+    }
 }

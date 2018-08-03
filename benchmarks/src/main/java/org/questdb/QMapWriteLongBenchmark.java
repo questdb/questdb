@@ -23,7 +23,11 @@
 
 package org.questdb;
 
-import com.questdb.cairo.map.*;
+import com.questdb.cairo.SingleColumnType;
+import com.questdb.cairo.map.CompactMap;
+import com.questdb.cairo.map.FastMap;
+import com.questdb.cairo.map.MapKey;
+import com.questdb.cairo.map.MapValue;
 import com.questdb.common.ColumnType;
 import com.questdb.std.Rnd;
 import org.openjdk.jmh.annotations.*;

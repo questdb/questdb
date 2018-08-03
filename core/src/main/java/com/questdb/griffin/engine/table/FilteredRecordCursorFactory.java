@@ -56,4 +56,9 @@ public class FilteredRecordCursorFactory implements RecordCursorFactory {
         this.cursor.of(cursor);
         return this.cursor;
     }
+
+    @Override
+    public boolean isRandomAccessCursor() {
+        return base.isRandomAccessCursor();
+    }
 }

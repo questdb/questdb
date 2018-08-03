@@ -40,4 +40,9 @@ public class GenericRecordCursorFactory extends AbstractRecordCursorFactory {
         cursor.toTop();
         return cursor;
     }
+
+    @Override
+    public boolean isRandomAccessCursor() {
+        return false;
+    }
 }

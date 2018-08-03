@@ -21,16 +21,16 @@
  *
  ******************************************************************************/
 
-package com.questdb.ql.sort;
+package com.questdb.griffin.engine;
 
+import com.questdb.cairo.CairoException;
+import com.questdb.cairo.ColumnTypes;
+import com.questdb.cairo.sql.Record;
 import com.questdb.common.ColumnType;
-import com.questdb.common.Record;
-import com.questdb.common.RecordMetadata;
-import com.questdb.parser.sql.QueryParser;
+import com.questdb.griffin.SqlParser;
 import com.questdb.std.*;
-import com.questdb.std.ex.JournalUnsupportedTypeException;
 
-public class ComparatorCompiler {
+public class RecordComparatorCompiler {
     private final BytecodeAssembler asm;
     private final CharSequenceIntHashMap typeMap = new CharSequenceIntHashMap();
     private final CharSequenceIntHashMap methodMap = new CharSequenceIntHashMap();
@@ -42,13 +42,13 @@ public class ComparatorCompiler {
     private final IntList comparatorAccessorIndices = new IntList();
     private final IntList branches = new IntList();
 
-    public ComparatorCompiler(BytecodeAssembler asm) {
+    public RecordComparatorCompiler(BytecodeAssembler asm) {
         this.asm = asm;
     }
 
-    public RecordComparator compile(RecordMetadata m, @Transient IntList keyColumnIndices) {
+    public RecordComparator compile(ColumnTypes columnTypes, @Transient IntList keyColumnIndices) {
 
-        assert keyColumnIndices.size() < QueryParser.MAX_ORDER_BY_COLUMNS;
+        assert keyColumnIndices.size() < SqlParser.MAX_ORDER_BY_COLUMNS;
 
         asm.init(RecordComparator.class);
         asm.setupPool();
@@ -60,11 +60,11 @@ public class ComparatorCompiler {
         // this is name re-use, it used on all static interfaces that compare values
         int compareNameIndex = asm.poolUtf8("compare");
         // our compare method signature
-        int compareDescIndex = asm.poolUtf8("(Lcom/questdb/common/Record;)I");
-        poolFieldArtifacts(compareNameIndex, thisClassIndex, recordClassIndex, m, keyColumnIndices);
+        int compareDescIndex = asm.poolUtf8("(Lcom/questdb/cairo/sql/Record;)I");
+        poolFieldArtifacts(compareNameIndex, thisClassIndex, recordClassIndex, columnTypes, keyColumnIndices);
         // elements for setLeft() method
         int setLeftNameIndex = asm.poolUtf8("setLeft");
-        int setLeftDescIndex = asm.poolUtf8("(Lcom/questdb/common/Record;)V");
+        int setLeftDescIndex = asm.poolUtf8("(Lcom/questdb/cairo/sql/Record;)V");
         //
         asm.finishPool();
         asm.defineClass(thisClassIndex);
@@ -182,7 +182,12 @@ public class ComparatorCompiler {
         asm.endMethod();
     }
 
-    private void poolFieldArtifacts(int compareMethodIndex, int thisClassIndex, int recordClassIndex, RecordMetadata m, IntList keyColumnIndices) {
+    private void poolFieldArtifacts(
+            int compareMethodIndex,
+            int thisClassIndex,
+            int recordClassIndex,
+            ColumnTypes columnTypes,
+            IntList keyColumnIndices) {
         typeMap.clear();
         fieldIndices.clear();
         fieldNameIndices.clear();
@@ -208,7 +213,7 @@ public class ComparatorCompiler {
             // decrement to get real column index
             index--;
 
-            switch (m.getColumnQuick(index).getType()) {
+            switch (columnTypes.getColumnType(index)) {
                 case ColumnType.BOOLEAN:
                     fieldType = "Z";
                     getterNameA = "getBool";
@@ -246,8 +251,8 @@ public class ComparatorCompiler {
                     comparatorClass = Short.class;
                     break;
                 case ColumnType.STRING:
-                    getterNameA = "getFlyweightStr";
-                    getterNameB = "getFlyweightStrB";
+                    getterNameA = "getStr";
+                    getterNameB = "getStrB";
                     fieldType = "Ljava/lang/CharSequence;";
                     comparatorClass = Chars.class;
                     break;
@@ -258,7 +263,7 @@ public class ComparatorCompiler {
                     comparatorDesc = "(Ljava/lang/CharSequence;Ljava/lang/CharSequence;)I";
                     break;
                 default:
-                    throw new JournalUnsupportedTypeException(ColumnType.nameOf(m.getColumnQuick(index).getType()));
+                    throw CairoException.instance(0).put("unsupported column type [type=").put(ColumnType.nameOf(columnTypes.getColumnType(index))).put(']');
             }
 
             int keyIndex;

@@ -29,9 +29,9 @@ import com.questdb.common.PartitionBy;
 import com.questdb.griffin.model.*;
 import com.questdb.std.*;
 
-final class SqlParser {
+public final class SqlParser {
 
-    static final int MAX_ORDER_BY_COLUMNS = 1560;
+    public static final int MAX_ORDER_BY_COLUMNS = 1560;
     private static final CharSequenceHashSet tableAliasStop = new CharSequenceHashSet();
     private static final CharSequenceHashSet columnAliasStop = new CharSequenceHashSet();
     private static final CharSequenceHashSet groupByStopSet = new CharSequenceHashSet();

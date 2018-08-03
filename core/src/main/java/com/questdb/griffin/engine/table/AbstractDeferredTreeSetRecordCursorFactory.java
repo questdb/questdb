@@ -35,7 +35,7 @@ import com.questdb.std.IntHashSet;
 import com.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
 
-public class AbstractDeferredTreeSetRecordCursorFactory extends AbstractTreeSetRecordCursorFactory {
+public abstract class AbstractDeferredTreeSetRecordCursorFactory extends AbstractTreeSetRecordCursorFactory {
     // this instance is shared between factory and cursor
     // factory will be resolving symbols for cursor and if successful
     // symbol keys will be added to this hash set

@@ -21,40 +21,44 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.engine.table;
+package com.questdb.griffin.engine;
 
-import com.questdb.cairo.sql.*;
-import org.jetbrains.annotations.NotNull;
+import com.questdb.cairo.AbstractRecordCursorFactory;
+import com.questdb.cairo.CairoConfiguration;
+import com.questdb.cairo.sql.RecordCursor;
+import com.questdb.cairo.sql.RecordCursorFactory;
+import com.questdb.cairo.sql.RecordMetadata;
 
-public class LatestByValueIndexedFilteredRecordCursorFactory extends AbstractDataFrameRecordCursorFactory {
-    private final LatestByValueIndexedFilteredRecordCursor cursor;
-    private final Function filter;
+public class SortedLightRecordCursorFactory extends AbstractRecordCursorFactory {
+    private final RecordCursorFactory base;
+    private final LongTreeChain chain;
+    private final SortedLightRecordCursor cursor;
 
-    public LatestByValueIndexedFilteredRecordCursorFactory(
-            @NotNull RecordMetadata metadata,
-            @NotNull DataFrameCursorFactory dataFrameCursorFactory,
-            int columnIndex,
-            int symbolKey,
-            @NotNull Function filter) {
-        super(metadata, dataFrameCursorFactory);
-        this.cursor = new LatestByValueIndexedFilteredRecordCursor(columnIndex, symbolKey + 1, filter);
-        this.filter = filter;
+    public SortedLightRecordCursorFactory(
+            CairoConfiguration configuration,
+            RecordMetadata metadata,
+            RecordCursorFactory base,
+            RecordComparator comparator) {
+        super(metadata);
+        this.chain = new LongTreeChain(1024 * 1024, 1024 * 1024);
+        this.base = base;
+        this.cursor = new SortedLightRecordCursor(chain, comparator);
     }
 
     @Override
     public void close() {
-        super.close();
-        filter.close();
+        chain.close();
+    }
+
+    @Override
+    public RecordCursor getCursor() {
+        RecordCursor baseCursor = base.getCursor();
+        this.cursor.of(baseCursor);
+        return cursor;
     }
 
     @Override
     public boolean isRandomAccessCursor() {
         return true;
-    }
-
-    @Override
-    protected RecordCursor getCursorInstance(DataFrameCursor dataFrameCursor) {
-        cursor.of(dataFrameCursor);
-        return cursor;
     }
 }

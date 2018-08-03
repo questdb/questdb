@@ -23,6 +23,9 @@
 
 package com.questdb.griffin.engine;
 
+import com.questdb.cairo.VirtualMemory;
+import com.questdb.cairo.sql.Record;
+import com.questdb.cairo.sql.RecordCursor;
 import com.questdb.std.MemoryPages;
 import com.questdb.std.Misc;
 import com.questdb.std.Mutable;
@@ -30,32 +33,37 @@ import com.questdb.std.Unsafe;
 
 import java.io.Closeable;
 
-public class LongTreeSet implements Mutable, Closeable {
-    // P(8) + L + R + C(1) + REF
-    private static final int BLOCK_SIZE = 8 + 8 + 8 + 1 + 8;
+public class LongTreeChain implements Mutable, Closeable {
+    // P(8) + L + R + C(1) + REF + TOP
+    private static final int BLOCK_SIZE = 8 + 8 + 8 + 1 + 8 + 8;
     private static final int O_LEFT = 8;
     private static final int O_RIGHT = 16;
     private static final int O_COLOUR = 24;
     private static final int O_REF = 25;
+    private static final int O_TOP = 33;
 
     private static final byte RED = 1;
     private static final byte BLACK = 0;
     private final MemoryPages mem;
     private final TreeCursor cursor = new TreeCursor();
+    private final VirtualMemory valueChain;
     private long root = -1;
 
-    public LongTreeSet(int keyPageSize) {
+    public LongTreeChain(int keyPageSize, int valuePageSize) {
         this.mem = new MemoryPages(keyPageSize);
+        this.valueChain = new VirtualMemory(valuePageSize);
     }
 
     @Override
     public void clear() {
         root = -1;
         this.mem.clear();
+        this.valueChain.jumpTo(0);
     }
 
     @Override
     public void close() {
+        Misc.free(valueChain);
         Misc.free(mem);
     }
 
@@ -64,33 +72,45 @@ public class LongTreeSet implements Mutable, Closeable {
         return cursor;
     }
 
-    public void put(long value) {
+    public void put(
+            long value,
+            RecordCursor sourceCursor,
+            Record sourceRecord,
+            RecordComparator comparator
+    ) {
         if (root == -1) {
             putParent(value);
             return;
         }
 
+        sourceCursor.recordAt(sourceRecord, value);
+        comparator.setLeft(sourceRecord);
+
         long p = root;
         long parent;
-        long current;
+        int cmp;
         do {
             parent = p;
-            current = refOf(p);
-            if (current > value) {
+            long r = refOf(p);
+            sourceCursor.recordAt(sourceRecord, valueChain.getLong(r));
+            cmp = comparator.compare(sourceRecord);
+            if (cmp < 0) {
                 p = leftOf(p);
-            } else if (current < value) {
+            } else if (cmp > 0) {
                 p = rightOf(p);
             } else {
-                // duplicate
+                setRef(p, appendValue(value, r));
                 return;
             }
         } while (p > -1);
 
         p = allocateBlock();
         setParent(p, parent);
-        setRef(p, value);
+        long r = appendValue(value, -1L);
+        setTop(p, r);
+        setRef(p, r);
 
-        if (current > value) {
+        if (cmp < 0) {
             setLeft(parent, p);
         } else {
             setRight(parent, p);
@@ -103,11 +123,11 @@ public class LongTreeSet implements Mutable, Closeable {
     }
 
     private static long rightOf(long blockAddress) {
-        return Unsafe.getUnsafe().getLong(blockAddress + O_RIGHT);
+        return blockAddress == -1 ? -1 : Unsafe.getUnsafe().getLong(blockAddress + O_RIGHT);
     }
 
     private static long leftOf(long blockAddress) {
-        return Unsafe.getUnsafe().getLong(blockAddress + O_LEFT);
+        return blockAddress == -1 ? -1 : Unsafe.getUnsafe().getLong(blockAddress + O_LEFT);
     }
 
     private static void setParent(long blockAddress, long parent) {
@@ -115,11 +135,19 @@ public class LongTreeSet implements Mutable, Closeable {
     }
 
     private static long refOf(long blockAddress) {
-        return Unsafe.getUnsafe().getLong(blockAddress + O_REF);
+        return blockAddress == -1 ? -1 : Unsafe.getUnsafe().getLong(blockAddress + O_REF);
+    }
+
+    private static long topOf(long blockAddress) {
+        return blockAddress == -1 ? -1 : Unsafe.getUnsafe().getLong(blockAddress + O_TOP);
     }
 
     private static void setRef(long blockAddress, long recRef) {
         Unsafe.getUnsafe().putLong(blockAddress + O_REF, recRef);
+    }
+
+    private static void setTop(long blockAddress, long recRef) {
+        Unsafe.getUnsafe().putLong(blockAddress + O_TOP, recRef);
     }
 
     private static void setRight(long blockAddress, long right) {
@@ -127,7 +155,7 @@ public class LongTreeSet implements Mutable, Closeable {
     }
 
     private static long parentOf(long blockAddress) {
-        return Unsafe.getUnsafe().getLong(blockAddress);
+        return blockAddress == -1 ? -1 : Unsafe.getUnsafe().getLong(blockAddress);
     }
 
     private static long parent2Of(long blockAddress) {
@@ -135,6 +163,9 @@ public class LongTreeSet implements Mutable, Closeable {
     }
 
     private static void setColor(long blockAddress, byte colour) {
+        if (blockAddress == -1) {
+            return;
+        }
         Unsafe.getUnsafe().putByte(blockAddress + O_COLOUR, colour);
     }
 
@@ -166,6 +197,13 @@ public class LongTreeSet implements Mutable, Closeable {
         setRight(p, -1);
         setColor(p, BLACK);
         return p;
+    }
+
+    private long appendValue(long value, long prevValueOffset) {
+        final long offset = valueChain.getAppendOffset();
+        valueChain.putLong(value);
+        valueChain.putLong(prevValueOffset);
+        return offset;
     }
 
     private void fix(long x) {
@@ -211,7 +249,9 @@ public class LongTreeSet implements Mutable, Closeable {
 
     private void putParent(long value) {
         root = allocateBlock();
-        setRef(root, value);
+        long r = appendValue(value, -1L);
+        setTop(root, r);
+        setRef(root, r);
         setParent(root, -1);
         setLeft(root, -1);
         setRight(root, -1);
@@ -259,26 +299,41 @@ public class LongTreeSet implements Mutable, Closeable {
 
     public class TreeCursor {
 
-        private long current;
+        private long treeCurrent;
+        private long chainCurrent;
 
         public boolean hasNext() {
-            return current != -1;
+            if (chainCurrent != -1) {
+                return true;
+            }
+
+            treeCurrent = successor(treeCurrent);
+            if (treeCurrent == -1) {
+                return false;
+            }
+
+            chainCurrent = topOf(treeCurrent);
+            return true;
         }
 
         public long next() {
-            long address = current;
-            current = successor(current);
-            return refOf(address);
+            long result = chainCurrent;
+            chainCurrent = valueChain.getLong(chainCurrent + 8);
+            return result;
         }
 
         public void toTop() {
+            setup();
+        }
+
+        private void setup() {
             long p = root;
             if (p != -1) {
                 while (leftOf(p) != -1) {
                     p = leftOf(p);
                 }
             }
-            current = p;
+            chainCurrent = topOf(treeCurrent = p);
         }
     }
 }

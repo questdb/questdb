@@ -33,4 +33,6 @@ public interface RecordCursorFactory extends Closeable {
     RecordMetadata getMetadata();
 
     RecordCursor getCursor();
+
+    boolean isRandomAccessCursor();
 }

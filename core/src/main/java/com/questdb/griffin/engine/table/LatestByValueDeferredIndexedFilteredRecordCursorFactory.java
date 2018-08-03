@@ -44,4 +44,9 @@ public class LatestByValueDeferredIndexedFilteredRecordCursorFactory extends Abs
         assert filter != null;
         return new LatestByValueIndexedFilteredRecordCursor(columnIndex, symbolKey + 1, filter);
     }
+
+    @Override
+    public boolean isRandomAccessCursor() {
+        return true;
+    }
 }

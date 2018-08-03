@@ -25,7 +25,6 @@ package com.questdb.cairo;
 
 import com.questdb.cairo.sql.Record;
 import com.questdb.cairo.sql.RecordCursor;
-import com.questdb.cairo.sql.RecordMetadata;
 import com.questdb.common.ColumnType;
 import com.questdb.std.BinarySequence;
 import com.questdb.std.Mutable;
@@ -38,7 +37,7 @@ public class RecordChain implements Closeable, RecordCursor, Mutable {
     private final long columnOffsets[];
     private final VirtualMemory mem;
     private final int columnCount;
-    private final RecordMetadata metadata;
+    private final ColumnTypes metadata;
     private final RecordChainRecord record = new RecordChainRecord();
     private final long varOffset;
     private final long fixOffset;
@@ -46,16 +45,16 @@ public class RecordChain implements Closeable, RecordCursor, Mutable {
     private long varAppendOffset = 0L;
     private long nextRecordOffset = -1L;
 
-    public RecordChain(RecordMetadata metadata, long pageSize) {
+    public RecordChain(ColumnTypes columnTypes, long pageSize) {
         this.mem = new VirtualMemory(pageSize);
-        this.metadata = metadata;
-        int count = metadata.getColumnCount();
+        this.metadata = columnTypes;
+        int count = columnTypes.getColumnCount();
         long varOffset = 0L;
         long fixOffset = 0L;
 
         this.columnOffsets = new long[count];
         for (int i = 0; i < count; i++) {
-            int type = metadata.getColumnType(i);
+            int type = columnTypes.getColumnType(i);
 
             switch (type) {
                 case ColumnType.STRING:
@@ -87,6 +86,10 @@ public class RecordChain implements Closeable, RecordCursor, Mutable {
         return recordOffset;
     }
 
+    public void of(long nextRecordOffset) {
+        this.nextRecordOffset = nextRecordOffset;
+    }
+
     @Override
     public void clear() {
         close();
@@ -97,10 +100,6 @@ public class RecordChain implements Closeable, RecordCursor, Mutable {
         mem.close();
         nextRecordOffset = -1L;
         varAppendOffset = 0L;
-    }
-
-    public RecordMetadata getMetadata() {
-        return metadata;
     }
 
     @Override

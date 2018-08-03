@@ -64,4 +64,9 @@ public class LatestByAllFilteredRecordCursorFactory extends AbstractTreeSetRecor
         super.close();
         map.close();
     }
+
+    @Override
+    public boolean isRandomAccessCursor() {
+        return true;
+    }
 }

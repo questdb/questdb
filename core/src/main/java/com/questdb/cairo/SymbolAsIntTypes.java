@@ -21,40 +21,25 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.engine.table;
+package com.questdb.cairo;
 
-import com.questdb.cairo.sql.*;
-import org.jetbrains.annotations.NotNull;
+import com.questdb.common.ColumnType;
 
-public class LatestByValueIndexedFilteredRecordCursorFactory extends AbstractDataFrameRecordCursorFactory {
-    private final LatestByValueIndexedFilteredRecordCursor cursor;
-    private final Function filter;
+public class SymbolAsIntTypes implements ColumnTypes {
+    private ColumnTypes base;
 
-    public LatestByValueIndexedFilteredRecordCursorFactory(
-            @NotNull RecordMetadata metadata,
-            @NotNull DataFrameCursorFactory dataFrameCursorFactory,
-            int columnIndex,
-            int symbolKey,
-            @NotNull Function filter) {
-        super(metadata, dataFrameCursorFactory);
-        this.cursor = new LatestByValueIndexedFilteredRecordCursor(columnIndex, symbolKey + 1, filter);
-        this.filter = filter;
+    public SymbolAsIntTypes(ColumnTypes base) {
+        this.base = base;
     }
 
     @Override
-    public void close() {
-        super.close();
-        filter.close();
+    public int getColumnType(int columnIndex) {
+        final int type = base.getColumnType(columnIndex);
+        return type == ColumnType.SYMBOL ? ColumnType.INT : type;
     }
 
     @Override
-    public boolean isRandomAccessCursor() {
-        return true;
-    }
-
-    @Override
-    protected RecordCursor getCursorInstance(DataFrameCursor dataFrameCursor) {
-        cursor.of(dataFrameCursor);
-        return cursor;
+    public int getColumnCount() {
+        return base.getColumnCount();
     }
 }

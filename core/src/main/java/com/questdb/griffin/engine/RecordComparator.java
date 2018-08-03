@@ -21,26 +21,12 @@
  *
  ******************************************************************************/
 
-package com.questdb.cairo.map;
+package com.questdb.griffin.engine;
 
-import com.questdb.cairo.ColumnTypes;
-import com.questdb.common.ColumnType;
+import com.questdb.cairo.sql.Record;
 
-public class SymbolAsIntTypes implements ColumnTypes {
-    private ColumnTypes base;
+public interface RecordComparator {
+    int compare(Record record);
 
-    public SymbolAsIntTypes(ColumnTypes base) {
-        this.base = base;
-    }
-
-    @Override
-    public int getColumnType(int columnIndex) {
-        final int type = base.getColumnType(columnIndex);
-        return type == ColumnType.SYMBOL ? ColumnType.INT : type;
-    }
-
-    @Override
-    public int getColumnCount() {
-        return base.getColumnCount();
-    }
+    void setLeft(Record record);
 }

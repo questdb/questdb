@@ -23,9 +23,9 @@
 
 package com.questdb.net.ha.bridge;
 
-import com.questdb.ex.TimeoutException;
 import com.questdb.mp.RingQueue;
 import com.questdb.mp.Sequence;
+import com.questdb.mp.TimeoutException;
 
 public class JournalEventProcessor {
     private final RingQueue<JournalEvent> queue;

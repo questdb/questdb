@@ -21,9 +21,7 @@
  *
  ******************************************************************************/
 
-package com.questdb.cairo.map;
-
-import com.questdb.cairo.ColumnTypes;
+package com.questdb.cairo;
 
 public class SingleColumnType implements ColumnTypes {
     private int type;

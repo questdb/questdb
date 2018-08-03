@@ -59,4 +59,9 @@ public class LatestByValueFilteredRecordCursorFactory extends AbstractDataFrameR
         cursor.of(dataFrameCursor);
         return cursor;
     }
+
+    @Override
+    public boolean isRandomAccessCursor() {
+        return true;
+    }
 }

@@ -129,4 +129,9 @@ public class FilterOnSubQueryRecordCursorFactory extends AbstractDataFrameRecord
         this.cursor.of(dataFrameCursor);
         return this.cursor;
     }
+
+    @Override
+    public boolean isRandomAccessCursor() {
+        return true;
+    }
 }

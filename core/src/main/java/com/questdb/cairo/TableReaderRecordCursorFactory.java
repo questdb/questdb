@@ -45,4 +45,9 @@ public class TableReaderRecordCursorFactory extends AbstractRecordCursorFactory 
         cursor.of(engine.getReader(tableName, tableVersion));
         return cursor;
     }
+
+    @Override
+    public boolean isRandomAccessCursor() {
+        return true;
+    }
 }

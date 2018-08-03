@@ -52,4 +52,9 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
             filter.close();
         }
     }
+
+    @Override
+    public boolean isRandomAccessCursor() {
+        return true;
+    }
 }

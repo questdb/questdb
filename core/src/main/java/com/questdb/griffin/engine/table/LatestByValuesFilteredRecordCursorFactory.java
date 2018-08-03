@@ -73,4 +73,9 @@ public class LatestByValuesFilteredRecordCursorFactory extends AbstractDeferredT
         }
         return super.getCursorInstance(dataFrameCursor);
     }
+
+    @Override
+    public boolean isRandomAccessCursor() {
+        return true;
+    }
 }

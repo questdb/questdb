@@ -65,6 +65,11 @@ public class LatestByValuesIndexedFilteredRecordCursorFactory extends AbstractDe
     }
 
     @Override
+    public boolean isRandomAccessCursor() {
+        return true;
+    }
+
+    @Override
     protected AbstractDataFrameRecordCursor getCursorInstance(DataFrameCursor dataFrameCursor) {
         if (filter != null) {
             AbstractDataFrameRecordCursor cursor = super.getCursorInstance(dataFrameCursor);
