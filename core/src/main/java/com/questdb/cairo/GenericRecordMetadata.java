@@ -35,6 +35,12 @@ public class GenericRecordMetadata extends BaseRecordMetadata {
     }
 
     public static GenericRecordMetadata copyOf(RecordMetadata that) {
+        GenericRecordMetadata metadata = copyOfSansTimestamp(that);
+        metadata.setTimestampIndex(that.getTimestampIndex());
+        return metadata;
+    }
+
+    public static GenericRecordMetadata copyOfSansTimestamp(RecordMetadata that) {
         GenericRecordMetadata metadata = new GenericRecordMetadata();
         for (int i = 0, n = that.getColumnCount(); i < n; i++) {
             metadata.add(new TableColumnMetadata(
@@ -44,7 +50,6 @@ public class GenericRecordMetadata extends BaseRecordMetadata {
                     that.getIndexValueBlockCapacity(i)
             ));
         }
-        metadata.setTimestampIndex(that.getTimestampIndex());
         return metadata;
     }
 

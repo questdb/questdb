@@ -56,8 +56,10 @@ class DataFrameRecordCursor extends AbstractDataFrameRecordCursor {
     }
 
     public void of(DataFrameCursor dataFrameCursor) {
-        close();
-        this.dataFrameCursor = dataFrameCursor;
+        if (this.dataFrameCursor != dataFrameCursor) {
+            close();
+            this.dataFrameCursor = dataFrameCursor;
+        }
         this.record.of(dataFrameCursor.getTableReader());
         this.rowCursorFactory.prepareCursor(dataFrameCursor.getTableReader());
         rowCursor = null;

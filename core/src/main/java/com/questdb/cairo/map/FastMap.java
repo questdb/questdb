@@ -310,9 +310,10 @@ public class FastMap implements Map {
         this.capacity = kCapacity + Unsafe.CACHE_LINE_SIZE;
         long d = kStart - this.kStart;
         kPos += d;
+        long colOffsetDelta = key.nextColOffset - key.startAddress;
         key.startAddress += d;
         key.appendAddress += d;
-        key.nextColOffset = key.startAddress + keyBlockOffset;
+        key.nextColOffset = key.startAddress + colOffsetDelta;
 
         assert kPos > 0;
         assert key.startAddress > 0;

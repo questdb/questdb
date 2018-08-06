@@ -46,6 +46,16 @@ public class RecordComparatorCompiler {
         this.asm = asm;
     }
 
+    /**
+     * Generates byte code for record comparator. To avoid frequent calls to
+     * record field getters comparator caches values of left argument.
+     *
+     * @param columnTypes      types of columns in the cursor. All but BINARY types are supported
+     * @param keyColumnIndices indexes of columns in types object. Column indexes are 1-based.
+     *                         Index sign indicates direction of sort: negative - descending,
+     *                         positive - ascending.
+     * @return RecordComparator instance.
+     */
     public RecordComparator compile(ColumnTypes columnTypes, @Transient IntList keyColumnIndices) {
 
         assert keyColumnIndices.size() < SqlParser.MAX_ORDER_BY_COLUMNS;
@@ -209,6 +219,7 @@ public class RecordComparatorCompiler {
             if (index < 0) {
                 index = -index;
             }
+
 
             // decrement to get real column index
             index--;

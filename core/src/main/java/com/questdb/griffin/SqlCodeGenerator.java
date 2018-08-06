@@ -35,10 +35,7 @@ import com.questdb.griffin.model.ExpressionNode;
 import com.questdb.griffin.model.IntrinsicModel;
 import com.questdb.griffin.model.QueryColumn;
 import com.questdb.griffin.model.QueryModel;
-import com.questdb.std.BytecodeAssembler;
-import com.questdb.std.Chars;
-import com.questdb.std.IntList;
-import com.questdb.std.ObjList;
+import com.questdb.std.*;
 import org.jetbrains.annotations.NotNull;
 
 public class SqlCodeGenerator {
@@ -51,6 +48,7 @@ public class SqlCodeGenerator {
     private final SingleColumnType latestByColumnTypes = new SingleColumnType();
     private final CairoConfiguration configuration;
     private final RecordComparatorCompiler recordComparatorCompiler;
+    private final IntHashSet intHashSet = new IntHashSet();
 
     public SqlCodeGenerator(CairoEngine engine, CairoConfiguration configuration, FunctionParser functionParser) {
         this.engine = engine;
@@ -244,20 +242,60 @@ public class SqlCodeGenerator {
     }
 
     private RecordCursorFactory generateOrderBy(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
-        RecordCursorFactory recordCursorFactory = generateSelect(model, executionContext);
-        ObjList<ExpressionNode> orderBy = model.getOrderBy();
-        if (orderBy.size() > 0) {
-            final RecordMetadata metadata = recordCursorFactory.getMetadata();
-            listColumnFilter.clear();
+        final RecordCursorFactory recordCursorFactory = generateSelect(model, executionContext);
+        final ObjList<ExpressionNode> orderBy = model.getOrderBy();
+        final int size = orderBy.size();
 
-            for (int i = 0, n = orderBy.size(); i < n; i++) {
+        if (size > 0) {
+
+            final RecordMetadata metadata = recordCursorFactory.getMetadata();
+            final IntList orderByDirection = model.getOrderByDirection();
+            listColumnFilter.clear();
+            intHashSet.clear();
+
+            // column index sign indicates direction
+            // therefore 0 index is not allowed
+            for (int i = 0; i < size; i++) {
                 ExpressionNode node = orderBy.getQuick(i);
-                listColumnFilter.add(metadata.getColumnIndexQuiet(node.token));
+                int index = metadata.getColumnIndexQuiet(node.token);
+
+                // we also maintain unique set of column indexes for better performance
+                if (intHashSet.add(index)) {
+                    if (orderByDirection.getQuick(i) == QueryModel.ORDER_DIRECTION_DESCENDING) {
+                        listColumnFilter.add(-index - 1);
+                    } else {
+                        listColumnFilter.add(index + 1);
+                    }
+                }
+            }
+
+            // if first column index is the same as timestamp of underling record cursor factory
+            // we could have two possibilities:
+            // 1. if we only have one column to order by - the cursor would already be ordered
+            //    by timestamp; we have nothing to do
+            // 2. metadata of the new cursor will have timestamp
+
+            RecordMetadata orderedMetadata;
+            if (metadata.getTimestampIndex() == -1) {
+                orderedMetadata = GenericRecordMetadata.copyOfSansTimestamp(metadata);
+            } else {
+                int index = metadata.getColumnIndexQuiet(orderBy.getQuick(0).token);
+                if (index == metadata.getTimestampIndex()) {
+
+                    if (size == 1) {
+                        return recordCursorFactory;
+                    }
+
+                    orderedMetadata = copyMetadata(metadata);
+
+                } else {
+                    orderedMetadata = GenericRecordMetadata.copyOfSansTimestamp(metadata);
+                }
             }
 
             return new SortedLightRecordCursorFactory(
                     configuration,
-                    metadata,
+                    orderedMetadata,
                     recordCursorFactory,
                     recordComparatorCompiler.compile(metadata, listColumnFilter)
             );

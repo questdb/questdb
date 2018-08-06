@@ -89,9 +89,10 @@ public class LongTreeChain implements Mutable, Closeable {
         long p = root;
         long parent;
         int cmp;
+        long r;
         do {
             parent = p;
-            long r = refOf(p);
+            r = refOf(p);
             sourceCursor.recordAt(sourceRecord, valueChain.getLong(r));
             cmp = comparator.compare(sourceRecord);
             if (cmp < 0) {
@@ -106,7 +107,8 @@ public class LongTreeChain implements Mutable, Closeable {
 
         p = allocateBlock();
         setParent(p, parent);
-        long r = appendValue(value, -1L);
+
+        r = appendValue(value, -1L);
         setTop(p, r);
         setRef(p, r);
 
@@ -201,6 +203,7 @@ public class LongTreeChain implements Mutable, Closeable {
 
     private long appendValue(long value, long prevValueOffset) {
         final long offset = valueChain.getAppendOffset();
+        System.out.println(offset + " -> " + value);
         valueChain.putLong(value);
         valueChain.putLong(prevValueOffset);
         return offset;
@@ -312,14 +315,14 @@ public class LongTreeChain implements Mutable, Closeable {
                 return false;
             }
 
-            chainCurrent = topOf(treeCurrent);
+            chainCurrent = refOf(treeCurrent);
             return true;
         }
 
         public long next() {
             long result = chainCurrent;
             chainCurrent = valueChain.getLong(chainCurrent + 8);
-            return result;
+            return valueChain.getLong(result);
         }
 
         public void toTop() {
@@ -333,7 +336,7 @@ public class LongTreeChain implements Mutable, Closeable {
                     p = leftOf(p);
                 }
             }
-            chainCurrent = topOf(treeCurrent = p);
+            chainCurrent = refOf(treeCurrent = p);
         }
     }
 }

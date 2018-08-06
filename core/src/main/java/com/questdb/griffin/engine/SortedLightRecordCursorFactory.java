@@ -49,6 +49,7 @@ public class SortedLightRecordCursorFactory extends AbstractRecordCursorFactory 
 
     @Override
     public void close() {
+        base.close();
         chain.close();
     }
 

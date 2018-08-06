@@ -1972,6 +1972,90 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testOrderBy() throws Exception {
+        final String expected = "a\tb\tk\n" +
+                "11.427984775756\t\t1970-01-01T00:00:00.000000Z\n" +
+                "26.922103479745\t\t1970-01-13T17:33:20.000000Z\n" +
+                "32.881769076795\t\t1970-01-06T18:53:20.000000Z\n" +
+                "40.455469747939\t\t1970-01-22T23:46:40.000000Z\n" +
+                "45.634456960908\t\t1970-01-21T20:00:00.000000Z\n" +
+                "52.984059417621\t\t1970-01-14T21:20:00.000000Z\n" +
+                "57.934663268622\t\t1970-01-10T06:13:20.000000Z\n" +
+                "80.011211397392\t\t1970-01-19T12:26:40.000000Z\n" +
+                "87.996347253916\t\t1970-01-05T15:06:40.000000Z\n" +
+                "92.050039469858\t\t1970-01-20T16:13:20.000000Z\n" +
+                "97.501988537251\t\t1970-01-17T04:53:20.000000Z\n" +
+                "12.026122412833\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
+                "97.711031460512\tHYRX\t1970-01-07T22:40:00.000000Z\n" +
+                "23.905290108465\tRXGZ\t1970-01-03T07:33:20.000000Z\n";
+
+        assertQuery(expected,
+                "select * from x where b in (select rnd_symbol('RXGZ', 'HYRX', null) a from long_sequence(10))" +
+                        " order by b,a,x.a",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(to_timestamp(0), 100000000000) k" +
+                        " from" +
+                        " long_sequence(20)" +
+                        ") timestamp(k) partition by DAY",
+                null,
+                "insert into x select * from (" +
+                        "select" +
+                        " rnd_double(0)*100," +
+                        " 'RXGZ'," +
+                        " to_timestamp('1971', 'yyyy') t" +
+                        " from long_sequence(1)" +
+                        ") timestamp(t)",
+                expected +
+                        "42.020442539326\tRXGZ\t1971-01-01T00:00:00.000000Z\n");
+    }
+
+    @Test
+    public void testOrderByTimestamp() throws Exception {
+        final String expected = "a\tb\tk\n" +
+                "11.427984775756\t\t1970-01-01T00:00:00.000000Z\n" +
+                "23.905290108465\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
+                "87.996347253916\t\t1970-01-05T15:06:40.000000Z\n" +
+                "32.881769076795\t\t1970-01-06T18:53:20.000000Z\n" +
+                "97.711031460512\tHYRX\t1970-01-07T22:40:00.000000Z\n" +
+                "57.934663268622\t\t1970-01-10T06:13:20.000000Z\n" +
+                "12.026122412833\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
+                "26.922103479745\t\t1970-01-13T17:33:20.000000Z\n" +
+                "52.984059417621\t\t1970-01-14T21:20:00.000000Z\n" +
+                "97.501988537251\t\t1970-01-17T04:53:20.000000Z\n" +
+                "80.011211397392\t\t1970-01-19T12:26:40.000000Z\n" +
+                "92.050039469858\t\t1970-01-20T16:13:20.000000Z\n" +
+                "45.634456960908\t\t1970-01-21T20:00:00.000000Z\n" +
+                "40.455469747939\t\t1970-01-22T23:46:40.000000Z\n";
+
+        assertQuery(expected,
+                "select * from x where b in (select rnd_symbol('RXGZ', 'HYRX', null) a from long_sequence(10))" +
+                        " order by k",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(to_timestamp(0), 100000000000) k" +
+                        " from" +
+                        " long_sequence(20)" +
+                        ") timestamp(k) partition by DAY",
+                "k",
+                "insert into x select * from (" +
+                        "select" +
+                        " rnd_double(0)*100," +
+                        " 'RXGZ'," +
+                        " to_timestamp('1971', 'yyyy') t" +
+                        " from long_sequence(1)" +
+                        ") timestamp(t)",
+                expected +
+                        "95.400690890497\tRXGZ\t1971-01-01T00:00:00.000000Z\n");
+    }
+
+    @Test
     public void testSelectColumns() throws Exception {
         assertQuery("a\ta1\tb\tc\td\te\tf1\tf\tg\th\ti\tj\tj1\tk\tl\tm\n" +
                         "NaN\t1569490116\tfalse\t\tNaN\t0.7611\t-1593\t428\t2015-04-04T16:34:47.226Z\t\t\t185\t7039584373105579285\t1970-01-01T00:00:00.000000Z\t4\t00000000 af 19 c4 95 94 36 53 49 b4 59 7e\n" +

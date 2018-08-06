@@ -36,6 +36,140 @@ import org.junit.Test;
 public class FastMapTest extends AbstractCairoTest {
 
     @Test
+    public void testAllTypes() {
+        Rnd rnd = new Rnd();
+
+        ArrayColumnTypes keyTypes = new ArrayColumnTypes();
+        ArrayColumnTypes valueTypes = new ArrayColumnTypes();
+
+        keyTypes.add(ColumnType.BYTE);
+        keyTypes.add(ColumnType.SHORT);
+        keyTypes.add(ColumnType.INT);
+        keyTypes.add(ColumnType.LONG);
+        keyTypes.add(ColumnType.FLOAT);
+        keyTypes.add(ColumnType.DOUBLE);
+        keyTypes.add(ColumnType.STRING);
+        keyTypes.add(ColumnType.BOOLEAN);
+        keyTypes.add(ColumnType.DATE);
+
+
+        valueTypes.add(ColumnType.BYTE);
+        valueTypes.add(ColumnType.SHORT);
+        valueTypes.add(ColumnType.INT);
+        valueTypes.add(ColumnType.LONG);
+        valueTypes.add(ColumnType.FLOAT);
+        valueTypes.add(ColumnType.DOUBLE);
+        valueTypes.add(ColumnType.BOOLEAN);
+        valueTypes.add(ColumnType.DATE);
+
+        try (FastMap map = new FastMap(1024, keyTypes, valueTypes, 64, 0.8)) {
+            final int N = 100000;
+            for (int i = 0; i < N; i++) {
+                MapKey key = map.withKey();
+                key.putByte(rnd.nextByte());
+                key.putShort(rnd.nextShort());
+                key.putInt(rnd.nextInt());
+                key.putLong(rnd.nextLong());
+                key.putFloat(rnd.nextFloat2());
+                key.putDouble(rnd.nextDouble2());
+                if ((rnd.nextPositiveInt() % 4) == 0) {
+                    key.putStr(null);
+                } else {
+                    key.putStr(rnd.nextChars(rnd.nextPositiveInt() % 16));
+                }
+                key.putBool(rnd.nextBoolean());
+                key.putDate(rnd.nextLong());
+
+
+                MapValue value = key.createValue();
+                Assert.assertTrue(value.isNew());
+
+                value.putByte(0, rnd.nextByte());
+                value.putShort(1, rnd.nextShort());
+                value.putInt(2, rnd.nextInt());
+                value.putLong(3, rnd.nextLong());
+                value.putFloat(4, rnd.nextFloat2());
+                value.putDouble(5, rnd.nextDouble2());
+                value.putBool(6, rnd.nextBoolean());
+                value.putDate(7, rnd.nextLong());
+            }
+
+
+            rnd.reset();
+
+            // assert that all values are good
+            for (int i = 0; i < N; i++) {
+                MapKey key = map.withKey();
+                key.putByte(rnd.nextByte());
+                key.putShort(rnd.nextShort());
+                key.putInt(rnd.nextInt());
+                key.putLong(rnd.nextLong());
+                key.putFloat(rnd.nextFloat2());
+                key.putDouble(rnd.nextDouble2());
+                if ((rnd.nextPositiveInt() % 4) == 0) {
+                    key.putStr(null);
+                } else {
+                    key.putStr(rnd.nextChars(rnd.nextPositiveInt() % 16));
+                }
+                key.putBool(rnd.nextBoolean());
+                key.putDate(rnd.nextLong());
+
+
+                MapValue value = key.createValue();
+                Assert.assertFalse(value.isNew());
+
+
+                Assert.assertEquals(rnd.nextByte(), value.getByte(0));
+                Assert.assertEquals(rnd.nextShort(), value.getShort(1));
+                Assert.assertEquals(rnd.nextInt(), value.getInt(2));
+                Assert.assertEquals(rnd.nextLong(), value.getLong(3));
+                Assert.assertEquals(rnd.nextFloat2(), value.getFloat(4), 0.000000001f);
+                Assert.assertEquals(rnd.nextDouble2(), value.getDouble(5), 0.000000001d);
+                Assert.assertEquals(rnd.nextBoolean(), value.getBool(6));
+                Assert.assertEquals(rnd.nextLong(), value.getDate(7));
+            }
+
+            rnd.reset();
+
+            for (MapRecord r : map) {
+                Assert.assertEquals(rnd.nextByte(), r.getByte(8));
+                Assert.assertEquals(rnd.nextShort(), r.getShort(9));
+                Assert.assertEquals(rnd.nextInt(), r.getInt(10));
+                Assert.assertEquals(rnd.nextLong(), r.getLong(11));
+                Assert.assertEquals(rnd.nextFloat2(), r.getFloat(12), 0.000000001f);
+                Assert.assertEquals(rnd.nextDouble2(), r.getDouble(13), 0.000000001d);
+
+
+                if ((rnd.nextPositiveInt() % 4) == 0) {
+                    Assert.assertNull(r.getStr(14));
+                    Assert.assertEquals(-1, r.getStrLen(14));
+                } else {
+                    CharSequence expected = rnd.nextChars(rnd.nextPositiveInt() % 16);
+                    TestUtils.assertEquals(expected, r.getStr(14));
+                }
+
+                Assert.assertEquals(rnd.nextBoolean(), r.getBool(15));
+                Assert.assertEquals(rnd.nextLong(), r.getDate(16));
+
+
+                // value part, it comes first in record
+
+                Assert.assertEquals(rnd.nextByte(), r.getByte(0));
+                Assert.assertEquals(rnd.nextShort(), r.getShort(1));
+                Assert.assertEquals(rnd.nextInt(), r.getInt(2));
+                Assert.assertEquals(rnd.nextLong(), r.getLong(3));
+                Assert.assertEquals(rnd.nextFloat2(), r.getFloat(4), 0.000000001f);
+                Assert.assertEquals(rnd.nextDouble2(), r.getDouble(5), 0.000000001d);
+                Assert.assertEquals(rnd.nextBoolean(), r.getBool(6));
+                Assert.assertEquals(rnd.nextLong(), r.getDate(7));
+
+
+                //140190888375179
+            }
+        }
+    }
+
+    @Test
     public void testAppendExisting() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             Rnd rnd = new Rnd();
