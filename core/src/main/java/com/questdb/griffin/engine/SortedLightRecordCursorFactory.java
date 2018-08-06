@@ -40,7 +40,9 @@ public class SortedLightRecordCursorFactory extends AbstractRecordCursorFactory 
             RecordCursorFactory base,
             RecordComparator comparator) {
         super(metadata);
-        this.chain = new LongTreeChain(1024 * 1024, 1024 * 1024);
+        this.chain = new LongTreeChain(
+                configuration.getSqlSortKeyPageSize(),
+                configuration.getSqlSortLightValuePageSize());
         this.base = base;
         this.cursor = new SortedLightRecordCursor(chain, comparator);
     }

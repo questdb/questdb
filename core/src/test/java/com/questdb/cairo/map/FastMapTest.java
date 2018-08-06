@@ -543,7 +543,7 @@ public class FastMapTest extends AbstractCairoTest {
                     long c = 0;
                     while (cursor.hasNext()) {
                         MapKey key = map.withKey();
-                        key.putRecord(cursor.next(), sink);
+                        key.put(cursor.next(), sink);
                         MapValue value = key.findValue();
                         Assert.assertNotNull(value);
                         Assert.assertEquals(++c, value.getLong(0));
@@ -605,7 +605,7 @@ public class FastMapTest extends AbstractCairoTest {
                     long counter = 0;
                     while (cursor.hasNext()) {
                         MapKey key = map.withKey();
-                        key.putRecord(cursor.next(), sink);
+                        key.put(cursor.next(), sink);
                         MapValue value = key.createValue();
                         Assert.assertTrue(value.isNew());
                         value.putFloat(4, rnd2.nextFloat2());
@@ -625,7 +625,7 @@ public class FastMapTest extends AbstractCairoTest {
                     long c = 0;
                     while (cursor.hasNext()) {
                         MapKey key = map.withKey();
-                        key.putRecord(cursor.next(), sink);
+                        key.put(cursor.next(), sink);
                         MapValue value = key.findValue();
                         Assert.assertNotNull(value);
 
@@ -760,7 +760,7 @@ public class FastMapTest extends AbstractCairoTest {
         long counter = 0;
         while (cursor.hasNext()) {
             MapKey key = map.withKey();
-            key.putRecord(cursor.next(), sink);
+            key.put(cursor.next(), sink);
             MapValue value = key.createValue();
             Assert.assertTrue(value.isNew());
             value.putLong(0, ++counter);

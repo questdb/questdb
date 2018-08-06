@@ -25,6 +25,7 @@ package com.questdb.griffin.engine;
 
 import com.questdb.cairo.ColumnTypes;
 import com.questdb.cairo.RecordChain;
+import com.questdb.cairo.RecordSink;
 import com.questdb.cairo.sql.Record;
 import com.questdb.cairo.sql.RecordCursor;
 import com.questdb.common.SymbolTable;
@@ -51,12 +52,13 @@ public class RecordTreeChain implements Closeable, Mutable {
 
     public RecordTreeChain(
             ColumnTypes columnTypes,
+            RecordSink recordSink,
             RecordComparator comparator,
             int keyPageSize,
             int valuePageSize) {
         this.comparator = comparator;
         this.mem = new MemoryPages(keyPageSize);
-        this.recordChain = new RecordChain(columnTypes, valuePageSize);
+        this.recordChain = new RecordChain(columnTypes, recordSink, valuePageSize);
     }
 
 
@@ -98,14 +100,14 @@ public class RecordTreeChain implements Closeable, Mutable {
             } else if (cmp > 0) {
                 p = rightOf(p);
             } else {
-                setRef(p, recordChain.putRecord(record, r));
+                setRef(p, recordChain.put(record, r));
                 return;
             }
         } while (p > -1);
 
         p = allocateBlock();
         setParent(p, parent);
-        long r = recordChain.putRecord(record, (long) -1);
+        long r = recordChain.put(record, -1L);
         setTop(p, r);
         setRef(p, r);
 
@@ -241,7 +243,7 @@ public class RecordTreeChain implements Closeable, Mutable {
 
     private void putParent(Record record) {
         root = allocateBlock();
-        long r = recordChain.putRecord(record, -1L);
+        long r = recordChain.put(record, -1L);
         setTop(root, r);
         setRef(root, r);
         setParent(root, -1);

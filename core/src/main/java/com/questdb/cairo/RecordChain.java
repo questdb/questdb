@@ -28,26 +28,26 @@ import com.questdb.cairo.sql.RecordCursor;
 import com.questdb.common.ColumnType;
 import com.questdb.std.BinarySequence;
 import com.questdb.std.Mutable;
+import com.questdb.std.Transient;
 import com.questdb.std.Unsafe;
 
 import java.io.Closeable;
 
-public class RecordChain implements Closeable, RecordCursor, Mutable {
+public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSinkSPI {
 
     private final long columnOffsets[];
     private final VirtualMemory mem;
-    private final int columnCount;
-    private final ColumnTypes metadata;
     private final RecordChainRecord record = new RecordChainRecord();
     private final long varOffset;
     private final long fixOffset;
+    private final RecordSink recordSink;
     private long recordOffset;
     private long varAppendOffset = 0L;
     private long nextRecordOffset = -1L;
 
-    public RecordChain(ColumnTypes columnTypes, long pageSize) {
+    public RecordChain(@Transient ColumnTypes columnTypes, RecordSink recordSink, long pageSize) {
         this.mem = new VirtualMemory(pageSize);
-        this.metadata = columnTypes;
+        this.recordSink = recordSink;
         int count = columnTypes.getColumnCount();
         long varOffset = 0L;
         long fixOffset = 0L;
@@ -71,7 +71,6 @@ public class RecordChain implements Closeable, RecordCursor, Mutable {
         }
         this.varOffset = varOffset;
         this.fixOffset = fixOffset;
-        this.columnCount = count;
     }
 
     public long beginRecord(long prevOffset) {
@@ -84,10 +83,6 @@ public class RecordChain implements Closeable, RecordCursor, Mutable {
         mem.jumpTo(rowToDataOffset(recordOffset + varOffset));
         varAppendOffset = rowToDataOffset(recordOffset + varOffset + fixOffset);
         return recordOffset;
-    }
-
-    public void of(long nextRecordOffset) {
-        this.nextRecordOffset = nextRecordOffset;
     }
 
     @Override
@@ -143,6 +138,17 @@ public class RecordChain implements Closeable, RecordCursor, Mutable {
         return record.of(rowToDataOffset(offset));
     }
 
+    public void of(long nextRecordOffset) {
+        this.nextRecordOffset = nextRecordOffset;
+    }
+
+    public long put(Record record, long prevRecordOffset) {
+        long offset = beginRecord(prevRecordOffset);
+        recordSink.copy(record, this);
+//        putRecord0(record);
+        return offset;
+    }
+
     public void putBin(BinarySequence value) {
         if (value == null) {
             putNull();
@@ -162,14 +168,38 @@ public class RecordChain implements Closeable, RecordCursor, Mutable {
         mem.putBool(value);
     }
 
+    @Override
+    public void putByte(byte value) {
+        mem.putByte(value);
+    }
+
+    @Override
+    public void putDate(long date) {
+        putLong(date);
+    }
+
+    @Override
+    public void putDouble(double value) {
+        mem.putDouble(value);
+    }
+
+    @Override
+    public void putFloat(float value) {
+        mem.putFloat(value);
+    }
+
     public void putInt(int value) {
         mem.putInt(value);
     }
 
-    public long putRecord(Record record, long prevRecordOffset) {
-        long offset = beginRecord(prevRecordOffset);
-        putRecord0(record);
-        return offset;
+    @Override
+    public void putLong(long value) {
+        mem.putLong(value);
+    }
+
+    @Override
+    public void putShort(short value) {
+        mem.putShort(value);
     }
 
     public void putStr(CharSequence value) {
@@ -183,82 +213,18 @@ public class RecordChain implements Closeable, RecordCursor, Mutable {
         }
     }
 
+    @Override
+    public void putTimestamp(long value) {
+        putLong(value);
+    }
+
     private static long rowToDataOffset(long row) {
         return row + 8;
-    }
-
-    private void putByte(byte value) {
-        mem.putByte(value);
-    }
-
-    private void putDate(long date) {
-        putLong(date);
-    }
-
-    private void putDouble(double value) {
-        mem.putDouble(value);
-    }
-
-    private void putFloat(float value) {
-        mem.putFloat(value);
-    }
-
-    private void putLong(long value) {
-        mem.putLong(value);
     }
 
     private void putNull() {
         mem.putLong(rowToDataOffset(recordOffset), TableUtils.NULL_LEN);
         recordOffset += 8;
-    }
-
-    private void putRecord0(Record record) {
-        for (int i = 0; i < columnCount; i++) {
-            switch (metadata.getColumnType(i)) {
-                case ColumnType.BOOLEAN:
-                    putBool(record.getBool(i));
-                    break;
-                case ColumnType.BYTE:
-                    putByte(record.getByte(i));
-                    break;
-                case ColumnType.DOUBLE:
-                    putDouble(record.getDouble(i));
-                    break;
-                case ColumnType.INT:
-                    putInt(record.getInt(i));
-                    break;
-                case ColumnType.LONG:
-                    putDate(record.getLong(i));
-                    break;
-                case ColumnType.DATE:
-                    putLong(record.getDate(i));
-                    break;
-                case ColumnType.TIMESTAMP:
-                    putLong(record.getTimestamp(i));
-                    break;
-                case ColumnType.SHORT:
-                    putShort(record.getShort(i));
-                    break;
-                case ColumnType.SYMBOL:
-                    putStr(record.getSym(i));
-                    break;
-                case ColumnType.FLOAT:
-                    putFloat(record.getFloat(i));
-                    break;
-                case ColumnType.STRING:
-                    putStr(record.getStr(i));
-                    break;
-                case ColumnType.BINARY:
-                    putBin(record.getBin(i));
-                    break;
-                default:
-                    throw CairoException.instance(0).put("Unsupported type: ").put(ColumnType.nameOf(metadata.getColumnType(i))).put(" [").put(metadata.getColumnType(i)).put(']');
-            }
-        }
-    }
-
-    private void putShort(short value) {
-        mem.putShort(value);
     }
 
     private class RecordChainRecord implements Record {

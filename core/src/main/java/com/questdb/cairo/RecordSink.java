@@ -21,25 +21,10 @@
  *
  ******************************************************************************/
 
-package com.questdb.cairo.map;
+package com.questdb.cairo;
 
-import com.questdb.cairo.RecordSink;
-import com.questdb.cairo.RecordSinkSPI;
 import com.questdb.cairo.sql.Record;
 
-public interface MapKey extends RecordSinkSPI {
-
-    default boolean create() {
-        return createValue().isNew();
-    }
-
-    MapValue createValue();
-
-    MapValue findValue();
-
-    default boolean notFound() {
-        return findValue() == null;
-    }
-
-    void put(Record record, RecordSink sink);
+public interface RecordSink {
+    void copy(Record r, RecordSinkSPI w);
 }

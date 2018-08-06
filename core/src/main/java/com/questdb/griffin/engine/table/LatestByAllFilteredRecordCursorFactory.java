@@ -25,9 +25,9 @@ package com.questdb.griffin.engine.table;
 
 import com.questdb.cairo.CairoConfiguration;
 import com.questdb.cairo.ColumnTypes;
+import com.questdb.cairo.RecordSink;
 import com.questdb.cairo.map.FastMap;
 import com.questdb.cairo.map.Map;
-import com.questdb.cairo.map.RecordSink;
 import com.questdb.cairo.sql.DataFrameCursorFactory;
 import com.questdb.cairo.sql.Function;
 import com.questdb.cairo.sql.RecordMetadata;

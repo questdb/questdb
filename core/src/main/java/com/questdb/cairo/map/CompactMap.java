@@ -23,10 +23,7 @@
 
 package com.questdb.cairo.map;
 
-import com.questdb.cairo.CairoException;
-import com.questdb.cairo.ColumnTypes;
-import com.questdb.cairo.TableUtils;
-import com.questdb.cairo.VirtualMemory;
+import com.questdb.cairo.*;
 import com.questdb.cairo.sql.Record;
 import com.questdb.common.ColumnType;
 import com.questdb.std.BinarySequence;
@@ -415,7 +412,7 @@ public class CompactMap implements Map {
             entries.putLong(value);
         }
 
-        public void putRecord(Record record, RecordSink sink) {
+        public void put(Record record, RecordSink sink) {
             sink.copy(record, key);
         }
 

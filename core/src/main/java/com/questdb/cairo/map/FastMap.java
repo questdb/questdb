@@ -25,6 +25,7 @@ package com.questdb.cairo.map;
 
 import com.questdb.cairo.CairoException;
 import com.questdb.cairo.ColumnTypes;
+import com.questdb.cairo.RecordSink;
 import com.questdb.cairo.TableUtils;
 import com.questdb.cairo.sql.Record;
 import com.questdb.common.ColumnType;
@@ -450,7 +451,7 @@ public class FastMap implements Map {
         }
 
         @Override
-        public void putRecord(Record record, RecordSink sink) {
+        public void put(Record record, RecordSink sink) {
             sink.copy(record, this);
         }
 

@@ -189,4 +189,14 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     public int getSqlCharacterStorePoolCapacity() {
         return 64;
     }
+
+    @Override
+    public int getSqlSortKeyPageSize() {
+        return 4 * Numbers.SIZE_1MB;
+    }
+
+    @Override
+    public int getSqlSortLightValuePageSize() {
+        return Numbers.SIZE_1MB;
+    }
 }

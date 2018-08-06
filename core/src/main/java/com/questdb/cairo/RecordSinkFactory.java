@@ -21,18 +21,16 @@
  *
  ******************************************************************************/
 
-package com.questdb.cairo.map;
+package com.questdb.cairo;
 
-import com.questdb.cairo.ColumnFilter;
 import com.questdb.cairo.sql.Record;
-import com.questdb.cairo.sql.RecordMetadata;
 import com.questdb.common.ColumnType;
 import com.questdb.std.BytecodeAssembler;
 import com.questdb.std.Transient;
 
 public class RecordSinkFactory {
 
-    public static RecordSink getInstance(BytecodeAssembler asm, RecordMetadata meta, @Transient ColumnFilter columnFilter, boolean symAsString) {
+    public static RecordSink getInstance(BytecodeAssembler asm, ColumnTypes columnTypes, @Transient ColumnFilter columnFilter, boolean symAsString) {
         asm.init(RecordSink.class);
         asm.setupPool();
         int thisClassIndex = asm.poolClass(asm.poolUtf8("questdbasm"));
@@ -50,23 +48,21 @@ public class RecordSinkFactory {
         int rGetStr = asm.poolInterfaceMethod(Record.class, "getStr", "(I)Ljava/lang/CharSequence;");
         int rGetSym = asm.poolInterfaceMethod(Record.class, "getSym", "(I)Ljava/lang/CharSequence;");
         final int rGetBin = asm.poolInterfaceMethod(Record.class, "getBin", "(I)Lcom/questdb/std/BinarySequence;");
-
-
         //
-        int wPutInt = asm.poolInterfaceMethod(MapKey.class, "putInt", "(I)V");
-        int wPutLong = asm.poolInterfaceMethod(MapKey.class, "putLong", "(J)V");
-        int wPutByte = asm.poolInterfaceMethod(MapKey.class, "putByte", "(B)V");
-        int wPutShort = asm.poolInterfaceMethod(MapKey.class, "putShort", "(S)V");
-        int wPutBool = asm.poolInterfaceMethod(MapKey.class, "putBool", "(Z)V");
-        int wPutFloat = asm.poolInterfaceMethod(MapKey.class, "putFloat", "(F)V");
-        int wPutDouble = asm.poolInterfaceMethod(MapKey.class, "putDouble", "(D)V");
-        int wPutStr = asm.poolInterfaceMethod(MapKey.class, "putStr", "(Ljava/lang/CharSequence;)V");
-        int wPutDate = asm.poolInterfaceMethod(MapKey.class, "putDate", "(J)V");
-        int wPutTimestamp = asm.poolInterfaceMethod(MapKey.class, "putTimestamp", "(J)V");
-        final int wPutBin = asm.poolInterfaceMethod(MapKey.class, "putBin", "(Lcom/questdb/std/BinarySequence;)V");
+        int wPutInt = asm.poolInterfaceMethod(RecordSinkSPI.class, "putInt", "(I)V");
+        int wPutLong = asm.poolInterfaceMethod(RecordSinkSPI.class, "putLong", "(J)V");
+        int wPutByte = asm.poolInterfaceMethod(RecordSinkSPI.class, "putByte", "(B)V");
+        int wPutShort = asm.poolInterfaceMethod(RecordSinkSPI.class, "putShort", "(S)V");
+        int wPutBool = asm.poolInterfaceMethod(RecordSinkSPI.class, "putBool", "(Z)V");
+        int wPutFloat = asm.poolInterfaceMethod(RecordSinkSPI.class, "putFloat", "(F)V");
+        int wPutDouble = asm.poolInterfaceMethod(RecordSinkSPI.class, "putDouble", "(D)V");
+        int wPutStr = asm.poolInterfaceMethod(RecordSinkSPI.class, "putStr", "(Ljava/lang/CharSequence;)V");
+        int wPutDate = asm.poolInterfaceMethod(RecordSinkSPI.class, "putDate", "(J)V");
+        int wPutTimestamp = asm.poolInterfaceMethod(RecordSinkSPI.class, "putTimestamp", "(J)V");
+        final int wPutBin = asm.poolInterfaceMethod(RecordSinkSPI.class, "putBin", "(Lcom/questdb/std/BinarySequence;)V");
 
         int copyNameIndex = asm.poolUtf8("copy");
-        int copySigIndex = asm.poolUtf8("(Lcom/questdb/cairo/sql/Record;Lcom/questdb/cairo/map/MapKey;)V");
+        int copySigIndex = asm.poolUtf8("(Lcom/questdb/cairo/sql/Record;Lcom/questdb/cairo/RecordSinkSPI;)V");
 
         asm.finishPool();
         asm.defineClass(thisClassIndex);
@@ -86,7 +82,7 @@ public class RecordSinkFactory {
             asm.aload(1);
             asm.iconst(index);
 
-            switch (meta.getColumnType(index)) {
+            switch (columnTypes.getColumnType(index)) {
                 case ColumnType.INT:
                     asm.invokeInterface(rGetInt, 1);
                     asm.invokeInterface(wPutInt, 1);

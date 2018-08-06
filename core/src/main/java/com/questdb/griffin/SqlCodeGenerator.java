@@ -24,10 +24,11 @@
 package com.questdb.griffin;
 
 import com.questdb.cairo.*;
-import com.questdb.cairo.map.RecordSinkFactory;
 import com.questdb.cairo.sql.*;
 import com.questdb.common.ColumnType;
 import com.questdb.common.SymbolTable;
+import com.questdb.griffin.engine.RecordComparatorCompiler;
+import com.questdb.griffin.engine.SortedLightRecordCursorFactory;
 import com.questdb.griffin.engine.functions.columns.SymbolColumn;
 import com.questdb.griffin.engine.table.*;
 import com.questdb.griffin.model.ExpressionNode;
@@ -49,11 +50,13 @@ public class SqlCodeGenerator {
     private final ListColumnFilter listColumnFilter = new ListColumnFilter();
     private final SingleColumnType latestByColumnTypes = new SingleColumnType();
     private final CairoConfiguration configuration;
+    private final RecordComparatorCompiler recordComparatorCompiler;
 
     public SqlCodeGenerator(CairoEngine engine, CairoConfiguration configuration, FunctionParser functionParser) {
         this.engine = engine;
         this.configuration = configuration;
         this.functionParser = functionParser;
+        this.recordComparatorCompiler = new RecordComparatorCompiler(asm);
     }
 
     private void clearState() {
@@ -240,7 +243,34 @@ public class SqlCodeGenerator {
         return generateQuery(model.getNestedModel(), executionContext);
     }
 
+    private RecordCursorFactory generateOrderBy(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
+        RecordCursorFactory recordCursorFactory = generateSelect(model, executionContext);
+        ObjList<ExpressionNode> orderBy = model.getOrderBy();
+        if (orderBy.size() > 0) {
+            final RecordMetadata metadata = recordCursorFactory.getMetadata();
+            listColumnFilter.clear();
+
+            for (int i = 0, n = orderBy.size(); i < n; i++) {
+                ExpressionNode node = orderBy.getQuick(i);
+                listColumnFilter.add(metadata.getColumnIndexQuiet(node.token));
+            }
+
+            return new SortedLightRecordCursorFactory(
+                    configuration,
+                    metadata,
+                    recordCursorFactory,
+                    recordComparatorCompiler.compile(metadata, listColumnFilter)
+            );
+        }
+
+        return recordCursorFactory;
+    }
+
     private RecordCursorFactory generateQuery(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
+        return generateOrderBy(model, executionContext);
+    }
+
+    private RecordCursorFactory generateSelect(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
         switch (model.getSelectModelType()) {
             case QueryModel.SELECT_MODEL_CHOOSE:
                 return generateSelectChoose(model, executionContext);

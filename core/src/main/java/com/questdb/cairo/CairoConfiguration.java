@@ -88,4 +88,8 @@ public interface CairoConfiguration {
     int getSqlCharacterStoreCapacity();
 
     int getSqlCharacterStorePoolCapacity();
+
+    int getSqlSortKeyPageSize();
+
+    int getSqlSortLightValuePageSize();
 }

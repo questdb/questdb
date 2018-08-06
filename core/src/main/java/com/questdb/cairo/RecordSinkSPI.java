@@ -21,10 +21,30 @@
  *
  ******************************************************************************/
 
-package com.questdb.cairo.map;
+package com.questdb.cairo;
 
-import com.questdb.cairo.sql.Record;
+import com.questdb.std.BinarySequence;
 
-public interface RecordSink {
-    void copy(Record r, MapKey w);
+public interface RecordSinkSPI {
+    void putBin(BinarySequence value);
+
+    void putBool(boolean value);
+
+    void putByte(byte value);
+
+    void putDate(long value);
+
+    void putDouble(double value);
+
+    void putFloat(float value);
+
+    void putInt(int value);
+
+    void putLong(long value);
+
+    void putShort(short value);
+
+    void putStr(CharSequence value);
+
+    void putTimestamp(long value);
 }

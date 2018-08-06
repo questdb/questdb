@@ -23,9 +23,9 @@
 
 package com.questdb.griffin.engine.table;
 
+import com.questdb.cairo.RecordSink;
 import com.questdb.cairo.map.Map;
 import com.questdb.cairo.map.MapKey;
-import com.questdb.cairo.map.RecordSink;
 import com.questdb.cairo.sql.DataFrame;
 import com.questdb.cairo.sql.Function;
 import com.questdb.griffin.engine.LongTreeSet;
@@ -71,7 +71,7 @@ class LatestByAllFilteredRecordCursor extends AbstractTreeSetRecordCursor {
                 record.setRecordIndex(row);
                 if (filter.getBool(record)) {
                     MapKey key = map.withKey();
-                    key.putRecord(record, recordSink);
+                    key.put(record, recordSink);
                     if (key.create()) {
                         treeSet.put(Rows.toRowID(partitionIndex, row));
                     }
