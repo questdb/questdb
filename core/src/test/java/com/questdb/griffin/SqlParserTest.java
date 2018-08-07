@@ -2350,7 +2350,7 @@ public class SqlParserTest extends AbstractCairoTest {
                                 "-- from acc\n" +
                                 "from acc(Date) sample by 1d\n" +
                                 "-- where x = 10\n",
-                        sqlExecutionContext, true);
+                        sqlExecutionContext);
                 Assert.fail();
             } catch (SqlException e) {
                 TestUtils.assertEquals("Invalid column: Date", e.getFlyweightMessage());
@@ -2431,7 +2431,7 @@ public class SqlParserTest extends AbstractCairoTest {
     @Test
     public void testMissingWhere() {
         try {
-            sqlCompiler.compileExecutionModel("select id, x + 10, x from tab id ~ 'HBRO'", sqlExecutionContext, true);
+            sqlCompiler.compileExecutionModel("select id, x + 10, x from tab id ~ 'HBRO'", sqlExecutionContext);
             Assert.fail("Exception expected");
         } catch (SqlException e) {
             Assert.assertEquals(33, e.getPosition());
@@ -3433,7 +3433,7 @@ public class SqlParserTest extends AbstractCairoTest {
             }
             b.append('f').append(i);
         }
-        QueryModel st = (QueryModel) sqlCompiler.compileExecutionModel(b, sqlExecutionContext, true);
+        QueryModel st = (QueryModel) sqlCompiler.compileExecutionModel(b, sqlExecutionContext);
         Assert.assertEquals(SqlParser.MAX_ORDER_BY_COLUMNS - 1, st.getOrderBy().size());
     }
 
@@ -3448,7 +3448,7 @@ public class SqlParserTest extends AbstractCairoTest {
             b.append('f').append(i);
         }
         try {
-            sqlCompiler.compileExecutionModel(b, sqlExecutionContext, true);
+            sqlCompiler.compileExecutionModel(b, sqlExecutionContext);
         } catch (SqlException e) {
             TestUtils.assertEquals("Too many columns", e.getFlyweightMessage());
         }
@@ -3559,7 +3559,7 @@ public class SqlParserTest extends AbstractCairoTest {
             for (int i = 0, n = tableModels.length; i < n; i++) {
                 CairoTestUtils.create(tableModels[i]);
             }
-            compiler.compileExecutionModel(query, sqlExecutionContext, true);
+            compiler.compileExecutionModel(query, sqlExecutionContext);
             Assert.fail("Exception expected");
         } catch (SqlException e) {
             Assert.assertEquals(position, e.getPosition());
@@ -3582,7 +3582,7 @@ public class SqlParserTest extends AbstractCairoTest {
     private void assertModel(String expected, String query, int modelType, TableModel... tableModels) throws SqlException {
         createModelsAndRun(() -> {
             sink.clear();
-            ExecutionModel model = sqlCompiler.compileExecutionModel(query, sqlExecutionContext, true);
+            ExecutionModel model = sqlCompiler.compileExecutionModel(query, sqlExecutionContext);
             Assert.assertEquals(model.getModelType(), modelType);
             ((Sinkable) model).toSink(sink);
             TestUtils.assertEquals(expected, sink);

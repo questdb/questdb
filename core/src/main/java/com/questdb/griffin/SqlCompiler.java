@@ -130,8 +130,7 @@ public class SqlCompiler implements Closeable {
 
     public RecordCursorFactory compile(CharSequence query, BindVariableService bindVariableService) throws SqlException {
         executionContext.with(bindVariableService);
-
-        ExecutionModel executionModel = compileExecutionModel(query, executionContext, true);
+        ExecutionModel executionModel = compileExecutionModel(query, executionContext);
         switch (executionModel.getModelType()) {
             case ExecutionModel.QUERY:
                 return generate((QueryModel) executionModel, executionContext);
@@ -149,28 +148,6 @@ public class SqlCompiler implements Closeable {
                 break;
         }
         return null;
-    }
-
-    public void execute(CharSequence query, BindVariableService bindVariableService) throws SqlException {
-        executionContext.with(bindVariableService);
-        ExecutionModel executionModel = compileExecutionModel(query, executionContext, false);
-        switch (executionModel.getModelType()) {
-            case ExecutionModel.QUERY:
-                break;
-            case ExecutionModel.CREATE_TABLE:
-                createTableWithRetries(query, executionModel);
-                break;
-            case ExecutionModel.INSERT_AS_SELECT:
-                executeWithRetries(
-                        query,
-                        insertAsSelectMethod,
-                        executionModel,
-                        configuration.getCreateAsSelectRetryCount()
-                );
-                break;
-            default:
-                break;
-        }
     }
 
     // Creates data type converter.
@@ -610,15 +587,11 @@ public class SqlCompiler implements Closeable {
         parser.clear();
     }
 
-    private ExecutionModel compileExecutionModel(GenericLexer lexer, SqlExecutionContext executionContext, boolean willUseCursor) throws SqlException {
+    private ExecutionModel compileExecutionModel(GenericLexer lexer, SqlExecutionContext executionContext) throws SqlException {
         ExecutionModel model = parser.parse(lexer, executionContext);
         switch (model.getModelType()) {
             case ExecutionModel.QUERY:
-                if (willUseCursor) {
-                    return optimiser.optimise((QueryModel) model, executionContext);
-                } else {
-                    return model;
-                }
+                return optimiser.optimise((QueryModel) model, executionContext);
             case ExecutionModel.INSERT_AS_SELECT:
                 return validateAndOptimiseInsertAsSelect((InsertAsSelectModel) model, executionContext);
             default:
@@ -626,14 +599,10 @@ public class SqlCompiler implements Closeable {
         }
     }
 
-    ExecutionModel compileExecutionModel(
-            CharSequence query,
-            SqlExecutionContext executionContext,
-            boolean willUseCursor
-    ) throws SqlException {
+    ExecutionModel compileExecutionModel(CharSequence query, SqlExecutionContext executionContext) throws SqlException {
         clear();
         lexer.of(query);
-        return compileExecutionModel(lexer, executionContext, willUseCursor);
+        return compileExecutionModel(lexer, executionContext);
     }
 
     private void copyOrdered(TableWriter writer, RecordCursor cursor, RecordToRowCopier copier, int cursorTimestampIndex) {
@@ -900,7 +869,7 @@ public class SqlCompiler implements Closeable {
                 break;
             } catch (ReaderOutOfDateException e) {
                 attemptsLeft--;
-                executionModel = compileExecutionModel(query, executionContext, false);
+                executionModel = compileExecutionModel(query, executionContext);
             }
         } while (attemptsLeft > 0);
 

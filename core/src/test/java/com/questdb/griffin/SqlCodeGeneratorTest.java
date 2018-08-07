@@ -1054,7 +1054,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
             try (Engine engine = new Engine(configuration);
                  SqlCompiler compiler = new SqlCompiler(engine, configuration)) {
                 try {
-                    compiler.execute(("create table x as " +
+                    compiler.compile(("create table x as " +
                             "(" +
                             "select * from" +
                             " random_cursor" +
@@ -2643,7 +2643,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     private void assertError(CharSequence ddl, CharSequence query, int position, CharSequence message) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try {
-                compiler.execute(ddl, bindVariableService);
+                compiler.compile(ddl, bindVariableService);
 
                 try {
                     compiler.compile(query, bindVariableService);
@@ -2671,7 +2671,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             try {
                 if (ddl != null) {
-                    compiler.execute(ddl, bindVariableService);
+                    compiler.compile(ddl, bindVariableService);
                 }
                 try {
                     compiler.compile(query, bindVariableService);
@@ -2703,7 +2703,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             try {
                 if (ddl != null) {
-                    compiler.execute(ddl, bindVariableService);
+                    compiler.compile(ddl, bindVariableService);
                 }
                 if (verify != null) {
                     printSqlResult(null, verify, expectedTimestamp, ddl2, expected2, supportsRandomAccess);
@@ -2828,7 +2828,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
             assertVariableColumns(factory);
 
             if (ddl2 != null) {
-                compiler.execute(ddl2, bindVariableService);
+                compiler.compile(ddl2, bindVariableService);
                 assertCursor(expected2, factory, supportsRandomAccess);
                 // and again
                 assertCursor(expected2, factory, supportsRandomAccess);

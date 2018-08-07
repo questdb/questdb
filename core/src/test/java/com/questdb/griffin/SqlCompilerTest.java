@@ -119,7 +119,7 @@ public class SqlCompilerTest extends AbstractCairoTest {
         SqlCompiler compiler = new SqlCompiler(engine, configuration);
 
         try {
-            compiler.execute("create table x (a int)", bindVariableService);
+            compiler.compile("create table x (a int)", bindVariableService);
             Assert.fail();
         } catch (SqlException e) {
             Assert.assertEquals(13, e.getPosition());
@@ -1720,7 +1720,7 @@ public class SqlCompilerTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCreateAsSelectConstantColumnRename() throws IOException {
+    public void testCreateAsSelectConstantColumnRename() {
         try {
             assertCreateTableAsSelect(
                     null,
@@ -1792,7 +1792,7 @@ public class SqlCompilerTest extends AbstractCairoTest {
 
                 try (Engine engine = new Engine(configuration); SqlCompiler compiler = new SqlCompiler(engine, configuration)) {
                     try {
-                        compiler.execute(sql, bindVariableService);
+                        compiler.compile(sql, bindVariableService);
                         Assert.fail();
                     } catch (CairoException ignore) {
                     }
@@ -1818,7 +1818,7 @@ public class SqlCompilerTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCreateAsSelectRemoveColumn() throws SqlException, IOException {
+    public void testCreateAsSelectRemoveColumn() throws SqlException {
         assertCreateTableAsSelect(
                 "{\"columnCount\":2,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\"INT\"},{\"index\":1,\"name\":\"t\",\"type\":\"TIMESTAMP\"}],\"timestampIndex\":1}",
                 "create table Y as (select * from X) timestamp(t)",
@@ -1843,7 +1843,7 @@ public class SqlCompilerTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCreateAsSelectRemoveColumnFromCast() throws IOException {
+    public void testCreateAsSelectRemoveColumnFromCast() {
         // because the column we delete is used in "cast" expression this SQL must fail
         try {
             assertCreateTableAsSelect(
@@ -1875,7 +1875,7 @@ public class SqlCompilerTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCreateAsSelectReplaceColumn() throws SqlException, IOException {
+    public void testCreateAsSelectReplaceColumn() throws SqlException {
         assertCreateTableAsSelect(
                 "{\"columnCount\":3,\"columns\":[{\"index\":0,\"name\":\"b\",\"type\":\"INT\"},{\"index\":1,\"name\":\"t\",\"type\":\"TIMESTAMP\"},{\"index\":2,\"name\":\"c\",\"type\":\"FLOAT\"}],\"timestampIndex\":1}",
                 "create table Y as (select * from X) timestamp(t)",
@@ -1901,7 +1901,7 @@ public class SqlCompilerTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCreateAsSelectReplaceTimestamp() throws IOException {
+    public void testCreateAsSelectReplaceTimestamp() {
         try {
             assertCreateTableAsSelect(
                     "{\"columnCount\":3,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\"INT\"},{\"index\":1,\"name\":\"b\",\"type\":\"INT\"},{\"index\":2,\"name\":\"t\",\"type\":\"FLOAT\"}],\"timestampIndex\":-1}",
@@ -1933,7 +1933,7 @@ public class SqlCompilerTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCreateCleanUpFailure() throws SqlException, IOException {
+    public void testCreateCleanUpFailure() throws SqlException {
         // remove column from table X
         Fiddler fiddler = new Fiddler() {
             int state = 0;
@@ -1972,7 +1972,7 @@ public class SqlCompilerTest extends AbstractCairoTest {
             }
         };
 
-        try (CairoEngine engine = new Engine(configuration) {
+        try (Engine engine = new Engine(configuration) {
             @Override
             public TableReader getReader(CharSequence tableName, long tableVersion) {
                 fiddler.run(this);
@@ -1983,23 +1983,23 @@ public class SqlCompilerTest extends AbstractCairoTest {
             SqlCompiler compiler = new SqlCompiler(engine, configuration);
 
             // create source table
-            SqlCompilerTest.compiler.execute("create table X (a int, b int, t timestamp) timestamp(t)", bindVariableService);
+            SqlCompilerTest.compiler.compile("create table X (a int, b int, t timestamp) timestamp(t)", bindVariableService);
 
             try {
-                compiler.execute("create table Y as (select * from X) timestamp(t)", bindVariableService);
+                compiler.compile("create table Y as (select * from X) timestamp(t)", bindVariableService);
                 Assert.fail();
             } catch (SqlException e) {
                 Assert.assertEquals(0, e.getPosition());
                 TestUtils.assertContains(e.getMessage(), "Concurrent modification cannot be handled");
             }
 
-            Assert.assertEquals(0, ((Engine) engine).getBusyReaderCount());
+            Assert.assertEquals(0, engine.getBusyReaderCount());
         }
     }
 
     @Test
     public void testCreateEmptyTableNoPartition() throws SqlException {
-        compiler.execute("create table x (" +
+        compiler.compile("create table x (" +
                         "a INT, " +
                         "b BYTE, " +
                         "c SHORT, " +
@@ -2035,7 +2035,7 @@ public class SqlCompilerTest extends AbstractCairoTest {
 
     @Test
     public void testCreateEmptyTableNoTimestamp() throws SqlException {
-        compiler.execute("create table x (" +
+        compiler.compile("create table x (" +
                         "a INT, " +
                         "b BYTE, " +
                         "c SHORT, " +
@@ -2071,7 +2071,7 @@ public class SqlCompilerTest extends AbstractCairoTest {
 
     @Test
     public void testCreateEmptyTableSymbolCache() throws SqlException {
-        compiler.execute("create table x (" +
+        compiler.compile("create table x (" +
                         "a INT, " +
                         "b BYTE, " +
                         "c SHORT, " +
@@ -2108,7 +2108,7 @@ public class SqlCompilerTest extends AbstractCairoTest {
 
     @Test
     public void testCreateEmptyTableSymbolNoCache() throws SqlException {
-        compiler.execute("create table x (" +
+        compiler.compile("create table x (" +
                         "a INT, " +
                         "b BYTE, " +
                         "c SHORT, " +
@@ -2145,7 +2145,7 @@ public class SqlCompilerTest extends AbstractCairoTest {
 
     @Test
     public void testCreateEmptyTableWithIndex() throws SqlException {
-        compiler.execute("create table x (" +
+        compiler.compile("create table x (" +
                         "a INT, " +
                         "b BYTE, " +
                         "c SHORT, " +
@@ -2182,7 +2182,7 @@ public class SqlCompilerTest extends AbstractCairoTest {
 
     @Test
     public void testCreateTableUtf8() throws SqlException, IOException {
-        compiler.execute("create table доходы(экспорт int)", bindVariableService);
+        compiler.compile("create table доходы(экспорт int)", bindVariableService);
 
         try (TableWriter writer = engine.getWriter("доходы")) {
             for (int i = 0; i < 20; i++) {
@@ -2193,7 +2193,7 @@ public class SqlCompilerTest extends AbstractCairoTest {
             writer.commit();
         }
 
-        compiler.execute("create table миллионы as (select * from доходы)", bindVariableService);
+        compiler.compile("create table миллионы as (select * from доходы)", bindVariableService);
 
         try (TableReader reader = engine.getReader("миллионы", -1)) {
             sink.clear();
@@ -2227,7 +2227,7 @@ public class SqlCompilerTest extends AbstractCairoTest {
 
     @Test
     public void testDuplicateTableName() throws SqlException {
-        compiler.execute("create table x (" +
+        compiler.compile("create table x (" +
                         "a INT, " +
                         "b BYTE, " +
                         "t TIMESTAMP, " +
@@ -2246,10 +2246,13 @@ public class SqlCompilerTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testExecuteQuery() throws SqlException {
-        // there is no explicit assert here because when SQL contains semantic error
-        // timestamp refers to INT column, which is picked up by both optimiser and compiler
-        compiler.execute("select * from random_cursor(20, 'x', rnd_int()) timestamp(x)", bindVariableService);
+    public void testExecuteQuery() {
+        assertFailure(
+                58,
+                "not a TIMESTAMP",
+                "select * from random_cursor(20, 'x', rnd_int()) timestamp(x)"
+
+        );
     }
 
     @Test
@@ -2674,10 +2677,10 @@ public class SqlCompilerTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             try {
                 if (ddl != null) {
-                    compiler.execute(ddl, bindVariableService);
+                    compiler.compile(ddl, bindVariableService);
                 }
                 try {
-                    compiler.execute(insert, bindVariableService);
+                    compiler.compile(insert, bindVariableService);
                     Assert.fail();
                 } catch (SqlException e) {
                     Assert.assertEquals(errorPosition, e.getPosition());
@@ -2846,9 +2849,9 @@ public class SqlCompilerTest extends AbstractCairoTest {
             }) {
                 try (SqlCompiler compiler = new SqlCompiler(engine, configuration)) {
 
-                    compiler.execute("create table x (a INT, b INT)", bindVariableService);
-                    compiler.execute("create table y as (select rnd_int() int1, rnd_int() int2 from long_sequence(10))", bindVariableService);
-                    compiler.execute("insert into x select * from y", bindVariableService);
+                    compiler.compile("create table x (a INT, b INT)", bindVariableService);
+                    compiler.compile("create table y as (select rnd_int() int1, rnd_int() int2 from long_sequence(10))", bindVariableService);
+                    compiler.compile("insert into x select * from y", bindVariableService);
 
                     try (RecordCursorFactory factory = compiler.compile("select * from x", bindVariableService)) {
                         sink.clear();
@@ -2939,7 +2942,7 @@ public class SqlCompilerTest extends AbstractCairoTest {
             new Thread(() -> {
                 try {
                     barrier.await();
-                    compiler.execute("create table x (a INT, b FLOAT)", bindVariableService);
+                    compiler.compile("create table x (a INT, b FLOAT)", bindVariableService);
                     index.set(0);
                     success.incrementAndGet();
                 } catch (Exception ignore) {
@@ -2952,7 +2955,7 @@ public class SqlCompilerTest extends AbstractCairoTest {
             new Thread(() -> {
                 try {
                     barrier.await();
-                    compiler2.execute("create table x (a STRING, b DOUBLE)", bindVariableService);
+                    compiler2.compile("create table x (a STRING, b DOUBLE)", bindVariableService);
                     index.set(1);
                     success.incrementAndGet();
                 } catch (Exception ignore) {
@@ -2981,7 +2984,7 @@ public class SqlCompilerTest extends AbstractCairoTest {
     }
 
     private void assertCast(String expectedData, String expectedMeta, String sql) throws SqlException, IOException {
-        compiler.execute(sql, bindVariableService);
+        compiler.compile(sql, bindVariableService);
         try (TableReader reader = engine.getReader("y", -1)) {
             sink.clear();
             reader.getMetadata().toJson(sink);
@@ -3007,7 +3010,7 @@ public class SqlCompilerTest extends AbstractCairoTest {
 
     private void assertCastByteFail(int castTo) {
         try {
-            compiler.execute("create table y as (" +
+            compiler.compile("create table y as (" +
                             "select * from random_cursor(" +
                             " 20," + // record count
                             " 'a', rnd_byte(2,50)" +
@@ -3046,7 +3049,7 @@ public class SqlCompilerTest extends AbstractCairoTest {
 
     private void assertCastDoubleFail(int castTo) {
         try {
-            compiler.execute("create table y as (" +
+            compiler.compile("create table y as (" +
                             "select * from random_cursor(" +
                             " 20," + // record count
                             " 'a', rnd_double(2)" +
@@ -3073,7 +3076,7 @@ public class SqlCompilerTest extends AbstractCairoTest {
 
     private void assertCastFloatFail(int castTo) {
         try {
-            compiler.execute("create table y as (" +
+            compiler.compile("create table y as (" +
                             "select * from random_cursor(" +
                             " 20," + // record count
                             " 'a', rnd_float(2)" +
@@ -3100,7 +3103,7 @@ public class SqlCompilerTest extends AbstractCairoTest {
 
     private void assertCastIntFail(int castTo) {
         try {
-            compiler.execute("create table y as (" +
+            compiler.compile("create table y as (" +
                             "select * from random_cursor(" +
                             " 20," + // record count
                             " 'a', rnd_int(0, 30, 2)" +
@@ -3127,7 +3130,7 @@ public class SqlCompilerTest extends AbstractCairoTest {
 
     private void assertCastLongFail(int castTo) {
         try {
-            compiler.execute("create table y as (" +
+            compiler.compile("create table y as (" +
                             "select * from random_cursor(" +
                             " 20," + // record count
                             " 'a', rnd_long(0, 30, 2)" +
@@ -3154,7 +3157,7 @@ public class SqlCompilerTest extends AbstractCairoTest {
 
     private void assertCastShortFail(int castTo) {
         try {
-            compiler.execute("create table y as (" +
+            compiler.compile("create table y as (" +
                             "select * from random_cursor(" +
                             " 20," + // record count
                             " 'a', rnd_short(2,10)" +
@@ -3169,7 +3172,7 @@ public class SqlCompilerTest extends AbstractCairoTest {
 
     private void assertCastStringFail(int castTo) {
         try {
-            compiler.execute("create table y as (" +
+            compiler.compile("create table y as (" +
                             "select * from random_cursor(" +
                             " 20," + // record count
                             " 'a', rnd_str(5,10,2)" +
@@ -3184,7 +3187,7 @@ public class SqlCompilerTest extends AbstractCairoTest {
 
     private void assertCastSymbolFail(int castTo) {
         try {
-            compiler.execute("create table y as (" +
+            compiler.compile("create table y as (" +
                             "select * from random_cursor(" +
                             " 20," + // record count
                             " 'a', rnd_symbol(4,6,10,2)" +
@@ -3209,12 +3212,12 @@ public class SqlCompilerTest extends AbstractCairoTest {
         assertCast(expectedData, expectedMeta, sql);
     }
 
-    private void assertCreateTableAsSelect(CharSequence expectedMetadata, CharSequence sql, Fiddler fiddler) throws SqlException, IOException {
+    private void assertCreateTableAsSelect(CharSequence expectedMetadata, CharSequence sql, Fiddler fiddler) throws SqlException {
 
         // create source table
-        compiler.execute("create table X (a int, b int, t timestamp) timestamp(t)", bindVariableService);
+        compiler.compile("create table X (a int, b int, t timestamp) timestamp(t)", bindVariableService);
 
-        try (CairoEngine engine = new Engine(configuration) {
+        try (Engine engine = new Engine(configuration) {
             @Override
             public TableReader getReader(CharSequence tableName, long tableVersion) {
                 fiddler.run(this);
@@ -3223,7 +3226,7 @@ public class SqlCompilerTest extends AbstractCairoTest {
         }) {
 
             SqlCompiler compiler = new SqlCompiler(engine, configuration);
-            compiler.execute(sql, bindVariableService);
+            compiler.compile(sql, bindVariableService);
 
             Assert.assertTrue(fiddler.isHappy());
 
@@ -3233,7 +3236,7 @@ public class SqlCompilerTest extends AbstractCairoTest {
                 TestUtils.assertEquals(expectedMetadata, sink);
             }
 
-            Assert.assertEquals(0, ((Engine) engine).getBusyReaderCount());
+            Assert.assertEquals(0, engine.getBusyReaderCount());
         }
     }
 
@@ -3258,9 +3261,9 @@ public class SqlCompilerTest extends AbstractCairoTest {
         try (Engine engine = new Engine(configuration)) {
             try (SqlCompiler compiler = new SqlCompiler(engine, configuration)) {
 
-                compiler.execute("create table x (a INT, b INT)", bindVariableService);
+                compiler.compile("create table x (a INT, b INT)", bindVariableService);
                 try {
-                    compiler.execute("insert into x select rnd_int() int1, rnd_int() int2 from long_sequence(1000000)", bindVariableService);
+                    compiler.compile("insert into x select rnd_int() int1, rnd_int() int2 from long_sequence(1000000)", bindVariableService);
                     Assert.fail();
                 } catch (CairoException ignore) {
                 }
@@ -3271,7 +3274,7 @@ public class SqlCompilerTest extends AbstractCairoTest {
 
                 inError.set(false);
 
-                compiler.execute("insert into x select rnd_int() int1, rnd_int() int2 from long_sequence(1000000)", bindVariableService);
+                compiler.compile("insert into x select rnd_int() int1, rnd_int() int2 from long_sequence(1000000)", bindVariableService);
                 try (TableWriter w = engine.getWriter("x")) {
                     Assert.assertEquals(1000000, w.size());
                 }
@@ -3289,8 +3292,8 @@ public class SqlCompilerTest extends AbstractCairoTest {
     private void testInsertAsSelect(CharSequence expectedData, CharSequence ddl, CharSequence insert, CharSequence select) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try {
-                compiler.execute(ddl, bindVariableService);
-                compiler.execute(insert, bindVariableService);
+                compiler.compile(ddl, bindVariableService);
+                compiler.compile(insert, bindVariableService);
 
                 try (RecordCursorFactory factory = compiler.compile(select, bindVariableService)) {
                     sink.clear();
