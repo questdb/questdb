@@ -157,7 +157,7 @@ public class FastMap implements Map {
 
     @Override
     public final void close() {
-        offsets.close();
+        offsets = Misc.free(offsets);
         if (address != 0) {
             Unsafe.free(address, capacity);
             address = 0;
@@ -188,8 +188,10 @@ public class FastMap implements Map {
     @Override
     public MapKey withKeyAsLong(long value) {
         key.startAddress = kPos;
-        key.appendAddress = key.startAddress + keyDataOffset;
+        key.appendAddress = kPos + keyDataOffset;
+        // we need nextColOffset in case we need to resize
         if (key.appendAddress + 8 > kLimit) {
+            key.nextColOffset = kPos + keyBlockOffset;
             resize(8);
         }
         Unsafe.getUnsafe().putLong(key.appendAddress, value);
