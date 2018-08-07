@@ -154,7 +154,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         " timestamp_sequence(to_timestamp('2019', 'yyyy'), 1000000000) timestamp" +
                         " from long_sequence(50)" +
                         ") timestamp(timestamp)",
-                expected);
+                expected,
+                false);
     }
 
     @Test
@@ -209,7 +210,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
         assertQuery("a\tb\tk\n",
                 "select * from x o where o.b in ('HYRX','PEHN', null) and a < a",
                 "create table x as (select * from random_cursor(20, 'a', rnd_double(0)*100, 'b', rnd_symbol(5,4,4,1), 'k', timestamp_sequence(to_timestamp(0), 1000000000))), index(b)",
-                null);
+                null,
+                false);
     }
 
     @Test
@@ -1066,7 +1068,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                     try (final RecordCursorFactory factory = compiler.compile("select * from x latest by b where b = 'PEHN' and a < 22", bindVariableService)) {
                         try {
                             assertCursor(("a\tb\tk\n" +
-                                    "5.942010834028\tPEHN\t1970-08-03T02:53:20.000000Z\n"), factory);
+                                    "5.942010834028\tPEHN\t1970-08-03T02:53:20.000000Z\n"), factory, true);
                             Assert.fail();
                         } catch (CairoException e) {
                             TestUtils.assertContains(e.getMessage(), "Cannot open file");
@@ -2014,6 +2016,159 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testOrderByAllSupported() throws Exception {
+        final String expected = "a\tb\tc\td\te\tf\tg\ti\tj\tk\tl\tm\tn\n" +
+                "-2099411412\ttrue\t\tNaN\tNaN\t119\t2015-09-08T05:51:33.432Z\tPEHN\t8196152051414471878\t1970-01-01T05:16:40.000000Z\t17\t00000000 05 2b 73 51 cf c3 7e c0 1d 6c a9 65 81 ad 79 87\tYWXBBZVRLPT\n" +
+                "-2088317486\tfalse\tU\t0.744600037109\tNaN\t651\t2015-07-18T10:50:24.009Z\tVTJW\t3446015290144635451\t1970-01-01T01:06:40.000000Z\t8\t00000000 92 fe 69 38 e1 77 9a e7 0c 89 14 58\tUMLGLHMLLEOY\n" +
+                "-2077041000\ttrue\tM\t0.734065626073\t0.5026\t345\t2015-02-16T05:23:30.407Z\t\t-8534688874718947140\t1970-01-01T01:40:00.000000Z\t34\t00000000 1c 0b 20 a2 86 89 37 11 2c 14\tUSZMZVQE\n" +
+                "-1915752164\tfalse\tI\t0.878611111254\t0.9966\t403\t2015-08-19T00:36:24.375Z\tCPSW\t-8506266080452644687\t1970-01-01T02:30:00.000000Z\t6\t00000000 9a ef 88 cb 4b a1 cf cf 41 7d a6\t\n" +
+                "-1508370878\tfalse\t\tNaN\tNaN\t400\t2015-07-23T20:17:04.236Z\tHYRX\t-7146439436217962540\t1970-01-01T04:43:20.000000Z\t27\t00000000 fa 8d ac 3d 98 a0 ad 9a 5d df dc 72 d7 97 cb f6\n" +
+                "00000010 2c 23\tVLOMPBETTTKRIV\n" +
+                "-1271909747\ttrue\tB\tNaN\t0.1250\t524\t2015-02-23T11:11:04.998Z\t\t-8955092533521658248\t1970-01-01T00:16:40.000000Z\t3\t00000000 de e4 7c d2 35 07 42 fc 31 79\tRSZSRYRFBVTMHG\n" +
+                "-1234141625\tfalse\tC\t0.063816578702\t0.7606\t397\t2015-02-14T21:43:16.924Z\tHYRX\t-8888027247206813045\t1970-01-01T01:56:40.000000Z\t10\t00000000 b3 14 33 80 c9 eb a3 67 7a 1a 79 e4 35 e4\tUIZULIGYVFZFK\n" +
+                "-1172180184\tfalse\tS\t0.589121648388\t0.2820\t886\t\tPEHN\t1761725072747471430\t1970-01-01T00:50:00.000000Z\t27\t\tIQBZXIOVIKJS\n" +
+                "-857795778\ttrue\t\t0.078280206815\t0.2395\t519\t2015-06-12T11:35:40.668Z\tPEHN\t5360746485515325739\t1970-01-01T02:46:40.000000Z\t43\t\tDMIGQZVK\n" +
+                "-682294338\ttrue\tG\t0.915304483996\t0.7943\t646\t2015-11-20T14:44:35.439Z\t\t8432832362817764490\t1970-01-01T05:00:00.000000Z\t38\t\tBOSEPGIUQZHEISQH\n" +
+                "-42049305\tfalse\tW\t0.469864814071\t0.8912\t264\t2015-04-25T07:53:52.476Z\t\t-5296023984443079410\t1970-01-01T03:20:00.000000Z\t17\t00000000 9f 13 8f bb 2a 4b af 8f 89 df 35 8f\tOQKYHQQ\n" +
+                "33027131\tfalse\tS\t0.153698370855\t0.5083\t107\t2015-08-04T00:55:25.323Z\t\t-8966711730402783587\t1970-01-01T03:53:20.000000Z\t48\t00000000 00 6b dd 18 fe 71 76 bc 45 24 cd 13 00 7c fb 01\tGZJYYFLSVIHDWWL\n" +
+                "131103569\ttrue\tO\tNaN\tNaN\t658\t2015-12-24T01:28:12.922Z\tVTJW\t-7745861463408011425\t1970-01-01T03:36:40.000000Z\t43\t\tKXEJCTIZKYFLU\n" +
+                "161592763\ttrue\tZ\t0.187697081573\t0.1638\t137\t2015-03-12T05:14:11.462Z\t\t7522482991756933150\t1970-01-01T00:33:20.000000Z\t43\t00000000 06 ac 37 c8 cd 82 89 2b 4d 5f f6 46 90 c3 b3 59\n" +
+                "00000010 8e e5 61 2f\tQOLYXWC\n" +
+                "971963578\ttrue\t\t0.223478278116\t0.7347\t925\t2015-01-03T11:24:48.587Z\tPEHN\t-8851773155849999621\t1970-01-01T04:10:00.000000Z\t40\t00000000 89 a3 83 64 de d6 fd c4 5b c4 e9 19 47\tXHQUTZOD\n" +
+                "976011946\ttrue\tU\t0.240014590077\t0.9292\t379\t\tVTJW\t3820631780839257855\t1970-01-01T02:13:20.000000Z\t12\t00000000 8a b3 14 cd 47 0b 0c 39 12 f7 05 10 f4\tGMXUKLGMXSLUQDYO\n" +
+                "1150448121\ttrue\tC\t0.600707072504\t0.7398\t663\t2015-08-17T00:23:29.874Z\tVTJW\t8873452284097498126\t1970-01-01T04:26:40.000000Z\t48\t00000000 c5 60 b7 d1 5a 0c e9 db 51 13 4d 59 20 c9 37 a1\n" +
+                "00000010 00\t\n" +
+                "1194691156\tfalse\tQ\tNaN\t0.2915\t348\t\tHYRX\t9026435187365103026\t1970-01-01T03:03:20.000000Z\t13\t00000000 71 3d 20 e2 37 f2 64 43 84 55 a0 dd 44 11 e2 a3\tIWZNFKPEVMC\n" +
+                "1431425139\tfalse\t\t0.307166678100\t0.4275\t181\t2015-07-26T11:59:20.003Z\t\t-8546113611224784332\t1970-01-01T01:23:20.000000Z\t11\t00000000 d8 57 91 88 28 a5 18 93 bd 0b\tJOXPKRGIIHYH\n" +
+                "1569490116\tfalse\tZ\tNaN\t0.7611\t428\t2015-05-16T20:27:48.158Z\tVTJW\t-8671107786057422727\t1970-01-01T00:00:00.000000Z\t26\t00000000 68 61 26 af 19 c4 95 94 36 53 49\tFOWLPD\n";
+
+        assertQuery(expected,
+                "x order by a,b,c,d,e,f,g,i,j,k,l,n",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_int() a," +
+                        " rnd_boolean() b," +
+                        " rnd_str(1,1,2) c," +
+                        " rnd_double(2) d," +
+                        " rnd_float(2) e," +
+                        " rnd_short(10,1024) f," +
+                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                        " rnd_symbol(4,4,4,2) i," +
+                        " rnd_long() j," +
+                        " timestamp_sequence(to_timestamp(0), 1000000000) k," +
+                        " rnd_byte(2,50) l," +
+                        " rnd_bin(10, 20, 2) m," +
+                        " rnd_str(5,16,2) n" +
+                        " from" +
+                        " long_sequence(20)" +
+                        ") partition by NONE",
+                null,
+                "insert into x(a,d,c,k) select * from (" +
+                        "select" +
+                        " 1194691157," +
+                        " rnd_double(0)*100," +
+                        " 'RXGZ'," +
+                        " to_timestamp('1971', 'yyyy') t" +
+                        " from long_sequence(1)" +
+                        ") timestamp(t)",
+                "a\tb\tc\td\te\tf\tg\ti\tj\tk\tl\tm\tn\n" +
+                        "-2099411412\ttrue\t\tNaN\tNaN\t119\t2015-09-08T05:51:33.432Z\tPEHN\t8196152051414471878\t1970-01-01T05:16:40.000000Z\t17\t00000000 05 2b 73 51 cf c3 7e c0 1d 6c a9 65 81 ad 79 87\tYWXBBZVRLPT\n" +
+                        "-2088317486\tfalse\tU\t0.744600037109\tNaN\t651\t2015-07-18T10:50:24.009Z\tVTJW\t3446015290144635451\t1970-01-01T01:06:40.000000Z\t8\t00000000 92 fe 69 38 e1 77 9a e7 0c 89 14 58\tUMLGLHMLLEOY\n" +
+                        "-2077041000\ttrue\tM\t0.734065626073\t0.5026\t345\t2015-02-16T05:23:30.407Z\t\t-8534688874718947140\t1970-01-01T01:40:00.000000Z\t34\t00000000 1c 0b 20 a2 86 89 37 11 2c 14\tUSZMZVQE\n" +
+                        "-1915752164\tfalse\tI\t0.878611111254\t0.9966\t403\t2015-08-19T00:36:24.375Z\tCPSW\t-8506266080452644687\t1970-01-01T02:30:00.000000Z\t6\t00000000 9a ef 88 cb 4b a1 cf cf 41 7d a6\t\n" +
+                        "-1508370878\tfalse\t\tNaN\tNaN\t400\t2015-07-23T20:17:04.236Z\tHYRX\t-7146439436217962540\t1970-01-01T04:43:20.000000Z\t27\t00000000 fa 8d ac 3d 98 a0 ad 9a 5d df dc 72 d7 97 cb f6\n" +
+                        "00000010 2c 23\tVLOMPBETTTKRIV\n" +
+                        "-1271909747\ttrue\tB\tNaN\t0.1250\t524\t2015-02-23T11:11:04.998Z\t\t-8955092533521658248\t1970-01-01T00:16:40.000000Z\t3\t00000000 de e4 7c d2 35 07 42 fc 31 79\tRSZSRYRFBVTMHG\n" +
+                        "-1234141625\tfalse\tC\t0.063816578702\t0.7606\t397\t2015-02-14T21:43:16.924Z\tHYRX\t-8888027247206813045\t1970-01-01T01:56:40.000000Z\t10\t00000000 b3 14 33 80 c9 eb a3 67 7a 1a 79 e4 35 e4\tUIZULIGYVFZFK\n" +
+                        "-1172180184\tfalse\tS\t0.589121648388\t0.2820\t886\t\tPEHN\t1761725072747471430\t1970-01-01T00:50:00.000000Z\t27\t\tIQBZXIOVIKJS\n" +
+                        "-857795778\ttrue\t\t0.078280206815\t0.2395\t519\t2015-06-12T11:35:40.668Z\tPEHN\t5360746485515325739\t1970-01-01T02:46:40.000000Z\t43\t\tDMIGQZVK\n" +
+                        "-682294338\ttrue\tG\t0.915304483996\t0.7943\t646\t2015-11-20T14:44:35.439Z\t\t8432832362817764490\t1970-01-01T05:00:00.000000Z\t38\t\tBOSEPGIUQZHEISQH\n" +
+                        "-42049305\tfalse\tW\t0.469864814071\t0.8912\t264\t2015-04-25T07:53:52.476Z\t\t-5296023984443079410\t1970-01-01T03:20:00.000000Z\t17\t00000000 9f 13 8f bb 2a 4b af 8f 89 df 35 8f\tOQKYHQQ\n" +
+                        "33027131\tfalse\tS\t0.153698370855\t0.5083\t107\t2015-08-04T00:55:25.323Z\t\t-8966711730402783587\t1970-01-01T03:53:20.000000Z\t48\t00000000 00 6b dd 18 fe 71 76 bc 45 24 cd 13 00 7c fb 01\tGZJYYFLSVIHDWWL\n" +
+                        "131103569\ttrue\tO\tNaN\tNaN\t658\t2015-12-24T01:28:12.922Z\tVTJW\t-7745861463408011425\t1970-01-01T03:36:40.000000Z\t43\t\tKXEJCTIZKYFLU\n" +
+                        "161592763\ttrue\tZ\t0.187697081573\t0.1638\t137\t2015-03-12T05:14:11.462Z\t\t7522482991756933150\t1970-01-01T00:33:20.000000Z\t43\t00000000 06 ac 37 c8 cd 82 89 2b 4d 5f f6 46 90 c3 b3 59\n" +
+                        "00000010 8e e5 61 2f\tQOLYXWC\n" +
+                        "971963578\ttrue\t\t0.223478278116\t0.7347\t925\t2015-01-03T11:24:48.587Z\tPEHN\t-8851773155849999621\t1970-01-01T04:10:00.000000Z\t40\t00000000 89 a3 83 64 de d6 fd c4 5b c4 e9 19 47\tXHQUTZOD\n" +
+                        "976011946\ttrue\tU\t0.240014590077\t0.9292\t379\t\tVTJW\t3820631780839257855\t1970-01-01T02:13:20.000000Z\t12\t00000000 8a b3 14 cd 47 0b 0c 39 12 f7 05 10 f4\tGMXUKLGMXSLUQDYO\n" +
+                        "1150448121\ttrue\tC\t0.600707072504\t0.7398\t663\t2015-08-17T00:23:29.874Z\tVTJW\t8873452284097498126\t1970-01-01T04:26:40.000000Z\t48\t00000000 c5 60 b7 d1 5a 0c e9 db 51 13 4d 59 20 c9 37 a1\n" +
+                        "00000010 00\t\n" +
+                        "1194691156\tfalse\tQ\tNaN\t0.2915\t348\t\tHYRX\t9026435187365103026\t1970-01-01T03:03:20.000000Z\t13\t00000000 71 3d 20 e2 37 f2 64 43 84 55 a0 dd 44 11 e2 a3\tIWZNFKPEVMC\n" +
+                        "1194691157\tfalse\tRXGZ\t88.693976174595\tNaN\t0\t\t\tNaN\t1971-01-01T00:00:00.000000Z\t0\t\t\n" +
+                        "1431425139\tfalse\t\t0.307166678100\t0.4275\t181\t2015-07-26T11:59:20.003Z\t\t-8546113611224784332\t1970-01-01T01:23:20.000000Z\t11\t00000000 d8 57 91 88 28 a5 18 93 bd 0b\tJOXPKRGIIHYH\n" +
+                        "1569490116\tfalse\tZ\tNaN\t0.7611\t428\t2015-05-16T20:27:48.158Z\tVTJW\t-8671107786057422727\t1970-01-01T00:00:00.000000Z\t26\t00000000 68 61 26 af 19 c4 95 94 36 53 49\tFOWLPD\n");
+    }
+
+    @Test
+    public void testOrderByNonUnique() throws Exception {
+        final String expected = "a\tc\tk\tn\n" +
+                "-1182156192\t\t1970-01-01T04:43:20.000000Z\tGLUOHNZHZS\n" +
+                "-1470806499\t\t1970-01-01T03:53:20.000000Z\t\n" +
+                "-1966408995\t\t1970-01-01T02:30:00.000000Z\tBZXIOVIKJSMSS\n" +
+                "-2105201404\tB\t1970-01-01T04:10:00.000000Z\tGHWVDKFL\n" +
+                "1431775887\tC\t1970-01-01T05:16:40.000000Z\tEHNOMVELLKKHT\n" +
+                "852921272\tC\t1970-01-01T02:13:20.000000Z\tLSUWDSWUGSHOLN\n" +
+                "-147343840\tD\t1970-01-01T05:00:00.000000Z\tOGIFOUSZMZVQEB\n" +
+                "1907911110\tE\t1970-01-01T03:36:40.000000Z\tPHRIPZIMNZ\n" +
+                "-1715058769\tE\t1970-01-01T00:33:20.000000Z\tQEHBHFOWL\n" +
+                "-514934130\tH\t1970-01-01T03:20:00.000000Z\t\n" +
+                "116799613\tI\t1970-01-01T03:03:20.000000Z\tZEPIHVLTOVLJUML\n" +
+                "-1204245663\tJ\t1970-01-01T04:26:40.000000Z\tPKRGIIHYHBOQMY\n" +
+                "-1148479920\tJ\t1970-01-01T00:00:00.000000Z\tPSWHYRXPEH\n" +
+                "410717394\tO\t1970-01-01T01:06:40.000000Z\tGETJR\n" +
+                "1743740444\tS\t1970-01-01T02:46:40.000000Z\tTKVVSJ\n" +
+                "326010667\tS\t1970-01-01T01:23:20.000000Z\tRFBVTMHGOOZZVDZ\n" +
+                "1876812930\tV\t1970-01-01T01:56:40.000000Z\tSDOTSEDYYCTGQOLY\n" +
+                "-938514914\tX\t1970-01-01T00:50:00.000000Z\tBEOUOJSHRUEDRQQ\n" +
+                "1545253512\tX\t1970-01-01T00:16:40.000000Z\tSXUXIBBTGPGWFFY\n" +
+                "-235358133\tY\t1970-01-01T01:40:00.000000Z\tCXZOUICWEK\n";
+
+        assertQuery(expected,
+                "x order by c",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_int() a," +
+                        " rnd_str(1,1,2) c," +
+                        " timestamp_sequence(to_timestamp(0), 1000000000) k," +
+                        " rnd_str(5,16,2) n" +
+                        " from" +
+                        " long_sequence(20)" +
+                        ") partition by NONE",
+                null,
+                "insert into x select * from (" +
+                        "select" +
+                        " rnd_int()," +
+                        " 'J'," +
+                        " to_timestamp('1971', 'yyyy') t," +
+                        " 'APPC'" +
+                        " from long_sequence(1)" +
+                        ") timestamp(t)",
+                "a\tc\tk\tn\n" +
+                        "-1182156192\t\t1970-01-01T04:43:20.000000Z\tGLUOHNZHZS\n" +
+                        "-1470806499\t\t1970-01-01T03:53:20.000000Z\t\n" +
+                        "-1966408995\t\t1970-01-01T02:30:00.000000Z\tBZXIOVIKJSMSS\n" +
+                        "-2105201404\tB\t1970-01-01T04:10:00.000000Z\tGHWVDKFL\n" +
+                        "1431775887\tC\t1970-01-01T05:16:40.000000Z\tEHNOMVELLKKHT\n" +
+                        "852921272\tC\t1970-01-01T02:13:20.000000Z\tLSUWDSWUGSHOLN\n" +
+                        "-147343840\tD\t1970-01-01T05:00:00.000000Z\tOGIFOUSZMZVQEB\n" +
+                        "1907911110\tE\t1970-01-01T03:36:40.000000Z\tPHRIPZIMNZ\n" +
+                        "-1715058769\tE\t1970-01-01T00:33:20.000000Z\tQEHBHFOWL\n" +
+                        "-514934130\tH\t1970-01-01T03:20:00.000000Z\t\n" +
+                        "116799613\tI\t1970-01-01T03:03:20.000000Z\tZEPIHVLTOVLJUML\n" +
+                        "1570930196\tJ\t1971-01-01T00:00:00.000000Z\tAPPC\n" +
+                        "-1204245663\tJ\t1970-01-01T04:26:40.000000Z\tPKRGIIHYHBOQMY\n" +
+                        "-1148479920\tJ\t1970-01-01T00:00:00.000000Z\tPSWHYRXPEH\n" +
+                        "410717394\tO\t1970-01-01T01:06:40.000000Z\tGETJR\n" +
+                        "1743740444\tS\t1970-01-01T02:46:40.000000Z\tTKVVSJ\n" +
+                        "326010667\tS\t1970-01-01T01:23:20.000000Z\tRFBVTMHGOOZZVDZ\n" +
+                        "1876812930\tV\t1970-01-01T01:56:40.000000Z\tSDOTSEDYYCTGQOLY\n" +
+                        "-938514914\tX\t1970-01-01T00:50:00.000000Z\tBEOUOJSHRUEDRQQ\n" +
+                        "1545253512\tX\t1970-01-01T00:16:40.000000Z\tSXUXIBBTGPGWFFY\n" +
+                        "-235358133\tY\t1970-01-01T01:40:00.000000Z\tCXZOUICWEK\n");
+    }
+
+    @Test
     public void testOrderByTimestamp() throws Exception {
         final String expected = "a\tb\tk\n" +
                 "11.427984775756\t\t1970-01-01T00:00:00.000000Z\n" +
@@ -2053,6 +2208,172 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         ") timestamp(t)",
                 expected +
                         "95.400690890497\tRXGZ\t1971-01-01T00:00:00.000000Z\n");
+    }
+
+    @Test
+    public void testOrderByTimestampLead() throws Exception {
+        final String expected = "a\tc\tk\tn\n" +
+                "-2105201404\tB\t1970-01-01T00:00:01.000000Z\tGHWVDKFL\n" +
+                "-1966408995\t\t1970-01-01T00:00:01.000000Z\tBZXIOVIKJSMSS\n" +
+                "-1715058769\tE\t1970-01-01T00:00:01.000000Z\tQEHBHFOWL\n" +
+                "-1470806499\t\t1970-01-01T00:00:01.000000Z\t\n" +
+                "-1204245663\tJ\t1970-01-01T00:00:01.000000Z\tPKRGIIHYHBOQMY\n" +
+                "-1182156192\t\t1970-01-01T00:00:01.000000Z\tGLUOHNZHZS\n" +
+                "-1148479920\tJ\t1970-01-01T00:00:01.000000Z\tPSWHYRXPEH\n" +
+                "-938514914\tX\t1970-01-01T00:00:01.000000Z\tBEOUOJSHRUEDRQQ\n" +
+                "-514934130\tH\t1970-01-01T00:00:01.000000Z\t\n" +
+                "-235358133\tY\t1970-01-01T00:00:01.000000Z\tCXZOUICWEK\n" +
+                "-147343840\tD\t1970-01-01T00:00:01.000000Z\tOGIFOUSZMZVQEB\n" +
+                "116799613\tI\t1970-01-01T00:00:01.000000Z\tZEPIHVLTOVLJUML\n" +
+                "326010667\tS\t1970-01-01T00:00:01.000000Z\tRFBVTMHGOOZZVDZ\n" +
+                "410717394\tO\t1970-01-01T00:00:01.000000Z\tGETJR\n" +
+                "852921272\tC\t1970-01-01T00:00:01.000000Z\tLSUWDSWUGSHOLN\n" +
+                "1431775887\tC\t1970-01-01T00:00:01.000000Z\tEHNOMVELLKKHT\n" +
+                "1545253512\tX\t1970-01-01T00:00:01.000000Z\tSXUXIBBTGPGWFFY\n" +
+                "1743740444\tS\t1970-01-01T00:00:01.000000Z\tTKVVSJ\n" +
+                "1876812930\tV\t1970-01-01T00:00:01.000000Z\tSDOTSEDYYCTGQOLY\n" +
+                "1907911110\tE\t1970-01-01T00:00:01.000000Z\tPHRIPZIMNZ\n";
+
+        assertQuery(expected,
+                "x order by k,a",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_int() a," +
+                        " rnd_str(1,1,2) c," +
+                        " to_timestamp(1000000) k," +
+                        " rnd_str(5,16,2) n" +
+                        " from" +
+                        " long_sequence(20)" +
+                        ") timestamp(k) partition by NONE",
+                "k",
+                "insert into x select * from (" +
+                        "select" +
+                        " 852921272," +
+                        " 'J'," +
+                        " to_timestamp(1000000) t," +
+                        " 'APPC'" +
+                        " from long_sequence(1)" +
+                        ") timestamp(t)",
+                "a\tc\tk\tn\n" +
+                        "-2105201404\tB\t1970-01-01T00:00:01.000000Z\tGHWVDKFL\n" +
+                        "-1966408995\t\t1970-01-01T00:00:01.000000Z\tBZXIOVIKJSMSS\n" +
+                        "-1715058769\tE\t1970-01-01T00:00:01.000000Z\tQEHBHFOWL\n" +
+                        "-1470806499\t\t1970-01-01T00:00:01.000000Z\t\n" +
+                        "-1204245663\tJ\t1970-01-01T00:00:01.000000Z\tPKRGIIHYHBOQMY\n" +
+                        "-1182156192\t\t1970-01-01T00:00:01.000000Z\tGLUOHNZHZS\n" +
+                        "-1148479920\tJ\t1970-01-01T00:00:01.000000Z\tPSWHYRXPEH\n" +
+                        "-938514914\tX\t1970-01-01T00:00:01.000000Z\tBEOUOJSHRUEDRQQ\n" +
+                        "-514934130\tH\t1970-01-01T00:00:01.000000Z\t\n" +
+                        "-235358133\tY\t1970-01-01T00:00:01.000000Z\tCXZOUICWEK\n" +
+                        "-147343840\tD\t1970-01-01T00:00:01.000000Z\tOGIFOUSZMZVQEB\n" +
+                        "116799613\tI\t1970-01-01T00:00:01.000000Z\tZEPIHVLTOVLJUML\n" +
+                        "326010667\tS\t1970-01-01T00:00:01.000000Z\tRFBVTMHGOOZZVDZ\n" +
+                        "410717394\tO\t1970-01-01T00:00:01.000000Z\tGETJR\n" +
+                        "852921272\tJ\t1970-01-01T00:00:01.000000Z\tAPPC\n" +
+                        "852921272\tC\t1970-01-01T00:00:01.000000Z\tLSUWDSWUGSHOLN\n" +
+                        "1431775887\tC\t1970-01-01T00:00:01.000000Z\tEHNOMVELLKKHT\n" +
+                        "1545253512\tX\t1970-01-01T00:00:01.000000Z\tSXUXIBBTGPGWFFY\n" +
+                        "1743740444\tS\t1970-01-01T00:00:01.000000Z\tTKVVSJ\n" +
+                        "1876812930\tV\t1970-01-01T00:00:01.000000Z\tSDOTSEDYYCTGQOLY\n" +
+                        "1907911110\tE\t1970-01-01T00:00:01.000000Z\tPHRIPZIMNZ\n");
+    }
+
+    @Test
+    public void testOrderByTwoStrings() throws Exception {
+        final String expected = "a\tc\tk\tn\n" +
+                "-1182156192\t\t1970-01-01T04:43:20.000000Z\tGLUOHNZHZS\n" +
+                "-1966408995\t\t1970-01-01T02:30:00.000000Z\tBZXIOVIKJSMSS\n" +
+                "-1470806499\t\t1970-01-01T03:53:20.000000Z\t\n" +
+                "-2105201404\tB\t1970-01-01T04:10:00.000000Z\tGHWVDKFL\n" +
+                "852921272\tC\t1970-01-01T02:13:20.000000Z\tLSUWDSWUGSHOLN\n" +
+                "1431775887\tC\t1970-01-01T05:16:40.000000Z\tEHNOMVELLKKHT\n" +
+                "-147343840\tD\t1970-01-01T05:00:00.000000Z\tOGIFOUSZMZVQEB\n" +
+                "-1715058769\tE\t1970-01-01T00:33:20.000000Z\tQEHBHFOWL\n" +
+                "1907911110\tE\t1970-01-01T03:36:40.000000Z\tPHRIPZIMNZ\n" +
+                "-514934130\tH\t1970-01-01T03:20:00.000000Z\t\n" +
+                "116799613\tI\t1970-01-01T03:03:20.000000Z\tZEPIHVLTOVLJUML\n" +
+                "-1148479920\tJ\t1970-01-01T00:00:00.000000Z\tPSWHYRXPEH\n" +
+                "-1204245663\tJ\t1970-01-01T04:26:40.000000Z\tPKRGIIHYHBOQMY\n" +
+                "410717394\tO\t1970-01-01T01:06:40.000000Z\tGETJR\n" +
+                "1743740444\tS\t1970-01-01T02:46:40.000000Z\tTKVVSJ\n" +
+                "326010667\tS\t1970-01-01T01:23:20.000000Z\tRFBVTMHGOOZZVDZ\n" +
+                "1876812930\tV\t1970-01-01T01:56:40.000000Z\tSDOTSEDYYCTGQOLY\n" +
+                "1545253512\tX\t1970-01-01T00:16:40.000000Z\tSXUXIBBTGPGWFFY\n" +
+                "-938514914\tX\t1970-01-01T00:50:00.000000Z\tBEOUOJSHRUEDRQQ\n" +
+                "-235358133\tY\t1970-01-01T01:40:00.000000Z\tCXZOUICWEK\n";
+
+        assertQuery(expected,
+                "x order by c,n desc",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_int() a," +
+                        " rnd_str(1,1,2) c," +
+                        " timestamp_sequence(to_timestamp(0), 1000000000) k," +
+                        " rnd_str(5,16,2) n" +
+                        " from" +
+                        " long_sequence(20)" +
+                        ") partition by NONE",
+                null,
+                "insert into x select * from (" +
+                        "select" +
+                        " rnd_int()," +
+                        " 'J'," +
+                        " to_timestamp('1971', 'yyyy') t," +
+                        " 'ZZCC'" +
+                        " from long_sequence(1)" +
+                        ") timestamp(t)",
+                "a\tc\tk\tn\n" +
+                        "-1182156192\t\t1970-01-01T04:43:20.000000Z\tGLUOHNZHZS\n" +
+                        "-1966408995\t\t1970-01-01T02:30:00.000000Z\tBZXIOVIKJSMSS\n" +
+                        "-1470806499\t\t1970-01-01T03:53:20.000000Z\t\n" +
+                        "-2105201404\tB\t1970-01-01T04:10:00.000000Z\tGHWVDKFL\n" +
+                        "852921272\tC\t1970-01-01T02:13:20.000000Z\tLSUWDSWUGSHOLN\n" +
+                        "1431775887\tC\t1970-01-01T05:16:40.000000Z\tEHNOMVELLKKHT\n" +
+                        "-147343840\tD\t1970-01-01T05:00:00.000000Z\tOGIFOUSZMZVQEB\n" +
+                        "-1715058769\tE\t1970-01-01T00:33:20.000000Z\tQEHBHFOWL\n" +
+                        "1907911110\tE\t1970-01-01T03:36:40.000000Z\tPHRIPZIMNZ\n" +
+                        "-514934130\tH\t1970-01-01T03:20:00.000000Z\t\n" +
+                        "116799613\tI\t1970-01-01T03:03:20.000000Z\tZEPIHVLTOVLJUML\n" +
+                        "1570930196\tJ\t1971-01-01T00:00:00.000000Z\tZZCC\n" +
+                        "-1148479920\tJ\t1970-01-01T00:00:00.000000Z\tPSWHYRXPEH\n" +
+                        "-1204245663\tJ\t1970-01-01T04:26:40.000000Z\tPKRGIIHYHBOQMY\n" +
+                        "410717394\tO\t1970-01-01T01:06:40.000000Z\tGETJR\n" +
+                        "1743740444\tS\t1970-01-01T02:46:40.000000Z\tTKVVSJ\n" +
+                        "326010667\tS\t1970-01-01T01:23:20.000000Z\tRFBVTMHGOOZZVDZ\n" +
+                        "1876812930\tV\t1970-01-01T01:56:40.000000Z\tSDOTSEDYYCTGQOLY\n" +
+                        "1545253512\tX\t1970-01-01T00:16:40.000000Z\tSXUXIBBTGPGWFFY\n" +
+                        "-938514914\tX\t1970-01-01T00:50:00.000000Z\tBEOUOJSHRUEDRQQ\n" +
+                        "-235358133\tY\t1970-01-01T01:40:00.000000Z\tCXZOUICWEK\n");
+    }
+
+    @Test
+    public void testOrderByUnsupportedType() throws Exception {
+        assertFailure(
+                "x order by a,m,n",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_int() a," +
+                        " rnd_boolean() b," +
+                        " rnd_str(1,1,2) c," +
+                        " rnd_double(2) d," +
+                        " rnd_float(2) e," +
+                        " rnd_short(10,1024) f," +
+                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                        " rnd_symbol(4,4,4,2) i," +
+                        " rnd_long() j," +
+                        " timestamp_sequence(to_timestamp(0), 1000000000) k," +
+                        " rnd_byte(2,50) l," +
+                        " rnd_bin(10, 20, 2) m," +
+                        " rnd_str(5,16,2) n" +
+                        " from" +
+                        " long_sequence(20)" +
+                        ") partition by NONE",
+                13, "unsupported column type: BINARY"
+        );
+
     }
 
     @Test
@@ -2255,7 +2576,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 null);
     }
 
-    private void assertCursor(CharSequence expected, RecordCursorFactory factory) throws IOException {
+    private void assertCursor(CharSequence expected, RecordCursorFactory factory, boolean supportsRandomAccess) throws IOException {
         try (RecordCursor cursor = factory.getCursor()) {
             sink.clear();
             rows.clear();
@@ -2266,47 +2587,56 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
             }
 
             TestUtils.assertEquals(expected, sink);
-            cursor.toTop();
-
-            sink.clear();
-            while (cursor.hasNext()) {
-                rows.add(cursor.next().getRowId());
-            }
 
             final RecordMetadata metadata = factory.getMetadata();
 
-            // test external record
-            Record record = cursor.getRecord();
-
-            printer.printHeader(metadata);
-            for (int i = 0, n = rows.size(); i < n; i++) {
-                cursor.recordAt(record, rows.getQuick(i));
-                printer.print(record, metadata);
-            }
-
-            TestUtils.assertEquals(expected, sink);
-
-            // test internal record
-            sink.clear();
-            printer.printHeader(metadata);
-            for (int i = 0, n = rows.size(); i < n; i++) {
-                printer.print(cursor.recordAt(rows.getQuick(i)), metadata);
-            }
-
-            TestUtils.assertEquals(expected, sink);
-
-            // test _new_ record
-            sink.clear();
-            record = cursor.newRecord();
-            printer.printHeader(metadata);
-            for (int i = 0, n = rows.size(); i < n; i++) {
-                cursor.recordAt(record, rows.getQuick(i));
-                printer.print(record, metadata);
-            }
-
-            TestUtils.assertEquals(expected, sink);
-
             testSymbolAPI(metadata, cursor);
+
+            if (supportsRandomAccess) {
+
+                Assert.assertTrue(factory.isRandomAccessCursor());
+
+                cursor.toTop();
+
+                sink.clear();
+                while (cursor.hasNext()) {
+                    rows.add(cursor.next().getRowId());
+                }
+
+
+                // test external record
+                Record record = cursor.getRecord();
+
+                printer.printHeader(metadata);
+                for (int i = 0, n = rows.size(); i < n; i++) {
+                    cursor.recordAt(record, rows.getQuick(i));
+                    printer.print(record, metadata);
+                }
+
+                TestUtils.assertEquals(expected, sink);
+
+                // test internal record
+                sink.clear();
+                printer.printHeader(metadata);
+                for (int i = 0, n = rows.size(); i < n; i++) {
+                    printer.print(cursor.recordAt(rows.getQuick(i)), metadata);
+                }
+
+                TestUtils.assertEquals(expected, sink);
+
+                // test _new_ record
+                sink.clear();
+                record = cursor.newRecord();
+                printer.printHeader(metadata);
+                for (int i = 0, n = rows.size(); i < n; i++) {
+                    cursor.recordAt(record, rows.getQuick(i));
+                    printer.print(record, metadata);
+                }
+
+                TestUtils.assertEquals(expected, sink);
+            } else {
+                Assert.assertFalse(factory.isRandomAccessCursor());
+            }
         }
     }
 
@@ -2367,7 +2697,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
             @Nullable CharSequence verify,
             @Nullable CharSequence expectedTimestamp,
             @Nullable CharSequence ddl2,
-            @Nullable CharSequence expected2
+            @Nullable CharSequence expected2,
+            boolean supportsRandomAccess
     ) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try {
@@ -2375,9 +2706,9 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                     compiler.execute(ddl, bindVariableService);
                 }
                 if (verify != null) {
-                    printSqlResult(null, verify, expectedTimestamp, ddl2, expected2);
+                    printSqlResult(null, verify, expectedTimestamp, ddl2, expected2, supportsRandomAccess);
                 }
-                printSqlResult(expected, query, expectedTimestamp, ddl2, expected2);
+                printSqlResult(expected, query, expectedTimestamp, ddl2, expected2, supportsRandomAccess);
                 Assert.assertEquals(0, engine.getBusyReaderCount());
                 Assert.assertEquals(0, engine.getBusyWriterCount());
             } finally {
@@ -2392,7 +2723,16 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
             CharSequence query,
             CharSequence ddl,
             @Nullable CharSequence expectedTimestamp) throws Exception {
-        assertQuery(expected, query, ddl, null, expectedTimestamp, null, null);
+        assertQuery(expected, query, ddl, null, expectedTimestamp, null, null, true);
+    }
+
+    private void assertQuery(
+            CharSequence expected,
+            CharSequence query,
+            CharSequence ddl,
+            @Nullable CharSequence expectedTimestamp,
+            boolean supportsRandomAccess) throws Exception {
+        assertQuery(expected, query, ddl, null, expectedTimestamp, null, null, supportsRandomAccess);
     }
 
     private void assertQuery(
@@ -2402,7 +2742,18 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
             @Nullable CharSequence expectedTimestamp,
             @Nullable CharSequence ddl2,
             @Nullable CharSequence expected2) throws Exception {
-        assertQuery(expected, query, ddl, null, expectedTimestamp, ddl2, expected2);
+        assertQuery(expected, query, ddl, null, expectedTimestamp, ddl2, expected2, true);
+    }
+
+    private void assertQuery(
+            CharSequence expected,
+            CharSequence query,
+            CharSequence ddl,
+            @Nullable CharSequence expectedTimestamp,
+            @Nullable CharSequence ddl2,
+            @Nullable CharSequence expected2,
+            boolean supportsRandomAccess) throws Exception {
+        assertQuery(expected, query, ddl, null, expectedTimestamp, ddl2, expected2, supportsRandomAccess);
     }
 
     private void assertTimestampColumnValues(RecordCursorFactory factory) {
@@ -2458,7 +2809,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
             CharSequence query,
             CharSequence expectedTimestamp,
             CharSequence ddl2,
-            CharSequence expected2
+            CharSequence expected2,
+            boolean supportsRandomAccess
     ) throws IOException, SqlException {
         try (final RecordCursorFactory factory = compiler.compile(query, bindVariableService)) {
             if (expectedTimestamp == null) {
@@ -2469,17 +2821,17 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 Assert.assertEquals(index, factory.getMetadata().getTimestampIndex());
                 assertTimestampColumnValues(factory);
             }
-            assertCursor(expected, factory);
+            assertCursor(expected, factory, supportsRandomAccess);
             // make sure we get the same outcome when we get factory to create new cursor
-            assertCursor(expected, factory);
+            assertCursor(expected, factory, supportsRandomAccess);
             // make sure strings, binary fields and symbols are compliant with expected record behaviour
             assertVariableColumns(factory);
 
             if (ddl2 != null) {
                 compiler.execute(ddl2, bindVariableService);
-                assertCursor(expected2, factory);
+                assertCursor(expected2, factory, supportsRandomAccess);
                 // and again
-                assertCursor(expected2, factory);
+                assertCursor(expected2, factory, supportsRandomAccess);
             }
         }
     }

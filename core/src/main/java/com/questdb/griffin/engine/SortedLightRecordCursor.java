@@ -32,6 +32,7 @@ class SortedLightRecordCursor implements RecordCursor {
     private final RecordComparator comparator;
     private final LongTreeChain.TreeCursor chainCursor;
     private RecordCursor base;
+    private Record record = null;
 
     public SortedLightRecordCursor(LongTreeChain chain, RecordComparator comparator) {
         this.chain = chain;
@@ -88,11 +89,22 @@ class SortedLightRecordCursor implements RecordCursor {
 
     void of(RecordCursor base) {
         this.base = base;
+        if (record == null) {
+            record = base.newRecord();
+        }
+
         chain.clear();
         while (base.hasNext()) {
-            Record record = base.next();
-            System.out.println(record.getRowId());
-            chain.put(record.getRowId(), base, record, comparator);
+            // Tree chain is liable to re-position record to
+            // other rows to do record comparison. We must use our
+            // own record instance in case base cursor keeps
+            // state in the record it returns.
+            chain.put(
+                    base.next().getRowId(),
+                    base,
+                    record,
+                    comparator
+            );
         }
         chainCursor.toTop();
     }

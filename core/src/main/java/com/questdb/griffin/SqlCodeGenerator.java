@@ -259,6 +259,11 @@ public class SqlCodeGenerator {
                 ExpressionNode node = orderBy.getQuick(i);
                 int index = metadata.getColumnIndexQuiet(node.token);
 
+                // check if column type is supported
+                if (metadata.getColumnType(index) == ColumnType.BINARY) {
+                    throw SqlException.$(node.position, "unsupported column type: ").put(ColumnType.nameOf(metadata.getColumnType(index)));
+                }
+
                 // we also maintain unique set of column indexes for better performance
                 if (intHashSet.add(index)) {
                     if (orderByDirection.getQuick(i) == QueryModel.ORDER_DIRECTION_DESCENDING) {

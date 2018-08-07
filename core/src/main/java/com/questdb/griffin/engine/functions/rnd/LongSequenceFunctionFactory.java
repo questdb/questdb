@@ -51,7 +51,7 @@ public class LongSequenceFunctionFactory implements FunctionFactory {
 
         return new CursorFunction(
                 position,
-                new GenericRecordCursorFactory(METADATA, new LongSequenceRecordCursor(Math.max(0L, recordCount)))
+                new GenericRecordCursorFactory(METADATA, new LongSequenceRecordCursor(Math.max(0L, recordCount)), true)
         );
     }
 

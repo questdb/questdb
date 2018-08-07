@@ -29,10 +29,12 @@ import com.questdb.cairo.sql.RecordMetadata;
 
 public class GenericRecordCursorFactory extends AbstractRecordCursorFactory {
     private final RecordCursor cursor;
+    private final boolean supportsRandomAccess;
 
-    public GenericRecordCursorFactory(RecordMetadata metadata, RecordCursor cursor) {
+    public GenericRecordCursorFactory(RecordMetadata metadata, RecordCursor cursor, boolean supportsRandomAccess) {
         super(metadata);
         this.cursor = cursor;
+        this.supportsRandomAccess = supportsRandomAccess;
     }
 
     @Override
@@ -43,6 +45,6 @@ public class GenericRecordCursorFactory extends AbstractRecordCursorFactory {
 
     @Override
     public boolean isRandomAccessCursor() {
-        return false;
+        return supportsRandomAccess;
     }
 }

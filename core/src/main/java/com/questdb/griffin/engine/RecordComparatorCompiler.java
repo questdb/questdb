@@ -23,7 +23,6 @@
 
 package com.questdb.griffin.engine;
 
-import com.questdb.cairo.CairoException;
 import com.questdb.cairo.ColumnTypes;
 import com.questdb.cairo.sql.Record;
 import com.questdb.common.ColumnType;
@@ -252,6 +251,7 @@ public class RecordComparatorCompiler {
                     break;
                 case ColumnType.LONG:
                 case ColumnType.DATE:
+                case ColumnType.TIMESTAMP:
                     fieldType = "J";
                     getterNameA = "getLong";
                     comparatorClass = Long.class;
@@ -267,14 +267,13 @@ public class RecordComparatorCompiler {
                     fieldType = "Ljava/lang/CharSequence;";
                     comparatorClass = Chars.class;
                     break;
-                case ColumnType.SYMBOL:
+                default:
+                    // SYMBOL
                     getterNameA = "getSym";
                     fieldType = "Ljava/lang/CharSequence;";
                     comparatorClass = Chars.class;
                     comparatorDesc = "(Ljava/lang/CharSequence;Ljava/lang/CharSequence;)I";
                     break;
-                default:
-                    throw CairoException.instance(0).put("unsupported column type [type=").put(ColumnType.nameOf(columnTypes.getColumnType(index))).put(']');
             }
 
             int keyIndex;

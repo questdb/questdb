@@ -182,7 +182,9 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public int getSqlCharacterStoreCapacity() {
-        return 1024;
+        // 1024 seems like a good fit, but tests need
+        // smaller capacity so that resize is tested correctly
+        return 64;
     }
 
     @Override
