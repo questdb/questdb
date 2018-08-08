@@ -23,15 +23,16 @@
 
 package com.questdb.cairo;
 
-import com.questdb.common.ColumnType;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
-import com.questdb.std.*;
+import com.questdb.std.CharSequenceIntHashMap;
+import com.questdb.std.FilesFacade;
+import com.questdb.std.Os;
+import com.questdb.std.Unsafe;
 import com.questdb.std.microtime.DateFormat;
 import com.questdb.std.microtime.DateFormatCompiler;
 import com.questdb.std.str.LPSZ;
 import com.questdb.std.str.Path;
-import com.questdb.store.factory.configuration.JournalMetadata;
 
 public final class TableUtils {
     public static final int TABLE_EXISTS = 0;
@@ -41,6 +42,7 @@ public final class TableUtils {
     public static final String TXN_FILE_NAME = "_txn";
     public static final long META_OFFSET_COLUMN_TYPES = 128;
     public static final int INITIAL_TXN = 0;
+    public static final int NULL_LEN = -1;
     static final byte TODO_RESTORE_META = 2;
     static final byte TODO_TRUNCATE = 1;
     static final DateFormat fmtDay;
@@ -63,38 +65,6 @@ public final class TableUtils {
     static final long META_OFFSET_TIMESTAMP_INDEX = 8;
     private static final int META_COLUMN_DATA_SIZE = 16;
     private final static Log LOG = LogFactory.getLog(TableUtils.class);
-    public static final int NULL_LEN = -1;
-
-    public static void create(FilesFacade ff, Path path, AppendMemory memory, CharSequence root, JournalMetadata metadata, int mode) {
-        path.of(root).concat(metadata.getName());
-        final int rootLen = path.length();
-        if (ff.mkdirs(path.put(Files.SEPARATOR).$(), mode) == -1) {
-            throw CairoException.instance(ff.errno()).put("Cannot create dir: ").put(path);
-        }
-
-        try (AppendMemory mem = memory) {
-
-            mem.of(ff, path.trimTo(rootLen).concat(META_FILE_NAME).$(), ff.getPageSize());
-
-            int count = metadata.getColumnCount();
-            int symbolMapCount = 0;
-            mem.putInt(count);
-            mem.putInt(metadata.getPartitionBy());
-            mem.putInt(metadata.getTimestampIndex());
-            for (int i = 0; i < count; i++) {
-                mem.putInt(metadata.getColumnQuick(i).type);
-                if (metadata.getColumnQuick(i).type == ColumnType.SYMBOL) {
-                    symbolMapCount++;
-                }
-            }
-            for (int i = 0; i < count; i++) {
-                mem.putStr(metadata.getColumnQuick(i).name);
-            }
-
-            mem.of(ff, path.trimTo(rootLen).concat(TXN_FILE_NAME).$(), ff.getPageSize());
-            resetTxn(mem, symbolMapCount);
-        }
-    }
 
     public static int exists(FilesFacade ff, Path path, CharSequence root, CharSequence name) {
         return exists(ff, path, root, name, 0, name.length());

@@ -23,7 +23,7 @@
 
 package com.questdb.ql;
 
-import com.questdb.common.ColumnType;
+import com.questdb.store.ColumnType;
 
 public final class LongMetadata extends RecordColumnMetadataImpl {
 

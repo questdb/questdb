@@ -28,7 +28,7 @@ import com.questdb.cairo.RecordChain;
 import com.questdb.cairo.RecordSink;
 import com.questdb.cairo.sql.Record;
 import com.questdb.cairo.sql.RecordCursor;
-import com.questdb.common.SymbolTable;
+import com.questdb.cairo.sql.SymbolTable;
 import com.questdb.std.*;
 
 import java.io.Closeable;

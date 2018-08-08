@@ -23,10 +23,10 @@
 
 package org.questdb;
 
-import com.questdb.cutlass.receiver.parser.CachedCharSequence;
-import com.questdb.cutlass.receiver.parser.CharSequenceCache;
-import com.questdb.cutlass.receiver.parser.LineProtoLexer;
-import com.questdb.cutlass.receiver.parser.LineProtoParser;
+import com.questdb.cutlass.line.CachedCharSequence;
+import com.questdb.cutlass.line.CharSequenceCache;
+import com.questdb.cutlass.line.LineProtoLexer;
+import com.questdb.cutlass.line.LineProtoParser;
 import com.questdb.std.Unsafe;
 import org.openjdk.jmh.annotations.*;
 import org.openjdk.jmh.runner.Runner;

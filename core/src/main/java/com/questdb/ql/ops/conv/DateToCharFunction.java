@@ -23,8 +23,6 @@
 
 package com.questdb.ql.ops.conv;
 
-import com.questdb.common.ColumnType;
-import com.questdb.common.Record;
 import com.questdb.ex.ParserException;
 import com.questdb.ql.ops.AbstractBinaryOperator;
 import com.questdb.ql.ops.Function;
@@ -35,6 +33,8 @@ import com.questdb.std.str.StringSink;
 import com.questdb.std.time.DateFormat;
 import com.questdb.std.time.DateFormatFactory;
 import com.questdb.std.time.DateLocale;
+import com.questdb.store.ColumnType;
+import com.questdb.store.Record;
 
 public class DateToCharFunction extends AbstractBinaryOperator {
 

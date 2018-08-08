@@ -23,7 +23,7 @@
 
 package com.questdb.cairo;
 
-import com.questdb.common.SymbolTable;
+import com.questdb.cairo.sql.SymbolTable;
 
 public class EmptySymbolMapReader implements SymbolMapReader {
 

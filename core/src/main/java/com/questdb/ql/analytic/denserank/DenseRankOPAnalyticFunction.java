@@ -23,12 +23,12 @@
 
 package com.questdb.ql.analytic.denserank;
 
-import com.questdb.common.Record;
 import com.questdb.ql.map.*;
 import com.questdb.ql.ops.VirtualColumn;
 import com.questdb.std.Misc;
 import com.questdb.std.ObjList;
 import com.questdb.std.ThreadLocal;
+import com.questdb.store.Record;
 
 import java.io.IOException;
 

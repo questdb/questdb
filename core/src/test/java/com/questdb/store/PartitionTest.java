@@ -27,7 +27,6 @@ import com.questdb.model.Quote;
 import com.questdb.std.NumericException;
 import com.questdb.std.ex.JournalException;
 import com.questdb.std.time.DateFormatUtils;
-import com.questdb.std.time.Interval;
 import com.questdb.test.tools.AbstractTest;
 import org.junit.Assert;
 import org.junit.Test;

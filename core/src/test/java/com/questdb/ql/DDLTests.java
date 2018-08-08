@@ -23,20 +23,17 @@
 
 package com.questdb.ql;
 
-import com.questdb.common.ColumnType;
-import com.questdb.common.PartitionBy;
-import com.questdb.common.Record;
-import com.questdb.common.RecordCursor;
 import com.questdb.ex.ParserException;
 import com.questdb.parser.sql.QueryCompiler;
 import com.questdb.parser.sql.QueryError;
-import com.questdb.std.*;
+import com.questdb.std.ByteBuffers;
+import com.questdb.std.DirectInputStream;
+import com.questdb.std.Rnd;
+import com.questdb.std.Unsafe;
 import com.questdb.std.ex.JournalException;
 import com.questdb.std.time.DateFormatUtils;
 import com.questdb.std.time.Dates;
-import com.questdb.store.Journal;
-import com.questdb.store.JournalEntryWriter;
-import com.questdb.store.JournalWriter;
+import com.questdb.store.*;
 import com.questdb.store.factory.configuration.JournalMetadata;
 import com.questdb.test.tools.AbstractTest;
 import com.questdb.test.tools.TestUtils;

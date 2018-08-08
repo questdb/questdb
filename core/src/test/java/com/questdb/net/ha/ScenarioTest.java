@@ -23,7 +23,6 @@
 
 package com.questdb.net.ha;
 
-import com.questdb.common.PartitionBy;
 import com.questdb.model.Quote;
 import com.questdb.net.ha.config.ClientConfig;
 import com.questdb.net.ha.config.ServerConfig;

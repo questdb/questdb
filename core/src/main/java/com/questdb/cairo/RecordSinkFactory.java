@@ -24,7 +24,6 @@
 package com.questdb.cairo;
 
 import com.questdb.cairo.sql.Record;
-import com.questdb.common.ColumnType;
 import com.questdb.std.BytecodeAssembler;
 import com.questdb.std.Transient;
 

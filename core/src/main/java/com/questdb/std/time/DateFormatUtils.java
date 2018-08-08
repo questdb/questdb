@@ -28,6 +28,7 @@ import com.questdb.std.LongList;
 import com.questdb.std.Numbers;
 import com.questdb.std.NumericException;
 import com.questdb.std.str.CharSink;
+import com.questdb.store.Interval;
 
 public class DateFormatUtils {
     public static final int HOUR_24 = 2;

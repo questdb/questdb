@@ -23,7 +23,6 @@
 
 package com.questdb.parser.sql;
 
-import com.questdb.common.JournalRuntimeException;
 import com.questdb.ex.ParserException;
 import com.questdb.ex.UndefinedParameterException;
 import com.questdb.model.Quote;
@@ -34,6 +33,7 @@ import com.questdb.std.str.StringSink;
 import com.questdb.std.time.DateFormatUtils;
 import com.questdb.std.time.Dates;
 import com.questdb.store.JournalEntryWriter;
+import com.questdb.store.JournalRuntimeException;
 import com.questdb.store.JournalWriter;
 import com.questdb.store.factory.configuration.JournalStructure;
 import com.questdb.test.tools.AbstractTest;

@@ -23,8 +23,6 @@
 
 package com.questdb.cairo;
 
-import com.questdb.common.ColumnType;
-import com.questdb.common.PartitionBy;
 import com.questdb.std.FilesFacadeImpl;
 import com.questdb.std.str.Path;
 import com.questdb.std.str.StringSink;

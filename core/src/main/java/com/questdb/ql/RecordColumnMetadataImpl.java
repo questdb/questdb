@@ -23,8 +23,8 @@
 
 package com.questdb.ql;
 
-import com.questdb.common.RecordColumnMetadata;
-import com.questdb.common.SymbolTable;
+import com.questdb.store.RecordColumnMetadata;
+import com.questdb.store.SymbolTable;
 
 public class RecordColumnMetadataImpl implements RecordColumnMetadata {
     private final String name;

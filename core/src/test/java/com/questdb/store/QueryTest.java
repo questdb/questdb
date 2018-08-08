@@ -27,7 +27,6 @@ import com.questdb.model.Quote;
 import com.questdb.std.ex.JournalException;
 import com.questdb.std.time.DateFormatUtils;
 import com.questdb.std.time.Dates;
-import com.questdb.std.time.Interval;
 import com.questdb.store.query.ResultSet;
 import com.questdb.store.query.UnorderedResultSet;
 import com.questdb.store.query.api.Query;

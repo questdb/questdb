@@ -25,7 +25,6 @@ package com.questdb.net.http;
 
 import com.questdb.BootstrapEnv;
 import com.questdb.ServerConfiguration;
-import com.questdb.common.JournalRuntimeException;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.mp.*;
@@ -35,6 +34,7 @@ import com.questdb.std.ex.FatalError;
 import com.questdb.std.ex.NetworkError;
 import com.questdb.std.time.MillisecondClock;
 import com.questdb.std.time.MillisecondClockImpl;
+import com.questdb.store.JournalRuntimeException;
 
 import java.net.InetSocketAddress;
 import java.util.concurrent.CountDownLatch;

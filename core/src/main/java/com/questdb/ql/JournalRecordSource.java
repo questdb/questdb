@@ -23,10 +23,10 @@
 
 package com.questdb.ql;
 
-import com.questdb.common.*;
 import com.questdb.ql.ops.AbstractCombinedRecordSource;
 import com.questdb.std.Rows;
 import com.questdb.std.str.CharSink;
+import com.questdb.store.*;
 import com.questdb.store.factory.ReaderFactory;
 import com.questdb.store.factory.configuration.JournalMetadata;
 

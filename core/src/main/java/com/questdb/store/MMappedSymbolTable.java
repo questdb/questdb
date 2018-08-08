@@ -23,8 +23,6 @@
 
 package com.questdb.store;
 
-import com.questdb.common.JournalRuntimeException;
-import com.questdb.common.SymbolTable;
 import com.questdb.ex.JournalInvalidSymbolValueException;
 import com.questdb.std.*;
 import com.questdb.std.ex.JournalException;

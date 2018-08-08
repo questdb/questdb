@@ -23,8 +23,8 @@
 
 package com.questdb.model.configuration;
 
-import com.questdb.common.PartitionBy;
 import com.questdb.model.*;
+import com.questdb.store.PartitionBy;
 import com.questdb.store.factory.configuration.JournalConfigurationBuilder;
 
 import java.util.concurrent.TimeUnit;

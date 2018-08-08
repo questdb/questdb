@@ -23,11 +23,11 @@
 
 package com.questdb.ql.ops;
 
-import com.questdb.common.ColumnType;
 import com.questdb.std.IntList;
 import com.questdb.std.Misc;
 import com.questdb.std.Mutable;
 import com.questdb.std.str.StringSink;
+import com.questdb.store.ColumnType;
 
 public final class Signature implements Mutable {
     public final IntList paramTypes = new IntList(2);

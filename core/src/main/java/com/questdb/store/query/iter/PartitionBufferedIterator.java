@@ -23,9 +23,9 @@
 
 package com.questdb.store.query.iter;
 
-import com.questdb.common.JournalRuntimeException;
 import com.questdb.std.ex.JournalException;
 import com.questdb.store.Journal;
+import com.questdb.store.JournalRuntimeException;
 import com.questdb.store.Partition;
 
 public class PartitionBufferedIterator<T> implements JournalIterator<T>, PeekingIterator<T>, com.questdb.std.ImmutableIterator<T> {

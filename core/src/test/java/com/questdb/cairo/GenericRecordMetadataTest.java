@@ -24,7 +24,6 @@
 package com.questdb.cairo;
 
 import com.questdb.cairo.sql.InvalidColumnException;
-import com.questdb.common.ColumnType;
 import com.questdb.std.str.StringSink;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;

@@ -23,10 +23,10 @@
 
 package com.questdb.ql.map;
 
-import com.questdb.common.RecordCursor;
-import com.questdb.common.StorageFacade;
-import com.questdb.common.SymbolTable;
 import com.questdb.std.IntList;
+import com.questdb.store.RecordCursor;
+import com.questdb.store.StorageFacade;
+import com.questdb.store.SymbolTable;
 
 public class DirectMapStorageFacade implements StorageFacade {
     private final int split;

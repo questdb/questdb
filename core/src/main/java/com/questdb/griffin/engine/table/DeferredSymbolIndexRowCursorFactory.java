@@ -27,9 +27,9 @@ import com.questdb.cairo.BitmapIndexReader;
 import com.questdb.cairo.EmptyRowCursor;
 import com.questdb.cairo.TableReader;
 import com.questdb.cairo.sql.DataFrame;
+import com.questdb.cairo.sql.RowCursor;
 import com.questdb.cairo.sql.RowCursorFactory;
-import com.questdb.common.RowCursor;
-import com.questdb.common.SymbolTable;
+import com.questdb.cairo.sql.SymbolTable;
 
 public class DeferredSymbolIndexRowCursorFactory implements RowCursorFactory {
     private final int columnIndex;

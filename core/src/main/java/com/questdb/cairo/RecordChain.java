@@ -25,7 +25,6 @@ package com.questdb.cairo;
 
 import com.questdb.cairo.sql.Record;
 import com.questdb.cairo.sql.RecordCursor;
-import com.questdb.common.ColumnType;
 import com.questdb.std.BinarySequence;
 import com.questdb.std.Mutable;
 import com.questdb.std.Transient;

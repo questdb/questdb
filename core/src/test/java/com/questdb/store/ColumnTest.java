@@ -24,7 +24,6 @@
 package com.questdb.store;
 
 import com.questdb.std.ByteBuffers;
-import com.questdb.std.Files;
 import com.questdb.std.Rnd;
 import com.questdb.std.ex.JournalException;
 import org.junit.*;
@@ -47,7 +46,7 @@ public class ColumnTest {
 
     @After
     public void tearDown() throws Exception {
-        Files.deleteOrException(dataFile);
+        com.questdb.store.Files.deleteOrException(dataFile);
         Files.deleteOrException(indexFile);
     }
 

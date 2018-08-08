@@ -23,9 +23,6 @@
 
 package com.questdb.store;
 
-import com.questdb.common.ColumnType;
-import com.questdb.common.JournalRuntimeException;
-import com.questdb.common.PartitionBy;
 import com.questdb.ex.IncompatibleJournalException;
 import com.questdb.ex.JournalIOException;
 import com.questdb.ex.JournalPartiallyMappedException;
@@ -36,12 +33,14 @@ import com.questdb.mp.BlockingWaitStrategy;
 import com.questdb.mp.SCSequence;
 import com.questdb.mp.SPSequence;
 import com.questdb.mp.Sequence;
-import com.questdb.std.*;
+import com.questdb.std.Misc;
+import com.questdb.std.NamedDaemonThreadFactory;
+import com.questdb.std.Numbers;
+import com.questdb.std.Rows;
 import com.questdb.std.ex.JournalException;
 import com.questdb.std.str.FlexBufferSink;
 import com.questdb.std.time.DateFormatUtils;
 import com.questdb.std.time.Dates;
-import com.questdb.std.time.Interval;
 import com.questdb.store.factory.configuration.Constants;
 import com.questdb.store.factory.configuration.JournalConfiguration;
 import com.questdb.store.factory.configuration.JournalMetadata;

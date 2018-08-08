@@ -23,13 +23,13 @@
 
 package com.questdb.net.ha;
 
-import com.questdb.common.JournalRuntimeException;
 import com.questdb.model.Quote;
 import com.questdb.net.ha.config.ClientConfig;
 import com.questdb.net.ha.config.ServerConfig;
 import com.questdb.std.ex.JournalException;
 import com.questdb.store.Journal;
 import com.questdb.store.JournalListener;
+import com.questdb.store.JournalRuntimeException;
 import com.questdb.store.JournalWriter;
 import com.questdb.test.tools.AbstractTest;
 import com.questdb.test.tools.TestUtils;

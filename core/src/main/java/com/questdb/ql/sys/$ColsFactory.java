@@ -24,8 +24,8 @@
 package com.questdb.ql.sys;
 
 import com.questdb.BootstrapEnv;
-import com.questdb.common.RecordMetadata;
 import com.questdb.ql.RecordSource;
+import com.questdb.store.RecordMetadata;
 import com.questdb.store.factory.ReaderFactory;
 
 public class $ColsFactory implements SystemViewFactory {

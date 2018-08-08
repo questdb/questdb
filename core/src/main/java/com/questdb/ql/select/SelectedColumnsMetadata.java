@@ -23,11 +23,11 @@
 
 package com.questdb.ql.select;
 
-import com.questdb.common.AbstractRecordMetadata;
-import com.questdb.common.RecordColumnMetadata;
-import com.questdb.common.RecordMetadata;
 import com.questdb.ql.RecordColumnMetadataImpl;
 import com.questdb.std.*;
+import com.questdb.store.AbstractRecordMetadata;
+import com.questdb.store.RecordColumnMetadata;
+import com.questdb.store.RecordMetadata;
 import com.questdb.store.factory.configuration.ColumnName;
 
 import java.util.Arrays;

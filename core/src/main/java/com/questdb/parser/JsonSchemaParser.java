@@ -24,7 +24,6 @@
 package com.questdb.parser;
 
 import com.questdb.BootstrapEnv;
-import com.questdb.common.ColumnType;
 import com.questdb.parser.json.JsonException;
 import com.questdb.parser.json.JsonLexer;
 import com.questdb.parser.json.JsonParser;
@@ -34,6 +33,7 @@ import com.questdb.std.time.DateFormat;
 import com.questdb.std.time.DateFormatFactory;
 import com.questdb.std.time.DateLocale;
 import com.questdb.std.time.DateLocaleFactory;
+import com.questdb.store.ColumnType;
 
 public class JsonSchemaParser implements JsonParser, Mutable {
     private static final int S_NEED_ARRAY = 1;

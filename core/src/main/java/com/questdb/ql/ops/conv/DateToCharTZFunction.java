@@ -23,9 +23,6 @@
 
 package com.questdb.ql.ops.conv;
 
-import com.questdb.common.ColumnType;
-import com.questdb.common.Record;
-import com.questdb.common.StorageFacade;
 import com.questdb.ex.ParserException;
 import com.questdb.parser.sql.QueryError;
 import com.questdb.ql.ops.AbstractVirtualColumn;
@@ -37,6 +34,9 @@ import com.questdb.std.NumericException;
 import com.questdb.std.str.CharSink;
 import com.questdb.std.str.StringSink;
 import com.questdb.std.time.*;
+import com.questdb.store.ColumnType;
+import com.questdb.store.Record;
+import com.questdb.store.StorageFacade;
 
 public class DateToCharTZFunction extends AbstractVirtualColumn implements Function {
 

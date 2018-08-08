@@ -23,7 +23,6 @@
 
 package com.questdb.ql.analytic.next;
 
-import com.questdb.common.*;
 import com.questdb.ql.NullRecord;
 import com.questdb.ql.analytic.AnalyticFunction;
 import com.questdb.ql.ops.VirtualColumn;
@@ -31,6 +30,7 @@ import com.questdb.std.MemoryPages;
 import com.questdb.std.Misc;
 import com.questdb.std.Unsafe;
 import com.questdb.std.str.CharSink;
+import com.questdb.store.*;
 
 import java.io.Closeable;
 

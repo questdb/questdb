@@ -24,12 +24,7 @@
 package com.questdb.griffin;
 
 import com.questdb.cairo.*;
-import com.questdb.cairo.sql.Record;
-import com.questdb.cairo.sql.RecordCursor;
-import com.questdb.cairo.sql.RecordCursorFactory;
-import com.questdb.cairo.sql.RecordMetadata;
-import com.questdb.common.ColumnType;
-import com.questdb.common.SymbolTable;
+import com.questdb.cairo.sql.*;
 import com.questdb.griffin.engine.functions.bind.BindVariableService;
 import com.questdb.griffin.engine.functions.rnd.SharedRandom;
 import com.questdb.griffin.engine.functions.str.TestMatchFunctionFactory;

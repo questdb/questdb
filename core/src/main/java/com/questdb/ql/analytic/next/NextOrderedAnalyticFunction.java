@@ -23,9 +23,9 @@
 
 package com.questdb.ql.analytic.next;
 
-import com.questdb.common.Record;
 import com.questdb.ql.analytic.AbstractOrderedAnalyticFunction;
 import com.questdb.ql.ops.VirtualColumn;
+import com.questdb.store.Record;
 
 public class NextOrderedAnalyticFunction extends AbstractOrderedAnalyticFunction {
     private long prevRow = -1;

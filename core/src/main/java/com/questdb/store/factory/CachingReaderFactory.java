@@ -23,13 +23,13 @@
 
 package com.questdb.store.factory;
 
-import com.questdb.common.PoolConstants;
 import com.questdb.ex.*;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.std.Unsafe;
 import com.questdb.std.ex.JournalException;
 import com.questdb.store.Journal;
+import com.questdb.store.PoolConstants;
 import com.questdb.store.factory.configuration.JournalConfiguration;
 import com.questdb.store.factory.configuration.JournalMetadata;
 

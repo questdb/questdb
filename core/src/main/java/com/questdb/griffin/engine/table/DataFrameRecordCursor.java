@@ -24,13 +24,12 @@
 package com.questdb.griffin.engine.table;
 
 import com.questdb.cairo.sql.*;
-import com.questdb.common.RowCursor;
 import org.jetbrains.annotations.Nullable;
 
 class DataFrameRecordCursor extends AbstractDataFrameRecordCursor {
     private final RowCursorFactory rowCursorFactory;
-    private RowCursor rowCursor;
     private final Function filter;
+    private RowCursor rowCursor;
 
     public DataFrameRecordCursor(RowCursorFactory rowCursorFactory, @Nullable Function filter) {
         this.rowCursorFactory = rowCursorFactory;

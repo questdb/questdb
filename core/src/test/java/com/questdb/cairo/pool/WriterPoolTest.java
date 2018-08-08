@@ -27,8 +27,6 @@ import com.questdb.cairo.*;
 import com.questdb.cairo.pool.ex.EntryLockedException;
 import com.questdb.cairo.pool.ex.EntryUnavailableException;
 import com.questdb.cairo.pool.ex.PoolClosedException;
-import com.questdb.common.ColumnType;
-import com.questdb.common.PartitionBy;
 import com.questdb.std.Chars;
 import com.questdb.std.FilesFacade;
 import com.questdb.std.str.LPSZ;

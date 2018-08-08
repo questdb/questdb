@@ -23,10 +23,10 @@
 
 package com.questdb.ql.ops.constant;
 
-import com.questdb.common.ColumnType;
-import com.questdb.common.Record;
-import com.questdb.common.StorageFacade;
 import com.questdb.ql.ops.AbstractVirtualColumn;
+import com.questdb.store.ColumnType;
+import com.questdb.store.Record;
+import com.questdb.store.StorageFacade;
 
 public class FloatConstant extends AbstractVirtualColumn {
     private final float value;

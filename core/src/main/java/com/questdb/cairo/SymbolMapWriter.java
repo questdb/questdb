@@ -23,8 +23,8 @@
 
 package com.questdb.cairo;
 
-import com.questdb.common.RowCursor;
-import com.questdb.common.SymbolTable;
+import com.questdb.cairo.sql.RowCursor;
+import com.questdb.cairo.sql.SymbolTable;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.std.*;

@@ -24,9 +24,7 @@
 package com.questdb.cairo;
 
 import com.questdb.cairo.sql.RecordMetadata;
-import com.questdb.common.ColumnType;
-import com.questdb.common.PartitionBy;
-import com.questdb.common.SymbolTable;
+import com.questdb.cairo.sql.SymbolTable;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.mp.RingQueue;

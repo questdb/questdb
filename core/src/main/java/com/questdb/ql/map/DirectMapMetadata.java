@@ -23,10 +23,10 @@
 
 package com.questdb.ql.map;
 
-import com.questdb.common.AbstractRecordMetadata;
-import com.questdb.common.RecordColumnMetadata;
-import com.questdb.common.RecordMetadata;
 import com.questdb.std.*;
+import com.questdb.store.AbstractRecordMetadata;
+import com.questdb.store.RecordColumnMetadata;
+import com.questdb.store.RecordMetadata;
 
 public final class DirectMapMetadata extends AbstractRecordMetadata {
 

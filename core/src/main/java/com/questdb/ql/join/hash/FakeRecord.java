@@ -23,7 +23,7 @@
 
 package com.questdb.ql.join.hash;
 
-import com.questdb.common.Record;
+import com.questdb.store.Record;
 
 public class FakeRecord implements Record {
     private long rowId;

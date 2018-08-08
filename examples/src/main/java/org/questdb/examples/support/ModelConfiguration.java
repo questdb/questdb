@@ -5,7 +5,7 @@
  *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
- *  Copyright (c) 2014-2017 Appsicle
+ *  Copyright (c) 2014-2018 Appsicle
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -23,7 +23,7 @@
 
 package org.questdb.examples.support;
 
-import com.questdb.common.PartitionBy;
+import com.questdb.store.PartitionBy;
 import com.questdb.store.factory.configuration.JournalConfigurationBuilder;
 
 import java.util.concurrent.TimeUnit;

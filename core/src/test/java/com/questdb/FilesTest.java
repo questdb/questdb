@@ -99,7 +99,7 @@ public class FilesTest {
         Assert.assertTrue(new File(r, "d/e/f").mkdirs());
         touch(new File(r, "d/1.txt"));
         touch(new File(r, "a/b/2.txt"));
-        Assert.assertTrue(Files.delete(r));
+        Assert.assertTrue(com.questdb.store.Files.delete(r));
         Assert.assertFalse(r.exists());
     }
 
@@ -200,7 +200,7 @@ public class FilesTest {
     @Test
     public void testTruncate() throws Exception {
         File temp = temporaryFolder.newFile();
-        Files.writeStringToFile(temp, "abcde");
+        com.questdb.store.Files.writeStringToFile(temp, "abcde");
         try (Path path = new Path().of(temp.getAbsolutePath()).$()) {
             Assert.assertTrue(Files.exists(path));
             Assert.assertEquals(5, Files.length(path));
@@ -267,8 +267,8 @@ public class FilesTest {
     @Test
     public void testWriteStringToFile() throws IOException, JournalException {
         File f = temporaryFolder.newFile();
-        Files.writeStringToFile(f, "TEST123");
-        Assert.assertEquals("TEST123", Files.readStringFromFile(f));
+        com.questdb.store.Files.writeStringToFile(f, "TEST123");
+        Assert.assertEquals("TEST123", com.questdb.store.Files.readStringFromFile(f));
     }
 
     private static void touch(File file) throws IOException {

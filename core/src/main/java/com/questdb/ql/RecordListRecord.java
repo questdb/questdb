@@ -23,11 +23,11 @@
 
 package com.questdb.ql;
 
-import com.questdb.common.*;
 import com.questdb.std.DirectInputStream;
 import com.questdb.std.MemoryPages;
 import com.questdb.std.Unsafe;
 import com.questdb.std.str.DirectCharSequence;
+import com.questdb.store.*;
 
 import java.io.IOException;
 import java.io.OutputStream;

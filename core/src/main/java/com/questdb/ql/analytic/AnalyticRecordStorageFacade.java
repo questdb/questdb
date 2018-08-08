@@ -23,9 +23,9 @@
 
 package com.questdb.ql.analytic;
 
-import com.questdb.common.StorageFacade;
-import com.questdb.common.SymbolTable;
 import com.questdb.std.ObjList;
+import com.questdb.store.StorageFacade;
+import com.questdb.store.SymbolTable;
 
 public class AnalyticRecordStorageFacade implements StorageFacade {
     private final int split;

@@ -23,8 +23,6 @@
 
 package com.questdb.store;
 
-import com.questdb.std.time.Interval;
-
 import java.io.File;
 
 public class TempPartition<T> extends Partition<T> {

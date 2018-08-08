@@ -25,7 +25,7 @@ package com.questdb.cairo;
 
 import com.questdb.cairo.sql.Record;
 import com.questdb.cairo.sql.RecordCursor;
-import com.questdb.common.SymbolTable;
+import com.questdb.cairo.sql.SymbolTable;
 import com.questdb.std.Rows;
 
 public class TableReaderRecordCursor implements RecordCursor {

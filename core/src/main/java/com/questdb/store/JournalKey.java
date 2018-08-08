@@ -23,7 +23,6 @@
 
 package com.questdb.store;
 
-import com.questdb.common.PartitionBy;
 import com.questdb.std.ByteBuffers;
 import com.questdb.store.factory.configuration.Constants;
 

@@ -24,9 +24,6 @@
 package com.questdb.parser.sql;
 
 import com.questdb.BootstrapEnv;
-import com.questdb.common.ColumnType;
-import com.questdb.common.NoSuchColumnException;
-import com.questdb.common.RecordMetadata;
 import com.questdb.ex.ParserException;
 import com.questdb.parser.sql.model.ExprNode;
 import com.questdb.parser.sql.model.QueryModel;
@@ -34,6 +31,9 @@ import com.questdb.ql.ops.*;
 import com.questdb.ql.ops.col.*;
 import com.questdb.ql.ops.constant.*;
 import com.questdb.std.*;
+import com.questdb.store.ColumnType;
+import com.questdb.store.NoSuchColumnException;
+import com.questdb.store.RecordMetadata;
 
 import java.util.ArrayDeque;
 

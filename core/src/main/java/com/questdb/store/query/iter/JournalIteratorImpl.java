@@ -23,11 +23,11 @@
 
 package com.questdb.store.query.iter;
 
-import com.questdb.common.JournalRuntimeException;
 import com.questdb.std.ObjList;
 import com.questdb.std.Rows;
 import com.questdb.std.ex.JournalException;
 import com.questdb.store.Journal;
+import com.questdb.store.JournalRuntimeException;
 
 public class JournalIteratorImpl<T> implements JournalPeekingIterator<T>, com.questdb.std.ImmutableIterator<T> {
     private final ObjList<JournalIteratorRange> ranges;

@@ -28,7 +28,6 @@ import com.questdb.std.NumericException;
 import com.questdb.std.ObjList;
 import com.questdb.std.ex.JournalException;
 import com.questdb.std.time.DateFormatUtils;
-import com.questdb.std.time.Interval;
 import com.questdb.store.factory.WriterFactory;
 import com.questdb.store.query.iter.*;
 import com.questdb.test.tools.AbstractTest;

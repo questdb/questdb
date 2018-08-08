@@ -23,11 +23,8 @@
 
 package com.questdb.store;
 
-import com.questdb.common.PartitionBy;
-import com.questdb.common.SymbolTable;
 import com.questdb.model.Quote;
 import com.questdb.model.TestEntity;
-import com.questdb.std.Files;
 import com.questdb.std.NumericException;
 import com.questdb.std.Rnd;
 import com.questdb.std.Rows;
@@ -121,7 +118,7 @@ public class JournalTest extends AbstractTest {
         getFactory().expire();
 
         assertTrue(dir.exists());
-        assertTrue(Files.delete(dir));
+        assertTrue(com.questdb.store.Files.delete(dir));
     }
 
     @Test
@@ -188,7 +185,7 @@ public class JournalTest extends AbstractTest {
 
         getFactory().lock(name);
         try {
-            Files.deleteOrException(location);
+            com.questdb.store.Files.deleteOrException(location);
         } finally {
             getFactory().unlock(name);
         }
@@ -258,7 +255,7 @@ public class JournalTest extends AbstractTest {
 
         getFactory().lock(Quote.class.getName());
         try {
-            Files.deleteOrException(new File(path, "2013-02/sym.r"));
+            com.questdb.store.Files.deleteOrException(new File(path, "2013-02/sym.r"));
             Files.deleteOrException(new File(path, "2013-02/sym.k"));
         } finally {
             getFactory().unlock(Quote.class.getName());

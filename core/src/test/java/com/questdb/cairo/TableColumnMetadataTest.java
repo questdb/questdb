@@ -23,7 +23,6 @@
 
 package com.questdb.cairo;
 
-import com.questdb.common.ColumnType;
 import org.junit.Assert;
 import org.junit.Test;
 

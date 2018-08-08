@@ -23,11 +23,11 @@
 
 package com.questdb.ql.ops.col;
 
-import com.questdb.common.ColumnType;
-import com.questdb.common.Record;
-import com.questdb.common.StorageFacade;
 import com.questdb.ql.ops.AbstractVirtualColumn;
 import com.questdb.std.str.CharSink;
+import com.questdb.store.ColumnType;
+import com.questdb.store.Record;
+import com.questdb.store.StorageFacade;
 
 public class StrRecordSourceColumn extends AbstractVirtualColumn {
     private final int index;

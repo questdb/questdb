@@ -23,8 +23,8 @@
 
 package com.questdb.log;
 
-import com.questdb.std.Files;
 import com.questdb.std.Misc;
+import com.questdb.store.Files;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Rule;
@@ -209,8 +209,8 @@ public class LogFactoryTest {
             // let async writer catch up in a busy environment
             Thread.sleep(100);
 
-            Assert.assertEquals("this is for network" + Misc.EOL, Files.readStringFromFile(a));
-            Assert.assertEquals("this is for std" + Misc.EOL, Files.readStringFromFile(b));
+            Assert.assertEquals("this is for network" + Misc.EOL, com.questdb.store.Files.readStringFromFile(a));
+            Assert.assertEquals("this is for std" + Misc.EOL, com.questdb.store.Files.readStringFromFile(b));
         }
     }
 

@@ -23,12 +23,12 @@
 
 package com.questdb.ex;
 
-import com.questdb.common.ColumnType;
-import com.questdb.common.PartitionBy;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.log.LogRecord;
 import com.questdb.std.ex.JournalException;
+import com.questdb.store.ColumnType;
+import com.questdb.store.PartitionBy;
 import com.questdb.store.factory.configuration.ColumnMetadata;
 import com.questdb.store.factory.configuration.JournalMetadata;
 

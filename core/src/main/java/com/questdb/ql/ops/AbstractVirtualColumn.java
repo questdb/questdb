@@ -23,13 +23,13 @@
 
 package com.questdb.ql.ops;
 
-import com.questdb.common.ColumnType;
-import com.questdb.common.Record;
-import com.questdb.common.SymbolTable;
 import com.questdb.ex.ParserException;
 import com.questdb.parser.sql.QueryError;
 import com.questdb.std.DirectInputStream;
 import com.questdb.std.str.CharSink;
+import com.questdb.store.ColumnType;
+import com.questdb.store.Record;
+import com.questdb.store.SymbolTable;
 import com.questdb.store.VariableColumn;
 
 import java.io.OutputStream;

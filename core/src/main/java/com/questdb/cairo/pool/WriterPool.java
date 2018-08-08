@@ -27,7 +27,6 @@ import com.questdb.cairo.*;
 import com.questdb.cairo.pool.ex.EntryLockedException;
 import com.questdb.cairo.pool.ex.EntryUnavailableException;
 import com.questdb.cairo.pool.ex.PoolClosedException;
-import com.questdb.common.PoolConstants;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.std.ConcurrentHashMap;

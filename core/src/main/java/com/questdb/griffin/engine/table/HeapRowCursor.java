@@ -23,7 +23,7 @@
 
 package com.questdb.griffin.engine.table;
 
-import com.questdb.common.RowCursor;
+import com.questdb.cairo.sql.RowCursor;
 import com.questdb.std.IntLongPriorityQueue;
 import com.questdb.std.ObjList;
 

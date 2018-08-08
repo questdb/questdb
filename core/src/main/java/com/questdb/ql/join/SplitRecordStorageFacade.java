@@ -23,8 +23,8 @@
 
 package com.questdb.ql.join;
 
-import com.questdb.common.StorageFacade;
-import com.questdb.common.SymbolTable;
+import com.questdb.store.StorageFacade;
+import com.questdb.store.SymbolTable;
 
 public class SplitRecordStorageFacade implements StorageFacade {
     private final int split;

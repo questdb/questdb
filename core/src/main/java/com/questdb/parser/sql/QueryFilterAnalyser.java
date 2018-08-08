@@ -23,9 +23,6 @@
 
 package com.questdb.parser.sql;
 
-import com.questdb.common.ColumnType;
-import com.questdb.common.RecordColumnMetadata;
-import com.questdb.common.RecordMetadata;
 import com.questdb.ex.ParserException;
 import com.questdb.parser.sql.model.AliasTranslator;
 import com.questdb.parser.sql.model.ExprNode;
@@ -34,6 +31,9 @@ import com.questdb.parser.sql.model.IntrinsicValue;
 import com.questdb.std.*;
 import com.questdb.std.str.FlyweightCharSequence;
 import com.questdb.std.time.DateFormatUtils;
+import com.questdb.store.ColumnType;
+import com.questdb.store.RecordColumnMetadata;
+import com.questdb.store.RecordMetadata;
 
 import java.util.ArrayDeque;
 

@@ -23,7 +23,7 @@
 
 package com.questdb.ql.analytic.denserank;
 
-import com.questdb.common.Record;
+import com.questdb.store.Record;
 
 public class DenseRankOrderedAnalyticFunction extends AbstractRankOrderedAnalyticFunction {
     public DenseRankOrderedAnalyticFunction(int pageSize, String name) {

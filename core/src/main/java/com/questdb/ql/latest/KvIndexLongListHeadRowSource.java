@@ -23,9 +23,6 @@
 
 package com.questdb.ql.latest;
 
-import com.questdb.common.JournalRuntimeException;
-import com.questdb.common.RowCursor;
-import com.questdb.common.StorageFacade;
 import com.questdb.ql.CancellationHandler;
 import com.questdb.ql.JournalRecord;
 import com.questdb.ql.PartitionSlice;
@@ -35,10 +32,7 @@ import com.questdb.std.LongHashSet;
 import com.questdb.std.LongList;
 import com.questdb.std.ex.JournalException;
 import com.questdb.std.str.CharSink;
-import com.questdb.store.FixedColumn;
-import com.questdb.store.IndexCursor;
-import com.questdb.store.KVIndex;
-import com.questdb.store.Partition;
+import com.questdb.store.*;
 import com.questdb.store.factory.ReaderFactory;
 import com.questdb.store.factory.configuration.JournalMetadata;
 

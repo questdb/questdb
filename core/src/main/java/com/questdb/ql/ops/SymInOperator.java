@@ -23,13 +23,13 @@
 
 package com.questdb.ql.ops;
 
-import com.questdb.common.ColumnType;
-import com.questdb.common.Record;
-import com.questdb.common.StorageFacade;
-import com.questdb.common.SymbolTable;
 import com.questdb.ex.ParserException;
 import com.questdb.std.CharSequenceHashSet;
 import com.questdb.std.IntHashSet;
+import com.questdb.store.ColumnType;
+import com.questdb.store.Record;
+import com.questdb.store.StorageFacade;
+import com.questdb.store.SymbolTable;
 
 public class SymInOperator extends AbstractVirtualColumn implements Function {
 

@@ -24,10 +24,6 @@
 package com.questdb.net.http.handlers;
 
 import com.questdb.BootstrapEnv;
-import com.questdb.common.JournalRuntimeException;
-import com.questdb.common.Record;
-import com.questdb.common.RecordCursor;
-import com.questdb.common.RecordMetadata;
 import com.questdb.ex.ParserException;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
@@ -43,6 +39,10 @@ import com.questdb.std.*;
 import com.questdb.std.ex.DisconnectedChannelException;
 import com.questdb.std.ex.JournalException;
 import com.questdb.std.ex.SlowWritableChannelException;
+import com.questdb.store.JournalRuntimeException;
+import com.questdb.store.Record;
+import com.questdb.store.RecordCursor;
+import com.questdb.store.RecordMetadata;
 import com.questdb.store.factory.Factory;
 
 import java.io.Closeable;

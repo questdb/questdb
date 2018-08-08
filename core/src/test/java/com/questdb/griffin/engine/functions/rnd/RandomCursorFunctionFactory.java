@@ -24,10 +24,10 @@
 package com.questdb.griffin.engine.functions.rnd;
 
 import com.questdb.cairo.CairoConfiguration;
+import com.questdb.cairo.ColumnType;
 import com.questdb.cairo.GenericRecordMetadata;
 import com.questdb.cairo.TableColumnMetadata;
 import com.questdb.cairo.sql.Function;
-import com.questdb.common.ColumnType;
 import com.questdb.griffin.FunctionFactory;
 import com.questdb.griffin.SqlException;
 import com.questdb.griffin.engine.functions.CursorFunction;

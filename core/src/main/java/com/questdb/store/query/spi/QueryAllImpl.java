@@ -23,12 +23,12 @@
 
 package com.questdb.store.query.spi;
 
-import com.questdb.common.JournalRuntimeException;
 import com.questdb.std.ObjList;
 import com.questdb.std.Rows;
 import com.questdb.std.ex.JournalException;
-import com.questdb.std.time.Interval;
+import com.questdb.store.Interval;
 import com.questdb.store.Journal;
+import com.questdb.store.JournalRuntimeException;
 import com.questdb.store.Partition;
 import com.questdb.store.query.OrderedResultSet;
 import com.questdb.store.query.OrderedResultSetBuilder;

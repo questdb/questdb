@@ -24,10 +24,8 @@
 package com.questdb;
 
 import com.questdb.cairo.*;
-import com.questdb.common.ColumnType;
-import com.questdb.common.PartitionBy;
-import com.questdb.common.Record;
-import com.questdb.common.RecordCursor;
+import com.questdb.cairo.ColumnType;
+import com.questdb.cairo.PartitionBy;
 import com.questdb.ex.ParserException;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
@@ -39,7 +37,6 @@ import com.questdb.std.NumericException;
 import com.questdb.std.Rnd;
 import com.questdb.std.ex.JournalException;
 import com.questdb.std.time.DateFormatUtils;
-import com.questdb.std.time.Interval;
 import com.questdb.store.*;
 import com.questdb.store.factory.Factory;
 import com.questdb.store.factory.ReaderFactory;

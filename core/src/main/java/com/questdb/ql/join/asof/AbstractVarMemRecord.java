@@ -23,11 +23,11 @@
 
 package com.questdb.ql.join.asof;
 
-import com.questdb.common.ColumnType;
-import com.questdb.common.RecordMetadata;
 import com.questdb.std.Unsafe;
 import com.questdb.std.str.CharSink;
 import com.questdb.std.str.DirectCharSequence;
+import com.questdb.store.ColumnType;
+import com.questdb.store.RecordMetadata;
 
 abstract class AbstractVarMemRecord extends AbstractMemRecord {
 

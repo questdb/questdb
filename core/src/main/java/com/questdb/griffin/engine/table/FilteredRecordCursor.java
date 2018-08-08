@@ -26,7 +26,7 @@ package com.questdb.griffin.engine.table;
 import com.questdb.cairo.sql.Function;
 import com.questdb.cairo.sql.Record;
 import com.questdb.cairo.sql.RecordCursor;
-import com.questdb.common.SymbolTable;
+import com.questdb.cairo.sql.SymbolTable;
 
 class FilteredRecordCursor implements RecordCursor {
     private final Function filter;

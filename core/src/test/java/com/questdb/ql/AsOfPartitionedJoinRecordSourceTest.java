@@ -23,8 +23,6 @@
 
 package com.questdb.ql;
 
-import com.questdb.common.Record;
-import com.questdb.common.RecordCursor;
 import com.questdb.ex.ParserException;
 import com.questdb.parser.sql.AbstractOptimiserTest;
 import com.questdb.parser.sql.QueryError;
@@ -36,6 +34,8 @@ import com.questdb.std.str.StringSink;
 import com.questdb.std.time.DateFormatUtils;
 import com.questdb.store.JournalEntryWriter;
 import com.questdb.store.JournalWriter;
+import com.questdb.store.Record;
+import com.questdb.store.RecordCursor;
 import com.questdb.store.factory.configuration.JournalStructure;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;

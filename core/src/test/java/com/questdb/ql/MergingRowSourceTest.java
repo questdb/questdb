@@ -23,7 +23,6 @@
 
 package com.questdb.ql;
 
-import com.questdb.common.RecordCursor;
 import com.questdb.model.Quote;
 import com.questdb.ql.latest.HeapMergingRowSource;
 import com.questdb.ql.latest.KvIndexSymLookupRowSource;
@@ -32,6 +31,7 @@ import com.questdb.std.NumericException;
 import com.questdb.std.ex.JournalException;
 import com.questdb.std.time.DateFormatUtils;
 import com.questdb.store.JournalWriter;
+import com.questdb.store.RecordCursor;
 import com.questdb.test.tools.AbstractTest;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;

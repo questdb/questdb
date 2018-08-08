@@ -23,8 +23,6 @@
 
 package com.questdb.net.ha;
 
-import com.questdb.common.JournalRuntimeException;
-import com.questdb.common.PartitionBy;
 import com.questdb.ex.IncompatibleJournalException;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
@@ -53,10 +51,8 @@ import com.questdb.net.ha.protocol.commands.*;
 import com.questdb.std.*;
 import com.questdb.std.ex.JournalException;
 import com.questdb.std.ex.JournalNetworkException;
-import com.questdb.store.JournalEvents;
-import com.questdb.store.JournalKey;
-import com.questdb.store.JournalListener;
-import com.questdb.store.JournalWriter;
+import com.questdb.store.Files;
+import com.questdb.store.*;
 import com.questdb.store.factory.WriterFactory;
 import com.questdb.store.factory.configuration.JournalMetadata;
 
@@ -385,7 +381,7 @@ public class JournalClient {
                     throw new JournalNetworkException(e);
                 }
             } finally {
-                Files.delete(file);
+                com.questdb.store.Files.delete(file);
             }
 
             boolean validate = true;

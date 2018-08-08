@@ -23,9 +23,9 @@
 
 package com.questdb.ql;
 
-import com.questdb.common.RowCursor;
-import com.questdb.common.StorageFacade;
 import com.questdb.std.Sinkable;
+import com.questdb.store.RowCursor;
+import com.questdb.store.StorageFacade;
 import com.questdb.store.factory.ReaderFactory;
 import com.questdb.store.factory.configuration.JournalMetadata;
 

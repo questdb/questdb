@@ -23,13 +23,13 @@
 
 package com.questdb.parser.plaintext;
 
-import com.questdb.common.ColumnType;
 import com.questdb.parser.ImportedColumnMetadata;
 import com.questdb.parser.typeprobe.TypeProbe;
 import com.questdb.parser.typeprobe.TypeProbeCollection;
 import com.questdb.std.*;
 import com.questdb.std.str.DirectByteCharSequence;
 import com.questdb.std.str.StringSink;
+import com.questdb.store.ColumnType;
 
 public class PlainTextMetadataParser implements PlainTextParser, Mutable {
     private final StringSink tempSink = new StringSink();

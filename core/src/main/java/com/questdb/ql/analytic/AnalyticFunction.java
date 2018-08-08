@@ -23,11 +23,11 @@
 
 package com.questdb.ql.analytic;
 
-import com.questdb.common.Record;
-import com.questdb.common.RecordColumnMetadata;
-import com.questdb.common.RecordCursor;
-import com.questdb.common.SymbolTable;
 import com.questdb.std.str.CharSink;
+import com.questdb.store.Record;
+import com.questdb.store.RecordColumnMetadata;
+import com.questdb.store.RecordCursor;
+import com.questdb.store.SymbolTable;
 
 public interface AnalyticFunction {
     int STREAM = 1;

@@ -23,9 +23,8 @@
 
 package com.questdb.griffin.engine.table;
 
+import com.questdb.cairo.ColumnType;
 import com.questdb.cairo.sql.*;
-import com.questdb.common.ColumnType;
-import com.questdb.common.SymbolTable;
 import com.questdb.griffin.engine.StrTypeCaster;
 import com.questdb.griffin.engine.SymbolTypeCaster;
 import com.questdb.griffin.engine.TypeCaster;
@@ -75,6 +74,11 @@ public class FilterOnSubQueryRecordCursorFactory extends AbstractDataFrameRecord
         recordCursorFactory.close();
         factoriesA.clear();
         factoriesB.clear();
+    }
+
+    @Override
+    public boolean isRandomAccessCursor() {
+        return true;
     }
 
     @Override
@@ -128,10 +132,5 @@ public class FilterOnSubQueryRecordCursorFactory extends AbstractDataFrameRecord
 
         this.cursor.of(dataFrameCursor);
         return this.cursor;
-    }
-
-    @Override
-    public boolean isRandomAccessCursor() {
-        return true;
     }
 }

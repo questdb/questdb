@@ -24,10 +24,6 @@
 package com.questdb.net.http.handlers;
 
 import com.questdb.BootstrapEnv;
-import com.questdb.common.ColumnType;
-import com.questdb.common.JournalRuntimeException;
-import com.questdb.common.PartitionBy;
-import com.questdb.common.RecordColumnMetadata;
 import com.questdb.ex.ImportSchemaException;
 import com.questdb.ex.ResponseContentBufferTooSmallException;
 import com.questdb.net.http.ChunkedResponse;
@@ -48,6 +44,10 @@ import com.questdb.std.str.ByteSequence;
 import com.questdb.std.str.CharSink;
 import com.questdb.std.str.DirectByteCharSequence;
 import com.questdb.std.str.FileNameExtractorCharSequence;
+import com.questdb.store.ColumnType;
+import com.questdb.store.JournalRuntimeException;
+import com.questdb.store.PartitionBy;
+import com.questdb.store.RecordColumnMetadata;
 import com.questdb.store.factory.configuration.ColumnMetadata;
 import com.questdb.store.factory.configuration.JournalMetadata;
 

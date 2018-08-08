@@ -23,10 +23,9 @@
 
 package com.questdb.ql.join.asof;
 
-import com.questdb.common.*;
 import com.questdb.ql.map.*;
 import com.questdb.std.*;
-import com.questdb.store.VariableColumn;
+import com.questdb.store.*;
 
 public class LastVarRecordMap implements LastRecordMap {
     private final DirectMap map;

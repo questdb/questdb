@@ -23,10 +23,6 @@
 
 package com.questdb.ql.analytic;
 
-import com.questdb.common.Record;
-import com.questdb.common.RecordColumnMetadata;
-import com.questdb.common.RecordCursor;
-import com.questdb.common.SymbolTable;
 import com.questdb.ql.NullRecord;
 import com.questdb.ql.map.DirectMap;
 import com.questdb.ql.map.DirectMapValues;
@@ -34,6 +30,10 @@ import com.questdb.ql.map.LongResolver;
 import com.questdb.ql.ops.VirtualColumn;
 import com.questdb.std.Misc;
 import com.questdb.std.str.CharSink;
+import com.questdb.store.Record;
+import com.questdb.store.RecordColumnMetadata;
+import com.questdb.store.RecordCursor;
+import com.questdb.store.SymbolTable;
 
 import java.io.Closeable;
 import java.io.IOException;

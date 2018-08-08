@@ -23,9 +23,9 @@
 
 package com.questdb.ql.join.asof;
 
-import com.questdb.common.*;
 import com.questdb.std.IntList;
 import com.questdb.std.Unsafe;
+import com.questdb.store.*;
 
 public class FixRecordHolder extends AbstractMemRecord implements RecordHolder {
     private final IntList types;

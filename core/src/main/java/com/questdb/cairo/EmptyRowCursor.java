@@ -23,7 +23,7 @@
 
 package com.questdb.cairo;
 
-import com.questdb.common.RowCursor;
+import com.questdb.cairo.sql.RowCursor;
 
 public class EmptyRowCursor implements RowCursor {
 

@@ -24,7 +24,6 @@
 package com.questdb.cairo;
 
 import com.questdb.cairo.sql.Record;
-import com.questdb.common.ColumnType;
 import com.questdb.std.BytecodeAssembler;
 import com.questdb.std.LongList;
 import com.questdb.test.tools.TestUtils;
@@ -275,7 +274,7 @@ public class RecordChainTest extends AbstractCairoTest {
     }
 /*
 
-    public class TestRecord2 implements com.questdb.common.Record {
+    public class TestRecord2 implements com.questdb.store.Record {
         final Rnd rnd = new Rnd();
 
 

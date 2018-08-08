@@ -23,8 +23,8 @@
 
 package com.questdb.ql.ops;
 
-import com.questdb.common.ColumnType;
-import com.questdb.common.Record;
+import com.questdb.store.ColumnType;
+import com.questdb.store.Record;
 
 public class NotOperator extends AbstractUnaryOperator {
 

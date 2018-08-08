@@ -23,9 +23,9 @@
 
 package com.questdb.ql.ops;
 
-import com.questdb.common.RecordColumnMetadata;
 import com.questdb.ql.AggregatorFunction;
 import com.questdb.std.ObjList;
+import com.questdb.store.RecordColumnMetadata;
 
 public abstract class AbstractUnaryAggregator extends AbstractUnaryOperator implements AggregatorFunction {
 

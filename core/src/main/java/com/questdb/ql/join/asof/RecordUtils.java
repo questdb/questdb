@@ -23,9 +23,9 @@
 
 package com.questdb.ql.join.asof;
 
-import com.questdb.common.ColumnType;
-import com.questdb.common.Record;
 import com.questdb.std.Unsafe;
+import com.questdb.store.ColumnType;
+import com.questdb.store.Record;
 
 final class RecordUtils {
     private RecordUtils() {

@@ -5,7 +5,7 @@
  *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
- *  Copyright (c) 2014-2017 Appsicle
+ *  Copyright (c) 2014-2018 Appsicle
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -23,18 +23,17 @@
 
 package org.questdb.examples;
 
-import com.questdb.common.PartitionBy;
-import com.questdb.ex.ParserException;
 import com.questdb.std.Rnd;
 import com.questdb.std.ex.JournalException;
 import com.questdb.store.JournalEntryWriter;
 import com.questdb.store.JournalWriter;
+import com.questdb.store.PartitionBy;
 import com.questdb.store.factory.Factory;
 import com.questdb.store.factory.configuration.JournalStructure;
 
 public class AppendRawPartitioned {
 
-    public static void main(String[] args) throws JournalException, ParserException {
+    public static void main(String[] args) throws JournalException {
         if (args.length < 1) {
             System.out.println("Usage: AppendRawPartitioned <path>");
             System.exit(1);

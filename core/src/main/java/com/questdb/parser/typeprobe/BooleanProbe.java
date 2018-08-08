@@ -23,10 +23,10 @@
 
 package com.questdb.parser.typeprobe;
 
-import com.questdb.common.ColumnType;
 import com.questdb.std.Chars;
 import com.questdb.std.time.DateFormat;
 import com.questdb.std.time.DateLocale;
+import com.questdb.store.ColumnType;
 
 public class BooleanProbe implements TypeProbe {
 

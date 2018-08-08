@@ -23,12 +23,12 @@
 
 package com.questdb.ql.latest;
 
-import com.questdb.common.RowCursor;
-import com.questdb.common.StorageFacade;
 import com.questdb.ql.CancellationHandler;
 import com.questdb.ql.PartitionSlice;
 import com.questdb.ql.RowSource;
 import com.questdb.std.str.CharSink;
+import com.questdb.store.RowCursor;
+import com.questdb.store.StorageFacade;
 import com.questdb.store.factory.ReaderFactory;
 import com.questdb.store.factory.configuration.JournalMetadata;
 

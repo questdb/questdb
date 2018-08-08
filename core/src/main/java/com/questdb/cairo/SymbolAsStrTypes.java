@@ -23,8 +23,6 @@
 
 package com.questdb.cairo;
 
-import com.questdb.common.ColumnType;
-
 public class SymbolAsStrTypes implements ColumnTypes {
     private ColumnTypes base;
 

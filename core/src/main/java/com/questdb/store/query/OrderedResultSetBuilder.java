@@ -23,7 +23,7 @@
 
 package com.questdb.store.query;
 
-import com.questdb.std.time.Interval;
+import com.questdb.store.Interval;
 
 public abstract class OrderedResultSetBuilder<T> extends AbstractResultSetBuilder<T, OrderedResultSet<T>> {
 

@@ -23,7 +23,6 @@
 
 package com.questdb.store;
 
-import com.questdb.common.JournalRuntimeException;
 import com.questdb.std.LongList;
 import com.questdb.std.ex.JournalException;
 import com.questdb.test.tools.AbstractTest;

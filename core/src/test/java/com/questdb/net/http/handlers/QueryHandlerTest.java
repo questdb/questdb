@@ -30,11 +30,11 @@ import com.questdb.net.http.HttpServer;
 import com.questdb.net.http.QueryResponse;
 import com.questdb.net.http.SimpleUrlMatcher;
 import com.questdb.parser.sql.AbstractOptimiserTest;
-import com.questdb.std.Files;
 import com.questdb.std.NumericException;
 import com.questdb.std.Rnd;
 import com.questdb.std.ex.JournalException;
 import com.questdb.std.time.DateFormatUtils;
+import com.questdb.store.Files;
 import com.questdb.store.JournalEntryWriter;
 import com.questdb.store.JournalWriter;
 import com.questdb.store.factory.configuration.JournalStructure;
@@ -95,7 +95,7 @@ public class QueryHandlerTest extends AbstractOptimiserTest {
         File f = temp.newFile();
         String url = "http://localhost:9000/csv?query=" + URLEncoder.encode("create table y(a INT)", "UTF-8");
         HttpTestUtils.download(HttpTestUtils.clientBuilder(false), url, f);
-        String response = Files.readStringFromFile(f);
+        String response = com.questdb.store.Files.readStringFromFile(f);
         Assert.assertTrue(response.contains("\"ddl\":\"OK\"}"));
     }
 
@@ -116,7 +116,7 @@ public class QueryHandlerTest extends AbstractOptimiserTest {
         File f = temp.newFile();
         String url = "http://localhost:9000/chk?j=tab2";
         HttpTestUtils.download(HttpTestUtils.clientBuilder(false), url, f);
-        TestUtils.assertEquals("Does not exist\r\n", Files.readStringFromFile(f));
+        TestUtils.assertEquals("Does not exist\r\n", com.questdb.store.Files.readStringFromFile(f));
     }
 
     @Test
@@ -124,7 +124,7 @@ public class QueryHandlerTest extends AbstractOptimiserTest {
         File f = temp.newFile();
         String url = "http://localhost:9000/chk?j=tab";
         HttpTestUtils.download(HttpTestUtils.clientBuilder(false), url, f);
-        TestUtils.assertEquals("Exists\r\n", Files.readStringFromFile(f));
+        TestUtils.assertEquals("Exists\r\n", com.questdb.store.Files.readStringFromFile(f));
     }
 
     @Test
@@ -132,7 +132,7 @@ public class QueryHandlerTest extends AbstractOptimiserTest {
         File f = temp.newFile();
         String url = "http://localhost:9000/chk?j=tab&f=json";
         HttpTestUtils.download(HttpTestUtils.clientBuilder(false), url, f);
-        TestUtils.assertEquals("{\"status\":\"Exists\"}", Files.readStringFromFile(f));
+        TestUtils.assertEquals("{\"status\":\"Exists\"}", com.questdb.store.Files.readStringFromFile(f));
     }
 
     @Test

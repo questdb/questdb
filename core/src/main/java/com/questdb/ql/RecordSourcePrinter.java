@@ -23,13 +23,13 @@
 
 package com.questdb.ql;
 
-import com.questdb.common.ColumnType;
-import com.questdb.common.Record;
-import com.questdb.common.RecordCursor;
-import com.questdb.common.RecordMetadata;
 import com.questdb.std.Numbers;
 import com.questdb.std.str.CharSink;
 import com.questdb.std.time.DateFormatUtils;
+import com.questdb.store.ColumnType;
+import com.questdb.store.Record;
+import com.questdb.store.RecordCursor;
+import com.questdb.store.RecordMetadata;
 import com.questdb.store.factory.ReaderFactory;
 
 import java.io.IOException;

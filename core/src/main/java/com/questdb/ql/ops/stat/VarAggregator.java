@@ -24,9 +24,6 @@
 package com.questdb.ql.ops.stat;
 
 import com.questdb.ServerConfiguration;
-import com.questdb.common.ColumnType;
-import com.questdb.common.Record;
-import com.questdb.common.RecordColumnMetadata;
 import com.questdb.ql.AggregatorFunction;
 import com.questdb.ql.CollectionRecordMetadata;
 import com.questdb.ql.RecordColumnMetadataImpl;
@@ -38,6 +35,9 @@ import com.questdb.ql.ops.Function;
 import com.questdb.ql.ops.VirtualColumnFactory;
 import com.questdb.std.Misc;
 import com.questdb.std.ObjList;
+import com.questdb.store.ColumnType;
+import com.questdb.store.Record;
+import com.questdb.store.RecordColumnMetadata;
 import com.questdb.store.factory.configuration.ColumnMetadata;
 
 import java.io.Closeable;

@@ -23,8 +23,8 @@
 
 package com.questdb.ql.sys;
 
-import com.questdb.common.PartitionBy;
-import com.questdb.common.SymbolTable;
+import com.questdb.store.PartitionBy;
+import com.questdb.store.SymbolTable;
 
 public class PartitionBySymbolTable implements SymbolTable {
 

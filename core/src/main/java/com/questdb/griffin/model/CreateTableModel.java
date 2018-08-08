@@ -23,7 +23,7 @@
 
 package com.questdb.griffin.model;
 
-import com.questdb.common.ColumnType;
+import com.questdb.cairo.ColumnType;
 import com.questdb.std.*;
 import com.questdb.std.str.CharSink;
 

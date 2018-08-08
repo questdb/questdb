@@ -23,7 +23,6 @@
 
 package com.questdb.ql.ops;
 
-import com.questdb.common.ColumnType;
 import com.questdb.ql.ops.conv.*;
 import com.questdb.ql.ops.count.*;
 import com.questdb.ql.ops.div.DivDoubleOperator;
@@ -70,6 +69,7 @@ import com.questdb.std.CharSequenceHashSet;
 import com.questdb.std.Chars;
 import com.questdb.std.ObjList;
 import com.questdb.std.ObjObjHashMap;
+import com.questdb.store.ColumnType;
 
 public final class FunctionFactories {
 

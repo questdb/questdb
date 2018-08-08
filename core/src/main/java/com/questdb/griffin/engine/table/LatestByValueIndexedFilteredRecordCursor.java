@@ -24,11 +24,7 @@
 package com.questdb.griffin.engine.table;
 
 import com.questdb.cairo.BitmapIndexReader;
-import com.questdb.cairo.sql.DataFrame;
-import com.questdb.cairo.sql.DataFrameCursor;
-import com.questdb.cairo.sql.Function;
-import com.questdb.cairo.sql.Record;
-import com.questdb.common.RowCursor;
+import com.questdb.cairo.sql.*;
 import org.jetbrains.annotations.NotNull;
 
 class LatestByValueIndexedFilteredRecordCursor extends AbstractDataFrameRecordCursor {

@@ -23,15 +23,11 @@
 
 package com.questdb.griffin;
 
-import com.questdb.cairo.CairoConfiguration;
-import com.questdb.cairo.CairoException;
-import com.questdb.cairo.TableReader;
-import com.questdb.cairo.TableUtils;
+import com.questdb.cairo.*;
 import com.questdb.cairo.pool.ex.EntryLockedException;
 import com.questdb.cairo.sql.CairoEngine;
 import com.questdb.cairo.sql.Function;
 import com.questdb.cairo.sql.RecordMetadata;
-import com.questdb.common.ColumnType;
 import com.questdb.griffin.model.*;
 import com.questdb.ql.ops.FunctionFactories;
 import com.questdb.std.*;

@@ -23,10 +23,6 @@
 
 package com.questdb.ql.sys;
 
-import com.questdb.common.Record;
-import com.questdb.common.RecordCursor;
-import com.questdb.common.RecordMetadata;
-import com.questdb.common.SymbolTable;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.ql.CancellationHandler;
@@ -41,6 +37,10 @@ import com.questdb.std.str.CharSink;
 import com.questdb.std.str.DirectCharSequence;
 import com.questdb.std.str.NativeLPSZ;
 import com.questdb.std.str.Path;
+import com.questdb.store.Record;
+import com.questdb.store.RecordCursor;
+import com.questdb.store.RecordMetadata;
+import com.questdb.store.SymbolTable;
 import com.questdb.store.factory.ReaderFactory;
 import com.questdb.store.factory.configuration.JournalConfiguration;
 

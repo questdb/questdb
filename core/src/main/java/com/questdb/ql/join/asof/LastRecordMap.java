@@ -23,10 +23,10 @@
 
 package com.questdb.ql.join.asof;
 
-import com.questdb.common.Record;
-import com.questdb.common.RecordCursor;
-import com.questdb.common.RecordMetadata;
-import com.questdb.common.StorageFacade;
+import com.questdb.store.Record;
+import com.questdb.store.RecordCursor;
+import com.questdb.store.RecordMetadata;
+import com.questdb.store.StorageFacade;
 
 import java.io.Closeable;
 

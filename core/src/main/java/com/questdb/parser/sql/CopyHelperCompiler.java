@@ -23,11 +23,11 @@
 
 package com.questdb.parser.sql;
 
-import com.questdb.common.ColumnType;
-import com.questdb.common.Record;
-import com.questdb.common.RecordMetadata;
 import com.questdb.std.BytecodeAssembler;
+import com.questdb.store.ColumnType;
 import com.questdb.store.JournalEntryWriter;
+import com.questdb.store.Record;
+import com.questdb.store.RecordMetadata;
 
 public class CopyHelperCompiler {
     private final BytecodeAssembler asm;
@@ -70,7 +70,7 @@ public class CopyHelperCompiler {
         int wPutBin = asm.poolInterfaceMethod(JournalEntryWriter.class, "putBin", "(ILjava/io/InputStream;)V");
 
         int copyNameIndex = asm.poolUtf8("copy");
-        int copySigIndex = asm.poolUtf8("(Lcom/questdb/common/Record;Lcom/questdb/store/JournalEntryWriter;)V");
+        int copySigIndex = asm.poolUtf8("(Lcom/questdb/store/Record;Lcom/questdb/store/JournalEntryWriter;)V");
 
         asm.finishPool();
         asm.defineClass(thisClassIndex);

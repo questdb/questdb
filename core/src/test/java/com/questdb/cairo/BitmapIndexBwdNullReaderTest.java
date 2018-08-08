@@ -23,7 +23,7 @@
 
 package com.questdb.cairo;
 
-import com.questdb.common.RowCursor;
+import com.questdb.cairo.sql.RowCursor;
 import com.questdb.std.Rnd;
 import org.junit.Assert;
 import org.junit.Test;

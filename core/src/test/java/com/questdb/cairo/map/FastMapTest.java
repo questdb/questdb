@@ -26,8 +26,6 @@ package com.questdb.cairo.map;
 import com.questdb.cairo.*;
 import com.questdb.cairo.sql.Record;
 import com.questdb.cairo.sql.RecordCursor;
-import com.questdb.common.ColumnType;
-import com.questdb.common.PartitionBy;
 import com.questdb.std.*;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;

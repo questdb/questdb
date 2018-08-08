@@ -23,13 +23,11 @@
 
 package com.questdb.cairo.sql;
 
+import com.questdb.cairo.ColumnType;
 import com.questdb.cairo.ColumnTypes;
-import com.questdb.common.ColumnType;
 import com.questdb.std.str.CharSink;
 
 public interface RecordMetadata extends ColumnTypes {
-
-    int getColumnCount();
 
     default int getColumnIndex(CharSequence columnName) {
         int index = getColumnIndexQuiet(columnName);
@@ -48,6 +46,8 @@ public interface RecordMetadata extends ColumnTypes {
     }
 
     int getColumnType(int index);
+
+    int getColumnCount();
 
     int getIndexValueBlockCapacity(int columnIndex);
 

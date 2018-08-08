@@ -23,12 +23,12 @@
 
 package com.questdb.ql.ops.gt;
 
-import com.questdb.common.ColumnType;
-import com.questdb.common.Record;
 import com.questdb.ql.ops.AbstractBinaryOperator;
 import com.questdb.ql.ops.Function;
 import com.questdb.ql.ops.VirtualColumnFactory;
 import com.questdb.std.Numbers;
+import com.questdb.store.ColumnType;
+import com.questdb.store.Record;
 
 public class DateGreaterThanOperator extends AbstractBinaryOperator {
 

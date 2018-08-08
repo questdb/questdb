@@ -23,7 +23,6 @@
 
 package com.questdb.store.query.iter;
 
-import com.questdb.common.JournalRuntimeException;
 import com.questdb.mp.RingQueue;
 import com.questdb.mp.SCSequence;
 import com.questdb.mp.SPSequence;
@@ -34,6 +33,7 @@ import com.questdb.std.ObjectFactory;
 import com.questdb.std.Rows;
 import com.questdb.std.ex.JournalException;
 import com.questdb.store.Journal;
+import com.questdb.store.JournalRuntimeException;
 
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;

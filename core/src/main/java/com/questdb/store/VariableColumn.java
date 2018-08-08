@@ -23,7 +23,6 @@
 
 package com.questdb.store;
 
-import com.questdb.common.JournalRuntimeException;
 import com.questdb.std.Chars;
 import com.questdb.std.DirectInputStream;
 import com.questdb.std.Unsafe;

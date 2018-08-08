@@ -23,9 +23,9 @@
 
 package com.questdb.store.factory.configuration;
 
-import com.questdb.common.RecordColumnMetadata;
-import com.questdb.common.SymbolTable;
 import com.questdb.store.MMappedSymbolTable;
+import com.questdb.store.RecordColumnMetadata;
+import com.questdb.store.SymbolTable;
 import com.questdb.store.UnstructuredFile;
 
 public class ColumnMetadata implements RecordColumnMetadata {

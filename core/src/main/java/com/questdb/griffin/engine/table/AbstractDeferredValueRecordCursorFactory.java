@@ -24,7 +24,6 @@
 package com.questdb.griffin.engine.table;
 
 import com.questdb.cairo.sql.*;
-import com.questdb.common.SymbolTable;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 

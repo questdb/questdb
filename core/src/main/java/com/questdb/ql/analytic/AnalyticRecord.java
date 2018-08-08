@@ -23,9 +23,9 @@
 
 package com.questdb.ql.analytic;
 
-import com.questdb.common.Record;
 import com.questdb.std.DirectInputStream;
 import com.questdb.std.ObjList;
+import com.questdb.store.Record;
 
 import java.io.OutputStream;
 

@@ -23,16 +23,16 @@
 
 package com.questdb.ql.ops;
 
-import com.questdb.common.ColumnType;
-import com.questdb.common.Record;
-import com.questdb.common.StorageFacade;
-import com.questdb.common.SymbolTable;
 import com.questdb.ex.ParserException;
 import com.questdb.parser.sql.QueryError;
 import com.questdb.ql.ops.regex.Matcher;
 import com.questdb.ql.ops.regex.Pattern;
 import com.questdb.ql.ops.regex.PatternSyntaxException;
 import com.questdb.std.IntHashSet;
+import com.questdb.store.ColumnType;
+import com.questdb.store.Record;
+import com.questdb.store.StorageFacade;
+import com.questdb.store.SymbolTable;
 
 public class SymRegexOperator extends AbstractBinaryOperator {
 

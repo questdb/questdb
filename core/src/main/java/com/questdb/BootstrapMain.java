@@ -245,7 +245,7 @@ class BootstrapMain {
             if (force) {
                 File pub = new File(dir, "public");
                 if (pub.exists()) {
-                    com.questdb.std.Files.delete(pub);
+                    com.questdb.store.Files.delete(pub);
                 }
             }
 

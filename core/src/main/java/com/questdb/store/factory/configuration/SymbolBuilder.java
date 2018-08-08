@@ -23,9 +23,9 @@
 
 package com.questdb.store.factory.configuration;
 
-import com.questdb.common.ColumnType;
 import com.questdb.ex.JournalConfigurationException;
 import com.questdb.std.Numbers;
+import com.questdb.store.ColumnType;
 
 public class SymbolBuilder<T> extends AbstractMetadataBuilder<T> {
     public SymbolBuilder(JournalMetadataBuilder<T> parent, ColumnMetadata meta) {

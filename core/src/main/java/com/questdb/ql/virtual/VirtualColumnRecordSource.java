@@ -23,7 +23,6 @@
 
 package com.questdb.ql.virtual;
 
-import com.questdb.common.*;
 import com.questdb.ql.CancellationHandler;
 import com.questdb.ql.RecordSource;
 import com.questdb.ql.join.SplitRecordStorageFacade;
@@ -32,6 +31,7 @@ import com.questdb.ql.ops.VirtualColumn;
 import com.questdb.std.Misc;
 import com.questdb.std.ObjList;
 import com.questdb.std.str.CharSink;
+import com.questdb.store.*;
 import com.questdb.store.factory.ReaderFactory;
 
 public class VirtualColumnRecordSource extends AbstractCombinedRecordSource {

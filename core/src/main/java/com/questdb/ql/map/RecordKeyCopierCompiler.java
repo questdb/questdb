@@ -23,12 +23,12 @@
 
 package com.questdb.ql.map;
 
-import com.questdb.common.ColumnType;
-import com.questdb.common.Record;
-import com.questdb.common.RecordMetadata;
 import com.questdb.std.BytecodeAssembler;
 import com.questdb.std.IntList;
 import com.questdb.std.Transient;
+import com.questdb.store.ColumnType;
+import com.questdb.store.Record;
+import com.questdb.store.RecordMetadata;
 
 public class RecordKeyCopierCompiler {
     private final BytecodeAssembler asm;
@@ -70,7 +70,7 @@ public class RecordKeyCopierCompiler {
         int wPutStr = asm.poolMethod(DirectMap.KeyWriter.class, "putStr", "(Ljava/lang/CharSequence;)V");
 
         int copyNameIndex = asm.poolUtf8("copy");
-        int copySigIndex = asm.poolUtf8("(Lcom/questdb/common/Record;Lcom/questdb/ql/map/DirectMap$KeyWriter;)V");
+        int copySigIndex = asm.poolUtf8("(Lcom/questdb/store/Record;Lcom/questdb/ql/map/DirectMap$KeyWriter;)V");
 
         asm.finishPool();
         asm.defineClass(thisClassIndex);

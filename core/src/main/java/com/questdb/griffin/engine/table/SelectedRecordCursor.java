@@ -25,7 +25,7 @@ package com.questdb.griffin.engine.table;
 
 import com.questdb.cairo.sql.Record;
 import com.questdb.cairo.sql.RecordCursor;
-import com.questdb.common.SymbolTable;
+import com.questdb.cairo.sql.SymbolTable;
 import com.questdb.std.IntList;
 
 class SelectedRecordCursor implements RecordCursor {

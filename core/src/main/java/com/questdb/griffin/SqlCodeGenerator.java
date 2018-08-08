@@ -25,8 +25,6 @@ package com.questdb.griffin;
 
 import com.questdb.cairo.*;
 import com.questdb.cairo.sql.*;
-import com.questdb.common.ColumnType;
-import com.questdb.common.SymbolTable;
 import com.questdb.griffin.engine.RecordComparatorCompiler;
 import com.questdb.griffin.engine.SortedLightRecordCursorFactory;
 import com.questdb.griffin.engine.functions.columns.SymbolColumn;

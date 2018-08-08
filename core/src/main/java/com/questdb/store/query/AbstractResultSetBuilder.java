@@ -25,8 +25,8 @@ package com.questdb.store.query;
 
 import com.questdb.std.LongList;
 import com.questdb.std.ex.JournalException;
-import com.questdb.std.time.Interval;
 import com.questdb.store.BSearchType;
+import com.questdb.store.Interval;
 import com.questdb.store.Journal;
 import com.questdb.store.Partition;
 

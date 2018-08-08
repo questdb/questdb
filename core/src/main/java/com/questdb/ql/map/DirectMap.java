@@ -23,10 +23,10 @@
 
 package com.questdb.ql.map;
 
-import com.questdb.common.ColumnType;
-import com.questdb.common.JournalRuntimeException;
-import com.questdb.common.Record;
 import com.questdb.std.*;
+import com.questdb.store.ColumnType;
+import com.questdb.store.JournalRuntimeException;
+import com.questdb.store.Record;
 import com.questdb.store.VariableColumn;
 import org.jetbrains.annotations.NotNull;
 

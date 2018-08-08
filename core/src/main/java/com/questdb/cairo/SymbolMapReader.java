@@ -23,14 +23,15 @@
 
 package com.questdb.cairo;
 
-import com.questdb.common.SymbolTable;
+
+import com.questdb.cairo.sql.SymbolTable;
 
 public interface SymbolMapReader extends SymbolTable {
-    boolean isDeleted();
-
-    void updateSymbolCount(int count);
-
     int getSymbolCapacity();
 
     boolean isCached();
+
+    boolean isDeleted();
+
+    void updateSymbolCount(int count);
 }

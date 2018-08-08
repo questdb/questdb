@@ -23,9 +23,6 @@
 
 package com.questdb.ql.analytic.prev;
 
-import com.questdb.common.Record;
-import com.questdb.common.RecordColumnMetadata;
-import com.questdb.common.RecordCursor;
 import com.questdb.ql.analytic.AnalyticFunction;
 import com.questdb.ql.map.*;
 import com.questdb.ql.ops.VirtualColumn;
@@ -33,8 +30,7 @@ import com.questdb.std.*;
 import com.questdb.std.ThreadLocal;
 import com.questdb.std.str.CharSink;
 import com.questdb.std.str.DirectCharSequence;
-import com.questdb.store.MMappedSymbolTable;
-import com.questdb.store.VariableColumn;
+import com.questdb.store.*;
 
 import java.io.Closeable;
 

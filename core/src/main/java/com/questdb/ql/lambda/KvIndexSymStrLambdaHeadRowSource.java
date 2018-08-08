@@ -23,11 +23,11 @@
 
 package com.questdb.ql.lambda;
 
-import com.questdb.common.Record;
 import com.questdb.ql.RecordSource;
 import com.questdb.ql.RowSource;
 import com.questdb.ql.ops.VirtualColumn;
 import com.questdb.std.str.CharSink;
+import com.questdb.store.Record;
 
 public class KvIndexSymStrLambdaHeadRowSource extends KvIndexSymLambdaHeadRowSource {
 

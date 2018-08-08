@@ -24,8 +24,6 @@
 package com.questdb.parser.plaintext;
 
 import com.questdb.BootstrapEnv;
-import com.questdb.common.ColumnType;
-import com.questdb.common.JournalRuntimeException;
 import com.questdb.ex.ImportColumnCountException;
 import com.questdb.ex.ImportNameException;
 import com.questdb.log.Log;
@@ -36,7 +34,9 @@ import com.questdb.std.ex.JournalException;
 import com.questdb.std.str.DirectByteCharSequence;
 import com.questdb.std.str.DirectBytes;
 import com.questdb.std.str.DirectCharSink;
+import com.questdb.store.ColumnType;
 import com.questdb.store.JournalEntryWriter;
+import com.questdb.store.JournalRuntimeException;
 import com.questdb.store.JournalWriter;
 import com.questdb.store.factory.Factory;
 import com.questdb.store.factory.configuration.ColumnMetadata;

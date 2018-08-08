@@ -23,9 +23,9 @@
 
 package com.questdb.ql.map;
 
-import com.questdb.common.RecordMetadata;
 import com.questdb.std.ObjHashSet;
 import com.questdb.std.ThreadLocal;
+import com.questdb.store.RecordMetadata;
 
 public class MetadataNameTypeResolver implements ColumnTypeResolver {
     private RecordMetadata metadata;

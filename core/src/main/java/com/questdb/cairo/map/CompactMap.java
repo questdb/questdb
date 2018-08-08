@@ -25,7 +25,6 @@ package com.questdb.cairo.map;
 
 import com.questdb.cairo.*;
 import com.questdb.cairo.sql.Record;
-import com.questdb.common.ColumnType;
 import com.questdb.std.BinarySequence;
 import com.questdb.std.Misc;
 import com.questdb.std.Numbers;
@@ -370,6 +369,10 @@ public class CompactMap implements Map {
             }
         }
 
+        public void put(Record record, RecordSink sink) {
+            sink.copy(record, key);
+        }
+
         public void putBin(BinarySequence value) {
             if (value == null) {
                 entries.putLong(TableUtils.NULL_LEN);
@@ -410,10 +413,6 @@ public class CompactMap implements Map {
 
         public void putLong(long value) {
             entries.putLong(value);
-        }
-
-        public void put(Record record, RecordSink sink) {
-            sink.copy(record, key);
         }
 
         public void putShort(short value) {

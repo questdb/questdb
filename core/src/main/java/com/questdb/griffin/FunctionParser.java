@@ -24,9 +24,9 @@
 package com.questdb.griffin;
 
 import com.questdb.cairo.CairoConfiguration;
+import com.questdb.cairo.ColumnType;
 import com.questdb.cairo.sql.Function;
 import com.questdb.cairo.sql.RecordMetadata;
-import com.questdb.common.ColumnType;
 import com.questdb.griffin.engine.functions.CursorFunction;
 import com.questdb.griffin.engine.functions.columns.*;
 import com.questdb.griffin.engine.functions.constants.*;

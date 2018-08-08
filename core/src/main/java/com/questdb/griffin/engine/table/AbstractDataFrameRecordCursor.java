@@ -27,7 +27,7 @@ import com.questdb.cairo.TableReaderRecord;
 import com.questdb.cairo.sql.DataFrameCursor;
 import com.questdb.cairo.sql.Record;
 import com.questdb.cairo.sql.RecordCursor;
-import com.questdb.common.SymbolTable;
+import com.questdb.cairo.sql.SymbolTable;
 import com.questdb.std.Rows;
 
 public abstract class AbstractDataFrameRecordCursor implements RecordCursor {

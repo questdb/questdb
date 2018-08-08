@@ -23,9 +23,9 @@
 
 package com.questdb.ql.ops;
 
-import com.questdb.common.JournalRuntimeException;
 import com.questdb.ql.RecordSource;
 import com.questdb.std.CharSequenceObjHashMap;
+import com.questdb.store.JournalRuntimeException;
 
 public abstract class AbstractRecordSource implements RecordSource {
     private CharSequenceObjHashMap<Parameter> parameterMap;

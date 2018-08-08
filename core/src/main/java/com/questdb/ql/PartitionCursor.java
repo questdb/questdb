@@ -23,9 +23,9 @@
 
 package com.questdb.ql;
 
-import com.questdb.common.StorageFacade;
 import com.questdb.std.ImmutableIterator;
 import com.questdb.store.Partition;
+import com.questdb.store.StorageFacade;
 
 public interface PartitionCursor extends ImmutableIterator<PartitionSlice> {
     Partition getPartition(int index);

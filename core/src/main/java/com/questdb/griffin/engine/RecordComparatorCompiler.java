@@ -23,9 +23,9 @@
 
 package com.questdb.griffin.engine;
 
+import com.questdb.cairo.ColumnType;
 import com.questdb.cairo.ColumnTypes;
 import com.questdb.cairo.sql.Record;
-import com.questdb.common.ColumnType;
 import com.questdb.griffin.SqlParser;
 import com.questdb.std.*;
 

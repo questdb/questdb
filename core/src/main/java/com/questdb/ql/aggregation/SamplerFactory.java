@@ -23,10 +23,10 @@
 
 package com.questdb.ql.aggregation;
 
-import com.questdb.common.JournalRuntimeException;
 import com.questdb.std.Numbers;
 import com.questdb.std.NumericException;
 import com.questdb.std.time.Dates;
+import com.questdb.store.JournalRuntimeException;
 
 public final class SamplerFactory {
 

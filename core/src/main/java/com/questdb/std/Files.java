@@ -23,15 +23,10 @@
 
 package com.questdb.std;
 
-import com.questdb.common.JournalRuntimeException;
-import com.questdb.std.ex.JournalException;
 import com.questdb.std.str.LPSZ;
 import com.questdb.std.str.Path;
 
 import java.io.File;
-import java.io.FileInputStream;
-import java.io.FileOutputStream;
-import java.io.IOException;
 import java.nio.charset.Charset;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -39,15 +34,15 @@ public final class Files {
 
     public static final Charset UTF_8;
     public static final long PAGE_SIZE;
-    public static final int DT_UNKNOWN = 0;
-    public static final int DT_FIFO = 1;
-    public static final int DT_CHR = 2;
+    //    public static final int DT_UNKNOWN = 0;
+//    public static final int DT_FIFO = 1;
+//    public static final int DT_CHR = 2;
     public static final int DT_DIR = 4;
-    public static final int DT_BLK = 6;
-    public static final int DT_REG = 8;
+    //    public static final int DT_BLK = 6;
+//    public static final int DT_REG = 8;
     public static final int DT_LNK = 10;
-    public static final int DT_SOCK = 12;
-    public static final int DT_WHT = 14;
+//    public static final int DT_SOCK = 12;
+//    public static final int DT_WHT = 14;
 
     public static final int MAP_RO = 1;
     public static final int MAP_RW = 2;
@@ -76,33 +71,6 @@ public final class Files {
             total += l;
         }
         return total;
-    }
-
-    public static boolean delete(File file) {
-        try {
-            deleteOrException(file);
-            return true;
-        } catch (JournalException e) {
-            return false;
-        }
-    }
-
-    public static void deleteOrException(File file) throws JournalException {
-        if (!file.exists()) {
-            return;
-        }
-        deleteDirContentsOrException(file);
-
-        int retryCount = 3;
-        boolean deleted = false;
-        while (retryCount > 0 && !(deleted = file.delete())) {
-            retryCount--;
-            Thread.yield();
-        }
-
-        if (!deleted) {
-            throw new JournalException("Cannot delete file %s", file);
-        }
     }
 
     public static native boolean exists(long fd);
@@ -144,32 +112,6 @@ public final class Files {
     public native static long length(long fd);
 
     public static native int lock(long fd);
-
-    public static File makeTempDir() {
-        File result;
-        try {
-            result = File.createTempFile("questdb", "");
-            deleteOrException(result);
-            mkDirsOrException(result);
-        } catch (Exception e) {
-            throw new JournalRuntimeException("Exception when creating temp dir", e);
-        }
-        return result;
-    }
-
-    public static File makeTempFile() {
-        try {
-            return File.createTempFile("questdb", "");
-        } catch (IOException e) {
-            throw new JournalRuntimeException(e);
-        }
-    }
-
-    public static void mkDirsOrException(File dir) {
-        if (!dir.mkdirs()) {
-            throw new JournalRuntimeException("Cannot create temp directory: %s", dir);
-        }
-    }
 
     public static int mkdir(LPSZ path, int mode) {
         return mkdir(path.address(), mode);
@@ -241,24 +183,6 @@ public final class Files {
 
     public native static long read(long fd, long address, long len, long offset);
 
-    public static String readStringFromFile(File file) throws JournalException {
-        try {
-            try (FileInputStream fis = new FileInputStream(file)) {
-                byte buffer[]
-                        = new byte[(int) fis.getChannel().size()];
-                int totalRead = 0;
-                int read;
-                while (totalRead < buffer.length
-                        && (read = fis.read(buffer, totalRead, buffer.length - totalRead)) > 0) {
-                    totalRead += read;
-                }
-                return new String(buffer, UTF_8);
-            }
-        } catch (IOException e) {
-            throw new JournalException("Cannot read from %s", e, file.getAbsolutePath());
-        }
-    }
-
     public static boolean remove(LPSZ lpsz) {
         return remove(lpsz.address());
     }
@@ -322,17 +246,6 @@ public final class Files {
 
     public native static long write(long fd, long address, long len, long offset);
 
-    // used in tests
-    public static void writeStringToFile(File file, String s) throws JournalException {
-        try {
-            try (FileOutputStream fos = new FileOutputStream(file)) {
-                fos.write(s.getBytes(UTF_8));
-            }
-        } catch (IOException e) {
-            throw new JournalException("Cannot write to %s", e, file.getAbsolutePath());
-        }
-    }
-
     native static int close0(long fd);
 
     private static boolean strcmp(long lpsz, CharSequence s) {
@@ -371,43 +284,6 @@ public final class Files {
     private native static long findFirst(long lpszName);
 
     private native static boolean setLastModified(long lpszName, long millis);
-
-    private static void deleteDirContentsOrException(File file) throws JournalException {
-        if (!file.exists()) {
-            return;
-        }
-        try {
-            if (notSymlink(file)) {
-                File[] files = file.listFiles();
-                if (files != null) {
-                    for (int i = 0; i < files.length; i++) {
-                        deleteOrException(files[i]);
-                    }
-                }
-            }
-        } catch (IOException e) {
-            throw new JournalException("Cannot delete dir contents: %s", file, e);
-        }
-    }
-
-    private static boolean notSymlink(File file) throws IOException {
-        if (file == null) {
-            throw new IllegalArgumentException("File must not be null");
-        }
-        if (File.separatorChar == '\\') {
-            return true;
-        }
-
-        File fileInCanonicalDir;
-        if (file.getParentFile() == null) {
-            fileInCanonicalDir = file;
-        } else {
-            File canonicalDir = file.getParentFile().getCanonicalFile();
-            fileInCanonicalDir = new File(canonicalDir, file.getName());
-        }
-
-        return fileInCanonicalDir.getCanonicalFile().equals(fileInCanonicalDir.getAbsoluteFile());
-    }
 
     private static native boolean rename(long lpszOld, long lpszNew);
 

@@ -23,7 +23,6 @@
 
 package com.questdb;
 
-import com.questdb.common.PartitionBy;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.mp.MPSequence;
@@ -36,6 +35,7 @@ import com.questdb.std.ex.JournalException;
 import com.questdb.std.microtime.MicrosecondClock;
 import com.questdb.store.JournalEntryWriter;
 import com.questdb.store.JournalWriter;
+import com.questdb.store.PartitionBy;
 import com.questdb.store.factory.Factory;
 import com.questdb.store.factory.configuration.JournalStructure;
 

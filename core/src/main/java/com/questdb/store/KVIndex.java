@@ -23,8 +23,10 @@
 
 package com.questdb.store;
 
-import com.questdb.common.JournalRuntimeException;
-import com.questdb.std.*;
+import com.questdb.std.ByteBuffers;
+import com.questdb.std.LongList;
+import com.questdb.std.Numbers;
+import com.questdb.std.Unsafe;
 import com.questdb.std.ex.JournalException;
 
 import java.io.Closeable;

@@ -23,9 +23,9 @@
 
 package com.questdb.ql.analytic.next;
 
-import com.questdb.common.Record;
 import com.questdb.ql.ops.VirtualColumn;
 import com.questdb.std.Unsafe;
+import com.questdb.store.Record;
 
 public class NextAnalyticFunction extends AbstractNextAnalyticFunction {
 

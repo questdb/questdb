@@ -25,7 +25,7 @@ package com.questdb.griffin.engine.functions.rnd;
 
 import com.questdb.cairo.sql.Record;
 import com.questdb.cairo.sql.RecordCursor;
-import com.questdb.common.SymbolTable;
+import com.questdb.cairo.sql.SymbolTable;
 
 class RandomRecordCursor implements RecordCursor {
     private final long recordCount;

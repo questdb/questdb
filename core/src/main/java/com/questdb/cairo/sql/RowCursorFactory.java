@@ -24,7 +24,6 @@
 package com.questdb.cairo.sql;
 
 import com.questdb.cairo.TableReader;
-import com.questdb.common.RowCursor;
 
 public interface RowCursorFactory {
     RowCursor getCursor(DataFrame dataFrame);

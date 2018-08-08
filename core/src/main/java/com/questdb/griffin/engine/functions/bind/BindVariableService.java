@@ -23,8 +23,8 @@
 
 package com.questdb.griffin.engine.functions.bind;
 
+import com.questdb.cairo.ColumnType;
 import com.questdb.cairo.sql.Function;
-import com.questdb.common.ColumnType;
 import com.questdb.griffin.SqlException;
 import com.questdb.std.BinarySequence;
 import com.questdb.std.CharSequenceObjHashMap;

@@ -24,8 +24,8 @@
 package com.questdb.griffin;
 
 import com.questdb.cairo.CairoConfiguration;
-import com.questdb.common.ColumnType;
-import com.questdb.common.PartitionBy;
+import com.questdb.cairo.ColumnType;
+import com.questdb.cairo.PartitionBy;
 import com.questdb.griffin.model.*;
 import com.questdb.std.*;
 

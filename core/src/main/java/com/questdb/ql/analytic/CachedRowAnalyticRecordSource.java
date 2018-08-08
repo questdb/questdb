@@ -23,10 +23,6 @@
 
 package com.questdb.ql.analytic;
 
-import com.questdb.common.Record;
-import com.questdb.common.RecordCursor;
-import com.questdb.common.RecordMetadata;
-import com.questdb.common.StorageFacade;
 import com.questdb.ql.*;
 import com.questdb.ql.join.hash.FakeRecord;
 import com.questdb.ql.map.MapUtils;
@@ -36,6 +32,10 @@ import com.questdb.std.Misc;
 import com.questdb.std.ObjList;
 import com.questdb.std.RedBlackTree;
 import com.questdb.std.str.CharSink;
+import com.questdb.store.Record;
+import com.questdb.store.RecordCursor;
+import com.questdb.store.RecordMetadata;
+import com.questdb.store.StorageFacade;
 import com.questdb.store.factory.ReaderFactory;
 
 public class CachedRowAnalyticRecordSource extends AbstractCombinedRecordSource {

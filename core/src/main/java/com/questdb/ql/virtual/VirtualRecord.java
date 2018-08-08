@@ -23,11 +23,11 @@
 
 package com.questdb.ql.virtual;
 
-import com.questdb.common.Record;
-import com.questdb.common.StorageFacade;
 import com.questdb.ql.ops.VirtualColumn;
 import com.questdb.std.DirectInputStream;
 import com.questdb.std.ObjList;
+import com.questdb.store.Record;
+import com.questdb.store.StorageFacade;
 
 import java.io.OutputStream;
 

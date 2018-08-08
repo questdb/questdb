@@ -23,12 +23,12 @@
 
 package com.questdb.ql.sort;
 
-import com.questdb.common.ColumnType;
-import com.questdb.common.Record;
-import com.questdb.common.RecordMetadata;
 import com.questdb.parser.sql.QueryParser;
 import com.questdb.std.*;
-import com.questdb.std.ex.JournalUnsupportedTypeException;
+import com.questdb.store.ColumnType;
+import com.questdb.store.JournalUnsupportedTypeException;
+import com.questdb.store.Record;
+import com.questdb.store.RecordMetadata;
 
 public class ComparatorCompiler {
     private final BytecodeAssembler asm;
@@ -60,11 +60,11 @@ public class ComparatorCompiler {
         // this is name re-use, it used on all static interfaces that compare values
         int compareNameIndex = asm.poolUtf8("compare");
         // our compare method signature
-        int compareDescIndex = asm.poolUtf8("(Lcom/questdb/common/Record;)I");
+        int compareDescIndex = asm.poolUtf8("(Lcom/questdb/store/Record;)I");
         poolFieldArtifacts(compareNameIndex, thisClassIndex, recordClassIndex, m, keyColumnIndices);
         // elements for setLeft() method
         int setLeftNameIndex = asm.poolUtf8("setLeft");
-        int setLeftDescIndex = asm.poolUtf8("(Lcom/questdb/common/Record;)V");
+        int setLeftDescIndex = asm.poolUtf8("(Lcom/questdb/store/Record;)V");
         //
         asm.finishPool();
         asm.defineClass(thisClassIndex);

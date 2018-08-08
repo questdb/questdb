@@ -23,11 +23,11 @@
 
 package com.questdb.ql.analytic.prev;
 
-import com.questdb.common.*;
 import com.questdb.ql.analytic.AnalyticFunction;
 import com.questdb.ql.ops.VirtualColumn;
 import com.questdb.std.Numbers;
 import com.questdb.std.str.CharSink;
+import com.questdb.store.*;
 
 public class PrevRowAnalyticFunction implements AnalyticFunction {
     private final VirtualColumn valueColumn;

@@ -23,8 +23,8 @@
 
 package com.questdb.parser.plaintext;
 
-import com.questdb.common.ColumnType;
 import com.questdb.ql.RecordSource;
+import com.questdb.store.ColumnType;
 import com.questdb.store.Journal;
 import com.questdb.store.factory.configuration.JournalConfiguration;
 import com.questdb.store.factory.configuration.JournalMetadata;

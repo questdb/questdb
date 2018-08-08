@@ -23,9 +23,9 @@
 
 package com.questdb.ql.map;
 
-import com.questdb.common.ColumnType;
 import com.questdb.std.*;
 import com.questdb.std.str.StringSink;
+import com.questdb.store.ColumnType;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.BeforeClass;

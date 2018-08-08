@@ -26,7 +26,6 @@ package com.questdb.griffin.engine.table;
 import com.questdb.cairo.SymbolMapReader;
 import com.questdb.cairo.TableReader;
 import com.questdb.cairo.sql.*;
-import com.questdb.common.SymbolTable;
 import com.questdb.std.CharSequenceHashSet;
 import com.questdb.std.Chars;
 import com.questdb.std.ObjList;

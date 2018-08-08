@@ -23,9 +23,6 @@
 
 package com.questdb.store;
 
-import com.questdb.common.ColumnType;
-import com.questdb.common.JournalRuntimeException;
-import com.questdb.common.SymbolTable;
 import com.questdb.std.Hash;
 import com.questdb.std.Numbers;
 import com.questdb.std.Unsafe;

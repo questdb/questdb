@@ -28,7 +28,7 @@ import com.questdb.cairo.SymbolMapReader;
 import com.questdb.cairo.sql.DataFrameCursor;
 import com.questdb.cairo.sql.DataFrameCursorFactory;
 import com.questdb.cairo.sql.RecordMetadata;
-import com.questdb.common.SymbolTable;
+import com.questdb.cairo.sql.SymbolTable;
 import com.questdb.std.CharSequenceHashSet;
 import com.questdb.std.Chars;
 import com.questdb.std.IntHashSet;

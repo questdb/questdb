@@ -23,10 +23,6 @@
 
 package com.questdb.ql.sort;
 
-import com.questdb.common.Record;
-import com.questdb.common.RecordCursor;
-import com.questdb.common.RecordMetadata;
-import com.questdb.common.StorageFacade;
 import com.questdb.ql.CancellationHandler;
 import com.questdb.ql.RecordList;
 import com.questdb.ql.RecordSource;
@@ -38,6 +34,10 @@ import com.questdb.std.Misc;
 import com.questdb.std.Mutable;
 import com.questdb.std.Unsafe;
 import com.questdb.std.str.CharSink;
+import com.questdb.store.Record;
+import com.questdb.store.RecordCursor;
+import com.questdb.store.RecordMetadata;
+import com.questdb.store.StorageFacade;
 import com.questdb.store.factory.ReaderFactory;
 
 import java.io.Closeable;

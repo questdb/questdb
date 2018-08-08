@@ -23,10 +23,10 @@
 
 package com.questdb.ql.join;
 
-import com.questdb.common.Record;
 import com.questdb.std.DirectInputStream;
 import com.questdb.std.IntList;
 import com.questdb.std.ObjList;
+import com.questdb.store.Record;
 
 import java.io.OutputStream;
 

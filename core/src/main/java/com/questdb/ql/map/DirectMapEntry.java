@@ -23,11 +23,11 @@
 
 package com.questdb.ql.map;
 
-import com.questdb.common.ColumnType;
 import com.questdb.std.Transient;
 import com.questdb.std.Unsafe;
 import com.questdb.std.str.CharSink;
 import com.questdb.std.str.DirectCharSequence;
+import com.questdb.store.ColumnType;
 import com.questdb.store.VariableColumn;
 
 public final class DirectMapEntry {

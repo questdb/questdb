@@ -23,10 +23,10 @@
 
 package com.questdb.ql.ops.lt;
 
-import com.questdb.common.Record;
 import com.questdb.ql.ops.Function;
 import com.questdb.ql.ops.VirtualColumnFactory;
 import com.questdb.ql.ops.gt.StrToDateCmpBaseOperator;
+import com.questdb.store.Record;
 
 public class StrLessThanDateOperator extends StrToDateCmpBaseOperator {
 

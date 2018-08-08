@@ -23,12 +23,8 @@
 
 package com.questdb.cairo.map;
 
-import com.questdb.cairo.CairoException;
-import com.questdb.cairo.ColumnTypes;
-import com.questdb.cairo.RecordSink;
-import com.questdb.cairo.TableUtils;
+import com.questdb.cairo.*;
 import com.questdb.cairo.sql.Record;
-import com.questdb.common.ColumnType;
 import com.questdb.std.*;
 import org.jetbrains.annotations.NotNull;
 
@@ -165,12 +161,6 @@ public class FastMap implements Map {
     }
 
     @Override
-    @NotNull
-    public Iterator<MapRecord> iterator() {
-        return iterator.init(kStart, size);
-    }
-
-    @Override
     public MapRecord recordAt(long rowid) {
         return record.of(rowid);
     }
@@ -197,6 +187,12 @@ public class FastMap implements Map {
         Unsafe.getUnsafe().putLong(key.appendAddress, value);
         key.appendAddress += 8;
         return key;
+    }
+
+    @Override
+    @NotNull
+    public Iterator<MapRecord> iterator() {
+        return iterator.init(kStart, size);
     }
 
     private FastMapValue asNew(Key keyWriter, int index) {
@@ -368,6 +364,18 @@ public class FastMap implements Map {
             }
         }
 
+        public Key init() {
+            startAddress = kPos;
+            appendAddress = kPos + keyDataOffset;
+            nextColOffset = kPos + keyBlockOffset;
+            return this;
+        }
+
+        @Override
+        public void put(Record record, RecordSink sink) {
+            sink.copy(record, this);
+        }
+
         @Override
         public void putBin(BinarySequence value) {
             if (value == null) {
@@ -454,11 +462,6 @@ public class FastMap implements Map {
         }
 
         @Override
-        public void put(Record record, RecordSink sink) {
-            sink.copy(record, this);
-        }
-
-        @Override
         public void putShort(short value) {
             checkSize(2);
             Unsafe.getUnsafe().putShort(appendAddress, value);
@@ -488,13 +491,6 @@ public class FastMap implements Map {
         @SuppressWarnings("unused")
         public void putTimestamp(long value) {
             putLong(value);
-        }
-
-        public Key init() {
-            startAddress = kPos;
-            appendAddress = kPos + keyDataOffset;
-            nextColOffset = kPos + keyBlockOffset;
-            return this;
         }
 
         private void checkSize(int size) {

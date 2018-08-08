@@ -23,17 +23,12 @@
 
 package com.questdb.store;
 
-import com.questdb.common.ColumnType;
-import com.questdb.common.JournalRuntimeException;
-import com.questdb.common.PartitionBy;
-import com.questdb.common.SymbolTable;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.std.*;
 import com.questdb.std.ex.JournalException;
 import com.questdb.std.str.CharSink;
 import com.questdb.std.time.Dates;
-import com.questdb.std.time.Interval;
 import com.questdb.store.factory.configuration.ColumnMetadata;
 import com.questdb.store.factory.configuration.JournalMetadata;
 import com.questdb.store.query.iter.PartitionBufferedIterator;

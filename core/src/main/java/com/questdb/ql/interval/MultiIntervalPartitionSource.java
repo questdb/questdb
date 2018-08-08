@@ -23,7 +23,6 @@
 
 package com.questdb.ql.interval;
 
-import com.questdb.common.StorageFacade;
 import com.questdb.parser.sql.IntervalCompiler;
 import com.questdb.ql.PartitionCursor;
 import com.questdb.ql.PartitionSlice;
@@ -33,6 +32,7 @@ import com.questdb.std.str.CharSink;
 import com.questdb.store.BSearchType;
 import com.questdb.store.FixedColumn;
 import com.questdb.store.Partition;
+import com.questdb.store.StorageFacade;
 import com.questdb.store.factory.ReaderFactory;
 import com.questdb.store.factory.configuration.JournalMetadata;
 

@@ -23,13 +23,13 @@
 
 package com.questdb.net.ha.mcast;
 
-import com.questdb.common.JournalRuntimeException;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.net.ha.config.DatagramChannelWrapper;
 import com.questdb.net.ha.config.ServerConfig;
 import com.questdb.std.ByteBuffers;
 import com.questdb.std.ex.JournalNetworkException;
+import com.questdb.store.JournalRuntimeException;
 
 import java.net.SocketAddress;
 import java.net.StandardSocketOptions;

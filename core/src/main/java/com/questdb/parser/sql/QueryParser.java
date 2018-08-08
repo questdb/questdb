@@ -23,11 +23,11 @@
 
 package com.questdb.parser.sql;
 
-import com.questdb.common.ColumnType;
 import com.questdb.ex.ParserException;
 import com.questdb.parser.sql.model.*;
 import com.questdb.std.*;
 import com.questdb.std.str.CharSink;
+import com.questdb.store.ColumnType;
 import com.questdb.store.factory.configuration.GenericIndexedBuilder;
 import com.questdb.store.factory.configuration.JournalStructure;
 

@@ -23,10 +23,10 @@
 
 package com.questdb.store.factory.configuration;
 
-import com.questdb.common.ColumnType;
-import com.questdb.common.PartitionBy;
 import com.questdb.ex.JournalConfigurationException;
 import com.questdb.std.*;
+import com.questdb.store.ColumnType;
+import com.questdb.store.PartitionBy;
 
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;

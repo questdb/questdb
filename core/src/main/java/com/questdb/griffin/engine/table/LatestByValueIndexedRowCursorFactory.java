@@ -26,8 +26,8 @@ package com.questdb.griffin.engine.table;
 import com.questdb.cairo.BitmapIndexReader;
 import com.questdb.cairo.EmptyRowCursor;
 import com.questdb.cairo.sql.DataFrame;
+import com.questdb.cairo.sql.RowCursor;
 import com.questdb.cairo.sql.RowCursorFactory;
-import com.questdb.common.RowCursor;
 
 public class LatestByValueIndexedRowCursorFactory implements RowCursorFactory {
     private final int columnIndex;

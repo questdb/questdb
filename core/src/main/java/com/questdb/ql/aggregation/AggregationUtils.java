@@ -23,9 +23,9 @@
 
 package com.questdb.ql.aggregation;
 
-import com.questdb.common.RecordColumnMetadata;
 import com.questdb.std.ObjList;
 import com.questdb.std.ThreadLocal;
+import com.questdb.store.RecordColumnMetadata;
 
 public final class AggregationUtils {
     static final ThreadLocal<ObjList<RecordColumnMetadata>> TL_COLUMNS = new ThreadLocal<>(ObjList::new);

@@ -24,11 +24,11 @@
 package com.questdb.griffin.engine.functions;
 
 
+import com.questdb.cairo.ColumnType;
 import com.questdb.cairo.sql.Function;
 import com.questdb.cairo.sql.Record;
 import com.questdb.cairo.sql.RecordCursorFactory;
 import com.questdb.cairo.sql.RecordMetadata;
-import com.questdb.common.ColumnType;
 import com.questdb.std.str.CharSink;
 
 public abstract class BinFunction implements Function {

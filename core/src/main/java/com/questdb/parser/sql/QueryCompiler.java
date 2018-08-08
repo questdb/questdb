@@ -25,7 +25,6 @@ package com.questdb.parser.sql;
 
 import com.questdb.BootstrapEnv;
 import com.questdb.ServerConfiguration;
-import com.questdb.common.*;
 import com.questdb.ex.ParserException;
 import com.questdb.parser.sql.model.*;
 import com.questdb.ql.*;
@@ -56,8 +55,7 @@ import com.questdb.std.*;
 import com.questdb.std.ex.JournalException;
 import com.questdb.std.str.FlyweightCharSequence;
 import com.questdb.std.str.StringSink;
-import com.questdb.store.JournalEntryWriter;
-import com.questdb.store.JournalWriter;
+import com.questdb.store.*;
 import com.questdb.store.factory.Factory;
 import com.questdb.store.factory.configuration.ColumnMetadata;
 import com.questdb.store.factory.configuration.JournalConfiguration;

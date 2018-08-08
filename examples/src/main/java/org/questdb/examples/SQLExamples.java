@@ -5,7 +5,7 @@
  *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
- *  Copyright (c) 2014-2017 Appsicle
+ *  Copyright (c) 2014-2018 Appsicle
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -23,14 +23,13 @@
 
 package org.questdb.examples;
 
-import com.questdb.common.Record;
-import com.questdb.common.RecordCursor;
 import com.questdb.ex.ParserException;
 import com.questdb.parser.sql.QueryCompiler;
 import com.questdb.ql.RecordSource;
 import com.questdb.ql.RecordSourcePrinter;
-import com.questdb.std.ex.JournalException;
 import com.questdb.std.str.StdoutSink;
+import com.questdb.store.Record;
+import com.questdb.store.RecordCursor;
 import com.questdb.store.factory.Factory;
 import com.questdb.store.util.ImportManager;
 
@@ -38,7 +37,7 @@ import java.io.IOException;
 
 public class SQLExamples {
 
-    public static void main(String[] args) throws JournalException, ParserException, IOException {
+    public static void main(String[] args) throws ParserException, IOException {
 
         if (args.length < 1) {
             System.out.println("Usage: SQLExamples <path>");

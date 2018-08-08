@@ -25,8 +25,8 @@ package com.questdb.griffin.engine.table;
 
 import com.questdb.cairo.TableReader;
 import com.questdb.cairo.sql.DataFrame;
+import com.questdb.cairo.sql.RowCursor;
 import com.questdb.cairo.sql.RowCursorFactory;
-import com.questdb.common.RowCursor;
 import com.questdb.std.ObjList;
 
 public class HeapRowCursorFactory implements RowCursorFactory {

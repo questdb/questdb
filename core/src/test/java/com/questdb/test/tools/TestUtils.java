@@ -23,10 +23,6 @@
 
 package com.questdb.test.tools;
 
-import com.questdb.common.ColumnType;
-import com.questdb.common.Record;
-import com.questdb.common.RecordCursor;
-import com.questdb.common.RecordMetadata;
 import com.questdb.model.Quote;
 import com.questdb.model.TestEntity;
 import com.questdb.parser.sql.model.ExprNode;
@@ -35,10 +31,10 @@ import com.questdb.printer.appender.AssertingAppender;
 import com.questdb.printer.converter.DateConverter;
 import com.questdb.ql.RecordSource;
 import com.questdb.std.*;
+import com.questdb.std.Files;
 import com.questdb.std.ex.JournalException;
 import com.questdb.std.time.DateFormatUtils;
 import com.questdb.std.time.Dates;
-import com.questdb.std.time.Interval;
 import com.questdb.store.*;
 import com.questdb.store.factory.ReaderFactory;
 import com.questdb.store.factory.configuration.ColumnMetadata;
@@ -251,6 +247,24 @@ public final class TestUtils {
         for (int i = 0; i < expected.length(); i++) {
             if (expected.charAt(i) != actual.charAt(i)) {
                 Assert.fail("At: " + i + ". Expected: `" + expected + "`, actual: `" + actual + '`');
+            }
+        }
+    }
+
+    public static void assertEquals(BinarySequence bs, BinarySequence actBs, long actualLen) {
+        if (bs == null) {
+            Assert.assertNull(actBs);
+            Assert.assertEquals(-1, actualLen);
+        } else {
+            Assert.assertEquals(bs.length(), actBs.length());
+            Assert.assertEquals(bs.length(), actualLen);
+            for (long l = 0, z = bs.length(); l < z; l++) {
+                byte b1 = bs.byteAt(l);
+                byte b2 = actBs.byteAt(l);
+                if (b1 != b2) {
+                    Assert.fail("Failed comparison at [" + l + "], expected: " + b1 + ", actual: " + b2);
+                }
+                Assert.assertEquals(bs.byteAt(l), actBs.byteAt(l));
             }
         }
     }
@@ -506,24 +520,6 @@ public final class TestUtils {
     private static <T> void out(JournalPrinter p, JournalIterator<T> iterator) {
         for (T o : iterator) {
             p.out(o);
-        }
-    }
-
-    public static void assertEquals(BinarySequence bs, BinarySequence actBs, long actualLen) {
-        if (bs == null) {
-            Assert.assertNull(actBs);
-            Assert.assertEquals(-1, actualLen);
-        } else {
-            Assert.assertEquals(bs.length(), actBs.length());
-            Assert.assertEquals(bs.length(), actualLen);
-            for (long l = 0, z = bs.length(); l < z; l++) {
-                byte b1 = bs.byteAt(l);
-                byte b2 = actBs.byteAt(l);
-                if (b1 != b2) {
-                    Assert.fail("Failed comparison at [" + l + "], expected: " + b1 + ", actual: " + b2);
-                }
-                Assert.assertEquals(bs.byteAt(l), actBs.byteAt(l));
-            }
         }
     }
 

@@ -23,7 +23,6 @@
 
 package com.questdb.cairo.sql;
 
-import com.questdb.common.SymbolTable;
 import com.questdb.std.ImmutableIterator;
 
 import java.io.Closeable;

@@ -23,12 +23,12 @@
 
 package com.questdb.net.ha;
 
-import com.questdb.common.PartitionBy;
 import com.questdb.model.Quote;
 import com.questdb.net.ha.model.IndexedJournalKey;
 import com.questdb.net.ha.protocol.commands.SetKeyRequestConsumer;
 import com.questdb.net.ha.protocol.commands.SetKeyRequestProducer;
 import com.questdb.store.JournalKey;
+import com.questdb.store.PartitionBy;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;

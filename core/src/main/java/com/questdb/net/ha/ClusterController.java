@@ -23,13 +23,13 @@
 
 package com.questdb.net.ha;
 
-import com.questdb.common.JournalRuntimeException;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.net.ha.config.ClientConfig;
 import com.questdb.net.ha.config.ServerConfig;
 import com.questdb.net.ha.config.ServerNode;
 import com.questdb.std.ex.JournalNetworkException;
+import com.questdb.store.JournalRuntimeException;
 import com.questdb.store.JournalWriter;
 import com.questdb.store.factory.Factory;
 

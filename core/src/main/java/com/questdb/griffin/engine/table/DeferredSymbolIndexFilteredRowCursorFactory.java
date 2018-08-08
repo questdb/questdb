@@ -25,11 +25,7 @@ package com.questdb.griffin.engine.table;
 
 import com.questdb.cairo.EmptyRowCursor;
 import com.questdb.cairo.TableReader;
-import com.questdb.cairo.sql.DataFrame;
-import com.questdb.cairo.sql.Function;
-import com.questdb.cairo.sql.RowCursorFactory;
-import com.questdb.common.RowCursor;
-import com.questdb.common.SymbolTable;
+import com.questdb.cairo.sql.*;
 
 public class DeferredSymbolIndexFilteredRowCursorFactory implements RowCursorFactory {
     private final SymbolIndexFilteredRowCursor cursor;

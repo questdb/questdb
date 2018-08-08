@@ -23,7 +23,7 @@
 
 package com.questdb.griffin.engine.table;
 
-import com.questdb.common.RowCursor;
+import com.questdb.cairo.sql.RowCursor;
 
 class LatestByValueIndexedRowCursor implements RowCursor {
     private long next;

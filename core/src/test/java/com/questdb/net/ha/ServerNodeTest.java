@@ -23,8 +23,8 @@
 
 package com.questdb.net.ha;
 
-import com.questdb.common.JournalRuntimeException;
 import com.questdb.net.ha.config.ServerNode;
+import com.questdb.store.JournalRuntimeException;
 import org.junit.Assert;
 import org.junit.Test;
 

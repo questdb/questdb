@@ -23,12 +23,12 @@
 
 package com.questdb.ql.analytic.denserank;
 
-import com.questdb.common.ColumnType;
-import com.questdb.common.Record;
-import com.questdb.common.RecordColumnMetadata;
-import com.questdb.common.RecordCursor;
 import com.questdb.ql.RecordColumnMetadataImpl;
 import com.questdb.ql.analytic.AnalyticFunction;
+import com.questdb.store.ColumnType;
+import com.questdb.store.Record;
+import com.questdb.store.RecordColumnMetadata;
+import com.questdb.store.RecordCursor;
 
 public abstract class AbstractRankAnalyticFunction implements AnalyticFunction {
 

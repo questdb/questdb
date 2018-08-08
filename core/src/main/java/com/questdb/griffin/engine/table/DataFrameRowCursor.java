@@ -24,7 +24,7 @@
 package com.questdb.griffin.engine.table;
 
 import com.questdb.cairo.sql.DataFrame;
-import com.questdb.common.RowCursor;
+import com.questdb.cairo.sql.RowCursor;
 
 class DataFrameRowCursor implements RowCursor {
     private long hi;

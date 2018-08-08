@@ -23,11 +23,11 @@
 
 package com.questdb.ql.analytic.denserank;
 
-import com.questdb.common.Record;
 import com.questdb.ql.analytic.AnalyticFunction;
 import com.questdb.ql.map.DirectMap;
 import com.questdb.ql.map.LongResolver;
 import com.questdb.std.Misc;
+import com.questdb.store.Record;
 
 import java.io.Closeable;
 import java.io.IOException;

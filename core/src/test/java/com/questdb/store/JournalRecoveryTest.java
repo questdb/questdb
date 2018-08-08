@@ -24,7 +24,6 @@
 package com.questdb.store;
 
 import com.questdb.model.Quote;
-import com.questdb.std.time.Interval;
 import com.questdb.test.tools.AbstractTest;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;

@@ -23,8 +23,8 @@
 
 package com.questdb.ql.sys;
 
-import com.questdb.common.ColumnType;
-import com.questdb.common.SymbolTable;
+import com.questdb.store.ColumnType;
+import com.questdb.store.SymbolTable;
 
 public class ColumnTypeSymbolTable implements SymbolTable {
     public static final ColumnTypeSymbolTable INSTANCE = new ColumnTypeSymbolTable();

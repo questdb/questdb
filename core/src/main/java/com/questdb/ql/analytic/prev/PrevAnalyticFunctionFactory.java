@@ -24,11 +24,11 @@
 package com.questdb.ql.analytic.prev;
 
 import com.questdb.ServerConfiguration;
-import com.questdb.common.ColumnType;
 import com.questdb.ql.analytic.AnalyticFunction;
 import com.questdb.ql.analytic.AnalyticFunctionFactory;
 import com.questdb.ql.ops.VirtualColumn;
 import com.questdb.std.ObjList;
+import com.questdb.store.ColumnType;
 
 public class PrevAnalyticFunctionFactory implements AnalyticFunctionFactory {
     @Override

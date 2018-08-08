@@ -23,9 +23,9 @@
 
 package com.questdb.parser.sql;
 
-import com.questdb.common.ColumnType;
 import com.questdb.ql.ops.Signature;
 import com.questdb.std.ObjObjHashMap;
+import com.questdb.store.ColumnType;
 import org.junit.Assert;
 import org.junit.Test;
 

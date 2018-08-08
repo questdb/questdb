@@ -23,11 +23,11 @@
 
 package com.questdb.ql.ops.lte;
 
-import com.questdb.common.Record;
 import com.questdb.ql.ops.Function;
 import com.questdb.ql.ops.VirtualColumnFactory;
 import com.questdb.ql.ops.gt.DateToStrCmpBaseOperator;
 import com.questdb.std.Numbers;
+import com.questdb.store.Record;
 
 public class DateLessOrEqualStrOperator extends DateToStrCmpBaseOperator {
 

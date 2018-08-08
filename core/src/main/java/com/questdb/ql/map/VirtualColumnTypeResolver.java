@@ -23,9 +23,9 @@
 
 package com.questdb.ql.map;
 
-import com.questdb.common.RecordColumnMetadata;
 import com.questdb.std.ObjList;
 import com.questdb.std.ThreadLocal;
+import com.questdb.store.RecordColumnMetadata;
 
 public class VirtualColumnTypeResolver implements ColumnTypeResolver {
     private ObjList<? extends RecordColumnMetadata> virtualColumns = new ObjList<>();

@@ -23,14 +23,14 @@
 
 package com.questdb.store.query;
 
-import com.questdb.common.ColumnType;
-import com.questdb.common.SymbolTable;
 import com.questdb.std.LongList;
 import com.questdb.std.Rnd;
 import com.questdb.std.Rows;
 import com.questdb.std.ex.JournalException;
+import com.questdb.store.ColumnType;
 import com.questdb.store.Journal;
 import com.questdb.store.Partition;
+import com.questdb.store.SymbolTable;
 import com.questdb.store.factory.configuration.ColumnMetadata;
 import com.questdb.store.query.iter.ResultSetBufferedIterator;
 import com.questdb.store.query.iter.ResultSetIterator;

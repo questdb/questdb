@@ -23,12 +23,12 @@
 
 package com.questdb.ql;
 
-import com.questdb.common.PartitionBy;
 import com.questdb.parser.sql.AbstractOptimiserTest;
 import com.questdb.std.Rnd;
 import com.questdb.std.time.Dates;
 import com.questdb.store.JournalEntryWriter;
 import com.questdb.store.JournalWriter;
+import com.questdb.store.PartitionBy;
 import com.questdb.store.factory.configuration.JournalStructure;
 import org.junit.BeforeClass;
 import org.junit.Test;

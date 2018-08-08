@@ -23,7 +23,6 @@
 
 package com.questdb.store.factory;
 
-import com.questdb.common.PartitionBy;
 import com.questdb.ex.*;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
@@ -235,7 +234,7 @@ public class Factory implements ReaderFactory, WriterFactory {
                 throw JournalWriterAlreadyOpenException.INSTANCE;
             }
             metadataCache.remove(name);
-            Files.deleteOrException(l);
+            com.questdb.store.Files.deleteOrException(l);
         } finally {
             LockManager.release(lock);
         }

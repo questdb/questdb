@@ -23,8 +23,6 @@
 
 package com.questdb.ql.ops.neq;
 
-import com.questdb.common.ColumnType;
-import com.questdb.common.Record;
 import com.questdb.ex.ParserException;
 import com.questdb.parser.sql.IntervalCompiler;
 import com.questdb.ql.ops.AbstractBinaryOperator;
@@ -32,6 +30,8 @@ import com.questdb.ql.ops.Function;
 import com.questdb.ql.ops.VirtualColumn;
 import com.questdb.ql.ops.VirtualColumnFactory;
 import com.questdb.std.LongList;
+import com.questdb.store.ColumnType;
+import com.questdb.store.Record;
 
 public class StrNotEqualDateOperator extends AbstractBinaryOperator {
 

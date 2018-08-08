@@ -23,12 +23,12 @@
 
 package com.questdb.ql.ops;
 
-import com.questdb.common.ColumnType;
-import com.questdb.common.Record;
-import com.questdb.common.StorageFacade;
 import com.questdb.ex.ParserException;
 import com.questdb.std.IntHashSet;
 import com.questdb.std.Numbers;
+import com.questdb.store.ColumnType;
+import com.questdb.store.Record;
+import com.questdb.store.StorageFacade;
 
 public class IntInOperator extends AbstractVirtualColumn implements Function {
 

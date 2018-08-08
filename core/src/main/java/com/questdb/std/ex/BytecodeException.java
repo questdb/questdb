@@ -23,12 +23,10 @@
 
 package com.questdb.std.ex;
 
-import com.questdb.common.JournalRuntimeException;
-
-public class BytecodeException extends JournalRuntimeException {
+public class BytecodeException extends RuntimeException {
     public static final BytecodeException INSTANCE = new BytecodeException("Error in bytecode");
 
-    private BytecodeException(String message, Object... args) {
-        super(message, args);
+    private BytecodeException(String message) {
+        super(message);
     }
 }

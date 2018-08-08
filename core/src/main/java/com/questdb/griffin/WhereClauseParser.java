@@ -23,8 +23,8 @@
 
 package com.questdb.griffin;
 
+import com.questdb.cairo.ColumnType;
 import com.questdb.cairo.sql.RecordMetadata;
-import com.questdb.common.ColumnType;
 import com.questdb.griffin.model.AliasTranslator;
 import com.questdb.griffin.model.ExpressionNode;
 import com.questdb.griffin.model.IntrinsicModel;

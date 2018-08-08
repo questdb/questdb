@@ -23,9 +23,9 @@
 
 package com.questdb.ql.join.asof;
 
-import com.questdb.common.Record;
-import com.questdb.common.SymbolTable;
 import com.questdb.std.Unsafe;
+import com.questdb.store.Record;
+import com.questdb.store.SymbolTable;
 
 abstract class AbstractMemRecord implements Record {
     @Override

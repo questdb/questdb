@@ -23,7 +23,6 @@
 
 package com.questdb.cairo;
 
-import com.questdb.common.ColumnType;
 import com.questdb.std.CharSequenceIntHashMap;
 import com.questdb.std.FilesFacade;
 import com.questdb.std.ObjList;

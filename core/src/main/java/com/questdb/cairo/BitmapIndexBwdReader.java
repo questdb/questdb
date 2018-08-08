@@ -23,7 +23,7 @@
 
 package com.questdb.cairo;
 
-import com.questdb.common.RowCursor;
+import com.questdb.cairo.sql.RowCursor;
 import com.questdb.std.Unsafe;
 import com.questdb.std.str.Path;
 

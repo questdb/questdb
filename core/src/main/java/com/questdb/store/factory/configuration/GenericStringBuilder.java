@@ -23,7 +23,7 @@
 
 package com.questdb.store.factory.configuration;
 
-import com.questdb.common.ColumnType;
+import com.questdb.store.ColumnType;
 
 public class GenericStringBuilder extends GenericIndexedBuilder {
 

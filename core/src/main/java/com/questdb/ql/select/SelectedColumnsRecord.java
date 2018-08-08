@@ -23,12 +23,12 @@
 
 package com.questdb.ql.select;
 
-import com.questdb.common.Record;
-import com.questdb.common.RecordMetadata;
 import com.questdb.std.DirectInputStream;
 import com.questdb.std.ObjList;
 import com.questdb.std.Transient;
 import com.questdb.std.Unsafe;
+import com.questdb.store.Record;
+import com.questdb.store.RecordMetadata;
 
 import java.io.OutputStream;
 

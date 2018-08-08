@@ -26,7 +26,6 @@ package com.questdb.cairo;
 import com.questdb.cairo.sql.Record;
 import com.questdb.cairo.sql.RecordCursor;
 import com.questdb.cairo.sql.RecordMetadata;
-import com.questdb.common.ColumnType;
 import com.questdb.std.Chars;
 import com.questdb.std.Numbers;
 import com.questdb.std.str.CharSink;

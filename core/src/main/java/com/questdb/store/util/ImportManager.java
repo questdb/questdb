@@ -25,7 +25,6 @@ package com.questdb.store.util;
 
 import com.questdb.BootstrapEnv;
 import com.questdb.ServerConfiguration;
-import com.questdb.common.JournalRuntimeException;
 import com.questdb.parser.ImportedColumnMetadata;
 import com.questdb.parser.JsonSchemaParser;
 import com.questdb.parser.json.JsonException;
@@ -42,6 +41,7 @@ import com.questdb.std.Unsafe;
 import com.questdb.std.time.DateFormatFactory;
 import com.questdb.std.time.DateLocaleFactory;
 import com.questdb.std.time.TimeZoneRuleFactory;
+import com.questdb.store.JournalRuntimeException;
 import com.questdb.store.factory.Factory;
 import com.questdb.store.factory.configuration.JournalConfiguration;
 import org.jetbrains.annotations.Nullable;

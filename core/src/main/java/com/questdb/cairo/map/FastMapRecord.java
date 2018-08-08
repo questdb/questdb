@@ -23,9 +23,9 @@
 
 package com.questdb.cairo.map;
 
+import com.questdb.cairo.ColumnType;
 import com.questdb.cairo.ColumnTypes;
 import com.questdb.cairo.TableUtils;
-import com.questdb.common.ColumnType;
 import com.questdb.std.BinarySequence;
 import com.questdb.std.Transient;
 import com.questdb.std.Unsafe;

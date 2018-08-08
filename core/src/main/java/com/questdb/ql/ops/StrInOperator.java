@@ -23,11 +23,11 @@
 
 package com.questdb.ql.ops;
 
-import com.questdb.common.ColumnType;
-import com.questdb.common.Record;
-import com.questdb.common.StorageFacade;
 import com.questdb.ex.ParserException;
 import com.questdb.std.CharSequenceHashSet;
+import com.questdb.store.ColumnType;
+import com.questdb.store.Record;
+import com.questdb.store.StorageFacade;
 
 public class StrInOperator extends AbstractVirtualColumn implements Function {
 

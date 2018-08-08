@@ -23,7 +23,6 @@
 
 package com.questdb.store;
 
-import com.questdb.common.JournalRuntimeException;
 import com.questdb.model.TestEntity;
 import com.questdb.std.ex.JournalException;
 import com.questdb.std.time.DateFormatUtils;

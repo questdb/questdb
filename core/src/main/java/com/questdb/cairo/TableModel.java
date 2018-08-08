@@ -23,7 +23,6 @@
 
 package com.questdb.cairo;
 
-import com.questdb.common.ColumnType;
 import com.questdb.std.*;
 import com.questdb.std.str.Path;
 

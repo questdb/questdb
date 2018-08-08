@@ -23,9 +23,8 @@
 
 package com.questdb.ql;
 
-import com.questdb.common.*;
 import com.questdb.std.*;
-import com.questdb.store.VariableColumn;
+import com.questdb.store.*;
 
 import java.io.Closeable;
 

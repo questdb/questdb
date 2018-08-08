@@ -23,14 +23,14 @@
 
 package com.questdb.ql.map;
 
-import com.questdb.common.ColumnType;
-import com.questdb.common.JournalRuntimeException;
-import com.questdb.common.Record;
 import com.questdb.ql.CollectionRecordMetadata;
 import com.questdb.ql.LongMetadata;
 import com.questdb.ql.ops.VirtualColumn;
 import com.questdb.std.IntList;
 import com.questdb.std.ObjList;
+import com.questdb.store.ColumnType;
+import com.questdb.store.JournalRuntimeException;
+import com.questdb.store.Record;
 
 public class MapUtils {
     public static final IntList ROWID_MAP_VALUES = new IntList(1);

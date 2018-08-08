@@ -23,8 +23,6 @@
 
 package com.questdb.cairo;
 
-import com.questdb.common.ColumnType;
-import com.questdb.common.PartitionBy;
 import com.questdb.std.Files;
 import com.questdb.std.FilesFacade;
 import com.questdb.std.microtime.Dates;
