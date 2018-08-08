@@ -21,7 +21,7 @@
  *
  ******************************************************************************/
 
-package com.questdb.parser.json;
+package com.questdb.cutlass.json;
 
 import com.questdb.std.*;
 import com.questdb.std.str.StringSink;

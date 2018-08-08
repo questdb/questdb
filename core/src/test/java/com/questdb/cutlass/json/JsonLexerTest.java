@@ -21,7 +21,7 @@
  *
  ******************************************************************************/
 
-package com.questdb.parser.json;
+package com.questdb.cutlass.json;
 
 import com.questdb.std.*;
 import com.questdb.std.str.Path;
@@ -31,7 +31,7 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
-import java.io.UnsupportedEncodingException;
+import java.nio.charset.StandardCharsets;
 
 public class JsonLexerTest {
 
@@ -133,10 +133,10 @@ public class JsonLexerTest {
     }
 
     @Test
-    public void testInvalidUtf8Value() throws UnsupportedEncodingException {
-        byte bytesA[] = "{\"x\":\"违法违,控网站漏洞风\", \"y\":\"站漏洞风".getBytes("UTF8");
+    public void testInvalidUtf8Value() {
+        byte bytesA[] = "{\"x\":\"违法违,控网站漏洞风\", \"y\":\"站漏洞风".getBytes(StandardCharsets.UTF_8);
         byte bytesB[] = {-116, -76, -55, 55, -34, 0, -11, 15, 13};
-        byte bytesC[] = "\"}".getBytes("UTF8");
+        byte bytesC[] = "\"}".getBytes(StandardCharsets.UTF_8);
 
         byte[] bytes = new byte[bytesA.length + bytesB.length + bytesC.length];
         System.arraycopy(bytesA, 0, bytes, 0, bytesA.length);
@@ -693,7 +693,7 @@ public class JsonLexerTest {
     }
 
     private void assertThat(String expected, String input, boolean recordPositions) throws Exception {
-        byte bytes[] = input.getBytes("UTF8");
+        byte bytes[] = input.getBytes(StandardCharsets.UTF_8);
         int len = bytes.length;
         long address = Unsafe.malloc(len);
         for (int i = 0; i < len; i++) {

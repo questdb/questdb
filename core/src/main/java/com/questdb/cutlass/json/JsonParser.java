@@ -21,7 +21,7 @@
  *
  ******************************************************************************/
 
-package com.questdb.parser.json;
+package com.questdb.cutlass.json;
 
 @FunctionalInterface
 public interface JsonParser {

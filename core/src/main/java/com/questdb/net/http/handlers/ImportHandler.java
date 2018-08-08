@@ -24,6 +24,8 @@
 package com.questdb.net.http.handlers;
 
 import com.questdb.BootstrapEnv;
+import com.questdb.cutlass.json.JsonException;
+import com.questdb.cutlass.json.JsonLexer;
 import com.questdb.ex.ImportSchemaException;
 import com.questdb.ex.ResponseContentBufferTooSmallException;
 import com.questdb.net.http.ChunkedResponse;
@@ -32,8 +34,6 @@ import com.questdb.net.http.RequestHeaderBuffer;
 import com.questdb.net.http.ResponseSink;
 import com.questdb.parser.ImportedColumnMetadata;
 import com.questdb.parser.JsonSchemaParser;
-import com.questdb.parser.json.JsonException;
-import com.questdb.parser.json.JsonLexer;
 import com.questdb.parser.plaintext.PlainTextDelimiterLexer;
 import com.questdb.parser.plaintext.PlainTextLexer;
 import com.questdb.parser.plaintext.PlainTextStoringParser;

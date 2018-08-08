@@ -24,8 +24,8 @@
 package com.questdb.parser;
 
 import com.questdb.BootstrapEnv;
-import com.questdb.parser.json.JsonException;
-import com.questdb.parser.json.JsonLexer;
+import com.questdb.cutlass.json.JsonException;
+import com.questdb.cutlass.json.JsonLexer;
 import com.questdb.std.ObjList;
 import com.questdb.std.Unsafe;
 import com.questdb.std.time.DateFormatFactory;

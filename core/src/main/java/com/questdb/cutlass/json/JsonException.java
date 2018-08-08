@@ -21,7 +21,7 @@
  *
  ******************************************************************************/
 
-package com.questdb.parser.json;
+package com.questdb.cutlass.json;
 
 public class JsonException extends Exception {
     private static final JsonException INSTANCE = new JsonException();
