@@ -24,6 +24,7 @@
 package com.questdb.griffin.engine.table;
 
 import com.questdb.cairo.sql.*;
+import com.questdb.griffin.engine.functions.bind.BindVariableService;
 import org.jetbrains.annotations.Nullable;
 
 public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorFactory {
@@ -41,12 +42,6 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
     }
 
     @Override
-    protected RecordCursor getCursorInstance(DataFrameCursor dataFrameCursor) {
-        cursor.of(dataFrameCursor);
-        return cursor;
-    }
-
-    @Override
     public void close() {
         if (filter != null) {
             filter.close();
@@ -56,5 +51,11 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
     @Override
     public boolean isRandomAccessCursor() {
         return true;
+    }
+
+    @Override
+    protected RecordCursor getCursorInstance(DataFrameCursor dataFrameCursor, BindVariableService bindVariableService) {
+        cursor.of(dataFrameCursor, bindVariableService);
+        return cursor;
     }
 }

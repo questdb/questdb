@@ -28,6 +28,7 @@ import com.questdb.cairo.sql.DataFrameCursor;
 import com.questdb.cairo.sql.DataFrameCursorFactory;
 import com.questdb.cairo.sql.RecordMetadata;
 import com.questdb.griffin.engine.LongTreeSet;
+import com.questdb.griffin.engine.functions.bind.BindVariableService;
 
 abstract class AbstractTreeSetRecordCursorFactory extends AbstractDataFrameRecordCursorFactory {
     protected final LongTreeSet treeSet;
@@ -51,8 +52,10 @@ abstract class AbstractTreeSetRecordCursorFactory extends AbstractDataFrameRecor
     }
 
     @Override
-    protected AbstractDataFrameRecordCursor getCursorInstance(DataFrameCursor dataFrameCursor) {
-        cursor.of(dataFrameCursor);
+    protected AbstractDataFrameRecordCursor getCursorInstance(
+            DataFrameCursor dataFrameCursor,
+            BindVariableService bindVariableService) {
+        cursor.of(dataFrameCursor, bindVariableService);
         return cursor;
     }
 }

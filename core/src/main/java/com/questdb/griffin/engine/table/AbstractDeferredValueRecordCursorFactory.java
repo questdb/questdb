@@ -24,6 +24,7 @@
 package com.questdb.griffin.engine.table;
 
 import com.questdb.cairo.sql.*;
+import com.questdb.griffin.engine.functions.bind.BindVariableService;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -58,11 +59,11 @@ abstract class AbstractDeferredValueRecordCursorFactory extends AbstractDataFram
     protected abstract AbstractDataFrameRecordCursor createDataFrameCursorFor(int symbolKey);
 
     @Override
-    protected RecordCursor getCursorInstance(DataFrameCursor dataFrameCursor) {
+    protected RecordCursor getCursorInstance(DataFrameCursor dataFrameCursor, BindVariableService bindVariableService) {
         if (cursor == null && lookupDeferredSymbol(dataFrameCursor)) {
             return EmptyTableRecordCursor.INSTANCE;
         }
-        cursor.of(dataFrameCursor);
+        cursor.of(dataFrameCursor, bindVariableService);
         return cursor;
     }
 

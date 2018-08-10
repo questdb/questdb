@@ -164,7 +164,7 @@ class ExpressionParser {
                             // allow sub-query to parse "select" keyword
                             lexer.unparse();
 
-                            ExpressionNode n = sqlNodePool.next().of(ExpressionNode.LAMBDA, null, 0, pos);
+                            ExpressionNode n = sqlNodePool.next().of(ExpressionNode.QUERY, null, 0, pos);
                             n.queryModel = sqlParser.parseSubQuery(lexer);
                             listener.onNode(n);
 

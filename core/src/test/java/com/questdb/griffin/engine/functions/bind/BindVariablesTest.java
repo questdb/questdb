@@ -48,16 +48,19 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
 
     private static final FunctionBuilder builder = new FunctionBuilder();
 
+    private static final BindVariableService bindVariableService = sqlExecutionContext.getBindVariableService();
+
     @Test
     public void testAmbiguousCall() throws SqlException {
 
-        sqlExecutionContext.getBindVariableService().setDate("xyz", 0);
+        bindVariableService.setDate("xyz", 0);
 
         Function func = expr("to_char(:xyz, 'yyyy-MM')")
                 .withFunction(new ToCharDateFunctionFactory())
                 .withFunction(new ToCharTimestampFunctionFactory())
                 .$();
 
+        func.init(null, bindVariableService);
         TestUtils.assertEquals("1970-01", func.getStr(builder.getRecord()));
     }
 
@@ -66,12 +69,14 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
         Rnd rnd = new Rnd();
         TestBinarySequence sequence = new TestBinarySequence();
         sequence.of(rnd.nextBytes(256));
-        sqlExecutionContext.getBindVariableService().setBin("x", sequence);
+        bindVariableService.setBin("x", sequence);
 
         Function func = expr("to_char(:x)")
                 .withFunction(new ToCharBinFunctionFactory())
                 .withFunction(new ToCharTimestampFunctionFactory())
                 .$();
+
+        func.init(null, bindVariableService);
 
         TestUtils.assertEquals("00000000 56 54 4a 57 43 50 53 57 48 59 52 58 50 45 48 4e\n" +
                         "00000010 52 58 47 5a 53 58 55 58 49 42 42 54 47 50 47 57\n" +
@@ -93,12 +98,12 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
 
         sequence.of(rnd.nextBytes(16));
 
-        sqlExecutionContext.getBindVariableService().setBin("x", sequence);
+        bindVariableService.setBin("x", sequence);
 
         TestUtils.assertEquals("00000000 53 53 4d 50 47 4c 55 4f 48 4e 5a 48 5a 53 51 4c",
                 func.getStr(builder.getRecord()));
 
-        sqlExecutionContext.getBindVariableService().setBin("x", new TestBinarySequence().of(rnd.nextBytes(24)));
+        bindVariableService.setBin("x", new TestBinarySequence().of(rnd.nextBytes(24)));
 
         TestUtils.assertEquals("00000000 44 47 4c 4f 47 49 46 4f 55 53 5a 4d 5a 56 51 45\n" +
                         "00000010 42 4e 44 43 51 43 45 48",
@@ -107,71 +112,78 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
 
     @Test
     public void testBoolean() throws SqlException {
-        sqlExecutionContext.getBindVariableService().setBoolean("xyz", false);
+        bindVariableService.setBoolean("xyz", false);
         Function func = expr("not :xyz")
                 .withFunction(new NotFunctionFactory())
                 .$();
 
+        func.init(null, bindVariableService);
         Assert.assertTrue(func.getBool(builder.getRecord()));
 
-        sqlExecutionContext.getBindVariableService().setBoolean("xyz", true);
+        bindVariableService.setBoolean("xyz", true);
         Assert.assertFalse(func.getBool(builder.getRecord()));
     }
 
     @Test
     public void testByte() throws SqlException {
-        sqlExecutionContext.getBindVariableService().setByte("xyz", (byte) 8);
+        bindVariableService.setByte("xyz", (byte) 8);
         Function func = expr("b + :xyz")
                 .withFunction(new AddByteFunctionFactory())
                 .withColumn("b", ColumnType.BYTE, (byte) 22)
                 .$();
 
+        func.init(null, bindVariableService);
         Assert.assertEquals(30, func.getByte(builder.getRecord()));
 
-        sqlExecutionContext.getBindVariableService().setByte("xyz", (byte) 10);
+        bindVariableService.setByte("xyz", (byte) 10);
         Assert.assertEquals(32, func.getByte(builder.getRecord()));
     }
 
     @Test
     public void testDate() throws SqlException, NumericException {
-        sqlExecutionContext.getBindVariableService().setDate("xyz", DateFormatUtils.parseDateTime("2015-04-10T10:00:00.000Z"));
+        bindVariableService.setDate("xyz", DateFormatUtils.parseDateTime("2015-04-10T10:00:00.000Z"));
         Function func = expr("to_char(:xyz, 'yyyy-MM')")
                 .withFunction(new ToCharDateFunctionFactory())
                 .$();
 
+        func.init(null, bindVariableService);
         TestUtils.assertEquals("2015-04", func.getStr(builder.getRecord()));
 
-        sqlExecutionContext.getBindVariableService().setDate("xyz", DateFormatUtils.parseDateTime("2015-08-10T10:00:00.000Z"));
+        bindVariableService.setDate("xyz", DateFormatUtils.parseDateTime("2015-08-10T10:00:00.000Z"));
         TestUtils.assertEquals("2015-08", func.getStr(builder.getRecord()));
     }
 
     @Test
     public void testDouble() throws SqlException {
-        sqlExecutionContext.getBindVariableService().setDouble("xyz", 7.98821);
+        bindVariableService.setDouble("xyz", 7.98821);
         Function func = expr("a + :xyz")
                 .withFunction(new AddDoubleFunctionFactory())
                 .withColumn("a", ColumnType.DOUBLE, 25.1)
                 .$();
 
+        func.init(null, bindVariableService);
         Assert.assertEquals(33.08821, func.getDouble(builder.getRecord()), 0.00001);
 
-        sqlExecutionContext.getBindVariableService().setDouble("xyz", 0.12311);
+        bindVariableService.setDouble("xyz", 0.12311);
         Assert.assertEquals(25.22311, func.getDouble(builder.getRecord()), 0.00001);
     }
 
     @Test
     public void testFloat() throws SqlException {
-        sqlExecutionContext.getBindVariableService().setFloat("xyz", 7.6f);
+        bindVariableService.setFloat("xyz", 7.6f);
 
         Function func = expr("a + :xyz")
                 .withFunction(new AddFloatFunctionFactory())
                 .withColumn("a", ColumnType.FLOAT, 25.1f)
                 .$();
 
-
+        func.init(null, bindVariableService);
         Assert.assertEquals(32.7f, func.getFloat(builder.getRecord()), 0.001f);
 
-        sqlExecutionContext.getBindVariableService().setFloat("xyz", 0.78f);
+        bindVariableService.setFloat("xyz", 0.78f);
+
+        func.init(null, bindVariableService);
+
         Assert.assertEquals(25.88f, func.getFloat(builder.getRecord()), 0.001f);
 
         func.close();
@@ -179,8 +191,8 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
 
     @Test
     public void testInt() throws SqlException {
-        sqlExecutionContext.getBindVariableService().setInt("xyz", 10);
-        sqlExecutionContext.getBindVariableService().setInt("zz", 5);
+        bindVariableService.setInt("xyz", 10);
+        bindVariableService.setInt("zz", 5);
 
         Function func = expr("a + :xyz + :xyz - :zz")
                 .withFunction(new AddIntFunctionFactory())
@@ -188,76 +200,85 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
                 .withColumn("a", ColumnType.INT, 22)
                 .$();
 
+        func.init(null, bindVariableService);
+
         Assert.assertEquals(37, func.getInt(builder.getRecord()));
 
-        sqlExecutionContext.getBindVariableService().setInt("zz", 8);
+        bindVariableService.setInt("zz", 8);
         Assert.assertEquals(34, func.getInt(builder.getRecord()));
     }
 
     @Test
     public void testLong() throws SqlException {
-        sqlExecutionContext.getBindVariableService().setLong("xyz", 9);
+        bindVariableService.setLong("xyz", 9);
         Function func = expr("a + :xyz")
                 .withFunction(new AddLongFunctionFactory())
                 .withColumn("a", ColumnType.LONG, 22L)
                 .$();
 
+        func.init(null, bindVariableService);
+
         Assert.assertEquals(31L, func.getLong(builder.getRecord()));
 
-        sqlExecutionContext.getBindVariableService().setLong("xyz", 11);
+        bindVariableService.setLong("xyz", 11);
         Assert.assertEquals(33L, func.getLong(builder.getRecord()));
     }
 
     @Test
     public void testShort() throws SqlException {
-        sqlExecutionContext.getBindVariableService().setShort("xyz", (short) 8);
+        bindVariableService.setShort("xyz", (short) 8);
         Function func = expr("b + :xyz")
                 .withFunction(new AddShortFunctionFactory())
                 .withColumn("b", ColumnType.SHORT, (short) 22)
                 .$();
 
+        func.init(null, bindVariableService);
         Assert.assertEquals(30, func.getShort(builder.getRecord()));
 
-        sqlExecutionContext.getBindVariableService().setShort("xyz", (short) 33);
+        bindVariableService.setShort("xyz", (short) 33);
         Assert.assertEquals(55, func.getShort(builder.getRecord()));
     }
 
     @Test
     public void testStr() throws SqlException {
-        sqlExecutionContext.getBindVariableService().setStr("str", "abc");
+        bindVariableService.setStr("str", "abc");
         Function func = expr("length(:str)")
                 .withFunction(new LengthStrFunctionFactory())
                 .$();
 
+        func.init(null, bindVariableService);
         Assert.assertEquals(3, func.getInt(builder.getRecord()));
 
-        sqlExecutionContext.getBindVariableService().setStr("str", "hello");
+        bindVariableService.setStr("str", "hello");
         Assert.assertEquals(5, func.getInt(builder.getRecord()));
     }
 
     @Test
     public void testStr2() throws SqlException {
-        sqlExecutionContext.getBindVariableService().setStr("str", "abcd");
-        sqlExecutionContext.getBindVariableService().setInt("start", 1);
+        bindVariableService.setStr("str", "abcd");
+        bindVariableService.setInt("start", 1);
 
         Function func = expr("substr(:str, :start)")
                 .withFunction(new SubStrFunctionFactory())
                 .$();
+
+        func.init(null, bindVariableService);
 
         TestUtils.assertEquals("bcd", func.getStr(builder.getRecord()));
     }
 
     @Test
     public void testTimestamp() throws SqlException, NumericException {
-        sqlExecutionContext.getBindVariableService().setTimestamp("xyz", com.questdb.std.microtime.DateFormatUtils.parseDateTime("2015-04-10T10:00:00.000Z"));
+        bindVariableService.setTimestamp("xyz", com.questdb.std.microtime.DateFormatUtils.parseDateTime("2015-04-10T10:00:00.000Z"));
 
         Function func = expr("to_char(:xyz, 'yyyy-MM')")
                 .withFunction(new ToCharTimestampFunctionFactory())
                 .$();
 
+        func.init(null, bindVariableService);
         TestUtils.assertEquals("2015-04", func.getStr(builder.getRecord()));
 
-        sqlExecutionContext.getBindVariableService().setTimestamp("xyz", com.questdb.std.microtime.DateFormatUtils.parseDateTime("2015-08-10T10:00:00.000Z"));
+        bindVariableService.setTimestamp("xyz", com.questdb.std.microtime.DateFormatUtils.parseDateTime("2015-08-10T10:00:00.000Z"));
         TestUtils.assertEquals("2015-08", func.getStr(builder.getRecord()));
     }
 

@@ -2853,7 +2853,7 @@ public class SqlCompilerTest extends AbstractCairoTest {
 
                     try (RecordCursorFactory factory = compiler.compile("select * from x", bindVariableService)) {
                         sink.clear();
-                        try (RecordCursor cursor = factory.getCursor()) {
+                        try (RecordCursor cursor = factory.getCursor(bindVariableService)) {
                             printer.print(cursor, factory.getMetadata(), true);
                         }
                         TestUtils.assertEquals(expected, sink);
@@ -2979,6 +2979,78 @@ public class SqlCompilerTest extends AbstractCairoTest {
             }
             engine.remove("x");
         }
+    }
+
+    @Test
+    public void testSqlCache() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            String ddl = "create table x (a STRING, b INT, n TIMESTAMP)";
+            String insert = "insert into x (b,a)" +
+                    "select" +
+                    " rnd_int()," +
+                    " rnd_symbol(8,6,10,2)" +
+                    " from long_sequence(30)";
+            String query = "x where a = :sym";
+
+            compiler.compile(ddl, bindVariableService);
+            compiler.compile(insert, bindVariableService);
+
+
+            bindVariableService.setStr("sym", null);
+            RecordCursorFactory factory = compiler.compile(query, bindVariableService);
+            sink.clear();
+            bindVariableService.setStr("sym", "RXGZSXUX");
+            try (RecordCursor cursor = factory.getCursor(bindVariableService)) {
+                printer.print(cursor, factory.getMetadata(), true);
+            }
+
+            TestUtils.assertEquals(
+                    "a\tb\tn\n" +
+                            "RXGZSXUX\t-235358133\t\n" +
+                            "RXGZSXUX\t-1424048819\t\n", sink);
+
+            compiler.cache(query, factory);
+
+            sink.clear();
+
+            try (RecordCursorFactory f = compiler.compile(query, bindVariableService)) {
+
+                bindVariableService.setStr("sym", null);
+                try (RecordCursor cursor = f.getCursor(bindVariableService)) {
+                    printer.print(cursor, f.getMetadata(), true);
+                }
+
+                TestUtils.assertEquals("a\tb\tn\n" +
+                                "\t326010667\t\n" +
+                                "\t1196016669\t\n" +
+                                "\t-1566901076\t\n" +
+                                "\t-1201923128\t\n" +
+                                "\t1234796102\t\n" +
+                                "\t-89906802\t\n" +
+                                "\t659736535\t\n" +
+                                "\t1060917944\t\n" +
+                                "\t2060263242\t\n",
+                        sink);
+            }
+
+            // attempt to compile factory again after it is closed
+
+            bindVariableService.setStr("sym", null);
+            try (RecordCursorFactory f2 = compiler.compile(query, bindVariableService)) {
+                sink.clear();
+                bindVariableService.setStr("sym", "RXGZSXUX");
+                try (RecordCursor cursor = f2.getCursor(bindVariableService)) {
+                    printer.print(cursor, f2.getMetadata(), true);
+                }
+
+                TestUtils.assertEquals(
+                        "a\tb\tn\n" +
+                                "RXGZSXUX\t-235358133\t\n" +
+                                "RXGZSXUX\t-1424048819\t\n", sink);
+            }
+            engine.releaseAllWriters();
+            engine.releaseAllReaders();
+        });
     }
 
     private void assertCast(String expectedData, String expectedMeta, String sql) throws SqlException, IOException {
@@ -3295,7 +3367,7 @@ public class SqlCompilerTest extends AbstractCairoTest {
 
                 try (RecordCursorFactory factory = compiler.compile(select, bindVariableService)) {
                     sink.clear();
-                    try (RecordCursor cursor = factory.getCursor()) {
+                    try (RecordCursor cursor = factory.getCursor(bindVariableService)) {
                         printer.print(cursor, factory.getMetadata(), true);
                     }
                     TestUtils.assertEquals(expectedData, sink);

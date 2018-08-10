@@ -33,6 +33,7 @@ import com.questdb.griffin.engine.SymbolTypeCaster;
 import com.questdb.griffin.engine.TypeCaster;
 import com.questdb.griffin.engine.functions.BinaryFunction;
 import com.questdb.griffin.engine.functions.BooleanFunction;
+import com.questdb.griffin.engine.functions.bind.BindVariableService;
 import com.questdb.griffin.engine.functions.columns.SymbolColumn;
 import com.questdb.std.CharSequenceHashSet;
 import com.questdb.std.Chars;
@@ -104,15 +105,15 @@ public class SymbolInCursorFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void withCursor(RecordCursor recordCursor) {
-            valueArg.withCursor(recordCursor);
-            cursorArg.withCursor(recordCursor);
+        public void init(RecordCursor recordCursor, BindVariableService bindVariableService) {
+            valueArg.init(recordCursor, bindVariableService);
+            cursorArg.init(recordCursor, bindVariableService);
             symbolKeys.clear();
 
             SymbolTable symbolTable = recordCursor.getSymbolTable(columnIndex);
 
             RecordCursorFactory factory = cursorArg.getRecordCursorFactory();
-            try (RecordCursor cursor = factory.getCursor()) {
+            try (RecordCursor cursor = factory.getCursor(bindVariableService)) {
                 while (cursor.hasNext()) {
                     Record record = cursor.next();
                     int key = symbolTable.getQuick(typeCaster.getValue(record, 0));
@@ -149,9 +150,9 @@ public class SymbolInCursorFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void withCursor(RecordCursor recordCursor) {
-            valueArg.withCursor(recordCursor);
-            cursorArg.withCursor(recordCursor);
+        public void init(RecordCursor recordCursor, BindVariableService bindVariableService) {
+            valueArg.init(recordCursor, bindVariableService);
+            cursorArg.init(recordCursor, bindVariableService);
 
             CharSequenceHashSet valueSet;
             if (this.valueSet == this.valueSetA) {
@@ -164,7 +165,7 @@ public class SymbolInCursorFunctionFactory implements FunctionFactory {
 
 
             RecordCursorFactory factory = cursorArg.getRecordCursorFactory();
-            try (RecordCursor cursor = factory.getCursor()) {
+            try (RecordCursor cursor = factory.getCursor(bindVariableService)) {
                 while (cursor.hasNext()) {
                     Record record = cursor.next();
 
@@ -186,6 +187,7 @@ public class SymbolInCursorFunctionFactory implements FunctionFactory {
             }
             this.valueSet = valueSet;
         }
+
 
         @Override
         public Function getLeft() {

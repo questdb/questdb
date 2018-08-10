@@ -201,4 +201,14 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     public int getSqlSortLightValuePageSize() {
         return Numbers.SIZE_1MB;
     }
+
+    @Override
+    public int getSqlCacheBlockCount() {
+        return 16;
+    }
+
+    @Override
+    public int getSqlCacheBlockSize() {
+        return 4;
+    }
 }

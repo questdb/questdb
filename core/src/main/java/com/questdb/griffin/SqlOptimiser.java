@@ -2235,11 +2235,14 @@ class SqlOptimiser {
         public void visit(ExpressionNode node) throws SqlException {
             switch (node.type) {
                 case ExpressionNode.LITERAL:
-                    int dot = Chars.indexOf(node.token, '.');
-                    CharSequence name = extractColumnName(node.token, dot);
-                    indexes.add(getIndexOfTableForColumn(model, node.token, dot, node.position));
-                    if (names != null) {
-                        names.add(name);
+                    // ignore bind variables
+                    if (!Chars.startsWith(node.token, ':')) {
+                        int dot = Chars.indexOf(node.token, '.');
+                        CharSequence name = extractColumnName(node.token, dot);
+                        indexes.add(getIndexOfTableForColumn(model, node.token, dot, node.position));
+                        if (names != null) {
+                            names.add(name);
+                        }
                     }
                     break;
                 case ExpressionNode.CONSTANT:

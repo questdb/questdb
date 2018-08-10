@@ -27,6 +27,7 @@ import com.questdb.cairo.sql.Record;
 import com.questdb.cairo.sql.RecordCursor;
 import com.questdb.cairo.sql.RecordCursorFactory;
 import com.questdb.cairo.sql.RecordMetadata;
+import com.questdb.griffin.engine.functions.bind.BindVariableService;
 import com.questdb.std.Rnd;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -85,7 +86,8 @@ public class TableReaderRecordCursorFactoryTest extends AbstractCairoTest {
                 try (RecordCursorFactory factory = new TableReaderRecordCursorFactory(metadata, engine, "x", -1)) {
 
                     long count = 0;
-                    try (RecordCursor cursor = factory.getCursor()) {
+                    final BindVariableService bindVariableService = new BindVariableService();
+                    try (RecordCursor cursor = factory.getCursor(bindVariableService)) {
                         rnd.reset();
                         while (cursor.hasNext()) {
                             Record record = cursor.next();

@@ -29,6 +29,7 @@ import com.questdb.cairo.sql.*;
 import com.questdb.griffin.engine.StrTypeCaster;
 import com.questdb.griffin.engine.SymbolTypeCaster;
 import com.questdb.griffin.engine.TypeCaster;
+import com.questdb.griffin.engine.functions.bind.BindVariableService;
 import com.questdb.std.IntHashSet;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -86,10 +87,10 @@ public class LatestBySubQueryRecordCursorFactory extends AbstractTreeSetRecordCu
     }
 
     @Override
-    protected AbstractDataFrameRecordCursor getCursorInstance(DataFrameCursor dataFrameCursor) {
+    protected AbstractDataFrameRecordCursor getCursorInstance(DataFrameCursor dataFrameCursor, BindVariableService bindVariableService) {
         SymbolTable symbolTable = dataFrameCursor.getSymbolTable(columnIndex);
         symbolKeys.clear();
-        try (RecordCursor cursor = recordCursorFactory.getCursor()) {
+        try (RecordCursor cursor = recordCursorFactory.getCursor(bindVariableService)) {
             while (cursor.hasNext()) {
                 Record record = cursor.next();
                 int symbolKey = symbolTable.getQuick(typeCaster.getValue(record, 0));
@@ -100,11 +101,11 @@ public class LatestBySubQueryRecordCursorFactory extends AbstractTreeSetRecordCu
         }
 
         if (filter != null) {
-            AbstractDataFrameRecordCursor cursor = super.getCursorInstance(dataFrameCursor);
-            filter.withCursor(cursor);
+            AbstractDataFrameRecordCursor cursor = super.getCursorInstance(dataFrameCursor, bindVariableService);
+            filter.init(cursor, bindVariableService);
             return cursor;
         }
-        return super.getCursorInstance(dataFrameCursor);
+        return super.getCursorInstance(dataFrameCursor, bindVariableService);
     }
 
     @Override

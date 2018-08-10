@@ -1040,7 +1040,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         TestUtils.assertEquals("sym", m.keyColumn);
         Assert.assertNotNull(m.keySubQuery);
         Assert.assertNotNull(m.filter);
-        Assert.assertEquals(ExpressionNode.LAMBDA, m.filter.rhs.type);
+        Assert.assertEquals(ExpressionNode.QUERY, m.filter.rhs.type);
     }
 
     @Test

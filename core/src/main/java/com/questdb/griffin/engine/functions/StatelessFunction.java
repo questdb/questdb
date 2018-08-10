@@ -25,6 +25,7 @@ package com.questdb.griffin.engine.functions;
 
 import com.questdb.cairo.sql.Function;
 import com.questdb.cairo.sql.RecordCursor;
+import com.questdb.griffin.engine.functions.bind.BindVariableService;
 
 public interface StatelessFunction extends Function {
 
@@ -33,7 +34,7 @@ public interface StatelessFunction extends Function {
     }
 
     @Override
-    default void withCursor(RecordCursor recordCursor) {
+    default void init(RecordCursor recordCursor, BindVariableService bindVariableService) {
     }
 
     @Override

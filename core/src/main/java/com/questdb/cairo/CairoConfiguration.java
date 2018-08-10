@@ -92,4 +92,8 @@ public interface CairoConfiguration {
     int getSqlSortKeyPageSize();
 
     int getSqlSortLightValuePageSize();
+
+    int getSqlCacheBlockCount();
+
+    int getSqlCacheBlockSize();
 }

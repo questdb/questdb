@@ -29,6 +29,7 @@ import com.questdb.cairo.sql.Record;
 import com.questdb.cairo.sql.RecordCursor;
 import com.questdb.griffin.FunctionFactory;
 import com.questdb.griffin.engine.functions.BooleanFunction;
+import com.questdb.griffin.engine.functions.bind.BindVariableService;
 import com.questdb.std.ObjList;
 
 import java.util.concurrent.atomic.AtomicInteger;
@@ -89,7 +90,7 @@ public class TestMatchFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void withCursor(RecordCursor recordCursor) {
+        public void init(RecordCursor recordCursor, BindVariableService bindVariableService) {
             openCounter.incrementAndGet();
         }
 

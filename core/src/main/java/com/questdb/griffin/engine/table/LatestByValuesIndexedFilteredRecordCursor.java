@@ -28,6 +28,7 @@ import com.questdb.cairo.sql.DataFrame;
 import com.questdb.cairo.sql.Function;
 import com.questdb.cairo.sql.RowCursor;
 import com.questdb.griffin.engine.LongTreeSet;
+import com.questdb.griffin.engine.functions.bind.BindVariableService;
 import com.questdb.std.IntHashSet;
 import com.questdb.std.Rows;
 
@@ -56,7 +57,7 @@ class LatestByValuesIndexedFilteredRecordCursor extends AbstractTreeSetRecordCur
     }
 
     @Override
-    protected void buildTreeMap() {
+    protected void buildTreeMap(BindVariableService bindVariableService) {
         final int keyCount = symbolKeys.size();
         found.clear();
         while (this.dataFrameCursor.hasNext() && found.size() < keyCount) {

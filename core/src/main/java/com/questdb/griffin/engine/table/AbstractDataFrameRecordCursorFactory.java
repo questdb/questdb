@@ -29,6 +29,7 @@ import com.questdb.cairo.sql.DataFrameCursor;
 import com.questdb.cairo.sql.DataFrameCursorFactory;
 import com.questdb.cairo.sql.RecordCursor;
 import com.questdb.cairo.sql.RecordMetadata;
+import com.questdb.griffin.engine.functions.bind.BindVariableService;
 
 abstract class AbstractDataFrameRecordCursorFactory extends AbstractRecordCursorFactory {
     protected final DataFrameCursorFactory dataFrameCursorFactory;
@@ -39,15 +40,15 @@ abstract class AbstractDataFrameRecordCursorFactory extends AbstractRecordCursor
     }
 
     @Override
-    public RecordCursor getCursor() {
+    public RecordCursor getCursor(BindVariableService bindVariableService) {
         DataFrameCursor dataFrameCursor = dataFrameCursorFactory.getCursor();
         try {
-            return getCursorInstance(dataFrameCursor);
+            return getCursorInstance(dataFrameCursor, bindVariableService);
         } catch (CairoException e) {
             dataFrameCursor.close();
             throw e;
         }
     }
 
-    protected abstract RecordCursor getCursorInstance(DataFrameCursor dataFrameCursor);
+    protected abstract RecordCursor getCursorInstance(DataFrameCursor dataFrameCursor, BindVariableService bindVariableService);
 }

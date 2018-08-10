@@ -24,6 +24,7 @@
 package com.questdb.griffin.engine.table;
 
 import com.questdb.cairo.sql.*;
+import com.questdb.griffin.engine.functions.bind.BindVariableService;
 import org.jetbrains.annotations.NotNull;
 
 public class LatestByValueIndexedFilteredRecordCursorFactory extends AbstractDataFrameRecordCursorFactory {
@@ -53,8 +54,8 @@ public class LatestByValueIndexedFilteredRecordCursorFactory extends AbstractDat
     }
 
     @Override
-    protected RecordCursor getCursorInstance(DataFrameCursor dataFrameCursor) {
-        cursor.of(dataFrameCursor);
+    protected RecordCursor getCursorInstance(DataFrameCursor dataFrameCursor, BindVariableService bindVariableService) {
+        cursor.of(dataFrameCursor, bindVariableService);
         return cursor;
     }
 }

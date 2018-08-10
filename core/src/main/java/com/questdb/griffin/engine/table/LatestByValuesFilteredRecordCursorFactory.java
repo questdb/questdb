@@ -29,6 +29,7 @@ import com.questdb.cairo.sql.DataFrameCursor;
 import com.questdb.cairo.sql.DataFrameCursorFactory;
 import com.questdb.cairo.sql.Function;
 import com.questdb.cairo.sql.RecordMetadata;
+import com.questdb.griffin.engine.functions.bind.BindVariableService;
 import com.questdb.std.CharSequenceHashSet;
 import com.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
@@ -65,17 +66,17 @@ public class LatestByValuesFilteredRecordCursorFactory extends AbstractDeferredT
     }
 
     @Override
-    protected AbstractDataFrameRecordCursor getCursorInstance(DataFrameCursor dataFrameCursor) {
-        if (filter != null) {
-            AbstractDataFrameRecordCursor cursor = super.getCursorInstance(dataFrameCursor);
-            filter.withCursor(cursor);
-            return cursor;
-        }
-        return super.getCursorInstance(dataFrameCursor);
+    public boolean isRandomAccessCursor() {
+        return true;
     }
 
     @Override
-    public boolean isRandomAccessCursor() {
-        return true;
+    protected AbstractDataFrameRecordCursor getCursorInstance(DataFrameCursor dataFrameCursor, BindVariableService bindVariableService) {
+        if (filter != null) {
+            AbstractDataFrameRecordCursor cursor = super.getCursorInstance(dataFrameCursor, bindVariableService);
+            filter.init(cursor, bindVariableService);
+            return cursor;
+        }
+        return super.getCursorInstance(dataFrameCursor, bindVariableService);
     }
 }

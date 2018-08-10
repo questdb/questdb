@@ -26,6 +26,7 @@ package com.questdb.griffin.engine.functions;
 import com.questdb.cairo.AbstractRecordCursorFactory;
 import com.questdb.cairo.sql.RecordCursor;
 import com.questdb.cairo.sql.RecordMetadata;
+import com.questdb.griffin.engine.functions.bind.BindVariableService;
 
 public class GenericRecordCursorFactory extends AbstractRecordCursorFactory {
     private final RecordCursor cursor;
@@ -38,7 +39,7 @@ public class GenericRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
-    public RecordCursor getCursor() {
+    public RecordCursor getCursor(BindVariableService bindVariableService) {
         cursor.toTop();
         return cursor;
     }

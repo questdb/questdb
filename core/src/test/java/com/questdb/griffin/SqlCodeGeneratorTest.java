@@ -2572,7 +2572,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     }
 
     private void assertCursor(CharSequence expected, RecordCursorFactory factory, boolean supportsRandomAccess) throws IOException {
-        try (RecordCursor cursor = factory.getCursor()) {
+        try (RecordCursor cursor = factory.getCursor(bindVariableService)) {
             sink.clear();
             rows.clear();
             printer.print(cursor, factory.getMetadata(), true);
@@ -2754,7 +2754,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     private void assertTimestampColumnValues(RecordCursorFactory factory) {
         int index = factory.getMetadata().getTimestampIndex();
         long timestamp = Long.MIN_VALUE;
-        try (RecordCursor cursor = factory.getCursor()) {
+        try (RecordCursor cursor = factory.getCursor(bindVariableService)) {
             while (cursor.hasNext()) {
                 long ts = cursor.next().getTimestamp(index);
                 Assert.assertTrue(timestamp <= ts);
@@ -2764,7 +2764,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     }
 
     private void assertVariableColumns(RecordCursorFactory factory) {
-        try (RecordCursor cursor = factory.getCursor()) {
+        try (RecordCursor cursor = factory.getCursor(bindVariableService)) {
             RecordMetadata metadata = factory.getMetadata();
             final int columnCount = metadata.getColumnCount();
             while (cursor.hasNext()) {

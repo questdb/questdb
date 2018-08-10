@@ -30,6 +30,7 @@ import com.questdb.cairo.sql.RecordCursor;
 import com.questdb.griffin.FunctionFactory;
 import com.questdb.griffin.SqlException;
 import com.questdb.griffin.engine.functions.TimestampFunction;
+import com.questdb.griffin.engine.functions.bind.BindVariableService;
 import com.questdb.griffin.engine.functions.constants.TimestampConstant;
 import com.questdb.std.Numbers;
 import com.questdb.std.ObjList;
@@ -79,7 +80,7 @@ public class TimestampSequenceFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void withCursor(RecordCursor recordCursor) {
+        public void init(RecordCursor recordCursor, BindVariableService bindVariableService) {
             toTop();
         }
 

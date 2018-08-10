@@ -24,6 +24,7 @@
 package com.questdb.griffin.engine.table;
 
 import com.questdb.cairo.sql.*;
+import com.questdb.griffin.engine.functions.bind.BindVariableService;
 import org.jetbrains.annotations.Nullable;
 
 class DataFrameRecordCursor extends AbstractDataFrameRecordCursor {
@@ -54,7 +55,8 @@ class DataFrameRecordCursor extends AbstractDataFrameRecordCursor {
         return record;
     }
 
-    public void of(DataFrameCursor dataFrameCursor) {
+    @Override
+    public void of(DataFrameCursor dataFrameCursor, BindVariableService bindVariableService) {
         if (this.dataFrameCursor != dataFrameCursor) {
             close();
             this.dataFrameCursor = dataFrameCursor;
@@ -63,7 +65,7 @@ class DataFrameRecordCursor extends AbstractDataFrameRecordCursor {
         this.rowCursorFactory.prepareCursor(dataFrameCursor.getTableReader());
         rowCursor = null;
         if (filter != null) {
-            filter.withCursor(this);
+            filter.init(this, bindVariableService);
         }
     }
 

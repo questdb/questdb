@@ -253,7 +253,7 @@ final class WhereClauseParser {
                 return false;
             }
 
-            if (node.rhs == null || node.rhs.type != ExpressionNode.LAMBDA) {
+            if (node.rhs == null || node.rhs.type != ExpressionNode.QUERY) {
                 return false;
             }
 

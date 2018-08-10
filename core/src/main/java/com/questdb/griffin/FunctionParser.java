@@ -28,6 +28,7 @@ import com.questdb.cairo.ColumnType;
 import com.questdb.cairo.sql.Function;
 import com.questdb.cairo.sql.RecordMetadata;
 import com.questdb.griffin.engine.functions.CursorFunction;
+import com.questdb.griffin.engine.functions.bind.LinkFunction;
 import com.questdb.griffin.engine.functions.columns.*;
 import com.questdb.griffin.engine.functions.constants.*;
 import com.questdb.griffin.model.ExpressionNode;
@@ -164,7 +165,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
         if (function == null) {
             throw SqlException.position(node.position).put("undefined bind variable: ").put(node.token);
         }
-        return function;
+        return new LinkFunction(Chars.toString(node.token), function.getType(), node.position);
     }
 
     /**
@@ -175,7 +176,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
      * When node type is {@link ExpressionNode#CONSTANT} a constant function is returned. Type of constant is
      * inferred from value of node token.
      * <p>
-     * When node type is {@link ExpressionNode#LAMBDA} a cursor function is returned. Cursor function can be wrapping
+     * When node type is {@link ExpressionNode#QUERY} a cursor function is returned. Cursor function can be wrapping
      * stateful instance of {@link com.questdb.cairo.sql.RecordCursorFactory} that has to be closed when disposed of.
      * Such instances are added to the supplied list of {@link java.io.Closeable} items.
      * <p>
@@ -233,7 +234,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
                 case ExpressionNode.CONSTANT:
                     stack.push(createConstant(node));
                     break;
-                case ExpressionNode.LAMBDA:
+                case ExpressionNode.QUERY:
                     stack.push(createCursorFunction(node));
                     break;
                 default:

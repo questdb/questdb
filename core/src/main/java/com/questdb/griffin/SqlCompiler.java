@@ -64,6 +64,7 @@ public class SqlCompiler implements Closeable {
     private final ExecutableMethod insertAsSelectMethod = this::insertAsSelect;
     private final ExecutableMethod createTableMethod = this::createTable;
     private final SqlExecutionContextImpl executionContext = new SqlExecutionContextImpl();
+    private final AssociativeCache<RecordCursorFactory> sqlCache;
 
     public SqlCompiler(CairoEngine engine, CairoConfiguration configuration) {
         this(engine, configuration, null);
@@ -107,6 +108,11 @@ public class SqlCompiler implements Closeable {
                 queryModelPool,
                 postOrderTreeTraversalAlgo
         );
+
+        this.sqlCache = new AssociativeCache<>(
+                configuration.getSqlCacheBlockSize(),
+                configuration.getSqlCacheBlockCount()
+        );
     }
 
     public static void configureLexer(GenericLexer lexer) {
@@ -121,12 +127,31 @@ public class SqlCompiler implements Closeable {
         }
     }
 
+    public void cache(CharSequence query, RecordCursorFactory factory) {
+        sqlCache.put(query, factory);
+    }
+
     @Override
     public void close() {
         Misc.free(path);
+        Misc.free(sqlCache);
     }
 
     public RecordCursorFactory compile(CharSequence query, BindVariableService bindVariableService) throws SqlException {
+
+        // short circuit to cache if there is anything there
+        RecordCursorFactory result = sqlCache.poll(query);
+        if (result != null) {
+            return result;
+        }
+
+        // This method will not populate sql cache directly;
+        // factories are assumed to be non reentrant and once
+        // factory is out of this method the caller assumes
+        // full ownership over it. In that however caller may
+        // chose to return factory back to this or any other
+        // instance of compiler for safekeeping
+
         executionContext.with(bindVariableService);
         ExecutionModel executionModel = compileExecutionModel(query, executionContext);
         switch (executionModel.getModelType()) {
@@ -743,7 +768,7 @@ public class SqlCompiler implements Closeable {
 
     private TableWriter createTableFromCursor(CreateTableModel model, SqlExecutionContext executionContext) throws SqlException {
         try (final RecordCursorFactory factory = generate(model.getQueryModel(), executionContext);
-             final RecordCursor cursor = factory.getCursor()) {
+             final RecordCursor cursor = factory.getCursor(executionContext.getBindVariableService())) {
             typeCast.clear();
             final RecordMetadata metadata = factory.getMetadata();
             validateTableModelAndCreateTypeCast(model, metadata, typeCast);
@@ -967,7 +992,7 @@ public class SqlCompiler implements Closeable {
                 copier = assembleRecordToRowCopier(asm, cursorMetadata, writerMetadata, entityColumnFilter);
             }
 
-            try (RecordCursor cursor = factory.getCursor()) {
+            try (RecordCursor cursor = factory.getCursor(executionContext.getBindVariableService())) {
                 try {
                     if (writerTimestampIndex == -1) {
                         copyUnordered(cursor, writer, copier);

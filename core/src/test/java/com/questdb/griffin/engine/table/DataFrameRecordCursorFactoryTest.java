@@ -27,6 +27,7 @@ import com.questdb.cairo.*;
 import com.questdb.cairo.sql.Record;
 import com.questdb.cairo.sql.RecordCursor;
 import com.questdb.cairo.sql.RecordMetadata;
+import com.questdb.griffin.engine.functions.bind.BindVariableService;
 import com.questdb.std.Rnd;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Test;
@@ -86,7 +87,8 @@ public class DataFrameRecordCursorFactoryTest extends AbstractCairoTest {
                 FullFwdDataFrameCursorFactory dataFrameFactory = new FullFwdDataFrameCursorFactory(engine, "x", -1);
                 DataFrameRecordCursorFactory factory = new DataFrameRecordCursorFactory(metadata, dataFrameFactory, symbolIndexRowCursorFactory, null);
 
-                try (RecordCursor cursor = factory.getCursor()) {
+                BindVariableService bindVariableService = new BindVariableService();
+                try (RecordCursor cursor = factory.getCursor(bindVariableService)) {
                     while (cursor.hasNext()) {
                         Record record = cursor.next();
                         TestUtils.assertEquals(value, record.getSym(1));
