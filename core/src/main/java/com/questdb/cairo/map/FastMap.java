@@ -41,7 +41,6 @@ public class FastMap implements Map {
     private final FastMapRecord record;
     private final int valueColumnCount;
     private final HashFunction hashFunction;
-    private long address;
     private long capacity;
     private int keyBlockOffset;
     private int keyDataOffset;
@@ -83,8 +82,7 @@ public class FastMap implements Map {
         assert loadFactor > 0 && loadFactor < 1d;
 
         this.loadFactor = loadFactor;
-        this.address = Unsafe.malloc(this.capacity = (pageSize + Unsafe.CACHE_LINE_SIZE));
-        this.kStart = kPos = this.address + (this.address & (Unsafe.CACHE_LINE_SIZE - 1));
+        this.kStart = kPos = Unsafe.malloc(this.capacity = pageSize);
         this.kLimit = kStart + pageSize;
 
         this.keyCapacity = (int) (keyCapacity / loadFactor);
@@ -139,6 +137,7 @@ public class FastMap implements Map {
             this.keyDataOffset = this.keyBlockOffset + 4 * keyTypes.getColumnCount();
             this.record = new FastMapRecord(null, 0, keyDataOffset, keyBlockOffset, value, keyTypes);
         }
+        assert this.keyBlockOffset < kLimit - kStart : "page size is too small for number of columns";
         this.iterator = new FastMapCursor(record);
     }
 
@@ -153,9 +152,9 @@ public class FastMap implements Map {
     @Override
     public final void close() {
         offsets = Misc.free(offsets);
-        if (address != 0) {
-            Unsafe.free(address, capacity);
-            address = 0;
+        if (kStart != 0) {
+            Unsafe.free(kStart, capacity);
+            kStart = 0;
         }
     }
 
@@ -297,15 +296,13 @@ public class FastMap implements Map {
         if (kCapacity < target) {
             kCapacity = Numbers.ceilPow2(target);
         }
-        long kAddress = Unsafe.malloc(kCapacity + Unsafe.CACHE_LINE_SIZE);
-        long kStart = kAddress + (kAddress & (Unsafe.CACHE_LINE_SIZE - 1));
+        long kAddress = Unsafe.malloc(kCapacity);
 
-        Unsafe.getUnsafe().copyMemory(this.kStart, kStart, (kLimit - this.kStart));
-        Unsafe.free(this.address, this.capacity);
+        Unsafe.getUnsafe().copyMemory(this.kStart, kAddress, (kLimit - this.kStart));
+        Unsafe.free(this.kStart, this.capacity);
 
-
-        this.capacity = kCapacity + Unsafe.CACHE_LINE_SIZE;
-        long d = kStart - this.kStart;
+        this.capacity = kCapacity;
+        long d = kAddress - this.kStart;
         kPos += d;
         long colOffsetDelta = key.nextColOffset - key.startAddress;
         key.startAddress += d;
@@ -317,9 +314,8 @@ public class FastMap implements Map {
         assert key.appendAddress > 0;
         assert key.nextColOffset > 0;
 
-        this.address = kAddress;
-        this.kStart = kStart;
-        this.kLimit = kStart + kCapacity;
+        this.kStart = kAddress;
+        this.kLimit = kAddress + kCapacity;
     }
 
     @FunctionalInterface
@@ -363,16 +359,16 @@ public class FastMap implements Map {
             }
         }
 
+        @Override
+        public void put(Record record, RecordSink sink) {
+            sink.copy(record, this);
+        }
+
         public Key init() {
             startAddress = kPos;
             appendAddress = kPos + keyDataOffset;
             nextColOffset = kPos + keyBlockOffset;
             return this;
-        }
-
-        @Override
-        public void put(Record record, RecordSink sink) {
-            sink.copy(record, this);
         }
 
         @Override

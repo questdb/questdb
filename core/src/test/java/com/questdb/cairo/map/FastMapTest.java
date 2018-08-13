@@ -60,7 +60,7 @@ public class FastMapTest extends AbstractCairoTest {
         valueTypes.add(ColumnType.BOOLEAN);
         valueTypes.add(ColumnType.DATE);
 
-        try (FastMap map = new FastMap(1024, keyTypes, valueTypes, 64, 0.8)) {
+        try (FastMap map = new FastMap(64, keyTypes, valueTypes, 64, 0.8)) {
             final int N = 100000;
             for (int i = 0; i < N; i++) {
                 MapKey key = map.withKey();
