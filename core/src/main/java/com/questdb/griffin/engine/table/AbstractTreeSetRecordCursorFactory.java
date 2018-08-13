@@ -39,7 +39,7 @@ abstract class AbstractTreeSetRecordCursorFactory extends AbstractDataFrameRecor
             DataFrameCursorFactory dataFrameCursorFactory,
             CairoConfiguration configuration) {
         super(metadata, dataFrameCursorFactory);
-        this.treeSet = new LongTreeSet(configuration.getSqlTreeDefaultPageSize());
+        this.treeSet = new LongTreeSet(configuration.getSqlTreePageSize());
     }
 
     @Override

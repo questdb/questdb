@@ -46,6 +46,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public CharSequence getDefaultMapType() {
+        return "fast";
+    }
+
+    @Override
     public boolean getDefaultSymbolCacheFlag() {
         return true;
     }
@@ -126,58 +131,13 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public long getWorkStealTimeoutNanos() {
-        return 10000;
+    public int getSqlCacheBlockCount() {
+        return 16;
     }
 
     @Override
-    public boolean isParallelIndexingEnabled() {
-        return true;
-    }
-
-    @Override
-    public double getSqlFastMapLoadFactor() {
-        return 0.5;
-    }
-
-    @Override
-    public int getSqlMapDefaultKeyCapacity() {
-        return 128;
-    }
-
-    @Override
-    public int getSqlMapDefaultPageSize() {
-        return 4 * Numbers.SIZE_1MB;
-    }
-
-    @Override
-    public int getSqlTreeDefaultPageSize() {
-        return Numbers.SIZE_1MB;
-    }
-
-    @Override
-    public int getSqlColumnPoolCapacity() {
-        return 4096;
-    }
-
-    @Override
-    public int getSqlExpressionPoolCapacity() {
-        return 8192;
-    }
-
-    @Override
-    public int getSqlJoinContextPoolCapacity() {
-        return 64;
-    }
-
-    @Override
-    public int getSqlLexerPoolCapacity() {
-        return 2048;
-    }
-
-    @Override
-    public int getSqlModelPoolCapacity() {
-        return 1024;
+    public int getSqlCacheBlockSize() {
+        return 4;
     }
 
     @Override
@@ -193,6 +153,51 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getSqlColumnPoolCapacity() {
+        return 4096;
+    }
+
+    @Override
+    public int getSqlExpressionPoolCapacity() {
+        return 8192;
+    }
+
+    @Override
+    public double getSqlCompactMapLoadFactor() {
+        return 0.8;
+    }
+
+    @Override
+    public double getSqlFastMapLoadFactor() {
+        return 0.5;
+    }
+
+    @Override
+    public int getSqlJoinContextPoolCapacity() {
+        return 64;
+    }
+
+    @Override
+    public int getSqlLexerPoolCapacity() {
+        return 2048;
+    }
+
+    @Override
+    public int getSqlMapKeyCapacity() {
+        return 128;
+    }
+
+    @Override
+    public int getSqlMapPageSize() {
+        return 4 * Numbers.SIZE_1MB;
+    }
+
+    @Override
+    public int getSqlModelPoolCapacity() {
+        return 1024;
+    }
+
+    @Override
     public int getSqlSortKeyPageSize() {
         return 4 * Numbers.SIZE_1MB;
     }
@@ -203,12 +208,17 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getSqlCacheBlockCount() {
-        return 16;
+    public int getSqlTreePageSize() {
+        return Numbers.SIZE_1MB;
     }
 
     @Override
-    public int getSqlCacheBlockSize() {
-        return 4;
+    public long getWorkStealTimeoutNanos() {
+        return 10000;
+    }
+
+    @Override
+    public boolean isParallelIndexingEnabled() {
+        return true;
     }
 }

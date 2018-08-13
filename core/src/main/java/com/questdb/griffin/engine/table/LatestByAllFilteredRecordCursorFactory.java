@@ -26,8 +26,8 @@ package com.questdb.griffin.engine.table;
 import com.questdb.cairo.CairoConfiguration;
 import com.questdb.cairo.ColumnTypes;
 import com.questdb.cairo.RecordSink;
-import com.questdb.cairo.map.FastMap;
 import com.questdb.cairo.map.Map;
+import com.questdb.cairo.map.MapFactory;
 import com.questdb.cairo.sql.DataFrameCursorFactory;
 import com.questdb.cairo.sql.Function;
 import com.questdb.cairo.sql.RecordMetadata;
@@ -46,12 +46,7 @@ public class LatestByAllFilteredRecordCursorFactory extends AbstractTreeSetRecor
             @Transient @NotNull ColumnTypes columnTypes,
             @Nullable Function filter) {
         super(metadata, dataFrameCursorFactory, configuration);
-        this.map = new FastMap(
-                configuration.getSqlMapDefaultPageSize(),
-                columnTypes,
-                configuration.getSqlMapDefaultKeyCapacity(),
-                configuration.getSqlFastMapLoadFactor()
-        );
+        this.map = MapFactory.createMap(configuration, columnTypes);
         if (filter == null) {
             this.cursor = new LatestByAllRecordCursor(map, treeSet, recordSink);
         } else {

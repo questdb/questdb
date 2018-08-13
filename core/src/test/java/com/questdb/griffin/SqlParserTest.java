@@ -31,21 +31,10 @@ import com.questdb.std.*;
 import com.questdb.std.str.LPSZ;
 import com.questdb.std.str.Path;
 import com.questdb.test.tools.TestUtils;
-import org.junit.AfterClass;
 import org.junit.Assert;
 import org.junit.Test;
 
-import java.io.IOException;
-
-public class SqlParserTest extends AbstractCairoTest {
-    private final static CairoEngine engine = new Engine(configuration);
-    private final static SqlCompiler sqlCompiler = new SqlCompiler(engine, configuration);
-    private final static TestExecutionContext sqlExecutionContext = new TestExecutionContext(sqlCompiler.getCodeGenerator());
-
-    @AfterClass
-    public static void tearDown() throws IOException {
-        engine.close();
-    }
+public class SqlParserTest extends AbstractGriffinTest {
 
     @Test
     public void testAliasWithSpace() throws Exception {
@@ -2342,7 +2331,7 @@ public class SqlParserTest extends AbstractCairoTest {
     public void testLexerReset() {
         for (int i = 0; i < 10; i++) {
             try {
-                sqlCompiler.compileExecutionModel("select \n" +
+                compiler.compileExecutionModel("select \n" +
                                 "-- ltod(Date)\n" +
                                 "count() \n" +
                                 "-- from acc\n" +
@@ -2429,7 +2418,7 @@ public class SqlParserTest extends AbstractCairoTest {
     @Test
     public void testMissingWhere() {
         try {
-            sqlCompiler.compileExecutionModel("select id, x + 10, x from tab id ~ 'HBRO'", sqlExecutionContext);
+            compiler.compileExecutionModel("select id, x + 10, x from tab id ~ 'HBRO'", sqlExecutionContext);
             Assert.fail("Exception expected");
         } catch (SqlException e) {
             Assert.assertEquals(33, e.getPosition());
@@ -3431,7 +3420,7 @@ public class SqlParserTest extends AbstractCairoTest {
             }
             b.append('f').append(i);
         }
-        QueryModel st = (QueryModel) sqlCompiler.compileExecutionModel(b, sqlExecutionContext);
+        QueryModel st = (QueryModel) compiler.compileExecutionModel(b, sqlExecutionContext);
         Assert.assertEquals(SqlParser.MAX_ORDER_BY_COLUMNS - 1, st.getOrderBy().size());
     }
 
@@ -3446,7 +3435,7 @@ public class SqlParserTest extends AbstractCairoTest {
             b.append('f').append(i);
         }
         try {
-            sqlCompiler.compileExecutionModel(b, sqlExecutionContext);
+            compiler.compileExecutionModel(b, sqlExecutionContext);
         } catch (SqlException e) {
             TestUtils.assertEquals("Too many columns", e.getFlyweightMessage());
         }
@@ -3543,7 +3532,7 @@ public class SqlParserTest extends AbstractCairoTest {
     }
 
     private static void assertSyntaxError(String query, int position, String contains, TableModel... tableModels) {
-        assertSyntaxError(sqlCompiler, engine, query, position, contains, tableModels);
+        assertSyntaxError(compiler, engine, query, position, contains, tableModels);
     }
 
     private static void assertSyntaxError(
@@ -3580,7 +3569,7 @@ public class SqlParserTest extends AbstractCairoTest {
     private void assertModel(String expected, String query, int modelType, TableModel... tableModels) throws SqlException {
         createModelsAndRun(() -> {
             sink.clear();
-            ExecutionModel model = sqlCompiler.compileExecutionModel(query, sqlExecutionContext);
+            ExecutionModel model = compiler.compileExecutionModel(query, sqlExecutionContext);
             Assert.assertEquals(model.getModelType(), modelType);
             ((Sinkable) model).toSink(sink);
             TestUtils.assertEquals(expected, sink);

@@ -31,6 +31,8 @@ public interface CairoConfiguration {
 
     int getCreateAsSelectRetryCount();
 
+    CharSequence getDefaultMapType();
+
     boolean getDefaultSymbolCacheFlag();
 
     int getDefaultSymbolCapacity();
@@ -63,37 +65,39 @@ public interface CairoConfiguration {
 
     long getSpinLockTimeoutUs();
 
-    long getWorkStealTimeoutNanos();
+    int getSqlCacheBlockCount();
 
-    boolean isParallelIndexingEnabled();
-
-    double getSqlFastMapLoadFactor();
-
-    int getSqlMapDefaultKeyCapacity();
-
-    int getSqlMapDefaultPageSize();
-
-    int getSqlTreeDefaultPageSize();
-
-    int getSqlColumnPoolCapacity();
-
-    int getSqlExpressionPoolCapacity();
-
-    int getSqlJoinContextPoolCapacity();
-
-    int getSqlLexerPoolCapacity();
-
-    int getSqlModelPoolCapacity();
+    int getSqlCacheBlockSize();
 
     int getSqlCharacterStoreCapacity();
 
     int getSqlCharacterStorePoolCapacity();
 
+    int getSqlColumnPoolCapacity();
+
+    int getSqlExpressionPoolCapacity();
+
+    double getSqlCompactMapLoadFactor();
+
+    double getSqlFastMapLoadFactor();
+
+    int getSqlJoinContextPoolCapacity();
+
+    int getSqlLexerPoolCapacity();
+
+    int getSqlMapKeyCapacity();
+
+    int getSqlMapPageSize();
+
+    int getSqlModelPoolCapacity();
+
     int getSqlSortKeyPageSize();
 
     int getSqlSortLightValuePageSize();
 
-    int getSqlCacheBlockCount();
+    int getSqlTreePageSize();
 
-    int getSqlCacheBlockSize();
+    long getWorkStealTimeoutNanos();
+
+    boolean isParallelIndexingEnabled();
 }

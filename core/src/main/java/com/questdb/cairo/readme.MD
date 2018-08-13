@@ -1,6 +1,6 @@
 ## Cairo
 
-CAIRO is code name for next generation storage sub-system for QuestDB. It targets goals and functionality that is not well implemented in the original QuestDB storage.
+CAIRO is code name for next generation storage system for QuestDB. It targets goals and functionality that is not well implemented in the original QuestDB storage.
 
 Some of these goals are:
 

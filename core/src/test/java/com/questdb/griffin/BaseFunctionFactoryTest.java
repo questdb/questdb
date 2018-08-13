@@ -23,34 +23,27 @@
 
 package com.questdb.griffin;
 
-import com.questdb.cairo.AbstractCairoTest;
-import com.questdb.cairo.Engine;
 import com.questdb.cairo.GenericRecordMetadata;
 import com.questdb.cairo.sql.Function;
 import com.questdb.griffin.model.ExpressionNode;
 import com.questdb.griffin.model.QueryModel;
-import com.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Before;
 
-import java.io.Closeable;
 import java.util.ArrayList;
 
-public class BaseFunctionFactoryTest extends AbstractCairoTest {
+public class BaseFunctionFactoryTest extends AbstractGriffinTest {
     protected static final ArrayList<FunctionFactory> functions = new ArrayList<>();
     protected final static QueryModel queryModel = QueryModel.FACTORY.newInstance();
-    private static final SqlCompiler compiler = new SqlCompiler(new Engine(configuration), configuration);
     protected static final TestExecutionContext sqlExecutionContext = new TestExecutionContext(compiler.getCodeGenerator());
-    private static final ObjList<Closeable> closeables = new ObjList<>();
 
     @Before
-    public void setUp2() {
+    public void setUp4() {
         sqlExecutionContext.clear();
         functions.clear();
     }
 
     protected static Function parseFunction(CharSequence expression, GenericRecordMetadata metadata, FunctionParser functionParser) throws SqlException {
-        closeables.clear();
         return functionParser.parseFunction(expr(expression), metadata, sqlExecutionContext);
     }
 

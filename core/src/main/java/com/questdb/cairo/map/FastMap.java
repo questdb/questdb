@@ -62,7 +62,6 @@ public class FastMap implements Map {
         this(pageSize, keyTypes, null, keyCapacity, loadFactor, DEFAULT_HASH);
     }
 
-
     public FastMap(int pageSize,
                    @Transient @NotNull ColumnTypes keyTypes,
                    @Transient @NotNull ColumnTypes valueTypes,

@@ -36,7 +36,15 @@ public class RndLongCCFunctionFactoryTest extends AbstractFunctionFactoryTest {
     @Test
     public void testInvalidRange() {
         assertFailure(0, "invalid range", 20L, 10L, 0);
+    }
+
+    @Test
+    public void testInvalidRange2() {
         assertFailure(0, "invalid range", 5L, 5L, 0);
+    }
+
+    @Test
+    public void testInvalidRange3() {
         assertFailure(13, "invalid NaN rate", 1L, 4L, -1);
     }
 
@@ -60,6 +68,11 @@ public class RndLongCCFunctionFactoryTest extends AbstractFunctionFactoryTest {
         functions.add(new NegIntFunctionFactory());
     }
 
+    @Override
+    protected FunctionFactory getFunctionFactory() {
+        return new RndLongCCFunctionFactory();
+    }
+
     private void assertFunctionValues(long lo, long hi, boolean expectNan, Invocation invocation, Function function1) {
         int nanCount = 0;
         for (int i = 0; i < 1000; i++) {
@@ -81,10 +94,5 @@ public class RndLongCCFunctionFactoryTest extends AbstractFunctionFactoryTest {
         Invocation invocation = call(lo, hi, nanRate);
         assertFunctionValues(lo, hi, nanRate > 0, invocation, invocation.getFunction1());
         assertFunctionValues(lo, hi, nanRate > 0, invocation, invocation.getFunction2());
-    }
-
-    @Override
-    protected FunctionFactory getFunctionFactory() {
-        return new RndLongCCFunctionFactory();
     }
 }
