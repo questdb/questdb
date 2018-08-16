@@ -181,6 +181,11 @@ public class CompactMap implements Map {
         return record;
     }
 
+    @Override
+    public MapRecord getRecord() {
+        return record;
+    }
+
     public long size() {
         return size;
     }

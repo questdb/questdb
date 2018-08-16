@@ -33,6 +33,8 @@ public interface Map extends Mutable, Closeable, Iterable<MapRecord> {
 
     MapRecord recordAt(long rowid);
 
+    MapRecord getRecord();
+
     long size();
 
     MapKey withKey();

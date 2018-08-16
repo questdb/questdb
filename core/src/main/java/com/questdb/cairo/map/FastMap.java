@@ -164,6 +164,11 @@ public class FastMap implements Map {
     }
 
     @Override
+    public MapRecord getRecord() {
+        return record;
+    }
+
+    @Override
     public long size() {
         return size;
     }

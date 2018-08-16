@@ -130,6 +130,11 @@ public class DateFormatUtils {
         return parseDateTime(seq, 0, seq.length());
     }
 
+    // YYYY-MM-DDThh:mm:ss.mmmnnn
+    public static long parseTimestamp(CharSequence seq) throws NumericException {
+        return parseTimestamp(seq, 0, seq.length());
+    }
+
     // YYYY-MM-DDThh:mm:ss.mmm
     public static long parseDateTimeQuiet(CharSequence seq) {
         try {
@@ -339,6 +344,10 @@ public class DateFormatUtils {
 
     private static long parseDateTime(CharSequence seq, int lo, int lim) throws NumericException {
         return UTC_FORMAT.parse(seq, lo, lim, defaultLocale);
+    }
+
+    private static long parseTimestamp(CharSequence seq, int lo, int lim) throws NumericException {
+        return USEC_UTC_FORMAT.parse(seq, lo, lim, defaultLocale);
     }
 
     static {

@@ -21,36 +21,11 @@
  *
  ******************************************************************************/
 
-package com.questdb.cairo.map;
+package com.questdb.griffin.engine.groupby;
 
-import com.questdb.std.ImmutableIterator;
-import com.questdb.std.Unsafe;
+public interface TimestampSampler {
 
-public final class FastMapCursor implements ImmutableIterator<MapRecord> {
-    private final FastMapRecord record;
-    private int count;
-    private long address;
+    long nextTimestamp(long timestamp);
 
-    FastMapCursor(FastMapRecord record) {
-        this.record = record;
-    }
-
-    @Override
-    public boolean hasNext() {
-        return count > 0;
-    }
-
-    @Override
-    public MapRecord next() {
-        long address = this.address;
-        this.address = address + Unsafe.getUnsafe().getInt(address);
-        count--;
-        return record.of(address);
-    }
-
-    FastMapCursor init(long address, int count) {
-        this.address = address;
-        this.count = count;
-        return this;
-    }
+    long round(long timestamp);
 }

@@ -21,36 +21,30 @@
  *
  ******************************************************************************/
 
-package com.questdb.cairo.map;
+package com.questdb.griffin.engine.groupby;
 
-import com.questdb.std.ImmutableIterator;
-import com.questdb.std.Unsafe;
+import com.questdb.std.microtime.Dates;
 
-public final class FastMapCursor implements ImmutableIterator<MapRecord> {
-    private final FastMapRecord record;
-    private int count;
-    private long address;
+class MonthTimestampSampler implements TimestampSampler {
+    private final int bucket;
 
-    FastMapCursor(FastMapRecord record) {
-        this.record = record;
+    MonthTimestampSampler(int bucket) {
+        this.bucket = bucket;
     }
 
     @Override
-    public boolean hasNext() {
-        return count > 0;
+    public long nextTimestamp(long timestamp) {
+        return Dates.addMonths(timestamp, bucket);
     }
 
     @Override
-    public MapRecord next() {
-        long address = this.address;
-        this.address = address + Unsafe.getUnsafe().getInt(address);
-        count--;
-        return record.of(address);
-    }
-
-    FastMapCursor init(long address, int count) {
-        this.address = address;
-        this.count = count;
-        return this;
+    public long round(long value) {
+        int y = Dates.getYear(value);
+        boolean l = Dates.isLeapYear(y);
+        int m = Dates.getMonthOfYear(value, y, l);
+        // target month
+        int n = ((m - 1) / bucket) * bucket + 1;
+        return Dates.yearMicros(y, l) +
+                Dates.monthOfYearMicros(n, l);
     }
 }
