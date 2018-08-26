@@ -96,6 +96,34 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testAsOfJoinColumnAliasNull() throws SqlException {
+        assertQuery(
+                "select-choose customerId, kk, count" +
+                        " from " +
+                        "(" +
+                        "(" +
+                        "select-group-by customerId, kk, count() count" +
+                        " from " +
+                        "(" +
+                        "select-choose c.customerId customerId, o.customerId kk" +
+                        " from " +
+                        "(customers c" +
+                        " asof join orders o" +
+                        " on o.customerId = c.customerId" +
+                        " post-join-where o.customerId = null" +
+                        ")" +
+                        ")" +
+                        ") _xQdbA1 limit 10" +
+                        ")",
+                "(select c.customerId, o.customerId kk, count() from customers c" +
+                        " asof join orders o on c.customerId = o.customerId) " +
+                        " where kk = null limit 10",
+                modelOf("customers").col("customerId", ColumnType.INT),
+                modelOf("orders").col("customerId", ColumnType.INT)
+        );
+    }
+
+    @Test
     public void testAsOfJoinOrder() throws Exception {
         assertQuery(
                 "select-choose" +
@@ -1241,6 +1269,37 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testFilter2() throws Exception {
+        assertQuery(
+                "select-virtual" +
+                        " customerId + 1 column," +
+                        " name," +
+                        " count" +
+                        " from" +
+                        " (" +
+                        "(select-group-by customerId," +
+                        " name," +
+                        " count() count" +
+                        " from" +
+                        " (" +
+                        "select-choose customerId," +
+                        " customerName name" +
+                        " from" +
+                        " (" +
+                        "customers" +
+                        " where" +
+                        " customerName = 'X'" +
+                        ")" +
+                        ")" +
+                        ") _xQdbA1" +
+                        ")",
+                "select customerId+1, name, count from (select customerId, customerName name, count() count from customers) where name = 'X'",
+                modelOf("customers").col("customerId", ColumnType.INT).col("customerName", ColumnType.STRING),
+                modelOf("orders").col("orderId", ColumnType.INT).col("customerId", ColumnType.INT)
+        );
+    }
+
+    @Test
     public void testFilterOnSubQuery() throws Exception {
         assertQuery(
                 "select-choose" +
@@ -1302,6 +1361,33 @@ public class SqlParserTest extends AbstractGriffinTest {
                         ")",
                 "customers join orders on customers.customerId = orders.customerId where customerName ~ 'WTBHZVPVZZ'",
                 modelOf("customers").col("customerId", ColumnType.INT).col("customerName", ColumnType.STRING),
+                modelOf("orders").col("customerId", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testInnerJoinColumnAliasNull() throws SqlException {
+        assertQuery(
+                "select-choose customerId, kk, count" +
+                        " from " +
+                        "(" +
+                        "(" +
+                        "select-group-by customerId, kk, count() count" +
+                        " from " +
+                        "(" +
+                        "select-choose c.customerId customerId, o.customerId kk" +
+                        " from " +
+                        "(customers c" +
+                        " join (orders o where customerId = null) o" +
+                        " on o.customerId = c.customerId" +
+                        ")" +
+                        ")" +
+                        ") _xQdbA1 limit 10" +
+                        ")",
+                "(select c.customerId, o.customerId kk, count() from customers c" +
+                        " join orders o on c.customerId = o.customerId) " +
+                        " where kk = null limit 10",
+                modelOf("customers").col("customerId", ColumnType.INT),
                 modelOf("orders").col("customerId", ColumnType.INT)
         );
     }
@@ -1579,19 +1665,6 @@ public class SqlParserTest extends AbstractGriffinTest {
                 modelOf("tab").col("x", ColumnType.INT),
                 modelOf("tab2").col("x", ColumnType.INT),
                 modelOf("tab3").col("x", ColumnType.INT)
-        );
-    }
-
-    @Test
-    public void testJoinColumnAlias() {
-        assertSyntaxError(
-                "(select c.customerId, o.customerId kk, count() from customers c" +
-                        " outer join orders o on c.customerId = o.customerId) " +
-                        " where kk = NaN limit 10",
-                123,
-                "Invalid column",
-                modelOf("customers").col("customerId", ColumnType.INT),
-                modelOf("orders").col("customerId", ColumnType.INT)
         );
     }
 
@@ -2913,6 +2986,89 @@ public class SqlParserTest extends AbstractGriffinTest {
                 "select a.x from a a outer join b on b.x = a.x",
                 modelOf("a").col("x", ColumnType.INT),
                 modelOf("b").col("x", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testOuterJoinColumnAlias() throws SqlException {
+        assertQuery(
+                "select-choose customerId, kk, count" +
+                        " from " +
+                        "(" +
+                        "(" +
+                        "select-group-by customerId, kk, count() count" +
+                        " from " +
+                        "(" +
+                        "select-choose c.customerId customerId, o.customerId kk" +
+                        " from " +
+                        "(customers c" +
+                        " outer join orders o" +
+                        " on o.customerId = c.customerId" +
+                        " post-join-where o.customerId = NaN" +
+                        ")" +
+                        ")" +
+                        ") _xQdbA1 limit 10" +
+                        ")",
+                "(select c.customerId, o.customerId kk, count() from customers c" +
+                        " outer join orders o on c.customerId = o.customerId) " +
+                        " where kk = NaN limit 10",
+                modelOf("customers").col("customerId", ColumnType.INT),
+                modelOf("orders").col("customerId", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testOuterJoinColumnAliasConst() throws SqlException {
+        assertQuery(
+                "select-choose customerId, kk, count" +
+                        " from " +
+                        "(" +
+                        "(" +
+                        "select-group-by customerId, kk, count() count" +
+                        " from " +
+                        "(" +
+                        "select-choose c.customerId customerId, o.customerId kk" +
+                        " from " +
+                        "(customers c" +
+                        " outer join (orders o where customerId = 10) o" +
+                        " on o.customerId = c.customerId" +
+                        ")" +
+                        ")" +
+                        ") _xQdbA1 limit 10" +
+                        ")",
+                "(select c.customerId, o.customerId kk, count() from customers c" +
+                        " outer join orders o on c.customerId = o.customerId) " +
+                        " where kk = 10 limit 10",
+                modelOf("customers").col("customerId", ColumnType.INT),
+                modelOf("orders").col("customerId", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testOuterJoinColumnAliasNull() throws SqlException {
+        assertQuery(
+                "select-choose customerId, kk, count" +
+                        " from " +
+                        "(" +
+                        "(" +
+                        "select-group-by customerId, kk, count() count" +
+                        " from " +
+                        "(" +
+                        "select-choose c.customerId customerId, o.customerId kk" +
+                        " from " +
+                        "(customers c" +
+                        " outer join orders o" +
+                        " on o.customerId = c.customerId" +
+                        " post-join-where o.customerId = null" +
+                        ")" +
+                        ")" +
+                        ") _xQdbA1 limit 10" +
+                        ")",
+                "(select c.customerId, o.customerId kk, count() from customers c" +
+                        " outer join orders o on c.customerId = o.customerId) " +
+                        " where kk = null limit 10",
+                modelOf("customers").col("customerId", ColumnType.INT),
+                modelOf("orders").col("customerId", ColumnType.INT)
         );
     }
 

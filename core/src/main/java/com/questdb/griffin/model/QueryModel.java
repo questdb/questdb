@@ -193,8 +193,12 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         this.aliasToColumnMap.clear();
         this.columnNames.clear();
         this.columnNameTypeMap.putAll(other.columnNameTypeMap);
-        this.aliasToColumnMap.putAll(other.aliasToColumnMap);
-        this.columnNames.addAll(other.columnNames);
+        ObjList<CharSequence> columnNames = other.columnNames;
+        this.columnNames.addAll(columnNames);
+        for (int i = 0, n = columnNames.size(); i < n; i++) {
+            final CharSequence name = columnNames.getQuick(i);
+            this.aliasToColumnMap.put(name, name);
+        }
     }
 
     public ExpressionNode getAlias() {

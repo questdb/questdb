@@ -215,12 +215,7 @@ class SqlOptimiser {
     }
 
     private void addWhereNode(QueryModel model, ExpressionNode node) {
-        if (model.getColumns().size() > 0) {
-            model.getNestedModel().setWhereClause(concatFilters(model.getNestedModel().getWhereClause(), node));
-        } else {
-            // otherwise assign directly to model
-            model.setWhereClause(concatFilters(model.getWhereClause(), node));
-        }
+        model.setWhereClause(concatFilters(model.getWhereClause(), node));
     }
 
     /**
@@ -1113,6 +1108,18 @@ class SqlOptimiser {
                 // they would have been rewritten and validated as join analysis stage
                 final int tableIndex = literalCollectorAIndexes.getQuick(0);
                 final QueryModel parent = model.getJoinModels().getQuick(tableIndex);
+
+                // Do not move where clauses that contain references
+                // to NULL constant inside outer join models.
+                // Outer join can produce nulls in slave model columns.
+                int joinType = parent.getJoinType();
+                if (tableIndex > 0
+                        && (joinType == QueryModel.JOIN_OUTER || joinType == QueryModel.JOIN_ASOF)
+                        && literalCollector.nullCount > 0) {
+                    model.setPostJoinWhereClause(concatFilters(model.getPostJoinWhereClause(), node));
+                    continue;
+                }
+
                 final QueryModel nested = parent.getNestedModel();
                 if (nested == null) {
                     // there is no nested model for this table, keep where clause element with this model
@@ -1135,10 +1142,10 @@ class SqlOptimiser {
                     // in sub-query
 
                     try {
-                        traversalAlgo.traverse(node, literalCheckingVisitor.of(nested.getColumnNameTypeMap()));
+                        traversalAlgo.traverse(node, literalCheckingVisitor.of(parent.getColumnNameTypeMap()));
 
                         // go ahead and rewrite expression
-                        traversalAlgo.traverse(node, literalRewritingVisitor.of(nested.getAliasToColumnMap()));
+                        traversalAlgo.traverse(node, literalRewritingVisitor.of(parent.getAliasToColumnMap()));
 
                         // whenever nested model has explicitly defined columns it must also
                         // have its owen nested model, where we assign new "where" clauses
