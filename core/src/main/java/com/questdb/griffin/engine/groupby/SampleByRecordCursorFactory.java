@@ -58,7 +58,7 @@ public class SampleByRecordCursorFactory extends AbstractRecordCursorFactory {
         super(metadata);
         this.map = MapFactory.createMap(configuration, keyTypes, valueTypes);
         this.base = base;
-        this.cursor = new SampleByRecordCursor(map, mapSink, functions, metadata, timestampSampler);
+        this.cursor = new SampleByRecordCursor(map, mapSink, functions, metadata, base.getMetadata().getTimestampIndex(), timestampSampler);
         this.functions = functions;
         this.mapSink = mapSink;
         this.functionCount = functions.size();
@@ -121,10 +121,11 @@ public class SampleByRecordCursorFactory extends AbstractRecordCursorFactory {
                 RecordSink keyMapSink,
                 ObjList<GroupByFunction> functions,
                 RecordMetadata metadata,
+                int timestampIndex, // index of timestamp column in base cursor
                 TimestampSampler timestampSampler) {
             this.map = map;
             this.functions = functions;
-            this.timestampIndex = metadata.getTimestampIndex();
+            this.timestampIndex = timestampIndex;
             this.keyMapSink = keyMapSink;
             this.timestampSampler = timestampSampler;
             this.record = new SampleByRecord(map.getRecord(), functions, metadata.getColumnCount());
@@ -204,6 +205,8 @@ public class SampleByRecordCursorFactory extends AbstractRecordCursorFactory {
 
                     // carry on if we still have data
                     if (base.hasNext()) {
+                        base.next();
+                        timestamp = timestampSampler.round(baseRecord.getTimestamp(timestampIndex));
                         continue;
                     }
 

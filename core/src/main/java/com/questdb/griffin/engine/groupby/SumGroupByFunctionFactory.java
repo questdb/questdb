@@ -21,41 +21,22 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin;
+package com.questdb.griffin.engine.groupby;
 
 import com.questdb.cairo.CairoConfiguration;
 import com.questdb.cairo.sql.Function;
+import com.questdb.griffin.FunctionFactory;
+import com.questdb.griffin.SqlException;
 import com.questdb.std.ObjList;
 
-public interface FunctionFactory {
+public class SumGroupByFunctionFactory implements FunctionFactory {
+    @Override
+    public String getSignature() {
+        return "sum(D)";
+    }
 
-    /**
-     * Function signature in a form of "name(type...)". Name is a literal that does not
-     * start with number and contains no control characters, which can be confused with
-     * SQL language punctuation. Control characters include but not limited to:
-     * ',', '(', ')', '*', '/', '%', '+', '-', '='.
-     * <p>
-     * Argument types are represented by single character from this table:
-     * <ul>
-     * <li>B = byte</li>
-     * <li>E = short</li>
-     * <li>I = int</li>
-     * <li>L = long</li>
-     * <li>F = float</li>
-     * <li>D = double</li>
-     * <li>S = string</li>
-     * <li>K = symbol</li>
-     * <li>T = boolean</li>
-     * <li>M = date</li>
-     * <li>N = timestamp</li>
-     * <li>U = binary</li>
-     * <li>V = variable argument list</li>
-     * <li>C = cursor</li>
-     * </ul>
-     *
-     * @return signature, for example "substr(SII)"
-     */
-    String getSignature();
-
-    Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) throws SqlException;
+    @Override
+    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) throws SqlException {
+        return new SumGroupByFunction(position);
+    }
 }

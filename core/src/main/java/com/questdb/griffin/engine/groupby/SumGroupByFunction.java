@@ -21,27 +21,29 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin;
+package com.questdb.griffin.engine.groupby;
 
-import org.junit.Ignore;
-import org.junit.Test;
+import com.questdb.cairo.map.MapValue;
+import com.questdb.cairo.sql.Record;
+import com.questdb.griffin.engine.functions.DoubleFunction;
 
-public class AggregationTest extends AbstractGriffinTest {
-    @Test
-    @Ignore
-    public void testSample() throws Exception {
-        assertQuery("",
-                "select sum(a) from x sample by 3h",
-                "create table x as " +
-                        "(" +
-                        "select * from" +
-                        " random_cursor" +
-                        "(20," +
-                        " 'a', rnd_double(0)*100," +
-                        " 'b', rnd_symbol(5,4,4,1)," +
-                        " 'k', timestamp_sequence(to_timestamp(0), 100000000000)" +
-                        ")" +
-                        ") timestamp(k) partition by DAY",
-                "k");
+public class SumGroupByFunction extends DoubleFunction implements GroupByFunction {
+    public SumGroupByFunction(int position) {
+        super(position);
+    }
+
+    @Override
+    public void computeFirst(MapValue mapValue) {
+
+    }
+
+    @Override
+    public void computeNext(MapValue mapValue) {
+
+    }
+
+    @Override
+    public double getDouble(Record rec) {
+        return 0;
     }
 }

@@ -1883,21 +1883,9 @@ class SqlOptimiser {
                 throw SqlException.$(sampleBy.position, "TIMESTAMP column is not defined");
             }
 
+            // move sample by to group by model
             groupByModel.setSampleBy(sampleBy);
-            groupByModel.setTimestamp(timestamp);
             baseModel.setSampleBy(null);
-            baseModel.setTimestamp(null);
-
-            createSelectColumn(
-                    timestamp.token,
-                    timestamp,
-                    baseModel,
-                    translatingModel,
-                    innerModel,
-                    groupByModel,
-                    analyticModel,
-                    outerModel
-            );
         }
 
         // create virtual columns from select list

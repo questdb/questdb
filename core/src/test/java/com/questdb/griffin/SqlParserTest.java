@@ -2958,7 +2958,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     @Test
     public void testOrderByWithSampleBy() throws SqlException {
         assertQuery(
-                "select-group-by t, a, sum(b) sum from ((tab order by t) _xQdbA1) timestamp (t) sample by 2m order by a",
+                "select-group-by a, sum(b) sum from ((tab order by t) _xQdbA1) timestamp (t) sample by 2m order by a",
                 "select a, sum(b) from (tab order by t) timestamp(t) sample by 2m order by a",
                 modelOf("tab")
                         .col("a", ColumnType.INT)
@@ -2970,7 +2970,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     @Test
     public void testOrderByWithSampleBy2() throws SqlException {
         assertQuery(
-                "select-group-by a, sum(b) sum from ((select-group-by t, a, sum(b) b from ((tab order by t) _xQdbA3) timestamp (t) sample by 10m) _xQdbA1) order by a",
+                "select-group-by a, sum(b) sum from ((select-group-by a, sum(b) b from ((tab order by t) _xQdbA3) timestamp (t) sample by 10m) _xQdbA1) order by a",
                 "select a, sum(b) from (select a,sum(b) b from (tab order by t) timestamp(t) sample by 10m order by t) order by a",
                 modelOf("tab")
                         .col("a", ColumnType.INT)
@@ -3075,7 +3075,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     @Test
     public void testSampleBy() throws Exception {
         assertQuery(
-                "select-group-by timestamp, x, avg(y) avg from (tab) timestamp (timestamp) sample by 2m",
+                "select-group-by x, avg(y) avg from (tab timestamp (timestamp)) sample by 2m",
                 "select x,avg(y) from tab sample by 2m",
                 modelOf("tab")
                         .col("x", ColumnType.INT)
@@ -3087,7 +3087,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     @Test
     public void testSampleByAlreadySelected() throws Exception {
         assertQuery(
-                "select-group-by x, x1, avg(y) avg from (select-choose x, x x1, y from (tab)) timestamp (x) sample by 2m",
+                "select-group-by x, avg(y) avg from (tab timestamp (x)) sample by 2m",
                 "select x,avg(y) from tab timestamp(x) sample by 2m",
                 modelOf("tab")
                         .col("x", ColumnType.TIMESTAMP)
@@ -3098,7 +3098,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     @Test
     public void testSampleByAltTimestamp() throws Exception {
         assertQuery(
-                "select-group-by t, x, avg(y) avg from (tab) timestamp (t) sample by 2m",
+                "select-group-by x, avg(y) avg from (tab timestamp (t)) sample by 2m",
                 "select x,avg(y) from tab timestamp(t) sample by 2m",
                 modelOf("tab")
                         .col("x", ColumnType.INT)
