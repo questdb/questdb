@@ -77,6 +77,8 @@ com.questdb.griffin.engine.functions.math.SubDoubleFunctionFactory
 # '*' operator
 com.questdb.griffin.engine.functions.math.MulFloatFunctionFactory
 com.questdb.griffin.engine.functions.math.MulDoubleFunctionFactory
+com.questdb.griffin.engine.functions.math.MulLongFunctionFactory
+com.questdb.griffin.engine.functions.math.MulIntFunctionFactory
 
 # 'to_char'
 com.questdb.griffin.engine.functions.str.ToCharDateFunctionFactory
