@@ -116,7 +116,6 @@ public class FastMapTest extends AbstractCairoTest {
                 MapValue value = key.createValue();
                 Assert.assertFalse(value.isNew());
 
-
                 Assert.assertEquals(rnd.nextByte(), value.getByte(0));
                 Assert.assertEquals(rnd.nextShort(), value.getShort(1));
                 Assert.assertEquals(rnd.nextInt(), value.getInt(2));

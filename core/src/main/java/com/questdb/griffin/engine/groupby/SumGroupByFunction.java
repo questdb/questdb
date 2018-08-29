@@ -23,27 +23,46 @@
 
 package com.questdb.griffin.engine.groupby;
 
+import com.questdb.cairo.ArrayColumnTypes;
+import com.questdb.cairo.ColumnType;
 import com.questdb.cairo.map.MapValue;
+import com.questdb.cairo.sql.Function;
 import com.questdb.cairo.sql.Record;
 import com.questdb.griffin.engine.functions.DoubleFunction;
+import org.jetbrains.annotations.NotNull;
 
 public class SumGroupByFunction extends DoubleFunction implements GroupByFunction {
-    public SumGroupByFunction(int position) {
+    private final Function value;
+    private int valueIndex;
+
+    public SumGroupByFunction(int position, @NotNull Function value) {
         super(position);
+        this.value = value;
     }
 
     @Override
-    public void computeFirst(MapValue mapValue) {
-
+    public void computeFirst(MapValue mapValue, Record record) {
+        mapValue.putDouble(valueIndex, value.getDouble(record));
     }
 
     @Override
-    public void computeNext(MapValue mapValue) {
+    public void computeNext(MapValue mapValue, Record record) {
+        mapValue.putDouble(valueIndex, mapValue.getDouble(valueIndex) + value.getDouble(record));
+    }
 
+    @Override
+    public void pushValueTypes(ArrayColumnTypes columnTypes) {
+        this.valueIndex = columnTypes.getColumnCount();
+        columnTypes.add(ColumnType.DOUBLE);
+    }
+
+    @Override
+    public void zero(MapValue value) {
+        value.putDouble(valueIndex, 0);
     }
 
     @Override
     public double getDouble(Record rec) {
-        return 0;
+        return rec.getDouble(valueIndex);
     }
 }

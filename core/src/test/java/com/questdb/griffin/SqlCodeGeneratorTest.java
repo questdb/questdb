@@ -152,6 +152,13 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testAmbiguousFunction() throws Exception {
+        assertQuery("",
+                "select 10*23499000000000 from long_sequence(1)",
+                null, null);
+    }
+
+    @Test
     public void testFilterOnInterval() throws Exception {
         assertQuery("a\tb\tk\n" +
                         "84.452581772111\tPEHN\t1970-01-01T03:36:40.000000Z\n" +

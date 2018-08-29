@@ -28,7 +28,6 @@ import com.questdb.cairo.sql.*;
 import com.questdb.griffin.engine.RecordComparatorCompiler;
 import com.questdb.griffin.engine.SortedLightRecordCursorFactory;
 import com.questdb.griffin.engine.functions.columns.SymbolColumn;
-import com.questdb.griffin.engine.groupby.GroupByFunction;
 import com.questdb.griffin.engine.groupby.SampleByRecordCursorFactory;
 import com.questdb.griffin.engine.groupby.TimestampSampler;
 import com.questdb.griffin.engine.groupby.TimestampSamplerFactory;
@@ -405,59 +404,15 @@ public class SqlCodeGenerator {
         final RecordCursorFactory factory = generateQuery(model.getNestedModel(), executionContext);
 
         try {
-            final int columnCount = model.getColumns().size();
-            final RecordMetadata metadata = factory.getMetadata();
-            final ObjList<GroupByFunction> functions = new ObjList<>(columnCount);
-            final GenericRecordMetadata groupByMetadata = new GenericRecordMetadata();
-
-            ArrayColumnTypes keyTypes = new ArrayColumnTypes();
-            ArrayColumnTypes valueTypes = new ArrayColumnTypes();
-            listColumnFilter.clear();
-
-            for (int i = 0; i < columnCount; i++) {
-                final QueryColumn column = model.getColumns().getQuick(i);
-                ExpressionNode node = column.getAst();
-
-                if (node.type == ExpressionNode.LITERAL) {
-                    // this is key
-                    int index = metadata.getColumnIndex(node.token);
-                    int type = metadata.getColumnType(index);
-                    listColumnFilter.add(index);
-                    keyTypes.add(type);
-                    groupByMetadata.add(new TableColumnMetadata(
-                            Chars.toString(column.getAlias()),
-                            type
-                    ));
-                } else {
-                    final Function function = functionParser.parseFunction(
-                            column.getAst(),
-                            metadata,
-                            executionContext
-                    );
-
-                    assert function instanceof GroupByFunction;
-
-                    GroupByFunction func = (GroupByFunction) function;
-                    int type = func.getType();
-                    functions.add(func);
-                    valueTypes.add(type);
-
-                    groupByMetadata.add(new TableColumnMetadata(
-                            Chars.toString(column.getAlias()),
-                            type
-                    ));
-                }
-            }
-
             return new SampleByRecordCursorFactory(
-                    groupByMetadata,
                     configuration,
-                    keyTypes,
-                    valueTypes,
                     factory,
-                    functions,
-                    RecordSinkFactory.getInstance(asm, keyTypes, listColumnFilter, false),
-                    timestampSampler);
+                    timestampSampler,
+                    model,
+                    listColumnFilter,
+                    functionParser,
+                    executionContext,
+                    asm);
         } catch (SqlException | CairoException e) {
             factory.close();
             throw e;
