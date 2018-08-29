@@ -503,7 +503,11 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
                     candidateSigVarArgConst = sigVarArgConst;
 
                     if (match != MATCH_EXACT_MATCH) {
-                        fuzzyMatchCount++;
+                        if (match == MATCH_FUZZY_MATCH) {
+                            fuzzyMatchCount++;
+                        } else if (match == MATCH_PARTIAL_MATCH) {
+                            fuzzyMatchCount = 0;
+                        }
                         bestMatch = match;
                     } else {
                         break;

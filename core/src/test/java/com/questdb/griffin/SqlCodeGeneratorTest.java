@@ -153,8 +153,9 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
     @Test
     public void testAmbiguousFunction() throws Exception {
-        assertQuery("",
-                "select 10*23499000000000 from long_sequence(1)",
+        assertQuery("column\n" +
+                        "234990000000000\n",
+                "select 23499000000000*10 from long_sequence(1)",
                 null, null);
     }
 

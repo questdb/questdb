@@ -50,7 +50,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         functions.add(new FunctionFactory() {
             @Override
             public String getSignature() {
-                return "+(BI)"; // byte,int
+                return "+(DD)"; // double,double
             }
 
             @Override
@@ -61,7 +61,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         functions.add(new FunctionFactory() {
             @Override
             public String getSignature() {
-                return "+(LE)"; // long,short
+                return "+(FF)"; // float,float
             }
 
             @Override
@@ -73,68 +73,6 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         metadata.add(new TableColumnMetadata("a", ColumnType.BYTE));
         metadata.add(new TableColumnMetadata("c", ColumnType.SHORT));
         assertFail(2, "ambiguous function call: +(BYTE,SHORT)", "a + c", metadata);
-    }
-
-    @Test
-    public void testAmbiguousFunctionInvocation2() {
-        functions.add(new FunctionFactory() {
-            @Override
-            public String getSignature() {
-                return "x(BIS)"; // byte,int,string
-            }
-
-            @Override
-            public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
-                return null;
-            }
-        });
-        functions.add(new FunctionFactory() {
-            @Override
-            public String getSignature() {
-                return "x(LES)"; // long,short,string
-            }
-
-            @Override
-            public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
-                return null;
-            }
-        });
-        final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        metadata.add(new TableColumnMetadata("a", ColumnType.BYTE));
-        metadata.add(new TableColumnMetadata("b", ColumnType.SHORT));
-        metadata.add(new TableColumnMetadata("c", ColumnType.STRING));
-        assertFail(0, "ambiguous function call: x(BYTE,SHORT,STRING)", "x(a,b,c)", metadata);
-    }
-
-    @Test
-    public void testAmbiguousFunctionInvocation3() {
-        functions.add(new FunctionFactory() {
-            @Override
-            public String getSignature() {
-                return "x(IIS)"; // int,int,string
-            }
-
-            @Override
-            public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
-                return null;
-            }
-        });
-        functions.add(new FunctionFactory() {
-            @Override
-            public String getSignature() {
-                return "x(LES)"; // long,short,string
-            }
-
-            @Override
-            public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
-                return null;
-            }
-        });
-        final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        metadata.add(new TableColumnMetadata("a", ColumnType.BYTE));
-        metadata.add(new TableColumnMetadata("b", ColumnType.SHORT));
-        metadata.add(new TableColumnMetadata("c", ColumnType.STRING));
-        assertFail(0, "ambiguous function call: x(DOUBLE,SHORT,STRING)", "x(NaN,b,c)", metadata);
     }
 
     @Test
