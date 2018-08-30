@@ -535,21 +535,36 @@ class SqlOptimiser {
             QueryModel analyticModel,
             QueryModel outerModel
     ) throws SqlException {
-        final CharSequence alias = createColumnAlias(columnName, translatingModel);
+        // add duplicate column names only to group-by model
+        // taking into account that column is pre-aliased, e.g.
+        // "col, col" will look like "col, col col1"
 
-        addColumnToTranslatingModel(
-                queryColumnPool.next().of(
-                        alias,
-                        columnAst
-                ), translatingModel, validatingModel);
+        CharSequenceObjHashMap<CharSequence> translatingAliasMap = translatingModel.getColumnToAliasMap();
+        int index = translatingAliasMap.keyIndex(columnAst.token);
+        if (index < 0) {
+            // column is already being referenced by translating model
+            final CharSequence translatedColumnName = translatingAliasMap.valueAt(index);
+            final CharSequence alias = createColumnAlias(columnName, groupByModel);
+            final QueryColumn translatedColumn = nextColumn(alias, translatedColumnName);
+            groupByModel.addColumn(translatedColumn);
+            analyticModel.addColumn(translatedColumn);
+            outerModel.addColumn(translatedColumn);
+        } else {
+            final CharSequence alias = createColumnAlias(columnName, translatingModel);
+            addColumnToTranslatingModel(
+                    queryColumnPool.next().of(
+                            alias,
+                            columnAst
+                    ), translatingModel, validatingModel);
 
-        final QueryColumn translatedColumn = nextColumn(alias);
+            final QueryColumn translatedColumn = nextColumn(alias);
 
-        // create column that references inner alias we just created
-        innerModel.addColumn(translatedColumn);
-        groupByModel.addColumn(translatedColumn);
-        analyticModel.addColumn(translatedColumn);
-        outerModel.addColumn(translatedColumn);
+            // create column that references inner alias we just created
+            innerModel.addColumn(translatedColumn);
+            groupByModel.addColumn(translatedColumn);
+            analyticModel.addColumn(translatedColumn);
+            outerModel.addColumn(translatedColumn);
+        }
     }
 
     private void createSelectColumnsForWildcard(

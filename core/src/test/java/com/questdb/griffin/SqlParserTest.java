@@ -3085,6 +3085,24 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testSampleByAliasedColumn() throws SqlException {
+        assertQuery(
+                "select-group-by b, sum(a) sum, k, k k1 from (x y timestamp (timestamp)) sample by 3h",
+                "select b, sum(a), k, k from x y sample by 3h",
+                modelOf("x").col("a", ColumnType.DOUBLE).col("b", ColumnType.SYMBOL).col("k", ColumnType.TIMESTAMP).timestamp()
+        );
+    }
+
+    @Test
+    public void testSampleByAliasedColumn2() throws SqlException {
+        assertQuery(
+                "select-group-by b, sum(a) sum, k1, k1 k from (select-choose b, a, k k1 from (x y timestamp (timestamp))) sample by 3h",
+                "select b, sum(a), k k1, k from x y sample by 3h",
+                modelOf("x").col("a", ColumnType.DOUBLE).col("b", ColumnType.SYMBOL).col("k", ColumnType.TIMESTAMP).timestamp()
+        );
+    }
+
+    @Test
     public void testSampleByAlreadySelected() throws Exception {
         assertQuery(
                 "select-group-by x, avg(y) avg from (tab timestamp (x)) sample by 2m",

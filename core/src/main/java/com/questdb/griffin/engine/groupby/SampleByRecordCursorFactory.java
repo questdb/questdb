@@ -110,6 +110,9 @@ public class SampleByRecordCursorFactory implements RecordCursorFactory {
         int valueColumnIndex = 0;
         final IntIntHashMap symbolTableIndex = new IntIntHashMap();
 
+        // when we have same column several times in a row
+        // we only add it once to map keys
+        int lastIndex = -1;
         for (int i = 0; i < columnCount; i++) {
             final QueryColumn column = model.getColumns().getQuick(i);
             final ExpressionNode node = column.getAst();
@@ -120,30 +123,35 @@ public class SampleByRecordCursorFactory implements RecordCursorFactory {
                 int index = metadata.getColumnIndex(node.token);
                 type = metadata.getColumnType(index);
                 if (index != timestampIndex) {
-                    listColumnFilter.add(index);
-                    keyTypes.add(type);
+                    if (lastIndex != index) {
+                        listColumnFilter.add(index);
+                        keyTypes.add(type);
+                        keyColumnIndex++;
+                        lastIndex = index;
+                    }
                     switch (type) {
                         case ColumnType.INT:
-                            recordFunctions.add(new IntColumn(node.position, keyColumnIndex));
+                            recordFunctions.add(new IntColumn(node.position, keyColumnIndex - 1));
                             break;
                         case ColumnType.SYMBOL:
-                            symbolTableIndex.put(keyColumnIndex, index);
-                            recordFunctions.add(new MapSymbolColumn(node.position, keyColumnIndex));
+                            symbolTableIndex.put(keyColumnIndex - 1, index);
+                            recordFunctions.add(new MapSymbolColumn(node.position, keyColumnIndex - 1));
                             break;
                         case ColumnType.TIMESTAMP:
-                            recordFunctions.add(new TimestampColumn(node.position, keyColumnIndex));
+                            recordFunctions.add(new TimestampColumn(node.position, keyColumnIndex - 1));
                             break;
                         default:
                             assert false;
                     }
 
-                    keyColumnIndex++;
                 } else {
                     // set this function to null, cursor will replace it with an instance class
                     // timestamp function returns value of class member which makes it impossible
                     // to create these columns in advance of cursor instantiation
                     recordFunctions.add(null);
-                    groupByMetadata.setTimestampIndex(i);
+                    if (groupByMetadata.getTimestampIndex() == -1) {
+                        groupByMetadata.setTimestampIndex(i);
+                    }
                     assert type == ColumnType.TIMESTAMP;
                 }
             } else {
