@@ -992,17 +992,20 @@ public class TableWriter implements Closeable {
         freeColumns(truncate);
         freeSymbolMapWriters();
         freeIndexers();
-        freeTxMem();
-        Misc.free(metaMem);
-        Misc.free(columnSizeMem);
-        Misc.free(ddlMem);
-        Misc.free(other);
         try {
-            releaseLock(!truncate | tx | performRecovery | distressed);
+            freeTxMem();
         } finally {
-            Misc.free(path);
-            freeTempMem();
-            LOG.info().$("closed '").utf8(name).$('\'').$();
+            Misc.free(metaMem);
+            Misc.free(columnSizeMem);
+            Misc.free(ddlMem);
+            Misc.free(other);
+            try {
+                releaseLock(!truncate | tx | performRecovery | distressed);
+            } finally {
+                Misc.free(path);
+                freeTempMem();
+                LOG.info().$("closed '").utf8(name).$('\'').$();
+            }
         }
     }
 
@@ -1049,8 +1052,11 @@ public class TableWriter implements Closeable {
 
     private void freeTxMem() {
         if (txMem != null) {
-            txMem.jumpTo(getTxEofOffset());
-            txMem.close();
+            try {
+                txMem.jumpTo(getTxEofOffset());
+            } finally {
+                txMem.close();
+            }
         }
     }
 

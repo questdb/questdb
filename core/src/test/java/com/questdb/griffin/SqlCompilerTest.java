@@ -1774,7 +1774,63 @@ public class SqlCompilerTest extends AbstractCairoTest {
 
                     @Override
                     public long mmap(long fd, long len, long offset, int mode) {
-                        if (mapCount++ > 10) {
+                        if (mapCount++ > 5) {
+                            return -1;
+                        }
+                        return super.mmap(fd, len, offset, mode);
+                    }
+                };
+
+                final DefaultCairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+                    @Override
+                    public FilesFacade getFilesFacade() {
+                        return ff;
+                    }
+                };
+
+                try (Engine engine = new Engine(configuration); SqlCompiler compiler = new SqlCompiler(engine, configuration)) {
+                    try {
+                        compiler.compile(sql, bindVariableService);
+                        Assert.fail();
+                    } catch (CairoException ignore) {
+                    }
+
+                    engine.releaseAllReaders();
+                    engine.releaseAllWriters();
+
+                    Assert.assertEquals(0, engine.getBusyReaderCount());
+                    Assert.assertEquals(0, engine.getBusyWriterCount());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testCreateAsSelectIOError2() throws Exception {
+
+        TestUtils.assertMemoryLeak(new TestUtils.LeakProneCode() {
+            @Override
+            public void run() throws Exception {
+                String sql = "create table y as (" +
+                        "select * from random_cursor(" +
+                        " 10000," + // record count
+                        " 'a', rnd_symbol(4,4,4,2)" +
+                        ")), cast(a as STRING)";
+
+                final FilesFacade ff = new FilesFacadeImpl() {
+                    int mapCount = 0;
+
+                    @Override
+                    public long getMapPageSize() {
+                        return getPageSize();
+                    }
+
+                    @Override
+                    public long mmap(long fd, long len, long offset, int mode) {
+                        // this is very specific failure
+                        // it fails to open table writer metadata
+                        // and then fails to close txMem
+                        if (mapCount++ > 2) {
                             return -1;
                         }
                         return super.mmap(fd, len, offset, mode);
