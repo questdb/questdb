@@ -29,7 +29,6 @@ import com.questdb.cairo.sql.SymbolTable;
 import com.questdb.griffin.engine.functions.SymbolFunction;
 import com.questdb.griffin.engine.functions.bind.BindVariableService;
 
-//todo: this can potentially be replaced with regular SymbolColumn and record doing symbol table lookup
 public class MapSymbolColumn extends SymbolFunction {
     private final int columnIndex;
     private SymbolTable symbolTable;
