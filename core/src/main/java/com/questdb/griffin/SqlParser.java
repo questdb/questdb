@@ -115,9 +115,13 @@ public final class SqlParser {
     }
 
     private ExpressionNode expectLiteral(GenericLexer lexer) throws SqlException {
-        CharSequence tok = tok(lexer, "literal");
+        return expectLiteral(lexer, "literal");
+    }
+
+    private ExpressionNode expectLiteral(GenericLexer lexer, String expectedList) throws SqlException {
+        CharSequence tok = tok(lexer, expectedList);
         int pos = lexer.lastTokenPosition();
-        validateLiteral(pos, tok);
+        validateLiteral(pos, tok, expectedList);
         return nextLiteral(GenericLexer.immutableOf(tok), pos);
     }
 
@@ -536,6 +540,13 @@ public final class SqlParser {
             expectTok(lexer, "by");
             model.setSampleBy(expectLiteral(lexer));
             tok = optTok(lexer);
+
+            if (tok != null && Chars.equals(tok, "fill")) {
+                expectTok(lexer, '(');
+                model.setSampleByFill(expectLiteral(lexer, "'none', 'prev', 'mid', 'null' or number"));
+                expectTok(lexer, ')');
+                tok = optTok(lexer);
+            }
         }
 
         // expect [order by]
@@ -1015,7 +1026,7 @@ public final class SqlParser {
         return tok;
     }
 
-    private void validateLiteral(int pos, CharSequence tok) throws SqlException {
+    private void validateLiteral(int pos, CharSequence tok, String expectedList) throws SqlException {
         switch (tok.charAt(0)) {
             case '(':
             case ')':
@@ -1023,7 +1034,7 @@ public final class SqlParser {
             case '`':
             case '"':
             case '\'':
-                throw SqlException.$(pos, "literal expected");
+                throw SqlException.position(pos).put(expectedList).put(" expected");
             default:
                 break;
 

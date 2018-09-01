@@ -28,7 +28,7 @@ import com.questdb.cairo.sql.*;
 import com.questdb.griffin.engine.RecordComparatorCompiler;
 import com.questdb.griffin.engine.SortedLightRecordCursorFactory;
 import com.questdb.griffin.engine.functions.columns.SymbolColumn;
-import com.questdb.griffin.engine.groupby.SampleByRecordCursorFactory;
+import com.questdb.griffin.engine.groupby.SampleByFillPrevRecordCursorFactory;
 import com.questdb.griffin.engine.groupby.TimestampSampler;
 import com.questdb.griffin.engine.groupby.TimestampSamplerFactory;
 import com.questdb.griffin.engine.table.*;
@@ -404,7 +404,7 @@ public class SqlCodeGenerator {
         final RecordCursorFactory factory = generateQuery(model.getNestedModel(), executionContext);
 
         try {
-            return new SampleByRecordCursorFactory(
+            return new SampleByFillPrevRecordCursorFactory(
                     configuration,
                     factory,
                     timestampSampler,

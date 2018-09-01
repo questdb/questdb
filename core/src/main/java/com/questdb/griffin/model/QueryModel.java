@@ -79,6 +79,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private ExpressionNode latestBy;
     private ExpressionNode timestamp;
     private ExpressionNode sampleBy;
+    private ExpressionNode sampleByFill;
     private JoinContext context;
     private ExpressionNode joinCriteria;
     private int joinType;
@@ -107,13 +108,13 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         columnNames.add(alias);
     }
 
+    public void addDependency(int index) {
+        dependencies.add(index);
+    }
+
     public void addExpressionModel(ExpressionNode node) {
         assert node.queryModel != null;
         expressionModels.add(node);
-    }
-
-    public void addDependency(int index) {
-        dependencies.add(index);
     }
 
     public void addField(CharSequence name) {
@@ -149,6 +150,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         joinModels.clear();
         joinModels.add(this);
         sampleBy = null;
+        sampleByFill = null;
         orderBy.clear();
         orderByDirection.clear();
         dependencies.clear();
@@ -365,6 +367,14 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public void setSampleBy(ExpressionNode sampleBy) {
         this.sampleBy = sampleBy;
+    }
+
+    public ExpressionNode getSampleByFill() {
+        return sampleByFill;
+    }
+
+    public void setSampleByFill(ExpressionNode sampleByFill) {
+        this.sampleByFill = sampleByFill;
     }
 
     public int getSelectModelType() {
@@ -664,6 +674,12 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         if (sampleBy != null) {
             sink.put(" sample by ");
             sampleBy.toSink(sink);
+
+            if (sampleByFill != null) {
+                sink.put(" fill(");
+                sink.put(sampleByFill);
+                sink.put(')');
+            }
         }
 
         if (orderBy.size() > 0) {

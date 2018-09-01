@@ -2980,6 +2980,54 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testDuplicateColumnGroupBy() throws SqlException {
+        assertQuery(
+                "select-group-by b, sum(a) sum, k1, k1 k from (select-choose b, a, k k1 from (x y timestamp (timestamp))) sample by 3h",
+                "select b, sum(a), k k1, k from x y sample by 3h",
+                modelOf("x").col("a", ColumnType.DOUBLE).col("b", ColumnType.SYMBOL).col("k", ColumnType.TIMESTAMP).timestamp()
+        );
+    }
+
+    @Test
+    public void testDuplicateColumnsBasicSelect() throws SqlException {
+        assertQuery(
+                "select-choose b, a, k1, k1 k from (select-choose b, a, k k1 from (x timestamp (timestamp)))",
+                "select b, a, k k1, k from x",
+                modelOf("x").col("a", ColumnType.DOUBLE).col("b", ColumnType.SYMBOL).col("k", ColumnType.TIMESTAMP).timestamp()
+        );
+    }
+
+    @Test
+    public void testDuplicateColumnsVirtualAndGroupBySelect() throws SqlException {
+        assertQuery(
+                "select-group-by sum(b + a) sum, column, k1, k1 k from (select-virtual a, b, a + b column, k1 from (select-choose a, b, k k1 from (x timestamp (timestamp)))) sample by 1m",
+                "select sum(b+a), a+b, k k1, k from x sample by 1m",
+                modelOf("x").col("a", ColumnType.DOUBLE).col("b", ColumnType.SYMBOL).col("k", ColumnType.TIMESTAMP).timestamp()
+        );
+    }
+
+    @Test
+    public void testDuplicateColumnsVirtualSelect() throws SqlException {
+        assertQuery(
+                "select-choose column, k1, k1 k from (select-virtual b + a column, k1 from (select-choose a, b, k k1 from (x timestamp (timestamp))))",
+                "select b+a, k k1, k from x",
+                modelOf("x").col("a", ColumnType.DOUBLE).col("b", ColumnType.SYMBOL).col("k", ColumnType.TIMESTAMP).timestamp()
+        );
+    }
+
+    @Test
+    public void testSampleByFillMin() throws SqlException {
+        assertQuery(
+                "select-group-by a, sum(b) b from (tab timestamp (t)) sample by 10m fill(mid)",
+                "select a,sum(b) b from tab timestamp(t) sample by 10m fill(mid)",
+                modelOf("tab")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.INT)
+                        .col("t", ColumnType.TIMESTAMP)
+        );
+    }
+
+    @Test
     public void testOuterJoin() throws Exception {
         assertQuery(
                 "select-choose a.x x from (a a outer join b on b.x = a.x)",
@@ -3094,11 +3142,53 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testSampleByAliasedColumn2() throws SqlException {
+    public void testSampleByFillMissingCloseBrace() {
+        assertSyntaxError(
+                "select a,sum(b) b from tab timestamp(t) sample by 10m fill (21231.2344",
+                70,
+                "')' expected",
+                modelOf("tab")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.INT)
+                        .col("t", ColumnType.TIMESTAMP)
+        );
+    }
+
+    @Test
+    public void testSampleByFillMissingOpenBrace() {
+        assertSyntaxError(
+                "select a,sum(b) b from tab timestamp(t) sample by 10m fill 21231.2344",
+                59,
+                "'(' expected",
+                modelOf("tab")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.INT)
+                        .col("t", ColumnType.TIMESTAMP)
+        );
+    }
+
+    @Test
+    public void testSampleByFillMissingValue() {
+        assertSyntaxError(
+                "select a,sum(b) b from tab timestamp(t) sample by 10m fill ()",
+                60,
+                "'none', 'prev', 'mid', 'null' or number expected",
+                modelOf("tab")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.INT)
+                        .col("t", ColumnType.TIMESTAMP)
+        );
+    }
+
+    @Test
+    public void testSampleByFillValue() throws SqlException {
         assertQuery(
-                "select-group-by b, sum(a) sum, k1, k1 k from (select-choose b, a, k k1 from (x y timestamp (timestamp))) sample by 3h",
-                "select b, sum(a), k k1, k from x y sample by 3h",
-                modelOf("x").col("a", ColumnType.DOUBLE).col("b", ColumnType.SYMBOL).col("k", ColumnType.TIMESTAMP).timestamp()
+                "select-group-by a, sum(b) b from (tab timestamp (t)) sample by 10m fill(21231.2344)",
+                "select a,sum(b) b from tab timestamp(t) sample by 10m fill(21231.2344)",
+                modelOf("tab")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.INT)
+                        .col("t", ColumnType.TIMESTAMP)
         );
     }
 

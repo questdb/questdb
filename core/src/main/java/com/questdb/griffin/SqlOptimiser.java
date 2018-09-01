@@ -1900,7 +1900,9 @@ class SqlOptimiser {
 
             // move sample by to group by model
             groupByModel.setSampleBy(sampleBy);
+            groupByModel.setSampleByFill(baseModel.getSampleByFill());
             baseModel.setSampleBy(null);
+            baseModel.setSampleByFill(null);
         }
 
         // create virtual columns from select list
@@ -2034,6 +2036,13 @@ class SqlOptimiser {
                 outerModel.setNestedModel(root);
                 root = outerModel;
             }
+        }
+
+        if (root != outerModel && root.getColumns().size() < outerModel.getColumns().size()) {
+            outerModel.setNestedModel(root);
+            // in this case outer model should be of "choose" type
+            outerModel.setSelectModelType(QueryModel.SELECT_MODEL_CHOOSE);
+            root = outerModel;
         }
 
         if (!useGroupByModel && groupByModel.getSampleBy() != null) {
