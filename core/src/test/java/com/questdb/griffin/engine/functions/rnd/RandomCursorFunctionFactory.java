@@ -28,6 +28,7 @@ import com.questdb.cairo.ColumnType;
 import com.questdb.cairo.GenericRecordMetadata;
 import com.questdb.cairo.TableColumnMetadata;
 import com.questdb.cairo.sql.Function;
+import com.questdb.cairo.sql.VirtualRecord;
 import com.questdb.griffin.FunctionFactory;
 import com.questdb.griffin.SqlException;
 import com.questdb.griffin.engine.functions.CursorFunction;
@@ -86,7 +87,7 @@ public class RandomCursorFunctionFactory implements FunctionFactory {
             functions.add(rndFunc);
         }
 
-        final RandomRecord record = new RandomRecord(functions);
+        final VirtualRecord record = new VirtualRecord(functions);
         return new CursorFunction(position,
                 new GenericRecordCursorFactory(metadata, new RandomRecordCursor(recordCount, record), false)
         );

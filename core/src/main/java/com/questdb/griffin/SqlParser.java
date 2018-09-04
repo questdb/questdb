@@ -543,8 +543,15 @@ public final class SqlParser {
 
             if (tok != null && Chars.equals(tok, "fill")) {
                 expectTok(lexer, '(');
-                model.setSampleByFill(expectLiteral(lexer, "'none', 'prev', 'mid', 'null' or number"));
-                expectTok(lexer, ')');
+                do {
+                    final ExpressionNode fillNode = expectLiteral(lexer, "'none', 'prev', 'mid', 'null' or number");
+                    model.addSampleByFill(fillNode);
+                    tok = tok(lexer, "',' or ')'");
+                    if (Chars.equals(tok, ')')) {
+                        break;
+                    }
+                    expectTok(tok, lexer.lastTokenPosition(), ',');
+                } while (true);
                 tok = optTok(lexer);
             }
         }
@@ -778,6 +785,15 @@ public final class SqlParser {
                     throw SqlException.$(pos, "'*' expected");
                 }
             } else {
+                // cut off some obvious errors
+                if (Chars.equals(tok, "from")) {
+                    throw SqlException.$(lexer.getPosition(), "column name expected");
+                }
+
+                if (Chars.equals(tok, "select")) {
+                    throw SqlException.$(lexer.getPosition(), "reserved name");
+                }
+
                 lexer.unparse();
                 expr = expr(lexer, model);
 
@@ -1019,9 +1035,10 @@ public final class SqlParser {
     }
 
     private CharSequence tok(GenericLexer lexer, String expectedList) throws SqlException {
+        final int pos = lexer.getPosition();
         CharSequence tok = optTok(lexer);
         if (tok == null) {
-            throw SqlException.position(lexer.lastTokenPosition()).put(expectedList).put(" expected");
+            throw SqlException.position(pos).put(expectedList).put(" expected");
         }
         return tok;
     }

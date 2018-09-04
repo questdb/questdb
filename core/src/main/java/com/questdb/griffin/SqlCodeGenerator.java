@@ -28,9 +28,7 @@ import com.questdb.cairo.sql.*;
 import com.questdb.griffin.engine.RecordComparatorCompiler;
 import com.questdb.griffin.engine.SortedLightRecordCursorFactory;
 import com.questdb.griffin.engine.functions.columns.SymbolColumn;
-import com.questdb.griffin.engine.groupby.SampleByFillPrevRecordCursorFactory;
-import com.questdb.griffin.engine.groupby.TimestampSampler;
-import com.questdb.griffin.engine.groupby.TimestampSamplerFactory;
+import com.questdb.griffin.engine.groupby.*;
 import com.questdb.griffin.engine.table.*;
 import com.questdb.griffin.model.ExpressionNode;
 import com.questdb.griffin.model.IntrinsicModel;
@@ -398,21 +396,69 @@ public class SqlCodeGenerator {
         // fail fast if we cannot create timestamp sampler
 
         final ExpressionNode sampleByNode = model.getSampleBy();
+        final ObjList<ExpressionNode> sampleByFill = model.getSampleByFill();
         final TimestampSampler timestampSampler = TimestampSamplerFactory.getInstance(sampleByNode.token, sampleByNode.position);
 
         assert model.getNestedModel() != null;
         final RecordCursorFactory factory = generateQuery(model.getNestedModel(), executionContext);
+        final int fillCount = sampleByFill.size();
 
         try {
-            return new SampleByFillPrevRecordCursorFactory(
-                    configuration,
-                    factory,
-                    timestampSampler,
-                    model,
-                    listColumnFilter,
-                    functionParser,
-                    executionContext,
-                    asm);
+
+            if (fillCount == 0 || fillCount == 1 && Chars.equals(sampleByFill.getQuick(0).token, "none")) {
+                return new SampleByFillNoneRecordCursorFactory(
+                        configuration,
+                        factory,
+                        timestampSampler,
+                        model,
+                        listColumnFilter,
+                        functionParser,
+                        executionContext,
+                        asm);
+            }
+
+
+            if (fillCount == 1 && Chars.equals(sampleByFill.getQuick(0).token, "prev")) {
+                return new SampleByFillPrevRecordCursorFactory(
+                        configuration,
+                        factory,
+                        timestampSampler,
+                        model,
+                        listColumnFilter,
+                        functionParser,
+                        executionContext,
+                        asm);
+            }
+
+            if (fillCount == 1 && Chars.equals(sampleByFill.getQuick(0).token, "null")) {
+                return new SampleByFillNullRecordCursorFactory(
+                        configuration,
+                        factory,
+                        timestampSampler,
+                        model,
+                        listColumnFilter,
+                        functionParser,
+                        executionContext,
+                        asm);
+            }
+
+            if (fillCount > 0) {
+                return new SampleByFillValueRecordCursorFactory(
+                        configuration,
+                        factory,
+                        timestampSampler,
+                        model,
+                        listColumnFilter,
+                        functionParser,
+                        executionContext,
+                        asm,
+                        sampleByFill);
+            }
+
+            assert false;
+
+            return null;
+
         } catch (SqlException | CairoException e) {
             factory.close();
             throw e;

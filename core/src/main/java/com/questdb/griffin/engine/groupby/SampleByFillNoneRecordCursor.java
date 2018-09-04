@@ -35,7 +35,7 @@ import com.questdb.std.ObjList;
 
 import java.util.Iterator;
 
-class SampleByFillPrevRecordCursor implements RecordCursor {
+class SampleByFillNoneRecordCursor implements RecordCursor {
     private final Map map;
     private final RecordSink keyMapSink;
     private final ObjList<GroupByFunction> groupByFunctions;
@@ -49,7 +49,7 @@ class SampleByFillPrevRecordCursor implements RecordCursor {
     private long lastTimestamp;
     private long nextTimestamp;
 
-    public SampleByFillPrevRecordCursor(
+    public SampleByFillNoneRecordCursor(
             Map map,
             RecordSink keyMapSink,
             ObjList<GroupByFunction> groupByFunctions,
@@ -112,9 +112,7 @@ class SampleByFillPrevRecordCursor implements RecordCursor {
     @Override
     public boolean hasNext() {
         //
-        if (mapIterator.hasNext()) {
-            // scroll down the map iterator
-            // next() will return record that uses current map position
+        if (mapHasNext()) {
             return true;
         }
 
@@ -126,17 +124,8 @@ class SampleByFillPrevRecordCursor implements RecordCursor {
         // before we build another one we need to check
         // for timestamp gaps
 
-        // what is the next timestamp we are expecting?
-        long nextTimestamp = timestampSampler.nextTimestamp(lastTimestamp);
-
-        // is data timestamp ahead of next expected timestamp?
-        if (this.nextTimestamp > nextTimestamp) {
-            this.lastTimestamp = nextTimestamp;
-            // reset iterator on map and stream contents
-            return map.iterator().hasNext();
-        }
-
         this.lastTimestamp = this.nextTimestamp;
+        this.map.clear();
 
         // looks like we need to populate key map
 
@@ -146,11 +135,9 @@ class SampleByFillPrevRecordCursor implements RecordCursor {
             if (lastTimestamp == timestamp) {
                 final MapKey key = map.withKey();
                 keyMapSink.copy(baseRecord, key);
-                final MapValue value = key.findValue();
-                assert value != null;
+                final MapValue value = key.createValue();
 
-                if (value.getLong(0) != timestamp) {
-                    value.putLong(0, timestamp);
+                if (value.isNew()) {
                     for (int i = 0; i < n; i++) {
                         groupByFunctions.getQuick(i).computeFirst(value, baseRecord);
                     }
@@ -169,22 +156,40 @@ class SampleByFillPrevRecordCursor implements RecordCursor {
                 // we ran out of data, make sure hasNext() returns false at the next
                 // opportunity, after we stream map that is.
                 baseRecord = null;
-            } else {
-                // timestamp changed, make sure we keep the value of 'lastTimestamp'
-                // unchanged. Timestamp columns uses this variable
-                // When map is exhausted we would assign 'nextTimestamp' to 'lastTimestamp'
-                // and build another map
-                this.nextTimestamp = timestamp;
+                // reset map iterator
+                map.iterator();
+
+                // we do not have any more data, let map take over
+                return mapHasNext();
             }
 
-            return this.map.iterator().hasNext();
+            // timestamp changed, make sure we keep the value of 'lastTimestamp'
+            // unchanged. Timestamp columns uses this variable
+            // When map is exhausted we would assign 'nextTimestamp' to 'lastTimestamp'
+            // and build another map
+            this.nextTimestamp = timestamp;
+            this.map.iterator();
+            if (mapHasNext()) {
+                return true;
+            }
+            // we do not need to clear map, it is empty anyway
+            lastTimestamp = nextTimestamp;
         }
     }
 
     @Override
     public Record next() {
-        mapIterator.next();
         return record;
+    }
+
+    private boolean mapHasNext() {
+        if (mapIterator.hasNext()) {
+            // scroll down the map iterator
+            // next() will return record that uses current map position
+            mapIterator.next();
+            return true;
+        }
+        return false;
     }
 
     void of(RecordCursor base) {

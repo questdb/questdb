@@ -21,77 +21,122 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.engine.functions.rnd;
+package com.questdb.cairo.sql;
 
-import com.questdb.cairo.sql.Function;
-import com.questdb.cairo.sql.Record;
 import com.questdb.std.BinarySequence;
 import com.questdb.std.ObjList;
+import com.questdb.std.str.CharSink;
 
-public class RandomRecord implements Record {
-    final ObjList<Function> functions;
+public class VirtualRecord implements Record {
+    private final ObjList<Function> functions;
+    private Record base;
 
-    public RandomRecord(ObjList<Function> functions) {
+    public VirtualRecord(ObjList<Function> functions) {
         this.functions = functions;
+    }
+
+    public Record getBaseRecord() {
+        return base;
     }
 
     @Override
     public BinarySequence getBin(int col) {
-        return functions.getQuick(col).getBin(null);
+        return getFunction(col).getBin(base);
+    }
+
+    @Override
+    public long getBinLen(int col) {
+        BinarySequence sequence = getBin(col);
+        if (sequence == null) {
+            return -1L;
+        }
+        return sequence.length();
     }
 
     @Override
     public boolean getBool(int col) {
-        return functions.getQuick(col).getBool(null);
+        return getFunction(col).getBool(base);
     }
 
     @Override
     public byte getByte(int col) {
-        return functions.getQuick(col).getByte(null);
+        return getFunction(col).getByte(base);
     }
 
     @Override
     public long getDate(int col) {
-        return functions.getQuick(col).getDate(null);
+        return getFunction(col).getDate(base);
     }
 
     @Override
     public double getDouble(int col) {
-        return functions.getQuick(col).getDouble(null);
+        return getFunction(col).getDouble(base);
     }
 
     @Override
     public float getFloat(int col) {
-        return functions.getQuick(col).getFloat(null);
+        return getFunction(col).getFloat(base);
     }
 
     @Override
     public CharSequence getStr(int col) {
-        return functions.getQuick(col).getStr(null);
+        return getFunction(col).getStr(base);
+    }
+
+    @Override
+    public void getStr(int col, CharSink sink) {
+        getFunction(col).getStr(base, sink);
     }
 
     @Override
     public int getInt(int col) {
-        return functions.getQuick(col).getInt(null);
+        return getFunction(col).getInt(base);
     }
 
     @Override
     public long getLong(int col) {
-        return functions.getQuick(col).getLong(null);
+        return getFunction(col).getLong(base);
+    }
+
+    @Override
+    public long getRowId() {
+        return base.getRowId();
     }
 
     @Override
     public short getShort(int col) {
-        return functions.getQuick(col).getShort(null);
+        return getFunction(col).getShort(base);
+    }
+
+    @Override
+    public CharSequence getStrB(int col) {
+        return getFunction(col).getStrB(base);
+    }
+
+    @Override
+    public int getStrLen(int col) {
+        return getFunction(col).getStrLen(base);
     }
 
     @Override
     public CharSequence getSym(int col) {
-        return functions.getQuick(col).getSymbol(null);
+        return getFunction(col).getSymbol(base);
     }
 
     @Override
     public long getTimestamp(int col) {
-        return functions.getQuick(col).getTimestamp(null);
+        return getFunction(col).getTimestamp(base);
+    }
+
+    public ObjList<Function> getFunctions() {
+        return functions;
+    }
+
+    public void of(Record record) {
+        this.base = record;
+    }
+
+    private Function getFunction(int columnIndex) {
+        return functions.getQuick(columnIndex);
     }
 }

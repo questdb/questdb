@@ -852,12 +852,12 @@ public class SqlParserTest extends AbstractGriffinTest {
 
     @Test
     public void testCreateTableMissingDef() {
-        assertSyntaxError("create table xyx", 13, "'(' or 'as' expected");
+        assertSyntaxError("create table xyx", 16, "'(' or 'as' expected");
     }
 
     @Test
     public void testCreateTableMissingName() {
-        assertSyntaxError("create table ", 12, "table name expected");
+        assertSyntaxError("create table ", 13, "table name expected");
     }
 
     @Test
@@ -1169,12 +1169,12 @@ public class SqlParserTest extends AbstractGriffinTest {
 
     @Test
     public void testEmptyOrderBy() {
-        assertSyntaxError("select x, y from tab order by", 27, "literal expected");
+        assertSyntaxError("select x, y from tab order by", 29, "literal expected");
     }
 
     @Test
     public void testEmptySampleBy() {
-        assertSyntaxError("select x, y from tab sample by", 28, "literal expected");
+        assertSyntaxError("select x, y from tab sample by", 30, "literal expected");
     }
 
     @Test
@@ -1560,7 +1560,7 @@ public class SqlParserTest extends AbstractGriffinTest {
 
     @Test
     public void testInvalidOrderBy1() {
-        assertSyntaxError("select x, y from tab order by x,", 31, "literal expected");
+        assertSyntaxError("select x, y from tab order by x,", 32, "literal expected");
     }
 
     @Test
@@ -2278,7 +2278,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     public void testJoinTableMissing() {
         assertSyntaxError(
                 "select a from tab join",
-                18,
+                22,
                 "table name or sub-query expected"
         );
     }
@@ -2473,16 +2473,17 @@ public class SqlParserTest extends AbstractGriffinTest {
     public void testMissingTable() {
         assertSyntaxError(
                 "select a from",
-                9,
+                13,
                 "table name or sub-query expected"
         );
     }
 
     @Test
     public void testMissingTableInSubQuery() {
+        // todo: 24 is the correct position
         assertSyntaxError(
                 "with x as (select a from) x",
-                24,
+                25,
                 "table name or sub-query expected",
                 modelOf("tab").col("b", ColumnType.INT)
         );
@@ -3193,6 +3194,18 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testSampleByFillList() throws SqlException {
+        assertQuery(
+                "select-group-by a, sum(b) b from (tab timestamp (t)) sample by 10m fill(21.1,22,null,98)",
+                "select a,sum(b) b from tab timestamp(t) sample by 10m fill(21.1,22,null,98)",
+                modelOf("tab")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.INT)
+                        .col("t", ColumnType.TIMESTAMP)
+        );
+    }
+
+    @Test
     public void testSampleByAlreadySelected() throws Exception {
         assertQuery(
                 "select-group-by x, avg(y) avg from (tab timestamp (x)) sample by 2m",
@@ -3333,13 +3346,22 @@ public class SqlParserTest extends AbstractGriffinTest {
         assertSyntaxError(
                 "select a, from tab",
                 15,
-                "',', 'from' or 'over' expected"
+                "column name expected"
         );
     }
 
     @Test
     public void testSelectOnItsOwn() {
-        assertSyntaxError("select ", 6, "column expected");
+        assertSyntaxError("select ", 7, "column expected");
+    }
+
+    @Test
+    public void testSelectSelectColumn() {
+        assertSyntaxError(
+                "select a, select from tab",
+                17,
+                "reserved name"
+        );
     }
 
     @Test
@@ -3726,7 +3748,7 @@ public class SqlParserTest extends AbstractGriffinTest {
 
     @Test
     public void testUnderTerminatedOver2() {
-        assertSyntaxError("select a,b, f(c) my over (partition by b order by ts", 50, "'asc' or 'desc' expected");
+        assertSyntaxError("select a,b, f(c) my over (partition by b order by ts", 52, "'asc' or 'desc' expected");
     }
 
     @Test

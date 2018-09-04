@@ -37,6 +37,10 @@ import com.questdb.griffin.SqlException;
 import com.questdb.griffin.SqlExecutionContext;
 import com.questdb.griffin.engine.functions.bind.BindVariableService;
 import com.questdb.griffin.engine.functions.columns.*;
+import com.questdb.griffin.engine.functions.constants.DoubleConstant;
+import com.questdb.griffin.engine.functions.constants.FloatConstant;
+import com.questdb.griffin.engine.functions.constants.IntConstant;
+import com.questdb.griffin.engine.functions.constants.LongConstant;
 import com.questdb.griffin.engine.table.EmptyTableRecordCursor;
 import com.questdb.griffin.model.ExpressionNode;
 import com.questdb.griffin.model.QueryColumn;
@@ -44,17 +48,17 @@ import com.questdb.griffin.model.QueryModel;
 import com.questdb.std.*;
 import org.jetbrains.annotations.NotNull;
 
-public class SampleByFillPrevRecordCursorFactory implements RecordCursorFactory {
+public class SampleByFillNullRecordCursorFactory implements RecordCursorFactory {
 
     private final Map map;
     private final RecordCursorFactory base;
-    private final SampleByFillPrevRecordCursor cursor;
+    private final SampleByFillNullRecordCursor cursor;
     private final ObjList<Function> recordFunctions;
     private final ObjList<GroupByFunction> groupByFunctions;
     private final RecordSink mapSink;
     private final RecordMetadata metadata;
 
-    public SampleByFillPrevRecordCursorFactory(
+    public SampleByFillNullRecordCursorFactory(
             CairoConfiguration configuration,
             RecordCursorFactory base,
             @NotNull TimestampSampler timestampSampler,
@@ -70,6 +74,7 @@ public class SampleByFillPrevRecordCursorFactory implements RecordCursorFactory 
         assert timestampIndex != -1;
         final ObjList<GroupByFunction> groupByFunctions = new ObjList<>(columnCount);
         final ObjList<Function> recordFunctions = new ObjList<>(columnCount);
+        final ObjList<Function> placeholderFunctions = new ObjList<>(columnCount);
         final GenericRecordMetadata groupByMetadata = new GenericRecordMetadata();
 
         // transient ?
@@ -132,53 +137,56 @@ public class SampleByFillPrevRecordCursorFactory implements RecordCursorFactory 
                         lastIndex = index;
                     }
 
+                    final Function fun;
                     switch (type) {
                         case ColumnType.BOOLEAN:
-                            recordFunctions.add(new BooleanColumn(node.position, keyColumnIndex - 1));
+                            fun = new BooleanColumn(node.position, keyColumnIndex - 1);
                             break;
                         case ColumnType.BYTE:
-                            recordFunctions.add(new ByteColumn(node.position, keyColumnIndex - 1));
+                            fun = new ByteColumn(node.position, keyColumnIndex - 1);
                             break;
                         case ColumnType.SHORT:
-                            recordFunctions.add(new ShortColumn(node.position, keyColumnIndex - 1));
+                            fun = new ShortColumn(node.position, keyColumnIndex - 1);
                             break;
                         case ColumnType.INT:
-                            recordFunctions.add(new IntColumn(node.position, keyColumnIndex - 1));
+                            fun = new IntColumn(node.position, keyColumnIndex - 1);
                             break;
                         case ColumnType.LONG:
-                            recordFunctions.add(new LongColumn(node.position, keyColumnIndex - 1));
+                            fun = new LongColumn(node.position, keyColumnIndex - 1);
                             break;
                         case ColumnType.FLOAT:
-                            recordFunctions.add(new FloatColumn(node.position, keyColumnIndex - 1));
+                            fun = new FloatColumn(node.position, keyColumnIndex - 1);
                             break;
                         case ColumnType.DOUBLE:
-                            recordFunctions.add(new DoubleColumn(node.position, keyColumnIndex - 1));
+                            fun = new DoubleColumn(node.position, keyColumnIndex - 1);
                             break;
                         case ColumnType.STRING:
-                            recordFunctions.add(new StrColumn(node.position, keyColumnIndex - 1));
+                            fun = new StrColumn(node.position, keyColumnIndex - 1);
                             break;
                         case ColumnType.SYMBOL:
                             symbolTableIndex.put(keyColumnIndex - 1, index);
-                            recordFunctions.add(new MapSymbolColumn(node.position, keyColumnIndex - 1));
+                            fun = new MapSymbolColumn(node.position, keyColumnIndex - 1);
                             break;
                         case ColumnType.DATE:
-                            recordFunctions.add(new DateColumn(node.position, keyColumnIndex - 1));
+                            fun = new DateColumn(node.position, keyColumnIndex - 1);
                             break;
                         case ColumnType.TIMESTAMP:
-                            recordFunctions.add(new TimestampColumn(node.position, keyColumnIndex - 1));
-                            break;
-                        case ColumnType.BINARY:
-                            recordFunctions.add(new BinColumn(node.position, keyColumnIndex - 1));
+                            fun = new TimestampColumn(node.position, keyColumnIndex - 1);
                             break;
                         default:
-                            assert false;
+                            fun = new BinColumn(node.position, keyColumnIndex - 1);
+                            break;
                     }
+
+                    recordFunctions.add(fun);
+                    placeholderFunctions.add(fun);
 
                 } else {
                     // set this function to null, cursor will replace it with an instance class
                     // timestamp function returns value of class member which makes it impossible
                     // to create these columns in advance of cursor instantiation
                     recordFunctions.add(null);
+                    placeholderFunctions.add(null);
                     if (groupByMetadata.getTimestampIndex() == -1) {
                         groupByMetadata.setTimestampIndex(i);
                     }
@@ -190,6 +198,22 @@ public class SampleByFillPrevRecordCursorFactory implements RecordCursorFactory 
                 final GroupByFunction groupByFunction = groupByFunctions.getQuick(valueColumnIndex++);
                 recordFunctions.add(groupByFunction);
                 type = groupByFunction.getType();
+                switch (type) {
+                    case ColumnType.INT:
+                        placeholderFunctions.add(new IntConstant(groupByFunction.getPosition(), Numbers.INT_NaN));
+                        break;
+                    case ColumnType.LONG:
+                        placeholderFunctions.add(new LongConstant(groupByFunction.getPosition(), Numbers.LONG_NaN));
+                        break;
+                    case ColumnType.FLOAT:
+                        placeholderFunctions.add(new FloatConstant(groupByFunction.getPosition(), Float.NaN));
+                        break;
+                    case ColumnType.DOUBLE:
+                        placeholderFunctions.add(new DoubleConstant(groupByFunction.getPosition(), Double.NaN));
+                        break;
+                    default:
+                        assert false;
+                }
             }
 
             // and finish with populating metadata for this factory
@@ -204,11 +228,12 @@ public class SampleByFillPrevRecordCursorFactory implements RecordCursorFactory 
         // this is the map itself, which we must not forget to free when factory closes
         this.map = MapFactory.createMap(configuration, keyTypes, valueTypes);
         this.base = base;
-        this.cursor = new SampleByFillPrevRecordCursor(
+        this.cursor = new SampleByFillNullRecordCursor(
                 map,
                 mapSink,
                 groupByFunctions,
                 recordFunctions,
+                placeholderFunctions,
                 timestampIndex,
                 timestampSampler,
                 symbolTableIndex

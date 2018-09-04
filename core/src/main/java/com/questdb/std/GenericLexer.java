@@ -261,9 +261,8 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
             _pos = _pos + t.length() - 1;
             if (_lo == _hi) {
                 return t;
-            } else {
-                next = t;
             }
+            next = t;
             return flyweightSequence;
         } else {
             return null;

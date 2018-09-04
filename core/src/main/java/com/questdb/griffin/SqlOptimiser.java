@@ -1899,10 +1899,7 @@ class SqlOptimiser {
             }
 
             // move sample by to group by model
-            groupByModel.setSampleBy(sampleBy);
-            groupByModel.setSampleByFill(baseModel.getSampleByFill());
-            baseModel.setSampleBy(null);
-            baseModel.setSampleByFill(null);
+            groupByModel.moveSampleByFrom(baseModel);
         }
 
         // create virtual columns from select list

@@ -35,13 +35,15 @@ import com.questdb.std.ObjList;
 
 import java.util.Iterator;
 
-class SampleByFillPrevRecordCursor implements RecordCursor {
+class SampleByFillValueRecordCursor implements RecordCursor {
     private final Map map;
     private final RecordSink keyMapSink;
     private final ObjList<GroupByFunction> groupByFunctions;
     private final int timestampIndex;
     private final TimestampSampler timestampSampler;
-    private final Record record;
+    private final Record virtualRecord;
+    private final Record placeholderRecord;
+    private final Record mapRecord;
     private final IntIntHashMap symbolTableIndex;
     private RecordCursor base;
     private Iterator<MapRecord> mapIterator;
@@ -49,11 +51,12 @@ class SampleByFillPrevRecordCursor implements RecordCursor {
     private long lastTimestamp;
     private long nextTimestamp;
 
-    public SampleByFillPrevRecordCursor(
+    public SampleByFillValueRecordCursor(
             Map map,
             RecordSink keyMapSink,
             ObjList<GroupByFunction> groupByFunctions,
             ObjList<Function> recordFunctions,
+            ObjList<Function> placeholderFunctions,
             int timestampIndex, // index of timestamp column in base cursor
             TimestampSampler timestampSampler,
             IntIntHashMap symbolTableIndex) {
@@ -62,14 +65,22 @@ class SampleByFillPrevRecordCursor implements RecordCursor {
         this.timestampIndex = timestampIndex;
         this.keyMapSink = keyMapSink;
         this.timestampSampler = timestampSampler;
+        this.mapRecord = map.getRecord();
         VirtualRecord rec = new VirtualRecord(recordFunctions);
-        rec.of(map.getRecord());
-        this.record = rec;
+        VirtualRecord rec2 = new VirtualRecord(placeholderFunctions);
+        rec.of(mapRecord);
+        rec2.of(mapRecord);
+
+        this.virtualRecord = rec;
+        this.placeholderRecord = rec2;
         this.symbolTableIndex = symbolTableIndex;
+        assert recordFunctions.size() == placeholderFunctions.size();
+        final TimestampFunc timestampFunc = new TimestampFunc(0);
         for (int i = 0, n = recordFunctions.size(); i < n; i++) {
             Function f = recordFunctions.getQuick(i);
             if (f == null) {
-                recordFunctions.setQuick(i, new TimestampFunc(0));
+                recordFunctions.setQuick(i, timestampFunc);
+                placeholderFunctions.setQuick(i, timestampFunc);
             }
         }
         this.mapIterator = map.iterator();
@@ -82,7 +93,7 @@ class SampleByFillPrevRecordCursor implements RecordCursor {
 
     @Override
     public Record getRecord() {
-        return record;
+        return virtualRecord;
     }
 
     @Override
@@ -184,7 +195,7 @@ class SampleByFillPrevRecordCursor implements RecordCursor {
     @Override
     public Record next() {
         mapIterator.next();
-        return record;
+        return mapRecord.getTimestamp(0) == lastTimestamp ? virtualRecord : placeholderRecord;
     }
 
     void of(RecordCursor base) {

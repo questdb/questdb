@@ -23,10 +23,7 @@
 
 package com.questdb.griffin.engine.table;
 
-import com.questdb.cairo.sql.Function;
-import com.questdb.cairo.sql.Record;
-import com.questdb.cairo.sql.RecordCursor;
-import com.questdb.cairo.sql.SymbolTable;
+import com.questdb.cairo.sql.*;
 import com.questdb.std.IntList;
 import com.questdb.std.ObjList;
 import org.jetbrains.annotations.Nullable;

@@ -68,6 +68,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private final CharSequenceIntHashMap orderHash = new CharSequenceIntHashMap(4, 0.5, -1);
     private final ObjList<ExpressionNode> joinColumns = new ObjList<>(4);
     private final CharSequenceObjHashMap<WithClauseModel> withClauses = new CharSequenceObjHashMap<>();
+    private final ObjList<ExpressionNode> sampleByFill = new ObjList<>();
     private ExpressionNode whereClause;
     private ExpressionNode postJoinWhereClause;
     private ExpressionNode constWhereClause;
@@ -79,7 +80,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private ExpressionNode latestBy;
     private ExpressionNode timestamp;
     private ExpressionNode sampleBy;
-    private ExpressionNode sampleByFill;
     private JoinContext context;
     private ExpressionNode joinCriteria;
     private int joinType;
@@ -140,6 +140,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         parsedWhere.add(node);
     }
 
+    public void addSampleByFill(ExpressionNode sampleByFill) {
+        this.sampleByFill.add(sampleByFill);
+    }
+
     public void addWithClause(CharSequence name, WithClauseModel model) {
         withClauses.put(name, model);
     }
@@ -149,8 +153,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         aliasToColumnMap.clear();
         joinModels.clear();
         joinModels.add(this);
-        sampleBy = null;
-        sampleByFill = null;
+        clearSampleBy();
         orderBy.clear();
         orderByDirection.clear();
         dependencies.clear();
@@ -188,6 +191,11 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     public void clearOrderBy() {
         orderBy.clear();
         orderByDirection.clear();
+    }
+
+    public void clearSampleBy() {
+        sampleBy = null;
+        sampleByFill.clear();
     }
 
     public void copyColumnsFrom(QueryModel other) {
@@ -369,12 +377,8 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         this.sampleBy = sampleBy;
     }
 
-    public ExpressionNode getSampleByFill() {
+    public ObjList<ExpressionNode> getSampleByFill() {
         return sampleByFill;
-    }
-
-    public void setSampleByFill(ExpressionNode sampleByFill) {
-        this.sampleByFill = sampleByFill;
     }
 
     public int getSelectModelType() {
@@ -427,6 +431,15 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public WithClauseModel getWithClause(CharSequence name) {
         return withClauses.get(name);
+    }
+
+    public void moveSampleByFrom(QueryModel model) {
+        this.sampleBy = model.sampleBy;
+        this.sampleByFill.clear();
+        this.sampleByFill.addAll(model.sampleByFill);
+
+        // clear the source
+        model.clearSampleBy();
     }
 
     /**
@@ -675,9 +688,17 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
             sink.put(" sample by ");
             sampleBy.toSink(sink);
 
-            if (sampleByFill != null) {
+            final int fillCount = sampleByFill.size();
+            if (fillCount > 0) {
                 sink.put(" fill(");
-                sink.put(sampleByFill);
+                sink.put(sampleByFill.getQuick(0));
+
+                if (fillCount > 1) {
+                    for (int i = 1; i < fillCount; i++) {
+                        sink.put(',');
+                        sink.put(sampleByFill.getQuick(i));
+                    }
+                }
                 sink.put(')');
             }
         }

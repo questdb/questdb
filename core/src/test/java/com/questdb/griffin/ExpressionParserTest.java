@@ -264,7 +264,7 @@ public class ExpressionParserTest extends AbstractCairoTest {
 
     @Test
     public void testNewLambdaQuerySyntax() {
-        assertFail("x in (select a,b, from T)", 24, "',', 'from' or 'over' expected");
+        assertFail("x in (select a,b, from T)", 23, "column name expected");
     }
 
     @Test

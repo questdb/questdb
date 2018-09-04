@@ -26,8 +26,6 @@ package com.questdb.griffin.engine.groupby;
 import com.questdb.cairo.*;
 import com.questdb.cairo.map.Map;
 import com.questdb.cairo.map.MapFactory;
-import com.questdb.cairo.map.MapKey;
-import com.questdb.cairo.map.MapValue;
 import com.questdb.cairo.sql.Function;
 import com.questdb.cairo.sql.RecordCursor;
 import com.questdb.cairo.sql.RecordCursorFactory;
@@ -44,17 +42,15 @@ import com.questdb.griffin.model.QueryModel;
 import com.questdb.std.*;
 import org.jetbrains.annotations.NotNull;
 
-public class SampleByFillPrevRecordCursorFactory implements RecordCursorFactory {
+public class SampleByFillNoneRecordCursorFactory implements RecordCursorFactory {
 
     private final Map map;
     private final RecordCursorFactory base;
-    private final SampleByFillPrevRecordCursor cursor;
+    private final SampleByFillNoneRecordCursor cursor;
     private final ObjList<Function> recordFunctions;
-    private final ObjList<GroupByFunction> groupByFunctions;
-    private final RecordSink mapSink;
     private final RecordMetadata metadata;
 
-    public SampleByFillPrevRecordCursorFactory(
+    public SampleByFillNoneRecordCursorFactory(
             CairoConfiguration configuration,
             RecordCursorFactory base,
             @NotNull TimestampSampler timestampSampler,
@@ -77,9 +73,6 @@ public class SampleByFillPrevRecordCursorFactory implements RecordCursorFactory 
         ArrayColumnTypes valueTypes = new ArrayColumnTypes();
 
         listColumnFilter.clear();
-
-        // first value is always timestamp
-        valueTypes.add(ColumnType.LONG);
 
         // Process group-by functions first to get the idea of
         // how many map values we will have.
@@ -200,11 +193,11 @@ public class SampleByFillPrevRecordCursorFactory implements RecordCursorFactory 
         }
 
         // sink will be storing record columns to map key
-        this.mapSink = RecordSinkFactory.getInstance(asm, metadata, listColumnFilter, false);
+        RecordSink mapSink = RecordSinkFactory.getInstance(asm, metadata, listColumnFilter, false);
         // this is the map itself, which we must not forget to free when factory closes
         this.map = MapFactory.createMap(configuration, keyTypes, valueTypes);
         this.base = base;
-        this.cursor = new SampleByFillPrevRecordCursor(
+        this.cursor = new SampleByFillNoneRecordCursor(
                 map,
                 mapSink,
                 groupByFunctions,
@@ -215,7 +208,6 @@ public class SampleByFillPrevRecordCursorFactory implements RecordCursorFactory 
         );
         this.recordFunctions = recordFunctions;
         this.metadata = groupByMetadata;
-        this.groupByFunctions = groupByFunctions;
     }
 
     @Override
@@ -231,47 +223,17 @@ public class SampleByFillPrevRecordCursorFactory implements RecordCursorFactory 
     @Override
     public RecordCursor getCursor(BindVariableService bindVariableService) {
         final RecordCursor baseCursor = base.getCursor(bindVariableService);
-        map.clear();
-
-        // This factory fills gaps in data. To do that we
-        // have to know all possible key values. Essentially, every time
-        // we sample we return same set of key values with different
-        // aggregation results and timestamp
-
-        int n = groupByFunctions.size();
-        while (baseCursor.hasNext()) {
-            MapKey key = map.withKey();
-            mapSink.copy(baseCursor.next(), key);
-            MapValue value = key.createValue();
-            if (value.isNew()) {
-                // timestamp is always stored in value field 0
-                value.putLong(0, Numbers.LONG_NaN);
-                // have functions reset their columns to "zero" state
-                // this would set values for when keys are not found right away
-                for (int i = 0; i < n; i++) {
-                    groupByFunctions.getQuick(i).zero(value);
-                }
+        if (baseCursor.hasNext()) {
+            map.clear();
+            cursor.of(baseCursor);
+            // init all record function for this cursor, in case functions require metadata and/or symbol tables
+            for (int i = 0, m = recordFunctions.size(); i < m; i++) {
+                recordFunctions.getQuick(i).init(cursor, bindVariableService);
             }
+            return cursor;
         }
 
-        // empty map? this means that base cursor was empty
-        if (map.size() == 0) {
-            return EmptyTableRecordCursor.INSTANCE;
-        }
-
-        // because we pass base cursor twice we have to go back to top
-        // for the second run
-        baseCursor.toTop();
-        boolean next = baseCursor.hasNext();
-        // we know base cursor has value
-        assert next;
-        cursor.of(baseCursor);
-
-        // init all record function for this cursor, in case functions require metadata and/or symbol tables
-        for (int i = 0, m = recordFunctions.size(); i < m; i++) {
-            recordFunctions.getQuick(i).init(cursor, bindVariableService);
-        }
-        return cursor;
+        return EmptyTableRecordCursor.INSTANCE;
     }
 
     @Override

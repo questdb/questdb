@@ -37,6 +37,10 @@ import com.questdb.griffin.SqlException;
 import com.questdb.griffin.SqlExecutionContext;
 import com.questdb.griffin.engine.functions.bind.BindVariableService;
 import com.questdb.griffin.engine.functions.columns.*;
+import com.questdb.griffin.engine.functions.constants.DoubleConstant;
+import com.questdb.griffin.engine.functions.constants.FloatConstant;
+import com.questdb.griffin.engine.functions.constants.IntConstant;
+import com.questdb.griffin.engine.functions.constants.LongConstant;
 import com.questdb.griffin.engine.table.EmptyTableRecordCursor;
 import com.questdb.griffin.model.ExpressionNode;
 import com.questdb.griffin.model.QueryColumn;
@@ -44,17 +48,17 @@ import com.questdb.griffin.model.QueryModel;
 import com.questdb.std.*;
 import org.jetbrains.annotations.NotNull;
 
-public class SampleByFillPrevRecordCursorFactory implements RecordCursorFactory {
+public class SampleByFillValueRecordCursorFactory implements RecordCursorFactory {
 
     private final Map map;
     private final RecordCursorFactory base;
-    private final SampleByFillPrevRecordCursor cursor;
+    private final SampleByFillValueRecordCursor cursor;
     private final ObjList<Function> recordFunctions;
     private final ObjList<GroupByFunction> groupByFunctions;
     private final RecordSink mapSink;
     private final RecordMetadata metadata;
 
-    public SampleByFillPrevRecordCursorFactory(
+    public SampleByFillValueRecordCursorFactory(
             CairoConfiguration configuration,
             RecordCursorFactory base,
             @NotNull TimestampSampler timestampSampler,
@@ -62,7 +66,8 @@ public class SampleByFillPrevRecordCursorFactory implements RecordCursorFactory 
             @Transient @NotNull ListColumnFilter listColumnFilter,
             @Transient @NotNull FunctionParser functionParser,
             @Transient @NotNull SqlExecutionContext executionContext,
-            @Transient @NotNull BytecodeAssembler asm) throws SqlException {
+            @Transient @NotNull BytecodeAssembler asm,
+            @Transient @NotNull ObjList<ExpressionNode> fillValues) throws SqlException {
         final int columnCount = model.getColumns().size();
         final RecordMetadata metadata = base.getMetadata();
         final int timestampIndex = metadata.getTimestampIndex();
@@ -70,7 +75,9 @@ public class SampleByFillPrevRecordCursorFactory implements RecordCursorFactory 
         assert timestampIndex != -1;
         final ObjList<GroupByFunction> groupByFunctions = new ObjList<>(columnCount);
         final ObjList<Function> recordFunctions = new ObjList<>(columnCount);
+        final ObjList<Function> placeholderFunctions = new ObjList<>(columnCount);
         final GenericRecordMetadata groupByMetadata = new GenericRecordMetadata();
+        final int fillValueCount = fillValues.size();
 
         // transient ?
         ArrayColumnTypes keyTypes = new ArrayColumnTypes();
@@ -85,7 +92,6 @@ public class SampleByFillPrevRecordCursorFactory implements RecordCursorFactory 
         // how many map values we will have.
         // Map value count is needed to calculate offsets for
         // map key columns.
-
         for (int i = 0; i < columnCount; i++) {
             final QueryColumn column = model.getColumns().getQuick(i);
             ExpressionNode node = column.getAst();
@@ -132,53 +138,56 @@ public class SampleByFillPrevRecordCursorFactory implements RecordCursorFactory 
                         lastIndex = index;
                     }
 
+                    final Function fun;
                     switch (type) {
                         case ColumnType.BOOLEAN:
-                            recordFunctions.add(new BooleanColumn(node.position, keyColumnIndex - 1));
+                            fun = new BooleanColumn(node.position, keyColumnIndex - 1);
                             break;
                         case ColumnType.BYTE:
-                            recordFunctions.add(new ByteColumn(node.position, keyColumnIndex - 1));
+                            fun = new ByteColumn(node.position, keyColumnIndex - 1);
                             break;
                         case ColumnType.SHORT:
-                            recordFunctions.add(new ShortColumn(node.position, keyColumnIndex - 1));
+                            fun = new ShortColumn(node.position, keyColumnIndex - 1);
                             break;
                         case ColumnType.INT:
-                            recordFunctions.add(new IntColumn(node.position, keyColumnIndex - 1));
+                            fun = new IntColumn(node.position, keyColumnIndex - 1);
                             break;
                         case ColumnType.LONG:
-                            recordFunctions.add(new LongColumn(node.position, keyColumnIndex - 1));
+                            fun = new LongColumn(node.position, keyColumnIndex - 1);
                             break;
                         case ColumnType.FLOAT:
-                            recordFunctions.add(new FloatColumn(node.position, keyColumnIndex - 1));
+                            fun = new FloatColumn(node.position, keyColumnIndex - 1);
                             break;
                         case ColumnType.DOUBLE:
-                            recordFunctions.add(new DoubleColumn(node.position, keyColumnIndex - 1));
+                            fun = new DoubleColumn(node.position, keyColumnIndex - 1);
                             break;
                         case ColumnType.STRING:
-                            recordFunctions.add(new StrColumn(node.position, keyColumnIndex - 1));
+                            fun = new StrColumn(node.position, keyColumnIndex - 1);
                             break;
                         case ColumnType.SYMBOL:
                             symbolTableIndex.put(keyColumnIndex - 1, index);
-                            recordFunctions.add(new MapSymbolColumn(node.position, keyColumnIndex - 1));
+                            fun = new MapSymbolColumn(node.position, keyColumnIndex - 1);
                             break;
                         case ColumnType.DATE:
-                            recordFunctions.add(new DateColumn(node.position, keyColumnIndex - 1));
+                            fun = new DateColumn(node.position, keyColumnIndex - 1);
                             break;
                         case ColumnType.TIMESTAMP:
-                            recordFunctions.add(new TimestampColumn(node.position, keyColumnIndex - 1));
-                            break;
-                        case ColumnType.BINARY:
-                            recordFunctions.add(new BinColumn(node.position, keyColumnIndex - 1));
+                            fun = new TimestampColumn(node.position, keyColumnIndex - 1);
                             break;
                         default:
-                            assert false;
+                            fun = new BinColumn(node.position, keyColumnIndex - 1);
+                            break;
                     }
+
+                    recordFunctions.add(fun);
+                    placeholderFunctions.add(fun);
 
                 } else {
                     // set this function to null, cursor will replace it with an instance class
                     // timestamp function returns value of class member which makes it impossible
                     // to create these columns in advance of cursor instantiation
                     recordFunctions.add(null);
+                    placeholderFunctions.add(null);
                     if (groupByMetadata.getTimestampIndex() == -1) {
                         groupByMetadata.setTimestampIndex(i);
                     }
@@ -187,9 +196,34 @@ public class SampleByFillPrevRecordCursorFactory implements RecordCursorFactory 
             } else {
                 // add group-by function as a record function as well
                 // so it can produce column values
+                if (fillValueCount == valueColumnIndex) {
+                    throw SqlException.$(0, "not enough fill values");
+                }
+                ExpressionNode fillNode = fillValues.getQuick(valueColumnIndex);
                 final GroupByFunction groupByFunction = groupByFunctions.getQuick(valueColumnIndex++);
                 recordFunctions.add(groupByFunction);
                 type = groupByFunction.getType();
+                try {
+                    switch (type) {
+                        case ColumnType.INT:
+                            placeholderFunctions.add(new IntConstant(groupByFunction.getPosition(), Numbers.parseInt(fillNode.token)));
+                            break;
+                        case ColumnType.LONG:
+                            placeholderFunctions.add(new LongConstant(groupByFunction.getPosition(), Numbers.parseLong(fillNode.token)));
+                            break;
+                        case ColumnType.FLOAT:
+                            placeholderFunctions.add(new FloatConstant(groupByFunction.getPosition(), Numbers.parseFloat(fillNode.token)));
+                            break;
+                        case ColumnType.DOUBLE:
+                            placeholderFunctions.add(new DoubleConstant(groupByFunction.getPosition(), Numbers.parseDouble(fillNode.token)));
+                            break;
+                        // todo: support and test all types
+                        default:
+                            assert false;
+                    }
+                } catch (NumericException e) {
+                    throw SqlException.position(fillNode.position).put("invalid number: ").put(fillNode.token);
+                }
             }
 
             // and finish with populating metadata for this factory
@@ -204,11 +238,12 @@ public class SampleByFillPrevRecordCursorFactory implements RecordCursorFactory 
         // this is the map itself, which we must not forget to free when factory closes
         this.map = MapFactory.createMap(configuration, keyTypes, valueTypes);
         this.base = base;
-        this.cursor = new SampleByFillPrevRecordCursor(
+        this.cursor = new SampleByFillValueRecordCursor(
                 map,
                 mapSink,
                 groupByFunctions,
                 recordFunctions,
+                placeholderFunctions,
                 timestampIndex,
                 timestampSampler,
                 symbolTableIndex

@@ -29,19 +29,14 @@ import com.questdb.cairo.sql.SymbolTable;
 
 class RandomRecordCursor implements RecordCursor {
     private final long recordCount;
-    private final RandomRecord record;
+    private final Record record;
 
     private long recordIndex;
 
-    public RandomRecordCursor(long recordCount, RandomRecord record) {
+    public RandomRecordCursor(long recordCount, Record record) {
         this.recordCount = recordCount;
         this.record = record;
         recordIndex = 0;
-    }
-
-    @Override
-    public SymbolTable getSymbolTable(int columnIndex) {
-        throw new UnsupportedOperationException();
     }
 
     @Override
@@ -51,6 +46,11 @@ class RandomRecordCursor implements RecordCursor {
     @Override
     public Record getRecord() {
         return record;
+    }
+
+    @Override
+    public SymbolTable getSymbolTable(int columnIndex) {
+        throw new UnsupportedOperationException();
     }
 
     @Override
