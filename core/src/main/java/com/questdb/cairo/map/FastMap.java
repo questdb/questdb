@@ -25,10 +25,9 @@ package com.questdb.cairo.map;
 
 import com.questdb.cairo.*;
 import com.questdb.cairo.sql.Record;
+import com.questdb.cairo.sql.RecordCursor;
 import com.questdb.std.*;
 import org.jetbrains.annotations.NotNull;
-
-import java.util.Iterator;
 
 public class FastMap implements Map {
 
@@ -37,7 +36,7 @@ public class FastMap implements Map {
     private final double loadFactor;
     private final Key key = new Key();
     private final FastMapValue value;
-    private final FastMapCursor iterator;
+    private final FastMapCursor cursor;
     private final FastMapRecord record;
     private final int valueColumnCount;
     private final HashFunction hashFunction;
@@ -138,7 +137,7 @@ public class FastMap implements Map {
             this.record = new FastMapRecord(null, 0, keyDataOffset, keyBlockOffset, value, keyTypes);
         }
         assert this.keyBlockOffset < kLimit - kStart : "page size is too small for number of columns";
-        this.iterator = new FastMapCursor(record);
+        this.cursor = new FastMapCursor(record);
     }
 
     @Override
@@ -159,8 +158,8 @@ public class FastMap implements Map {
     }
 
     @Override
-    public MapRecord recordAt(long rowid) {
-        return record.of(rowid);
+    public RecordCursor getCursor() {
+        return cursor.init(kStart, size);
     }
 
     @Override
@@ -193,9 +192,9 @@ public class FastMap implements Map {
     }
 
     @Override
-    @NotNull
-    public Iterator<MapRecord> iterator() {
-        return iterator.init(kStart, size);
+    public MapValue valueAt(long address) {
+        value.of(address, false);
+        return value;
     }
 
     private FastMapValue asNew(Key keyWriter, int index) {

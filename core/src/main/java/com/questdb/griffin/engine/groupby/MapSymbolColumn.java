@@ -30,17 +30,19 @@ import com.questdb.griffin.engine.functions.SymbolFunction;
 import com.questdb.griffin.engine.functions.bind.BindVariableService;
 
 public class MapSymbolColumn extends SymbolFunction {
-    private final int columnIndex;
+    private final int mapColumnIndex;
+    private final int cursorColumnIndex;
     private SymbolTable symbolTable;
 
-    public MapSymbolColumn(int position, int columnIndex) {
+    public MapSymbolColumn(int position, int mapColumnIndex, int cursorColumnIndex) {
         super(position);
-        this.columnIndex = columnIndex;
+        this.mapColumnIndex = mapColumnIndex;
+        this.cursorColumnIndex = cursorColumnIndex;
     }
 
     @Override
     public int getInt(Record rec) {
-        return rec.getInt(columnIndex);
+        return rec.getInt(mapColumnIndex);
     }
 
     @Override
@@ -50,6 +52,6 @@ public class MapSymbolColumn extends SymbolFunction {
 
     @Override
     public void init(RecordCursor recordCursor, BindVariableService bindVariableService) {
-        this.symbolTable = recordCursor.getSymbolTable(columnIndex);
+        this.symbolTable = recordCursor.getSymbolTable(cursorColumnIndex);
     }
 }

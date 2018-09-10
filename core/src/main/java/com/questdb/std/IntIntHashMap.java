@@ -26,15 +26,9 @@ package com.questdb.std;
 import java.util.Arrays;
 
 
-public class IntIntHashMap implements Mutable {
-
-    private static final int MIN_INITIAL_CAPACITY = 16;
+public class IntIntHashMap extends AbstractIntHashSet {
     private static final int noEntryValue = -1;
-    private final double loadFactor;
     private int[] values;
-    private int[] keys;
-    private int free;
-    private int mask;
 
     public IntIntHashMap() {
         this(8);
@@ -46,38 +40,13 @@ public class IntIntHashMap implements Mutable {
 
     @SuppressWarnings("unchecked")
     private IntIntHashMap(int initialCapacity, double loadFactor) {
-        if (loadFactor <= 0d || loadFactor >= 1d) {
-            throw new IllegalArgumentException("0 < loadFactor < 1");
-        }
-        int capacity = Math.max(initialCapacity, (int) (initialCapacity / loadFactor));
-        capacity = capacity < MIN_INITIAL_CAPACITY ? MIN_INITIAL_CAPACITY : Numbers.ceilPow2(capacity);
-        this.loadFactor = loadFactor;
-        values = new int[capacity];
-        keys = new int[capacity];
-        free = initialCapacity;
-        mask = capacity - 1;
+        super(initialCapacity, loadFactor);
+        values = new int[keys.length];
         clear();
-    }
-
-    public final void clear() {
-        Arrays.fill(values, noEntryValue);
     }
 
     public int get(int key) {
         return valueAt(keyIndex(key));
-    }
-
-    public int keyIndex(int key) {
-        int index = key & mask;
-        if (Unsafe.arrayGet(values, index) == noEntryValue) {
-            return index;
-        }
-
-        if (Unsafe.arrayGet(keys, index) == key) {
-            return -index - 1;
-        }
-
-        return probe(key, index);
     }
 
     public void put(int key, int value) {
@@ -100,34 +69,39 @@ public class IntIntHashMap implements Mutable {
         return index < 0 ? Unsafe.arrayGet(values, -index - 1) : noEntryValue;
     }
 
-    private int probe(int key, int index) {
-        do {
-            index = (index + 1) & mask;
-            if (Unsafe.arrayGet(values, index) == noEntryValue) {
-                return index;
-            }
-            if (key == Unsafe.arrayGet(keys, index)) {
-                return -index - 1;
-            }
-        } while (true);
+    @Override
+    protected void erase(int index) {
+        Unsafe.arrayPut(keys, index, this.noEntryKeyValue);
+    }
+
+    @Override
+    protected void move(int from, int to) {
+        Unsafe.arrayPut(keys, to, Unsafe.arrayGet(keys, from));
+        Unsafe.arrayPut(values, to, Unsafe.arrayGet(values, from));
+        erase(from);
     }
 
     @SuppressWarnings({"unchecked"})
     private void rehash() {
-        int newCapacity = values.length << 1;
+        int size = size();
+        int newCapacity = capacity * 2;
         mask = newCapacity - 1;
-
-        free = (int) (newCapacity * loadFactor);
+        free = capacity = newCapacity;
+        int arrayCapacity = (int) (newCapacity / loadFactor);
 
         int[] oldValues = values;
         int[] oldKeys = keys;
-        this.keys = new int[newCapacity];
-        this.values = new int[newCapacity];
-        Arrays.fill(values, noEntryValue);
+        this.keys = new int[arrayCapacity];
+        this.values = new int[arrayCapacity];
+        Arrays.fill(keys, noEntryKeyValue);
 
+        free -= size;
         for (int i = oldKeys.length; i-- > 0; ) {
-            if (Unsafe.arrayGet(oldValues, i) != noEntryValue) {
-                put(Unsafe.arrayGet(oldKeys, i), Unsafe.arrayGet(oldValues, i));
+            int key = Unsafe.arrayGet(oldKeys, i);
+            if (key != noEntryKeyValue) {
+                final int index = keyIndex(key);
+                Unsafe.arrayPut(keys, index, key);
+                Unsafe.arrayPut(values, index, Unsafe.arrayGet(oldValues, i));
             }
         }
     }

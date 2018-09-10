@@ -39,8 +39,8 @@ public class FilterOnSubQueryRecordCursorFactory extends AbstractDataFrameRecord
     private final int columnIndex;
     private final Function filter;
     private final ObjList<RowCursorFactory> cursorFactories;
-    private final IntObjHashMap<RowCursorFactory> factoriesA = new IntObjHashMap<>();
-    private final IntObjHashMap<RowCursorFactory> factoriesB = new IntObjHashMap<>();
+    private final IntObjHashMap<RowCursorFactory> factoriesA = new IntObjHashMap<>(64, 0.5, -5);
+    private final IntObjHashMap<RowCursorFactory> factoriesB = new IntObjHashMap<>(64, 0.5, -5);
     private final RecordCursorFactory recordCursorFactory;
     private final TypeCaster typeCaster;
     private IntObjHashMap<RowCursorFactory> factories;

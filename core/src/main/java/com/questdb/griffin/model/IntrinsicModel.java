@@ -81,7 +81,13 @@ public class IntrinsicModel implements Mutable {
                 keyValuePositions.removeIndex(index);
             }
         } else {
-            index = keyValues.removeAt(Chars.isQuoted(val.token) ? keyValues.keyIndex(val.token, 1, val.token.length() - 1) : keyValues.keyIndex(val.token));
+            int keyIndex = Chars.isQuoted(val.token) ? keyValues.keyIndex(val.token, 1, val.token.length() - 1) : keyValues.keyIndex(val.token);
+            if (keyIndex < 0) {
+                index = keyValues.getListIndexAt(keyIndex);
+                keyValues.removeAt(keyIndex);
+            } else {
+                index = -1;
+            }
         }
 
         if (index > -1) {

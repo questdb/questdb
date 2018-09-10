@@ -27,5 +27,7 @@ public interface TimestampSampler {
 
     long nextTimestamp(long timestamp);
 
+    long previousTimestamp(long timestamp);
+
     long round(long timestamp);
 }

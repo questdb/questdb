@@ -36,8 +36,6 @@ import com.questdb.std.FilesFacadeImpl;
 import com.questdb.std.Rnd;
 import com.questdb.std.str.LPSZ;
 import com.questdb.test.tools.TestUtils;
-import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -47,6 +45,14 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     @Before
     public void setUp3() {
         SharedRandom.RANDOM.set(new Rnd());
+    }
+
+    @Test
+    public void testAmbiguousFunction() throws Exception {
+        assertQuery("column\n" +
+                        "234990000000000\n",
+                "select 23499000000000*10 from long_sequence(1)",
+                null, null);
     }
 
     @Test
@@ -126,8 +132,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
     @Test
     public void testFilterOnConstantFalse() throws Exception {
-        final String expected = "a\tb\tk\n";
-        assertQuery(expected,
+        assertQuery(null,
                 "select * from x o where 10 < 8",
                 "create table x as " +
                         "(" +
@@ -147,16 +152,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         " timestamp_sequence(to_timestamp('2019', 'yyyy'), 1000000000) timestamp" +
                         " from long_sequence(50)" +
                         ") timestamp(timestamp)",
-                expected,
+                null,
                 false);
-    }
-
-    @Test
-    public void testAmbiguousFunction() throws Exception {
-        assertQuery("column\n" +
-                        "234990000000000\n",
-                "select 23499000000000*10 from long_sequence(1)",
-                null, null);
     }
 
     @Test
@@ -208,7 +205,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
     @Test
     public void testFilterOnIntrinsicFalse() throws Exception {
-        assertQuery("a\tb\tk\n",
+        assertQuery(null,
                 "select * from x o where o.b in ('HYRX','PEHN', null) and a < a",
                 "create table x as (select * from random_cursor(20, 'a', rnd_double(0)*100, 'b', rnd_symbol(5,4,4,1), 'k', timestamp_sequence(to_timestamp(0), 1000000000))), index(b)",
                 null,
@@ -291,9 +288,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     @Test
     public void testFilterOnSubQueryIndexedDeferred() throws Exception {
 
-        final String expected = "a\tb\tk\n";
-
-        assertQuery(expected,
+        assertQuery(null,
                 "select * from x where b in (select rnd_symbol('ABC') a from long_sequence(10))",
                 "create table x as " +
                         "(" +
@@ -312,7 +307,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         " to_timestamp('1971', 'yyyy') t" +
                         " from long_sequence(5)" +
                         ") timestamp(t)",
-                expected +
+                "a\tb\tk\n" +
                         "95.400690890497\tABC\t1971-01-01T00:00:00.000000Z\n" +
                         "25.533193397031\tABC\t1971-01-01T00:00:00.000000Z\n" +
                         "89.409171265819\tABC\t1971-01-01T00:00:00.000000Z\n" +
@@ -370,9 +365,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
     @Test
     public void testFilterOnSubQueryIndexedStrColumn() throws Exception {
-        final String expected = "a\tb\tk\n";
 
-        assertQuery(expected,
+        assertQuery(null,
                 "select * from x where b in (select 'ABC' a from long_sequence(10))",
                 "create table x as " +
                         "(" +
@@ -391,7 +385,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         " to_timestamp('1971', 'yyyy') t" +
                         " from long_sequence(1)" +
                         ") timestamp(t)",
-                expected +
+                "a\tb\tk\n" +
                         "56.594291398612\tABC\t1971-01-01T00:00:00.000000Z\n");
     }
 
@@ -505,9 +499,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
     @Test
     public void testFilterOnValuesDeferred() throws Exception {
-        final String expected1 = "a\tb\tk\n";
-
-        assertQuery(expected1,
+        assertQuery(null,
                 "select * from x o where o.b in ('ABCD', 'XYZ')",
                 "create table x as (select * from random_cursor(20, 'a', rnd_double(0)*100, 'b', rnd_symbol(5,4,4,1), 'k', timestamp_sequence(to_timestamp(0), 1000000000))), index(b)",
                 null,
@@ -517,7 +509,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         " rnd_symbol('HYRX','PEHN', null, 'ABCD')" +
                         " from" +
                         " long_sequence(10)",
-                expected1 +
+                "a\tb\tk\n" +
                         "11.585982949541\tABCD\t\n" +
                         "81.641825924675\tABCD\t\n" +
                         "76.923818943378\tABCD\t\n" +
@@ -572,7 +564,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
     @Test
     public void testFilterSingleNonExistingSymbol() throws Exception {
-        assertQuery("a\tb\n",
+        assertQuery(null,
                 "select * from x where b = 'ABC'",
                 "create table x as (select * from random_cursor(20, 'a', rnd_double(0)*100, 'b', rnd_symbol(5,4,4,0))), index(b)",
                 null,
@@ -588,7 +580,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     @Test
     public void testFilterSingleNonExistingSymbolAndFilter() throws Exception {
         TestMatchFunctionFactory.clear();
-        assertQuery("a\tb\n",
+        assertQuery(null,
                 "select * from x where b = 'ABC' and a > 30 and test_match()",
                 "create table x as (select * from random_cursor(20, 'a', rnd_double(0)*100, 'b', rnd_symbol(5,4,4,0))), index(b)",
                 null,
@@ -601,7 +593,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "57.789479151824\tABC\n");
         // 5 opens is good because we check variable length column API sanity
         Assert.assertEquals(5, TestMatchFunctionFactory.getOpenCount());
-        Assert.assertEquals(8, TestMatchFunctionFactory.getTopCount());
+        Assert.assertEquals(6, TestMatchFunctionFactory.getTopCount());
         Assert.assertEquals(1, TestMatchFunctionFactory.getCloseCount());
     }
 
@@ -1353,7 +1345,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
     @Test
     public void testLatestByMissingKeyValue() throws Exception {
-        assertQuery("a\tb\tk\n",
+        assertQuery(null,
                 "select * from x latest by b where b in ('XYZ')",
                 "create table x as " +
                         "(" +
@@ -1379,7 +1371,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     @Test
     public void testLatestByMissingKeyValueFiltered() throws Exception {
         TestMatchFunctionFactory.clear();
-        assertQuery("a\tb\tk\n",
+        assertQuery(null,
                 "select * from x latest by b where b in ('XYZ') and a < 60 and test_match()",
                 "create table x as " +
                         "(" +
@@ -1409,7 +1401,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
     @Test
     public void testLatestByMissingKeyValueIndexed() throws Exception {
-        assertQuery("a\tb\tk\n",
+        assertQuery(null,
                 "select * from x latest by b where b in ('XYZ')",
                 "create table x as " +
                         "(" +
@@ -1435,7 +1427,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     @Test
     public void testLatestByMissingKeyValueIndexedFiltered() throws Exception {
         TestMatchFunctionFactory.clear();
-        assertQuery("a\tb\tk\n",
+        assertQuery(null,
                 "select * from x latest by b where b in ('XYZ') and a < 60 and test_match()",
                 "create table x as " +
                         "(" +
@@ -2577,52 +2569,4 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 null);
     }
 
-    private void assertError(CharSequence ddl, CharSequence query, int position, CharSequence message) throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            try {
-                compiler.compile(ddl, bindVariableService);
-
-                try {
-                    compiler.compile(query, bindVariableService);
-                    Assert.fail();
-                } catch (SqlException e) {
-                    Assert.assertEquals(position, e.getPosition());
-                    TestUtils.assertContains(e.getFlyweightMessage(), message);
-                }
-
-                Assert.assertEquals(0, engine.getBusyReaderCount());
-                Assert.assertEquals(0, engine.getBusyWriterCount());
-            } finally {
-                engine.releaseAllWriters();
-                engine.releaseAllReaders();
-            }
-        });
-    }
-
-    private void assertFailure(
-            CharSequence query,
-            @Nullable CharSequence ddl,
-            int expectedPosition,
-            @NotNull CharSequence expectedMessage
-    ) throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            try {
-                if (ddl != null) {
-                    compiler.compile(ddl, bindVariableService);
-                }
-                try {
-                    compiler.compile(query, bindVariableService);
-                    Assert.fail();
-                } catch (SqlException e) {
-                    Assert.assertEquals(expectedPosition, e.getPosition());
-                    TestUtils.assertContains(e.getFlyweightMessage(), expectedMessage);
-                }
-                Assert.assertEquals(0, engine.getBusyReaderCount());
-                Assert.assertEquals(0, engine.getBusyWriterCount());
-            } finally {
-                engine.releaseAllWriters();
-                engine.releaseAllReaders();
-            }
-        });
-    }
 }

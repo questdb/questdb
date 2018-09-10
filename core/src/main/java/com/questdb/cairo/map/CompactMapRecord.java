@@ -41,6 +41,12 @@ class CompactMapRecord implements MapRecord {
         this.value = value;
     }
 
+    @SuppressWarnings("MethodDoesntCallSuperMethod")
+    @Override
+    public CompactMapRecord clone() {
+        return new CompactMapRecord(this.entries, this.columnOffsets, new CompactMapValue(this.entries, columnOffsets));
+    }
+
     @Override
     public BinarySequence getBin(int col) {
         long o = getLong(col);

@@ -39,6 +39,11 @@ class YearTimestampSampler implements TimestampSampler {
     }
 
     @Override
+    public long previousTimestamp(long timestamp) {
+        return Dates.addYear(timestamp, -bucket);
+    }
+
+    @Override
     public long round(long value) {
         int y = Dates.getYear(value);
         y = y - y % bucket;

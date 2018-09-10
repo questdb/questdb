@@ -62,7 +62,19 @@ public class IntrinsicModel implements Mutable {
 
     public void excludeValue(ExprNode val) {
         String value = Chars.equals("null", val.token) ? null : Chars.stripQuotes(val.token);
-        int index = keyValues.remove(value);
+        int index;
+        if (value == null) {
+            index = keyValues.removeNull();
+        } else {
+            int keyIndex = keyValues.keyIndex(value);
+            if (keyIndex < 0) {
+                index = keyValues.getListIndexAt(keyIndex);
+                keyValues.removeAt(keyIndex);
+            } else {
+                index = -1;
+            }
+        }
+
         if (index > -1) {
             keyValuePositions.removeIndex(index);
         }

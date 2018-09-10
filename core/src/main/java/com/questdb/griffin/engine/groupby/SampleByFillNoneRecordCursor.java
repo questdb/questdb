@@ -26,16 +26,14 @@ package com.questdb.griffin.engine.groupby;
 import com.questdb.cairo.RecordSink;
 import com.questdb.cairo.map.Map;
 import com.questdb.cairo.map.MapKey;
-import com.questdb.cairo.map.MapRecord;
 import com.questdb.cairo.map.MapValue;
 import com.questdb.cairo.sql.*;
+import com.questdb.griffin.engine.functions.GroupByFunction;
 import com.questdb.griffin.engine.functions.TimestampFunction;
 import com.questdb.std.IntIntHashMap;
 import com.questdb.std.ObjList;
 
-import java.util.Iterator;
-
-class SampleByFillNoneRecordCursor implements RecordCursor {
+class SampleByFillNoneRecordCursor implements DelegatingRecordCursor {
     private final Map map;
     private final RecordSink keyMapSink;
     private final ObjList<GroupByFunction> groupByFunctions;
@@ -44,7 +42,7 @@ class SampleByFillNoneRecordCursor implements RecordCursor {
     private final Record record;
     private final IntIntHashMap symbolTableIndex;
     private RecordCursor base;
-    private Iterator<MapRecord> mapIterator;
+    private RecordCursor mapCursor;
     private Record baseRecord;
     private long lastTimestamp;
     private long nextTimestamp;
@@ -72,7 +70,7 @@ class SampleByFillNoneRecordCursor implements RecordCursor {
                 recordFunctions.setQuick(i, new TimestampFunc(0));
             }
         }
-        this.mapIterator = map.iterator();
+        this.mapCursor = map.getCursor();
     }
 
     @Override
@@ -102,11 +100,6 @@ class SampleByFillNoneRecordCursor implements RecordCursor {
 
     @Override
     public void recordAt(Record record, long atRowId) {
-    }
-
-    @Override
-    public void toTop() {
-        this.base.toTop();
     }
 
     @Override
@@ -157,7 +150,7 @@ class SampleByFillNoneRecordCursor implements RecordCursor {
                 // opportunity, after we stream map that is.
                 baseRecord = null;
                 // reset map iterator
-                map.iterator();
+                map.getCursor();
 
                 // we do not have any more data, let map take over
                 return mapHasNext();
@@ -168,7 +161,7 @@ class SampleByFillNoneRecordCursor implements RecordCursor {
             // When map is exhausted we would assign 'nextTimestamp' to 'lastTimestamp'
             // and build another map
             this.nextTimestamp = timestamp;
-            this.map.iterator();
+            this.map.getCursor();
             if (mapHasNext()) {
                 return true;
             }
@@ -177,27 +170,33 @@ class SampleByFillNoneRecordCursor implements RecordCursor {
         }
     }
 
-    @Override
-    public Record next() {
-        return record;
-    }
-
-    private boolean mapHasNext() {
-        if (mapIterator.hasNext()) {
-            // scroll down the map iterator
-            // next() will return record that uses current map position
-            mapIterator.next();
-            return true;
-        }
-        return false;
-    }
-
-    void of(RecordCursor base) {
+    public void of(RecordCursor base) {
         // factory guarantees that base cursor is not empty
         this.base = base;
         this.baseRecord = base.next();
         this.nextTimestamp = timestampSampler.round(baseRecord.getTimestamp(timestampIndex));
         this.lastTimestamp = this.nextTimestamp;
+    }
+
+    @Override
+    public Record next() {
+        return record;
+    }
+
+    @Override
+    public void toTop() {
+        this.base.toTop();
+        baseRecord = this.base.next();
+    }
+
+    private boolean mapHasNext() {
+        if (mapCursor.hasNext()) {
+            // scroll down the map iterator
+            // next() will return record that uses current map position
+            mapCursor.next();
+            return true;
+        }
+        return false;
     }
 
     private class TimestampFunc extends TimestampFunction {

@@ -55,6 +55,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
     private final PostOrderTreeTraversalAlgo algo = new PostOrderTreeTraversalAlgo();
     private final CairoConfiguration configuration;
     private final CharSequenceObjHashMap<ObjList<FunctionFactory>> factories = new CharSequenceObjHashMap<>();
+    private final CharSequenceHashSet groupByFunctionNames = new CharSequenceHashSet();
     private final ArrayDeque<RecordMetadata> metadataStack = new ArrayDeque<>();
     private RecordMetadata metadata;
     private SqlExecutionContext sqlExecutionContext;
@@ -158,6 +159,10 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
             }
         }
         return openBraceIndex;
+    }
+
+    public boolean isGroupBy(CharSequence name) {
+        return groupByFunctionNames.contains(name);
     }
 
     public Function createParameter(ExpressionNode node) throws SqlException {
@@ -510,6 +515,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
                         }
                         bestMatch = match;
                     } else {
+                        fuzzyMatchCount = 0;
                         break;
                     }
                 }
@@ -658,6 +664,10 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
                 factories.putAt(index, name, overload);
             }
             overload.add(factory);
+
+            if (factory.isGroupBy()) {
+                groupByFunctionNames.add(name);
+            }
         }
     }
 

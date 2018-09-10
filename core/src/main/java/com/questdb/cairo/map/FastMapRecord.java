@@ -90,6 +90,25 @@ final class FastMapRecord implements MapRecord {
         this.bs = bs;
     }
 
+    private FastMapRecord(
+            int valueOffsets[],
+            int split,
+            int keyDataOffset,
+            int keyBlockOffset,
+            DirectCharSequence csA[],
+            DirectCharSequence csB[],
+            DirectBinarySequence bs[]) {
+
+        this.valueOffsets = valueOffsets;
+        this.split = split;
+        this.keyBlockOffset = keyBlockOffset;
+        this.keyDataOffset = keyDataOffset;
+        this.value = new FastMapValue(valueOffsets);
+        this.csA = csA;
+        this.csB = csB;
+        this.bs = bs;
+    }
+
     @Override
     public BinarySequence getBin(int columnIndex) {
         long address = addressOfColumn(columnIndex);
@@ -190,6 +209,44 @@ final class FastMapRecord implements MapRecord {
         }
 
         return Unsafe.getUnsafe().getInt(address2 + (index - split - 1) * 4) + address0;
+    }
+
+    @SuppressWarnings("MethodDoesntCallSuperMethod")
+    @Override
+    protected MapRecord clone() {
+        final DirectCharSequence csA[];
+        final DirectCharSequence csB[];
+        final DirectBinarySequence bs[];
+
+        // csA and csB are pegged, checking one for null should be enough
+        if (this.csA != null) {
+            int n = this.csA.length;
+            csA = new DirectCharSequence[n];
+            csB = new DirectCharSequence[n];
+
+            for (int i = 0; i < n; i++) {
+                if (Unsafe.arrayGet(this.csA, i) != null) {
+                    Unsafe.arrayPut(csA, i, new DirectCharSequence());
+                    Unsafe.arrayPut(csB, i, new DirectCharSequence());
+                }
+            }
+        } else {
+            csA = null;
+            csB = null;
+        }
+
+        if (this.bs != null) {
+            int n = this.bs.length;
+            bs = new DirectBinarySequence[n];
+            for (int i = 0; i < n; i++) {
+                if (Unsafe.arrayGet(this.bs, i) != null) {
+                    Unsafe.arrayPut(bs, i, new DirectBinarySequence());
+                }
+            }
+        } else {
+            bs = null;
+        }
+        return new FastMapRecord(valueOffsets, split, keyDataOffset, keyBlockOffset, csA, csB, bs);
     }
 
     private CharSequence getStr0(int index, DirectCharSequence cs) {

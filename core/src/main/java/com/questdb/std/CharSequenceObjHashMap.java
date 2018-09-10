@@ -41,7 +41,7 @@ public class CharSequenceObjHashMap<V> extends AbstractCharSequenceHashSet {
 
     @SuppressWarnings("unchecked")
     private CharSequenceObjHashMap(int initialCapacity, double loadFactor) {
-        super(initialCapacity, loadFactor, 0.3);
+        super(initialCapacity, loadFactor);
         this.list = new ObjList<>(capacity);
         keys = new CharSequence[capacity];
         values = (V[]) new Object[capacity];
@@ -53,16 +53,25 @@ public class CharSequenceObjHashMap<V> extends AbstractCharSequenceHashSet {
         list.clear();
     }
 
-    public boolean removeAt(int index) {
+    public void removeAt(int index) {
         if (index < 0) {
             CharSequence key = Unsafe.arrayGet(keys, -index - 1);
-            Unsafe.arrayPut(keys, -index - 1, noEntryKey);
-            Unsafe.arrayPut(values, -index - 1, null);
+            super.removeAt(index);
             list.remove(key);
-            free++;
-            return true;
         }
-        return false;
+    }
+
+    @Override
+    protected void erase(int index) {
+        Unsafe.arrayPut(keys, -index - 1, noEntryKey);
+        Unsafe.arrayPut(values, -index - 1, null);
+    }
+
+    @Override
+    protected void move(int from, int to) {
+        Unsafe.arrayPut(keys, to, Unsafe.arrayGet(keys, from));
+        Unsafe.arrayPut(values, to, Unsafe.arrayGet(values, from));
+        erase(from);
     }
 
     public V get(CharSequence key) {
@@ -123,17 +132,25 @@ public class CharSequenceObjHashMap<V> extends AbstractCharSequenceHashSet {
 
     @SuppressWarnings({"unchecked"})
     private void rehash() {
-        int newCapacity = values.length << 1;
+        int size = size();
+        int newCapacity = capacity * 2;
         mask = newCapacity - 1;
-        free = capacity = (int) (newCapacity * loadFactor);
+        free = capacity = newCapacity;
+        int arrayCapacity = (int) (newCapacity / loadFactor);
+
         V[] oldValues = values;
         CharSequence[] oldKeys = keys;
-        this.keys = new CharSequence[newCapacity];
-        this.values = (V[]) new Object[newCapacity];
-        Arrays.fill(keys, noEntryKey);
+        this.keys = new CharSequence[arrayCapacity];
+        this.values = (V[]) new Object[arrayCapacity];
+        Arrays.fill(keys, null);
+
+        free -= size;
         for (int i = oldKeys.length; i-- > 0; ) {
-            if (Unsafe.arrayGet(oldKeys, i) != noEntryKey) {
-                putAt0(keyIndex(Unsafe.arrayGet(oldKeys, i)), Unsafe.arrayGet(oldKeys, i), Unsafe.arrayGet(oldValues, i));
+            CharSequence key = Unsafe.arrayGet(oldKeys, i);
+            if (key != null) {
+                final int index = keyIndex(key);
+                Unsafe.arrayPut(keys, index, key);
+                Unsafe.arrayPut(values, index, Unsafe.arrayGet(oldValues, i));
             }
         }
     }

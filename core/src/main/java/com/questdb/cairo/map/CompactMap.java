@@ -25,13 +25,11 @@ package com.questdb.cairo.map;
 
 import com.questdb.cairo.*;
 import com.questdb.cairo.sql.Record;
+import com.questdb.cairo.sql.RecordCursor;
 import com.questdb.std.BinarySequence;
 import com.questdb.std.Misc;
 import com.questdb.std.Numbers;
 import com.questdb.std.Unsafe;
-import org.jetbrains.annotations.NotNull;
-
-import java.util.Iterator;
 
 /**
  * Storage structure to support queries such as "select distinct ...",
@@ -176,9 +174,9 @@ public class CompactMap implements Map {
     }
 
     @Override
-    public MapRecord recordAt(long rowid) {
-        record.of(rowid);
-        return record;
+    public RecordCursor getCursor() {
+        cursor.of(currentEntryOffset + currentEntrySize);
+        return cursor;
     }
 
     @Override
@@ -214,19 +212,18 @@ public class CompactMap implements Map {
         return key;
     }
 
+    @Override
+    public MapValue valueAt(long address) {
+        value.of(address, false);
+        return value;
+    }
+
     public long getKeyCapacity() {
         return keyCapacity;
     }
 
     public int getValueColumnCount() {
         return valueColumnCount;
-    }
-
-    @NotNull
-    @Override
-    public Iterator<MapRecord> iterator() {
-        cursor.of(currentEntryOffset + currentEntrySize);
-        return cursor;
     }
 
     private long calcColumnOffsets(ColumnTypes valueTypes, long startOffset, int startPosition) {

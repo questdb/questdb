@@ -29,7 +29,6 @@ import com.questdb.cairo.sql.CairoEngine;
 import com.questdb.cairo.sql.Function;
 import com.questdb.cairo.sql.RecordMetadata;
 import com.questdb.griffin.model.*;
-import com.questdb.ql.ops.FunctionFactories;
 import com.questdb.std.*;
 import com.questdb.std.str.FlyweightCharSequence;
 import org.jetbrains.annotations.NotNull;
@@ -885,7 +884,7 @@ class SqlOptimiser {
                         node = null;
                         continue;
                     case ExpressionNode.FUNCTION:
-                        if (FunctionFactories.isAggregate(node.token)) {
+                        if (functionParser.isGroupBy(node.token)) {
                             return true;
                         }
                         break;
@@ -1624,7 +1623,7 @@ class SqlOptimiser {
     }
 
     private ExpressionNode replaceIfAggregate(@Transient ExpressionNode node, QueryModel model) {
-        if (node != null && FunctionFactories.isAggregate(node.token)) {
+        if (node != null && functionParser.isGroupBy(node.token)) {
             QueryColumn c = queryColumnPool.next().of(createColumnAlias(node, model), node);
             model.addColumn(c);
             return nextLiteral(c.getAlias());
@@ -1942,7 +1941,7 @@ class SqlOptimiser {
                         emitLiterals(qc.getAst(), translatingModel, innerModel, baseModel);
                         useAnalyticModel = true;
                         continue;
-                    } else if (FunctionFactories.isAggregate(qc.getAst().token)) {
+                    } else if (functionParser.isGroupBy(qc.getAst().token)) {
                         groupByModel.addColumn(qc);
                         // group-by column references might be needed when we have
                         // outer model supporting arithmetic such as:

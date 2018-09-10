@@ -27,7 +27,10 @@ import com.questdb.cairo.sql.DataFrame;
 import com.questdb.cairo.sql.Function;
 import com.questdb.griffin.engine.LongTreeSet;
 import com.questdb.griffin.engine.functions.bind.BindVariableService;
-import com.questdb.std.*;
+import com.questdb.std.IntHashSet;
+import com.questdb.std.IntIntHashMap;
+import com.questdb.std.Numbers;
+import com.questdb.std.Rows;
 import org.jetbrains.annotations.NotNull;
 
 class LatestByValuesFilteredRecordCursor extends AbstractTreeSetRecordCursor {
@@ -47,12 +50,6 @@ class LatestByValuesFilteredRecordCursor extends AbstractTreeSetRecordCursor {
         this.symbolKeys = symbolKeys;
         this.map = new IntIntHashMap(Numbers.ceilPow2(symbolKeys.size()));
         this.filter = filter;
-    }
-
-    @Override
-    public void toTop() {
-        super.toTop();
-        filter.toTop();
     }
 
     @Override
@@ -82,14 +79,15 @@ class LatestByValuesFilteredRecordCursor extends AbstractTreeSetRecordCursor {
         }
     }
 
+    @Override
+    public void toTop() {
+        super.toTop();
+        filter.toTop();
+    }
+
     private void prepare() {
-        final int keys[] = symbolKeys.getKeys();
-        final int noEntryValue = symbolKeys.getNoEntryValue();
-        for (int i = 0, n = keys.length; i < n; i++) {
-            int key = Unsafe.arrayGet(keys, i);
-            if (key != noEntryValue) {
-                map.put(key, 0);
-            }
+        for (int i = 0, n = symbolKeys.size(); i < n; i++) {
+            map.put(symbolKeys.get(i), 0);
         }
     }
 }

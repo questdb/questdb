@@ -41,7 +41,7 @@ public class CharSequenceIntHashMap extends AbstractCharSequenceHashSet {
 
     @SuppressWarnings("unchecked")
     public CharSequenceIntHashMap(int initialCapacity, double loadFactor, int noEntryValue) {
-        super(initialCapacity, loadFactor, 0.3);
+        super(initialCapacity, loadFactor);
         this.noEntryValue = noEntryValue;
         values = new int[capacity];
         clear();
@@ -52,14 +52,22 @@ public class CharSequenceIntHashMap extends AbstractCharSequenceHashSet {
         Arrays.fill(values, noEntryValue);
     }
 
-    public boolean removeAt(int index) {
+    public void increment(CharSequence key) {
+        int index = keyIndex(key);
         if (index < 0) {
-            Unsafe.arrayPut(keys, -index - 1, noEntryKey);
-            Unsafe.arrayPut(values, -index - 1, noEntryValue);
-            free++;
-            return true;
+            Unsafe.arrayPut(values, -index - 1, Unsafe.arrayGet(values, -index - 1) + 1);
+        } else {
+            putAt0(index, key.toString(), 0);
         }
-        return false;
+    }
+
+    public boolean putAt(int index, CharSequence key, int value) {
+        if (index < 0) {
+            Unsafe.arrayPut(values, -index - 1, value);
+            return false;
+        }
+        putAt0(index, key.toString(), value);
+        return true;
     }
 
     public boolean contains(CharSequence key) {
@@ -70,12 +78,10 @@ public class CharSequenceIntHashMap extends AbstractCharSequenceHashSet {
         return valueAt(keyIndex(key));
     }
 
-    public void increment(CharSequence key) {
+    public void putIfAbsent(CharSequence key, int value) {
         int index = keyIndex(key);
-        if (index < 0) {
-            Unsafe.arrayPut(values, -index - 1, Unsafe.arrayGet(values, -index - 1) + 1);
-        } else {
-            putAt0(index, key, 0);
+        if (index > -1) {
+            putAt0(index, key.toString(), value);
         }
     }
 
@@ -93,20 +99,17 @@ public class CharSequenceIntHashMap extends AbstractCharSequenceHashSet {
         }
     }
 
-    public boolean putAt(int index, CharSequence key, int value) {
-        if (index < 0) {
-            Unsafe.arrayPut(values, -index - 1, value);
-            return false;
-        }
-        putAt0(index, key, value);
-        return true;
+    @Override
+    protected void erase(int index) {
+        Unsafe.arrayPut(keys, index, noEntryKey);
+        Unsafe.arrayPut(values, index, noEntryValue);
     }
 
-    public void putIfAbsent(CharSequence key, int value) {
-        int index = keyIndex(key);
-        if (index > -1) {
-            putAt0(index, key, value);
-        }
+    @Override
+    protected void move(int from, int to) {
+        Unsafe.arrayPut(keys, to, Unsafe.arrayGet(keys, from));
+        Unsafe.arrayPut(values, to, Unsafe.arrayGet(values, from));
+        erase(from);
     }
 
     public int valueAt(int index) {
@@ -122,19 +125,25 @@ public class CharSequenceIntHashMap extends AbstractCharSequenceHashSet {
     }
 
     private void rehash() {
-        int newCapacity = values.length << 1;
+        int size = size();
+        int newCapacity = capacity * 2;
         mask = newCapacity - 1;
-        free = capacity = (int) (newCapacity * loadFactor);
+        free = capacity = newCapacity;
+        int arrayCapacity = (int) (newCapacity / loadFactor);
+
         int[] oldValues = values;
         CharSequence[] oldKeys = keys;
-        this.keys = new CharSequence[newCapacity];
-        this.values = new int[newCapacity];
-        Arrays.fill(keys, noEntryKey);
-        Arrays.fill(values, noEntryValue);
+        this.keys = new CharSequence[arrayCapacity];
+        this.values = new int[arrayCapacity];
+        Arrays.fill(keys, null);
 
+        free -= size;
         for (int i = oldKeys.length; i-- > 0; ) {
-            if (Unsafe.arrayGet(oldKeys, i) != noEntryKey) {
-                put(Unsafe.arrayGet(oldKeys, i), Unsafe.arrayGet(oldValues, i));
+            CharSequence key = Unsafe.arrayGet(oldKeys, i);
+            if (key != null) {
+                final int index = keyIndex(key);
+                Unsafe.arrayPut(keys, index, key);
+                Unsafe.arrayPut(values, index, Unsafe.arrayGet(oldValues, i));
             }
         }
     }

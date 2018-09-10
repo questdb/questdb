@@ -21,48 +21,55 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.engine.groupby;
+package com.questdb.griffin.engine.functions.groupby;
 
 import com.questdb.cairo.ArrayColumnTypes;
 import com.questdb.cairo.ColumnType;
 import com.questdb.cairo.map.MapValue;
 import com.questdb.cairo.sql.Function;
 import com.questdb.cairo.sql.Record;
-import com.questdb.griffin.engine.functions.DoubleFunction;
+import com.questdb.griffin.engine.functions.GroupByFunction;
+import com.questdb.griffin.engine.functions.IntFunction;
+import com.questdb.std.Numbers;
 import org.jetbrains.annotations.NotNull;
 
-public class SumGroupByFunction extends DoubleFunction implements GroupByFunction {
+public class SumIntGroupByFunction extends IntFunction implements GroupByFunction {
     private final Function value;
     private int valueIndex;
 
-    public SumGroupByFunction(int position, @NotNull Function value) {
+    public SumIntGroupByFunction(int position, @NotNull Function value) {
         super(position);
         this.value = value;
     }
 
     @Override
     public void computeFirst(MapValue mapValue, Record record) {
-        mapValue.putDouble(valueIndex, value.getDouble(record));
+        mapValue.putInt(valueIndex, value.getInt(record));
     }
 
     @Override
     public void computeNext(MapValue mapValue, Record record) {
-        mapValue.putDouble(valueIndex, mapValue.getDouble(valueIndex) + value.getDouble(record));
+        mapValue.putInt(valueIndex, mapValue.getInt(valueIndex) + value.getInt(record));
     }
 
     @Override
     public void pushValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
-        columnTypes.add(ColumnType.DOUBLE);
+        columnTypes.add(ColumnType.INT);
     }
 
     @Override
-    public void zero(MapValue value) {
-        value.putDouble(valueIndex, 0);
+    public void setInt(MapValue mapValue, int value) {
+        mapValue.putInt(valueIndex, value);
     }
 
     @Override
-    public double getDouble(Record rec) {
-        return rec.getDouble(valueIndex);
+    public void setNull(MapValue mapValue) {
+        mapValue.putInt(valueIndex, Numbers.INT_NaN);
+    }
+
+    @Override
+    public int getInt(Record rec) {
+        return rec.getInt(valueIndex);
     }
 }

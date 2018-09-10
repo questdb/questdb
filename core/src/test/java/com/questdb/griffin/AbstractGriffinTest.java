@@ -32,7 +32,9 @@ import com.questdb.griffin.engine.functions.bind.BindVariableService;
 import com.questdb.std.BinarySequence;
 import com.questdb.std.IntList;
 import com.questdb.std.LongList;
+import com.questdb.std.microtime.Dates;
 import com.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.junit.AfterClass;
 import org.junit.Assert;
@@ -62,13 +64,16 @@ public class AbstractGriffinTest extends AbstractCairoTest {
 
     protected static void assertCursor(CharSequence expected, RecordCursorFactory factory, boolean supportsRandomAccess) throws IOException {
         try (RecordCursor cursor = factory.getCursor(bindVariableService)) {
+            if (expected == null) {
+                Assert.assertFalse(cursor.hasNext());
+                cursor.toTop();
+                Assert.assertFalse(cursor.hasNext());
+                return;
+            }
+
             sink.clear();
             rows.clear();
             printer.print(cursor, factory.getMetadata(), true);
-
-            if (expected == null) {
-                return;
-            }
 
             TestUtils.assertEquals(expected, sink);
 
@@ -136,8 +141,10 @@ public class AbstractGriffinTest extends AbstractCairoTest {
         }
 
         if (symbolIndexes != null) {
+            boolean tested = false;
             cursor.toTop();
             while (cursor.hasNext()) {
+                tested = true;
                 Record record = cursor.next();
                 for (int i = 0, n = symbolIndexes.size(); i < n; i++) {
                     int column = symbolIndexes.getQuick(i);
@@ -148,6 +155,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
                     TestUtils.assertEquals(sym, symbolTable.value(value));
                 }
             }
+            Assert.assertTrue(tested);
         }
     }
 
@@ -157,6 +165,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
         try (RecordCursor cursor = factory.getCursor(bindVariableService)) {
             while (cursor.hasNext()) {
                 long ts = cursor.next().getTimestamp(index);
+                System.out.println(Dates.toString(timestamp) + " - " + Dates.toString(ts));
                 Assert.assertTrue(timestamp <= ts);
                 timestamp = ts;
             }
@@ -295,5 +304,33 @@ public class AbstractGriffinTest extends AbstractCairoTest {
             @Nullable CharSequence expected2,
             boolean supportsRandomAccess) throws Exception {
         assertQuery(expected, query, ddl, null, expectedTimestamp, ddl2, expected2, supportsRandomAccess);
+    }
+
+    protected void assertFailure(
+            CharSequence query,
+            @Nullable CharSequence ddl,
+            int expectedPosition,
+            @NotNull CharSequence expectedMessage
+    ) throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try {
+                if (ddl != null) {
+                    compiler.compile(ddl, bindVariableService);
+                }
+                try {
+                    compiler.compile(query, bindVariableService);
+                    Assert.fail();
+                } catch (SqlException e) {
+                    e.printStackTrace();
+                    Assert.assertEquals(expectedPosition, e.getPosition());
+                    TestUtils.assertContains(e.getFlyweightMessage(), expectedMessage);
+                }
+                Assert.assertEquals(0, engine.getBusyReaderCount());
+                Assert.assertEquals(0, engine.getBusyWriterCount());
+            } finally {
+                engine.releaseAllWriters();
+                engine.releaseAllReaders();
+            }
+        });
     }
 }

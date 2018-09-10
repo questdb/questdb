@@ -57,5 +57,9 @@ public interface FunctionFactory {
      */
     String getSignature();
 
+    default boolean isGroupBy() {
+        return false;
+    }
+
     Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) throws SqlException;
 }

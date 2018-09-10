@@ -129,6 +129,11 @@ final class FastMapValue implements MapValue {
         putLong(columnIndex, value);
     }
 
+    @Override
+    public long getAddress() {
+        return address;
+    }
+
     private long address0(int index) {
         return address + Unsafe.arrayGet(valueOffsets, index);
     }

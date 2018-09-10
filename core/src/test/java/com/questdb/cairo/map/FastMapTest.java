@@ -126,42 +126,14 @@ public class FastMapTest extends AbstractCairoTest {
                 Assert.assertEquals(rnd.nextLong(), value.getDate(7));
             }
 
-            rnd.reset();
 
-            for (MapRecord r : map) {
-                Assert.assertEquals(rnd.nextByte(), r.getByte(8));
-                Assert.assertEquals(rnd.nextShort(), r.getShort(9));
-                Assert.assertEquals(rnd.nextInt(), r.getInt(10));
-                Assert.assertEquals(rnd.nextLong(), r.getLong(11));
-                Assert.assertEquals(rnd.nextFloat2(), r.getFloat(12), 0.000000001f);
-                Assert.assertEquals(rnd.nextDouble2(), r.getDouble(13), 0.000000001d);
+            try (RecordCursor cursor = map.getCursor()) {
+                rnd.reset();
+                assertCursor1(rnd, cursor);
 
-
-                if ((rnd.nextPositiveInt() % 4) == 0) {
-                    Assert.assertNull(r.getStr(14));
-                    Assert.assertEquals(-1, r.getStrLen(14));
-                } else {
-                    CharSequence expected = rnd.nextChars(rnd.nextPositiveInt() % 16);
-                    TestUtils.assertEquals(expected, r.getStr(14));
-                }
-
-                Assert.assertEquals(rnd.nextBoolean(), r.getBool(15));
-                Assert.assertEquals(rnd.nextLong(), r.getDate(16));
-
-
-                // value part, it comes first in record
-
-                Assert.assertEquals(rnd.nextByte(), r.getByte(0));
-                Assert.assertEquals(rnd.nextShort(), r.getShort(1));
-                Assert.assertEquals(rnd.nextInt(), r.getInt(2));
-                Assert.assertEquals(rnd.nextLong(), r.getLong(3));
-                Assert.assertEquals(rnd.nextFloat2(), r.getFloat(4), 0.000000001f);
-                Assert.assertEquals(rnd.nextDouble2(), r.getDouble(5), 0.000000001d);
-                Assert.assertEquals(rnd.nextBoolean(), r.getBool(6));
-                Assert.assertEquals(rnd.nextLong(), r.getDate(7));
-
-
-                //140190888375179
+                rnd.reset();
+                cursor.toTop();
+                assertCursor1(rnd, cursor);
             }
         }
     }
@@ -431,95 +403,11 @@ public class FastMapTest extends AbstractCairoTest {
                     RecordCursor cursor = reader.getCursor();
                     populateMap(map, rnd2, cursor, sink);
 
-                    long c = 0;
-                    rnd.reset();
-                    rnd2.reset();
-                    for (Record record : map) {
-                        // value
-                        Assert.assertEquals(++c, record.getLong(0));
-                        Assert.assertEquals(rnd2.nextInt(), record.getInt(1));
-                        Assert.assertEquals(rnd2.nextShort(), record.getShort(2));
-                        Assert.assertEquals(rnd2.nextByte(), record.getByte(3));
-                        Assert.assertEquals(rnd2.nextFloat2(), record.getFloat(4), 0.000001f);
-                        Assert.assertEquals(rnd2.nextDouble2(), record.getDouble(5), 0.000000001);
-                        Assert.assertEquals(rnd2.nextLong(), record.getDate(6));
-                        Assert.assertEquals(rnd2.nextLong(), record.getTimestamp(7));
-                        Assert.assertEquals(rnd2.nextBoolean(), record.getBool(8));
-                        // key fields
-                        Assert.assertEquals(rnd.nextByte(), record.getByte(keyColumnOffset));
-                        Assert.assertEquals(rnd.nextShort(), record.getShort(keyColumnOffset + 1));
-                        if (rnd.nextInt() % 4 == 0) {
-                            Assert.assertEquals(Numbers.INT_NaN, record.getInt(keyColumnOffset + 2));
-                        } else {
-                            Assert.assertEquals(rnd.nextInt(), record.getInt(keyColumnOffset + 2));
-                        }
-
-                        if (rnd.nextInt() % 4 == 0) {
-                            Assert.assertEquals(Numbers.LONG_NaN, record.getLong(keyColumnOffset + 3));
-                        } else {
-                            Assert.assertEquals(rnd.nextLong(), record.getLong(keyColumnOffset + 3));
-                        }
-
-                        if (rnd.nextInt() % 4 == 0) {
-                            Assert.assertEquals(Numbers.LONG_NaN, record.getDate(keyColumnOffset + 4));
-                        } else {
-                            Assert.assertEquals(rnd.nextLong(), record.getDate(keyColumnOffset + 4));
-                        }
-
-                        if (rnd.nextInt() % 4 == 0) {
-                            Assert.assertEquals(Numbers.LONG_NaN, record.getTimestamp(keyColumnOffset + 5));
-                        } else {
-                            Assert.assertEquals(rnd.nextLong(), record.getTimestamp(keyColumnOffset + 5));
-                        }
-
-                        if (rnd.nextInt() % 4 == 0) {
-                            Assert.assertTrue(Float.isNaN(record.getFloat(keyColumnOffset + 6)));
-                        } else {
-                            Assert.assertEquals(rnd.nextFloat2(), record.getFloat(keyColumnOffset + 6), 0.00000001f);
-                        }
-
-                        if (rnd.nextInt() % 4 == 0) {
-                            Assert.assertTrue(Double.isNaN(record.getDouble(keyColumnOffset + 7)));
-                        } else {
-                            Assert.assertEquals(rnd.nextDouble2(), record.getDouble(keyColumnOffset + 7), 0.0000000001d);
-                        }
-
-                        if (rnd.nextInt() % 4 == 0) {
-                            Assert.assertNull(record.getStr(keyColumnOffset + 8));
-                            Assert.assertNull(record.getStrB(keyColumnOffset + 8));
-                            Assert.assertEquals(-1, record.getStrLen(keyColumnOffset + 8));
-                            AbstractCairoTest.sink.clear();
-                            record.getStr(keyColumnOffset + 8, AbstractCairoTest.sink);
-                            Assert.assertEquals(0, AbstractCairoTest.sink.length());
-                        } else {
-                            CharSequence tmp = rnd.nextChars(5);
-                            TestUtils.assertEquals(tmp, record.getStr(keyColumnOffset + 8));
-                            TestUtils.assertEquals(tmp, record.getStrB(keyColumnOffset + 8));
-                            Assert.assertEquals(tmp.length(), record.getStrLen(keyColumnOffset + 8));
-                            AbstractCairoTest.sink.clear();
-                            record.getStr(keyColumnOffset + 8, AbstractCairoTest.sink);
-                            TestUtils.assertEquals(tmp, AbstractCairoTest.sink);
-                        }
-
-                        // we are storing symbol as string, assert as such
-
-                        if (rnd.nextInt() % 4 == 0) {
-                            Assert.assertNull(record.getStr(keyColumnOffset + 9));
-                        } else {
-                            TestUtils.assertEquals(rnd.nextChars(3), record.getStr(keyColumnOffset + 9));
-                        }
-
-                        Assert.assertEquals(rnd.nextBoolean(), record.getBool(keyColumnOffset + 10));
-
-                        if (rnd.nextInt() % 4 == 0) {
-                            TestUtils.assertEquals(null, record.getBin(keyColumnOffset + 11), record.getBinLen(keyColumnOffset + 11));
-                        } else {
-                            binarySequence.of(rnd.nextBytes(25));
-                            TestUtils.assertEquals(binarySequence, record.getBin(keyColumnOffset + 11), record.getBinLen(keyColumnOffset + 11));
-                        }
-
+                    try (RecordCursor mapCursor = map.getCursor()) {
+                        assertCursor2(rnd, binarySequence, keyColumnOffset, rnd2, mapCursor);
+                        mapCursor.toTop();
+                        assertCursor2(rnd, binarySequence, keyColumnOffset, rnd2, mapCursor);
                     }
-                    Assert.assertEquals(N, c);
                 }
             }
         });
@@ -544,19 +432,32 @@ public class FastMapTest extends AbstractCairoTest {
                 // reset random generator and iterate map to double the value
                 rnd.reset();
                 LongList list = new LongList();
-                for (MapRecord record : map) {
-                    list.add(record.getRowId());
-                    Assert.assertEquals(rnd.nextInt(), record.getInt(1));
-                    MapValue value = record.getValue();
-                    value.putInt(0, value.getInt(0) * 2);
-                }
+                try (RecordCursor cursor = map.getCursor()) {
+                    while (cursor.hasNext()) {
+                        MapRecord record = (MapRecord) cursor.next();
+                        list.add(record.getRowId());
+                        Assert.assertEquals(rnd.nextInt(), record.getInt(1));
+                        MapValue value = record.getValue();
+                        value.putInt(0, value.getInt(0) * 2);
+                    }
 
-                // access map by rowid now
-                rnd.reset();
-                for (int i = 0, n = list.size(); i < n; i++) {
-                    MapRecord record = map.recordAt(list.getQuick(i));
-                    Assert.assertEquals((i + 1) * 2, record.getInt(0));
-                    Assert.assertEquals(rnd.nextInt(), record.getInt(1));
+                    // access map by rowid now
+                    rnd.reset();
+                    for (int i = 0, n = list.size(); i < n; i++) {
+                        MapRecord record = (MapRecord) cursor.recordAt(list.getQuick(i));
+                        Assert.assertEquals((i + 1) * 2, record.getInt(0));
+                        Assert.assertEquals(rnd.nextInt(), record.getInt(1));
+                    }
+
+                    MapRecord rec = (MapRecord) cursor.newRecord();
+                    Assert.assertNotSame(rec, cursor.getRecord());
+
+                    rnd.reset();
+                    for (int i = 0, n = list.size(); i < n; i++) {
+                        cursor.recordAt(rec, list.getQuick(i));
+                        Assert.assertEquals((i + 1) * 2, rec.getInt(0));
+                        Assert.assertEquals(rnd.nextInt(), rec.getInt(1));
+                    }
                 }
             }
         });
@@ -774,6 +675,134 @@ public class FastMapTest extends AbstractCairoTest {
                 }
             }
         });
+    }
+
+    private void assertCursor1(Rnd rnd, RecordCursor cursor) {
+        while (cursor.hasNext()) {
+            Record r = cursor.next();
+            Assert.assertEquals(rnd.nextByte(), r.getByte(8));
+            Assert.assertEquals(rnd.nextShort(), r.getShort(9));
+            Assert.assertEquals(rnd.nextInt(), r.getInt(10));
+            Assert.assertEquals(rnd.nextLong(), r.getLong(11));
+            Assert.assertEquals(rnd.nextFloat2(), r.getFloat(12), 0.000000001f);
+            Assert.assertEquals(rnd.nextDouble2(), r.getDouble(13), 0.000000001d);
+
+
+            if ((rnd.nextPositiveInt() % 4) == 0) {
+                Assert.assertNull(r.getStr(14));
+                Assert.assertEquals(-1, r.getStrLen(14));
+            } else {
+                CharSequence expected = rnd.nextChars(rnd.nextPositiveInt() % 16);
+                TestUtils.assertEquals(expected, r.getStr(14));
+            }
+
+            Assert.assertEquals(rnd.nextBoolean(), r.getBool(15));
+            Assert.assertEquals(rnd.nextLong(), r.getDate(16));
+
+
+            // value part, it comes first in record
+
+            Assert.assertEquals(rnd.nextByte(), r.getByte(0));
+            Assert.assertEquals(rnd.nextShort(), r.getShort(1));
+            Assert.assertEquals(rnd.nextInt(), r.getInt(2));
+            Assert.assertEquals(rnd.nextLong(), r.getLong(3));
+            Assert.assertEquals(rnd.nextFloat2(), r.getFloat(4), 0.000000001f);
+            Assert.assertEquals(rnd.nextDouble2(), r.getDouble(5), 0.000000001d);
+            Assert.assertEquals(rnd.nextBoolean(), r.getBool(6));
+            Assert.assertEquals(rnd.nextLong(), r.getDate(7));
+        }
+    }
+
+    private void assertCursor2(Rnd rnd, TestRecord.ArrayBinarySequence binarySequence, int keyColumnOffset, Rnd rnd2, RecordCursor mapCursor) {
+        long c = 0;
+        rnd.reset();
+        rnd2.reset();
+        while (mapCursor.hasNext()) {
+            Record record = mapCursor.next();
+            // value
+            Assert.assertEquals(++c, record.getLong(0));
+            Assert.assertEquals(rnd2.nextInt(), record.getInt(1));
+            Assert.assertEquals(rnd2.nextShort(), record.getShort(2));
+            Assert.assertEquals(rnd2.nextByte(), record.getByte(3));
+            Assert.assertEquals(rnd2.nextFloat2(), record.getFloat(4), 0.000001f);
+            Assert.assertEquals(rnd2.nextDouble2(), record.getDouble(5), 0.000000001);
+            Assert.assertEquals(rnd2.nextLong(), record.getDate(6));
+            Assert.assertEquals(rnd2.nextLong(), record.getTimestamp(7));
+            Assert.assertEquals(rnd2.nextBoolean(), record.getBool(8));
+            // key fields
+            Assert.assertEquals(rnd.nextByte(), record.getByte(keyColumnOffset));
+            Assert.assertEquals(rnd.nextShort(), record.getShort(keyColumnOffset + 1));
+            if (rnd.nextInt() % 4 == 0) {
+                Assert.assertEquals(Numbers.INT_NaN, record.getInt(keyColumnOffset + 2));
+            } else {
+                Assert.assertEquals(rnd.nextInt(), record.getInt(keyColumnOffset + 2));
+            }
+
+            if (rnd.nextInt() % 4 == 0) {
+                Assert.assertEquals(Numbers.LONG_NaN, record.getLong(keyColumnOffset + 3));
+            } else {
+                Assert.assertEquals(rnd.nextLong(), record.getLong(keyColumnOffset + 3));
+            }
+
+            if (rnd.nextInt() % 4 == 0) {
+                Assert.assertEquals(Numbers.LONG_NaN, record.getDate(keyColumnOffset + 4));
+            } else {
+                Assert.assertEquals(rnd.nextLong(), record.getDate(keyColumnOffset + 4));
+            }
+
+            if (rnd.nextInt() % 4 == 0) {
+                Assert.assertEquals(Numbers.LONG_NaN, record.getTimestamp(keyColumnOffset + 5));
+            } else {
+                Assert.assertEquals(rnd.nextLong(), record.getTimestamp(keyColumnOffset + 5));
+            }
+
+            if (rnd.nextInt() % 4 == 0) {
+                Assert.assertTrue(Float.isNaN(record.getFloat(keyColumnOffset + 6)));
+            } else {
+                Assert.assertEquals(rnd.nextFloat2(), record.getFloat(keyColumnOffset + 6), 0.00000001f);
+            }
+
+            if (rnd.nextInt() % 4 == 0) {
+                Assert.assertTrue(Double.isNaN(record.getDouble(keyColumnOffset + 7)));
+            } else {
+                Assert.assertEquals(rnd.nextDouble2(), record.getDouble(keyColumnOffset + 7), 0.0000000001d);
+            }
+
+            if (rnd.nextInt() % 4 == 0) {
+                Assert.assertNull(record.getStr(keyColumnOffset + 8));
+                Assert.assertNull(record.getStrB(keyColumnOffset + 8));
+                Assert.assertEquals(-1, record.getStrLen(keyColumnOffset + 8));
+                AbstractCairoTest.sink.clear();
+                record.getStr(keyColumnOffset + 8, AbstractCairoTest.sink);
+                Assert.assertEquals(0, AbstractCairoTest.sink.length());
+            } else {
+                CharSequence tmp = rnd.nextChars(5);
+                TestUtils.assertEquals(tmp, record.getStr(keyColumnOffset + 8));
+                TestUtils.assertEquals(tmp, record.getStrB(keyColumnOffset + 8));
+                Assert.assertEquals(tmp.length(), record.getStrLen(keyColumnOffset + 8));
+                AbstractCairoTest.sink.clear();
+                record.getStr(keyColumnOffset + 8, AbstractCairoTest.sink);
+                TestUtils.assertEquals(tmp, AbstractCairoTest.sink);
+            }
+
+            // we are storing symbol as string, assert as such
+
+            if (rnd.nextInt() % 4 == 0) {
+                Assert.assertNull(record.getStr(keyColumnOffset + 9));
+            } else {
+                TestUtils.assertEquals(rnd.nextChars(3), record.getStr(keyColumnOffset + 9));
+            }
+
+            Assert.assertEquals(rnd.nextBoolean(), record.getBool(keyColumnOffset + 10));
+
+            if (rnd.nextInt() % 4 == 0) {
+                TestUtils.assertEquals(null, record.getBin(keyColumnOffset + 11), record.getBinLen(keyColumnOffset + 11));
+            } else {
+                binarySequence.of(rnd.nextBytes(25));
+                TestUtils.assertEquals(binarySequence, record.getBin(keyColumnOffset + 11), record.getBinLen(keyColumnOffset + 11));
+            }
+        }
+        Assert.assertEquals(5000, c);
     }
 
     private void assertDupes(FastMap map, Rnd rnd, int n) {

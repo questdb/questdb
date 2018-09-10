@@ -26,66 +26,49 @@ package com.questdb.std;
 import java.util.Arrays;
 
 
-public class IntObjHashMap<V> implements Mutable {
-    private static final int MIN_INITIAL_CAPACITY = 16;
+public class IntObjHashMap<V> extends AbstractIntHashSet {
     private static final Object noEntryValue = new Object();
-    private final double loadFactor;
     private V[] values;
-    private int[] keys;
-    private int free;
-    private int capacity;
-    private int mask;
 
     public IntObjHashMap() {
         this(8);
     }
 
     public IntObjHashMap(int initialCapacity) {
-        this(initialCapacity, 0.5f);
+        this(initialCapacity, 0.5f, noEntryKey);
     }
 
     @SuppressWarnings("unchecked")
-    private IntObjHashMap(int initialCapacity, double loadFactor) {
-        if (loadFactor <= 0d || loadFactor >= 1d) {
-            throw new IllegalArgumentException("0 < loadFactor < 1");
-        }
-        int capacity = Math.max(initialCapacity, (int) (initialCapacity / loadFactor));
-        capacity = capacity < MIN_INITIAL_CAPACITY ? MIN_INITIAL_CAPACITY : Numbers.ceilPow2(capacity);
-        this.loadFactor = loadFactor;
-        values = (V[]) new Object[capacity];
-        keys = new int[capacity];
-        free = this.capacity = initialCapacity;
-        mask = capacity - 1;
+    public IntObjHashMap(int initialCapacity, double loadFactor, int noKeyValue) {
+        super(initialCapacity, loadFactor, noKeyValue);
+        values = (V[]) new Object[keys.length];
         clear();
     }
 
     public final void clear() {
+        super.clear();
         Arrays.fill(values, noEntryValue);
+    }
+
+    @Override
+    protected void erase(int index) {
+        Unsafe.arrayPut(keys, index, noEntryKeyValue);
+        Unsafe.arrayPut(values, index, noEntryValue);
+    }
+
+    @Override
+    protected void move(int from, int to) {
+        Unsafe.arrayPut(keys, to, Unsafe.arrayGet(keys, from));
+        Unsafe.arrayPut(values, to, Unsafe.arrayGet(values, from));
+        erase(from);
     }
 
     public V get(int key) {
         return valueAt(keyIndex(key));
     }
 
-    public int keyIndex(int key) {
-        int index = key & mask;
-        if (Unsafe.arrayGet(values, index) == noEntryValue) {
-            return index;
-        }
-
-        if (Unsafe.arrayGet(keys, index) == key) {
-            return -index - 1;
-        }
-
-        return probe(key, index);
-    }
-
     public void put(int key, V value) {
         putAt(keyIndex(key), key, value);
-    }
-
-    public int size() {
-        return capacity - free;
     }
 
     public void putAt(int index, int key, V value) {
@@ -104,32 +87,27 @@ public class IntObjHashMap<V> implements Mutable {
         return index < 0 ? Unsafe.arrayGet(values, -index - 1) : null;
     }
 
-    private int probe(int key, int index) {
-        do {
-            index = (index + 1) & mask;
-            if (Unsafe.arrayGet(values, index) == noEntryValue) {
-                return index;
-            }
-            if (key == Unsafe.arrayGet(keys, index)) {
-                return -index - 1;
-            }
-        } while (true);
-    }
-
     @SuppressWarnings({"unchecked"})
     private void rehash() {
-        int newCapacity = values.length << 1;
+        int size = size();
+        int newCapacity = capacity * 2;
         mask = newCapacity - 1;
-        free = this.capacity = (int) (newCapacity * loadFactor);
+        free = capacity = newCapacity;
+        int arrayCapacity = (int) (newCapacity / loadFactor);
+
         V[] oldValues = values;
         int[] oldKeys = keys;
-        this.keys = new int[newCapacity];
-        this.values = (V[]) new Object[newCapacity];
-        Arrays.fill(values, 0, values.length, noEntryValue);
+        this.keys = new int[arrayCapacity];
+        this.values = (V[]) new Object[arrayCapacity];
+        Arrays.fill(keys, noEntryKeyValue);
 
+        free -= size;
         for (int i = oldKeys.length; i-- > 0; ) {
-            if (Unsafe.arrayGet(oldValues, i) != noEntryValue) {
-                put(Unsafe.arrayGet(oldKeys, i), Unsafe.arrayGet(oldValues, i));
+            int key = Unsafe.arrayGet(oldKeys, i);
+            if (key != noEntryKeyValue) {
+                final int index = keyIndex(key);
+                Unsafe.arrayPut(keys, index, key);
+                Unsafe.arrayPut(values, index, Unsafe.arrayGet(oldValues, i));
             }
         }
     }

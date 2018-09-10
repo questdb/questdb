@@ -41,15 +41,6 @@ public final class Numbers {
     private static final float[] pow10f = new float[]{1, 1E1f, 1E2f, 1E3f, 1E4f, 1E5f, 1E6f, 1E7f, 1E8f, 1E9f, 1E10f, 1E11f, 1E12f, 1E13f, 1E14f, 1E15f, 1E16f, 1E17f, 1E18f, 1E19f, 1E20f, 1E21f, 1E22f, 1E23f, 1E24f, 1E25f, 1E26f, 1E27f, 1E28f, 1E29f, 1E30f, 1E31f, 1E32f, 1E33f, 1E34f, 1E35f, 1E36f, 1E37f, 1E38f};
     private final static int pow10max;
 
-    static {
-        pow10 = new long[20];
-        pow10max = 14;
-        pow10[0] = 1;
-        for (int i = 1; i < pow10.length; i++) {
-            pow10[i] = pow10[i - 1] * 10;
-        }
-    }
-
     private Numbers() {
     }
 
@@ -151,7 +142,6 @@ public final class Numbers {
             sink.put('-');
             i = -i;
         }
-        int c;
         if (i < 10) {
             sink.put((char) ('0' + i));
         } else if (i < 100) {  // two
@@ -517,14 +507,6 @@ public final class Numbers {
             return -((((long) len) << 32L) | (-value));
         }
         return (((long) len) << 32L) | (value);
-    }
-
-    public static void main(String[] args) {
-        int x = 1;
-        for (int i = 0; i < 128; i++) {
-            x = ceilPow2(x + 1);
-            System.out.println(x);
-        }
     }
 
     public static int msb(int value) {
@@ -1153,13 +1135,13 @@ public final class Numbers {
         return ((double) (long) (value * powten + 1 - TOLERANCE)) / powten;
     }
 
-
-    //////////////////////
-
     private static double roundDown00(double value, int scale) {
         long powten = Unsafe.arrayGet(pow10, scale);
         return ((double) (long) (value * powten + TOLERANCE)) / powten;
     }
+
+
+    //////////////////////
 
     private static void appendLong10(CharSink sink, long i) {
         long c;
@@ -1447,5 +1429,14 @@ public final class Numbers {
             throw NumericException.INSTANCE;
         }
         return negative ? val : -val;
+    }
+
+    static {
+        pow10 = new long[20];
+        pow10max = 14;
+        pow10[0] = 1;
+        for (int i = 1; i < pow10.length; i++) {
+            pow10[i] = pow10[i - 1] * 10;
+        }
     }
 }

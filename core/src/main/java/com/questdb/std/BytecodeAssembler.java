@@ -481,19 +481,19 @@ public class BytecodeAssembler {
     }
 
     public int poolUtf8(CharSequence cs) {
-        int cachedIndex = utf8Cache.get(cs);
-        if (cachedIndex == -1) {
+        int index = utf8Cache.keyIndex(cs);
+        if (index > -1) {
             putByte(0x01);
             int n;
             putShort(n = cs.length());
             for (int i = 0; i < n; i++) {
                 putByte(cs.charAt(i));
             }
-            utf8Cache.put(cs, poolCount);
+            utf8Cache.putAt(index, cs, poolCount);
             return this.poolCount++;
         }
 
-        return cachedIndex;
+        return utf8Cache.valueAt(index);
     }
 
     public void pop() {

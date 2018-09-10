@@ -23,9 +23,10 @@
 
 package com.questdb.cairo.map;
 
-import com.questdb.std.ImmutableIterator;
+import com.questdb.cairo.sql.Record;
+import com.questdb.cairo.sql.RecordCursor;
 
-public class CompactMapCursor implements ImmutableIterator<MapRecord> {
+public class CompactMapCursor implements RecordCursor {
 
     private final CompactMapRecord record;
     private long offsetHi;
@@ -33,6 +34,37 @@ public class CompactMapCursor implements ImmutableIterator<MapRecord> {
 
     public CompactMapCursor(CompactMapRecord record) {
         this.record = record;
+    }
+
+    @Override
+    public void close() {
+    }
+
+    @Override
+    public MapRecord getRecord() {
+        return record;
+    }
+
+    @Override
+    public MapRecord newRecord() {
+        return record.clone();
+    }
+
+    @Override
+    public MapRecord recordAt(long rowId) {
+        record.of(rowId);
+        return record;
+    }
+
+    @Override
+    public void recordAt(Record record, long atRowId) {
+        assert record instanceof CompactMapRecord;
+        ((CompactMapRecord) record).of(atRowId);
+    }
+
+    @Override
+    public void toTop() {
+        nextOffset = 0;
     }
 
     @Override

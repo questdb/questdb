@@ -35,7 +35,7 @@ public class SymInOperator extends AbstractVirtualColumn implements Function {
 
     public final static VirtualColumnFactory<Function> FACTORY = (position, configuration) -> new SymInOperator(position);
 
-    private final IntHashSet set = new IntHashSet(10, .5f, -10);
+    private final IntHashSet set = new IntHashSet(10, .5f, -5);
     private final CharSequenceHashSet values = new CharSequenceHashSet();
     private VirtualColumn lhs;
 

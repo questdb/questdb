@@ -23,15 +23,16 @@
 
 package com.questdb.cairo.map;
 
+import com.questdb.cairo.sql.RecordCursor;
 import com.questdb.std.Mutable;
 
 import java.io.Closeable;
 
-public interface Map extends Mutable, Closeable, Iterable<MapRecord> {
+public interface Map extends Mutable, Closeable {
     @Override
     void close();
 
-    MapRecord recordAt(long rowid);
+    RecordCursor getCursor();
 
     MapRecord getRecord();
 
@@ -40,4 +41,6 @@ public interface Map extends Mutable, Closeable, Iterable<MapRecord> {
     MapKey withKey();
 
     MapKey withKeyAsLong(long value);
+
+    MapValue valueAt(long address);
 }

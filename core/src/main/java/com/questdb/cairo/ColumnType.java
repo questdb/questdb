@@ -53,10 +53,6 @@ public final class ColumnType {
     private ColumnType() {
     }
 
-    public static int columnTypeOf(Class clazz) {
-        return classMap.get(clazz);
-    }
-
     public static int columnTypeOf(CharSequence name) {
         StringSink b = caseConverterBuffer.get();
         b.clear();

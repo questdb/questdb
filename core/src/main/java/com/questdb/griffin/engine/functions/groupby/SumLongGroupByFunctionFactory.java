@@ -21,19 +21,27 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.engine.groupby;
+package com.questdb.griffin.engine.functions.groupby;
 
-import com.questdb.cairo.ArrayColumnTypes;
-import com.questdb.cairo.map.MapValue;
+import com.questdb.cairo.CairoConfiguration;
 import com.questdb.cairo.sql.Function;
-import com.questdb.cairo.sql.Record;
+import com.questdb.griffin.FunctionFactory;
+import com.questdb.griffin.SqlException;
+import com.questdb.std.ObjList;
 
-public interface GroupByFunction extends Function {
-    void computeFirst(MapValue mapValue, Record record);
+public class SumLongGroupByFunctionFactory implements FunctionFactory {
+    @Override
+    public String getSignature() {
+        return "sum(L)";
+    }
 
-    void computeNext(MapValue mapValue, Record record);
+    @Override
+    public boolean isGroupBy() {
+        return true;
+    }
 
-    void pushValueTypes(ArrayColumnTypes columnTypes);
-
-    void zero(MapValue value);
+    @Override
+    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) throws SqlException {
+        return new SumLongGroupByFunction(position, args.getQuick(0));
+    }
 }

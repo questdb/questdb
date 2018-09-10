@@ -25,39 +25,22 @@ package com.questdb.griffin.engine.groupby;
 
 import com.questdb.cairo.*;
 import com.questdb.cairo.map.Map;
-import com.questdb.cairo.map.MapFactory;
-import com.questdb.cairo.map.MapKey;
-import com.questdb.cairo.map.MapValue;
 import com.questdb.cairo.sql.Function;
-import com.questdb.cairo.sql.RecordCursor;
 import com.questdb.cairo.sql.RecordCursorFactory;
-import com.questdb.cairo.sql.RecordMetadata;
 import com.questdb.griffin.FunctionParser;
 import com.questdb.griffin.SqlException;
 import com.questdb.griffin.SqlExecutionContext;
-import com.questdb.griffin.engine.functions.bind.BindVariableService;
-import com.questdb.griffin.engine.functions.columns.*;
+import com.questdb.griffin.engine.functions.GroupByFunction;
 import com.questdb.griffin.engine.functions.constants.DoubleConstant;
 import com.questdb.griffin.engine.functions.constants.FloatConstant;
 import com.questdb.griffin.engine.functions.constants.IntConstant;
 import com.questdb.griffin.engine.functions.constants.LongConstant;
-import com.questdb.griffin.engine.table.EmptyTableRecordCursor;
 import com.questdb.griffin.model.ExpressionNode;
-import com.questdb.griffin.model.QueryColumn;
 import com.questdb.griffin.model.QueryModel;
 import com.questdb.std.*;
 import org.jetbrains.annotations.NotNull;
 
-public class SampleByFillValueRecordCursorFactory implements RecordCursorFactory {
-
-    private final Map map;
-    private final RecordCursorFactory base;
-    private final SampleByFillValueRecordCursor cursor;
-    private final ObjList<Function> recordFunctions;
-    private final ObjList<GroupByFunction> groupByFunctions;
-    private final RecordSink mapSink;
-    private final RecordMetadata metadata;
-
+public class SampleByFillValueRecordCursorFactory extends AbstractSampleByRecordCursorFactory {
     public SampleByFillValueRecordCursorFactory(
             CairoConfiguration configuration,
             RecordCursorFactory base,
@@ -67,155 +50,97 @@ public class SampleByFillValueRecordCursorFactory implements RecordCursorFactory
             @Transient @NotNull FunctionParser functionParser,
             @Transient @NotNull SqlExecutionContext executionContext,
             @Transient @NotNull BytecodeAssembler asm,
-            @Transient @NotNull ObjList<ExpressionNode> fillValues) throws SqlException {
-        final int columnCount = model.getColumns().size();
-        final RecordMetadata metadata = base.getMetadata();
-        final int timestampIndex = metadata.getTimestampIndex();
-        // fail?
-        assert timestampIndex != -1;
-        final ObjList<GroupByFunction> groupByFunctions = new ObjList<>(columnCount);
-        final ObjList<Function> recordFunctions = new ObjList<>(columnCount);
-        final ObjList<Function> placeholderFunctions = new ObjList<>(columnCount);
-        final GenericRecordMetadata groupByMetadata = new GenericRecordMetadata();
+            @Transient @NotNull ObjList<ExpressionNode> fillValues,
+            @Transient @NotNull ArrayColumnTypes keyTypes,
+            @Transient @NotNull ArrayColumnTypes valueTypes
+    ) throws SqlException {
+        super(
+                configuration,
+                base,
+                timestampSampler,
+                model,
+                listColumnFilter,
+                functionParser,
+                executionContext,
+                asm,
+                (
+                        map,
+                        sink,
+                        sampler,
+                        timestampIndex,
+                        groupByFunctions,
+                        recordFunctions,
+                        symbolTableIndex
+
+                ) -> createCursor(
+                        map,
+                        sink,
+                        sampler,
+                        timestampIndex,
+                        groupByFunctions,
+                        recordFunctions,
+                        symbolTableIndex,
+                        fillValues
+                ),
+                keyTypes,
+                valueTypes
+        );
+    }
+
+    @NotNull
+    public static SampleByFillValueRecordCursor createCursor(
+            Map map,
+            RecordSink sink,
+            @NotNull TimestampSampler timestampSampler,
+            int timestampIndex,
+            ObjList<GroupByFunction> groupByFunctions,
+            ObjList<Function> recordFunctions,
+            IntIntHashMap symbolTableIndex,
+            ObjList<ExpressionNode> fillValues
+    ) throws SqlException {
+        return new SampleByFillValueRecordCursor(
+                map,
+                sink,
+                groupByFunctions,
+                recordFunctions,
+                createPlaceholderFunctions(recordFunctions, fillValues),
+                timestampIndex,
+                timestampSampler,
+                symbolTableIndex
+        );
+    }
+
+    @NotNull
+    private static ObjList<Function> createPlaceholderFunctions(
+            ObjList<Function> recordFunctions,
+            @NotNull @Transient ObjList<ExpressionNode> fillValues
+    ) throws SqlException {
+
+        final ObjList<Function> placeholderFunctions = new ObjList<>();
+        int fillIndex = 0;
         final int fillValueCount = fillValues.size();
-
-        // transient ?
-        ArrayColumnTypes keyTypes = new ArrayColumnTypes();
-        ArrayColumnTypes valueTypes = new ArrayColumnTypes();
-
-        listColumnFilter.clear();
-
-        // first value is always timestamp
-        valueTypes.add(ColumnType.LONG);
-
-        // Process group-by functions first to get the idea of
-        // how many map values we will have.
-        // Map value count is needed to calculate offsets for
-        // map key columns.
-        for (int i = 0; i < columnCount; i++) {
-            final QueryColumn column = model.getColumns().getQuick(i);
-            ExpressionNode node = column.getAst();
-
-            if (node.type != ExpressionNode.LITERAL) {
-                // this can fail
-                final Function function = functionParser.parseFunction(
-                        column.getAst(),
-                        metadata,
-                        executionContext
-                );
-
-                // configure map value columns for group-by functions
-                // some functions may need more than one column in values
-                // so we have them do all the work
-                assert function instanceof GroupByFunction;
-                GroupByFunction func = (GroupByFunction) function;
-                func.pushValueTypes(valueTypes);
-                groupByFunctions.add(func);
-            }
-        }
-
-        int keyColumnIndex = valueTypes.getColumnCount();
-        int valueColumnIndex = 0;
-        final IntIntHashMap symbolTableIndex = new IntIntHashMap();
-
-        // when we have same column several times in a row
-        // we only add it once to map keys
-        int lastIndex = -1;
-        for (int i = 0; i < columnCount; i++) {
-            final QueryColumn column = model.getColumns().getQuick(i);
-            final ExpressionNode node = column.getAst();
-            final int type;
-
-            if (node.type == ExpressionNode.LITERAL) {
-                // this is key
-                int index = metadata.getColumnIndex(node.token);
-                type = metadata.getColumnType(index);
-                if (index != timestampIndex) {
-                    if (lastIndex != index) {
-                        listColumnFilter.add(index);
-                        keyTypes.add(type);
-                        keyColumnIndex++;
-                        lastIndex = index;
-                    }
-
-                    final Function fun;
-                    switch (type) {
-                        case ColumnType.BOOLEAN:
-                            fun = new BooleanColumn(node.position, keyColumnIndex - 1);
-                            break;
-                        case ColumnType.BYTE:
-                            fun = new ByteColumn(node.position, keyColumnIndex - 1);
-                            break;
-                        case ColumnType.SHORT:
-                            fun = new ShortColumn(node.position, keyColumnIndex - 1);
-                            break;
-                        case ColumnType.INT:
-                            fun = new IntColumn(node.position, keyColumnIndex - 1);
-                            break;
-                        case ColumnType.LONG:
-                            fun = new LongColumn(node.position, keyColumnIndex - 1);
-                            break;
-                        case ColumnType.FLOAT:
-                            fun = new FloatColumn(node.position, keyColumnIndex - 1);
-                            break;
-                        case ColumnType.DOUBLE:
-                            fun = new DoubleColumn(node.position, keyColumnIndex - 1);
-                            break;
-                        case ColumnType.STRING:
-                            fun = new StrColumn(node.position, keyColumnIndex - 1);
-                            break;
-                        case ColumnType.SYMBOL:
-                            symbolTableIndex.put(keyColumnIndex - 1, index);
-                            fun = new MapSymbolColumn(node.position, keyColumnIndex - 1);
-                            break;
-                        case ColumnType.DATE:
-                            fun = new DateColumn(node.position, keyColumnIndex - 1);
-                            break;
-                        case ColumnType.TIMESTAMP:
-                            fun = new TimestampColumn(node.position, keyColumnIndex - 1);
-                            break;
-                        default:
-                            fun = new BinColumn(node.position, keyColumnIndex - 1);
-                            break;
-                    }
-
-                    recordFunctions.add(fun);
-                    placeholderFunctions.add(fun);
-
-                } else {
-                    // set this function to null, cursor will replace it with an instance class
-                    // timestamp function returns value of class member which makes it impossible
-                    // to create these columns in advance of cursor instantiation
-                    recordFunctions.add(null);
-                    placeholderFunctions.add(null);
-                    if (groupByMetadata.getTimestampIndex() == -1) {
-                        groupByMetadata.setTimestampIndex(i);
-                    }
-                    assert type == ColumnType.TIMESTAMP;
+        for (int i = 0, n = recordFunctions.size(); i < n; i++) {
+            Function function = recordFunctions.getQuick(i);
+            if (function instanceof GroupByFunction) {
+                if (fillIndex == fillValueCount) {
+                    throw SqlException.position(0).put("not enough values");
                 }
-            } else {
-                // add group-by function as a record function as well
-                // so it can produce column values
-                if (fillValueCount == valueColumnIndex) {
-                    throw SqlException.$(0, "not enough fill values");
-                }
-                ExpressionNode fillNode = fillValues.getQuick(valueColumnIndex);
-                final GroupByFunction groupByFunction = groupByFunctions.getQuick(valueColumnIndex++);
-                recordFunctions.add(groupByFunction);
-                type = groupByFunction.getType();
+
+                ExpressionNode fillNode = fillValues.getQuick(fillIndex++);
+
                 try {
-                    switch (type) {
+                    switch (function.getType()) {
                         case ColumnType.INT:
-                            placeholderFunctions.add(new IntConstant(groupByFunction.getPosition(), Numbers.parseInt(fillNode.token)));
+                            placeholderFunctions.add(new IntConstant(function.getPosition(), Numbers.parseInt(fillNode.token)));
                             break;
                         case ColumnType.LONG:
-                            placeholderFunctions.add(new LongConstant(groupByFunction.getPosition(), Numbers.parseLong(fillNode.token)));
+                            placeholderFunctions.add(new LongConstant(function.getPosition(), Numbers.parseLong(fillNode.token)));
                             break;
                         case ColumnType.FLOAT:
-                            placeholderFunctions.add(new FloatConstant(groupByFunction.getPosition(), Numbers.parseFloat(fillNode.token)));
+                            placeholderFunctions.add(new FloatConstant(function.getPosition(), Numbers.parseFloat(fillNode.token)));
                             break;
                         case ColumnType.DOUBLE:
-                            placeholderFunctions.add(new DoubleConstant(groupByFunction.getPosition(), Numbers.parseDouble(fillNode.token)));
+                            placeholderFunctions.add(new DoubleConstant(function.getPosition(), Numbers.parseDouble(fillNode.token)));
                             break;
                         // todo: support and test all types
                         default:
@@ -224,94 +149,10 @@ public class SampleByFillValueRecordCursorFactory implements RecordCursorFactory
                 } catch (NumericException e) {
                     throw SqlException.position(fillNode.position).put("invalid number: ").put(fillNode.token);
                 }
-            }
-
-            // and finish with populating metadata for this factory
-            groupByMetadata.add(new TableColumnMetadata(
-                    Chars.toString(column.getName()),
-                    type
-            ));
-        }
-
-        // sink will be storing record columns to map key
-        this.mapSink = RecordSinkFactory.getInstance(asm, metadata, listColumnFilter, false);
-        // this is the map itself, which we must not forget to free when factory closes
-        this.map = MapFactory.createMap(configuration, keyTypes, valueTypes);
-        this.base = base;
-        this.cursor = new SampleByFillValueRecordCursor(
-                map,
-                mapSink,
-                groupByFunctions,
-                recordFunctions,
-                placeholderFunctions,
-                timestampIndex,
-                timestampSampler,
-                symbolTableIndex
-        );
-        this.recordFunctions = recordFunctions;
-        this.metadata = groupByMetadata;
-        this.groupByFunctions = groupByFunctions;
-    }
-
-    @Override
-    public void close() {
-        map.close();
-    }
-
-    @Override
-    public RecordMetadata getMetadata() {
-        return metadata;
-    }
-
-    @Override
-    public RecordCursor getCursor(BindVariableService bindVariableService) {
-        final RecordCursor baseCursor = base.getCursor(bindVariableService);
-        map.clear();
-
-        // This factory fills gaps in data. To do that we
-        // have to know all possible key values. Essentially, every time
-        // we sample we return same set of key values with different
-        // aggregation results and timestamp
-
-        int n = groupByFunctions.size();
-        while (baseCursor.hasNext()) {
-            MapKey key = map.withKey();
-            mapSink.copy(baseCursor.next(), key);
-            MapValue value = key.createValue();
-            if (value.isNew()) {
-                // timestamp is always stored in value field 0
-                value.putLong(0, Numbers.LONG_NaN);
-                // have functions reset their columns to "zero" state
-                // this would set values for when keys are not found right away
-                for (int i = 0; i < n; i++) {
-                    groupByFunctions.getQuick(i).zero(value);
-                }
+            } else {
+                placeholderFunctions.add(function);
             }
         }
-
-        // empty map? this means that base cursor was empty
-        if (map.size() == 0) {
-            return EmptyTableRecordCursor.INSTANCE;
-        }
-
-        // because we pass base cursor twice we have to go back to top
-        // for the second run
-        baseCursor.toTop();
-        boolean next = baseCursor.hasNext();
-        // we know base cursor has value
-        assert next;
-        cursor.of(baseCursor);
-
-        // init all record function for this cursor, in case functions require metadata and/or symbol tables
-        for (int i = 0, m = recordFunctions.size(); i < m; i++) {
-            recordFunctions.getQuick(i).init(cursor, bindVariableService);
-        }
-        return cursor;
+        return placeholderFunctions;
     }
-
-    @Override
-    public boolean isRandomAccessCursor() {
-        return false;
-    }
-
 }

@@ -133,6 +133,11 @@ class CompactMapValue implements MapValue {
         putLong(columnIndex, value);
     }
 
+    @Override
+    public long getAddress() {
+        return currentValueOffset;
+    }
+
     private long getValueColumnOffset(int columnIndex) {
         assert currentValueOffset != -1;
         return currentValueOffset + Unsafe.arrayGet(columnOffsets, columnIndex);

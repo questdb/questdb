@@ -23,12 +23,10 @@
 
 package com.questdb.std;
 
-import com.questdb.std.str.NullCharSequence;
-
 import java.util.Arrays;
 
 public abstract class AbstractCharSequenceHashSet implements Mutable {
-    protected static final CharSequence noEntryKey = NullCharSequence.INSTANCE;
+    protected static final CharSequence noEntryKey = null;
     protected static final int MIN_INITIAL_CAPACITY = 16;
     protected final double loadFactor;
     protected CharSequence[] keys;
@@ -36,21 +34,14 @@ public abstract class AbstractCharSequenceHashSet implements Mutable {
     protected int free;
     protected int capacity;
 
-    public AbstractCharSequenceHashSet(int initialCapacity, double loadFactor, double hashFactor) {
+    public AbstractCharSequenceHashSet(int initialCapacity, double loadFactor) {
         if (loadFactor <= 0d || loadFactor >= 1d) {
             throw new IllegalArgumentException("0 < loadFactor < 1");
         }
 
-        if (hashFactor <= 0d || hashFactor >= 1d) {
-            throw new IllegalArgumentException("0 < hashFactor < 1");
-        }
-
-        initialCapacity = (int) (initialCapacity * (1 + hashFactor));
+        free = this.capacity = initialCapacity < MIN_INITIAL_CAPACITY ? MIN_INITIAL_CAPACITY : Numbers.ceilPow2(initialCapacity);
         this.loadFactor = loadFactor;
-        int capacity = Math.max(initialCapacity, (int) (initialCapacity / loadFactor));
-        capacity = capacity < MIN_INITIAL_CAPACITY ? MIN_INITIAL_CAPACITY : Numbers.ceilPow2(capacity);
-        keys = new CharSequence[capacity];
-        free = this.capacity = capacity;
+        keys = new CharSequence[(int) (this.capacity / loadFactor)];
         mask = capacity - 1;
     }
 
@@ -96,15 +87,58 @@ public abstract class AbstractCharSequenceHashSet implements Mutable {
         return probe(key, lo, hi, index);
     }
 
-    public final boolean remove(CharSequence key) {
-        return removeAt(keyIndex(key));
+    public int remove(CharSequence key) {
+        int index = keyIndex(key);
+        if (index < 0) {
+            removeAt(index);
+            return -index - 1;
+        }
+        return -1;
     }
 
-    abstract public boolean removeAt(int index);
+    public void removeAt(int index) {
+        if (index < 0) {
+            int from = -index - 1;
+            erase(from);
+            free++;
+
+            // after we have freed up a slot
+            // consider non-empty keys directly below
+            // they may have been a direct hit but because
+            // directly hit slot wasn't empty these keys would
+            // have moved.
+            //
+            // After slot if freed these keys require re-hash
+            from = (from + 1) & mask;
+            for (
+                    CharSequence key = Unsafe.arrayGet(keys, from);
+                    key != noEntryKey;
+                    from = (from + 1) & mask, key = Unsafe.arrayGet(keys, from)
+            ) {
+                int idealHit = Chars.hashCode(key) & mask;
+                if (idealHit != from) {
+                    int to;
+                    if (Unsafe.arrayGet(keys, idealHit) != noEntryKey) {
+                        to = probe(key, idealHit);
+                    } else {
+                        to = idealHit;
+                    }
+
+                    if (to > -1) {
+                        move(from, to);
+                    }
+                }
+            }
+        }
+    }
 
     public int size() {
         return capacity - free;
     }
+
+    abstract protected void erase(int index);
+
+    abstract protected void move(int from, int to);
 
     private int probe(CharSequence key, int index) {
         do {

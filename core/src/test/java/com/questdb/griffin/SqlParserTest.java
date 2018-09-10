@@ -1799,9 +1799,9 @@ public class SqlParserTest extends AbstractGriffinTest {
     public void testJoinGroupBy() throws Exception {
         assertQuery("select-group-by" +
                         " country," +
-                        " avg(quantity) avg " +
+                        " sum(quantity) sum " +
                         "from (orders o join (customers c where country ~ '^Z') c on c.customerId = o.customerId join orderDetails d on d.orderId = o.orderId)",
-                "select country, avg(quantity) from orders o " +
+                "select country, sum(quantity) from orders o " +
                         "join customers c on c.customerId = o.customerId " +
                         "join orderDetails d on o.orderId = d.orderId" +
                         " where country ~ '^Z'",
@@ -1816,19 +1816,19 @@ public class SqlParserTest extends AbstractGriffinTest {
         assertQuery(
                 "select-choose" +
                         " country," +
-                        " avg " +
+                        " sum " +
                         "from" +
                         " ((select-group-by country," +
-                        " avg(quantity) avg" +
+                        " sum(quantity) sum" +
                         " from (orders o" +
                         " join (customers c where country ~ '^Z') c on c.customerId = o.customerId" +
                         " join orderDetails d on d.orderId = o.orderId)" +
-                        ") _xQdbA1 where avg > 2" +
+                        ") _xQdbA1 where sum > 2" +
                         ")",
-                "(select country, avg(quantity) avg from orders o " +
+                "(select country, sum(quantity) sum from orders o " +
                         "join customers c on c.customerId = o.customerId " +
                         "join orderDetails d on o.orderId = d.orderId" +
-                        " where country ~ '^Z') where avg > 2",
+                        " where country ~ '^Z') where sum > 2",
                 modelOf("orders").col("customerId", ColumnType.INT).col("orderId", ColumnType.INT).col("quantity", ColumnType.DOUBLE),
                 modelOf("customers").col("customerId", ColumnType.INT).col("country", ColumnType.SYMBOL),
                 modelOf("orderDetails").col("orderId", ColumnType.INT)
@@ -3124,8 +3124,8 @@ public class SqlParserTest extends AbstractGriffinTest {
     @Test
     public void testSampleBy() throws Exception {
         assertQuery(
-                "select-group-by x, avg(y) avg from (tab timestamp (timestamp)) sample by 2m",
-                "select x,avg(y) from tab sample by 2m",
+                "select-group-by x, sum(y) sum from (tab timestamp (timestamp)) sample by 2m",
+                "select x,sum(y) from tab sample by 2m",
                 modelOf("tab")
                         .col("x", ColumnType.INT)
                         .col("y", ColumnType.INT)
@@ -3208,8 +3208,8 @@ public class SqlParserTest extends AbstractGriffinTest {
     @Test
     public void testSampleByAlreadySelected() throws Exception {
         assertQuery(
-                "select-group-by x, avg(y) avg from (tab timestamp (x)) sample by 2m",
-                "select x,avg(y) from tab timestamp(x) sample by 2m",
+                "select-group-by x, sum(y) sum from (tab timestamp (x)) sample by 2m",
+                "select x,sum(y) from tab timestamp(x) sample by 2m",
                 modelOf("tab")
                         .col("x", ColumnType.TIMESTAMP)
                         .col("y", ColumnType.INT)
@@ -3219,8 +3219,8 @@ public class SqlParserTest extends AbstractGriffinTest {
     @Test
     public void testSampleByAltTimestamp() throws Exception {
         assertQuery(
-                "select-group-by x, avg(y) avg from (tab timestamp (t)) sample by 2m",
-                "select x,avg(y) from tab timestamp(t) sample by 2m",
+                "select-group-by x, sum(y) sum from (tab timestamp (t)) sample by 2m",
+                "select x,sum(y) from tab timestamp(t) sample by 2m",
                 modelOf("tab")
                         .col("x", ColumnType.INT)
                         .col("y", ColumnType.INT)

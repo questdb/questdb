@@ -26,7 +26,10 @@ package com.questdb.griffin.engine.table;
 import com.questdb.cairo.sql.DataFrame;
 import com.questdb.griffin.engine.LongTreeSet;
 import com.questdb.griffin.engine.functions.bind.BindVariableService;
-import com.questdb.std.*;
+import com.questdb.std.IntHashSet;
+import com.questdb.std.IntIntHashMap;
+import com.questdb.std.Numbers;
+import com.questdb.std.Rows;
 
 class LatestByValuesRecordCursor extends AbstractTreeSetRecordCursor {
 
@@ -66,13 +69,8 @@ class LatestByValuesRecordCursor extends AbstractTreeSetRecordCursor {
     }
 
     private void prepare() {
-        final int keys[] = symbolKeys.getKeys();
-        final int noEntryValue = symbolKeys.getNoEntryValue();
-        for (int i = 0, n = keys.length; i < n; i++) {
-            int key = Unsafe.arrayGet(keys, i);
-            if (key != noEntryValue) {
-                map.put(key, 0);
-            }
+        for (int i = 0, n = symbolKeys.size(); i < n; i++) {
+            map.put(symbolKeys.get(i), 0);
         }
     }
 }

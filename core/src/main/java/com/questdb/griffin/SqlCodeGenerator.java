@@ -48,6 +48,9 @@ public class SqlCodeGenerator {
     private final CairoConfiguration configuration;
     private final RecordComparatorCompiler recordComparatorCompiler;
     private final IntHashSet intHashSet = new IntHashSet();
+    private final ArrayColumnTypes keyTypes = new ArrayColumnTypes();
+    private final ArrayColumnTypes valueTypes = new ArrayColumnTypes();
+    private final EntityColumnFilter entityColumnFilter = new EntityColumnFilter();
 
     public SqlCodeGenerator(CairoEngine engine, CairoConfiguration configuration, FunctionParser functionParser) {
         this.engine = engine;
@@ -400,10 +403,13 @@ public class SqlCodeGenerator {
         final TimestampSampler timestampSampler = TimestampSamplerFactory.getInstance(sampleByNode.token, sampleByNode.position);
 
         assert model.getNestedModel() != null;
-        final RecordCursorFactory factory = generateQuery(model.getNestedModel(), executionContext);
         final int fillCount = sampleByFill.size();
-
+        final RecordCursorFactory factory = generateQuery(model.getNestedModel(), executionContext);
         try {
+
+            keyTypes.reset();
+            valueTypes.reset();
+            listColumnFilter.clear();
 
             if (fillCount == 0 || fillCount == 1 && Chars.equals(sampleByFill.getQuick(0).token, "none")) {
                 return new SampleByFillNoneRecordCursorFactory(
@@ -414,7 +420,10 @@ public class SqlCodeGenerator {
                         listColumnFilter,
                         functionParser,
                         executionContext,
-                        asm);
+                        asm,
+                        keyTypes,
+                        valueTypes
+                );
             }
 
 
@@ -427,7 +436,10 @@ public class SqlCodeGenerator {
                         listColumnFilter,
                         functionParser,
                         executionContext,
-                        asm);
+                        asm,
+                        keyTypes,
+                        valueTypes
+                );
             }
 
             if (fillCount == 1 && Chars.equals(sampleByFill.getQuick(0).token, "null")) {
@@ -439,11 +451,14 @@ public class SqlCodeGenerator {
                         listColumnFilter,
                         functionParser,
                         executionContext,
-                        asm);
+                        asm,
+                        keyTypes,
+                        valueTypes
+                );
             }
 
-            if (fillCount > 0) {
-                return new SampleByFillValueRecordCursorFactory(
+            if (fillCount == 1 && Chars.equals(sampleByFill.getQuick(0).token, "linear")) {
+                return new SampleByInterpolateRecordCursorFactory(
                         configuration,
                         factory,
                         timestampSampler,
@@ -452,18 +467,31 @@ public class SqlCodeGenerator {
                         functionParser,
                         executionContext,
                         asm,
-                        sampleByFill);
+                        keyTypes,
+                        valueTypes,
+                        entityColumnFilter
+                );
             }
 
-            assert false;
+            assert fillCount > 0;
 
-            return null;
-
+            return new SampleByFillValueRecordCursorFactory(
+                    configuration,
+                    factory,
+                    timestampSampler,
+                    model,
+                    listColumnFilter,
+                    functionParser,
+                    executionContext,
+                    asm,
+                    sampleByFill,
+                    keyTypes,
+                    valueTypes
+            );
         } catch (SqlException | CairoException e) {
             factory.close();
             throw e;
         }
-
     }
 
     private RecordCursorFactory generateSelectVirtual(QueryModel model, SqlExecutionContext executionContext) throws SqlException {

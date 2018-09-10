@@ -23,7 +23,9 @@
 
 package com.questdb.cairo.map;
 
-public interface MapValue {
+import com.questdb.cairo.sql.Record;
+
+public interface MapValue extends Record {
 
     boolean getBool(int columnIndex);
 
@@ -62,4 +64,6 @@ public interface MapValue {
     void putShort(int index, short value);
 
     void putTimestamp(int columnIndex, long value);
+
+    long getAddress();
 }

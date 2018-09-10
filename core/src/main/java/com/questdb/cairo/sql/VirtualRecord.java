@@ -28,10 +28,10 @@ import com.questdb.std.ObjList;
 import com.questdb.std.str.CharSink;
 
 public class VirtualRecord implements Record {
-    private final ObjList<Function> functions;
+    private final ObjList<? extends Function> functions;
     private Record base;
 
-    public VirtualRecord(ObjList<Function> functions) {
+    public VirtualRecord(ObjList<? extends Function> functions) {
         this.functions = functions;
     }
 
@@ -128,7 +128,7 @@ public class VirtualRecord implements Record {
         return getFunction(col).getTimestamp(base);
     }
 
-    public ObjList<Function> getFunctions() {
+    public ObjList<? extends Function> getFunctions() {
         return functions;
     }
 

@@ -26,15 +26,10 @@ package com.questdb.std;
 import java.util.Arrays;
 
 
-public class CharSequenceHashSet implements Mutable {
+public class CharSequenceHashSet extends AbstractCharSequenceHashSet {
 
     private static final int MIN_INITIAL_CAPACITY = 16;
-    private final double loadFactor;
     private final ObjList<CharSequence> list;
-    private CharSequence[] keys;
-    private int free;
-    private int capacity;
-    private int mask;
     private boolean hasNull = false;
 
     public CharSequenceHashSet() {
@@ -43,29 +38,16 @@ public class CharSequenceHashSet implements Mutable {
 
     @SuppressWarnings("CopyConstructorMissesField")
     public CharSequenceHashSet(CharSequenceHashSet that) {
-        this(that.capacity, that.loadFactor, 0.3);
+        this(that.capacity, that.loadFactor);
         addAll(that);
     }
 
     private CharSequenceHashSet(int initialCapacity) {
-        this(initialCapacity, 0.4, 0.3);
+        this(initialCapacity, 0.4);
     }
 
-    private CharSequenceHashSet(int initialCapacity, double loadFactor, double hashFactor) {
-        if (loadFactor <= 0d || loadFactor >= 1d) {
-            throw new IllegalArgumentException("0 < loadFactor < 1");
-        }
-
-        if (hashFactor <= 0d || hashFactor >= 1d) {
-            throw new IllegalArgumentException("0 < hashFactor < 1");
-        }
-
-        initialCapacity = (int) (initialCapacity * (1 + hashFactor));
-        int capacity = Math.max(initialCapacity, (int) (initialCapacity / loadFactor));
-        this.loadFactor = loadFactor;
-        keys = new CharSequence[capacity < MIN_INITIAL_CAPACITY ? MIN_INITIAL_CAPACITY : Numbers.ceilPow2(capacity)];
-        mask = keys.length - 1;
-        free = this.capacity = initialCapacity;
+    private CharSequenceHashSet(int initialCapacity, double loadFactor) {
+        super(initialCapacity, loadFactor);
         this.list = new ObjList<>(free);
         clear();
     }
@@ -97,10 +79,11 @@ public class CharSequenceHashSet implements Mutable {
     }
 
     public void addAt(int index, CharSequence key) {
-        Unsafe.arrayPut(keys, index, key);
-        list.add(key);
+        String s = key.toString();
+        Unsafe.arrayPut(keys, index, s);
+        list.add(s);
         if (--free < 1) {
-            resize();
+            rehash();
         }
     }
 
@@ -121,12 +104,44 @@ public class CharSequenceHashSet implements Mutable {
         hasNull = false;
     }
 
-    public boolean contains(CharSequence key) {
-        return key == null ? hasNull : keyIndex(key) < 0;
-    }
-
     public boolean excludes(CharSequence key) {
         return key == null ? !hasNull : keyIndex(key) > -1;
+    }
+
+    public int remove(CharSequence key) {
+        if (key == null) {
+            return removeNull();
+        }
+
+        int keyIndex = keyIndex(key);
+        if (keyIndex < 0) {
+            removeAt(keyIndex);
+            return -keyIndex - 1;
+        }
+        return -1;
+    }
+
+    public void removeAt(int index) {
+        if (index < 0) {
+            CharSequence key = Unsafe.arrayGet(keys, -index - 1);
+            super.removeAt(index);
+            list.remove(key);
+        }
+    }
+
+    @Override
+    protected void erase(int index) {
+        Unsafe.arrayPut(keys, index, noEntryKey);
+    }
+
+    @Override
+    protected void move(int from, int to) {
+        Unsafe.arrayPut(keys, to, Unsafe.arrayGet(keys, from));
+        erase(from);
+    }
+
+    public boolean contains(CharSequence key) {
+        return key == null ? hasNull : keyIndex(key) < 0;
     }
 
     public CharSequence get(int index) {
@@ -137,53 +152,12 @@ public class CharSequenceHashSet implements Mutable {
         return list.getLast();
     }
 
+    public int getListIndexAt(int keyIndex) {
+        return list.indexOf(Unsafe.arrayGet(keys, -keyIndex - 1));
+    }
+
     public CharSequence keyAt(int index) {
         return Unsafe.arrayGet(keys, -index - 1);
-    }
-
-    public int keyIndex(CharSequence key) {
-        int index = Chars.hashCode(key) & mask;
-        if (Unsafe.arrayGet(keys, index) == null) {
-            return index;
-        }
-        if (eq(index, key)) {
-            return -index - 1;
-        }
-
-        return probe(key, index);
-    }
-
-    public int keyIndex(CharSequence key, int lo, int hi) {
-        int index = Chars.hashCode(key, lo, hi) & mask;
-
-        if (Unsafe.arrayGet(keys, index) == null) {
-            return index;
-        }
-
-        CharSequence cs = Unsafe.arrayGet(keys, index);
-        if (Chars.equals(key, lo, hi, cs, 0, cs.length())) {
-            return -index - 1;
-        }
-        return probe(key, lo, hi, index);
-    }
-
-    public int remove(CharSequence key) {
-        if (key == null) {
-            return removeNull();
-        }
-        return removeAt(keyIndex(key));
-    }
-
-    public int removeAt(int index) {
-        if (index < 0) {
-            int result = list.remove(Unsafe.arrayGet(keys, -index - 1));
-            Unsafe.arrayPut(keys, -index - 1, null);
-            free++;
-            rehash();
-            return result;
-        }
-
-        return -1;
     }
 
     public int removeNull() {
@@ -196,63 +170,24 @@ public class CharSequenceHashSet implements Mutable {
         return -1;
     }
 
-    public int size() {
-        return capacity - free;
-    }
-
     @Override
     public String toString() {
         return list.toString();
     }
 
-    private boolean eq(int index, CharSequence key) {
-        return key == Unsafe.arrayGet(keys, index) || Chars.equals(key, Unsafe.arrayGet(keys, index));
-    }
-
-    private int probe(CharSequence key, int lo, int hi, int index) {
-        do {
-            index = (index + 1) & mask;
-            if (Unsafe.arrayGet(keys, index) == null) {
-                return index;
-            }
-            CharSequence cs = Unsafe.arrayGet(keys, index);
-            if (Chars.equals(key, lo, hi, cs, 0, cs.length())) {
-                return -index - 1;
-            }
-        } while (true);
-    }
-
-    private int probe(CharSequence key, int index) {
-        do {
-            index = (index + 1) & mask;
-
-            if (Unsafe.arrayGet(keys, index) == null) {
-                return index;
-            }
-
-            if (eq(index, key)) {
-                return -index - 1;
-            }
-
-        } while (true);
-    }
-
     private void rehash() {
-        Arrays.fill(keys, null);
-        for (int i = 0, n = list.size(); i < n; i++) {
-            CharSequence key = list.getQuick(i);
-            Unsafe.arrayPut(keys, keyIndex(key), key);
-        }
-    }
-
-    @SuppressWarnings({"unchecked"})
-    private void resize() {
-        int newCapacity = keys.length << 1;
+        int newCapacity = capacity * 2;
         mask = newCapacity - 1;
-        int oldCapacity = this.capacity;
-        capacity = (int) (newCapacity * loadFactor);
-        free = capacity - oldCapacity;
-        this.keys = new CharSequence[newCapacity];
-        rehash();
+        free = capacity = newCapacity;
+        int arrayCapacity = (int) (newCapacity / loadFactor);
+        this.keys = new CharSequence[arrayCapacity];
+        Arrays.fill(keys, null);
+        int n = list.size();
+        free -= n;
+        for (int i = 0; i < n; i++) {
+            CharSequence key = list.getQuick(i);
+            int keyIndex = keyIndex(key);
+            Unsafe.arrayPut(keys, keyIndex, key);
+        }
     }
 }

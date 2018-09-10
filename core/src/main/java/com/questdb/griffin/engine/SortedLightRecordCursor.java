@@ -23,11 +23,12 @@
 
 package com.questdb.griffin.engine;
 
+import com.questdb.cairo.sql.DelegatingRecordCursor;
 import com.questdb.cairo.sql.Record;
 import com.questdb.cairo.sql.RecordCursor;
 import com.questdb.cairo.sql.SymbolTable;
 
-class SortedLightRecordCursor implements RecordCursor {
+class SortedLightRecordCursor implements DelegatingRecordCursor {
     private final LongTreeChain chain;
     private final RecordComparator comparator;
     private final LongTreeChain.TreeCursor chainCursor;
@@ -48,13 +49,13 @@ class SortedLightRecordCursor implements RecordCursor {
     }
 
     @Override
-    public SymbolTable getSymbolTable(int columnIndex) {
-        return base.getSymbolTable(columnIndex);
+    public Record getRecord() {
+        return base.getRecord();
     }
 
     @Override
-    public Record getRecord() {
-        return base.getRecord();
+    public SymbolTable getSymbolTable(int columnIndex) {
+        return base.getSymbolTable(columnIndex);
     }
 
     @Override
@@ -87,7 +88,8 @@ class SortedLightRecordCursor implements RecordCursor {
         return base.recordAt(chainCursor.next());
     }
 
-    void of(RecordCursor base) {
+    @Override
+    public void of(RecordCursor base) {
         this.base = base;
         if (record == null) {
             record = base.newRecord();
