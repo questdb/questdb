@@ -32,7 +32,6 @@ import com.questdb.griffin.engine.functions.bind.BindVariableService;
 import com.questdb.std.BinarySequence;
 import com.questdb.std.IntList;
 import com.questdb.std.LongList;
-import com.questdb.std.microtime.Dates;
 import com.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -81,6 +80,18 @@ public class AbstractGriffinTest extends AbstractCairoTest {
 
             testSymbolAPI(metadata, cursor);
 
+            // test API where same record is being updated by cursor
+            cursor.toTop();
+            Record record = cursor.getRecord();
+            Assert.assertNotNull(record);
+            sink.clear();
+            printer.printHeader(metadata);
+            while (cursor.hasNext()) {
+                cursor.next(); // ignore value and use previously obtained record instead
+                printer.print(record, metadata);
+            }
+            TestUtils.assertEquals(expected, sink);
+
             if (supportsRandomAccess) {
 
                 Assert.assertTrue(factory.isRandomAccessCursor());
@@ -92,9 +103,8 @@ public class AbstractGriffinTest extends AbstractCairoTest {
                     rows.add(cursor.next().getRowId());
                 }
 
-
                 // test external record
-                Record record = cursor.getRecord();
+                record = cursor.getRecord();
 
                 printer.printHeader(metadata);
                 for (int i = 0, n = rows.size(); i < n; i++) {
@@ -165,7 +175,6 @@ public class AbstractGriffinTest extends AbstractCairoTest {
         try (RecordCursor cursor = factory.getCursor(bindVariableService)) {
             while (cursor.hasNext()) {
                 long ts = cursor.next().getTimestamp(index);
-                System.out.println(Dates.toString(timestamp) + " - " + Dates.toString(ts));
                 Assert.assertTrue(timestamp <= ts);
                 timestamp = ts;
             }
@@ -321,7 +330,6 @@ public class AbstractGriffinTest extends AbstractCairoTest {
                     compiler.compile(query, bindVariableService);
                     Assert.fail();
                 } catch (SqlException e) {
-                    e.printStackTrace();
                     Assert.assertEquals(expectedPosition, e.getPosition());
                     TestUtils.assertContains(e.getFlyweightMessage(), expectedMessage);
                 }

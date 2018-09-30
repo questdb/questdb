@@ -96,7 +96,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
         // these values are assured to be correct for the scenario
         Assert.assertEquals(4, TestMatchFunctionFactory.getOpenCount());
-        Assert.assertEquals(2, TestMatchFunctionFactory.getTopCount());
+        Assert.assertEquals(4, TestMatchFunctionFactory.getTopCount());
         Assert.assertEquals(1, TestMatchFunctionFactory.getCloseCount());
     }
 
@@ -199,7 +199,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
         // also good numbers, extra top calls are due to symbol column API check
         // tables without symbol columns will skip this check
         Assert.assertEquals(4, TestMatchFunctionFactory.getOpenCount());
-        Assert.assertEquals(4, TestMatchFunctionFactory.getTopCount());
+        Assert.assertEquals(6, TestMatchFunctionFactory.getTopCount());
         Assert.assertEquals(1, TestMatchFunctionFactory.getCloseCount());
     }
 
@@ -358,7 +358,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
         // these value are also ok because ddl2 is present, there is another round of check for that
         Assert.assertEquals(6, TestMatchFunctionFactory.getOpenCount());
-        Assert.assertEquals(8, TestMatchFunctionFactory.getTopCount());
+        Assert.assertEquals(12, TestMatchFunctionFactory.getTopCount());
         Assert.assertEquals(1, TestMatchFunctionFactory.getCloseCount());
 
     }
@@ -473,7 +473,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
         // 5 opens is good because we check variable lengh column API sanity
         Assert.assertEquals(5, TestMatchFunctionFactory.getOpenCount());
-        Assert.assertEquals(8, TestMatchFunctionFactory.getTopCount());
+        Assert.assertEquals(12, TestMatchFunctionFactory.getTopCount());
         Assert.assertEquals(1, TestMatchFunctionFactory.getCloseCount());
     }
 
@@ -558,7 +558,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
         // 5 opens is good because we check variable lengh column API sanity
         Assert.assertEquals(5, TestMatchFunctionFactory.getOpenCount());
-        Assert.assertEquals(8, TestMatchFunctionFactory.getTopCount());
+        Assert.assertEquals(12, TestMatchFunctionFactory.getTopCount());
         Assert.assertEquals(1, TestMatchFunctionFactory.getCloseCount());
     }
 
@@ -593,7 +593,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "57.789479151824\tABC\n");
         // 5 opens is good because we check variable length column API sanity
         Assert.assertEquals(5, TestMatchFunctionFactory.getOpenCount());
-        Assert.assertEquals(6, TestMatchFunctionFactory.getTopCount());
+        Assert.assertEquals(8, TestMatchFunctionFactory.getTopCount());
         Assert.assertEquals(1, TestMatchFunctionFactory.getCloseCount());
     }
 
@@ -1134,7 +1134,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
         // this is good
         Assert.assertEquals(6, TestMatchFunctionFactory.getOpenCount());
-        Assert.assertEquals(8, TestMatchFunctionFactory.getTopCount());
+        Assert.assertEquals(12, TestMatchFunctionFactory.getTopCount());
         Assert.assertEquals(1, TestMatchFunctionFactory.getCloseCount());
     }
 
@@ -1193,7 +1193,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "11.300000000000\tPEHN\t1971-01-01T00:00:00.000000Z\n");
 
         Assert.assertEquals(6, TestMatchFunctionFactory.getOpenCount());
-        Assert.assertEquals(8, TestMatchFunctionFactory.getTopCount());
+        Assert.assertEquals(12, TestMatchFunctionFactory.getTopCount());
         Assert.assertEquals(1, TestMatchFunctionFactory.getCloseCount());
     }
 
@@ -1277,7 +1277,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
         // this is good
         Assert.assertEquals(6, TestMatchFunctionFactory.getOpenCount());
-        Assert.assertEquals(8, TestMatchFunctionFactory.getTopCount());
+        Assert.assertEquals(12, TestMatchFunctionFactory.getTopCount());
         Assert.assertEquals(1, TestMatchFunctionFactory.getCloseCount());
     }
 
@@ -1339,7 +1339,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
         // this is good
         Assert.assertEquals(6, TestMatchFunctionFactory.getOpenCount());
-        Assert.assertEquals(8, TestMatchFunctionFactory.getTopCount());
+        Assert.assertEquals(12, TestMatchFunctionFactory.getTopCount());
         Assert.assertEquals(1, TestMatchFunctionFactory.getCloseCount());
     }
 
@@ -1395,7 +1395,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
         // this is good
         Assert.assertEquals(2, TestMatchFunctionFactory.getOpenCount());
-        Assert.assertEquals(4, TestMatchFunctionFactory.getTopCount());
+        Assert.assertEquals(6, TestMatchFunctionFactory.getTopCount());
         Assert.assertEquals(1, TestMatchFunctionFactory.getCloseCount());
     }
 
@@ -1450,7 +1450,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "56.594291398612\tXYZ\t1971-01-01T00:00:00.000000Z\n");
         // good
         Assert.assertEquals(2, TestMatchFunctionFactory.getOpenCount());
-        Assert.assertEquals(4, TestMatchFunctionFactory.getTopCount());
+        Assert.assertEquals(6, TestMatchFunctionFactory.getTopCount());
         Assert.assertEquals(1, TestMatchFunctionFactory.getCloseCount());
     }
 
@@ -1511,7 +1511,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
         // good
         Assert.assertEquals(6, TestMatchFunctionFactory.getOpenCount());
-        Assert.assertEquals(8, TestMatchFunctionFactory.getTopCount());
+        Assert.assertEquals(12, TestMatchFunctionFactory.getTopCount());
         Assert.assertEquals(1, TestMatchFunctionFactory.getCloseCount());
     }
 
@@ -1571,7 +1571,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
         // good
         Assert.assertEquals(6, TestMatchFunctionFactory.getOpenCount());
-        Assert.assertEquals(8, TestMatchFunctionFactory.getTopCount());
+        Assert.assertEquals(12, TestMatchFunctionFactory.getTopCount());
         Assert.assertEquals(1, TestMatchFunctionFactory.getCloseCount());
     }
 
@@ -1690,7 +1690,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
         // good
         Assert.assertEquals(6, TestMatchFunctionFactory.getOpenCount());
-        Assert.assertEquals(8, TestMatchFunctionFactory.getTopCount());
+        Assert.assertEquals(12, TestMatchFunctionFactory.getTopCount());
         Assert.assertEquals(1, TestMatchFunctionFactory.getCloseCount());
     }
 
@@ -1758,7 +1758,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "33.460000000000\tUCLA\t1971-01-01T00:00:00.000000Z\n");
 
         Assert.assertEquals(6, TestMatchFunctionFactory.getOpenCount());
-        Assert.assertEquals(8, TestMatchFunctionFactory.getTopCount());
+        Assert.assertEquals(12, TestMatchFunctionFactory.getTopCount());
         Assert.assertEquals(1, TestMatchFunctionFactory.getCloseCount());
     }
 
@@ -1795,7 +1795,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "33.460000000000\tRXGZ\t1971-01-01T00:00:00.000000Z\n");
 
         Assert.assertEquals(6, TestMatchFunctionFactory.getOpenCount());
-        Assert.assertEquals(8, TestMatchFunctionFactory.getTopCount());
+        Assert.assertEquals(12, TestMatchFunctionFactory.getTopCount());
         Assert.assertEquals(1, TestMatchFunctionFactory.getCloseCount());
     }
 
@@ -1861,7 +1861,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "33.460000000000\tRXGZ\t1971-01-01T00:00:00.000000Z\n");
 
         Assert.assertEquals(6, TestMatchFunctionFactory.getOpenCount());
-        Assert.assertEquals(8, TestMatchFunctionFactory.getTopCount());
+        Assert.assertEquals(12, TestMatchFunctionFactory.getTopCount());
         Assert.assertEquals(1, TestMatchFunctionFactory.getCloseCount());
     }
 

@@ -26,11 +26,13 @@ package com.questdb.griffin.engine.groupby;
 import com.questdb.cairo.RecordSink;
 import com.questdb.cairo.map.Map;
 import com.questdb.cairo.map.MapKey;
+import com.questdb.cairo.map.MapRecord;
 import com.questdb.cairo.map.MapValue;
 import com.questdb.cairo.sql.*;
 import com.questdb.griffin.engine.functions.GroupByFunction;
 import com.questdb.griffin.engine.functions.TimestampFunction;
 import com.questdb.std.IntIntHashMap;
+import com.questdb.std.Numbers;
 import com.questdb.std.ObjList;
 
 class SampleByFillPrevRecordCursor implements DelegatingRecordCursor {
@@ -42,7 +44,7 @@ class SampleByFillPrevRecordCursor implements DelegatingRecordCursor {
     private final Record record;
     private final IntIntHashMap symbolTableIndex;
     private RecordCursor base;
-    private RecordCursor mapIterator;
+    private RecordCursor mapRecord;
     private Record baseRecord;
     private long lastTimestamp;
     private long nextTimestamp;
@@ -70,7 +72,7 @@ class SampleByFillPrevRecordCursor implements DelegatingRecordCursor {
                 recordFunctions.setQuick(i, new TimestampFunc(0));
             }
         }
-        this.mapIterator = map.getCursor();
+        this.mapRecord = map.getCursor();
     }
 
     @Override
@@ -105,7 +107,7 @@ class SampleByFillPrevRecordCursor implements DelegatingRecordCursor {
     @Override
     public boolean hasNext() {
         //
-        if (mapIterator.hasNext()) {
+        if (mapRecord.hasNext()) {
             // scroll down the map iterator
             // next() will return record that uses current map position
             return true;
@@ -175,15 +177,34 @@ class SampleByFillPrevRecordCursor implements DelegatingRecordCursor {
     }
 
     @Override
-    public void toTop() {
-        this.base.toTop();
-        this.baseRecord = this.base.next();
+    public Record next() {
+        mapRecord.next();
+        return record;
     }
 
     @Override
-    public Record next() {
-        mapIterator.next();
-        return record;
+    public void toTop() {
+        this.base.toTop();
+        if (base.hasNext()) {
+            this.baseRecord = this.base.next();
+            this.nextTimestamp = timestampSampler.round(baseRecord.getTimestamp(timestampIndex));
+            this.lastTimestamp = this.nextTimestamp;
+
+            int n = groupByFunctions.size();
+            RecordCursor mapCursor = map.getCursor();
+            MapRecord mapRecord = map.getRecord();
+            while (mapCursor.hasNext()) {
+                mapCursor.next();
+                MapValue value = mapRecord.getValue();
+                // timestamp is always stored in value field 0
+                value.putLong(0, Numbers.LONG_NaN);
+                // have functions reset their columns to "zero" state
+                // this would set values for when keys are not found right away
+                for (int i = 0; i < n; i++) {
+                    groupByFunctions.getQuick(i).setNull(value);
+                }
+            }
+        }
     }
 
     @Override

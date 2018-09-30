@@ -43,5 +43,8 @@ public interface RecordCursor extends ImmutableIterator<Record>, Closeable {
 
     void recordAt(Record record, long atRowId);
 
+    @Override
+    Record next();
+
     void toTop();
 }

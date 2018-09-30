@@ -103,6 +103,11 @@ class SampleByFillNoneRecordCursor implements DelegatingRecordCursor {
     }
 
     @Override
+    public Record next() {
+        return record;
+    }
+
+    @Override
     public boolean hasNext() {
         //
         if (mapHasNext()) {
@@ -170,23 +175,23 @@ class SampleByFillNoneRecordCursor implements DelegatingRecordCursor {
         }
     }
 
+    @Override
+    public void toTop() {
+        this.base.toTop();
+        if (base.hasNext()) {
+            this.baseRecord = this.base.next();
+            this.nextTimestamp = timestampSampler.round(baseRecord.getTimestamp(timestampIndex));
+            this.lastTimestamp = this.nextTimestamp;
+            map.clear();
+        }
+    }
+
     public void of(RecordCursor base) {
         // factory guarantees that base cursor is not empty
         this.base = base;
         this.baseRecord = base.next();
         this.nextTimestamp = timestampSampler.round(baseRecord.getTimestamp(timestampIndex));
         this.lastTimestamp = this.nextTimestamp;
-    }
-
-    @Override
-    public Record next() {
-        return record;
-    }
-
-    @Override
-    public void toTop() {
-        this.base.toTop();
-        baseRecord = this.base.next();
     }
 
     private boolean mapHasNext() {

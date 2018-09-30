@@ -26,11 +26,13 @@ package com.questdb.griffin.engine.groupby;
 import com.questdb.cairo.RecordSink;
 import com.questdb.cairo.map.Map;
 import com.questdb.cairo.map.MapKey;
+import com.questdb.cairo.map.MapRecord;
 import com.questdb.cairo.map.MapValue;
 import com.questdb.cairo.sql.*;
 import com.questdb.griffin.engine.functions.GroupByFunction;
 import com.questdb.griffin.engine.functions.TimestampFunction;
 import com.questdb.std.IntIntHashMap;
+import com.questdb.std.Numbers;
 import com.questdb.std.ObjList;
 
 class SampleByFillValueRecordCursor implements DelegatingRecordCursor {
@@ -39,8 +41,7 @@ class SampleByFillValueRecordCursor implements DelegatingRecordCursor {
     private final ObjList<GroupByFunction> groupByFunctions;
     private final int timestampIndex;
     private final TimestampSampler timestampSampler;
-    private final Record virtualRecord;
-    private final Record placeholderRecord;
+    private final SplitVirtualRecord record;
     private final Record mapRecord;
     private final IntIntHashMap symbolTableIndex;
     private RecordCursor base;
@@ -64,13 +65,8 @@ class SampleByFillValueRecordCursor implements DelegatingRecordCursor {
         this.keyMapSink = keyMapSink;
         this.timestampSampler = timestampSampler;
         this.mapRecord = map.getRecord();
-        VirtualRecord rec = new VirtualRecord(recordFunctions);
-        VirtualRecord rec2 = new VirtualRecord(placeholderFunctions);
-        rec.of(mapRecord);
-        rec2.of(mapRecord);
-
-        this.virtualRecord = rec;
-        this.placeholderRecord = rec2;
+        this.record = new SplitVirtualRecord(recordFunctions, placeholderFunctions);
+        this.record.of(mapRecord);
         this.symbolTableIndex = symbolTableIndex;
         assert recordFunctions.size() == placeholderFunctions.size();
         final TimestampFunc timestampFunc = new TimestampFunc(0);
@@ -91,7 +87,7 @@ class SampleByFillValueRecordCursor implements DelegatingRecordCursor {
 
     @Override
     public Record getRecord() {
-        return virtualRecord;
+        return record;
     }
 
     @Override
@@ -111,6 +107,42 @@ class SampleByFillValueRecordCursor implements DelegatingRecordCursor {
 
     @Override
     public void recordAt(Record record, long atRowId) {
+    }
+
+    @Override
+    public Record next() {
+        mapIterator.next();
+        if (mapRecord.getTimestamp(0) == lastTimestamp) {
+            record.setActiveA();
+        } else {
+            record.setActiveB();
+        }
+        return record;
+    }
+
+    @Override
+    public void toTop() {
+        this.base.toTop();
+        if (base.hasNext()) {
+            this.baseRecord = this.base.next();
+            this.nextTimestamp = timestampSampler.round(baseRecord.getTimestamp(timestampIndex));
+            this.lastTimestamp = this.nextTimestamp;
+
+            int n = groupByFunctions.size();
+            RecordCursor mapCursor = map.getCursor();
+            MapRecord mapRecord = map.getRecord();
+            while (mapCursor.hasNext()) {
+                mapCursor.next();
+                MapValue value = mapRecord.getValue();
+                // timestamp is always stored in value field 0
+                value.putLong(0, Numbers.LONG_NaN);
+                // have functions reset their columns to "zero" state
+                // this would set values for when keys are not found right away
+                for (int i = 0; i < n; i++) {
+                    groupByFunctions.getQuick(i).setNull(value);
+                }
+            }
+        }
     }
 
     @Override
@@ -183,18 +215,6 @@ class SampleByFillValueRecordCursor implements DelegatingRecordCursor {
 
             return this.map.getCursor().hasNext();
         }
-    }
-
-    @Override
-    public void toTop() {
-        this.base.toTop();
-        this.baseRecord = this.base.next();
-    }
-
-    @Override
-    public Record next() {
-        mapIterator.next();
-        return mapRecord.getTimestamp(0) == lastTimestamp ? virtualRecord : placeholderRecord;
     }
 
     @Override
