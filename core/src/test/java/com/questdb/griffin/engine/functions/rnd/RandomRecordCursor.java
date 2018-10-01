@@ -59,8 +59,8 @@ class RandomRecordCursor implements RecordCursor {
     }
 
     @Override
-    public Record recordAt(long rowId) {
-        throw new UnsupportedOperationException();
+    public boolean hasNext() {
+        return recordIndex++ < recordCount;
     }
 
     @Override
@@ -69,18 +69,12 @@ class RandomRecordCursor implements RecordCursor {
     }
 
     @Override
+    public void recordAt(long rowId) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public void toTop() {
         recordIndex = 0;
-    }
-
-    @Override
-    public boolean hasNext() {
-        return recordIndex < recordCount;
-    }
-
-    @Override
-    public Record next() {
-        recordIndex++;
-        return record;
     }
 }

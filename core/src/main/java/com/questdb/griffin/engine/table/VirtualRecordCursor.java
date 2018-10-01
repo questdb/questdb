@@ -62,9 +62,8 @@ class VirtualRecordCursor implements RecordCursor {
     }
 
     @Override
-    public Record recordAt(long rowId) {
+    public void recordAt(long rowId) {
         baseCursor.recordAt(rowId);
-        return record;
     }
 
     @Override
@@ -73,19 +72,13 @@ class VirtualRecordCursor implements RecordCursor {
     }
 
     @Override
-    public void toTop() {
-        baseCursor.toTop();
-    }
-
-    @Override
     public boolean hasNext() {
         return baseCursor.hasNext();
     }
 
     @Override
-    public Record next() {
-        baseCursor.next();
-        return record;
+    public void toTop() {
+        baseCursor.toTop();
     }
 
     void of(RecordCursor cursor) {

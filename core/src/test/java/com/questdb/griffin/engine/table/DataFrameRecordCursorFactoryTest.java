@@ -89,8 +89,8 @@ public class DataFrameRecordCursorFactoryTest extends AbstractCairoTest {
 
                 BindVariableService bindVariableService = new BindVariableService();
                 try (RecordCursor cursor = factory.getCursor(bindVariableService)) {
+                    Record record = cursor.getRecord();
                     while (cursor.hasNext()) {
-                        Record record = cursor.next();
                         TestUtils.assertEquals(value, record.getSym(1));
                     }
                 }

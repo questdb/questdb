@@ -23,11 +23,9 @@
 
 package com.questdb.cairo.sql;
 
-import com.questdb.std.ImmutableIterator;
-
 import java.io.Closeable;
 
-public interface RecordCursor extends ImmutableIterator<Record>, Closeable {
+public interface RecordCursor extends Closeable {
     @Override
     void close();
 
@@ -37,14 +35,13 @@ public interface RecordCursor extends ImmutableIterator<Record>, Closeable {
         throw new UnsupportedOperationException();
     }
 
-    Record newRecord();
+    boolean hasNext();
 
-    Record recordAt(long rowId);
+    Record newRecord();
 
     void recordAt(Record record, long atRowId);
 
-    @Override
-    Record next();
+    void recordAt(long rowId);
 
     void toTop();
 }

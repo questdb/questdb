@@ -114,8 +114,8 @@ public class SymbolInCursorFunctionFactory implements FunctionFactory {
 
             RecordCursorFactory factory = cursorArg.getRecordCursorFactory();
             try (RecordCursor cursor = factory.getCursor(bindVariableService)) {
+                final Record record = cursor.getRecord();
                 while (cursor.hasNext()) {
-                    Record record = cursor.next();
                     int key = symbolTable.getQuick(typeCaster.getValue(record, 0));
                     if (key != SymbolTable.VALUE_NOT_FOUND) {
                         symbolKeys.add(key + 1);
@@ -166,9 +166,8 @@ public class SymbolInCursorFunctionFactory implements FunctionFactory {
 
             RecordCursorFactory factory = cursorArg.getRecordCursorFactory();
             try (RecordCursor cursor = factory.getCursor(bindVariableService)) {
+                final Record record = cursor.getRecord();
                 while (cursor.hasNext()) {
-                    Record record = cursor.next();
-
                     CharSequence value = typeCaster.getValue(record, 0);
                     if (value == null) {
                         valueSet.addNull();

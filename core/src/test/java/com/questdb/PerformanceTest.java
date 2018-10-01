@@ -173,16 +173,16 @@ public class PerformanceTest extends AbstractTest {
                 }
 
                 com.questdb.cairo.sql.RecordCursor cursor = reader.getCursor();
+                com.questdb.cairo.sql.Record record = cursor.getRecord();
                 while (cursor.hasNext()) {
-                    com.questdb.cairo.sql.Record r = cursor.next();
-                    r.getDate(0);
-                    r.getSym(1);
-                    r.getDouble(2);
-                    r.getDouble(3);
-                    r.getInt(4);
-                    r.getInt(5);
-                    r.getSym(6);
-                    r.getSym(7);
+                    record.getDate(0);
+                    record.getSym(1);
+                    record.getDouble(2);
+                    record.getDouble(3);
+                    record.getInt(4);
+                    record.getInt(5);
+                    record.getSym(6);
+                    record.getSym(7);
                 }
             }
             result = (System.nanoTime() - t) / count;

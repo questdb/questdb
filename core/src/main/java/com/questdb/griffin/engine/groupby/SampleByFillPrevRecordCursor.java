@@ -44,7 +44,7 @@ class SampleByFillPrevRecordCursor implements DelegatingRecordCursor {
     private final Record record;
     private final IntIntHashMap symbolTableIndex;
     private RecordCursor base;
-    private RecordCursor mapRecord;
+    private RecordCursor mapCursor;
     private Record baseRecord;
     private long lastTimestamp;
     private long nextTimestamp;
@@ -72,7 +72,7 @@ class SampleByFillPrevRecordCursor implements DelegatingRecordCursor {
                 recordFunctions.setQuick(i, new TimestampFunc(0));
             }
         }
-        this.mapRecord = map.getCursor();
+        this.mapCursor = map.getCursor();
     }
 
     @Override
@@ -91,23 +91,9 @@ class SampleByFillPrevRecordCursor implements DelegatingRecordCursor {
     }
 
     @Override
-    public Record newRecord() {
-        return null;
-    }
-
-    @Override
-    public Record recordAt(long rowId) {
-        return null;
-    }
-
-    @Override
-    public void recordAt(Record record, long atRowId) {
-    }
-
-    @Override
     public boolean hasNext() {
         //
-        if (mapRecord.hasNext()) {
+        if (mapCursor.hasNext()) {
             // scroll down the map iterator
             // next() will return record that uses current map position
             return true;
@@ -157,7 +143,6 @@ class SampleByFillPrevRecordCursor implements DelegatingRecordCursor {
 
                 // carry on with the loop if we still have data
                 if (base.hasNext()) {
-                    base.next();
                     continue;
                 }
 
@@ -177,16 +162,25 @@ class SampleByFillPrevRecordCursor implements DelegatingRecordCursor {
     }
 
     @Override
-    public Record next() {
-        mapRecord.next();
-        return record;
+    public Record newRecord() {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void recordAt(Record record, long atRowId) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void recordAt(long rowId) {
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void toTop() {
         this.base.toTop();
         if (base.hasNext()) {
-            this.baseRecord = this.base.next();
+            baseRecord = base.getRecord();
             this.nextTimestamp = timestampSampler.round(baseRecord.getTimestamp(timestampIndex));
             this.lastTimestamp = this.nextTimestamp;
 
@@ -194,7 +188,6 @@ class SampleByFillPrevRecordCursor implements DelegatingRecordCursor {
             RecordCursor mapCursor = map.getCursor();
             MapRecord mapRecord = map.getRecord();
             while (mapCursor.hasNext()) {
-                mapCursor.next();
                 MapValue value = mapRecord.getValue();
                 // timestamp is always stored in value field 0
                 value.putLong(0, Numbers.LONG_NaN);
@@ -211,7 +204,7 @@ class SampleByFillPrevRecordCursor implements DelegatingRecordCursor {
     public void of(RecordCursor base) {
         // factory guarantees that base cursor is not empty
         this.base = base;
-        this.baseRecord = base.next();
+        this.baseRecord = base.getRecord();
         this.nextTimestamp = timestampSampler.round(baseRecord.getTimestamp(timestampIndex));
         this.lastTimestamp = this.nextTimestamp;
     }

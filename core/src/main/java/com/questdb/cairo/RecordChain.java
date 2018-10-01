@@ -102,18 +102,29 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
     }
 
     @Override
+    public boolean hasNext() {
+        if (nextRecordOffset != -1) {
+            long offset = nextRecordOffset;
+            nextRecordOffset = mem.getLong(nextRecordOffset);
+            record.of(rowToDataOffset(offset));
+            return true;
+        }
+        return false;
+    }
+
+    @Override
     public Record newRecord() {
         return new RecordChainRecord();
     }
 
     @Override
-    public Record recordAt(long row) {
-        return record.of(rowToDataOffset(row));
+    public void recordAt(Record record, long row) {
+        ((RecordChainRecord) record).of(rowToDataOffset(row));
     }
 
     @Override
-    public void recordAt(Record record, long row) {
-        ((RecordChainRecord) record).of(rowToDataOffset(row));
+    public void recordAt(long row) {
+        record.of(rowToDataOffset(row));
     }
 
     @Override
@@ -123,18 +134,6 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
         } else {
             nextRecordOffset = 0L;
         }
-    }
-
-    @Override
-    public boolean hasNext() {
-        return nextRecordOffset != -1;
-    }
-
-    @Override
-    public Record next() {
-        long offset = nextRecordOffset;
-        nextRecordOffset = mem.getLong(nextRecordOffset);
-        return record.of(rowToDataOffset(offset));
     }
 
     public void of(long nextRecordOffset) {
@@ -312,10 +311,9 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
             return fixedOffset + Unsafe.arrayGet(columnOffsets, index);
         }
 
-        private Record of(long offset) {
+        private void of(long offset) {
             this.baseOffset = offset;
             this.fixedOffset = offset + varOffset;
-            return this;
         }
 
         private long varWidthColumnOffset(int index) {

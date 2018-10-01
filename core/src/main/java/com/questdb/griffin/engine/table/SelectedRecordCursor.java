@@ -39,8 +39,23 @@ class SelectedRecordCursor implements RecordCursor {
     }
 
     @Override
+    public void close() {
+        baseCursor.close();
+    }
+
+    @Override
     public Record getRecord() {
         return record;
+    }
+
+    @Override
+    public SymbolTable getSymbolTable(int columnIndex) {
+        return baseCursor.getSymbolTable(columnCrossIndex.getQuick(columnIndex));
+    }
+
+    @Override
+    public boolean hasNext() {
+        return baseCursor.hasNext();
     }
 
     @Override
@@ -51,40 +66,18 @@ class SelectedRecordCursor implements RecordCursor {
     }
 
     @Override
-    public Record recordAt(long rowId) {
-        baseCursor.recordAt(rowId);
-        return record;
-    }
-
-    @Override
     public void recordAt(Record record, long atRowId) {
         baseCursor.recordAt(((SelectedRecord) record).getBaseRecord(), atRowId);
     }
 
     @Override
+    public void recordAt(long rowId) {
+        baseCursor.recordAt(rowId);
+    }
+
+    @Override
     public void toTop() {
         baseCursor.toTop();
-    }
-
-    @Override
-    public SymbolTable getSymbolTable(int columnIndex) {
-        return baseCursor.getSymbolTable(columnCrossIndex.getQuick(columnIndex));
-    }
-
-    @Override
-    public void close() {
-        baseCursor.close();
-    }
-
-    @Override
-    public boolean hasNext() {
-        return baseCursor.hasNext();
-    }
-
-    @Override
-    public Record next() {
-        baseCursor.next();
-        return record;
     }
 
     void of(RecordCursor cursor) {

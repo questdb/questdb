@@ -629,8 +629,8 @@ public class SqlCompiler implements Closeable {
     }
 
     private void copyOrdered(TableWriter writer, RecordCursor cursor, RecordToRowCopier copier, int cursorTimestampIndex) {
+        final Record record = cursor.getRecord();
         while (cursor.hasNext()) {
-            Record record = cursor.next();
             TableWriter.Row row = writer.newRow(record.getTimestamp(cursorTimestampIndex));
             copier.copy(record, row);
             row.append();
@@ -659,8 +659,8 @@ public class SqlCompiler implements Closeable {
     }
 
     private void copyUnordered(RecordCursor cursor, TableWriter writer, RecordToRowCopier ccopier) {
+        final Record record = cursor.getRecord();
         while (cursor.hasNext()) {
-            Record record = cursor.next();
             TableWriter.Row row = writer.newRow(0);
             ccopier.copy(record, row);
             row.append();

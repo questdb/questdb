@@ -87,7 +87,6 @@ public class AbstractGriffinTest extends AbstractCairoTest {
             sink.clear();
             printer.printHeader(metadata);
             while (cursor.hasNext()) {
-                cursor.next(); // ignore value and use previously obtained record instead
                 printer.print(record, metadata);
             }
             TestUtils.assertEquals(expected, sink);
@@ -100,11 +99,8 @@ public class AbstractGriffinTest extends AbstractCairoTest {
 
                 sink.clear();
                 while (cursor.hasNext()) {
-                    rows.add(cursor.next().getRowId());
+                    rows.add(record.getRowId());
                 }
-
-                // test external record
-                record = cursor.getRecord();
 
                 printer.printHeader(metadata);
                 for (int i = 0, n = rows.size(); i < n; i++) {
@@ -118,7 +114,8 @@ public class AbstractGriffinTest extends AbstractCairoTest {
                 sink.clear();
                 printer.printHeader(metadata);
                 for (int i = 0, n = rows.size(); i < n; i++) {
-                    printer.print(cursor.recordAt(rows.getQuick(i)), metadata);
+                    cursor.recordAt(rows.getQuick(i));
+                    printer.print(record, metadata);
                 }
 
                 TestUtils.assertEquals(expected, sink);
@@ -153,9 +150,9 @@ public class AbstractGriffinTest extends AbstractCairoTest {
         if (symbolIndexes != null) {
             boolean tested = false;
             cursor.toTop();
+            final Record record = cursor.getRecord();
             while (cursor.hasNext()) {
                 tested = true;
-                Record record = cursor.next();
                 for (int i = 0, n = symbolIndexes.size(); i < n; i++) {
                     int column = symbolIndexes.getQuick(i);
                     SymbolTable symbolTable = cursor.getSymbolTable(column);
@@ -173,8 +170,9 @@ public class AbstractGriffinTest extends AbstractCairoTest {
         int index = factory.getMetadata().getTimestampIndex();
         long timestamp = Long.MIN_VALUE;
         try (RecordCursor cursor = factory.getCursor(bindVariableService)) {
+            final Record record = cursor.getRecord();
             while (cursor.hasNext()) {
-                long ts = cursor.next().getTimestamp(index);
+                long ts = record.getTimestamp(index);
                 Assert.assertTrue(timestamp <= ts);
                 timestamp = ts;
             }
@@ -185,8 +183,8 @@ public class AbstractGriffinTest extends AbstractCairoTest {
         try (RecordCursor cursor = factory.getCursor(bindVariableService)) {
             RecordMetadata metadata = factory.getMetadata();
             final int columnCount = metadata.getColumnCount();
+            final Record record = cursor.getRecord();
             while (cursor.hasNext()) {
-                Record record = cursor.next();
                 for (int i = 0; i < columnCount; i++) {
                     switch (metadata.getColumnType(i)) {
                         case ColumnType.STRING:

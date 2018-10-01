@@ -45,7 +45,7 @@ class SampleByFillValueRecordCursor implements DelegatingRecordCursor {
     private final Record mapRecord;
     private final IntIntHashMap symbolTableIndex;
     private RecordCursor base;
-    private RecordCursor mapIterator;
+    private RecordCursor mapCursor;
     private Record baseRecord;
     private long lastTimestamp;
     private long nextTimestamp;
@@ -77,7 +77,7 @@ class SampleByFillValueRecordCursor implements DelegatingRecordCursor {
                 placeholderFunctions.setQuick(i, timestampFunc);
             }
         }
-        this.mapIterator = map.getCursor();
+        this.mapCursor = map.getCursor();
     }
 
     @Override
@@ -101,57 +101,12 @@ class SampleByFillValueRecordCursor implements DelegatingRecordCursor {
     }
 
     @Override
-    public Record recordAt(long rowId) {
-        return null;
-    }
-
-    @Override
-    public void recordAt(Record record, long atRowId) {
-    }
-
-    @Override
-    public Record next() {
-        mapIterator.next();
-        if (mapRecord.getTimestamp(0) == lastTimestamp) {
-            record.setActiveA();
-        } else {
-            record.setActiveB();
-        }
-        return record;
-    }
-
-    @Override
-    public void toTop() {
-        this.base.toTop();
-        if (base.hasNext()) {
-            this.baseRecord = this.base.next();
-            this.nextTimestamp = timestampSampler.round(baseRecord.getTimestamp(timestampIndex));
-            this.lastTimestamp = this.nextTimestamp;
-
-            int n = groupByFunctions.size();
-            RecordCursor mapCursor = map.getCursor();
-            MapRecord mapRecord = map.getRecord();
-            while (mapCursor.hasNext()) {
-                mapCursor.next();
-                MapValue value = mapRecord.getValue();
-                // timestamp is always stored in value field 0
-                value.putLong(0, Numbers.LONG_NaN);
-                // have functions reset their columns to "zero" state
-                // this would set values for when keys are not found right away
-                for (int i = 0; i < n; i++) {
-                    groupByFunctions.getQuick(i).setNull(value);
-                }
-            }
-        }
-    }
-
-    @Override
     public boolean hasNext() {
         //
-        if (mapIterator.hasNext()) {
+        if (mapCursor.hasNext()) {
             // scroll down the map iterator
             // next() will return record that uses current map position
-            return true;
+            return refreshRecord();
         }
 
         if (baseRecord == null) {
@@ -169,7 +124,7 @@ class SampleByFillValueRecordCursor implements DelegatingRecordCursor {
         if (this.nextTimestamp > nextTimestamp) {
             this.lastTimestamp = nextTimestamp;
             // reset iterator on map and stream contents
-            return map.getCursor().hasNext();
+            return refreshCursorAndRecord();
         }
 
         this.lastTimestamp = this.nextTimestamp;
@@ -198,7 +153,6 @@ class SampleByFillValueRecordCursor implements DelegatingRecordCursor {
 
                 // carry on with the loop if we still have data
                 if (base.hasNext()) {
-                    base.next();
                     continue;
                 }
 
@@ -213,7 +167,39 @@ class SampleByFillValueRecordCursor implements DelegatingRecordCursor {
                 this.nextTimestamp = timestamp;
             }
 
-            return this.map.getCursor().hasNext();
+            return refreshCursorAndRecord();
+        }
+    }
+
+    @Override
+    public void recordAt(Record record, long atRowId) {
+    }
+
+    @Override
+    public void recordAt(long rowId) {
+    }
+
+    @Override
+    public void toTop() {
+        this.base.toTop();
+        if (base.hasNext()) {
+            baseRecord = base.getRecord();
+            this.nextTimestamp = timestampSampler.round(baseRecord.getTimestamp(timestampIndex));
+            this.lastTimestamp = this.nextTimestamp;
+
+            int n = groupByFunctions.size();
+            RecordCursor mapCursor = map.getCursor();
+            MapRecord mapRecord = map.getRecord();
+            while (mapCursor.hasNext()) {
+                MapValue value = mapRecord.getValue();
+                // timestamp is always stored in value field 0
+                value.putLong(0, Numbers.LONG_NaN);
+                // have functions reset their columns to "zero" state
+                // this would set values for when keys are not found right away
+                for (int i = 0; i < n; i++) {
+                    groupByFunctions.getQuick(i).setNull(value);
+                }
+            }
         }
     }
 
@@ -221,9 +207,27 @@ class SampleByFillValueRecordCursor implements DelegatingRecordCursor {
     public void of(RecordCursor base) {
         // factory guarantees that base cursor is not empty
         this.base = base;
-        this.baseRecord = base.next();
+        this.baseRecord = base.getRecord();
         this.nextTimestamp = timestampSampler.round(baseRecord.getTimestamp(timestampIndex));
         this.lastTimestamp = this.nextTimestamp;
+    }
+
+    private boolean refreshCursorAndRecord() {
+        // todo: should be able to refresh cursor
+        RecordCursor cursor = this.map.getCursor();
+        if (cursor.hasNext()) {
+            return refreshRecord();
+        }
+        return false;
+    }
+
+    private boolean refreshRecord() {
+        if (mapRecord.getTimestamp(0) == lastTimestamp) {
+            record.setActiveA();
+        } else {
+            record.setActiveB();
+        }
+        return true;
     }
 
     private class TimestampFunc extends TimestampFunction {

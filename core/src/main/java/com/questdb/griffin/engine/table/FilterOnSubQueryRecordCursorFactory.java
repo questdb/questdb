@@ -96,8 +96,8 @@ public class FilterOnSubQueryRecordCursorFactory extends AbstractDataFrameRecord
         targetFactories.clear();
 
         try (RecordCursor cursor = recordCursorFactory.getCursor(bindVariableService)) {
+            final Record record = cursor.getRecord();
             while (cursor.hasNext()) {
-                Record record = cursor.next();
                 final CharSequence symbol = typeCaster.getValue(record, 0);
                 int symbolKey = symbolTable.getQuick(symbol);
                 if (symbolKey != SymbolTable.VALUE_NOT_FOUND) {

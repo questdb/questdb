@@ -433,8 +433,8 @@ public class FastMapTest extends AbstractCairoTest {
                 rnd.reset();
                 LongList list = new LongList();
                 try (RecordCursor cursor = map.getCursor()) {
+                    final MapRecord record = (MapRecord) cursor.getRecord();
                     while (cursor.hasNext()) {
-                        MapRecord record = (MapRecord) cursor.next();
                         list.add(record.getRowId());
                         Assert.assertEquals(rnd.nextInt(), record.getInt(1));
                         MapValue value = record.getValue();
@@ -444,13 +444,13 @@ public class FastMapTest extends AbstractCairoTest {
                     // access map by rowid now
                     rnd.reset();
                     for (int i = 0, n = list.size(); i < n; i++) {
-                        MapRecord record = (MapRecord) cursor.recordAt(list.getQuick(i));
+                        cursor.recordAt(list.getQuick(i));
                         Assert.assertEquals((i + 1) * 2, record.getInt(0));
                         Assert.assertEquals(rnd.nextInt(), record.getInt(1));
                     }
 
                     MapRecord rec = (MapRecord) cursor.newRecord();
-                    Assert.assertNotSame(rec, cursor.getRecord());
+                    Assert.assertNotSame(rec, record);
 
                     rnd.reset();
                     for (int i = 0, n = list.size(); i < n; i++) {
@@ -477,10 +477,9 @@ public class FastMapTest extends AbstractCairoTest {
 
                 try (TableReader reader = new TableReader(configuration, "x")) {
                     RecordCursor cursor = reader.getCursor();
-
+                    final Record record = cursor.getRecord();
                     long counter = 0;
                     while (cursor.hasNext()) {
-                        Record record = cursor.next();
                         MapKey key = map.withKeyAsLong(record.getRowId());
                         MapValue values = key.createValue();
                         Assert.assertTrue(values.isNew());
@@ -490,7 +489,6 @@ public class FastMapTest extends AbstractCairoTest {
                     cursor.toTop();
                     counter = 0;
                     while (cursor.hasNext()) {
-                        Record record = cursor.next();
                         MapKey key = map.withKeyAsLong(record.getRowId());
                         MapValue values = key.findValue();
                         Assert.assertNotNull(values);
@@ -568,6 +566,7 @@ public class FastMapTest extends AbstractCairoTest {
                     Rnd rnd2 = new Rnd();
 
                     RecordCursor cursor = reader.getCursor();
+                    Record record = cursor.getRecord();
                     populateMap(map, rnd2, cursor, sink);
 
                     cursor.toTop();
@@ -575,7 +574,7 @@ public class FastMapTest extends AbstractCairoTest {
                     long c = 0;
                     while (cursor.hasNext()) {
                         MapKey key = map.withKey();
-                        key.put(cursor.next(), sink);
+                        key.put(record, sink);
                         MapValue value = key.findValue();
                         Assert.assertNotNull(value);
                         Assert.assertEquals(++c, value.getLong(0));
@@ -634,10 +633,11 @@ public class FastMapTest extends AbstractCairoTest {
                     Rnd rnd2 = new Rnd();
 
                     RecordCursor cursor = reader.getCursor();
+                    final Record record = cursor.getRecord();
                     long counter = 0;
                     while (cursor.hasNext()) {
                         MapKey key = map.withKey();
-                        key.put(cursor.next(), sink);
+                        key.put(record, sink);
                         MapValue value = key.createValue();
                         Assert.assertTrue(value.isNew());
                         value.putFloat(4, rnd2.nextFloat2());
@@ -657,7 +657,7 @@ public class FastMapTest extends AbstractCairoTest {
                     long c = 0;
                     while (cursor.hasNext()) {
                         MapKey key = map.withKey();
-                        key.put(cursor.next(), sink);
+                        key.put(record, sink);
                         MapValue value = key.findValue();
                         Assert.assertNotNull(value);
 
@@ -678,38 +678,38 @@ public class FastMapTest extends AbstractCairoTest {
     }
 
     private void assertCursor1(Rnd rnd, RecordCursor cursor) {
+        final Record record = cursor.getRecord();
         while (cursor.hasNext()) {
-            Record r = cursor.next();
-            Assert.assertEquals(rnd.nextByte(), r.getByte(8));
-            Assert.assertEquals(rnd.nextShort(), r.getShort(9));
-            Assert.assertEquals(rnd.nextInt(), r.getInt(10));
-            Assert.assertEquals(rnd.nextLong(), r.getLong(11));
-            Assert.assertEquals(rnd.nextFloat2(), r.getFloat(12), 0.000000001f);
-            Assert.assertEquals(rnd.nextDouble2(), r.getDouble(13), 0.000000001d);
+            Assert.assertEquals(rnd.nextByte(), record.getByte(8));
+            Assert.assertEquals(rnd.nextShort(), record.getShort(9));
+            Assert.assertEquals(rnd.nextInt(), record.getInt(10));
+            Assert.assertEquals(rnd.nextLong(), record.getLong(11));
+            Assert.assertEquals(rnd.nextFloat2(), record.getFloat(12), 0.000000001f);
+            Assert.assertEquals(rnd.nextDouble2(), record.getDouble(13), 0.000000001d);
 
 
             if ((rnd.nextPositiveInt() % 4) == 0) {
-                Assert.assertNull(r.getStr(14));
-                Assert.assertEquals(-1, r.getStrLen(14));
+                Assert.assertNull(record.getStr(14));
+                Assert.assertEquals(-1, record.getStrLen(14));
             } else {
                 CharSequence expected = rnd.nextChars(rnd.nextPositiveInt() % 16);
-                TestUtils.assertEquals(expected, r.getStr(14));
+                TestUtils.assertEquals(expected, record.getStr(14));
             }
 
-            Assert.assertEquals(rnd.nextBoolean(), r.getBool(15));
-            Assert.assertEquals(rnd.nextLong(), r.getDate(16));
+            Assert.assertEquals(rnd.nextBoolean(), record.getBool(15));
+            Assert.assertEquals(rnd.nextLong(), record.getDate(16));
 
 
             // value part, it comes first in record
 
-            Assert.assertEquals(rnd.nextByte(), r.getByte(0));
-            Assert.assertEquals(rnd.nextShort(), r.getShort(1));
-            Assert.assertEquals(rnd.nextInt(), r.getInt(2));
-            Assert.assertEquals(rnd.nextLong(), r.getLong(3));
-            Assert.assertEquals(rnd.nextFloat2(), r.getFloat(4), 0.000000001f);
-            Assert.assertEquals(rnd.nextDouble2(), r.getDouble(5), 0.000000001d);
-            Assert.assertEquals(rnd.nextBoolean(), r.getBool(6));
-            Assert.assertEquals(rnd.nextLong(), r.getDate(7));
+            Assert.assertEquals(rnd.nextByte(), record.getByte(0));
+            Assert.assertEquals(rnd.nextShort(), record.getShort(1));
+            Assert.assertEquals(rnd.nextInt(), record.getInt(2));
+            Assert.assertEquals(rnd.nextLong(), record.getLong(3));
+            Assert.assertEquals(rnd.nextFloat2(), record.getFloat(4), 0.000000001f);
+            Assert.assertEquals(rnd.nextDouble2(), record.getDouble(5), 0.000000001d);
+            Assert.assertEquals(rnd.nextBoolean(), record.getBool(6));
+            Assert.assertEquals(rnd.nextLong(), record.getDate(7));
         }
     }
 
@@ -717,8 +717,8 @@ public class FastMapTest extends AbstractCairoTest {
         long c = 0;
         rnd.reset();
         rnd2.reset();
+        final Record record = mapCursor.getRecord();
         while (mapCursor.hasNext()) {
-            Record record = mapCursor.next();
             // value
             Assert.assertEquals(++c, record.getLong(0));
             Assert.assertEquals(rnd2.nextInt(), record.getInt(1));
@@ -918,9 +918,10 @@ public class FastMapTest extends AbstractCairoTest {
 
     private void populateMap(FastMap map, Rnd rnd2, RecordCursor cursor, RecordSink sink) {
         long counter = 0;
+        final Record record = cursor.getRecord();
         while (cursor.hasNext()) {
             MapKey key = map.withKey();
-            key.put(cursor.next(), sink);
+            key.put(record, sink);
             MapValue value = key.createValue();
             Assert.assertTrue(value.isNew());
             value.putLong(0, ++counter);

@@ -32,6 +32,7 @@ import com.questdb.griffin.engine.functions.bind.BindVariableService;
 class FilteredRecordCursor implements RecordCursor {
     private final Function filter;
     private RecordCursor base;
+    private Record record;
 
     public FilteredRecordCursor(Function filter) {
         this.filter = filter;
@@ -44,22 +45,7 @@ class FilteredRecordCursor implements RecordCursor {
 
     @Override
     public Record getRecord() {
-        return base.getRecord();
-    }
-
-    @Override
-    public Record newRecord() {
-        return base.newRecord();
-    }
-
-    @Override
-    public Record recordAt(long rowId) {
-        return base.recordAt(rowId);
-    }
-
-    @Override
-    public void recordAt(Record record, long atRowId) {
-        base.recordAt(record, atRowId);
+        return record;
     }
 
     @Override
@@ -68,15 +54,14 @@ class FilteredRecordCursor implements RecordCursor {
     }
 
     @Override
-    public void toTop() {
-        base.toTop();
-        filter.toTop();
+    public Record newRecord() {
+        return base.newRecord();
     }
 
     @Override
     public boolean hasNext() {
         while (base.hasNext()) {
-            if (filter.getBool(next())) {
+            if (filter.getBool(record)) {
                 return true;
             }
         }
@@ -84,12 +69,24 @@ class FilteredRecordCursor implements RecordCursor {
     }
 
     @Override
-    public Record next() {
-        return base.getRecord();
+    public void recordAt(Record record, long atRowId) {
+        base.recordAt(record, atRowId);
+    }
+
+    @Override
+    public void recordAt(long rowId) {
+        base.recordAt(rowId);
+    }
+
+    @Override
+    public void toTop() {
+        base.toTop();
+        filter.toTop();
     }
 
     void of(RecordCursor base, BindVariableService bindVariableService) {
         this.base = base;
+        this.record = base.getRecord();
         filter.init(this, bindVariableService);
     }
 }

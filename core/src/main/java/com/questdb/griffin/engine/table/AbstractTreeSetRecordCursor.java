@@ -24,7 +24,6 @@
 package com.questdb.griffin.engine.table;
 
 import com.questdb.cairo.sql.DataFrameCursor;
-import com.questdb.cairo.sql.Record;
 import com.questdb.griffin.engine.LongTreeSet;
 import com.questdb.griffin.engine.functions.bind.BindVariableService;
 import com.questdb.std.Rows;
@@ -48,14 +47,12 @@ abstract class AbstractTreeSetRecordCursor extends AbstractDataFrameRecordCursor
 
     @Override
     public final boolean hasNext() {
-        return treeCursor.hasNext();
-    }
-
-    @Override
-    public final Record next() {
-        long row = treeCursor.next();
-        record.jumpTo(Rows.toPartitionIndex(row), Rows.toLocalRowID(row));
-        return record;
+        if (treeCursor.hasNext()) {
+            long row = treeCursor.next();
+            record.jumpTo(Rows.toPartitionIndex(row), Rows.toLocalRowID(row));
+            return true;
+        }
+        return false;
     }
 
     @Override

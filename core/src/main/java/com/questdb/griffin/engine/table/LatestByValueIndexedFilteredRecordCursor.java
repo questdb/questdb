@@ -24,7 +24,10 @@
 package com.questdb.griffin.engine.table;
 
 import com.questdb.cairo.BitmapIndexReader;
-import com.questdb.cairo.sql.*;
+import com.questdb.cairo.sql.DataFrame;
+import com.questdb.cairo.sql.DataFrameCursor;
+import com.questdb.cairo.sql.Function;
+import com.questdb.cairo.sql.RowCursor;
 import com.questdb.griffin.engine.functions.bind.BindVariableService;
 import org.jetbrains.annotations.NotNull;
 
@@ -47,13 +50,11 @@ class LatestByValueIndexedFilteredRecordCursor extends AbstractDataFrameRecordCu
 
     @Override
     public boolean hasNext() {
-        return hasNext;
-    }
-
-    @Override
-    public Record next() {
-        hasNext = false;
-        return record;
+        if (hasNext) {
+            hasNext = false;
+            return true;
+        }
+        return false;
     }
 
     @Override

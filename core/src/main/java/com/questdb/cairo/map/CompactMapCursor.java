@@ -46,14 +46,18 @@ public class CompactMapCursor implements RecordCursor {
     }
 
     @Override
-    public MapRecord newRecord() {
-        return record.clone();
+    public boolean hasNext() {
+        if (nextOffset < offsetHi) {
+            record.of(nextOffset);
+            nextOffset = record.getNextRecordOffset();
+            return true;
+        }
+        return false;
     }
 
     @Override
-    public MapRecord recordAt(long rowId) {
-        record.of(rowId);
-        return record;
+    public MapRecord newRecord() {
+        return record.clone();
     }
 
     @Override
@@ -63,23 +67,13 @@ public class CompactMapCursor implements RecordCursor {
     }
 
     @Override
+    public void recordAt(long rowId) {
+        record.of(rowId);
+    }
+
+    @Override
     public void toTop() {
         nextOffset = 0;
-    }
-
-    @Override
-    public boolean hasNext() {
-        if (nextOffset < offsetHi) {
-            record.of(nextOffset);
-            return true;
-        }
-        return false;
-    }
-
-    @Override
-    public MapRecord next() {
-        nextOffset = record.getNextRecordOffset();
-        return record;
     }
 
     void of(long offsetHi) {

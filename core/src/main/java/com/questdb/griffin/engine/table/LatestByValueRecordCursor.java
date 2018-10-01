@@ -25,7 +25,6 @@ package com.questdb.griffin.engine.table;
 
 import com.questdb.cairo.sql.DataFrame;
 import com.questdb.cairo.sql.DataFrameCursor;
-import com.questdb.cairo.sql.Record;
 import com.questdb.griffin.engine.functions.bind.BindVariableService;
 
 class LatestByValueRecordCursor extends AbstractDataFrameRecordCursor {
@@ -42,13 +41,11 @@ class LatestByValueRecordCursor extends AbstractDataFrameRecordCursor {
 
     @Override
     public boolean hasNext() {
-        return hasNext;
-    }
-
-    @Override
-    public Record next() {
-        hasNext = false;
-        return record;
+        if (hasNext) {
+            hasNext = false;
+            return true;
+        }
+        return false;
     }
 
     @Override

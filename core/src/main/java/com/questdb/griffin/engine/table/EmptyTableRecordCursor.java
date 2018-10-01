@@ -47,7 +47,7 @@ final public class EmptyTableRecordCursor implements RecordCursor {
     }
 
     @Override
-    public Record recordAt(long rowId) {
+    public void recordAt(long rowId) {
         throw new UnsupportedOperationException();
     }
 
@@ -57,16 +57,11 @@ final public class EmptyTableRecordCursor implements RecordCursor {
     }
 
     @Override
-    public void toTop() {
-    }
-
-    @Override
     public boolean hasNext() {
         return false;
     }
 
     @Override
-    public Record next() {
-        throw new UnsupportedOperationException();
+    public void toTop() {
     }
 }

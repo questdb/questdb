@@ -255,11 +255,10 @@ final class FastMapRecord implements MapRecord {
         return len == TableUtils.NULL_LEN ? null : cs.of(address + 4, address + 4 + len * 2);
     }
 
-    FastMapRecord of(long address) {
+    void of(long address) {
         this.address0 = address;
         this.address1 = address + keyDataOffset;
         this.address2 = address + keyBlockOffset;
-        return this;
     }
 
     private static class DirectBinarySequence implements BinarySequence {

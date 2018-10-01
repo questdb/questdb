@@ -88,9 +88,9 @@ public class TableReaderRecordCursorFactoryTest extends AbstractCairoTest {
                     long count = 0;
                     final BindVariableService bindVariableService = new BindVariableService();
                     try (RecordCursor cursor = factory.getCursor(bindVariableService)) {
+                        final Record record = cursor.getRecord();
                         rnd.reset();
                         while (cursor.hasNext()) {
-                            Record record = cursor.next();
                             TestUtils.assertEquals(rnd.nextChars(20), record.getStr(0));
                             TestUtils.assertEquals(symbols[rnd.nextPositiveInt() % N], record.getSym(1));
                             Assert.assertEquals(rnd.nextInt(), record.getInt(2));

@@ -33,7 +33,8 @@ class SortedLightRecordCursor implements DelegatingRecordCursor {
     private final RecordComparator comparator;
     private final LongTreeChain.TreeCursor chainCursor;
     private RecordCursor base;
-    private Record record = null;
+    private Record baseRecord;
+    private Record placeHolderRecord = null;
 
     public SortedLightRecordCursor(LongTreeChain chain, RecordComparator comparator) {
         this.chain = chain;
@@ -50,7 +51,7 @@ class SortedLightRecordCursor implements DelegatingRecordCursor {
 
     @Override
     public Record getRecord() {
-        return base.getRecord();
+        return baseRecord;
     }
 
     @Override
@@ -59,13 +60,17 @@ class SortedLightRecordCursor implements DelegatingRecordCursor {
     }
 
     @Override
-    public Record newRecord() {
-        return base.newRecord();
+    public boolean hasNext() {
+        if (chainCursor.hasNext()) {
+            base.recordAt(chainCursor.next());
+            return true;
+        }
+        return false;
     }
 
     @Override
-    public Record recordAt(long rowId) {
-        return base.recordAt(rowId);
+    public Record newRecord() {
+        return base.newRecord();
     }
 
     @Override
@@ -74,25 +79,21 @@ class SortedLightRecordCursor implements DelegatingRecordCursor {
     }
 
     @Override
+    public void recordAt(long rowId) {
+        base.recordAt(rowId);
+    }
+
+    @Override
     public void toTop() {
         chainCursor.toTop();
     }
 
     @Override
-    public boolean hasNext() {
-        return chainCursor.hasNext();
-    }
-
-    @Override
-    public Record next() {
-        return base.recordAt(chainCursor.next());
-    }
-
-    @Override
     public void of(RecordCursor base) {
         this.base = base;
-        if (record == null) {
-            record = base.newRecord();
+        this.baseRecord = base.getRecord();
+        if (placeHolderRecord == null) {
+            placeHolderRecord = base.newRecord();
         }
 
         chain.clear();
@@ -102,9 +103,9 @@ class SortedLightRecordCursor implements DelegatingRecordCursor {
             // own record instance in case base cursor keeps
             // state in the record it returns.
             chain.put(
-                    base.next().getRowId(),
+                    baseRecord.getRowId(),
                     base,
-                    record,
+                    placeHolderRecord,
                     comparator
             );
         }

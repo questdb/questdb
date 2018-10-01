@@ -51,8 +51,12 @@ class DataFrameRecordCursor extends AbstractDataFrameRecordCursor {
     }
 
     @Override
-    public Record next() {
-        return record;
+    public void toTop() {
+        dataFrameCursor.toTop();
+        rowCursor = null;
+        if (filter != null) {
+            filter.toTop();
+        }
     }
 
     @Override
@@ -66,15 +70,6 @@ class DataFrameRecordCursor extends AbstractDataFrameRecordCursor {
         rowCursor = null;
         if (filter != null) {
             filter.init(this, bindVariableService);
-        }
-    }
-
-    @Override
-    public void toTop() {
-        dataFrameCursor.toTop();
-        rowCursor = null;
-        if (filter != null) {
-            filter.toTop();
         }
     }
 

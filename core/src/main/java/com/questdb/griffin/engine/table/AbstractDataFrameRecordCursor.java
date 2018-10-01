@@ -36,8 +36,21 @@ public abstract class AbstractDataFrameRecordCursor implements RecordCursor {
     protected DataFrameCursor dataFrameCursor;
 
     @Override
+    public void close() {
+        if (dataFrameCursor != null) {
+            dataFrameCursor.close();
+            dataFrameCursor = null;
+        }
+    }
+
+    @Override
     public Record getRecord() {
         return record;
+    }
+
+    @Override
+    public SymbolTable getSymbolTable(int columnIndex) {
+        return dataFrameCursor.getSymbolTable(columnIndex);
     }
 
     @Override
@@ -48,27 +61,13 @@ public abstract class AbstractDataFrameRecordCursor implements RecordCursor {
     }
 
     @Override
-    public Record recordAt(long rowId) {
-        recordAt(record, rowId);
-        return record;
-    }
-
-    @Override
     public void recordAt(Record record, long atRowId) {
         ((TableReaderRecord) record).jumpTo(Rows.toPartitionIndex(atRowId), Rows.toLocalRowID(atRowId));
     }
 
     @Override
-    public SymbolTable getSymbolTable(int columnIndex) {
-        return dataFrameCursor.getSymbolTable(columnIndex);
-    }
-
-    @Override
-    public void close() {
-        if (dataFrameCursor != null) {
-            dataFrameCursor.close();
-            dataFrameCursor = null;
-        }
+    public void recordAt(long rowId) {
+        recordAt(record, rowId);
     }
 
     abstract void of(DataFrameCursor cursor, BindVariableService bindVariableService);

@@ -75,14 +75,17 @@ public class LongSequenceFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public Record newRecord() {
-            return new LongSequenceRecord();
+        public boolean hasNext() {
+            if (record.getValue() < recordCount) {
+                record.next();
+                return true;
+            }
+            return false;
         }
 
         @Override
-        public Record recordAt(long rowId) {
-            record.of(rowId);
-            return record;
+        public Record newRecord() {
+            return new LongSequenceRecord();
         }
 
         @Override
@@ -91,19 +94,13 @@ public class LongSequenceFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public void recordAt(long rowId) {
+            record.of(rowId);
+        }
+
+        @Override
         public void toTop() {
             record.of(0);
-        }
-
-        @Override
-        public boolean hasNext() {
-            return record.getValue() < recordCount;
-        }
-
-        @Override
-        public Record next() {
-            record.next();
-            return record;
         }
     }
 

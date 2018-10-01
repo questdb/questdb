@@ -1522,6 +1522,7 @@ public class TableReaderTest extends AbstractCairoTest {
                     startBarrier.await();
                     try (TableReader reader = new TableReader(configuration, "w")) {
                         RecordCursor cursor = reader.getCursor();
+                        final Record record = cursor.getRecord();
                         do {
                             // we deliberately ignore result of reload()
                             // to create more race conditions
@@ -1529,7 +1530,7 @@ public class TableReaderTest extends AbstractCairoTest {
                             cursor.toTop();
                             int count = 0;
                             while (cursor.hasNext()) {
-                                Assert.assertEquals(list.get(count++ % N), cursor.next().getLong(0));
+                                Assert.assertEquals(list.get(count++ % N), record.getLong(0));
                             }
 
                             if (count == N * scale) {
@@ -1606,6 +1607,7 @@ public class TableReaderTest extends AbstractCairoTest {
                     startBarrier.await();
                     try (TableReader reader = new TableReader(configuration, "w")) {
                         RecordCursor cursor = reader.getCursor();
+                        final Record record = cursor.getRecord();
                         do {
                             // we deliberately ignore result of reload()
                             // to create more race conditions
@@ -1613,7 +1615,7 @@ public class TableReaderTest extends AbstractCairoTest {
                             cursor.toTop();
                             int count = 0;
                             while (cursor.hasNext()) {
-                                Assert.assertEquals(list.get(count++ % N), cursor.next().getLong(0));
+                                Assert.assertEquals(list.get(count++ % N), record.getLong(0));
                             }
 
                             if (count == N * scale) {
@@ -1689,8 +1691,8 @@ public class TableReaderTest extends AbstractCairoTest {
                 int count = 0;
                 rnd.reset();
                 RecordCursor cursor = reader.getCursor();
+                final Record record = cursor.getRecord();
                 while (cursor.hasNext()) {
-                    Record record = cursor.next();
                     Assert.assertEquals(rnd.nextLong(), record.getLong(0));
                     count++;
                 }
@@ -1730,8 +1732,8 @@ public class TableReaderTest extends AbstractCairoTest {
                 col = reader.getMetadata().getColumnIndex("str");
                 int count = 0;
                 RecordCursor cursor = reader.getCursor();
+                final Record record = cursor.getRecord();
                 while (cursor.hasNext()) {
-                    Record record = cursor.next();
                     CharSequence expected = rnd.nextChars(15);
                     CharSequence actual = record.getStr(col);
                     Assert.assertTrue(Chars.equals(expected, 2, 10, actual, 0, 8));
@@ -1908,7 +1910,6 @@ public class TableReaderTest extends AbstractCairoTest {
                                 cursor.toTop();
                                 int localCount = 0;
                                 while (cursor.hasNext()) {
-                                    cursor.next();
                                     localCount++;
                                 }
                                 if (localCount > max) {
@@ -2040,8 +2041,9 @@ public class TableReaderTest extends AbstractCairoTest {
                 int previousBand = -1;
                 int bandCount = 0;
                 RecordCursor cursor = reader.getCursor();
+                final Record record = cursor.getRecord();
                 while (cursor.hasNext()) {
-                    long value = cursor.next().getLong(0);
+                    long value = record.getLong(0);
                     int band = (int) ((value / bandStride) * bandStride);
                     if (band != previousBand) {
                         // make sure we don#t pick up deleted partition
@@ -2166,8 +2168,8 @@ public class TableReaderTest extends AbstractCairoTest {
 
                     rnd.reset();
                     RecordCursor cursor = reader.getCursor();
+                    final Record record = cursor.getRecord();
                     while (cursor.hasNext()) {
-                        Record record = cursor.next();
                         Assert.assertEquals(rnd.nextChars(10), record.getStr(0));
                         Assert.assertEquals(rnd.nextChars(15), record.getStr(1));
                         counter++;
@@ -2194,7 +2196,6 @@ public class TableReaderTest extends AbstractCairoTest {
                     rnd.reset();
                     cursor.toTop();
                     while (cursor.hasNext()) {
-                        Record record = cursor.next();
                         Assert.assertEquals(rnd.nextChars(10), record.getStr(0));
                         // roll random generator to make sure it returns same values
                         rnd.nextChars(15);
@@ -2270,8 +2271,8 @@ public class TableReaderTest extends AbstractCairoTest {
 
                     rnd.reset();
                     RecordCursor cursor = reader.getCursor();
+                    final Record record = cursor.getRecord();
                     while (cursor.hasNext()) {
-                        Record record = cursor.next();
                         Assert.assertEquals(rnd.nextChars(10), record.getSym(0));
                         Assert.assertEquals(rnd.nextChars(15), record.getStr(1));
                         counter++;
@@ -2306,7 +2307,6 @@ public class TableReaderTest extends AbstractCairoTest {
                     cursor.toTop();
                     counter = 0;
                     while (cursor.hasNext()) {
-                        Record record = cursor.next();
                         Assert.assertEquals(rnd.nextChars(10), record.getSym(0));
                         if (counter < N) {
                             // roll random generator to make sure it returns same values
@@ -2382,8 +2382,8 @@ public class TableReaderTest extends AbstractCairoTest {
 
                     rnd.reset();
                     RecordCursor cursor = reader.getCursor();
+                    final Record record = cursor.getRecord();
                     while (cursor.hasNext()) {
-                        Record record = cursor.next();
                         Assert.assertEquals(rnd.nextChars(10), record.getSym(0));
                         Assert.assertEquals(rnd.nextChars(15), record.getSym(1));
                         counter++;
@@ -2416,7 +2416,6 @@ public class TableReaderTest extends AbstractCairoTest {
                     cursor.toTop();
                     counter = 0;
                     while (cursor.hasNext()) {
-                        Record record = cursor.next();
                         Assert.assertEquals(rnd.nextChars(10), record.getSym(0));
                         if (counter < N) {
                             // roll random generator to make sure it returns same values
@@ -2492,8 +2491,8 @@ public class TableReaderTest extends AbstractCairoTest {
 
                     rnd.reset();
                     RecordCursor cursor = reader.getCursor();
+                    Record record = cursor.getRecord();
                     while (cursor.hasNext()) {
-                        Record record = cursor.next();
                         Assert.assertEquals(rnd.nextChars(10), record.getSym(0));
                         Assert.assertEquals(rnd.nextChars(15), record.getSym(1));
                         counter++;
@@ -2522,7 +2521,6 @@ public class TableReaderTest extends AbstractCairoTest {
                     cursor.toTop();
                     counter = 0;
                     while (cursor.hasNext()) {
-                        Record record = cursor.next();
                         Assert.assertEquals(rnd.nextChars(10), record.getSym(0));
                         if (counter < N) {
                             // roll random generator to make sure it returns same values
@@ -2598,8 +2596,8 @@ public class TableReaderTest extends AbstractCairoTest {
 
                     rnd.reset();
                     RecordCursor cursor = reader.getCursor();
+                    final Record record = cursor.getRecord();
                     while (cursor.hasNext()) {
-                        Record record = cursor.next();
                         Assert.assertEquals(rnd.nextChars(10), record.getSym(0));
                         Assert.assertEquals(rnd.nextChars(15), record.getSym(1));
                         counter++;
@@ -2628,7 +2626,6 @@ public class TableReaderTest extends AbstractCairoTest {
                     cursor.toTop();
                     counter = 0;
                     while (cursor.hasNext()) {
-                        Record record = cursor.next();
                         Assert.assertEquals(rnd.nextChars(10), record.getSym(0));
                         if (counter < N) {
                             // roll random generator to make sure it returns same values
@@ -2704,8 +2701,8 @@ public class TableReaderTest extends AbstractCairoTest {
 
                     rnd.reset();
                     RecordCursor cursor = reader.getCursor();
+                    final Record record = cursor.getRecord();
                     while (cursor.hasNext()) {
-                        Record record = cursor.next();
                         Assert.assertEquals(rnd.nextChars(10), record.getSym(0));
                         Assert.assertEquals(rnd.nextChars(15), record.getSym(1));
                         counter++;
@@ -2725,7 +2722,6 @@ public class TableReaderTest extends AbstractCairoTest {
                     cursor.toTop();
                     counter = 0;
                     while (cursor.hasNext()) {
-                        Record record = cursor.next();
                         Assert.assertEquals(rnd.nextChars(10), record.getSym(0));
                         // roll random generator to make sure it returns same values
                         rnd.nextChars(15);
@@ -2963,17 +2959,16 @@ public class TableReaderTest extends AbstractCairoTest {
 
     private void assertCursor(RecordCursor cursor, long ts, long increment, long blob, long expectedSize, RecordAssert asserter) {
         Rnd rnd = new Rnd();
-//        Assert.assertEquals(expectedSize, cursor.size());
+        final Record record = cursor.getRecord();
         cursor.toTop();
         int count = 0;
         long timestamp = ts;
         LongList rows = new LongList((int) expectedSize);
 
-        while (cursor.hasNext() && count < expectedSize) {
+        while (count < expectedSize && cursor.hasNext()) {
             count++;
-            Record rec = cursor.next();
-            asserter.assertRecord(rec, rnd, timestamp += increment, blob);
-            rows.add(rec.getRowId());
+            asserter.assertRecord(record, rnd, timestamp += increment, blob);
+            rows.add(record.getRowId());
         }
         // did our loop run?
         Assert.assertEquals(expectedSize, count);
@@ -2982,8 +2977,8 @@ public class TableReaderTest extends AbstractCairoTest {
         rnd.reset();
         timestamp = ts;
         for (int i = 0; i < count; i++) {
-            Record rec = cursor.recordAt(rows.getQuick(i));
-            asserter.assertRecord(rec, rnd, timestamp += increment, blob);
+            cursor.recordAt(rows.getQuick(i));
+            asserter.assertRecord(record, rnd, timestamp += increment, blob);
         }
 
         // assert rowid access, method 2
@@ -3007,9 +3002,10 @@ public class TableReaderTest extends AbstractCairoTest {
 
     private long assertPartialCursor(RecordCursor cursor, Rnd rnd, long ts, long increment, long blob, long expectedSize, RecordAssert asserter) {
         int count = 0;
-        while (cursor.hasNext() && count < expectedSize) {
+        Record record = cursor.getRecord();
+        while (count < expectedSize && cursor.hasNext()) {
             count++;
-            asserter.assertRecord(cursor.next(), rnd, ts += increment, blob);
+            asserter.assertRecord(record, rnd, ts += increment, blob);
         }
         // did our loop run?
         Assert.assertEquals(expectedSize, count);
@@ -3355,16 +3351,18 @@ public class TableReaderTest extends AbstractCairoTest {
                 Assert.assertEquals(N, reader.size());
 
                 RecordCursor cursor = reader.getCursor();
+                final Record record = cursor.getRecord();
                 assertCursor(cursor, ts, inc, blob, N, BATCH1_ASSERTER);
 
                 cursor.toTop();
                 while (cursor.hasNext()) {
-                    rows.add(cursor.next().getRowId());
+                    rows.add(record.getRowId());
                 }
 
                 Rnd exp = new Rnd();
                 for (int i = 0, n = rows.size(); i < n; i++) {
-                    BATCH1_ASSERTER.assertRecord(cursor.recordAt(rows.getQuick(i)), exp, ts += inc, blob);
+                    cursor.recordAt(rows.getQuick(i));
+                    BATCH1_ASSERTER.assertRecord(record, exp, ts += inc, blob);
                 }
             }
         } finally {

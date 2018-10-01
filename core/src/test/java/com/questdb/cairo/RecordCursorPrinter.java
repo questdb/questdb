@@ -47,8 +47,9 @@ public class RecordCursorPrinter {
             printHeader(metadata);
         }
 
+        final Record record = cursor.getRecord();
         while (cursor.hasNext()) {
-            print(cursor.next(), metadata);
+            print(record, metadata);
         }
     }
 

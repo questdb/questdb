@@ -251,8 +251,8 @@ public class CompactMapTest extends AbstractCairoTest {
                 rnd.reset();
                 LongList list = new LongList();
                 try (RecordCursor mapCursor = map.getCursor()) {
+                    final MapRecord record = (MapRecord) mapCursor.getRecord();
                     while (mapCursor.hasNext()) {
-                        MapRecord record = (MapRecord) mapCursor.next();
                         list.add(record.getRowId());
                         Assert.assertEquals(rnd.nextInt(), record.getInt(1));
                         MapValue value = record.getValue();
@@ -262,7 +262,7 @@ public class CompactMapTest extends AbstractCairoTest {
                     // access map by rowid now
                     rnd.reset();
                     for (int i = 0, n = list.size(); i < n; i++) {
-                        MapRecord record = (MapRecord) mapCursor.recordAt(list.getQuick(i));
+                        mapCursor.recordAt(list.getQuick(i));
                         Assert.assertEquals((i + 1) * 2, record.getInt(0));
                         Assert.assertEquals(rnd.nextInt(), record.getInt(1));
                     }
@@ -295,10 +295,10 @@ public class CompactMapTest extends AbstractCairoTest {
 
                 try (TableReader reader = new TableReader(configuration, "x")) {
                     RecordCursor cursor = reader.getCursor();
+                    final Record record = cursor.getRecord();
 
                     long counter = 0;
                     while (cursor.hasNext()) {
-                        Record record = cursor.next();
                         MapKey key = map.withKeyAsLong(record.getRowId());
                         MapValue values = key.createValue();
                         Assert.assertTrue(values.isNew());
@@ -308,7 +308,6 @@ public class CompactMapTest extends AbstractCairoTest {
                     cursor.toTop();
                     counter = 0;
                     while (cursor.hasNext()) {
-                        Record record = cursor.next();
                         MapKey key = map.withKeyAsLong(record.getRowId());
                         MapValue values = key.findValue();
                         Assert.assertNotNull(values);
@@ -484,6 +483,7 @@ public class CompactMapTest extends AbstractCairoTest {
                     Rnd rnd2 = new Rnd();
 
                     RecordCursor cursor = reader.getCursor();
+                    final Record record = cursor.getRecord();
                     populateMap(map, rnd2, cursor, sink);
 
                     cursor.toTop();
@@ -491,7 +491,7 @@ public class CompactMapTest extends AbstractCairoTest {
                     long c = 0;
                     while (cursor.hasNext()) {
                         MapKey key = map.withKey();
-                        key.put(cursor.next(), sink);
+                        key.put(record, sink);
                         MapValue value = key.findValue();
                         Assert.assertNotNull(value);
                         Assert.assertEquals(++c, value.getLong(0));
@@ -548,10 +548,11 @@ public class CompactMapTest extends AbstractCairoTest {
                     Rnd rnd2 = new Rnd();
 
                     RecordCursor cursor = reader.getCursor();
+                    Record record = cursor.getRecord();
                     long counter = 0;
                     while (cursor.hasNext()) {
                         MapKey key = map.withKey();
-                        key.put(cursor.next(), sink);
+                        key.put(record, sink);
                         MapValue value1 = key.createValue();
                         Assert.assertTrue(value1.isNew());
                         value1.putFloat(4, rnd2.nextFloat2());
@@ -571,7 +572,7 @@ public class CompactMapTest extends AbstractCairoTest {
                     long c = 0;
                     while (cursor.hasNext()) {
                         MapKey key = map.withKey();
-                        key.put(cursor.next(), sink);
+                        key.put(record, sink);
                         MapValue value = key.findValue();
                         Assert.assertNotNull(value);
 
@@ -608,8 +609,8 @@ public class CompactMapTest extends AbstractCairoTest {
         long c = 0;
         rnd.reset();
         rnd2.reset();
+        Record record = mapCursor.getRecord();
         while (mapCursor.hasNext()) {
-            Record record = mapCursor.next();
             // value
             Assert.assertEquals(++c, record.getLong(0));
             Assert.assertEquals(rnd2.nextInt(), record.getInt(1));
@@ -792,9 +793,10 @@ public class CompactMapTest extends AbstractCairoTest {
 
     private void populateMap(CompactMap map, Rnd rnd2, RecordCursor cursor, RecordSink sink) {
         long counter = 0;
+        final Record record = cursor.getRecord();
         while (cursor.hasNext()) {
             MapKey key = map.withKey();
-            key.put(cursor.next(), sink);
+            key.put(record, sink);
             MapValue value = key.createValue();
             Assert.assertTrue(value.isNew());
             value.putLong(0, ++counter);

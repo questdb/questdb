@@ -37,8 +37,21 @@ public class TableReaderRecordCursor implements RecordCursor {
     private long maxRecordIndex = -1;
 
     @Override
+    public void close() {
+        if (reader != null) {
+            reader.close();
+            reader = null;
+        }
+    }
+
+    @Override
     public Record getRecord() {
         return record;
+    }
+
+    @Override
+    public SymbolTable getSymbolTable(int columnIndex) {
+        return reader.getSymbolMapReader(columnIndex);
     }
 
     @Override
@@ -49,9 +62,12 @@ public class TableReaderRecordCursor implements RecordCursor {
     }
 
     @Override
-    public Record recordAt(long rowId) {
-        recordAt(record, rowId);
-        return record;
+    public boolean hasNext() {
+        if (record.getRecordIndex() < maxRecordIndex || switchPartition()) {
+            record.incrementRecordIndex();
+            return true;
+        }
+        return false;
     }
 
     @Override
@@ -60,35 +76,16 @@ public class TableReaderRecordCursor implements RecordCursor {
     }
 
     @Override
+    public void recordAt(long rowId) {
+        recordAt(record, rowId);
+    }
+
+    @Override
     public void toTop() {
         partitionIndex = 0;
         partitionCount = reader.getPartitionCount();
         record.jumpTo(0, -1);
         maxRecordIndex = -1;
-    }
-
-    @Override
-    public void close() {
-        if (reader != null) {
-            reader.close();
-            reader = null;
-        }
-    }
-
-    @Override
-    public SymbolTable getSymbolTable(int columnIndex) {
-        return reader.getSymbolMapReader(columnIndex);
-    }
-
-    @Override
-    public boolean hasNext() {
-        return record.getRecordIndex() < maxRecordIndex || switchPartition();
-    }
-
-    @Override
-    public Record next() {
-        record.incrementRecordIndex();
-        return record;
     }
 
     void of(TableReader reader) {

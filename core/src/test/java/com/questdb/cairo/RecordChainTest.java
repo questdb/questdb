@@ -61,6 +61,7 @@ public class RecordChainTest extends AbstractCairoTest {
             entityColumnFilter.of(metadata.getColumnCount());
             RecordSink recordSink = RecordSinkFactory.getInstance(asm, metadata, entityColumnFilter, true);
             try (RecordChain chain = new RecordChain(metadata, recordSink, SIZE_4M)) {
+                Record chainRecord = chain.getRecord();
                 Record record = new TestRecord();
                 LongList rows = new LongList();
                 long o = -1L;
@@ -75,9 +76,9 @@ public class RecordChainTest extends AbstractCairoTest {
 
                 for (int i = 0, n = rows.size(); i < n; i++) {
                     long row = rows.getQuick(i);
-                    Record actual = chain.recordAt(row);
-                    Assert.assertEquals(row, actual.getRowId());
-                    assertSame(expected, actual);
+                    chain.recordAt(row);
+                    Assert.assertEquals(row, chainRecord.getRowId());
+                    assertSame(expected, chainRecord);
                 }
 
                 Record expected2 = new TestRecord();
@@ -185,8 +186,9 @@ public class RecordChainTest extends AbstractCairoTest {
     private void assertChain(RecordChain chain, Record r2, long expectedCount) {
         long count = 0L;
         chain.toTop();
+        Record record = chain.getRecord();
         while (chain.hasNext()) {
-            assertSame(r2, chain.next());
+            assertSame(r2, record);
             count++;
         }
         Assert.assertEquals(expectedCount, count);

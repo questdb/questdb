@@ -2306,8 +2306,8 @@ public class TableWriterTest extends AbstractCairoTest {
         try (TableReader reader = new TableReader(configuration, name)) {
             int col = reader.getMetadata().getColumnIndex("секьюрити");
             RecordCursor cursor = reader.getCursor();
+            final Record r = cursor.getRecord();
             while (cursor.hasNext()) {
-                Record r = cursor.next();
                 TestUtils.assertEquals(rnd.nextChars(5), r.getStr(col));
             }
         }
@@ -3044,8 +3044,8 @@ public class TableWriterTest extends AbstractCairoTest {
             Assert.assertEquals(cacheFlag, reader.isColumnCached(0));
             Assert.assertNotEquals(cacheFlag, reader.isColumnCached(2));
             RecordCursor cursor = reader.getCursor();
+            final Record record = cursor.getRecord();
             while (cursor.hasNext()) {
-                Record record = cursor.next();
                 TestUtils.assertEquals(rnd.nextChars(5), record.getSym(0));
                 TestUtils.assertEquals(rnd.nextChars(10), record.getStr(1));
                 count++;

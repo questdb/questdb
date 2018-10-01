@@ -98,12 +98,12 @@ public class TableReadFailTest extends AbstractCairoTest {
 
 
                 RecordCursor cursor = reader.getCursor();
+                final Record record = cursor.getRecord();
                 rnd.reset();
                 int count = 0;
                 while (cursor.hasNext()) {
-                    Record r = cursor.next();
-                    Assert.assertEquals(rnd.nextInt(), r.getInt(0));
-                    Assert.assertEquals(rnd.nextLong(), r.getLong(1));
+                    Assert.assertEquals(rnd.nextInt(), record.getInt(0));
+                    Assert.assertEquals(rnd.nextLong(), record.getLong(1));
                     count++;
                 }
 
@@ -160,9 +160,8 @@ public class TableReadFailTest extends AbstractCairoTest {
                 rnd.reset();
                 count = 0;
                 while (cursor.hasNext()) {
-                    Record r = cursor.next();
-                    Assert.assertEquals(rnd.nextInt(), r.getInt(0));
-                    Assert.assertEquals(rnd.nextLong(), r.getLong(1));
+                    Assert.assertEquals(rnd.nextInt(), record.getInt(0));
+                    Assert.assertEquals(rnd.nextLong(), record.getLong(1));
                     count++;
                 }
 

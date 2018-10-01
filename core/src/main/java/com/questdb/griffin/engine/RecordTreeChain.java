@@ -29,7 +29,10 @@ import com.questdb.cairo.RecordSink;
 import com.questdb.cairo.sql.Record;
 import com.questdb.cairo.sql.RecordCursor;
 import com.questdb.cairo.sql.SymbolTable;
-import com.questdb.std.*;
+import com.questdb.std.MemoryPages;
+import com.questdb.std.Misc;
+import com.questdb.std.Mutable;
+import com.questdb.std.Unsafe;
 
 import java.io.Closeable;
 
@@ -45,6 +48,7 @@ public class RecordTreeChain implements Closeable, Mutable {
     private static final byte RED = 1;
     private static final byte BLACK = 0;
     private final RecordChain recordChain;
+    private final Record recordChainRecord;
     private final MemoryPages mem;
     private final RecordComparator comparator;
     private final TreeCursor cursor = new TreeCursor();
@@ -59,6 +63,7 @@ public class RecordTreeChain implements Closeable, Mutable {
         this.comparator = comparator;
         this.mem = new MemoryPages(keyPageSize);
         this.recordChain = new RecordChain(columnTypes, recordSink, valuePageSize);
+        this.recordChainRecord = this.recordChain.getRecord();
     }
 
 
@@ -94,7 +99,8 @@ public class RecordTreeChain implements Closeable, Mutable {
         do {
             parent = p;
             long r = refOf(p);
-            cmp = comparator.compare(recordChain.recordAt(r));
+            recordChain.recordAt(r);
+            cmp = comparator.compare(recordChainRecord);
             if (cmp < 0) {
                 p = leftOf(p);
             } else if (cmp > 0) {
@@ -291,7 +297,7 @@ public class RecordTreeChain implements Closeable, Mutable {
         }
     }
 
-    private class TreeCursor implements RecordCursor, ImmutableIterator<Record> {
+    private class TreeCursor implements RecordCursor {
 
         private long current;
 
@@ -310,32 +316,6 @@ public class RecordTreeChain implements Closeable, Mutable {
         }
 
         @Override
-        public Record newRecord() {
-            return recordChain.newRecord();
-        }
-
-        @Override
-        public Record recordAt(long rowId) {
-            return recordChain.recordAt(rowId);
-        }
-
-        @Override
-        public void recordAt(Record record, long atRowId) {
-            recordChain.recordAt(record, atRowId);
-        }
-
-        @Override
-        public void toTop() {
-            long p = root;
-            if (p != -1) {
-                while (leftOf(p) != -1) {
-                    p = leftOf(p);
-                }
-            }
-            recordChain.of(topOf(current = p));
-        }
-
-        @Override
         public boolean hasNext() {
             if (recordChain.hasNext()) {
                 return true;
@@ -351,8 +331,29 @@ public class RecordTreeChain implements Closeable, Mutable {
         }
 
         @Override
-        public Record next() {
-            return recordChain.next();
+        public Record newRecord() {
+            return recordChain.newRecord();
+        }
+
+        @Override
+        public void recordAt(Record record, long atRowId) {
+            recordChain.recordAt(record, atRowId);
+        }
+
+        @Override
+        public void recordAt(long rowId) {
+            recordChain.recordAt(rowId);
+        }
+
+        @Override
+        public void toTop() {
+            long p = root;
+            if (p != -1) {
+                while (leftOf(p) != -1) {
+                    p = leftOf(p);
+                }
+            }
+            recordChain.of(topOf(current = p));
         }
     }
 }

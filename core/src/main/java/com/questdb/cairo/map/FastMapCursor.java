@@ -48,14 +48,20 @@ public final class FastMapCursor implements RecordCursor {
     }
 
     @Override
-    public MapRecord newRecord() {
-        return record.clone();
+    public boolean hasNext() {
+        if (remaining > 0) {
+            long address = this.address;
+            this.address = address + Unsafe.getUnsafe().getInt(address);
+            remaining--;
+            record.of(address);
+            return true;
+        }
+        return false;
     }
 
     @Override
-    public MapRecord recordAt(long rowId) {
-        record.of(rowId);
-        return record;
+    public MapRecord newRecord() {
+        return record.clone();
     }
 
     @Override
@@ -65,22 +71,14 @@ public final class FastMapCursor implements RecordCursor {
     }
 
     @Override
+    public void recordAt(long rowId) {
+        record.of(rowId);
+    }
+
+    @Override
     public void toTop() {
         this.address = topAddress;
         this.remaining = count;
-    }
-
-    @Override
-    public boolean hasNext() {
-        return remaining > 0;
-    }
-
-    @Override
-    public MapRecord next() {
-        long address = this.address;
-        this.address = address + Unsafe.getUnsafe().getInt(address);
-        remaining--;
-        return record.of(address);
     }
 
     FastMapCursor init(long address, int count) {

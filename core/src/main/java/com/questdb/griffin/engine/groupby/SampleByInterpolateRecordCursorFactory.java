@@ -196,6 +196,7 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
         recordKeyMap.clear();
         dataMap.clear();
         final RecordCursor baseCursor = base.getCursor(bindVariableService);
+        final Record baseRecord = baseCursor.getRecord();
         try {
 
             // Collect map of unique key values.
@@ -206,9 +207,8 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
             //
             // At the same time check if cursor has data
             while (baseCursor.hasNext()) {
-                final Record record = baseCursor.next();
                 final MapKey key = recordKeyMap.withKey();
-                mapSink.copy(record, key);
+                mapSink.copy(baseRecord, key);
                 key.createValue();
             }
 
@@ -232,8 +232,7 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
             // we have data in cursor, so we can grab first value
             final boolean good = baseCursor.hasNext();
             assert good;
-            Record record = baseCursor.next();
-            long prevSample = sampler.round(record.getTimestamp(timestampIndex));
+            long prevSample = sampler.round(baseRecord.getTimestamp(timestampIndex));
             long loSample = prevSample; // the lowest timestamp value
             long hiSample;
 
@@ -241,7 +240,7 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
             do {
                 // this seems inefficient, but we only double-sample
                 // very first record and nothing else
-                long sample = sampler.round(record.getTimestamp(timestampIndex));
+                long sample = sampler.round(baseRecord.getTimestamp(timestampIndex));
                 if (sample != prevSample) {
                     // before we continue with next interval
                     // we need to fill gaps in current interval
@@ -254,24 +253,22 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
 
                 // same data group - evaluate group-by functions
                 MapKey key = dataMap.withKey();
-                mapSink.copy(record, key);
+                mapSink.copy(baseRecord, key);
                 key.putLong(sample);
 
                 MapValue value = key.createValue();
                 if (value.isNew()) {
                     value.putByte(0, (byte) 0); // not a gap
                     for (int i = 0; i < n; i++) {
-                        groupByFunctions.getQuick(i).computeFirst(value, record);
+                        groupByFunctions.getQuick(i).computeFirst(value, baseRecord);
                     }
                 } else {
                     for (int i = 0; i < n; i++) {
-                        groupByFunctions.getQuick(i).computeNext(value, record);
+                        groupByFunctions.getQuick(i).computeNext(value, baseRecord);
                     }
                 }
 
-                if (baseCursor.hasNext()) {
-                    record = baseCursor.next();
-                } else {
+                if (!baseCursor.hasNext()) {
                     hiSample = sampler.nextTimestamp(prevSample);
                     break;
                 }
@@ -284,8 +281,8 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
             long sample;
             for (sample = prevSample = loSample; sample < hiSample; prevSample = sample, sample = sampler.nextTimestamp(sample)) {
                 final RecordCursor mapCursor = recordKeyMap.getCursor();
+                final Record mapRecord = mapCursor.getRecord();
                 while (mapCursor.hasNext()) {
-                    final Record mapRecord = mapCursor.next();
                     // locate first gap
                     MapValue value = findDataMapValue(mapRecord, sample);
                     if (value.getByte(0) == 1) {
@@ -396,12 +393,12 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
 
     private void fillGaps(long lo, long hi) {
         final RecordCursor keyCursor = recordKeyMap.getCursor();
+        final Record record = keyCursor.getRecord();
         long timestamp = lo;
         while (timestamp < hi) {
             while (keyCursor.hasNext()) {
                 MapKey key = dataMap.withKey();
-                Record rec = keyCursor.next();
-                mapSink2.copy(rec, key);
+                mapSink2.copy(record, key);
                 key.putLong(timestamp);
                 MapValue value = key.createValue();
                 if (value.isNew()) {
@@ -494,16 +491,15 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
         }
 
         @Override
+        public boolean hasNext() {
+            return mapCursor.hasNext();
+        }
+
+        @Override
         public Record newRecord() {
             VirtualRecord record = new VirtualRecord(functionRecord.getFunctions());
             record.of(mapCursor.newRecord());
             return record;
-        }
-
-        @Override
-        public Record recordAt(long rowId) {
-            mapCursor.recordAt(functionRecord.getBaseRecord(), rowId);
-            return functionRecord;
         }
 
         @Override
@@ -513,19 +509,13 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
         }
 
         @Override
+        public void recordAt(long rowId) {
+            mapCursor.recordAt(functionRecord.getBaseRecord(), rowId);
+        }
+
+        @Override
         public void toTop() {
             mapCursor.toTop();
-        }
-
-        @Override
-        public boolean hasNext() {
-            return mapCursor.hasNext();
-        }
-
-        @Override
-        public Record next() {
-            mapCursor.next();
-            return functionRecord;
         }
 
         public void of(RecordCursor mapCursor, RecordCursor baseCursor) {

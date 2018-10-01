@@ -778,7 +778,7 @@ public class TableReader implements Closeable {
         while (true) {
             long txn = txMem.getLong(TableUtils.TX_OFFSET_TXN);
 
-            // exit if this is the same as we alrwady have
+            // exit if this is the same as we already have
             if (txn == this.txn) {
                 return false;
             }

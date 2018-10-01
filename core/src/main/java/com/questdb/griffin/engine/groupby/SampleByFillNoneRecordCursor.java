@@ -89,25 +89,6 @@ class SampleByFillNoneRecordCursor implements DelegatingRecordCursor {
     }
 
     @Override
-    public Record newRecord() {
-        return null;
-    }
-
-    @Override
-    public Record recordAt(long rowId) {
-        return null;
-    }
-
-    @Override
-    public void recordAt(Record record, long atRowId) {
-    }
-
-    @Override
-    public Record next() {
-        return record;
-    }
-
-    @Override
     public boolean hasNext() {
         //
         if (mapHasNext()) {
@@ -147,7 +128,6 @@ class SampleByFillNoneRecordCursor implements DelegatingRecordCursor {
 
                 // carry on with the loop if we still have data
                 if (base.hasNext()) {
-                    base.next();
                     continue;
                 }
 
@@ -176,10 +156,24 @@ class SampleByFillNoneRecordCursor implements DelegatingRecordCursor {
     }
 
     @Override
+    public Record newRecord() {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void recordAt(Record record, long atRowId) {
+    }
+
+    @Override
+    public void recordAt(long rowId) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public void toTop() {
         this.base.toTop();
         if (base.hasNext()) {
-            this.baseRecord = this.base.next();
+            baseRecord = base.getRecord();
             this.nextTimestamp = timestampSampler.round(baseRecord.getTimestamp(timestampIndex));
             this.lastTimestamp = this.nextTimestamp;
             map.clear();
@@ -189,19 +183,13 @@ class SampleByFillNoneRecordCursor implements DelegatingRecordCursor {
     public void of(RecordCursor base) {
         // factory guarantees that base cursor is not empty
         this.base = base;
-        this.baseRecord = base.next();
+        this.baseRecord = base.getRecord();
         this.nextTimestamp = timestampSampler.round(baseRecord.getTimestamp(timestampIndex));
         this.lastTimestamp = this.nextTimestamp;
     }
 
     private boolean mapHasNext() {
-        if (mapCursor.hasNext()) {
-            // scroll down the map iterator
-            // next() will return record that uses current map position
-            mapCursor.next();
-            return true;
-        }
-        return false;
+        return mapCursor.hasNext();
     }
 
     private class TimestampFunc extends TimestampFunction {

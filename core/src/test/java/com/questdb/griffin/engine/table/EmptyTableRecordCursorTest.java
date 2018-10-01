@@ -30,12 +30,6 @@ public class EmptyTableRecordCursorTest {
     private static final EmptyTableRecordCursor CURSOR = new EmptyTableRecordCursor();
 
     @Test(expected = UnsupportedOperationException.class)
-    public void testNext() {
-        // next must always fail
-        CURSOR.next();
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
     public void testRecordAt() {
         // This cursor does not return row ids. Looking up records from cursor by rowid is most
         // likely a bug. Make sure we report it.

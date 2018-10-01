@@ -288,9 +288,10 @@ public class AbstractSampleByRecordCursorFactory implements RecordCursorFactory 
         // aggregation results and timestamp
 
         int n = groupByFunctions.size();
+        final Record baseCursorRecord = baseCursor.getRecord();
         while (baseCursor.hasNext()) {
             MapKey key = map.withKey();
-            mapSink.copy(baseCursor.next(), key);
+            mapSink.copy(baseCursorRecord, key);
             MapValue value = key.createValue();
             if (value.isNew()) {
                 // timestamp is always stored in value field 0
