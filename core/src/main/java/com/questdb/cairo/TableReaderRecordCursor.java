@@ -55,19 +55,19 @@ public class TableReaderRecordCursor implements RecordCursor {
     }
 
     @Override
-    public Record newRecord() {
-        TableReaderRecord record = new TableReaderRecord();
-        record.of(reader);
-        return record;
-    }
-
-    @Override
     public boolean hasNext() {
         if (record.getRecordIndex() < maxRecordIndex || switchPartition()) {
             record.incrementRecordIndex();
             return true;
         }
         return false;
+    }
+
+    @Override
+    public Record newRecord() {
+        TableReaderRecord record = new TableReaderRecord();
+        record.of(reader);
+        return record;
     }
 
     @Override
@@ -86,6 +86,14 @@ public class TableReaderRecordCursor implements RecordCursor {
         partitionCount = reader.getPartitionCount();
         record.jumpTo(0, -1);
         maxRecordIndex = -1;
+    }
+
+    public void startFrom(long rowid) {
+        partitionIndex = Rows.toPartitionIndex(rowid);
+        long recordIndex = Rows.toLocalRowID(rowid);
+        record.jumpTo(this.partitionIndex, recordIndex);
+        maxRecordIndex = reader.openPartition(partitionIndex) - 1;
+        partitionIndex++;
     }
 
     void of(TableReader reader) {

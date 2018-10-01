@@ -23,7 +23,6 @@
 
 package com.questdb.cairo;
 
-import com.questdb.cairo.sql.RecordCursor;
 import com.questdb.cairo.sql.RecordMetadata;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
@@ -213,7 +212,7 @@ public class TableReader implements Closeable {
         return reader == null ? createBitmapIndexReaderAt(index, columnBase, columnIndex, direction) : reader;
     }
 
-    public RecordCursor getCursor() {
+    public TableReaderRecordCursor getCursor() {
         recordCursor.toTop();
         return recordCursor;
     }
@@ -260,6 +259,10 @@ public class TableReader implements Closeable {
 
     public boolean reload() {
         return reloadMethod.reload(this);
+    }
+
+    public long getTxn() {
+        return txn;
     }
 
     public void reshuffleSymbolMapReaders(long pTransitionIndex) {
