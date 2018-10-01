@@ -218,7 +218,7 @@ public class WriterPoolTest extends AbstractCairoTest {
                 }
             }
             X x = new X();
-            pool.setPoolListner(x);
+            pool.setPoolListener(x);
             pool.close();
             try {
                 pool.lock("x");
@@ -664,7 +664,7 @@ public class WriterPoolTest extends AbstractCairoTest {
                 }
             }
             X x = new X();
-            pool.setPoolListner(x);
+            pool.setPoolListener(x);
             pool.unlock("x");
             Assert.assertEquals(PoolListener.EV_NOT_LOCKED, x.ev);
         });
@@ -695,7 +695,7 @@ public class WriterPoolTest extends AbstractCairoTest {
                 }
             }
             X x = new X();
-            pool.setPoolListner(x);
+            pool.setPoolListener(x);
             TableWriter w = pool.get("z");
             Assert.assertNotNull(w);
             Assert.assertEquals(1, pool.getBusyCount());

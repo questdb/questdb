@@ -36,28 +36,9 @@ class SelectedRecord implements Record {
         this.columnCrossIndex = columnCrossIndex;
     }
 
-    void of(Record record) {
-        this.base = record;
-    }
-
     @Override
     public BinarySequence getBin(int col) {
         return base.getBin(getColumnIndex(col));
-    }
-
-    @Override
-    public CharSequence getSym(int col) {
-        return base.getSym(getColumnIndex(col));
-    }
-
-    @Override
-    public double getDouble(int col) {
-        return base.getDouble(getColumnIndex(col));
-    }
-
-    @Override
-    public long getLong(int col) {
-        return base.getLong(getColumnIndex(col));
     }
 
     @Override
@@ -81,8 +62,33 @@ class SelectedRecord implements Record {
     }
 
     @Override
+    public double getDouble(int col) {
+        return base.getDouble(getColumnIndex(col));
+    }
+
+    @Override
     public float getFloat(int col) {
         return base.getFloat(getColumnIndex(col));
+    }
+
+    @Override
+    public int getInt(int col) {
+        return base.getInt(getColumnIndex(col));
+    }
+
+    @Override
+    public long getLong(int col) {
+        return base.getLong(getColumnIndex(col));
+    }
+
+    @Override
+    public long getRowId() {
+        return base.getRowId();
+    }
+
+    @Override
+    public short getShort(int col) {
+        return base.getShort(getColumnIndex(col));
     }
 
     @Override
@@ -96,16 +102,6 @@ class SelectedRecord implements Record {
     }
 
     @Override
-    public int getInt(int col) {
-        return base.getInt(getColumnIndex(col));
-    }
-
-    @Override
-    public short getShort(int col) {
-        return base.getShort(getColumnIndex(col));
-    }
-
-    @Override
     public CharSequence getStrB(int col) {
         return base.getStrB(getColumnIndex(col));
     }
@@ -116,24 +112,28 @@ class SelectedRecord implements Record {
     }
 
     @Override
+    public CharSequence getSym(int col) {
+        return base.getSym(getColumnIndex(col));
+    }
+
+    @Override
     public long getTimestamp(int col) {
         return base.getTimestamp(getColumnIndex(col));
-    }
-
-    private int getColumnIndex(int columnIndex) {
-        return columnCrossIndex.getQuick(columnIndex);
-    }
-
-    IntList getColumnCrossIndex() {
-        return columnCrossIndex;
     }
 
     Record getBaseRecord() {
         return base;
     }
 
-    @Override
-    public long getRowId() {
-        return base.getRowId();
+    IntList getColumnCrossIndex() {
+        return columnCrossIndex;
+    }
+
+    private int getColumnIndex(int columnIndex) {
+        return columnCrossIndex.getQuick(columnIndex);
+    }
+
+    void of(Record record) {
+        this.base = record;
     }
 }

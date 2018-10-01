@@ -36,28 +36,20 @@ public class InsertAsSelectModel implements ExecutionModel, Mutable, Sinkable {
     private InsertAsSelectModel() {
     }
 
-    public ExpressionNode getTableName() {
-        return tableName;
-    }
-
-    public void setTableName(ExpressionNode tableName) {
-        this.tableName = tableName;
-    }
-
-    public QueryModel getQueryModel() {
-        return queryModel;
-    }
-
-    public void setQueryModel(QueryModel queryModel) {
-        this.queryModel = queryModel;
-    }
-
     public boolean addColumn(CharSequence columnName, int columnPosition) {
         if (columnSet.add(columnName)) {
             columnPositions.add(columnPosition);
             return true;
         }
         return false;
+    }
+
+    @Override
+    public void clear() {
+        this.tableName = null;
+        this.queryModel = null;
+        this.columnSet.clear();
+        this.columnPositions.clear();
     }
 
     public int getColumnPosition(int columnIndex) {
@@ -73,12 +65,20 @@ public class InsertAsSelectModel implements ExecutionModel, Mutable, Sinkable {
         return INSERT_AS_SELECT;
     }
 
-    @Override
-    public void clear() {
-        this.tableName = null;
-        this.queryModel = null;
-        this.columnSet.clear();
-        this.columnPositions.clear();
+    public QueryModel getQueryModel() {
+        return queryModel;
+    }
+
+    public void setQueryModel(QueryModel queryModel) {
+        this.queryModel = queryModel;
+    }
+
+    public ExpressionNode getTableName() {
+        return tableName;
+    }
+
+    public void setTableName(ExpressionNode tableName) {
+        this.tableName = tableName;
     }
 
     @Override

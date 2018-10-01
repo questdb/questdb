@@ -188,6 +188,12 @@ class Logger implements LogRecord, Log {
     }
 
     @Override
+    public LogRecord ts() {
+        sink().putISODate(clock.getTicks());
+        return this;
+    }
+
+    @Override
     public LogRecord debug() {
         return xdebug().ts().$(" D ").$(name);
     }
@@ -200,12 +206,6 @@ class Logger implements LogRecord, Log {
     @Override
     public LogRecord info() {
         return xinfo().ts().$(" I ").$(name);
-    }
-
-    @Override
-    public LogRecord ts() {
-        sink().putISODate(clock.getTicks());
-        return this;
     }
 
     @Override

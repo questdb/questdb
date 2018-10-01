@@ -34,13 +34,13 @@ public interface UnaryFunction extends Function {
     }
 
     @Override
-    default boolean isConstant() {
-        return getArg().isConstant();
+    default void init(RecordCursor recordCursor, BindVariableService bindVariableService) {
+        getArg().init(recordCursor, bindVariableService);
     }
 
     @Override
-    default void init(RecordCursor recordCursor, BindVariableService bindVariableService) {
-        getArg().init(recordCursor, bindVariableService);
+    default boolean isConstant() {
+        return getArg().isConstant();
     }
 
     @Override

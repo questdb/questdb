@@ -27,6 +27,8 @@ import com.questdb.cairo.sql.Record;
 
 public interface MapValue extends Record {
 
+    long getAddress();
+
     boolean getBool(int columnIndex);
 
     byte getByte(int index);
@@ -64,6 +66,4 @@ public interface MapValue extends Record {
     void putShort(int index, short value);
 
     void putTimestamp(int columnIndex, long value);
-
-    long getAddress();
 }

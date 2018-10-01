@@ -21,26 +21,43 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.engine.functions.groupby;
+package com.questdb.cairo;
 
-import com.questdb.cairo.CairoConfiguration;
-import com.questdb.cairo.sql.Function;
-import com.questdb.griffin.FunctionFactory;
-import com.questdb.std.ObjList;
+public class TableReaderIncrementalRecordCursor extends TableReaderRecordCursor {
 
-public class SumLongGroupByFunctionFactory implements FunctionFactory {
+    private long txn = TableUtils.INITIAL_TXN;
+    private long lastRowId = -1;
+
     @Override
-    public String getSignature() {
-        return "sum(L)";
+    public boolean hasNext() {
+        if (super.hasNext()) {
+            return true;
+        }
+        lastRowId = record.getRowId();
+        return false;
     }
 
-    @Override
-    public boolean isGroupBy() {
-        return true;
+    public boolean reload() {
+        long txn;
+        if (reader.reload()) {
+            seekToLast();
+            return true;
+        }
+
+        txn = reader.getTxn();
+        if (txn > this.txn) {
+            this.txn = txn;
+            seekToLast();
+            return true;
+        }
+        return false;
     }
 
-    @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
-        return new SumLongGroupByFunction(position, args.getQuick(0));
+    private void seekToLast() {
+        if (lastRowId > -1) {
+            startFrom(lastRowId);
+        } else {
+            toTop();
+        }
     }
 }

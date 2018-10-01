@@ -69,7 +69,7 @@ public class DirectCharSink extends AbstractCharSink implements CharSequence, Cl
 
     @Override
     public char charAt(int index) {
-        return Unsafe.getUnsafe().getChar(ptr + index * 2);
+        return Unsafe.getUnsafe().getChar(ptr + index * 2L);
     }
 
     @Override
@@ -83,7 +83,7 @@ public class DirectCharSink extends AbstractCharSink implements CharSequence, Cl
         int l2 = l * 2;
 
         if (lo + l2 >= hi) {
-            resize((int) Math.max(capacity * 2, (lo - ptr + l2) * 2));
+            resize((int) Math.max(capacity * 2L, (lo - ptr + l2) * 2L));
         }
 
         for (int i = 0; i < l; i++) {

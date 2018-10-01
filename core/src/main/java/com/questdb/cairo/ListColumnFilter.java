@@ -27,12 +27,12 @@ import com.questdb.std.IntList;
 
 public class ListColumnFilter extends IntList implements ColumnFilter {
     @Override
-    public int getColumnIndex(int position) {
-        return getQuick(position);
+    public int getColumnCount() {
+        return size();
     }
 
     @Override
-    public int getColumnCount() {
-        return size();
+    public int getColumnIndex(int position) {
+        return getQuick(position);
     }
 }

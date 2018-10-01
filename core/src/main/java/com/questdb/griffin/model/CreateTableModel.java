@@ -29,7 +29,7 @@ import com.questdb.std.str.CharSink;
 
 public class CreateTableModel implements Mutable, ExecutionModel, Sinkable {
     public static final ObjectFactory<CreateTableModel> FACTORY = CreateTableModel::new;
-    private static final long COLUMN_FLAG_CHACHED = 1L;
+    private static final long COLUMN_FLAG_CACHED = 1L;
     private static final long COLUMN_FLAG_INDEXED = 2L;
     private final CharSequenceObjHashMap<ColumnCastModel> columnCastModels = new CharSequenceObjHashMap<>();
     private final LongList columnBits = new LongList();
@@ -47,7 +47,7 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable {
         if (columnNameIndexMap.put(name, columnNames.size())) {
             columnNames.add(Chars.stringOf(name));
             columnBits.add(((long) symbolCapacity << 32) | type);
-            columnBits.add(COLUMN_FLAG_CHACHED);
+            columnBits.add(COLUMN_FLAG_CACHED);
             return true;
         }
         return false;
@@ -63,9 +63,9 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable {
         assert ((int) columnBits.getQuick(last - 1) == ColumnType.SYMBOL);
         long bits = columnBits.getQuick(last);
         if (cached) {
-            columnBits.setQuick(last, bits | COLUMN_FLAG_CHACHED);
+            columnBits.setQuick(last, bits | COLUMN_FLAG_CACHED);
         } else {
-            columnBits.setQuick(last, bits & ~COLUMN_FLAG_CHACHED);
+            columnBits.setQuick(last, bits & ~COLUMN_FLAG_CACHED);
         }
         return this;
     }
@@ -140,7 +140,7 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable {
     }
 
     public boolean getSymbolCacheFlag(int index) {
-        return (columnBits.getQuick(index * 2 + 1) & COLUMN_FLAG_CHACHED) == COLUMN_FLAG_CHACHED;
+        return (columnBits.getQuick(index * 2 + 1) & COLUMN_FLAG_CACHED) == COLUMN_FLAG_CACHED;
     }
 
     public int getSymbolCapacity(int index) {

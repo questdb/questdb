@@ -63,7 +63,7 @@ public final class TableUtils {
     static final long META_OFFSET_COUNT = 0;
     static final long META_OFFSET_PARTITION_BY = 4;
     static final long META_OFFSET_TIMESTAMP_INDEX = 8;
-    private static final int META_COLUMN_DATA_SIZE = 16;
+    private static final long META_COLUMN_DATA_SIZE = 16;
     private final static Log LOG = LogFactory.getLog(TableUtils.class);
 
     public static int exists(FilesFacade ff, Path path, CharSequence root, CharSequence name) {

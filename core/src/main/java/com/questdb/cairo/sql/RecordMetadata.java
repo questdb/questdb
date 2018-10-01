@@ -29,6 +29,10 @@ import com.questdb.std.str.CharSink;
 
 public interface RecordMetadata extends ColumnTypes {
 
+    int getColumnCount();
+
+    int getColumnType(int index);
+
     default int getColumnIndex(CharSequence columnName) {
         int index = getColumnIndexQuiet(columnName);
         if (index == -1) {
@@ -44,10 +48,6 @@ public interface RecordMetadata extends ColumnTypes {
     default int getColumnType(CharSequence columnName) {
         return getColumnType(getColumnIndex(columnName));
     }
-
-    int getColumnType(int index);
-
-    int getColumnCount();
 
     int getIndexValueBlockCapacity(int columnIndex);
 

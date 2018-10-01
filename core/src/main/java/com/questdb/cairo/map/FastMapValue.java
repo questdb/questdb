@@ -35,6 +35,11 @@ final class FastMapValue implements MapValue {
     }
 
     @Override
+    public long getAddress() {
+        return address;
+    }
+
+    @Override
     public boolean getBool(int columnIndex) {
         return getByte(columnIndex) == 1;
     }
@@ -127,11 +132,6 @@ final class FastMapValue implements MapValue {
     @Override
     public void putTimestamp(int columnIndex, long value) {
         putLong(columnIndex, value);
-    }
-
-    @Override
-    public long getAddress() {
-        return address;
     }
 
     private long address0(int index) {

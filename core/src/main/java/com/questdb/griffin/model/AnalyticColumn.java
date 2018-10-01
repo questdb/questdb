@@ -49,12 +49,12 @@ public final class AnalyticColumn extends QueryColumn {
         orderByDirection.clear();
     }
 
-    public ObjList<ExpressionNode> getOrderBy() {
-        return orderBy;
-    }
-
     public ObjList<ExpressionNode> getPartitionBy() {
         return partitionBy;
+    }
+
+    public ObjList<ExpressionNode> getOrderBy() {
+        return orderBy;
     }
 
     public IntList getOrderByDirection() {

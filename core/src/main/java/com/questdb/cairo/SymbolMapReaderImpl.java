@@ -29,7 +29,6 @@ import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.std.*;
 import com.questdb.std.str.Path;
-import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
 
@@ -95,6 +94,16 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
     }
 
     @Override
+    public int getSymbolCapacity() {
+        return symbolCapacity;
+    }
+
+    @Override
+    public boolean isCached() {
+        return cached;
+    }
+
+    @Override
     public boolean isDeleted() {
         return offsetMem.isDeleted();
     }
@@ -107,16 +116,6 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
             this.offsetMem.grow(maxOffset);
             growCharMemToSymbolCount(symbolCount);
         }
-    }
-
-    @Override
-    public int getSymbolCapacity() {
-        return symbolCapacity;
-    }
-
-    @Override
-    public boolean isCached() {
-        return cached;
     }
 
     public void of(CairoConfiguration configuration, Path path, CharSequence name, int symbolCount) {
@@ -180,7 +179,6 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
         return symbol != null ? symbol : fetchAndCache(key);
     }
 
-    @NotNull
     private CharSequence fetchAndCache(int key) {
         String symbol;
         CharSequence cs = charMem.getStr(offsetMem.getLong(SymbolMapWriter.keyToOffset(key)));

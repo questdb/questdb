@@ -42,15 +42,15 @@ public class LatestByValueDeferredFilteredRecordCursorFactory extends AbstractDe
     }
 
     @Override
+    public boolean isRandomAccessCursor() {
+        return true;
+    }
+
+    @Override
     protected AbstractDataFrameRecordCursor createDataFrameCursorFor(int symbolKey) {
         if (filter == null) {
             return new LatestByValueRecordCursor(columnIndex, symbolKey);
         }
         return new LatestByValueFilteredRecordCursor(columnIndex, symbolKey, filter);
-    }
-
-    @Override
-    public boolean isRandomAccessCursor() {
-        return true;
     }
 }

@@ -29,13 +29,13 @@ import com.questdb.store.SymbolTable;
 
 abstract class AbstractMemRecord implements Record {
     @Override
-    public byte getByte(int col) {
-        return Unsafe.getUnsafe().getByte(address(col));
+    public boolean getBool(int col) {
+        return Unsafe.getBool(address(col));
     }
 
     @Override
-    public boolean getBool(int col) {
-        return Unsafe.getBool(address(col));
+    public byte getByte(int col) {
+        return Unsafe.getUnsafe().getByte(address(col));
     }
 
     @Override

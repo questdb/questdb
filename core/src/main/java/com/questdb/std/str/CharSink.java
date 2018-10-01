@@ -31,6 +31,10 @@ public interface CharSink {
 
     CharSink encodeUtf8(CharSequence cs);
 
+    CharSink encodeUtf8(CharSequence cs, int from, int len);
+
+    CharSink encodeUtf8AndQuote(CharSequence cs);
+
     default void flush() throws IOException {
     }
 
@@ -63,8 +67,4 @@ public interface CharSink {
     CharSink putISODateMillis(long value);
 
     CharSink putQuoted(CharSequence cs);
-
-    CharSink encodeUtf8(CharSequence cs, int from, int len);
-
-    CharSink encodeUtf8AndQuote(CharSequence cs);
 }

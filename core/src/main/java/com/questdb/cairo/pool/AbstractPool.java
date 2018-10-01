@@ -65,16 +65,16 @@ abstract class AbstractPool implements Closeable {
         return eventListener;
     }
 
+    public void setPoolListener(PoolListener eventListener) {
+        this.eventListener = eventListener;
+    }
+
     public boolean releaseAll() {
         return releaseAll(Long.MAX_VALUE);
     }
 
     public boolean releaseInactive() {
         return releaseAll(clock.getTicks() - inactiveTtlUs);
-    }
-
-    public void setPoolListner(PoolListener eventListener) {
-        this.eventListener = eventListener;
     }
 
     protected void closePool() {

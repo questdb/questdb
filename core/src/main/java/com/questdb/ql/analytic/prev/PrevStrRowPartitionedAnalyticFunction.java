@@ -72,16 +72,6 @@ public class PrevStrRowPartitionedAnalyticFunction extends AbstractPrevAnalyticF
     }
 
     @Override
-    public CharSequence getFlyweightStr() {
-        return nextNull ? null : valueColumn.getFlyweightStr(getParentRecord());
-    }
-
-    @Override
-    public CharSequence getFlyweightStrB() {
-        return nextNull ? null : valueColumn.getFlyweightStrB(getParentRecord());
-    }
-
-    @Override
     public int getInt() {
         return nextNull ? Numbers.INT_NaN : valueColumn.getInt(getParentRecord());
     }
@@ -94,19 +84,6 @@ public class PrevStrRowPartitionedAnalyticFunction extends AbstractPrevAnalyticF
     @Override
     public short getShort() {
         return nextNull ? 0 : valueColumn.getShort(getParentRecord());
-    }
-
-    @Override
-    public void getStr(CharSink sink) {
-        if (nextNull) {
-            return;
-        }
-        valueColumn.getStr(getParentRecord(), sink);
-    }
-
-    @Override
-    public int getStrLen() {
-        return nextNull ? -1 : valueColumn.getStrLen(getParentRecord());
     }
 
     @Override
@@ -138,6 +115,29 @@ public class PrevStrRowPartitionedAnalyticFunction extends AbstractPrevAnalyticF
         }
         super.close();
         Misc.free(map);
+    }
+
+    @Override
+    public CharSequence getFlyweightStr() {
+        return nextNull ? null : valueColumn.getFlyweightStr(getParentRecord());
+    }
+
+    @Override
+    public CharSequence getFlyweightStrB() {
+        return nextNull ? null : valueColumn.getFlyweightStrB(getParentRecord());
+    }
+
+    @Override
+    public void getStr(CharSink sink) {
+        if (nextNull) {
+            return;
+        }
+        valueColumn.getStr(getParentRecord(), sink);
+    }
+
+    @Override
+    public int getStrLen() {
+        return nextNull ? -1 : valueColumn.getStrLen(getParentRecord());
     }
 
     @Override

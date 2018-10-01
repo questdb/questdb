@@ -36,7 +36,7 @@ import org.jetbrains.annotations.Nullable;
 public class VirtualRecordCursorFactory extends AbstractRecordCursorFactory {
     private final VirtualRecordCursor cursor;
     private final ObjList<Function> functions;
-    private RecordCursorFactory base;
+    private final RecordCursorFactory base;
 
     public VirtualRecordCursorFactory(
             RecordMetadata metadata,

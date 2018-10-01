@@ -80,13 +80,13 @@ public abstract class StrFunction implements Function {
     }
 
     @Override
-    public int getPosition() {
-        return position;
+    public RecordMetadata getMetadata() {
+        throw new UnsupportedOperationException();
     }
 
     @Override
-    public RecordMetadata getMetadata() {
-        throw new UnsupportedOperationException();
+    public int getPosition() {
+        return position;
     }
 
     @Override

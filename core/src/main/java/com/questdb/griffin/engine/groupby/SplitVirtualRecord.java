@@ -80,16 +80,6 @@ public class SplitVirtualRecord implements Record {
     }
 
     @Override
-    public CharSequence getStr(int col) {
-        return getFunction(col).getStr(base);
-    }
-
-    @Override
-    public void getStr(int col, CharSink sink) {
-        getFunction(col).getStr(base, sink);
-    }
-
-    @Override
     public int getInt(int col) {
         return getFunction(col).getInt(base);
     }
@@ -107,6 +97,16 @@ public class SplitVirtualRecord implements Record {
     @Override
     public short getShort(int col) {
         return getFunction(col).getShort(base);
+    }
+
+    @Override
+    public CharSequence getStr(int col) {
+        return getFunction(col).getStr(base);
+    }
+
+    @Override
+    public void getStr(int col, CharSink sink) {
+        getFunction(col).getStr(base, sink);
     }
 
     @Override

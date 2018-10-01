@@ -77,12 +77,6 @@ public class RecordListRecord implements Record {
     }
 
     @Override
-    public byte getByte(int col) {
-        assert offsets[col] >= 0;
-        return Unsafe.getUnsafe().getByte(address + Unsafe.arrayGet(offsets, col));
-    }
-
-    @Override
     public void getBin(int col, OutputStream s) {
         final long readOffset = offsetOf(col);
         final long readAddress = mem.addressOf(readOffset);
@@ -113,6 +107,12 @@ public class RecordListRecord implements Record {
     public boolean getBool(int col) {
         assert offsets[col] >= 0;
         return Unsafe.getBool(address + Unsafe.arrayGet(offsets, col));
+    }
+
+    @Override
+    public byte getByte(int col) {
+        assert offsets[col] >= 0;
+        return Unsafe.getUnsafe().getByte(address + Unsafe.arrayGet(offsets, col));
     }
 
     @Override

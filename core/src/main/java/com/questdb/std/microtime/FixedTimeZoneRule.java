@@ -33,8 +33,8 @@ public class FixedTimeZoneRule implements TimeZoneRules {
     }
 
     @Override
-    public long getOffset(long millis) {
-        return offset;
+    public String getId() {
+        return id;
     }
 
     @Override
@@ -43,7 +43,7 @@ public class FixedTimeZoneRule implements TimeZoneRules {
     }
 
     @Override
-    public String getId() {
-        return id;
+    public long getOffset(long millis) {
+        return offset;
     }
 }

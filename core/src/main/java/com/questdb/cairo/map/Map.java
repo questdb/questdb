@@ -38,9 +38,9 @@ public interface Map extends Mutable, Closeable {
 
     long size();
 
+    MapValue valueAt(long address);
+
     MapKey withKey();
 
     MapKey withKeyAsLong(long value);
-
-    MapValue valueAt(long address);
 }

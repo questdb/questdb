@@ -53,6 +53,12 @@ class LatestByValuesFilteredRecordCursor extends AbstractTreeSetRecordCursor {
     }
 
     @Override
+    public void toTop() {
+        super.toTop();
+        filter.toTop();
+    }
+
+    @Override
     protected void buildTreeMap(BindVariableService bindVariableService) {
         prepare();
 
@@ -77,12 +83,6 @@ class LatestByValuesFilteredRecordCursor extends AbstractTreeSetRecordCursor {
                 }
             }
         }
-    }
-
-    @Override
-    public void toTop() {
-        super.toTop();
-        filter.toTop();
     }
 
     private void prepare() {

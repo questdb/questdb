@@ -34,13 +34,13 @@ public class SingleColumnType implements ColumnTypes {
     }
 
     @Override
-    public int getColumnType(int columnIndex) {
-        return type;
+    public int getColumnCount() {
+        return 1;
     }
 
     @Override
-    public int getColumnCount() {
-        return 1;
+    public int getColumnType(int columnIndex) {
+        return type;
     }
 
     public ColumnTypes of(int columnType) {

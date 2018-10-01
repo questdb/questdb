@@ -59,7 +59,7 @@ public abstract class AbstractResultSetBuilder<T, X> {
                         that.getLo() > interval.getHi()
                                 || that.getHi() < interval.getLo()
                 )
-                ) {
+        ) {
 
             return (that.getHi() < interval.getLo() && !desc) ||
                     (that.getLo() > interval.getHi() && desc);

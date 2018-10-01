@@ -28,14 +28,14 @@ import com.questdb.std.IntList;
 public class ArrayColumnTypes implements ColumnTypes {
     private final IntList types = new IntList();
 
-    public ArrayColumnTypes reset() {
-        types.clear();
-        return this;
-    }
-
     public ArrayColumnTypes add(int type) {
         types.add(type);
         return this;
+    }
+
+    @Override
+    public int getColumnCount() {
+        return types.size();
     }
 
     @Override
@@ -43,8 +43,8 @@ public class ArrayColumnTypes implements ColumnTypes {
         return types.getQuick(columnIndex);
     }
 
-    @Override
-    public int getColumnCount() {
-        return types.size();
+    public ArrayColumnTypes reset() {
+        types.clear();
+        return this;
     }
 }

@@ -75,9 +75,9 @@ public interface CairoConfiguration {
 
     int getSqlColumnPoolCapacity();
 
-    int getSqlExpressionPoolCapacity();
-
     double getSqlCompactMapLoadFactor();
+
+    int getSqlExpressionPoolCapacity();
 
     double getSqlFastMapLoadFactor();
 

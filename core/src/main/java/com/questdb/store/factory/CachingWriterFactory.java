@@ -128,6 +128,42 @@ public class CachingWriterFactory extends AbstractFactory implements JournalClos
         notifyListener(Thread.currentThread().getId(), null, FactoryEventListener.EV_POOL_CLOSED);
     }
 
+    public int getBusyCount() {
+
+        int count = 0;
+        for (Entry e : entries.values()) {
+            if (e.owner != -1) {
+                count++;
+            }
+        }
+
+        return count;
+    }
+
+    private JournalWriter checkAndReturn(long thread, Entry e, String name, JournalMetadata<?> metadata) throws JournalException {
+        JournalMetadata wm = e.writer.getMetadata();
+        if (metadata.isCompatible(wm, false)) {
+            if (metadata.getModelClass() != null && wm.getModelClass() == null) {
+                closeWriter(thread, e, FactoryEventListener.EV_CLOSE, FactoryEventListener.EV_CLOSE_EX, PoolConstants.CR_REOPEN);
+                return createWriter(thread, name, e, metadata);
+            } else {
+                LOG.info().$("Writer '").$(name).$("' is assigned to thread ").$(thread).$();
+                notifyListener(thread, name, FactoryEventListener.EV_GET);
+                return e.writer;
+            }
+        }
+
+        JournalMetadataException ex = new JournalMetadataException(wm, metadata);
+        notifyListener(thread, name, FactoryEventListener.EV_INCOMPATIBLE);
+
+        if (closed) {
+            closeWriter(thread, e, FactoryEventListener.EV_CLOSE, FactoryEventListener.EV_CLOSE_EX, PoolConstants.CR_POOL_CLOSE);
+        }
+
+        e.owner = -1L;
+        throw ex;
+    }
+
     public void lock(String name) throws JournalException {
         if (closed) {
             LOG.info().$("Pool is closed").$();
@@ -166,42 +202,6 @@ public class CachingWriterFactory extends AbstractFactory implements JournalClos
         throw WriterBusyException.INSTANCE;
     }
 
-    public int getBusyCount() {
-
-        int count = 0;
-        for (Entry e : entries.values()) {
-            if (e.owner != -1) {
-                count++;
-            }
-        }
-
-        return count;
-    }
-
-    private JournalWriter checkAndReturn(long thread, Entry e, String name, JournalMetadata<?> metadata) throws JournalException {
-        JournalMetadata wm = e.writer.getMetadata();
-        if (metadata.isCompatible(wm, false)) {
-            if (metadata.getModelClass() != null && wm.getModelClass() == null) {
-                closeWriter(thread, e, FactoryEventListener.EV_CLOSE, FactoryEventListener.EV_CLOSE_EX, PoolConstants.CR_REOPEN);
-                return createWriter(thread, name, e, metadata);
-            } else {
-                LOG.info().$("Writer '").$(name).$("' is assigned to thread ").$(thread).$();
-                notifyListener(thread, name, FactoryEventListener.EV_GET);
-                return e.writer;
-            }
-        }
-
-        JournalMetadataException ex = new JournalMetadataException(wm, metadata);
-        notifyListener(thread, name, FactoryEventListener.EV_INCOMPATIBLE);
-
-        if (closed) {
-            closeWriter(thread, e, FactoryEventListener.EV_CLOSE, FactoryEventListener.EV_CLOSE_EX, PoolConstants.CR_POOL_CLOSE);
-        }
-
-        e.owner = -1L;
-        throw ex;
-    }
-
     public int size() {
         return entries.size();
     }
@@ -229,23 +229,6 @@ public class CachingWriterFactory extends AbstractFactory implements JournalClos
             entries.remove(name);
         }
         notifyListener(thread, name, FactoryEventListener.EV_UNLOCKED);
-    }
-
-    private void closeWriter(long thread, Entry e, short ev, short evex, int reason) {
-        JournalWriter w = e.writer;
-        if (w != null) {
-            String name = e.writer.getName();
-            w.setCloseInterceptor(null);
-            try {
-                w.close();
-                e.writer = null;
-                LOG.info().$("Closed writer '").$(name).$('\'').$(PoolConstants.closeReasonText(reason)).$();
-                notifyListener(thread, name, ev);
-            } catch (Throwable e1) {
-                notifyListener(thread, name, evex);
-                LOG.error().$("Cannot close writer '").$(w.getName()).$("': ").$(e1.getMessage()).$();
-            }
-        }
     }
 
     @Override
@@ -277,6 +260,23 @@ public class CachingWriterFactory extends AbstractFactory implements JournalClos
         }
 
         return removed;
+    }
+
+    private void closeWriter(long thread, Entry e, short ev, short evex, int reason) {
+        JournalWriter w = e.writer;
+        if (w != null) {
+            String name = e.writer.getName();
+            w.setCloseInterceptor(null);
+            try {
+                w.close();
+                e.writer = null;
+                LOG.info().$("Closed writer '").$(name).$('\'').$(PoolConstants.closeReasonText(reason)).$();
+                notifyListener(thread, name, ev);
+            } catch (Throwable e1) {
+                notifyListener(thread, name, evex);
+                LOG.error().$("Cannot close writer '").$(w.getName()).$("': ").$(e1.getMessage()).$();
+            }
+        }
     }
 
     int countFreeWriters() {

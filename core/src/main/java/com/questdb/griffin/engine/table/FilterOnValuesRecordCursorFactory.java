@@ -77,6 +77,11 @@ public class FilterOnValuesRecordCursorFactory extends AbstractDataFrameRecordCu
         }
     }
 
+    @Override
+    public boolean isRandomAccessCursor() {
+        return true;
+    }
+
     private void addSymbolKey(int symbolKey) {
         final RowCursorFactory rowCursorFactory;
         if (filter == null) {
@@ -120,10 +125,5 @@ public class FilterOnValuesRecordCursorFactory extends AbstractDataFrameRecordCu
             return true;
         }
         return false;
-    }
-
-    @Override
-    public boolean isRandomAccessCursor() {
-        return true;
     }
 }

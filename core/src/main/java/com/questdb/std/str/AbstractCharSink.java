@@ -39,6 +39,26 @@ public abstract class AbstractCharSink implements CharSink {
     }
 
     @Override
+    public CharSink encodeUtf8(CharSequence cs, int from, int to) {
+        int i = from;
+        while (i < to) {
+            char c = cs.charAt(i++);
+            if (c < 128) {
+                putUtf8Special(c);
+            } else {
+                i = putUtf8Internal(cs, to, i, c);
+            }
+        }
+        return this;
+    }
+
+    @Override
+    public CharSink encodeUtf8AndQuote(CharSequence cs) {
+        put('\"').encodeUtf8(cs).put('\"');
+        return this;
+    }
+
+    @Override
     public CharSink put(int value) {
         Numbers.append(this, value);
         return this;
@@ -116,26 +136,6 @@ public abstract class AbstractCharSink implements CharSink {
     @Override
     public CharSink putQuoted(CharSequence cs) {
         put('\"').put(cs).put('\"');
-        return this;
-    }
-
-    @Override
-    public CharSink encodeUtf8(CharSequence cs, int from, int to) {
-        int i = from;
-        while (i < to) {
-            char c = cs.charAt(i++);
-            if (c < 128) {
-                putUtf8Special(c);
-            } else {
-                i = putUtf8Internal(cs, to, i, c);
-            }
-        }
-        return this;
-    }
-
-    @Override
-    public CharSink encodeUtf8AndQuote(CharSequence cs) {
-        put('\"').encodeUtf8(cs).put('\"');
         return this;
     }
 

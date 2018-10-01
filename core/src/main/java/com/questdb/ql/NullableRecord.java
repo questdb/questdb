@@ -38,11 +38,6 @@ public class NullableRecord implements Record {
     }
 
     @Override
-    public byte getByte(int col) {
-        return rec.getByte(col);
-    }
-
-    @Override
     public void getBin(int col, OutputStream s) {
         rec.getBin(col, s);
     }
@@ -60,6 +55,11 @@ public class NullableRecord implements Record {
     @Override
     public boolean getBool(int col) {
         return rec.getBool(col);
+    }
+
+    @Override
+    public byte getByte(int col) {
+        return rec.getByte(col);
     }
 
     @Override

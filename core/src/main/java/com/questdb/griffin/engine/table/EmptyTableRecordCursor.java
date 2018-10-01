@@ -42,13 +42,13 @@ final public class EmptyTableRecordCursor implements RecordCursor {
     }
 
     @Override
-    public Record newRecord() {
-        return new TableReaderRecord();
+    public boolean hasNext() {
+        return false;
     }
 
     @Override
-    public void recordAt(long rowId) {
-        throw new UnsupportedOperationException();
+    public Record newRecord() {
+        return new TableReaderRecord();
     }
 
     @Override
@@ -57,8 +57,8 @@ final public class EmptyTableRecordCursor implements RecordCursor {
     }
 
     @Override
-    public boolean hasNext() {
-        return false;
+    public void recordAt(long rowId) {
+        throw new UnsupportedOperationException();
     }
 
     @Override

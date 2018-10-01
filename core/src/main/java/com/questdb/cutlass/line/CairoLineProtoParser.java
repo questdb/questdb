@@ -463,6 +463,7 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
                 break;
             case ColumnType.SYMBOL:
                 row.putSym(index, value);
+                break;
             default:
                 break;
 

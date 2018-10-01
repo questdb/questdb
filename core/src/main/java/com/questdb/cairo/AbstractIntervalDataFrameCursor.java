@@ -59,6 +59,11 @@ public abstract class AbstractIntervalDataFrameCursor implements DataFrameCursor
     }
 
     @Override
+    public SymbolTable getSymbolTable(int columnIndex) {
+        return reader.getSymbolMapReader(columnIndex);
+    }
+
+    @Override
     public TableReader getTableReader() {
         return reader;
     }
@@ -78,11 +83,6 @@ public abstract class AbstractIntervalDataFrameCursor implements DataFrameCursor
         intervalsHi = initialIntervalsHi;
         partitionLo = initialPartitionLo;
         partitionHi = initialPartitionHi;
-    }
-
-    @Override
-    public SymbolTable getSymbolTable(int columnIndex) {
-        return reader.getSymbolMapReader(columnIndex);
     }
 
     @Override

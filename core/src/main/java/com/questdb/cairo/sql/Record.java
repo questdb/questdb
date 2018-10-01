@@ -56,14 +56,6 @@ public interface Record {
         throw new UnsupportedOperationException();
     }
 
-    default CharSequence getStr(int col) {
-        throw new UnsupportedOperationException();
-    }
-
-    default void getStr(int col, CharSink sink) {
-        sink.put(getStr(col));
-    }
-
     default int getInt(int col) {
         throw new UnsupportedOperationException();
     }
@@ -78,6 +70,14 @@ public interface Record {
 
     default short getShort(int col) {
         throw new UnsupportedOperationException();
+    }
+
+    default CharSequence getStr(int col) {
+        throw new UnsupportedOperationException();
+    }
+
+    default void getStr(int col, CharSink sink) {
+        sink.put(getStr(col));
     }
 
     default CharSequence getStrB(int col) {

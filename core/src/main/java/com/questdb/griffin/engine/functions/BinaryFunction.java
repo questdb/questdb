@@ -36,14 +36,14 @@ public interface BinaryFunction extends Function {
     }
 
     @Override
-    default boolean isConstant() {
-        return getLeft().isConstant() && getRight().isConstant();
-    }
-
-    @Override
     default void init(RecordCursor recordCursor, BindVariableService bindVariableService) {
         getLeft().init(recordCursor, bindVariableService);
         getRight().init(recordCursor, bindVariableService);
+    }
+
+    @Override
+    default boolean isConstant() {
+        return getLeft().isConstant() && getRight().isConstant();
     }
 
     @Override

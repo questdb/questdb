@@ -86,8 +86,8 @@ public class Engine implements Closeable, CairoEngine {
     }
 
     public void setPoolListener(PoolListener poolListener) {
-        this.writerPool.setPoolListner(poolListener);
-        this.readerPool.setPoolListner(poolListener);
+        this.writerPool.setPoolListener(poolListener);
+        this.readerPool.setPoolListener(poolListener);
     }
 
     @Override

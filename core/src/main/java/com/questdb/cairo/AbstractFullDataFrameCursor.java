@@ -42,6 +42,11 @@ public abstract class AbstractFullDataFrameCursor implements DataFrameCursor {
     }
 
     @Override
+    public SymbolTable getSymbolTable(int columnIndex) {
+        return reader.getSymbolMapReader(columnIndex);
+    }
+
+    @Override
     public TableReader getTableReader() {
         return reader;
     }
@@ -52,11 +57,6 @@ public abstract class AbstractFullDataFrameCursor implements DataFrameCursor {
         this.partitionHi = reader.getPartitionCount();
         toTop();
         return moreData;
-    }
-
-    @Override
-    public SymbolTable getSymbolTable(int columnIndex) {
-        return reader.getSymbolMapReader(columnIndex);
     }
 
     @Override

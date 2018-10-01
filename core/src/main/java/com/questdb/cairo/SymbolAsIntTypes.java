@@ -24,20 +24,20 @@
 package com.questdb.cairo;
 
 public class SymbolAsIntTypes implements ColumnTypes {
-    private ColumnTypes base;
+    private final ColumnTypes base;
 
     public SymbolAsIntTypes(ColumnTypes base) {
         this.base = base;
     }
 
     @Override
-    public int getColumnType(int columnIndex) {
-        final int type = base.getColumnType(columnIndex);
-        return type == ColumnType.SYMBOL ? ColumnType.INT : type;
+    public int getColumnCount() {
+        return base.getColumnCount();
     }
 
     @Override
-    public int getColumnCount() {
-        return base.getColumnCount();
+    public int getColumnType(int columnIndex) {
+        final int type = base.getColumnType(columnIndex);
+        return type == ColumnType.SYMBOL ? ColumnType.INT : type;
     }
 }

@@ -96,11 +96,6 @@ class SampleByFillValueRecordCursor implements DelegatingRecordCursor {
     }
 
     @Override
-    public Record newRecord() {
-        return null;
-    }
-
-    @Override
     public boolean hasNext() {
         //
         if (mapCursor.hasNext()) {
@@ -169,6 +164,11 @@ class SampleByFillValueRecordCursor implements DelegatingRecordCursor {
 
             return refreshCursorAndRecord();
         }
+    }
+
+    @Override
+    public Record newRecord() {
+        return null;
     }
 
     @Override

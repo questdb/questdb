@@ -3212,7 +3212,6 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
             return false;
         }
 
-        @NotNull
         public final Iterator<V> iterator() {
             ValueIterator<V> it = tlValueIterator.get();
             it.of(map);
@@ -3279,7 +3278,6 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
         /**
          * @return an iterator over the entries of the backing map
          */
-        @NotNull
         public Iterator<Map.Entry<CharSequence, V>> iterator() {
             EntryIterator<V> it = tlEntryIterator.get();
             it.of(map);

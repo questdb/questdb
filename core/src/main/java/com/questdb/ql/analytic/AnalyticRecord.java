@@ -40,11 +40,6 @@ public class AnalyticRecord implements Record {
     }
 
     @Override
-    public byte getByte(int col) {
-        return col < split ? base.getByte(col) : functions.getQuick(col - split).get();
-    }
-
-    @Override
     public void getBin(int col, OutputStream s) {
         if (col < split) {
             base.getBin(col, s);
@@ -72,6 +67,11 @@ public class AnalyticRecord implements Record {
     @Override
     public boolean getBool(int col) {
         return col < split ? base.getBool(col) : functions.getQuick(col - split).getBool();
+    }
+
+    @Override
+    public byte getByte(int col) {
+        return col < split ? base.getByte(col) : functions.getQuick(col - split).get();
     }
 
     @Override

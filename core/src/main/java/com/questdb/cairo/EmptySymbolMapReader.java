@@ -45,15 +45,6 @@ public class EmptySymbolMapReader implements SymbolMapReader {
     }
 
     @Override
-    public boolean isDeleted() {
-        return true;
-    }
-
-    @Override
-    public void updateSymbolCount(int count) {
-    }
-
-    @Override
     public int getSymbolCapacity() {
         return 0;
     }
@@ -61,5 +52,14 @@ public class EmptySymbolMapReader implements SymbolMapReader {
     @Override
     public boolean isCached() {
         return false;
+    }
+
+    @Override
+    public boolean isDeleted() {
+        return true;
+    }
+
+    @Override
+    public void updateSymbolCount(int count) {
     }
 }

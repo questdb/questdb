@@ -42,6 +42,8 @@ public interface ReadOnlyColumn extends Closeable {
 
     double getDouble(long offset);
 
+    long getFd();
+
     float getFloat(long offset);
 
     int getInt(long offset);
@@ -57,8 +59,6 @@ public interface ReadOnlyColumn extends Closeable {
     int getStrLen(long offset);
 
     void grow(long size);
-
-    long getFd();
 
     boolean isDeleted();
 }

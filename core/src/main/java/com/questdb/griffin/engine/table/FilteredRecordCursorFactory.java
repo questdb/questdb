@@ -47,15 +47,15 @@ public class FilteredRecordCursorFactory implements RecordCursorFactory {
     }
 
     @Override
-    public RecordMetadata getMetadata() {
-        return base.getMetadata();
-    }
-
-    @Override
     public RecordCursor getCursor(BindVariableService bindVariableService) {
         RecordCursor cursor = base.getCursor(bindVariableService);
         this.cursor.of(cursor, bindVariableService);
         return this.cursor;
+    }
+
+    @Override
+    public RecordMetadata getMetadata() {
+        return base.getMetadata();
     }
 
     @Override

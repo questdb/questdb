@@ -24,9 +24,9 @@
 package com.questdb.std.time;
 
 public interface TimeZoneRules {
-    long getOffset(long millis);
+    String getId();
 
     long getOffset(long millis, int year, boolean leap);
 
-    String getId();
+    long getOffset(long millis);
 }

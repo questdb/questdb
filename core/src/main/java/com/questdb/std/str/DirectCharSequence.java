@@ -41,6 +41,11 @@ public class DirectCharSequence extends AbstractCharSequence implements DirectBy
         return len * 2;
     }
 
+    @Override
+    public void clear() {
+        hi = lo = 0;
+    }
+
     public long getHi() {
         return hi;
     }
@@ -63,8 +68,11 @@ public class DirectCharSequence extends AbstractCharSequence implements DirectBy
     }
 
     @Override
-    public void clear() {
-        hi = lo = 0;
+    public CharSequence subSequence(int start, int end) {
+        DirectCharSequence seq = new DirectCharSequence();
+        seq.lo = this.lo + start;
+        seq.hi = this.lo + end;
+        return seq;
     }
 
     @Override
@@ -82,13 +90,5 @@ public class DirectCharSequence extends AbstractCharSequence implements DirectBy
         this.hi = hi;
         this.len = (int) ((hi - lo) / 2);
         return this;
-    }
-
-    @Override
-    public CharSequence subSequence(int start, int end) {
-        DirectCharSequence seq = new DirectCharSequence();
-        seq.lo = this.lo + start;
-        seq.hi = this.lo + end;
-        return seq;
     }
 }

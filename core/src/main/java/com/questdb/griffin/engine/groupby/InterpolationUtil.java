@@ -28,23 +28,23 @@ import com.questdb.griffin.engine.functions.GroupByFunction;
 import com.questdb.std.Unsafe;
 
 public class InterpolationUtil {
-    static StoreYFunction STORE_Y_DOUBLE = InterpolationUtil::storeYDouble;
-    static StoreYFunction STORE_Y_FLOAT = InterpolationUtil::storeYFloat;
-    static StoreYFunction STORE_Y_BYTE = InterpolationUtil::storeYByte;
-    static StoreYFunction STORE_Y_SHORT = InterpolationUtil::storeYShort;
-    static StoreYFunction STORE_Y_INT = InterpolationUtil::storeYInt;
-    static StoreYFunction STORE_Y_LONG = InterpolationUtil::storeYLong;
-    static StoreYFunction STORE_Y_DATE = InterpolationUtil::storeYLong;
-    static StoreYFunction STORE_Y_TIMESTAMP = InterpolationUtil::storeYLong;
+    static final StoreYFunction STORE_Y_DOUBLE = InterpolationUtil::storeYDouble;
+    static final StoreYFunction STORE_Y_FLOAT = InterpolationUtil::storeYFloat;
+    static final StoreYFunction STORE_Y_BYTE = InterpolationUtil::storeYByte;
+    static final StoreYFunction STORE_Y_SHORT = InterpolationUtil::storeYShort;
+    static final StoreYFunction STORE_Y_INT = InterpolationUtil::storeYInt;
+    static final StoreYFunction STORE_Y_LONG = InterpolationUtil::storeYLong;
+    static final StoreYFunction STORE_Y_DATE = InterpolationUtil::storeYLong;
+    static final StoreYFunction STORE_Y_TIMESTAMP = InterpolationUtil::storeYLong;
 
-    static InterpolatorFunction INTERPOLATE_DOUBLE = InterpolationUtil::interpolateDouble;
-    static InterpolatorFunction INTERPOLATE_FLOAT = InterpolationUtil::interpolateFloat;
-    static InterpolatorFunction INTERPOLATE_BYTE = InterpolationUtil::interpolateByte;
-    static InterpolatorFunction INTERPOLATE_SHORT = InterpolationUtil::interpolateShort;
-    static InterpolatorFunction INTERPOLATE_INT = InterpolationUtil::interpolateInt;
-    static InterpolatorFunction INTERPOLATE_LONG = InterpolationUtil::interpolateLong;
-    static InterpolatorFunction INTERPOLATE_DATE = InterpolationUtil::interpolateDate;
-    static InterpolatorFunction INTERPOLATE_TIMESTAMP = InterpolationUtil::interpolateTimestamp;
+    static final InterpolatorFunction INTERPOLATE_DOUBLE = InterpolationUtil::interpolateDouble;
+    static final InterpolatorFunction INTERPOLATE_FLOAT = InterpolationUtil::interpolateFloat;
+    static final InterpolatorFunction INTERPOLATE_BYTE = InterpolationUtil::interpolateByte;
+    static final InterpolatorFunction INTERPOLATE_SHORT = InterpolationUtil::interpolateShort;
+    static final InterpolatorFunction INTERPOLATE_INT = InterpolationUtil::interpolateInt;
+    static final InterpolatorFunction INTERPOLATE_LONG = InterpolationUtil::interpolateLong;
+    static final InterpolatorFunction INTERPOLATE_DATE = InterpolationUtil::interpolateDate;
+    static final InterpolatorFunction INTERPOLATE_TIMESTAMP = InterpolationUtil::interpolateTimestamp;
 
     public static void interpolateByte(
             GroupByFunction function,

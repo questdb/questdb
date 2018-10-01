@@ -173,6 +173,12 @@ public class FastMap implements Map {
     }
 
     @Override
+    public MapValue valueAt(long address) {
+        value.of(address, false);
+        return value;
+    }
+
+    @Override
     public MapKey withKey() {
         return key.init();
     }
@@ -189,12 +195,6 @@ public class FastMap implements Map {
         Unsafe.getUnsafe().putLong(key.appendAddress, value);
         key.appendAddress += 8;
         return key;
-    }
-
-    @Override
-    public MapValue valueAt(long address) {
-        value.of(address, false);
-        return value;
     }
 
     private FastMapValue asNew(Key keyWriter, int index) {

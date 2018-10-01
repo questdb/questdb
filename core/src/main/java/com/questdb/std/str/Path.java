@@ -42,7 +42,7 @@ import java.io.Closeable;
  */
 public class Path extends AbstractCharSink implements Closeable, LPSZ {
     private static final int OVERHEAD = 4;
-    private long ptr = 0;
+    private long ptr;
     private long wptr;
     private int capacity;
     private int len;
@@ -91,12 +91,6 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
         return concat(str, 0, str.length());
     }
 
-
-    @Override
-    public char charAt(int index) {
-        return (char) Unsafe.getUnsafe().getByte(ptr + index);
-    }
-
     public Path concat(long lpsz) {
 
         ensureSeparator();
@@ -121,16 +115,6 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
         return this;
     }
 
-    @Override
-    public void flush() {
-        $();
-    }
-
-    @Override
-    public CharSequence subSequence(int start, int end) {
-        throw new UnsupportedOperationException();
-    }
-
     public Path concat(CharSequence str, int from, int to) {
         ensureSeparator();
         copy(str, from, to);
@@ -138,8 +122,8 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
     }
 
     @Override
-    public final int length() {
-        return len;
+    public void flush() {
+        $();
     }
 
     @Override
@@ -162,6 +146,21 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
         Unsafe.getUnsafe().putByte(wptr++, (byte) c);
         len++;
         return this;
+    }
+
+    @Override
+    public final int length() {
+        return len;
+    }
+
+    @Override
+    public char charAt(int index) {
+        return (char) Unsafe.getUnsafe().getByte(ptr + index);
+    }
+
+    @Override
+    public CharSequence subSequence(int start, int end) {
+        throw new UnsupportedOperationException();
     }
 
     public Path of(CharSequence str) {
@@ -207,15 +206,6 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
         encodeUtf8(str, from, to);
     }
 
-    @Override
-    protected void putUtf8Special(char c) {
-        if (c == '/' && Os.type == Os.WINDOWS) {
-            put('\\');
-        } else {
-            put(c);
-        }
-    }
-
     protected final void ensureSeparator() {
         if (missingTrailingSeparator()) {
             Unsafe.getUnsafe().putByte(wptr, (byte) Files.SEPARATOR);
@@ -236,5 +226,14 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
 
     private boolean missingTrailingSeparator() {
         return len > 0 && Unsafe.getUnsafe().getByte(wptr - 1) != Files.SEPARATOR;
+    }
+
+    @Override
+    protected void putUtf8Special(char c) {
+        if (c == '/' && Os.type == Os.WINDOWS) {
+            put('\\');
+        } else {
+            put(c);
+        }
     }
 }

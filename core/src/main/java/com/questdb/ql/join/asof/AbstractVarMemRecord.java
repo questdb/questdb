@@ -77,16 +77,16 @@ abstract class AbstractVarMemRecord extends AbstractMemRecord {
     }
 
     @Override
-    public int getStrLen(int col) {
-        return Unsafe.getUnsafe().getInt(address() + getInt(col));
-    }
-
-    @Override
     public void getStr(int col, CharSink sink) {
         long address = address() + getInt(col);
         for (long p = address + 4, n = address + 4 + Unsafe.getUnsafe().getInt(address) * 2; p < n; p += 2) {
             sink.put(Unsafe.getUnsafe().getChar(p));
         }
+    }
+
+    @Override
+    public int getStrLen(int col) {
+        return Unsafe.getUnsafe().getInt(address() + getInt(col));
     }
 
     protected abstract long address();

@@ -42,9 +42,8 @@ class VirtualRecord implements Record {
         this.base = base;
     }
 
-    @Override
-    public byte getByte(int col) {
-        return col < split ? base.getByte(col) : getVc(col).get(base);
+    public Record getBase() {
+        return base;
     }
 
     @Override
@@ -69,6 +68,11 @@ class VirtualRecord implements Record {
     @Override
     public boolean getBool(int col) {
         return col < split ? base.getBool(col) : getVc(col).getBool(base);
+    }
+
+    @Override
+    public byte getByte(int col) {
+        return col < split ? base.getByte(col) : getVc(col).get(base);
     }
 
     @Override
@@ -124,10 +128,6 @@ class VirtualRecord implements Record {
     @Override
     public CharSequence getSym(int col) {
         return col < split ? base.getSym(col) : getVc(col).getSym(base);
-    }
-
-    public Record getBase() {
-        return base;
     }
 
     public void prepare(StorageFacade facade) {

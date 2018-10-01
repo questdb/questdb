@@ -38,11 +38,6 @@ public class NullRecord implements Record {
     }
 
     @Override
-    public byte getByte(int col) {
-        return 0;
-    }
-
-    @Override
     public void getBin(int col, OutputStream s) {
     }
 
@@ -59,6 +54,11 @@ public class NullRecord implements Record {
     @Override
     public boolean getBool(int col) {
         return false;
+    }
+
+    @Override
+    public byte getByte(int col) {
+        return 0;
     }
 
     @Override

@@ -36,11 +36,6 @@ public class JournalRecord implements Record {
     public int partitionIndex = -1;
 
     @Override
-    public byte getByte(int col) {
-        return partition.fixCol(col).getByte(rowid);
-    }
-
-    @Override
     public void getBin(int col, OutputStream s) {
         partition.getBin(rowid, col, s);
     }
@@ -58,6 +53,11 @@ public class JournalRecord implements Record {
     @Override
     public boolean getBool(int col) {
         return partition.getBool(rowid, col);
+    }
+
+    @Override
+    public byte getByte(int col) {
+        return partition.fixCol(col).getByte(rowid);
     }
 
     @Override

@@ -112,9 +112,8 @@ public class TimeZoneRulesImpl implements TimeZoneRules {
     }
 
     @Override
-    public long getOffset(long millis) {
-        int y = Dates.getYear(millis);
-        return getOffset(millis, y, Dates.isLeapYear(y));
+    public String getId() {
+        return id;
     }
 
     @Override
@@ -135,8 +134,9 @@ public class TimeZoneRulesImpl implements TimeZoneRules {
     }
 
     @Override
-    public String getId() {
-        return id;
+    public long getOffset(long millis) {
+        int y = Dates.getYear(millis);
+        return getOffset(millis, y, Dates.isLeapYear(y));
     }
 
     private long fromHistory(long millis) {

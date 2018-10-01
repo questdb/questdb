@@ -35,11 +35,6 @@ public class BaseRecordMetadata implements RecordMetadata {
     protected int columnCount;
 
     @Override
-    public int getColumnCount() {
-        return columnCount;
-    }
-
-    @Override
     public int getColumnIndexQuiet(CharSequence columnName) {
         return columnNameIndexMap.get(columnName);
     }
@@ -52,6 +47,11 @@ public class BaseRecordMetadata implements RecordMetadata {
     @Override
     public int getColumnType(int columnIndex) {
         return getColumnQuick(columnIndex).getType();
+    }
+
+    @Override
+    public int getColumnCount() {
+        return columnCount;
     }
 
     @Override

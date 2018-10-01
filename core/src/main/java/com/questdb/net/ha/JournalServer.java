@@ -414,10 +414,7 @@ public class JournalServer {
         @Override
         public void run() {
             try {
-                while (true) {
-                    if (!running.get()) {
-                        break;
-                    }
+                while (running.get()) {
                     SocketChannel channel = serverSocketChannel.accept();
                     if (channel != null) {
                         SocketChannelHolder holder = new SocketChannelHolder(

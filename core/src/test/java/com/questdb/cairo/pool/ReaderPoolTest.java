@@ -839,7 +839,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
             }
 
             Listener listener = new Listener();
-            pool.setPoolListner(listener);
+            pool.setPoolListener(listener);
 
             TableReader reader = pool.get("u");
 
@@ -914,7 +914,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
     public void testUnlockNonExisting() throws Exception {
         assertWithPool(pool -> {
             AtomicInteger counter = new AtomicInteger();
-            pool.setPoolListner((factoryType, thread, name, event, segment, position) -> {
+            pool.setPoolListener((factoryType, thread, name, event, segment, position) -> {
                 if (event == PoolListener.EV_NOT_LOCKED) {
                     counter.incrementAndGet();
                 }

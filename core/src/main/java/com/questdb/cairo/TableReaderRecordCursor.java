@@ -30,8 +30,8 @@ import com.questdb.std.Rows;
 
 public class TableReaderRecordCursor implements RecordCursor {
 
-    private final TableReaderRecord record = new TableReaderRecord();
-    private TableReader reader;
+    protected final TableReaderRecord record = new TableReaderRecord();
+    protected TableReader reader;
     private int partitionIndex = 0;
     private int partitionCount;
     private long maxRecordIndex = -1;
@@ -88,6 +88,13 @@ public class TableReaderRecordCursor implements RecordCursor {
         maxRecordIndex = -1;
     }
 
+    public void of(TableReader reader) {
+        close();
+        this.reader = reader;
+        this.record.of(reader);
+        toTop();
+    }
+
     public void startFrom(long rowid) {
         partitionIndex = Rows.toPartitionIndex(rowid);
         long recordIndex = Rows.toLocalRowID(rowid);
@@ -96,14 +103,14 @@ public class TableReaderRecordCursor implements RecordCursor {
         partitionIndex++;
     }
 
-    void of(TableReader reader) {
-        close();
-        this.reader = reader;
-        this.record.of(reader);
-        toTop();
+    private boolean switchPartition() {
+        if (partitionIndex < partitionCount) {
+            return switchPartition0();
+        }
+        return false;
     }
 
-    private boolean switchPartition() {
+    private boolean switchPartition0() {
         while (partitionIndex < partitionCount) {
             final long partitionSize = reader.openPartition(partitionIndex);
             if (partitionSize > 0) {

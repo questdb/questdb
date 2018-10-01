@@ -111,6 +111,10 @@ public class CachingReaderFactory extends AbstractFactory implements JournalClos
         }
     }
 
+    public int getMaxEntries() {
+        return maxEntries;
+    }
+
     public int getBusyCount() {
         int count = 0;
         for (Map.Entry<String, Entry> me : entries.entrySet()) {
@@ -125,6 +129,22 @@ public class CachingReaderFactory extends AbstractFactory implements JournalClos
             } while (e != null);
         }
         return count;
+    }
+
+    public void unlock(String name) {
+        Entry e = entries.get(name);
+        long thread = Thread.currentThread().getId();
+        if (e == null) {
+            LOG.info().$("Reader '").$(name).$("' does not exist. Nothing to unlock.").$();
+            notifyListener(thread, name, FactoryEventListener.EV_NOT_LOCKED, -1, -1);
+            return;
+        }
+
+        if (e.lockOwner == thread) {
+            entries.remove(name);
+        }
+        notifyListener(thread, name, FactoryEventListener.EV_UNLOCKED, -1, -1);
+        LOG.info().$("Reader '").$(name).$("' is unlocked").$();
     }
 
     public void lock(String name) throws JournalException {
@@ -158,8 +178,11 @@ public class CachingReaderFactory extends AbstractFactory implements JournalClos
         LOG.info().$("Reader '").$(name).$("' is locked").$();
     }
 
-    public int getMaxEntries() {
-        return maxEntries;
+    private void notifyListener(long thread, String name, short event, int segment, int position) {
+        FactoryEventListener listener = getEventListener();
+        if (listener != null) {
+            listener.onEvent(FactoryEventListener.SRC_READER, thread, name, event, (short) segment, (short) position);
+        }
     }
 
     private void closeReader(long thread, Entry e, int index, short ev, short evex, int reason) {
@@ -178,20 +201,33 @@ public class CachingReaderFactory extends AbstractFactory implements JournalClos
         }
     }
 
-    public void unlock(String name) {
-        Entry e = entries.get(name);
+    @Override
+    protected boolean releaseAll(long deadline) {
         long thread = Thread.currentThread().getId();
-        if (e == null) {
-            LOG.info().$("Reader '").$(name).$("' does not exist. Nothing to unlock.").$();
-            notifyListener(thread, name, FactoryEventListener.EV_NOT_LOCKED, -1, -1);
-            return;
-        }
+        boolean removed = false;
+        int closeReason = deadline < Long.MAX_VALUE ? PoolConstants.CR_IDLE : PoolConstants.CR_POOL_CLOSE;
 
-        if (e.lockOwner == thread) {
-            entries.remove(name);
+        for (Map.Entry<String, Entry> me : entries.entrySet()) {
+
+            Entry e = me.getValue();
+
+            do {
+                for (int i = 0; i < ENTRY_SIZE; i++) {
+                    if (deadline > Unsafe.arrayGetVolatile(e.releaseTimes, i) && Unsafe.arrayGet(e.readers, i) != null) {
+                        if (Unsafe.cas(e.allocations, i, PoolConstants.UNALLOCATED, thread)) {
+                            // check if deadline violation still holds
+                            if (deadline > Unsafe.arrayGet(e.releaseTimes, i)) {
+                                removed = true;
+                                closeReader(thread, e, i, FactoryEventListener.EV_EXPIRE, FactoryEventListener.EV_EXPIRE_EX, closeReason);
+                            }
+                            Unsafe.arrayPutOrdered(e.allocations, i, PoolConstants.UNALLOCATED);
+                        }
+                    }
+                }
+                e = e.next;
+            } while (e != null);
         }
-        notifyListener(thread, name, FactoryEventListener.EV_UNLOCKED, -1, -1);
-        LOG.info().$("Reader '").$(name).$("' is unlocked").$();
+        return removed;
     }
 
     @SuppressWarnings("unchecked")
@@ -280,51 +316,15 @@ public class CachingReaderFactory extends AbstractFactory implements JournalClos
         throw FactoryFullException.INSTANCE;
     }
 
-    private void notifyListener(long thread, String name, short event, int segment, int position) {
-        FactoryEventListener listener = getEventListener();
-        if (listener != null) {
-            listener.onEvent(FactoryEventListener.SRC_READER, thread, name, event, (short) segment, (short) position);
-        }
-    }
-
-    @Override
-    protected boolean releaseAll(long deadline) {
-        long thread = Thread.currentThread().getId();
-        boolean removed = false;
-        int closeReason = deadline < Long.MAX_VALUE ? PoolConstants.CR_IDLE : PoolConstants.CR_POOL_CLOSE;
-
-        for (Map.Entry<String, Entry> me : entries.entrySet()) {
-
-            Entry e = me.getValue();
-
-            do {
-                for (int i = 0; i < ENTRY_SIZE; i++) {
-                    if (deadline > Unsafe.arrayGetVolatile(e.releaseTimes, i) && Unsafe.arrayGet(e.readers, i) != null) {
-                        if (Unsafe.cas(e.allocations, i, PoolConstants.UNALLOCATED, thread)) {
-                            // check if deadline violation still holds
-                            if (deadline > Unsafe.arrayGet(e.releaseTimes, i)) {
-                                removed = true;
-                                closeReader(thread, e, i, FactoryEventListener.EV_EXPIRE, FactoryEventListener.EV_EXPIRE_EX, closeReason);
-                            }
-                            Unsafe.arrayPutOrdered(e.allocations, i, PoolConstants.UNALLOCATED);
-                        }
-                    }
-                }
-                e = e.next;
-            } while (e != null);
-        }
-        return removed;
-    }
-
     private static class Entry {
         final long[] allocations = new long[ENTRY_SIZE];
         final long[] releaseTimes = new long[ENTRY_SIZE];
         final R[] readers = new R[ENTRY_SIZE];
+        final int index;
         volatile long lockOwner = -1L;
         @SuppressWarnings("unused")
         long nextStatus = 0;
         volatile Entry next;
-        final int index;
 
         public Entry(int index) {
             this.index = index;

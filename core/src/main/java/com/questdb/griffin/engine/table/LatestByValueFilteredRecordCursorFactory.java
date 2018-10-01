@@ -56,13 +56,13 @@ public class LatestByValueFilteredRecordCursorFactory extends AbstractDataFrameR
     }
 
     @Override
-    protected RecordCursor getCursorInstance(DataFrameCursor dataFrameCursor, BindVariableService bindVariableService) {
-        cursor.of(dataFrameCursor, bindVariableService);
-        return cursor;
+    public boolean isRandomAccessCursor() {
+        return true;
     }
 
     @Override
-    public boolean isRandomAccessCursor() {
-        return true;
+    protected RecordCursor getCursorInstance(DataFrameCursor dataFrameCursor, BindVariableService bindVariableService) {
+        cursor.of(dataFrameCursor, bindVariableService);
+        return cursor;
     }
 }

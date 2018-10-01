@@ -35,7 +35,6 @@ import com.questdb.griffin.model.ExpressionNode;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.std.*;
-import org.jetbrains.annotations.NotNull;
 
 import java.util.ArrayDeque;
 
@@ -52,7 +51,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
     private static final CharSequenceHashSet invalidFunctionNames = new CharSequenceHashSet();
     private final ObjList<Function> mutableArgs = new ObjList<>();
     private final ArrayDeque<Function> stack = new ArrayDeque<>();
-    private final PostOrderTreeTraversalAlgo algo = new PostOrderTreeTraversalAlgo();
+    private final PostOrderTreeTraversalAlgo traverseAlgo = new PostOrderTreeTraversalAlgo();
     private final CairoConfiguration configuration;
     private final CharSequenceObjHashMap<ObjList<FunctionFactory>> factories = new CharSequenceObjHashMap<>();
     private final CharSequenceHashSet groupByFunctionNames = new CharSequenceHashSet();
@@ -161,16 +160,16 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
         return openBraceIndex;
     }
 
-    public boolean isGroupBy(CharSequence name) {
-        return groupByFunctionNames.contains(name);
-    }
-
     public Function createParameter(ExpressionNode node) throws SqlException {
         Function function = sqlExecutionContext.getBindVariableService().getFunction(node.token);
         if (function == null) {
             throw SqlException.position(node.position).put("undefined bind variable: ").put(node.token);
         }
         return new LinkFunction(Chars.toString(node.token), function.getType(), node.position);
+    }
+
+    public boolean isGroupBy(CharSequence name) {
+        return groupByFunctionNames.contains(name);
     }
 
     /**
@@ -212,7 +211,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
         }
         try {
             this.metadata = metadata;
-            algo.traverse(node, this);
+            traverseAlgo.traverse(node, this);
             return stack.poll();
         } finally {
             if (metadataStack.size() == 0) {
@@ -560,7 +559,6 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
         return checkAndCreateFunction(candidate, args, node.position, configuration);
     }
 
-    @NotNull
     private Function functionToConstant(int position, Function function) {
         switch (function.getType()) {
             case ColumnType.INT:

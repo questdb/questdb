@@ -26,8 +26,9 @@ package com.questdb.cairo;
 public class EntityColumnFilter implements ColumnFilter {
     private int columnCount;
 
-    public void of(int columnCount) {
-        this.columnCount = columnCount;
+    @Override
+    public int getColumnCount() {
+        return columnCount;
     }
 
     @Override
@@ -35,8 +36,7 @@ public class EntityColumnFilter implements ColumnFilter {
         return position;
     }
 
-    @Override
-    public int getColumnCount() {
-        return columnCount;
+    public void of(int columnCount) {
+        this.columnCount = columnCount;
     }
 }

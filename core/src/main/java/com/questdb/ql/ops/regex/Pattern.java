@@ -972,11 +972,11 @@ public final class Pattern
         sb.append("\\Q");
         int current = 0;
         while ((slashEIndex = s.indexOf("\\E", current)) != -1) {
-            sb.append(s.substring(current, slashEIndex));
+            sb.append(s, current, slashEIndex);
             current = slashEIndex + 2;
             sb.append("\\E\\\\E\\Q");
         }
-        sb.append(s.substring(current, s.length()));
+        sb.append(s.substring(current));
         sb.append("\\E");
         return sb.toString();
     }
@@ -1891,12 +1891,6 @@ public final class Pattern
         return new PatternSyntaxException(s, normalizedPattern, cursor - 1);
     }
 
-    /*
-     * The following private methods are mainly used to improve the
-     * readability of the code. In order to let the Java compiler easily
-     * inline them, we should not put many assertions or error checks in them.
-     */
-
     /**
      * Parses an escape sequence to determine the actual value that needs
      * to be matched.
@@ -2082,6 +2076,12 @@ public final class Pattern
         }
         throw error("Illegal/unsupported escape sequence");
     }
+
+    /*
+     * The following private methods are mainly used to improve the
+     * readability of the code. In order to let the Java compiler easily
+     * inline them, we should not put many assertions or error checks in them.
+     */
 
     /**
      * The expression is parsed with branch nodes added for alternations.
@@ -3448,10 +3448,6 @@ public final class Pattern
         }
     }
 
-    //
-    // Utility methods for code point support
-    //
-
     /**
      * Node to anchor at the beginning of a line when in unixdot mode.
      */
@@ -3477,6 +3473,10 @@ public final class Pattern
             return next.match(matcher, i, seq);
         }
     }
+
+    //
+    // Utility methods for code point support
+    //
 
     /**
      * Node to match the location where the last match ended.

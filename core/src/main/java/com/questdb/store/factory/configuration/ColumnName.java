@@ -60,6 +60,13 @@ public class ColumnName extends AbstractCharSequence {
         return Chars.equals(alias, that.alias()) && Chars.equals(name, that.name());
     }
 
+    @Override
+    public
+    @NotNull
+    String toString() {
+        return underlying == null ? "null" : underlying.toString();
+    }
+
     public boolean isNull() {
         return alias.length() == 0 && name.length() == 0;
     }
@@ -76,13 +83,6 @@ public class ColumnName extends AbstractCharSequence {
 
     public CharSequence name() {
         return name;
-    }
-
-    @Override
-    public
-    @NotNull
-    String toString() {
-        return underlying == null ? "null" : underlying.toString();
     }
 
     private void of(CharSequence that) {

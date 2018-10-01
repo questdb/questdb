@@ -35,13 +35,13 @@ public class DirectMapRecord implements Record {
     }
 
     @Override
-    public byte getByte(int col) {
-        return entry.get(col);
+    public boolean getBool(int col) {
+        return entry.getBool(col);
     }
 
     @Override
-    public boolean getBool(int col) {
-        return entry.getBool(col);
+    public byte getByte(int col) {
+        return entry.get(col);
     }
 
     @Override

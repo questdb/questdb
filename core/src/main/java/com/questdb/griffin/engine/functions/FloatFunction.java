@@ -76,8 +76,18 @@ public abstract class FloatFunction implements Function {
     }
 
     @Override
+    public RecordMetadata getMetadata() {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public int getPosition() {
         return position;
+    }
+
+    @Override
+    public RecordCursorFactory getRecordCursorFactory() {
+        throw new UnsupportedOperationException();
     }
 
     @Override
@@ -118,15 +128,5 @@ public abstract class FloatFunction implements Function {
     @Override
     public final int getType() {
         return ColumnType.FLOAT;
-    }
-
-    @Override
-    public RecordMetadata getMetadata() {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public RecordCursorFactory getRecordCursorFactory() {
-        throw new UnsupportedOperationException();
     }
 }

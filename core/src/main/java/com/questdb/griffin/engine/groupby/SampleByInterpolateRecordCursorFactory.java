@@ -187,11 +187,6 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
     }
 
     @Override
-    public RecordMetadata getMetadata() {
-        return metadata;
-    }
-
-    @Override
     public RecordCursor getCursor(BindVariableService bindVariableService) {
         recordKeyMap.clear();
         dataMap.clear();
@@ -372,6 +367,11 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
             //todo: free other things
             throw e;
         }
+    }
+
+    @Override
+    public RecordMetadata getMetadata() {
+        return metadata;
     }
 
     @Override

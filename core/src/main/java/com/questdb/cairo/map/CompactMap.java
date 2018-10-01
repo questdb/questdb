@@ -188,6 +188,12 @@ public class CompactMap implements Map {
         return size;
     }
 
+    @Override
+    public MapValue valueAt(long address) {
+        value.of(address, false);
+        return value;
+    }
+
     public MapKey withKey() {
         currentEntryOffset = currentEntryOffset + currentEntrySize;
         entries.jumpTo(currentEntryOffset + columnOffsets[valueColumnCount]);
@@ -210,12 +216,6 @@ public class CompactMap implements Map {
         withKey();
         key.putLong(value);
         return key;
-    }
-
-    @Override
-    public MapValue valueAt(long address) {
-        value.of(address, false);
-        return value;
     }
 
     public long getKeyCapacity() {

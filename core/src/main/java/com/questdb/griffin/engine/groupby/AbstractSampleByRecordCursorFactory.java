@@ -273,11 +273,6 @@ public class AbstractSampleByRecordCursorFactory implements RecordCursorFactory 
     }
 
     @Override
-    public RecordMetadata getMetadata() {
-        return metadata;
-    }
-
-    @Override
     public RecordCursor getCursor(BindVariableService bindVariableService) {
         final RecordCursor baseCursor = base.getCursor(bindVariableService);
         map.clear();
@@ -316,6 +311,11 @@ public class AbstractSampleByRecordCursorFactory implements RecordCursorFactory 
         // we know base cursor has value
         assert next;
         return initFunctionsAndCursor(bindVariableService, baseCursor);
+    }
+
+    @Override
+    public RecordMetadata getMetadata() {
+        return metadata;
     }
 
     @Override

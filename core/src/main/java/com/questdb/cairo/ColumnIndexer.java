@@ -26,19 +26,19 @@ package com.questdb.cairo;
 import com.questdb.std.str.Path;
 
 interface ColumnIndexer {
+    void distress();
+
     long getFd();
 
+    long getSequence();
+
     void index(long loRow, long hiRow);
+
+    boolean isDistressed();
 
     void of(CairoConfiguration configuration, Path path, CharSequence name, AppendMemory mem1, AppendMemory mem2, long columnTop);
 
     void rollback(long maxRow);
-
-    void distress();
-
-    long getSequence();
-
-    boolean isDistressed();
 
     boolean tryLock(long expectedSequence);
 }

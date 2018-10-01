@@ -42,21 +42,21 @@ public class FileSink extends AbstractCharSink implements Closeable {
     private final FileChannel channel;
     private ByteBuffer buffer;
     private long pos;
-    private long addr;
+    private long address;
     private long limit;
 
     public FileSink(File file) throws IOException {
         this.raf = new RandomAccessFile(file, "rw");
         this.channel = raf.getChannel();
         this.pos = 0L;
-        this.addr = this.limit = 0;
+        this.address = this.limit = 0;
     }
 
     @Override
     public void close() throws IOException {
         ByteBuffers.release(buffer);
-        if (addr > 0 && pos > 0) {
-            channel.truncate(pos - (limit - addr));
+        if (address > 0 && pos > 0) {
+            channel.truncate(pos - (limit - address));
         }
         channel.close();
         raf.close();
@@ -69,20 +69,20 @@ public class FileSink extends AbstractCharSink implements Closeable {
         }
 
         for (int i = 0, l = cs.length(); i < l; i++) {
-            if (addr == limit) {
+            if (address == limit) {
                 map();
             }
-            Unsafe.getUnsafe().putByte(addr++, (byte) cs.charAt(i));
+            Unsafe.getUnsafe().putByte(address++, (byte) cs.charAt(i));
         }
         return this;
     }
 
     @Override
     public CharSink put(char c) {
-        if (addr == limit) {
+        if (address == limit) {
             map();
         }
-        Unsafe.getUnsafe().putByte(addr++, (byte) c);
+        Unsafe.getUnsafe().putByte(address++, (byte) c);
         return this;
     }
 
@@ -93,8 +93,8 @@ public class FileSink extends AbstractCharSink implements Closeable {
         try {
             this.buffer = channel.map(FileChannel.MapMode.READ_WRITE, this.pos, ByteBuffers.getMaxMappedBufferSize(Long.MAX_VALUE));
             pos += buffer.limit();
-            addr = ByteBuffers.getAddress(buffer);
-            limit = addr + buffer.remaining();
+            address = ByteBuffers.getAddress(buffer);
+            limit = address + buffer.remaining();
         } catch (IOException e) {
             throw new JournalRuntimeException(e);
         }

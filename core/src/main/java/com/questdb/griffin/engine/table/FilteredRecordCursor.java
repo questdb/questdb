@@ -54,11 +54,6 @@ class FilteredRecordCursor implements RecordCursor {
     }
 
     @Override
-    public Record newRecord() {
-        return base.newRecord();
-    }
-
-    @Override
     public boolean hasNext() {
         while (base.hasNext()) {
             if (filter.getBool(record)) {
@@ -66,6 +61,11 @@ class FilteredRecordCursor implements RecordCursor {
             }
         }
         return false;
+    }
+
+    @Override
+    public Record newRecord() {
+        return base.newRecord();
     }
 
     @Override

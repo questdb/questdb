@@ -52,37 +52,12 @@ public class CharSequenceIntHashMap extends AbstractCharSequenceHashSet {
         Arrays.fill(values, noEntryValue);
     }
 
-    public void increment(CharSequence key) {
-        int index = keyIndex(key);
-        if (index < 0) {
-            Unsafe.arrayPut(values, -index - 1, Unsafe.arrayGet(values, -index - 1) + 1);
-        } else {
-            putAt0(index, key.toString(), 0);
-        }
-    }
-
-    public boolean putAt(int index, CharSequence key, int value) {
-        if (index < 0) {
-            Unsafe.arrayPut(values, -index - 1, value);
-            return false;
-        }
-        putAt0(index, key.toString(), value);
-        return true;
-    }
-
     public boolean contains(CharSequence key) {
         return keyIndex(key) < 0;
     }
 
     public int get(CharSequence key) {
         return valueAt(keyIndex(key));
-    }
-
-    public void putIfAbsent(CharSequence key, int value) {
-        int index = keyIndex(key);
-        if (index > -1) {
-            putAt0(index, key.toString(), value);
-        }
     }
 
     public boolean put(CharSequence key, int value) {
@@ -99,6 +74,15 @@ public class CharSequenceIntHashMap extends AbstractCharSequenceHashSet {
         }
     }
 
+    public void increment(CharSequence key) {
+        int index = keyIndex(key);
+        if (index < 0) {
+            Unsafe.arrayPut(values, -index - 1, Unsafe.arrayGet(values, -index - 1) + 1);
+        } else {
+            putAt0(index, key.toString(), 0);
+        }
+    }
+
     @Override
     protected void erase(int index) {
         Unsafe.arrayPut(keys, index, noEntryKey);
@@ -110,6 +94,22 @@ public class CharSequenceIntHashMap extends AbstractCharSequenceHashSet {
         Unsafe.arrayPut(keys, to, Unsafe.arrayGet(keys, from));
         Unsafe.arrayPut(values, to, Unsafe.arrayGet(values, from));
         erase(from);
+    }
+
+    public boolean putAt(int index, CharSequence key, int value) {
+        if (index < 0) {
+            Unsafe.arrayPut(values, -index - 1, value);
+            return false;
+        }
+        putAt0(index, key.toString(), value);
+        return true;
+    }
+
+    public void putIfAbsent(CharSequence key, int value) {
+        int index = keyIndex(key);
+        if (index > -1) {
+            putAt0(index, key.toString(), value);
+        }
     }
 
     public int valueAt(int index) {

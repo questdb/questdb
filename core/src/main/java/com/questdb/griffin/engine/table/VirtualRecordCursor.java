@@ -55,15 +55,15 @@ class VirtualRecordCursor implements RecordCursor {
     }
 
     @Override
+    public boolean hasNext() {
+        return baseCursor.hasNext();
+    }
+
+    @Override
     public Record newRecord() {
         final VirtualRecord record = new VirtualRecord(this.record.getFunctions());
         record.of(baseCursor.newRecord());
         return record;
-    }
-
-    @Override
-    public void recordAt(long rowId) {
-        baseCursor.recordAt(rowId);
     }
 
     @Override
@@ -72,8 +72,8 @@ class VirtualRecordCursor implements RecordCursor {
     }
 
     @Override
-    public boolean hasNext() {
-        return baseCursor.hasNext();
+    public void recordAt(long rowId) {
+        baseCursor.recordAt(rowId);
     }
 
     @Override

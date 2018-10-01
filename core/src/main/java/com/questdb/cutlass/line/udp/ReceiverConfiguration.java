@@ -27,9 +27,9 @@ import com.questdb.std.NetFacade;
 
 public interface ReceiverConfiguration {
 
-    int getCommitRate();
-
     CharSequence getBindIPv4Address();
+
+    int getCommitRate();
 
     CharSequence getGroupIPv4Address();
 
@@ -37,9 +37,9 @@ public interface ReceiverConfiguration {
 
     int getMsgCount();
 
+    NetFacade getNetFacade();
+
     int getPort();
 
     int getReceiveBufferSize();
-
-    NetFacade getNetFacade();
 }

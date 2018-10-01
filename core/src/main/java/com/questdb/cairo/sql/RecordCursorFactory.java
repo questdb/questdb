@@ -32,9 +32,9 @@ public interface RecordCursorFactory extends Closeable {
     default void close() {
     }
 
-    RecordMetadata getMetadata();
-
     RecordCursor getCursor(BindVariableService bindVariableService);
+
+    RecordMetadata getMetadata();
 
     boolean isRandomAccessCursor();
 }

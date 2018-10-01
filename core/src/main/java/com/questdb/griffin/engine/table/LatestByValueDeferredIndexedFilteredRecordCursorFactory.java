@@ -40,13 +40,13 @@ public class LatestByValueDeferredIndexedFilteredRecordCursorFactory extends Abs
     }
 
     @Override
-    protected AbstractDataFrameRecordCursor createDataFrameCursorFor(int symbolKey) {
-        assert filter != null;
-        return new LatestByValueIndexedFilteredRecordCursor(columnIndex, symbolKey + 1, filter);
+    public boolean isRandomAccessCursor() {
+        return true;
     }
 
     @Override
-    public boolean isRandomAccessCursor() {
-        return true;
+    protected AbstractDataFrameRecordCursor createDataFrameCursorFor(int symbolKey) {
+        assert filter != null;
+        return new LatestByValueIndexedFilteredRecordCursor(columnIndex, symbolKey + 1, filter);
     }
 }

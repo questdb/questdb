@@ -39,6 +39,11 @@ class CompactMapValue implements MapValue {
     }
 
     @Override
+    public long getAddress() {
+        return currentValueOffset;
+    }
+
+    @Override
     public boolean getBool(int columnIndex) {
         return entries.getBool(getValueColumnOffset(columnIndex));
     }
@@ -131,11 +136,6 @@ class CompactMapValue implements MapValue {
     @Override
     public void putTimestamp(int columnIndex, long value) {
         putLong(columnIndex, value);
-    }
-
-    @Override
-    public long getAddress() {
-        return currentValueOffset;
     }
 
     private long getValueColumnOffset(int columnIndex) {

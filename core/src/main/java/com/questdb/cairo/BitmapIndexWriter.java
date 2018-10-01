@@ -288,7 +288,7 @@ public class BitmapIndexWriter implements Closeable {
 
     private void appendValue(long offset, long valueBlockOffset, long valueCount, int valueCellIndex, long value) {
         // first set value
-        valueMem.putLong(valueBlockOffset + valueCellIndex * 8, value);
+        valueMem.putLong(valueBlockOffset + valueCellIndex * 8L, value);
         Unsafe.getUnsafe().storeFence();
         // update count and last value block offset for the key
         // in atomic fashion

@@ -67,13 +67,13 @@ public class NetFacadeImpl implements NetFacade {
     }
 
     @Override
-    public int recvmmsg(long fd, long msgVec, int msgCount) {
-        return Net.recvmmsg(fd, msgVec, msgCount);
+    public int recv(long fd, long buf, int bufLen) {
+        return Net.recv(fd, buf, bufLen);
     }
 
     @Override
-    public int recv(long fd, long buf, int bufLen) {
-        return Net.recv(fd, buf, bufLen);
+    public int recvmmsg(long fd, long msgVec, int msgCount) {
+        return Net.recvmmsg(fd, msgVec, msgCount);
     }
 
     @Override

@@ -41,8 +41,8 @@ class SampleByFillNoneRecordCursor implements DelegatingRecordCursor {
     private final TimestampSampler timestampSampler;
     private final Record record;
     private final IntIntHashMap symbolTableIndex;
+    private final RecordCursor mapCursor;
     private RecordCursor base;
-    private RecordCursor mapCursor;
     private Record baseRecord;
     private long lastTimestamp;
     private long nextTimestamp;

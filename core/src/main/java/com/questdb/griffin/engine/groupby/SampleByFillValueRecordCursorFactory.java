@@ -87,7 +87,6 @@ public class SampleByFillValueRecordCursorFactory extends AbstractSampleByRecord
         );
     }
 
-    @NotNull
     public static SampleByFillValueRecordCursor createCursor(
             Map map,
             RecordSink sink,
@@ -96,7 +95,7 @@ public class SampleByFillValueRecordCursorFactory extends AbstractSampleByRecord
             ObjList<GroupByFunction> groupByFunctions,
             ObjList<Function> recordFunctions,
             IntIntHashMap symbolTableIndex,
-            ObjList<ExpressionNode> fillValues
+            @NotNull ObjList<ExpressionNode> fillValues
     ) throws SqlException {
         return new SampleByFillValueRecordCursor(
                 map,

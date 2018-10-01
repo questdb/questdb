@@ -267,14 +267,6 @@ final public class Dates {
         }
     }
 
-    public static int getMillisOfSecond(long micros) {
-        if (micros > -1) {
-            return (int) ((micros / MILLI_MICROS) % SECOND_MILLIS);
-        } else {
-            return SECOND_MILLIS - 1 + (int) (((micros + 1) / MILLI_MICROS) % SECOND_MILLIS);
-        }
-    }
-
     public static int getMicrosOfSecond(long micros) {
         if (micros > -1) {
             return (int) (micros % MILLI_MICROS);
@@ -283,6 +275,13 @@ final public class Dates {
         }
     }
 
+    public static int getMillisOfSecond(long micros) {
+        if (micros > -1) {
+            return (int) ((micros / MILLI_MICROS) % SECOND_MILLIS);
+        } else {
+            return SECOND_MILLIS - 1 + (int) (((micros + 1) / MILLI_MICROS) % SECOND_MILLIS);
+        }
+    }
 
     public static int getMinuteOfHour(long micros) {
         if (micros > -1) {

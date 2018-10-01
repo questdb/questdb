@@ -53,9 +53,8 @@ public class SelectedColumnsRecord implements Record {
         return new SelectedColumnsRecord(reindex);
     }
 
-    @Override
-    public byte getByte(int col) {
-        return base.getByte(Unsafe.arrayGet(reindex, col));
+    public Record getBase() {
+        return base;
     }
 
     @Override
@@ -76,6 +75,11 @@ public class SelectedColumnsRecord implements Record {
     @Override
     public boolean getBool(int col) {
         return base.getBool(Unsafe.arrayGet(reindex, col));
+    }
+
+    @Override
+    public byte getByte(int col) {
+        return base.getByte(Unsafe.arrayGet(reindex, col));
     }
 
     @Override
@@ -131,10 +135,6 @@ public class SelectedColumnsRecord implements Record {
     @Override
     public CharSequence getSym(int col) {
         return base.getSym(Unsafe.arrayGet(reindex, col));
-    }
-
-    public Record getBase() {
-        return base;
     }
 
     public SelectedColumnsRecord of(Record base) {

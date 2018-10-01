@@ -199,14 +199,13 @@ public class IntList implements Mutable {
         Unsafe.arrayPut(buffer, index, Unsafe.arrayGet(buffer, index) + 1);
     }
 
-    public boolean remove(int key) {
+    public void remove(int key) {
         for (int i = 0, n = size(); i < n; i++) {
             if (key == getQuick(i)) {
                 removeIndex(i);
-                return true;
+                return;
             }
         }
-        return false;
     }
 
     /**

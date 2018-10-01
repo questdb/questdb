@@ -32,7 +32,6 @@ import com.questdb.std.microtime.DateLocaleFactory;
 import com.questdb.std.microtime.Dates;
 import com.questdb.std.str.NativeLPSZ;
 import com.questdb.std.str.Path;
-import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
 import java.util.concurrent.locks.LockSupport;
@@ -249,6 +248,10 @@ public class TableReader implements Closeable {
         return tableName;
     }
 
+    public long getTxn() {
+        return txn;
+    }
+
     public long getVersion() {
         return this.structVersion;
     }
@@ -259,10 +262,6 @@ public class TableReader implements Closeable {
 
     public boolean reload() {
         return reloadMethod.reload(this);
-    }
-
-    public long getTxn() {
-        return txn;
     }
 
     public void reshuffleSymbolMapReaders(long pTransitionIndex) {
@@ -454,7 +453,6 @@ public class TableReader implements Closeable {
         }
     }
 
-    @NotNull
     private BitmapIndexReader createBitmapIndexReaderAt(int globalIndex, int columnBase, int columnIndex, int direction) {
         BitmapIndexReader reader;
         if (!metadata.isColumnIndexed(columnIndex)) {
@@ -1036,7 +1034,7 @@ public class TableReader implements Closeable {
     private void reshuffleColumns(int columnCount, long pTransitionIndex) {
 
         final long pIndexBase = pTransitionIndex + 8;
-        final long pState = pIndexBase + columnCount * 8;
+        final long pState = pIndexBase + columnCount * 8L;
 
         for (int partitionIndex = 0; partitionIndex < partitionCount; partitionIndex++) {
             int base = getColumnBase(partitionIndex);

@@ -229,7 +229,7 @@ public class JournalMetadata<T> extends AbstractRecordMetadata {
         if (that == null
                 || (this.getPartitionBy() != that.getPartitionBy() && !ignorePartitionType)
                 || this.getColumnCount() != that.getColumnCount()
-                ) {
+        ) {
             return false;
         }
 
@@ -244,7 +244,7 @@ public class JournalMetadata<T> extends AbstractRecordMetadata {
                     || thisM.indexed != thatM.indexed
                     || (thisM.sameAs == null && thatM.sameAs != null)
                     || (thisM.sameAs != null && !thisM.sameAs.equals(thatM.sameAs))
-                    ) {
+            ) {
                 return false;
             }
         }

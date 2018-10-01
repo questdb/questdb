@@ -95,6 +95,11 @@ public class ReadOnlyMemory extends VirtualMemory implements ReadOnlyColumn {
     }
 
     @Override
+    public long getFd() {
+        return fd;
+    }
+
+    @Override
     public void grow(long size) {
         if (size > userSize) {
             userSize = size;
@@ -104,11 +109,6 @@ public class ReadOnlyMemory extends VirtualMemory implements ReadOnlyColumn {
             final long fileSize = ff.length(fd);
             grow0(size > fileSize ? size : fileSize);
         }
-    }
-
-    @Override
-    public long getFd() {
-        return fd;
     }
 
     @Override

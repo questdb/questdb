@@ -40,11 +40,6 @@ public class SplitRecord implements Record {
     }
 
     @Override
-    public byte getByte(int col) {
-        return getRec(col).getByte(idx(col));
-    }
-
-    @Override
     public void getBin(int col, OutputStream s) {
         getRec(col).getBin(idx(col), s);
     }
@@ -62,6 +57,11 @@ public class SplitRecord implements Record {
     @Override
     public boolean getBool(int col) {
         return getRec(col).getBool(idx(col));
+    }
+
+    @Override
+    public byte getByte(int col) {
+        return getRec(col).getByte(idx(col));
     }
 
     @Override

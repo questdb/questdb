@@ -158,13 +158,13 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getSqlExpressionPoolCapacity() {
-        return 8192;
+    public double getSqlCompactMapLoadFactor() {
+        return 0.8;
     }
 
     @Override
-    public double getSqlCompactMapLoadFactor() {
-        return 0.8;
+    public int getSqlExpressionPoolCapacity() {
+        return 8192;
     }
 
     @Override

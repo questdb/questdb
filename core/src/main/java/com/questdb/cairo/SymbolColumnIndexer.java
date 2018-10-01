@@ -46,8 +46,18 @@ class SymbolColumnIndexer implements ColumnIndexer, Closeable {
     }
 
     @Override
+    public void distress() {
+        distressed = true;
+    }
+
+    @Override
     public long getFd() {
         return mem.getFd();
+    }
+
+    @Override
+    public long getSequence() {
+        return sequence;
     }
 
     @Override
@@ -58,6 +68,11 @@ class SymbolColumnIndexer implements ColumnIndexer, Closeable {
         for (long lo = loRow - columnTop; lo < hiRow; lo++) {
             writer.add(mem.getInt(lo * 4) + 1, lo + columnTop);
         }
+    }
+
+    @Override
+    public boolean isDistressed() {
+        return distressed;
     }
 
     @Override
@@ -75,21 +90,6 @@ class SymbolColumnIndexer implements ColumnIndexer, Closeable {
     @Override
     public void rollback(long maxRow) {
         this.writer.rollbackValues(maxRow);
-    }
-
-    @Override
-    public void distress() {
-        distressed = true;
-    }
-
-    @Override
-    public long getSequence() {
-        return sequence;
-    }
-
-    @Override
-    public boolean isDistressed() {
-        return distressed;
     }
 
     @Override

@@ -408,7 +408,7 @@ public class VirtualMemory implements Closeable {
 
     public void putStr(long offset, CharSequence value, int pos, int len) {
         putInt(offset, len);
-        if (roOffsetLo < offset && offset < roOffsetHi - len * 2 - 4) {
+        if (roOffsetLo < offset && offset < roOffsetHi - len * 2L - 4) {
             copyStrChars(value, pos, len, absolutePointer + offset + 4);
         } else {
             putStrSplit(offset + 4, value, pos, len);
@@ -877,7 +877,7 @@ public class VirtualMemory implements Closeable {
     private long putStr0(CharSequence value, int pos, int len) {
         final long offset = getAppendOffset();
         putInt(len);
-        if (pageHi - appendPointer < len * 2) {
+        if (pageHi - appendPointer < len * 2L) {
             putStrSplit(value, pos, len);
         } else {
             copyStrChars(value, pos, len, appendPointer);
@@ -973,7 +973,7 @@ public class VirtualMemory implements Closeable {
 
         @Override
         public char charAt(int index) {
-            return VirtualMemory.this.getChar(offset + index * 2);
+            return VirtualMemory.this.getChar(offset + index * 2L);
         }
 
         CharSequenceView of(long offset, int len) {

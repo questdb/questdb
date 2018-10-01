@@ -340,7 +340,7 @@ public class LineProtoLexer implements Mutable, Closeable {
 
         @Override
         public char charAt(int index) {
-            return Unsafe.getUnsafe().getChar(dstTop + index * 2);
+            return Unsafe.getUnsafe().getChar(dstTop + index * 2L);
         }
     }
 
@@ -354,7 +354,7 @@ public class LineProtoLexer implements Mutable, Closeable {
 
         @Override
         public char charAt(int index) {
-            return Unsafe.getUnsafe().getChar(lo + index * 2);
+            return Unsafe.getUnsafe().getChar(lo + index * 2L);
         }
     }
 }

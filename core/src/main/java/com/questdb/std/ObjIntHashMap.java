@@ -99,13 +99,12 @@ public class ObjIntHashMap<K> implements Iterable<ObjIntHashMap.Entry<K>>, Mutab
         putAt(keyIndex(key), key, value);
     }
 
-    public boolean putAt(int index, K key, int value) {
+    public void putAt(int index, K key, int value) {
         if (index < 0) {
             Unsafe.arrayPut(values, -index - 1, value);
-            return false;
+            return;
         }
         putAt0(index, key, value);
-        return true;
     }
 
     public boolean putIfAbsent(K key, int value) {

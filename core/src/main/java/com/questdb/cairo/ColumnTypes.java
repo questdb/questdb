@@ -24,7 +24,7 @@
 package com.questdb.cairo;
 
 public interface ColumnTypes {
-    int getColumnType(int columnIndex);
-
     int getColumnCount();
+
+    int getColumnType(int columnIndex);
 }

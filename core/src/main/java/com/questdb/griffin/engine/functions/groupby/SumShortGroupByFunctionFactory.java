@@ -26,7 +26,6 @@ package com.questdb.griffin.engine.functions.groupby;
 import com.questdb.cairo.CairoConfiguration;
 import com.questdb.cairo.sql.Function;
 import com.questdb.griffin.FunctionFactory;
-import com.questdb.griffin.SqlException;
 import com.questdb.std.ObjList;
 
 public class SumShortGroupByFunctionFactory implements FunctionFactory {
@@ -41,7 +40,7 @@ public class SumShortGroupByFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) throws SqlException {
+    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
         return new SumShortGroupByFunction(position, args.getQuick(0));
     }
 }

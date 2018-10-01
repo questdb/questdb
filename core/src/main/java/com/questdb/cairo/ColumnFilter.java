@@ -24,7 +24,7 @@
 package com.questdb.cairo;
 
 public interface ColumnFilter {
-    int getColumnIndex(int position);
-
     int getColumnCount();
+
+    int getColumnIndex(int position);
 }
