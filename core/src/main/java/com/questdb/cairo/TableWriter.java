@@ -65,7 +65,7 @@ public class TableWriter implements Closeable {
     private final int rootLen;
     private final ReadWriteMemory txMem;
     private final ReadOnlyMemory metaMem;
-    private final VirtualMemory columnSizeMem;
+    private final VirtualMemory txPendingPartitionSizes;
     private final int partitionBy;
     private final RowFunction switchPartitionFunction = new SwitchPartitionRowFunction();
     private final RowFunction openPartitionFunction = new OpenPartitionRowFunction();
@@ -96,9 +96,9 @@ public class TableWriter implements Closeable {
     private long structVersion;
     private RowFunction rowFunction = openPartitionFunction;
     private long prevTimestamp;
-    private long prevTransientRowCount;
+    private long txPrevTransientRowCount;
     private long maxTimestamp;
-    private long partitionLo;
+    //    private long partitionLo;
     private long partitionHi;
     private long transientRowCount = 0;
     private long masterRef = 0;
@@ -169,7 +169,7 @@ public class TableWriter implements Closeable {
 
             this.columnCount = metadata.getColumnCount();
             this.partitionBy = metaMem.getInt(TableUtils.META_OFFSET_PARTITION_BY);
-            this.columnSizeMem = new VirtualMemory(ff.getPageSize());
+            this.txPendingPartitionSizes = new VirtualMemory(ff.getPageSize());
             this.refs.extendAndSet(columnCount, 0);
             this.columns = new ObjList<>(columnCount * 2);
             this.symbolMapWriters = new ObjList<>(columnCount);
@@ -338,7 +338,7 @@ public class TableWriter implements Closeable {
             if (txPartitionCount > 1) {
                 commitPendingPartitions();
                 txMem.putLong(TableUtils.TX_OFFSET_FIXED_ROW_COUNT, fixedRowCount);
-                columnSizeMem.jumpTo(0);
+                txPendingPartitionSizes.jumpTo(0);
                 txPartitionCount = 1;
             }
 
@@ -346,12 +346,12 @@ public class TableWriter implements Closeable {
 
             // store symbol counts
             for (int i = 0, n = denseSymbolMapWriters.size(); i < n; i++) {
-                txMem.putInt(TX_OFFSET_MAP_WRITER_COUNT + 4 + i * 4, denseSymbolMapWriters.getQuick(i).getSymbolCount());
+                txMem.putInt(TableUtils.getSymbolWriterIndexOffset(i), denseSymbolMapWriters.getQuick(i).getSymbolCount());
             }
 
             Unsafe.getUnsafe().storeFence();
             txMem.putLong(TX_OFFSET_TXN_CHECK, txn);
-            prevTransientRowCount = transientRowCount;
+            txPrevTransientRowCount = transientRowCount;
         }
     }
 
@@ -380,7 +380,7 @@ public class TableWriter implements Closeable {
     }
 
     public boolean inTransaction() {
-        return txPartitionCount > 1 || transientRowCount != prevTransientRowCount;
+        return txPartitionCount > 1 || transientRowCount != txPrevTransientRowCount;
     }
 
     public boolean isOpen() {
@@ -465,7 +465,7 @@ public class TableWriter implements Closeable {
         if (inTransaction()) {
             LOG.info().$("tx rollback [name=").$(name).$(']').$();
             freeColumns(false);
-            columnSizeMem.jumpTo(0);
+            txPendingPartitionSizes.jumpTo(0);
             configureAppendPosition();
             rollbackIndexes();
             purgeUnusedPartitions();
@@ -521,8 +521,7 @@ public class TableWriter implements Closeable {
 
         prevTimestamp = Long.MIN_VALUE;
         maxTimestamp = Long.MIN_VALUE;
-        partitionLo = Long.MIN_VALUE;
-        prevTransientRowCount = 0;
+        txPrevTransientRowCount = 0;
         transientRowCount = 0;
         fixedRowCount = 0;
         txn = 0;
@@ -573,26 +572,18 @@ public class TableWriter implements Closeable {
             switch (type) {
                 case ColumnType.BINARY:
                     assert mem2 != null;
-                    if (ff.read(mem2.getFd(), buf, 8, (actualPosition - 1) * 8) != 8) {
-                        throw CairoException.instance(ff.errno()).put("Cannot read offset, fd=").put(mem2.getFd()).put(", offset=").put((actualPosition - 1) * 8);
-                    }
+                    readOffsetBytes(ff, mem2, actualPosition, buf);
                     offset = Unsafe.getUnsafe().getLong(buf);
-                    if (ff.read(mem1.getFd(), buf, 8, offset) != 8) {
-                        throw CairoException.instance(ff.errno()).put("Cannot read length, fd=").put(mem1.getFd()).put(", offset=").put(offset);
-                    }
+                    readBytes(ff, mem1, buf, 8, offset, "Cannot read length, fd=");
                     len = Unsafe.getUnsafe().getLong(buf);
                     mem1.setSize(len == -1 ? offset + 8 : offset + len + 8);
                     mem2.setSize(actualPosition * 8);
                     break;
                 case ColumnType.STRING:
                     assert mem2 != null;
-                    if (ff.read(mem2.getFd(), buf, 8, (actualPosition - 1) * 8) != 8) {
-                        throw CairoException.instance(ff.errno()).put("Cannot read offset, fd=").put(mem2.getFd()).put(", offset=").put((actualPosition - 1) * 8);
-                    }
+                    readOffsetBytes(ff, mem2, actualPosition, buf);
                     offset = Unsafe.getUnsafe().getLong(buf);
-                    if (ff.read(mem1.getFd(), buf, 4, offset) != 4) {
-                        throw CairoException.instance(ff.errno()).put("Cannot read length, fd=").put(mem1.getFd()).put(", offset=").put(offset);
-                    }
+                    readBytes(ff, mem1, buf, 4, offset, "Cannot read length, fd=");
                     len = Unsafe.getUnsafe().getInt(buf);
                     mem1.setSize(len == -1 ? offset + 4 : offset + len * 2 + 4);
                     mem2.setSize(actualPosition * 8);
@@ -606,6 +597,16 @@ public class TableWriter implements Closeable {
             if (mem2 != null) {
                 mem2.setSize((long) 0);
             }
+        }
+    }
+
+    private static void readOffsetBytes(FilesFacade ff, AppendMemory mem, long position, long buf) {
+        readBytes(ff, mem, buf, 8, (position - 1) * 8, "Cannot read offset, fd=");
+    }
+
+    private static void readBytes(FilesFacade ff, AppendMemory mem, long buf, int byteCount, long offset, CharSequence errorMsg) {
+        if (ff.read(mem.getFd(), buf, byteCount, offset) != byteCount) {
+            throw CairoException.instance(ff.errno()).put(errorMsg).put(mem.getFd()).put(", offset=").put(offset);
         }
     }
 
@@ -715,7 +716,7 @@ public class TableWriter implements Closeable {
         final int count = denseSymbolMapWriters.size();
         txMem.putInt(TableUtils.TX_OFFSET_MAP_WRITER_COUNT, count);
         for (int i = 0; i < count; i++) {
-            txMem.putInt(TableUtils.TX_OFFSET_MAP_WRITER_COUNT + 4 + i * 4, denseSymbolMapWriters.getQuick(i).getSymbolCount());
+            txMem.putInt(TableUtils.getSymbolWriterIndexOffset(i), denseSymbolMapWriters.getQuick(i).getSymbolCount());
         }
         Unsafe.getUnsafe().storeFence();
 
@@ -747,9 +748,9 @@ public class TableWriter implements Closeable {
                 // open old partition
                 if (prevTimestamp > Long.MIN_VALUE) {
                     try {
-                        columnSizeMem.jumpTo((txPartitionCount - 2) * 16);
+                        txPendingPartitionSizes.jumpTo((txPartitionCount - 2) * 16);
                         openPartition(prevTimestamp);
-                        setAppendPosition(prevTransientRowCount);
+                        setAppendPosition(txPrevTransientRowCount);
                         txPartitionCount--;
                     } catch (CairoException e) {
                         freeColumns(false);
@@ -760,8 +761,8 @@ public class TableWriter implements Closeable {
                 }
 
                 // undo counts
-                transientRowCount = prevTransientRowCount;
-                fixedRowCount -= prevTransientRowCount;
+                transientRowCount = txPrevTransientRowCount;
+                fixedRowCount -= txPrevTransientRowCount;
                 maxTimestamp = prevTimestamp;
                 removeDirOnCancelRow = true;
             } else {
@@ -806,7 +807,7 @@ public class TableWriter implements Closeable {
         long offset = 0;
         for (int i = 0; i < txPartitionCount - 1; i++) {
             try {
-                long partitionTimestamp = columnSizeMem.getLong(offset + 8);
+                long partitionTimestamp = txPendingPartitionSizes.getLong(offset + 8);
                 setStateForTimestamp(partitionTimestamp, false);
 
                 long fd = openAppend(path.concat(TableUtils.ARCHIVE_FILE_NAME).$());
@@ -814,8 +815,8 @@ public class TableWriter implements Closeable {
                     int len = 8;
                     long o = offset;
                     while (len > 0) {
-                        long l = Math.min(len, columnSizeMem.pageRemaining(o));
-                        if (ff.write(fd, columnSizeMem.addressOf(o), l, 0) != l) {
+                        long l = Math.min(len, txPendingPartitionSizes.pageRemaining(o));
+                        if (ff.write(fd, txPendingPartitionSizes.addressOf(o), l, 0) != l) {
                             throw CairoException.instance(ff.errno()).put("Commit failed, file=").put(path);
                         }
                         len -= l;
@@ -834,7 +835,7 @@ public class TableWriter implements Closeable {
     private void configureAppendPosition() {
         this.txn = txMem.getLong(TableUtils.TX_OFFSET_TXN);
         this.transientRowCount = txMem.getLong(TableUtils.TX_OFFSET_TRANSIENT_ROW_COUNT);
-        this.prevTransientRowCount = this.transientRowCount;
+        this.txPrevTransientRowCount = this.transientRowCount;
         this.fixedRowCount = txMem.getLong(TableUtils.TX_OFFSET_FIXED_ROW_COUNT);
         this.maxTimestamp = txMem.getLong(TableUtils.TX_OFFSET_MAX_TIMESTAMP);
         this.structVersion = txMem.getLong(TableUtils.TX_OFFSET_STRUCT_VERSION);
@@ -875,13 +876,13 @@ public class TableWriter implements Closeable {
 
     private void configureColumnMemory() {
         int expectedMapWriters = txMem.getInt(TX_OFFSET_MAP_WRITER_COUNT);
-        long nextSymbolCountOffset = TX_OFFSET_MAP_WRITER_COUNT + 4;
+        long nextSymbolCountOffset = TableUtils.getSymbolWriterIndexOffset(0);
         for (int i = 0; i < columnCount; i++) {
             int type = metadata.getColumnType(i);
             configureColumn(type, metadata.isColumnIndexed(i));
 
             if (type == ColumnType.SYMBOL) {
-                assert nextSymbolCountOffset < TX_OFFSET_MAP_WRITER_COUNT + 4 + 8 * expectedMapWriters;
+                assert nextSymbolCountOffset < TableUtils.getSymbolWriterIndexOffset(expectedMapWriters);
                 // keep symbol map writers list sparse for ease of access
                 SymbolMapWriter symbolMapWriter = new SymbolMapWriter(configuration, path.trimTo(rootLen), metadata.getColumnName(i), txMem.getInt(nextSymbolCountOffset));
                 symbolMapWriters.extendAndSet(i, symbolMapWriter);
@@ -996,7 +997,7 @@ public class TableWriter implements Closeable {
             freeTxMem();
         } finally {
             Misc.free(metaMem);
-            Misc.free(columnSizeMem);
+            Misc.free(txPendingPartitionSizes);
             Misc.free(ddlMem);
             Misc.free(other);
             try {
@@ -1072,7 +1073,7 @@ public class TableWriter implements Closeable {
 
     private long getTxEofOffset() {
         if (metadata != null) {
-            return TX_OFFSET_MAP_WRITER_COUNT + 4 + (metadata.getSymbolMapCount() * 4);
+            return TableUtils.getTxMemSize(metadata.getSymbolMapCount());
         } else {
             return ff.length(txMem.getFd());
         }
@@ -1177,6 +1178,7 @@ public class TableWriter implements Closeable {
             if (ff.mkdirs(path.put(Files.SEPARATOR).$(), mkDirMode) != 0) {
                 throw CairoException.instance(ff.errno()).put("Cannot create directory: ").put(path);
             }
+
             assert columnCount > 0;
 
             for (int i = 0; i < columnCount; i++) {
@@ -1599,11 +1601,8 @@ public class TableWriter implements Closeable {
 
     private void rollbackSymbolTables() {
         int expectedMapWriters = txMem.getInt(TX_OFFSET_MAP_WRITER_COUNT);
-        long nextSymbolCountOffset = TX_OFFSET_MAP_WRITER_COUNT + 4;
         for (int i = 0; i < expectedMapWriters; i++) {
-            assert nextSymbolCountOffset < TX_OFFSET_MAP_WRITER_COUNT + 4 + 8 * expectedMapWriters;
-            denseSymbolMapWriters.getQuick(i).rollback(txMem.getInt(nextSymbolCountOffset));
-            nextSymbolCountOffset += 4;
+            denseSymbolMapWriters.getQuick(i).rollback(txMem.getInt(TableUtils.getSymbolWriterIndexOffset(i)));
         }
     }
 
@@ -1655,10 +1654,10 @@ public class TableWriter implements Closeable {
                 DateFormatUtils.append0(path, d);
 
                 if (updatePartitionInterval) {
-                    partitionLo = Dates.yearMicros(y, leap);
-                    partitionLo += Dates.monthOfYearMicros(m, leap);
-                    partitionLo += (d - 1) * Dates.DAY_MICROS;
-                    partitionHi = partitionLo + 24 * Dates.HOUR_MICROS;
+                    partitionHi =
+                            Dates.yearMicros(y, leap)
+                                    + Dates.monthOfYearMicros(m, leap)
+                                    + (d - 1) * Dates.DAY_MICROS + 24 * Dates.HOUR_MICROS;
                 }
                 break;
             case PartitionBy.MONTH:
@@ -1670,9 +1669,10 @@ public class TableWriter implements Closeable {
                 DateFormatUtils.append0(path, m);
 
                 if (updatePartitionInterval) {
-                    partitionLo = Dates.yearMicros(y, leap);
-                    partitionLo += Dates.monthOfYearMicros(m, leap);
-                    partitionHi = partitionLo + Dates.getDaysPerMonth(m, leap) * 24L * Dates.HOUR_MICROS;
+                    partitionHi =
+                            Dates.yearMicros(y, leap)
+                                    + Dates.monthOfYearMicros(m, leap)
+                                    + Dates.getDaysPerMonth(m, leap) * 24L * Dates.HOUR_MICROS;
                 }
                 break;
             case PartitionBy.YEAR:
@@ -1680,13 +1680,11 @@ public class TableWriter implements Closeable {
                 leap = Dates.isLeapYear(y);
                 DateFormatUtils.append000(path, y);
                 if (updatePartitionInterval) {
-                    partitionLo = Dates.yearMicros(y, leap);
-                    partitionHi = Dates.addYear(partitionLo, 1);
+                    partitionHi = Dates.addYear(Dates.yearMicros(y, leap), 1);
                 }
                 break;
             default:
                 path.put(TableUtils.DEFAULT_PARTITION_NAME);
-                partitionLo = Long.MIN_VALUE;
                 partitionHi = Long.MAX_VALUE;
                 break;
         }
@@ -1703,11 +1701,11 @@ public class TableWriter implements Closeable {
         // For simplicity use partitionLo, which can be
         // translated to directory name when needed
         if (txPartitionCount++ > 0) {
-            columnSizeMem.putLong(transientRowCount);
-            columnSizeMem.putLong(maxTimestamp);
+            txPendingPartitionSizes.putLong(transientRowCount);
+            txPendingPartitionSizes.putLong(maxTimestamp);
         }
         fixedRowCount += transientRowCount;
-        prevTransientRowCount = transientRowCount;
+        txPrevTransientRowCount = transientRowCount;
         transientRowCount = 0;
         openPartition(timestamp);
         setAppendPosition(0);
@@ -1720,7 +1718,7 @@ public class TableWriter implements Closeable {
 
     private void updateIndexes() {
         if (indexCount > 0) {
-            final long lo = txPartitionCount == 1 ? prevTransientRowCount : 0;
+            final long lo = txPartitionCount == 1 ? txPrevTransientRowCount : 0;
             final long hi = transientRowCount;
             if (indexCount > 1 && parallelIndexerEnabled && hi - lo > configuration.getParallelIndexThreshold()) {
                 updateIndexesParallel(lo, hi);

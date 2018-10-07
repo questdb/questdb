@@ -50,6 +50,8 @@ public final class TableUtils {
     static final DateFormat fmtYear;
     static final String ARCHIVE_FILE_NAME = "_archive";
     static final String DEFAULT_PARTITION_NAME = "default";
+
+    // transaction file structure
     static final long TX_OFFSET_TXN = 0;
     static final long TX_OFFSET_TRANSIENT_ROW_COUNT = 8;
     static final long TX_OFFSET_FIXED_ROW_COUNT = 16;
@@ -57,6 +59,24 @@ public final class TableUtils {
     static final long TX_OFFSET_STRUCT_VERSION = 32;
     static final long TX_OFFSET_TXN_CHECK = 40;
     static final long TX_OFFSET_MAP_WRITER_COUNT = 48;
+    // INT - symbol map count, this is a variable part of transaction file
+    // below this offset we will have INT values for symbol map size
+    /**
+     * struct {
+     * long txn;
+     * long transient_row_count; // rows count in last partition
+     * long fixed_row_count; // row count in table excluding count in last partition
+     * long max_timestamp; // last timestamp written to table
+     * long struct_version; // data structure version; whenever columns added or removed this version changes.
+     * long partition_version; // version that increments whenever non-current partitions are modified/added/removed
+     * long txn_check; // same as txn - sanity check for concurrent reads and writes
+     * int  map_writer_count; // symbol writer count
+     * int  map_writer_position[map_writer_count]; // position of each of map writers
+     * }
+     * <p>
+     * TableUtils.resetTxn() writes to this file, it could be using different offsets, beware
+     */
+
     static final String META_SWAP_FILE_NAME = "_meta.swp";
     static final String META_PREV_FILE_NAME = "_meta.prev";
     static final String TODO_FILE_NAME = "_todo";
@@ -88,6 +108,14 @@ public final class TableUtils {
         return META_OFFSET_COLUMN_TYPES + columnCount * META_COLUMN_DATA_SIZE;
     }
 
+    public static long getSymbolWriterIndexOffset(int index) {
+        return TX_OFFSET_MAP_WRITER_COUNT + 4 + index * 4L;
+    }
+
+    public static long getTxMemSize(int symbolWriterCount) {
+        return getSymbolWriterIndexOffset(symbolWriterCount);
+    }
+
     public static long lock(FilesFacade ff, Path path) {
         long fd = ff.openRW(path);
         if (fd == -1) {
@@ -109,34 +137,35 @@ public final class TableUtils {
     }
 
     public static void resetTxn(VirtualMemory txMem, int symbolMapCount) {
-        txMem.jumpTo(TX_OFFSET_TXN);
         // txn to let readers know table is being reset
-        txMem.putLong(INITIAL_TXN);
+        txMem.putLong(TX_OFFSET_TXN, INITIAL_TXN);
         Unsafe.getUnsafe().storeFence();
 
         // transient row count
-        txMem.putLong(0);
+        txMem.putLong(TX_OFFSET_TRANSIENT_ROW_COUNT, 0);
         // fixed row count
-        txMem.putLong(0);
+        txMem.putLong(TX_OFFSET_FIXED_ROW_COUNT, 0);
         // partition low
-        txMem.putLong(Long.MIN_VALUE);
+        txMem.putLong(TX_OFFSET_MAX_TIMESTAMP, Long.MIN_VALUE);
         // structure version
-        txMem.putLong(0);
+        txMem.putLong(TX_OFFSET_STRUCT_VERSION, 0);
 
-        // skip over txn check
-        txMem.skip(8);
-        txMem.putInt(symbolMapCount);
+        txMem.putInt(TX_OFFSET_MAP_WRITER_COUNT, symbolMapCount);
         for (int i = 0; i < symbolMapCount; i++) {
-            txMem.putLong(0);
+            txMem.putInt(getSymbolWriterIndexOffset(i), 0);
         }
-
-        long offset = txMem.getAppendOffset();
-        txMem.jumpTo(TX_OFFSET_TXN_CHECK);
 
         Unsafe.getUnsafe().storeFence();
         // txn check
-        txMem.putLong(INITIAL_TXN);
-        txMem.jumpTo(offset);
+        txMem.putLong(TX_OFFSET_TXN_CHECK, INITIAL_TXN);
+
+        long partitionUpdateCountOffset = getSymbolWriterIndexOffset(symbolMapCount);
+        // partition update count
+        txMem.putLong(partitionUpdateCountOffset, 0);
+
+        // make sure we put append pointer behind our data so that
+        // files does not get truncated when closing
+        txMem.jumpTo(partitionUpdateCountOffset + 8);
     }
 
     public static void validate(FilesFacade ff, ReadOnlyMemory metaMem, CharSequenceIntHashMap nameIndex) {

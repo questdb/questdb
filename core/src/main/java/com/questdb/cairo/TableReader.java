@@ -103,7 +103,7 @@ public class TableReader implements Closeable {
                     timestampFloorMethod = Dates::floorDD;
                     intervalLengthMethod = Dates::getDaysBetween;
                     dateFormat = TableUtils.fmtDay;
-                    partitionMin = findPartitionMinimum(dateFormat);
+                    partitionMin = findPartitionMinimum();
                     partitionCount = calculatePartitionCount();
                     break;
                 case PartitionBy.MONTH:
@@ -112,7 +112,7 @@ public class TableReader implements Closeable {
                     timestampFloorMethod = Dates::floorMM;
                     intervalLengthMethod = Dates::getMonthsBetween;
                     dateFormat = TableUtils.fmtMonth;
-                    partitionMin = findPartitionMinimum(dateFormat);
+                    partitionMin = findPartitionMinimum();
                     partitionCount = calculatePartitionCount();
                     break;
                 case PartitionBy.YEAR:
@@ -121,7 +121,7 @@ public class TableReader implements Closeable {
                     timestampFloorMethod = Dates::floorYYYY;
                     intervalLengthMethod = Dates::getYearsBetween;
                     dateFormat = TableUtils.fmtYear;
-                    partitionMin = findPartitionMinimum(dateFormat);
+                    partitionMin = findPartitionMinimum();
                     partitionCount = calculatePartitionCount();
                     break;
                 default:
@@ -347,31 +347,6 @@ public class TableReader implements Closeable {
         return base + index * 2;
     }
 
-    private static long readPartitionSize(FilesFacade ff, Path path, long tempMem) {
-        int plen = path.length();
-        try {
-            if (ff.exists(path.concat(TableUtils.ARCHIVE_FILE_NAME).$())) {
-                long fd = ff.openRO(path);
-                if (fd == -1) {
-                    throw CairoException.instance(Os.errno()).put("Cannot open: ").put(path);
-                }
-
-                try {
-                    if (ff.read(fd, tempMem, 8, 0) != 8) {
-                        throw CairoException.instance(Os.errno()).put("Cannot read: ").put(path);
-                    }
-                    return Unsafe.getUnsafe().getLong(tempMem);
-                } finally {
-                    ff.close(fd);
-                }
-            } else {
-                throw CairoException.instance(0).put("Doesn't exist: ").put(path);
-            }
-        } finally {
-            path.trimTo(plen);
-        }
-    }
-
     private static boolean isEntryToBeProcessed(long address, int index) {
         if (Unsafe.getUnsafe().getByte(address + index) == -1) {
             return false;
@@ -572,7 +547,7 @@ public class TableReader implements Closeable {
         tempCopyStruct.forwardReader = indexReaders.getAndSetQuick(index + 1, null);
     }
 
-    private long findPartitionMinimum(DateFormat partitionDirFmt) {
+    private long findPartitionMinimum() {
         long partitionMin = Long.MAX_VALUE;
         try {
             long p = ff.findFirst(path.$());
@@ -582,7 +557,7 @@ public class TableReader implements Closeable {
                         int type = ff.findType(p);
                         if (type == Files.DT_DIR || type == Files.DT_LNK) {
                             try {
-                                long time = partitionDirFmt.parse(nativeLPSZ.of(ff.findName(p)), DateLocaleFactory.INSTANCE.getDefaultDateLocale());
+                                long time = dateFormat.parse(nativeLPSZ.of(ff.findName(p)), DateLocaleFactory.INSTANCE.getDefaultDateLocale());
                                 if (time < partitionMin && time <= maxTimestamp) {
                                     partitionMin = time;
                                 }
@@ -689,7 +664,7 @@ public class TableReader implements Closeable {
 
                 path.chopZ();
 
-                final long partitionSize = partitionIndex == partitionCount - 1 ? transientRowCount : readPartitionSize(ff, path, tempMem8b);
+                final long partitionSize = partitionIndex == partitionCount - 1 ? transientRowCount : readPartitionSize(path);
 
                 LOG.info().$("open partition ").utf8(path.$()).$(" [rowCount=").$(partitionSize).$(", transientRowCount=").$(transientRowCount).$(", partitionIndex=").$(partitionIndex).$(", partitionCount=").$(partitionCount).$(']').$();
 
@@ -733,7 +708,7 @@ public class TableReader implements Closeable {
 
     private ReadOnlyMemory openTxnFile() {
         try {
-            return new ReadOnlyMemory(ff, path.concat(TableUtils.TXN_FILE_NAME).$(), ff.getPageSize(), TableUtils.TX_OFFSET_MAP_WRITER_COUNT + 4);
+            return new ReadOnlyMemory(ff, path.concat(TableUtils.TXN_FILE_NAME).$(), ff.getPageSize(), TableUtils.getSymbolWriterIndexOffset(0));
         } finally {
             path.trimTo(rootLen);
         }
@@ -773,6 +748,31 @@ public class TableReader implements Closeable {
         return path.$();
     }
 
+    private long readPartitionSize(Path path) {
+        int plen = path.length();
+        try {
+            if (ff.exists(path.concat(TableUtils.ARCHIVE_FILE_NAME).$())) {
+                long fd = ff.openRO(path);
+                if (fd == -1) {
+                    throw CairoException.instance(Os.errno()).put("Cannot open: ").put(path);
+                }
+
+                try {
+                    if (ff.read(fd, tempMem8b, 8, 0) != 8) {
+                        throw CairoException.instance(Os.errno()).put("Cannot read: ").put(path);
+                    }
+                    return Unsafe.getUnsafe().getLong(tempMem8b);
+                } finally {
+                    ff.close(fd);
+                }
+            } else {
+                throw CairoException.instance(0).put("Doesn't exist: ").put(path);
+            }
+        } finally {
+            path.trimTo(plen);
+        }
+    }
+
     private boolean readTxn() {
         int count = 0;
         final long deadline = configuration.getMicrosecondClock().getTicks() + configuration.getSpinLockTimeoutUs();
@@ -801,9 +801,9 @@ public class TableReader implements Closeable {
                 this.symbolCountSnapshot.clear();
                 int symbolMapCount = txMem.getInt(TableUtils.TX_OFFSET_MAP_WRITER_COUNT);
                 if (symbolMapCount > 0) {
-                    txMem.grow(TableUtils.TX_OFFSET_MAP_WRITER_COUNT + 4 + symbolMapCount * 4);
+                    txMem.grow(TableUtils.getSymbolWriterIndexOffset(symbolMapCount));
                     for (int i = 0; i < symbolMapCount; i++) {
-                        symbolCountSnapshot.add(txMem.getInt(TableUtils.TX_OFFSET_MAP_WRITER_COUNT + 4 + i * 4));
+                        symbolCountSnapshot.add(txMem.getInt(TableUtils.getSymbolWriterIndexOffset(i)));
                     }
                 }
 
@@ -920,7 +920,7 @@ public class TableReader implements Closeable {
         if (readTxn()) {
             reloadStruct();
             reloadSymbolMapCounts();
-            partitionMin = findPartitionMinimum(dateFormat);
+            partitionMin = findPartitionMinimum();
             partitionCount = calculatePartitionCount();
             if (partitionCount > 0) {
                 updateCapacities();
@@ -986,7 +986,7 @@ public class TableReader implements Closeable {
                     incrementPartitionCountBy(delta);
                     Path path = partitionPathGenerator.generate(this, partitionIndex);
                     try {
-                        reloadPartition(partitionIndex, readPartitionSize(ff, path.chopZ(), tempMem8b));
+                        reloadPartition(partitionIndex, readPartitionSize(path.chopZ()));
                     } finally {
                         path.trimTo(rootLen);
                     }

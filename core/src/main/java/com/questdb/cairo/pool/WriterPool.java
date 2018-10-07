@@ -389,7 +389,7 @@ public class WriterPool extends AbstractPool implements ResourcePool<TableWriter
         CharSequence name = e.writer.getName();
         long thread = Thread.currentThread().getId();
         if (e.owner != UNALLOCATED) {
-            LOG.info().$('\'').utf8(name).$(" is back [thread=").$(thread).$(']').$();
+            LOG.info().$('\'').utf8(name).$("' is back [thread=").$(thread).$(']').$();
             if (isClosed()) {
                 LOG.info().$("allowing '").utf8(name).$("' to close [thread=").$(e.owner).$(']').$();
                 entries.remove(name);

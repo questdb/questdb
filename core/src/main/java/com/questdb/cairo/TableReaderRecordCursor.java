@@ -101,6 +101,7 @@ public class TableReaderRecordCursor implements RecordCursor {
         record.jumpTo(this.partitionIndex, recordIndex);
         maxRecordIndex = reader.openPartition(partitionIndex) - 1;
         partitionIndex++;
+        this.partitionCount = reader.getPartitionCount();
     }
 
     private boolean switchPartition() {
