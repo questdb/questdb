@@ -60,10 +60,12 @@ public class TableReader implements Closeable {
     private final DateFormat dateFormat;
     private final TimestampFloorMethod timestampFloorMethod;
     private final IntervalLengthMethod intervalLengthMethod;
+    private final PartitionTimestampCalculatorMethod partitionTimestampCalculatorMethod;
     private final String tableName;
     private final ObjList<SymbolMapReader> symbolMapReaders = new ObjList<>();
     private final CairoConfiguration configuration;
     private final IntList symbolCountSnapshot = new IntList();
+    private final LongHashSet removedPartitions = new LongHashSet();
     private LongList columnTops;
     private ObjList<ReadOnlyColumn> columns;
     private ObjList<BitmapIndexReader> bitmapIndexes;
@@ -72,6 +74,8 @@ public class TableReader implements Closeable {
     private long transientRowCount;
     private long structVersion;
     private long prevStructVersion;
+    private long partitionTableVersion;
+    private long prevPartitionTableVersion;
     private long rowCount;
     private long txn = TableUtils.INITIAL_TXN;
     private long maxTimestamp = Numbers.LONG_NaN;
@@ -96,12 +100,14 @@ public class TableReader implements Closeable {
             readTxn();
             openSymbolMaps();
             this.prevStructVersion = structVersion;
+            this.prevPartitionTableVersion = partitionTableVersion;
             switch (this.metadata.getPartitionBy()) {
                 case PartitionBy.DAY:
                     partitionPathGenerator = DAY_GEN;
                     reloadMethod = FIRST_TIME_PARTITIONED_RELOAD_METHOD;
                     timestampFloorMethod = Dates::floorDD;
                     intervalLengthMethod = Dates::getDaysBetween;
+                    partitionTimestampCalculatorMethod = Dates::addDays;
                     dateFormat = TableUtils.fmtDay;
                     partitionMin = findPartitionMinimum();
                     partitionCount = calculatePartitionCount();
@@ -111,6 +117,7 @@ public class TableReader implements Closeable {
                     reloadMethod = FIRST_TIME_PARTITIONED_RELOAD_METHOD;
                     timestampFloorMethod = Dates::floorMM;
                     intervalLengthMethod = Dates::getMonthsBetween;
+                    partitionTimestampCalculatorMethod = Dates::addMonths;
                     dateFormat = TableUtils.fmtMonth;
                     partitionMin = findPartitionMinimum();
                     partitionCount = calculatePartitionCount();
@@ -120,6 +127,7 @@ public class TableReader implements Closeable {
                     reloadMethod = FIRST_TIME_PARTITIONED_RELOAD_METHOD;
                     timestampFloorMethod = Dates::floorYYYY;
                     intervalLengthMethod = Dates::getYearsBetween;
+                    partitionTimestampCalculatorMethod = Dates::addYear;
                     dateFormat = TableUtils.fmtYear;
                     partitionMin = findPartitionMinimum();
                     partitionCount = calculatePartitionCount();
@@ -129,6 +137,7 @@ public class TableReader implements Closeable {
                     reloadMethod = FIRST_TIME_NON_PARTITIONED_RELOAD_METHOD;
                     timestampFloorMethod = null;
                     intervalLengthMethod = null;
+                    partitionTimestampCalculatorMethod = null;
                     dateFormat = null;
                     countDefaultPartitions();
                     break;
@@ -174,15 +183,10 @@ public class TableReader implements Closeable {
     public void closeColumnForRemove(int columnIndex) {
         assert columnIndex > -1 && columnIndex < columnCount;
         for (int partitionIndex = 0; partitionIndex < partitionCount; partitionIndex++) {
-            final int base = getColumnBase(partitionIndex);
             // replace columns we force closed with special marker object
             // when we come to reloading table reader we would be able to
             // tell that column has to be attempted to be read from disk
-            final int index = getPrimaryColumnIndex(base, columnIndex);
-            Misc.free(columns.getAndSetQuick(index, ForceNullColumn.INSTANCE));
-            Misc.free(columns.getAndSetQuick(index + 1, ForceNullColumn.INSTANCE));
-            Misc.free(bitmapIndexes.getAndSetQuick(index, null));
-            Misc.free(bitmapIndexes.getAndSetQuick(index + 1, null));
+            closeColumn(getColumnBase(partitionIndex), columnIndex);
         }
 
         if (metadata.getColumnType(columnIndex) == ColumnType.SYMBOL) {
@@ -397,6 +401,40 @@ public class TableReader implements Closeable {
         }
     }
 
+    private void closeColumn(int columnBase, int columnIndex) {
+        final int index = getPrimaryColumnIndex(columnBase, columnIndex);
+        Misc.free(columns.getAndSetQuick(index, ForceNullColumn.INSTANCE));
+        Misc.free(columns.getAndSetQuick(index + 1, ForceNullColumn.INSTANCE));
+        Misc.free(bitmapIndexes.getAndSetQuick(index, null));
+        Misc.free(bitmapIndexes.getAndSetQuick(index + 1, null));
+    }
+
+    private void closeRemovedPartitions() {
+        for (int i = 0, n = removedPartitions.size(); i < n; i++) {
+            long timestamp = removedPartitions.get(i);
+            int partitionIndex = getPartitionCountBetweenTimestamps(partitionMin, timestamp);
+            if (partitionIndex > -1) {
+                if (partitionIndex < partitionCount) {
+                    if (getPartitionRowCount(partitionIndex) != -1) {
+                        // this is an open partition
+                        int base = getColumnBase(partitionIndex);
+                        for (int k = 0; k < columnCount; k++) {
+                            closeColumn(base, k);
+                        }
+                        partitionRowCounts.setQuick(partitionIndex, -1);
+                    }
+                    // partition has not yet been opened
+                } else {
+                    LOG.error()
+                            .$("partition index is out of range [partitionIndex=").$(partitionIndex)
+                            .$(", partitionCount=").$(partitionCount)
+                            .$(", timestamp=").$ts(timestamp)
+                            .$(']').$();
+                }
+            }
+        }
+    }
+
     private void copyColumnsTo(ObjList<ReadOnlyColumn> columns, LongList columnTops, ObjList<BitmapIndexReader> indexReaders, int columnBase, int columnIndex, long partitionRowCount) {
         ReadOnlyColumn mem1 = tempCopyStruct.mem1;
         final boolean reload = (mem1 instanceof ReadOnlyMemory || mem1 instanceof ForceNullColumn) && mem1.isDeleted();
@@ -501,31 +539,6 @@ public class TableReader implements Closeable {
         this.columnTops = columnTops;
         this.columnCountBits = columnBits;
         this.bitmapIndexes = indexReaders;
-    }
-
-    private void doReloadStruct() {
-        // create transition index, which will help us reuse already open resources
-        long pTransitionIndex = metadata.createTransitionIndex();
-        try {
-            metadata.applyTransitionIndex(pTransitionIndex);
-            final int columnCount = Unsafe.getUnsafe().getInt(pTransitionIndex + 4);
-
-            int columnCountBits = getColumnBits(columnCount);
-            // when a column is added we cannot easily reshuffle columns in-place
-            // the reason is that we'd have to create gaps in columns list between
-            // partitions. It is possible in theory, but this could be an algo for
-            // another day.
-            if (columnCountBits > this.columnCountBits) {
-                createNewColumnList(columnCount, pTransitionIndex, columnCountBits);
-            } else {
-                reshuffleColumns(columnCount, pTransitionIndex);
-            }
-            // rearrange symbol map reader list
-            reshuffleSymbolMapReaders(pTransitionIndex);
-            this.columnCount = columnCount;
-        } finally {
-            TableReaderMetadata.freeTransitionIndex(pTransitionIndex);
-        }
     }
 
     private void failOnPendingTodo() {
@@ -658,13 +671,19 @@ public class TableReader implements Closeable {
     }
 
     private long openPartition0(int partitionIndex) {
+        // is this table is partitioned?
+        if (partitionTimestampCalculatorMethod != null
+                && removedPartitions.contains(partitionTimestampCalculatorMethod.calculate(partitionMin, partitionIndex))) {
+            return -1;
+        }
+
         try {
             Path path = partitionPathGenerator.generate(this, partitionIndex);
             if (ff.exists(path)) {
 
                 path.chopZ();
 
-                final long partitionSize = partitionIndex == partitionCount - 1 ? transientRowCount : readPartitionSize(path);
+                final long partitionSize = partitionIndex == partitionCount - 1 ? transientRowCount : TableUtils.readPartitionSize(ff, path, tempMem8b);
 
                 LOG.info().$("open partition ").utf8(path.$()).$(" [rowCount=").$(partitionSize).$(", transientRowCount=").$(transientRowCount).$(", partitionIndex=").$(partitionIndex).$(", partitionCount=").$(partitionCount).$(']').$();
 
@@ -748,31 +767,6 @@ public class TableReader implements Closeable {
         return path.$();
     }
 
-    private long readPartitionSize(Path path) {
-        int plen = path.length();
-        try {
-            if (ff.exists(path.concat(TableUtils.ARCHIVE_FILE_NAME).$())) {
-                long fd = ff.openRO(path);
-                if (fd == -1) {
-                    throw CairoException.instance(Os.errno()).put("Cannot open: ").put(path);
-                }
-
-                try {
-                    if (ff.read(fd, tempMem8b, 8, 0) != 8) {
-                        throw CairoException.instance(Os.errno()).put("Cannot read: ").put(path);
-                    }
-                    return Unsafe.getUnsafe().getLong(tempMem8b);
-                } finally {
-                    ff.close(fd);
-                }
-            } else {
-                throw CairoException.instance(0).put("Doesn't exist: ").put(path);
-            }
-        } finally {
-            path.trimTo(plen);
-        }
-    }
-
     private boolean readTxn() {
         int count = 0;
         final long deadline = configuration.getMicrosecondClock().getTicks() + configuration.getSpinLockTimeoutUs();
@@ -797,6 +791,7 @@ public class TableReader implements Closeable {
                 final long fixedRowCount = txMem.getLong(TableUtils.TX_OFFSET_FIXED_ROW_COUNT);
                 final long maxTimestamp = txMem.getLong(TableUtils.TX_OFFSET_MAX_TIMESTAMP);
                 final long structVersion = txMem.getLong(TableUtils.TX_OFFSET_STRUCT_VERSION);
+                final long partitionTableVersion = txMem.getLong(TableUtils.TX_OFFSET_PARTITION_TABLE_VERSION);
 
                 this.symbolCountSnapshot.clear();
                 int symbolMapCount = txMem.getInt(TableUtils.TX_OFFSET_MAP_WRITER_COUNT);
@@ -804,6 +799,17 @@ public class TableReader implements Closeable {
                     txMem.grow(TableUtils.getSymbolWriterIndexOffset(symbolMapCount));
                     for (int i = 0; i < symbolMapCount; i++) {
                         symbolCountSnapshot.add(txMem.getInt(TableUtils.getSymbolWriterIndexOffset(i)));
+                    }
+                }
+
+                txMem.grow(TableUtils.getPartitionTableIndexOffset(symbolMapCount, 0));
+
+                this.removedPartitions.clear();
+                int partitionTableSize = txMem.getInt(TableUtils.getPartitionTableSizeOffset(symbolMapCount));
+                if (partitionTableSize > 0) {
+                    txMem.grow(TableUtils.getPartitionTableIndexOffset(symbolMapCount, partitionTableSize));
+                    for (int i = 0; i < partitionTableSize; i++) {
+                        this.removedPartitions.add(txMem.getLong(TableUtils.getPartitionTableIndexOffset(symbolMapCount, i)));
                     }
                 }
 
@@ -816,6 +822,7 @@ public class TableReader implements Closeable {
                     this.rowCount = fixedRowCount + transientRowCount;
                     this.maxTimestamp = maxTimestamp;
                     this.structVersion = structVersion;
+                    this.partitionTableVersion = partitionTableVersion;
                     LOG.info().$("new transaction [txn=").$(txn).$(", transientRowCount=").$(transientRowCount).$(", fixedRowCount=").$(fixedRowCount).$(", maxTimestamp=").$(maxTimestamp).$(", attempts=").$(count).$(']').$();
                     return true;
                 }
@@ -899,6 +906,31 @@ public class TableReader implements Closeable {
             }
         } finally {
             path.trimTo(plen);
+        }
+    }
+
+    private void reloadColumnChanges() {
+        // create transition index, which will help us reuse already open resources
+        long pTransitionIndex = metadata.createTransitionIndex();
+        try {
+            metadata.applyTransitionIndex(pTransitionIndex);
+            final int columnCount = Unsafe.getUnsafe().getInt(pTransitionIndex + 4);
+
+            int columnCountBits = getColumnBits(columnCount);
+            // when a column is added we cannot easily reshuffle columns in-place
+            // the reason is that we'd have to create gaps in columns list between
+            // partitions. It is possible in theory, but this could be an algo for
+            // another day.
+            if (columnCountBits > this.columnCountBits) {
+                createNewColumnList(columnCount, pTransitionIndex, columnCountBits);
+            } else {
+                reshuffleColumns(columnCount, pTransitionIndex);
+            }
+            // rearrange symbol map reader list
+            reshuffleSymbolMapReaders(pTransitionIndex);
+            this.columnCount = columnCount;
+        } finally {
+            TableReaderMetadata.freeTransitionIndex(pTransitionIndex);
         }
     }
 
@@ -986,7 +1018,7 @@ public class TableReader implements Closeable {
                     incrementPartitionCountBy(delta);
                     Path path = partitionPathGenerator.generate(this, partitionIndex);
                     try {
-                        reloadPartition(partitionIndex, readPartitionSize(path.chopZ()));
+                        reloadPartition(partitionIndex, TableUtils.readPartitionSize(ff, path.chopZ(), tempMem8b));
                     } finally {
                         path.trimTo(rootLen);
                     }
@@ -1004,8 +1036,13 @@ public class TableReader implements Closeable {
 
     private void reloadStruct() {
         if (this.prevStructVersion != this.structVersion) {
-            doReloadStruct();
+            reloadColumnChanges();
             this.prevStructVersion = this.structVersion;
+        }
+
+        if (this.prevPartitionTableVersion != this.partitionTableVersion) {
+            closeRemovedPartitions();
+            this.prevPartitionTableVersion = partitionTableVersion;
         }
     }
 
@@ -1104,6 +1141,11 @@ public class TableReader implements Closeable {
     @FunctionalInterface
     private interface IntervalLengthMethod {
         long calculate(long minTimestamp, long maxTimestamp);
+    }
+
+    @FunctionalInterface
+    private interface PartitionTimestampCalculatorMethod {
+        long calculate(long minTimestamp, int partitionIndex);
     }
 
     @FunctionalInterface

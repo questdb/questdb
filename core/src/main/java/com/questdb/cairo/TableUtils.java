@@ -31,6 +31,7 @@ import com.questdb.std.Os;
 import com.questdb.std.Unsafe;
 import com.questdb.std.microtime.DateFormat;
 import com.questdb.std.microtime.DateFormatCompiler;
+import com.questdb.std.microtime.Dates;
 import com.questdb.std.str.LPSZ;
 import com.questdb.std.str.Path;
 
@@ -57,8 +58,9 @@ public final class TableUtils {
     static final long TX_OFFSET_FIXED_ROW_COUNT = 16;
     static final long TX_OFFSET_MAX_TIMESTAMP = 24;
     static final long TX_OFFSET_STRUCT_VERSION = 32;
-    static final long TX_OFFSET_TXN_CHECK = 40;
-    static final long TX_OFFSET_MAP_WRITER_COUNT = 48;
+    static final long TX_OFFSET_PARTITION_TABLE_VERSION = 40;
+    static final long TX_OFFSET_TXN_CHECK = 48;
+    static final long TX_OFFSET_MAP_WRITER_COUNT = 56;
     // INT - symbol map count, this is a variable part of transaction file
     // below this offset we will have INT values for symbol map size
     /**
@@ -108,12 +110,20 @@ public final class TableUtils {
         return META_OFFSET_COLUMN_TYPES + columnCount * META_COLUMN_DATA_SIZE;
     }
 
+    public static long getPartitionTableIndexOffset(int symbolWriterCount, int index) {
+        return getPartitionTableSizeOffset(symbolWriterCount) + 4 + index * 8;
+    }
+
+    public static long getPartitionTableSizeOffset(int symbolWriterCount) {
+        return getSymbolWriterIndexOffset(symbolWriterCount);
+    }
+
     public static long getSymbolWriterIndexOffset(int index) {
         return TX_OFFSET_MAP_WRITER_COUNT + 4 + index * 4L;
     }
 
-    public static long getTxMemSize(int symbolWriterCount) {
-        return getSymbolWriterIndexOffset(symbolWriterCount);
+    public static long getTxMemSize(int symbolWriterCount, int removedPartitionsCount) {
+        return getPartitionTableIndexOffset(symbolWriterCount, removedPartitionsCount);
     }
 
     public static long lock(FilesFacade ff, Path path) {
@@ -159,13 +169,12 @@ public final class TableUtils {
         // txn check
         txMem.putLong(TX_OFFSET_TXN_CHECK, INITIAL_TXN);
 
-        long partitionUpdateCountOffset = getSymbolWriterIndexOffset(symbolMapCount);
         // partition update count
-        txMem.putLong(partitionUpdateCountOffset, 0);
+        txMem.putInt(getPartitionTableSizeOffset(symbolMapCount), 0);
 
         // make sure we put append pointer behind our data so that
         // files does not get truncated when closing
-        txMem.jumpTo(partitionUpdateCountOffset + 8);
+        txMem.jumpTo(getPartitionTableIndexOffset(symbolMapCount, 0));
     }
 
     public static void validate(FilesFacade ff, ReadOnlyMemory metaMem, CharSequenceIntHashMap nameIndex) {
@@ -318,6 +327,46 @@ public final class TableUtils {
 
     private static CairoException validationException(ReadOnlyMemory mem) {
         return CairoException.instance(0).put("Invalid metadata at fd=").put(mem.getFd()).put(". ");
+    }
+
+    static boolean isSamePartition(long timestampA, long timestampB, int partitionBy) {
+        switch (partitionBy) {
+            case PartitionBy.NONE:
+                return true;
+            case PartitionBy.DAY:
+                return Dates.floorDD(timestampA) == Dates.floorDD(timestampB);
+            case PartitionBy.MONTH:
+                return Dates.floorMM(timestampA) == Dates.floorMM(timestampB);
+            case PartitionBy.YEAR:
+                return Dates.floorYYYY(timestampA) == Dates.floorYYYY(timestampB);
+            default:
+                throw CairoException.instance(0).put("Cannot compare timestamps for unsupported partition type: [").put(partitionBy).put(']');
+        }
+    }
+
+    static long readPartitionSize(FilesFacade ff, Path path, long tempMem8b) {
+        int plen = path.length();
+        try {
+            if (ff.exists(path.concat(ARCHIVE_FILE_NAME).$())) {
+                long fd = ff.openRO(path);
+                if (fd == -1) {
+                    throw CairoException.instance(Os.errno()).put("Cannot open: ").put(path);
+                }
+
+                try {
+                    if (ff.read(fd, tempMem8b, 8, 0) != 8) {
+                        throw CairoException.instance(Os.errno()).put("Cannot read: ").put(path);
+                    }
+                    return Unsafe.getUnsafe().getLong(tempMem8b);
+                } finally {
+                    ff.close(fd);
+                }
+            } else {
+                throw CairoException.instance(0).put("Doesn't exist: ").put(path);
+            }
+        } finally {
+            path.trimTo(plen);
+        }
     }
 
     static {

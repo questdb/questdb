@@ -86,6 +86,7 @@ public class TableWriter implements Closeable {
     private final LongList indexSequences = new LongList();
     private final CairoWorkScheduler workScheduler;
     private final boolean parallelIndexerEnabled;
+    private final LongHashSet removedPartitions = new LongHashSet();
     private int txPartitionCount = 0;
     private long lockFd;
     private LongConsumer timestampSetter;
@@ -98,7 +99,6 @@ public class TableWriter implements Closeable {
     private long prevTimestamp;
     private long txPrevTransientRowCount;
     private long maxTimestamp;
-    //    private long partitionLo;
     private long partitionHi;
     private long transientRowCount = 0;
     private long masterRef = 0;
@@ -182,10 +182,24 @@ public class TableWriter implements Closeable {
             timestampSetter = configureTimestampSetter();
             configureAppendPosition();
             purgeUnusedPartitions();
+            loadRemovedPartitions();
         } catch (CairoException e) {
             LOG.error().$("cannot open '").$(path).$("' and this is why: {").$((Sinkable) e).$('}').$();
             doClose(false);
             throw e;
+        }
+    }
+
+    public static DateFormat selectPartitionDirFmt(int partitionBy) {
+        switch (partitionBy) {
+            case PartitionBy.DAY:
+                return TableUtils.fmtDay;
+            case PartitionBy.MONTH:
+                return TableUtils.fmtMonth;
+            case PartitionBy.YEAR:
+                return TableUtils.fmtYear;
+            default:
+                return null;
         }
     }
 
@@ -460,6 +474,70 @@ public class TableWriter implements Closeable {
         LOG.info().$("REMOVED column '").utf8(name).$("' from ").$(path).$();
     }
 
+    public boolean removePartition(long timestamp) {
+
+        if (partitionBy == PartitionBy.NONE) {
+            return false;
+        }
+
+        if (TableUtils.isSamePartition(timestamp, maxTimestamp, partitionBy)) {
+            LOG.error()
+                    .$("cannot remove active partition [path=").$(path)
+                    .$(", maxTimestamp=").$ts(maxTimestamp)
+                    .$(']').$();
+            return false;
+        }
+
+        try {
+            setStateForTimestamp(timestamp, false);
+            if (ff.exists(path)) {
+
+                int symbolWriterCount = denseSymbolMapWriters.size();
+                int partitionTableSize = txMem.getInt(getPartitionTableSizeOffset(symbolWriterCount));
+
+                if (removedPartitions.contains(timestamp)) {
+                    LOG.error().$("partition is already marked for delete [path=").$(path).$(']').$();
+                    return false;
+                }
+
+                long partitionSize = TableUtils.readPartitionSize(ff, path, tempMem8b);
+
+                long txn = txMem.getLong(TX_OFFSET_TXN) + 1;
+                txMem.putLong(TX_OFFSET_TXN, txn);
+                Unsafe.getUnsafe().storeFence();
+
+                final long partitionVersion = txMem.getLong(TableUtils.TX_OFFSET_PARTITION_TABLE_VERSION) + 1;
+                txMem.jumpTo(TableUtils.getPartitionTableIndexOffset(symbolWriterCount, partitionTableSize));
+                txMem.putLong(timestamp);
+
+                txMem.putLong(TX_OFFSET_PARTITION_TABLE_VERSION, partitionVersion);
+                txMem.putInt(getPartitionTableSizeOffset(symbolWriterCount), partitionTableSize + 1);
+
+                // decrement row count
+                txMem.putLong(TX_OFFSET_FIXED_ROW_COUNT, txMem.getLong(TX_OFFSET_FIXED_ROW_COUNT) - partitionSize);
+
+                Unsafe.getUnsafe().storeFence();
+                // txn check
+                txMem.putLong(TX_OFFSET_TXN_CHECK, txn);
+
+                if (!ff.rmdir(path.chopZ().put(Files.SEPARATOR).$())) {
+                    LOG.info().$("partition directory delete is postponed [path=").$(path).$(']').$();
+                }
+
+                removedPartitions.add(timestamp);
+                fixedRowCount -= partitionSize;
+
+                LOG.info().$("partition marked for delete [path=").$(path).$(']').$();
+                return true;
+            } else {
+                LOG.error().$("cannot remove already missing partition [path=").$(path).$(']').$();
+                return false;
+            }
+        } finally {
+            path.trimTo(rootLen);
+        }
+    }
+
     public void rollback() {
         checkDistressed();
         if (inTransaction()) {
@@ -610,19 +688,6 @@ public class TableWriter implements Closeable {
         }
     }
 
-    private static DateFormat selectPartitionDirFmt(int partitionBy) {
-        switch (partitionBy) {
-            case PartitionBy.DAY:
-                return TableUtils.fmtDay;
-            case PartitionBy.MONTH:
-                return TableUtils.fmtMonth;
-            case PartitionBy.YEAR:
-                return TableUtils.fmtYear;
-            default:
-                return null;
-        }
-    }
-
     /**
      * This an O(n) method to find if column by the same name already exists. The benefit of poor performance
      * is that we don't keep column name strings on heap. We only use this method when adding new column, where
@@ -714,12 +779,24 @@ public class TableWriter implements Closeable {
         txMem.putLong(TableUtils.TX_OFFSET_STRUCT_VERSION, ++structVersion);
 
         final int count = denseSymbolMapWriters.size();
+        final int oldCount = txMem.getInt(TableUtils.TX_OFFSET_MAP_WRITER_COUNT);
         txMem.putInt(TableUtils.TX_OFFSET_MAP_WRITER_COUNT, count);
         for (int i = 0; i < count; i++) {
             txMem.putInt(TableUtils.getSymbolWriterIndexOffset(i), denseSymbolMapWriters.getQuick(i).getSymbolCount());
         }
-        Unsafe.getUnsafe().storeFence();
 
+        // when symbol column is removed partition table has to be moved up
+        // to do that we just write partition table behind symbol writer table
+
+        if (oldCount != count) {
+            int n = removedPartitions.size();
+            txMem.putInt(getPartitionTableSizeOffset(count), n);
+            for (int i = 0; i < n; i++) {
+                txMem.putLong(getPartitionTableIndexOffset(count, i), removedPartitions.get(i));
+            }
+        }
+
+        Unsafe.getUnsafe().storeFence();
         txMem.putLong(TX_OFFSET_TXN_CHECK, txn);
     }
 
@@ -1073,7 +1150,7 @@ public class TableWriter implements Closeable {
 
     private long getTxEofOffset() {
         if (metadata != null) {
-            return TableUtils.getTxMemSize(metadata.getSymbolMapCount());
+            return TableUtils.getTxMemSize(metadata.getSymbolMapCount(), removedPartitions.size());
         } else {
             return ff.length(txMem.getFd());
         }
@@ -1085,6 +1162,16 @@ public class TableWriter implements Closeable {
 
     boolean isSymbolMapWriterCached(int columnIndex) {
         return symbolMapWriters.getQuick(columnIndex).isCached();
+    }
+
+    private void loadRemovedPartitions() {
+        int symbolWriterCount = denseSymbolMapWriters.size();
+        int partitionTableSize = txMem.getInt(getPartitionTableSizeOffset(symbolWriterCount));
+        if (partitionTableSize > 0) {
+            for (int i = 0; i < partitionTableSize; i++) {
+                removedPartitions.add(txMem.getLong(getPartitionTableIndexOffset(symbolWriterCount, i)));
+            }
+        }
     }
 
     private void lock() {

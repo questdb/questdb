@@ -23,175 +23,133 @@
 
 package com.questdb.std;
 
-import com.questdb.std.str.CharSink;
-import com.questdb.std.str.StringSink;
-
 import java.util.Arrays;
 
 
-public class LongHashSet implements Mutable {
+public class LongHashSet extends AbstractLongHashSet {
 
     private static final int MIN_INITIAL_CAPACITY = 16;
-    private static final long noEntryValue = -1L;
-    private final double loadFactor;
     private final LongList list;
-    private long[] keys;
-    private int free;
-    private int capacity;
-    private int mask;
 
     public LongHashSet() {
-        this(8);
+        this(MIN_INITIAL_CAPACITY);
+    }
+
+    @SuppressWarnings("CopyConstructorMissesField")
+    public LongHashSet(LongHashSet that) {
+        this(that.capacity, that.loadFactor, noEntryKey);
+        addAll(that);
     }
 
     public LongHashSet(int initialCapacity) {
-        this(initialCapacity, 0.5f);
+        this(initialCapacity, 0.4, noEntryKey);
     }
 
-    @SuppressWarnings("unchecked")
-    private LongHashSet(int initialCapacity, double loadFactor) {
-        if (loadFactor <= 0d || loadFactor >= 1d) {
-            throw new IllegalArgumentException("0 < loadFactor < 1");
-        }
-        this.list = new LongList(initialCapacity);
-        int capacity = Math.max(initialCapacity, (int) (initialCapacity / loadFactor));
-        this.loadFactor = loadFactor;
-        keys = new long[capacity < MIN_INITIAL_CAPACITY ? MIN_INITIAL_CAPACITY : Numbers.ceilPow2(capacity)];
-        mask = keys.length - 1;
-        free = this.capacity = initialCapacity;
+    public LongHashSet(int initialCapacity, double loadFactor, long noKeyValue) {
+        super(initialCapacity, loadFactor, noKeyValue);
+        this.list = new LongList(free);
         clear();
     }
 
-    public void add(long key) {
-        if (insertKey(key)) {
-            list.add(key);
-            if (free == 0) {
-                rehash();
-            }
+    /**
+     * Adds key to hash set preserving key uniqueness.
+     *
+     * @param key immutable sequence of characters.
+     * @return false if key is already in the set and true otherwise.
+     */
+    public boolean add(long key) {
+        int index = keyIndex(key);
+        if (index < 0) {
+            return false;
+        }
+
+        addAt(index, key);
+        return true;
+    }
+
+    public final void addAll(LongHashSet that) {
+        for (int i = 0, k = that.size(); i < k; i++) {
+            add(that.get(i));
+        }
+    }
+
+    public void addAt(int index, long key) {
+        Unsafe.arrayPut(keys, index, key);
+        list.add(key);
+        if (--free < 1) {
+            rehash();
         }
     }
 
     public final void clear() {
         free = capacity;
-        Arrays.fill(keys, noEntryValue);
+        Arrays.fill(keys, noEntryKeyValue
+        );
         list.clear();
     }
 
+    public boolean excludes(long key) {
+        return keyIndex(key) > -1;
+    }
+
+    public void removeAt(int index) {
+        if (index < 0) {
+            long key = Unsafe.arrayGet(keys, -index - 1);
+            super.removeAt(index);
+            list.remove(key);
+        }
+    }
+
+    @Override
+    protected void erase(int index) {
+        Unsafe.arrayPut(keys, index, noEntryKeyValue);
+    }
+
+    @Override
+    protected void move(int from, int to) {
+        Unsafe.arrayPut(keys, to, Unsafe.arrayGet(keys, from));
+        erase(from);
+    }
+
     public boolean contains(long key) {
-        int index = (int) (key & mask);
-        return Unsafe.arrayGet(keys, index) != noEntryValue && (key == Unsafe.arrayGet(keys, index) || key == Unsafe.arrayGet(keys, index)) || probeContains(key, index);
+        return keyIndex(key) < 0;
     }
 
     public long get(int index) {
         return list.getQuick(index);
     }
 
-    public void remove(long key) {
-        if (list.remove(key)) {
-            int index = (int) (key & mask);
-            if (key == Unsafe.arrayGet(keys, index)) {
-                Unsafe.arrayPut(keys, index, noEntryValue);
-                free++;
-            } else {
-                probeRemove(key, index);
-            }
-        }
+    public long getLast() {
+        return list.getLast();
     }
 
-    public int size() {
-        return capacity - free;
+    public int remove(long key) {
+        int keyIndex = keyIndex(key);
+        if (keyIndex < 0) {
+            removeAt(keyIndex);
+            return -keyIndex - 1;
+        }
+        return -1;
     }
 
     @Override
     public String toString() {
-        StringSink sink = new StringSink();
-        toString(sink);
-        return sink.toString();
+        return list.toString();
     }
 
-    private boolean insertKey(long key) {
-        int index = (int) (key & mask);
-        if (Unsafe.arrayGet(keys, index) == noEntryValue) {
-            Unsafe.arrayPut(keys, index, key);
-            free--;
-            return true;
-        }
-        return Unsafe.arrayGet(keys, index) != key && probeInsert(key, index);
-    }
-
-    private boolean probeContains(long key, int index) {
-        do {
-            index = (index + 1) & mask;
-            if (Unsafe.arrayGet(keys, index) == noEntryValue) {
-                return false;
-            }
-
-            if (key == Unsafe.arrayGet(keys, index)) {
-                return true;
-            }
-        } while (true);
-    }
-
-    private boolean probeInsert(long key, int index) {
-        do {
-            index = (index + 1) & mask;
-            if (Unsafe.arrayGet(keys, index) == noEntryValue) {
-                Unsafe.arrayPut(keys, index, key);
-                free--;
-                return true;
-            }
-
-            if (key == Unsafe.arrayGet(keys, index)) {
-                return false;
-            }
-        } while (true);
-    }
-
-    private void probeRemove(long key, int index) {
-        int i = index;
-        do {
-            index = (index + 1) & mask;
-            if (key == Unsafe.arrayGet(keys, index)) {
-                Unsafe.arrayPut(keys, index, noEntryValue);
-                free++;
-                break;
-            }
-        } while (i != index);
-    }
-
-    @SuppressWarnings({"unchecked"})
     private void rehash() {
-        int newCapacity = keys.length << 1;
+        int newCapacity = capacity * 2;
         mask = newCapacity - 1;
-        free = capacity = (int) (newCapacity * loadFactor);
-
-        long[] oldKeys = keys;
-        this.keys = new long[newCapacity];
-        Arrays.fill(keys, noEntryValue);
-
-        for (int i = oldKeys.length; i-- > 0; ) {
-            if (Unsafe.arrayGet(oldKeys, i) != noEntryValue) {
-                insertKey(Unsafe.arrayGet(oldKeys, i));
-            }
+        free = capacity = newCapacity;
+        int arrayCapacity = (int) (newCapacity / loadFactor);
+        this.keys = new long[arrayCapacity];
+        Arrays.fill(keys, noEntryKeyValue);
+        int n = list.size();
+        free -= n;
+        for (int i = 0; i < n; i++) {
+            long key = list.getQuick(i);
+            int keyIndex = keyIndex(key);
+            Unsafe.arrayPut(keys, keyIndex, key);
         }
-    }
-
-    private void toString(CharSink sink) {
-        sink.put('[');
-        boolean needComma = false;
-        for (int i = 0, n = keys.length; i < n; i++) {
-            if (keys[i] != noEntryValue) {
-                if (needComma) {
-                    sink.put(',');
-                }
-                sink.put(keys[i]);
-
-                if (!needComma) {
-                    needComma = true;
-                }
-            }
-        }
-
-        sink.put(']');
     }
 }

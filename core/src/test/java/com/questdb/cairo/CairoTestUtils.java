@@ -25,7 +25,6 @@ package com.questdb.cairo;
 
 import com.questdb.std.Files;
 import com.questdb.std.FilesFacade;
-import com.questdb.std.microtime.Dates;
 import com.questdb.std.str.Path;
 
 import static com.questdb.cairo.TableUtils.META_FILE_NAME;
@@ -104,18 +103,4 @@ public class CairoTestUtils {
                 .col("date", ColumnType.DATE);
     }
 
-    static boolean isSamePartition(long timestampA, long timestampB, int partitionBy) {
-        switch (partitionBy) {
-            case PartitionBy.NONE:
-                return true;
-            case PartitionBy.DAY:
-                return Dates.floorDD(timestampA) == Dates.floorDD(timestampB);
-            case PartitionBy.MONTH:
-                return Dates.floorMM(timestampA) == Dates.floorMM(timestampB);
-            case PartitionBy.YEAR:
-                return Dates.floorYYYY(timestampA) == Dates.floorYYYY(timestampB);
-            default:
-                throw CairoException.instance(0).put("Cannot compare timestamps for unsupported partition type: [").put(partitionBy).put(']');
-        }
-    }
 }

@@ -26,10 +26,11 @@ package com.questdb.cairo;
 import com.questdb.cairo.sql.Record;
 import com.questdb.cairo.sql.RecordCursor;
 import com.questdb.std.*;
+import com.questdb.std.microtime.DateFormat;
 import com.questdb.std.microtime.DateFormatUtils;
+import com.questdb.std.microtime.DateLocaleFactory;
 import com.questdb.std.microtime.Dates;
 import com.questdb.std.str.LPSZ;
-import com.questdb.std.str.Path;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -1991,8 +1992,28 @@ public class TableReaderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRemoveActivePartitionByDay() throws Exception {
+        testRemoveActivePartition(PartitionBy.DAY, current -> Dates.addDays(Dates.floorDD(current), 1), "2017-12-15");
+    }
+
+    @Test
+    public void testRemoveActivePartitionByMonth() throws Exception {
+        testRemoveActivePartition(PartitionBy.MONTH, current -> Dates.addMonths(Dates.floorMM(current), 1), "2018-04");
+    }
+
+    @Test
+    public void testRemoveActivePartitionByYear() throws Exception {
+        testRemoveActivePartition(PartitionBy.YEAR, current -> Dates.addYear(Dates.floorYYYY(current), 1), "2021");
+    }
+
+    @Test
     public void testRemoveFirstPartitionByDay() throws Exception {
         testRemovePartition(PartitionBy.DAY, "2017-12-11", 0, current -> Dates.addDays(Dates.floorDD(current), 1));
+    }
+
+    @Test
+    public void testRemoveFirstPartitionByDayReload() throws Exception {
+        testRemovePartitionReload(PartitionBy.DAY, "2017-12-11", 0, current -> Dates.addDays(Dates.floorDD(current), 1));
     }
 
     @Test
@@ -2001,67 +2022,18 @@ public class TableReaderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRemoveFirstPartitionByMonthReload() throws Exception {
+        testRemovePartitionReload(PartitionBy.MONTH, "2017-12", 0, current -> Dates.addMonths(Dates.floorMM(current), 1));
+    }
+
+    @Test
     public void testRemoveFirstPartitionByYear() throws Exception {
         testRemovePartition(PartitionBy.YEAR, "2017", 0, current -> Dates.addYear(Dates.floorYYYY(current), 1));
     }
 
-    public void testRemovePartition(int partitionBy, CharSequence partitionNameToDelete, int affectedBand, NextPartitionTimestampProvider provider) throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            int N = 100;
-            int N_PARTITIONS = 5;
-            long timestampUs = DateFormatUtils.parseDateTime("2017-12-11T00:00:00.000Z");
-            long stride = 100;
-            int bandStride = 1000;
-            int totalCount = 0;
-
-            // model table
-            try (TableModel model = new TableModel(configuration, "w", partitionBy).col("l", ColumnType.LONG).timestamp()) {
-                CairoTestUtils.create(model);
-            }
-
-            try (TableWriter writer = new TableWriter(configuration, "w")) {
-
-                for (int k = 0; k < N_PARTITIONS; k++) {
-                    long band = k * bandStride;
-                    for (int i = 0; i < N; i++) {
-                        TableWriter.Row row = writer.newRow(timestampUs);
-                        row.putLong(0, band + i);
-                        row.append();
-                        writer.commit();
-                        timestampUs += stride;
-                    }
-                    timestampUs = provider.getNext(timestampUs);
-                }
-            }
-
-            rmDir(partitionNameToDelete);
-
-            // now open table reader having partition gap
-            try (TableReader reader = new TableReader(configuration, "w")) {
-                int previousBand = -1;
-                int bandCount = 0;
-                RecordCursor cursor = reader.getCursor();
-                final Record record = cursor.getRecord();
-                while (cursor.hasNext()) {
-                    long value = record.getLong(0);
-                    int band = (int) ((value / bandStride) * bandStride);
-                    if (band != previousBand) {
-                        // make sure we don#t pick up deleted partition
-                        Assert.assertNotEquals(affectedBand, band);
-                        if (previousBand != -1) {
-                            Assert.assertEquals(N, bandCount);
-                        }
-                        previousBand = band;
-                        bandCount = 0;
-                    }
-                    bandCount++;
-                    totalCount++;
-                }
-                Assert.assertEquals(N, bandCount);
-            }
-
-            Assert.assertEquals(N * (N_PARTITIONS - 1), totalCount);
-        });
+    @Test
+    public void testRemoveFirstPartitionByYearReload() throws Exception {
+        testRemovePartitionReload(PartitionBy.YEAR, "2017", 0, current -> Dates.addYear(Dates.floorYYYY(current), 1));
     }
 
     @Test
@@ -2070,13 +2042,28 @@ public class TableReaderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRemovePartitionByDayReload() throws Exception {
+        testRemovePartitionReload(PartitionBy.DAY, "2017-12-14", 3000, current -> Dates.addDays(Dates.floorDD(current), 1));
+    }
+
+    @Test
     public void testRemovePartitionByMonth() throws Exception {
         testRemovePartition(PartitionBy.MONTH, "2018-01", 1000, current -> Dates.addMonths(Dates.floorMM(current), 1));
     }
 
     @Test
+    public void testRemovePartitionByMonthReload() throws Exception {
+        testRemovePartitionReload(PartitionBy.MONTH, "2018-01", 1000, current -> Dates.addMonths(Dates.floorMM(current), 1));
+    }
+
+    @Test
     public void testRemovePartitionByYear() throws Exception {
         testRemovePartition(PartitionBy.YEAR, "2020", 3000, current -> Dates.addYear(Dates.floorYYYY(current), 1));
+    }
+
+    @Test
+    public void testRemovePartitionByYearReload() throws Exception {
+        testRemovePartitionReload(PartitionBy.YEAR, "2020", 3000, current -> Dates.addYear(Dates.floorYYYY(current), 1));
     }
 
     @Test
@@ -2774,14 +2761,6 @@ public class TableReaderTest extends AbstractCairoTest {
         Assert.assertEquals(TableUtils.NULL_LEN, r.getStrLen(index));
     }
 
-    private static void rmDir(CharSequence partitionName) {
-        try (Path path = new Path()) {
-            path.of(root).concat("w").concat(partitionName).$();
-            Assert.assertTrue(configuration.getFilesFacade().exists(path));
-            Assert.assertTrue(configuration.getFilesFacade().rmdir(path));
-        }
-    }
-
     private void appendTwoSymbols(TableWriter writer, Rnd rnd) {
         for (int i = 0; i < 1000; i++) {
             TableWriter.Row row = writer.newRow(0);
@@ -3025,9 +3004,9 @@ public class TableReaderTest extends AbstractCairoTest {
         writer.commit();
 
         if (testPartitionSwitch == MUST_SWITCH) {
-            Assert.assertFalse(CairoTestUtils.isSamePartition(timestamp, writer.getMaxTimestamp(), writer.getPartitionBy()));
+            Assert.assertFalse(TableUtils.isSamePartition(timestamp, writer.getMaxTimestamp(), writer.getPartitionBy()));
         } else if (testPartitionSwitch == MUST_NOT_SWITCH) {
-            Assert.assertTrue(CairoTestUtils.isSamePartition(timestamp, writer.getMaxTimestamp(), writer.getPartitionBy()));
+            Assert.assertTrue(TableUtils.isSamePartition(timestamp, writer.getMaxTimestamp(), writer.getPartitionBy()));
         }
 
         Assert.assertEquals(size + count, writer.size());
@@ -3301,6 +3280,232 @@ public class TableReaderTest extends AbstractCairoTest {
             } finally {
                 freeBlob(blob);
             }
+        });
+    }
+
+    private void testRemoveActivePartition(int partitionBy, NextPartitionTimestampProvider provider, CharSequence partitionNameToDelete) throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            int N = 100;
+            int N_PARTITIONS = 5;
+            long timestampUs = DateFormatUtils.parseDateTime("2017-12-11T00:00:00.000Z");
+            long stride = 100;
+            int bandStride = 1000;
+            int totalCount = 0;
+
+            // model table
+            try (TableModel model = new TableModel(configuration, "w", partitionBy).col("l", ColumnType.LONG).timestamp()) {
+                CairoTestUtils.create(model);
+            }
+
+            try (TableWriter writer = new TableWriter(configuration, "w")) {
+
+                for (int k = 0; k < N_PARTITIONS; k++) {
+                    long band = k * bandStride;
+                    for (int i = 0; i < N; i++) {
+                        TableWriter.Row row = writer.newRow(timestampUs);
+                        row.putLong(0, band + i);
+                        row.append();
+                        writer.commit();
+                        timestampUs += stride;
+                    }
+                    timestampUs = provider.getNext(timestampUs);
+                }
+
+                Assert.assertEquals(500, writer.size());
+
+
+                // now open table reader having partition gap
+                try (TableReader reader = new TableReader(configuration, "w")) {
+
+                    Assert.assertEquals(500, reader.size());
+                    RecordCursor cursor = reader.getCursor();
+                    Record record = cursor.getRecord();
+                    while (cursor.hasNext()) {
+                        record.getLong(0);
+                        totalCount++;
+                    }
+                    Assert.assertEquals(500, totalCount);
+
+
+                    DateFormat fmt = TableWriter.selectPartitionDirFmt(partitionBy);
+                    assert fmt != null;
+                    Assert.assertFalse(
+                            writer.removePartition(fmt.parse(partitionNameToDelete, DateLocaleFactory.INSTANCE.getDefaultDateLocale()))
+                    );
+
+                    Assert.assertEquals(500, writer.size());
+
+                    reader.reload();
+
+                    totalCount = 0;
+
+                    Assert.assertEquals(N * N_PARTITIONS, reader.size());
+
+                    cursor = reader.getCursor();
+                    record = cursor.getRecord();
+                    while (cursor.hasNext()) {
+                        record.getLong(0);
+                        totalCount++;
+                    }
+                    Assert.assertEquals(N * N_PARTITIONS, totalCount);
+                }
+            }
+
+        });
+    }
+
+    private void testRemovePartition(int partitionBy, CharSequence partitionNameToDelete, int affectedBand, NextPartitionTimestampProvider provider) throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            int N = 100;
+            int N_PARTITIONS = 5;
+            long timestampUs = DateFormatUtils.parseDateTime("2017-12-11T00:00:00.000Z");
+            long stride = 100;
+            int bandStride = 1000;
+            int totalCount = 0;
+
+            // model table
+            try (TableModel model = new TableModel(configuration, "w", partitionBy).col("l", ColumnType.LONG).timestamp()) {
+                CairoTestUtils.create(model);
+            }
+
+            try (TableWriter writer = new TableWriter(configuration, "w")) {
+
+                for (int k = 0; k < N_PARTITIONS; k++) {
+                    long band = k * bandStride;
+                    for (int i = 0; i < N; i++) {
+                        TableWriter.Row row = writer.newRow(timestampUs);
+                        row.putLong(0, band + i);
+                        row.append();
+                        writer.commit();
+                        timestampUs += stride;
+                    }
+                    timestampUs = provider.getNext(timestampUs);
+                }
+
+                Assert.assertEquals(N * N_PARTITIONS, writer.size());
+
+                DateFormat fmt = TableWriter.selectPartitionDirFmt(partitionBy);
+                assert fmt != null;
+                Assert.assertTrue(
+                        writer.removePartition(fmt.parse(partitionNameToDelete, DateLocaleFactory.INSTANCE.getDefaultDateLocale()))
+                );
+
+                Assert.assertEquals(400, writer.size());
+            }
+
+            // now open table reader having partition gap
+            try (TableReader reader = new TableReader(configuration, "w")) {
+
+                Assert.assertEquals(400, reader.size());
+
+                int previousBand = -1;
+                int bandCount = 0;
+                RecordCursor cursor = reader.getCursor();
+                final Record record = cursor.getRecord();
+                while (cursor.hasNext()) {
+                    long value = record.getLong(0);
+                    int band = (int) ((value / bandStride) * bandStride);
+                    if (band != previousBand) {
+                        // make sure we don#t pick up deleted partition
+                        Assert.assertNotEquals(affectedBand, band);
+                        if (previousBand != -1) {
+                            Assert.assertEquals(N, bandCount);
+                        }
+                        previousBand = band;
+                        bandCount = 0;
+                    }
+                    bandCount++;
+                    totalCount++;
+                }
+                Assert.assertEquals(N, bandCount);
+            }
+
+            Assert.assertEquals(N * (N_PARTITIONS - 1), totalCount);
+        });
+    }
+
+    private void testRemovePartitionReload(int partitionBy, CharSequence partitionNameToDelete, int affectedBand, NextPartitionTimestampProvider provider) throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            int N = 100;
+            int N_PARTITIONS = 5;
+            long timestampUs = DateFormatUtils.parseDateTime("2017-12-11T00:00:00.000Z");
+            long stride = 100;
+            int bandStride = 1000;
+            int totalCount = 0;
+
+            // model table
+            try (TableModel model = new TableModel(configuration, "w", partitionBy).col("l", ColumnType.LONG).timestamp()) {
+                CairoTestUtils.create(model);
+            }
+
+            try (TableWriter writer = new TableWriter(configuration, "w")) {
+
+                for (int k = 0; k < N_PARTITIONS; k++) {
+                    long band = k * bandStride;
+                    for (int i = 0; i < N; i++) {
+                        TableWriter.Row row = writer.newRow(timestampUs);
+                        row.putLong(0, band + i);
+                        row.append();
+                        writer.commit();
+                        timestampUs += stride;
+                    }
+                    timestampUs = provider.getNext(timestampUs);
+                }
+
+                Assert.assertEquals(N * N_PARTITIONS, writer.size());
+
+
+                // now open table reader having partition gap
+                try (TableReader reader = new TableReader(configuration, "w")) {
+
+                    Assert.assertEquals(N * N_PARTITIONS, reader.size());
+                    RecordCursor cursor = reader.getCursor();
+                    Record record = cursor.getRecord();
+                    while (cursor.hasNext()) {
+                        record.getLong(0);
+                        totalCount++;
+                    }
+                    Assert.assertEquals(N * N_PARTITIONS, totalCount);
+
+
+                    DateFormat fmt = TableWriter.selectPartitionDirFmt(partitionBy);
+                    assert fmt != null;
+                    Assert.assertTrue(
+                            writer.removePartition(fmt.parse(partitionNameToDelete, DateLocaleFactory.INSTANCE.getDefaultDateLocale()))
+                    );
+
+                    Assert.assertEquals(N * (N_PARTITIONS - 1), writer.size());
+
+                    reader.reload();
+
+                    totalCount = 0;
+
+                    Assert.assertEquals(N * (N_PARTITIONS - 1), reader.size());
+
+                    int previousBand = -1;
+                    int bandCount = 0;
+                    cursor = reader.getCursor();
+                    record = cursor.getRecord();
+                    while (cursor.hasNext()) {
+                        long value = record.getLong(0);
+                        int band = (int) ((value / bandStride) * bandStride);
+                        if (band != previousBand) {
+                            // make sure we don#t pick up deleted partition
+                            Assert.assertNotEquals(affectedBand, band);
+                            if (previousBand != -1) {
+                                Assert.assertEquals(N, bandCount);
+                            }
+                            previousBand = band;
+                            bandCount = 0;
+                        }
+                        bandCount++;
+                        totalCount++;
+                    }
+                    Assert.assertEquals(N, bandCount);
+                }
+            }
+
+            Assert.assertEquals(N * (N_PARTITIONS - 1), totalCount);
         });
     }
 
