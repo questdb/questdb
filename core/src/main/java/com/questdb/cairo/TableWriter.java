@@ -500,6 +500,10 @@ public class TableWriter implements Closeable {
                     return false;
                 }
 
+                // todo: when this fails - rescan partitions to calculate fixedRowCount
+                // also write a todo file, which will indicate which partition we wanted to delete
+                // reconcile partitions we can read sizes of with partition table
+                // add partitions we cannot read sizes of to partition table
                 long partitionSize = TableUtils.readPartitionSize(ff, path, tempMem8b);
 
                 long txn = txMem.getLong(TX_OFFSET_TXN) + 1;

@@ -31,7 +31,7 @@ public final class OpenBarrier implements Barrier {
 
     @Override
     public long availableIndex(long lo) {
-        return Long.MAX_VALUE;
+        return Long.MAX_VALUE - 1;
     }
 
     @Override
