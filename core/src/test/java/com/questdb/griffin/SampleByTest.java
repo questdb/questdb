@@ -51,6 +51,56 @@ public class SampleByTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testGroupByAllTypes() throws Exception {
+        assertQuery("b\tsum\tsum1\tsum2\tsum3\tsum4\tsum5\n" +
+                        "HYRX\t108.4198\t129.399112218477\t2127224767\t95\t-8329\t1696566079386694074\n" +
+                        "\t680.7651\t771.092262202840\t2135522192\t77\t815\t-5259855777509188759\n" +
+                        "CPSW\t101.2276\t111.113584037391\t-1727443926\t33\t-22282\t7594916031131877487\n" +
+                        "PEHN\t104.2904\t100.877261378303\t-940643167\t18\t17565\t-4882690809235649274\n" +
+                        "RXGZ\t96.4029\t42.020442539326\t712702244\t46\t22661\t2762535352290012031\n",
+                "select b, sum(a), sum(c), sum(d), sum(e), sum(f), sum(g) from x",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_float(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " rnd_double(0)*100 c," +
+                        " abs(rnd_int()) d," +
+                        " rnd_byte(2, 50) e," +
+                        " abs(rnd_short()) f," +
+                        " abs(rnd_long()) g," +
+                        " timestamp_sequence(to_timestamp(172800000000), 3600000000) k" +
+                        " from" +
+                        " long_sequence(20)" +
+                        ") timestamp(k) partition by NONE",
+                null,
+                "insert into x select * from (" +
+                        "select" +
+                        " rnd_float(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " rnd_double(0)*100 c," +
+                        " abs(rnd_int()) d," +
+                        " rnd_byte(2, 50) e," +
+                        " abs(rnd_short()) f," +
+                        " abs(rnd_long()) g," +
+                        " timestamp_sequence(to_timestamp(277200000000), 3600000000) k" +
+                        " from" +
+                        " long_sequence(5)" +
+                        ") timestamp(k)",
+                "b\tsum\tsum1\tsum2\tsum3\tsum4\tsum5\n" +
+                        "HYRX\t108.4198\t129.399112218477\t2127224767\t95\t-8329\t1696566079386694074\n" +
+                        "\t779.3558\t869.932373151714\t-247384018\t107\t18639\t3597805051091659961\n" +
+                        "CPSW\t101.2276\t111.113584037391\t-1727443926\t33\t-22282\t7594916031131877487\n" +
+                        "PEHN\t104.2904\t100.877261378303\t-940643167\t18\t17565\t-4882690809235649274\n" +
+                        "RXGZ\t96.4029\t42.020442539326\t712702244\t46\t22661\t2762535352290012031\n" +
+                        "ZGHW\t50.2589\t38.422543844715\t597366062\t21\t23702\t7037372650941669660\n" +
+                        "LOPJ\t76.6815\t5.158459929274\t1920398380\t38\t16628\t3527911398466283309\n" +
+                        "VDKF\t4.3606\t35.681110212277\t503883303\t38\t10895\t7202923278768687325\n" +
+                        "OXPK\t45.9207\t76.062526341246\t2043541236\t21\t19278\t1832315370633201942\n",
+                true);
+    }
+
+    @Test
     public void testSampleBadFunction() throws Exception {
         assertFailure(
                 "select b, sumx(a, 'a') k from x sample by 3h fill(none)",

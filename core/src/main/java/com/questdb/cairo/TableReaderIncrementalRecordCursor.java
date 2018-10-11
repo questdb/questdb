@@ -53,10 +53,6 @@ public class TableReaderIncrementalRecordCursor extends TableReaderRecordCursor 
         return false;
     }
 
-    public long getLastRowId() {
-        return lastRowId;
-    }
-
     private void seekToLast() {
         if (lastRowId > -1) {
             startFrom(lastRowId);

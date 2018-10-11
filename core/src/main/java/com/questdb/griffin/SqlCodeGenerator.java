@@ -320,85 +320,8 @@ public class SqlCodeGenerator {
         return generateOrderBy(model, executionContext);
     }
 
-    private RecordCursorFactory generateSelect(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
-        switch (model.getSelectModelType()) {
-            case QueryModel.SELECT_MODEL_CHOOSE:
-                return generateSelectChoose(model, executionContext);
-            case QueryModel.SELECT_MODEL_GROUP_BY:
-                return generateSelectGroupBy(model, executionContext);
-            case QueryModel.SELECT_MODEL_VIRTUAL:
-                return generateSelectVirtual(model, executionContext);
-            case QueryModel.SELECT_MODEL_ANALYTIC:
-                return generateSelectAnalytic(model, executionContext);
-            default:
-                return generateNoSelect(model, executionContext);
-        }
-    }
-
-    private RecordCursorFactory generateSelectAnalytic(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
-        assert model.getNestedModel() != null;
-        return generateQuery(model.getNestedModel(), executionContext);
-    }
-
-    private RecordCursorFactory generateSelectChoose(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
-        assert model.getNestedModel() != null;
-        final RecordCursorFactory factory = generateQuery(model.getNestedModel(), executionContext);
-        final RecordMetadata metadata = factory.getMetadata();
-        final int selectColumnCount = model.getColumns().size();
-        final ExpressionNode timestamp = model.getTimestamp();
-
-        boolean entity;
-        // the model is considered entity when it doesn't add any value to its nested model
-        //
-        if (timestamp == null && metadata.getColumnCount() == selectColumnCount) {
-            entity = true;
-            for (int i = 0; i < selectColumnCount; i++) {
-                if (!Chars.equals(metadata.getColumnName(i), model.getColumns().getQuick(i).getAst().token)) {
-                    entity = false;
-                    break;
-                }
-            }
-        } else {
-            entity = false;
-        }
-
-        if (entity) {
-            return factory;
-        }
-
-        IntList columnCrossIndex = new IntList(selectColumnCount);
-        GenericRecordMetadata selectMetadata = new GenericRecordMetadata();
-        final int timestampIndex;
-        if (timestamp == null) {
-            timestampIndex = metadata.getTimestampIndex();
-        } else {
-            timestampIndex = metadata.getColumnIndex(timestamp.token);
-        }
-        for (int i = 0; i < selectColumnCount; i++) {
-            int index = metadata.getColumnIndexQuiet(model.getColumns().getQuick(i).getAst().token);
-            assert index > -1 : "wtf? " + model.getColumns().getQuick(i).getAst().token;
-            columnCrossIndex.add(index);
-
-            selectMetadata.add(new TableColumnMetadata(
-                    Chars.toString(model.getColumns().getQuick(i).getName()),
-                    metadata.getColumnType(index),
-                    metadata.isColumnIndexed(index),
-                    metadata.getIndexValueBlockCapacity(index)
-            ));
-
-            if (index == timestampIndex) {
-                selectMetadata.setTimestampIndex(i);
-            }
-        }
-
-        return new SelectedRecordCursorFactory(selectMetadata, columnCrossIndex, factory);
-    }
-
-    private RecordCursorFactory generateSelectGroupBy(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
-
-        // fail fast if we cannot create timestamp sampler
-
-        final ExpressionNode sampleByNode = model.getSampleBy();
+    @NotNull
+    private RecordCursorFactory generateSampleBy(QueryModel model, SqlExecutionContext executionContext, ExpressionNode sampleByNode) throws SqlException {
         final ObjList<ExpressionNode> sampleByFill = model.getSampleByFill();
         final TimestampSampler timestampSampler = TimestampSamplerFactory.getInstance(sampleByNode.token, sampleByNode.position);
 
@@ -406,7 +329,6 @@ public class SqlCodeGenerator {
         final int fillCount = sampleByFill.size();
         final RecordCursorFactory factory = generateQuery(model.getNestedModel(), executionContext);
         try {
-
             keyTypes.reset();
             valueTypes.reset();
             listColumnFilter.clear();
@@ -489,6 +411,113 @@ public class SqlCodeGenerator {
                     valueTypes
             );
         } catch (SqlException | CairoException e) {
+            factory.close();
+            throw e;
+        }
+    }
+
+    private RecordCursorFactory generateSelect(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
+        switch (model.getSelectModelType()) {
+            case QueryModel.SELECT_MODEL_CHOOSE:
+                return generateSelectChoose(model, executionContext);
+            case QueryModel.SELECT_MODEL_GROUP_BY:
+                return generateSelectGroupBy(model, executionContext);
+            case QueryModel.SELECT_MODEL_VIRTUAL:
+                return generateSelectVirtual(model, executionContext);
+            case QueryModel.SELECT_MODEL_ANALYTIC:
+                return generateSelectAnalytic(model, executionContext);
+            default:
+                return generateNoSelect(model, executionContext);
+        }
+    }
+
+    private RecordCursorFactory generateSelectAnalytic(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
+        assert model.getNestedModel() != null;
+        return generateQuery(model.getNestedModel(), executionContext);
+    }
+
+    private RecordCursorFactory generateSelectChoose(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
+        assert model.getNestedModel() != null;
+        final RecordCursorFactory factory = generateQuery(model.getNestedModel(), executionContext);
+        final RecordMetadata metadata = factory.getMetadata();
+        final int selectColumnCount = model.getColumns().size();
+        final ExpressionNode timestamp = model.getTimestamp();
+
+        boolean entity;
+        // the model is considered entity when it doesn't add any value to its nested model
+        //
+        if (timestamp == null && metadata.getColumnCount() == selectColumnCount) {
+            entity = true;
+            for (int i = 0; i < selectColumnCount; i++) {
+                if (!Chars.equals(metadata.getColumnName(i), model.getColumns().getQuick(i).getAst().token)) {
+                    entity = false;
+                    break;
+                }
+            }
+        } else {
+            entity = false;
+        }
+
+        if (entity) {
+            return factory;
+        }
+
+        IntList columnCrossIndex = new IntList(selectColumnCount);
+        GenericRecordMetadata selectMetadata = new GenericRecordMetadata();
+        final int timestampIndex;
+        if (timestamp == null) {
+            timestampIndex = metadata.getTimestampIndex();
+        } else {
+            timestampIndex = metadata.getColumnIndex(timestamp.token);
+        }
+        for (int i = 0; i < selectColumnCount; i++) {
+            int index = metadata.getColumnIndexQuiet(model.getColumns().getQuick(i).getAst().token);
+            assert index > -1 : "wtf? " + model.getColumns().getQuick(i).getAst().token;
+            columnCrossIndex.add(index);
+
+            selectMetadata.add(new TableColumnMetadata(
+                    Chars.toString(model.getColumns().getQuick(i).getName()),
+                    metadata.getColumnType(index),
+                    metadata.isColumnIndexed(index),
+                    metadata.getIndexValueBlockCapacity(index)
+            ));
+
+            if (index == timestampIndex) {
+                selectMetadata.setTimestampIndex(i);
+            }
+        }
+
+        return new SelectedRecordCursorFactory(selectMetadata, columnCrossIndex, factory);
+    }
+
+    private RecordCursorFactory generateSelectGroupBy(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
+
+        // fail fast if we cannot create timestamp sampler
+
+        final ExpressionNode sampleByNode = model.getSampleBy();
+        if (sampleByNode != null) {
+            return generateSampleBy(model, executionContext, sampleByNode);
+        }
+
+        final RecordCursorFactory factory = generateQuery(model.getNestedModel(), executionContext);
+        try {
+            keyTypes.reset();
+            valueTypes.reset();
+            listColumnFilter.clear();
+
+            return new GroupByRecordCursorFactory(
+                    configuration,
+                    factory,
+                    model,
+                    listColumnFilter,
+                    functionParser,
+                    executionContext,
+                    asm,
+                    keyTypes,
+                    valueTypes
+            );
+
+        } catch (CairoException e) {
             factory.close();
             throw e;
         }

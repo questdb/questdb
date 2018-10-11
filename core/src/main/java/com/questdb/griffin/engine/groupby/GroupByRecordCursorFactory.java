@@ -34,39 +34,35 @@ import com.questdb.griffin.SqlException;
 import com.questdb.griffin.SqlExecutionContext;
 import com.questdb.griffin.engine.functions.GroupByFunction;
 import com.questdb.griffin.engine.functions.bind.BindVariableService;
-import com.questdb.griffin.engine.table.EmptyTableRecordCursor;
 import com.questdb.griffin.model.QueryModel;
 import com.questdb.std.*;
 import org.jetbrains.annotations.NotNull;
 
-public class AbstractSampleByRecordCursorFactory implements RecordCursorFactory {
+public class GroupByRecordCursorFactory implements RecordCursorFactory {
 
     protected final RecordCursorFactory base;
-    protected final Map map;
-    private final DelegatingRecordCursor cursor;
+    private final Map dataMap;
+    private final GroupByRecordCursor cursor;
     private final ObjList<Function> recordFunctions;
     private final ObjList<GroupByFunction> groupByFunctions;
     private final RecordSink mapSink;
+    // this sink is used to copy recordKeyMap keys to dataMap
     private final RecordMetadata metadata;
 
-    public AbstractSampleByRecordCursorFactory(
+    public GroupByRecordCursorFactory(
             CairoConfiguration configuration,
             RecordCursorFactory base,
-            @NotNull TimestampSampler timestampSampler,
             @Transient @NotNull QueryModel model,
             @Transient @NotNull ListColumnFilter listColumnFilter,
             @Transient @NotNull FunctionParser functionParser,
             @Transient @NotNull SqlExecutionContext executionContext,
             @Transient @NotNull BytecodeAssembler asm,
-            @Transient @NotNull SampleByCursorLambda cursorLambda,
             @Transient @NotNull ArrayColumnTypes keyTypes,
             @Transient @NotNull ArrayColumnTypes valueTypes
     ) throws SqlException {
         final int columnCount = model.getColumns().size();
         final RecordMetadata metadata = base.getMetadata();
         this.groupByFunctions = new ObjList<>(columnCount);
-        valueTypes.add(ColumnType.TIMESTAMP); // first value is always timestamp
-
         GroupByUtils.prepareGroupByFunctions(
                 model,
                 metadata,
@@ -90,24 +86,15 @@ public class AbstractSampleByRecordCursorFactory implements RecordCursorFactory 
                 keyTypes,
                 valueTypes,
                 symbolTableIndex,
-                false
+                true
         );
 
         // sink will be storing record columns to map key
         this.mapSink = RecordSinkFactory.getInstance(asm, metadata, listColumnFilter, false);
-        // this is the map itself, which we must not forget to free when factory closes
-        this.map = MapFactory.createMap(configuration, keyTypes, valueTypes);
+        this.dataMap = MapFactory.createMap(configuration, keyTypes, valueTypes);
         this.base = base;
         this.metadata = groupByMetadata;
-        this.cursor = cursorLambda.createCursor(
-                map,
-                mapSink,
-                timestampSampler,
-                metadata.getTimestampIndex(),
-                groupByFunctions,
-                recordFunctions,
-                symbolTableIndex
-        );
+        this.cursor = new GroupByRecordCursor(recordFunctions, symbolTableIndex);
     }
 
     @Override
@@ -116,48 +103,36 @@ public class AbstractSampleByRecordCursorFactory implements RecordCursorFactory 
         for (int i = 0, n = recordFunctions.size(); i < n; i++) {
             recordFunctions.getQuick(i).close();
         }
-        map.close();
+        dataMap.close();
     }
 
     @Override
     public RecordCursor getCursor(BindVariableService bindVariableService) {
+        dataMap.clear();
         final RecordCursor baseCursor = base.getCursor(bindVariableService);
-        map.clear();
-
-        // This factory fills gaps in data. To do that we
-        // have to know all possible key values. Essentially, every time
-        // we sample we return same set of key values with different
-        // aggregation results and timestamp
-
-        int n = groupByFunctions.size();
-        final Record baseCursorRecord = baseCursor.getRecord();
-        while (baseCursor.hasNext()) {
-            MapKey key = map.withKey();
-            mapSink.copy(baseCursorRecord, key);
-            MapValue value = key.createValue();
-            if (value.isNew()) {
-                // timestamp is always stored in value field 0
-                value.putLong(0, Numbers.LONG_NaN);
-                // have functions reset their columns to "zero" state
-                // this would set values for when keys are not found right away
-                for (int i = 0; i < n; i++) {
-                    groupByFunctions.getQuick(i).setNull(value);
+        try {
+            final Record baseRecord = baseCursor.getRecord();
+            final int n = groupByFunctions.size();
+            while (baseCursor.hasNext()) {
+                final MapKey key = dataMap.withKey();
+                mapSink.copy(baseRecord, key);
+                MapValue value = key.createValue();
+                if (value.isNew()) {
+                    for (int i = 0; i < n; i++) {
+                        groupByFunctions.getQuick(i).computeFirst(value, baseRecord);
+                    }
+                } else {
+                    for (int i = 0; i < n; i++) {
+                        groupByFunctions.getQuick(i).computeNext(value, baseRecord);
+                    }
                 }
             }
+            return initFunctionsAndCursor(bindVariableService, dataMap.getCursor(), baseCursor);
+        } catch (CairoException e) {
+            baseCursor.close();
+            //todo: free other things
+            throw e;
         }
-
-        // empty map? this means that base cursor was empty
-        if (map.size() == 0) {
-            return EmptyTableRecordCursor.INSTANCE;
-        }
-
-        // because we pass base cursor twice we have to go back to top
-        // for the second run
-        baseCursor.toTop();
-        boolean next = baseCursor.hasNext();
-        // we know base cursor has value
-        assert next;
-        return initFunctionsAndCursor(bindVariableService, baseCursor);
     }
 
     @Override
@@ -167,16 +142,78 @@ public class AbstractSampleByRecordCursorFactory implements RecordCursorFactory 
 
     @Override
     public boolean isRandomAccessCursor() {
-        return false;
+        return true;
     }
 
     @NotNull
-    protected RecordCursor initFunctionsAndCursor(BindVariableService bindVariableService, RecordCursor baseCursor) {
-        cursor.of(baseCursor);
+    protected RecordCursor initFunctionsAndCursor(BindVariableService bindVariableService, RecordCursor mapCursor, RecordCursor baseCursor) {
+        cursor.of(mapCursor, baseCursor);
         // init all record function for this cursor, in case functions require metadata and/or symbol tables
         for (int i = 0, m = recordFunctions.size(); i < m; i++) {
             recordFunctions.getQuick(i).init(cursor, bindVariableService);
         }
         return cursor;
+    }
+
+    private static class GroupByRecordCursor implements RecordCursor {
+        private final VirtualRecord functionRecord;
+        private final IntIntHashMap symbolTableIndex;
+        private RecordCursor mapCursor;
+        private RecordCursor baseCursor;
+
+        public GroupByRecordCursor(ObjList<Function> functions, IntIntHashMap symbolTableIndex) {
+            this.functionRecord = new VirtualRecord(functions);
+            this.symbolTableIndex = symbolTableIndex;
+        }
+
+        @Override
+        public void close() {
+            Misc.free(mapCursor);
+            Misc.free(baseCursor);
+        }
+
+        @Override
+        public Record getRecord() {
+            return functionRecord;
+        }
+
+        @Override
+        public SymbolTable getSymbolTable(int columnIndex) {
+            return baseCursor.getSymbolTable(symbolTableIndex.get(columnIndex));
+        }
+
+        @Override
+        public boolean hasNext() {
+            return mapCursor.hasNext();
+        }
+
+        @Override
+        public Record newRecord() {
+            VirtualRecord record = new VirtualRecord(functionRecord.getFunctions());
+            record.of(mapCursor.newRecord());
+            return record;
+        }
+
+        @Override
+        public void recordAt(Record record, long atRowId) {
+            assert record instanceof VirtualRecord;
+            mapCursor.recordAt(((VirtualRecord) record).getBaseRecord(), atRowId);
+        }
+
+        @Override
+        public void recordAt(long rowId) {
+            mapCursor.recordAt(functionRecord.getBaseRecord(), rowId);
+        }
+
+        @Override
+        public void toTop() {
+            mapCursor.toTop();
+        }
+
+        public void of(RecordCursor mapCursor, RecordCursor baseCursor) {
+            this.mapCursor = mapCursor;
+            this.baseCursor = baseCursor;
+            functionRecord.of(mapCursor.getRecord());
+        }
     }
 }

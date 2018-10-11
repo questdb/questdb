@@ -1903,7 +1903,7 @@ class SqlOptimiser {
 
         // create virtual columns from select list
         for (int i = 0, k = columns.size(); i < k; i++) {
-            final QueryColumn qc = columns.getQuick(i);
+            QueryColumn qc = columns.getQuick(i);
             final boolean analytic = qc instanceof AnalyticColumn;
 
             // fail-fast if this is an arithmetic expression where we expect analytic function
@@ -1942,6 +1942,10 @@ class SqlOptimiser {
                         useAnalyticModel = true;
                         continue;
                     } else if (functionParser.isGroupBy(qc.getAst().token)) {
+                        CharSequence alias = createColumnAlias(qc.getAlias(), groupByModel);
+                        if (alias != qc.getAlias()) {
+                            qc = queryColumnPool.next().of(alias, qc.getAst());
+                        }
                         groupByModel.addColumn(qc);
                         // group-by column references might be needed when we have
                         // outer model supporting arithmetic such as:

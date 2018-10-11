@@ -64,6 +64,10 @@
                 <artifactId>maven-compiler-plugin</artifactId>
                 <version>3.6.1</version>
                 <configuration>
+                    <!-- these args suppress warning about using internal java APIs -->
+                    <compilerArgument>-XDignore.symbol.file</compilerArgument>
+                    <fork>true</fork>
+                    <!-- end -->
                     <source>1.8</source>
                     <target>1.8</target>
                 </configuration>
@@ -191,6 +195,9 @@
                                 </goals>
                             </execution>
                         </executions>
+                        <configuration>
+                            <executable>gpg2</executable>
+                        </configuration>
                     </plugin>
                     <plugin>
                         <groupId>org.codehaus.mojo</groupId>

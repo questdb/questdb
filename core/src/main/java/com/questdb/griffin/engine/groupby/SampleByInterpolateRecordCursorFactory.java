@@ -77,7 +77,7 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
         this.groupByFunctions = new ObjList<>(columnCount);
         valueTypes.add(ColumnType.BYTE); // gap flag
 
-        AbstractSampleByRecordCursorFactory.prepareGroupByFunctions(
+        GroupByUtils.prepareGroupByFunctions(
                 model,
                 metadata,
                 functionParser,
@@ -90,7 +90,7 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
         final GenericRecordMetadata groupByMetadata = new GenericRecordMetadata();
         final IntIntHashMap symbolTableIndex = new IntIntHashMap();
 
-        AbstractSampleByRecordCursorFactory.prepareGroupByRecordFunctions(
+        GroupByUtils.prepareGroupByRecordFunctions(
                 model,
                 metadata,
                 listColumnFilter,
@@ -99,7 +99,8 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
                 groupByMetadata,
                 keyTypes,
                 valueTypes,
-                symbolTableIndex
+                symbolTableIndex,
+                false
         );
 
         this.storeYFunctions = new ObjList<>(columnCount);
