@@ -111,7 +111,7 @@ public class CompactMapTest extends AbstractCairoTest {
     public void testConstructorRecovery() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             TestRecord.ArrayBinarySequence binarySequence = new TestRecord.ArrayBinarySequence();
-            createTestTable(10, new Rnd(), binarySequence);
+            CairoTestUtils.createTestTable(10, new Rnd(), binarySequence);
             SingleColumnType columnTypes = new SingleColumnType();
 
             try (TableReader reader = new TableReader(configuration, "x")) {
@@ -186,7 +186,7 @@ public class CompactMapTest extends AbstractCairoTest {
             final Rnd rnd = new Rnd();
             TestRecord.ArrayBinarySequence binarySequence = new TestRecord.ArrayBinarySequence();
 
-            createTestTable(N, rnd, binarySequence);
+            CairoTestUtils.createTestTable(N, rnd, binarySequence);
 
             BytecodeAssembler asm = new BytecodeAssembler();
 
@@ -287,7 +287,7 @@ public class CompactMapTest extends AbstractCairoTest {
             final int N = 10000;
             final Rnd rnd = new Rnd();
             final TestRecord.ArrayBinarySequence binarySequence = new TestRecord.ArrayBinarySequence();
-            createTestTable(N, rnd, binarySequence);
+            CairoTestUtils.createTestTable(N, rnd, binarySequence);
 
             ColumnTypes types = new SingleColumnType(ColumnType.LONG);
 
@@ -452,7 +452,7 @@ public class CompactMapTest extends AbstractCairoTest {
             final Rnd rnd = new Rnd();
             TestRecord.ArrayBinarySequence binarySequence = new TestRecord.ArrayBinarySequence();
 
-            createTestTable(N, rnd, binarySequence);
+            CairoTestUtils.createTestTable(N, rnd, binarySequence);
 
             BytecodeAssembler asm = new BytecodeAssembler();
 
@@ -517,7 +517,7 @@ public class CompactMapTest extends AbstractCairoTest {
             final Rnd rnd = new Rnd();
             TestRecord.ArrayBinarySequence binarySequence = new TestRecord.ArrayBinarySequence();
 
-            createTestTable(N, rnd, binarySequence);
+            CairoTestUtils.createTestTable(N, rnd, binarySequence);
 
             BytecodeAssembler asm = new BytecodeAssembler();
 
@@ -689,93 +689,6 @@ public class CompactMapTest extends AbstractCairoTest {
 
         }
         Assert.assertEquals(n, c);
-    }
-
-    private void createTestTable(int n, Rnd rnd, TestRecord.ArrayBinarySequence binarySequence) {
-
-        try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)) {
-            model
-                    .col("a", ColumnType.BYTE)
-                    .col("b", ColumnType.SHORT)
-                    .col("c", ColumnType.INT)
-                    .col("d", ColumnType.LONG)
-                    .col("e", ColumnType.DATE)
-                    .col("f", ColumnType.TIMESTAMP)
-                    .col("g", ColumnType.FLOAT)
-                    .col("h", ColumnType.DOUBLE)
-                    .col("i", ColumnType.STRING)
-                    .col("j", ColumnType.SYMBOL)
-                    .col("k", ColumnType.BOOLEAN)
-                    .col("l", ColumnType.BINARY);
-            CairoTestUtils.create(model);
-        }
-
-        try (TableWriter writer = new TableWriter(configuration, "x")) {
-            for (int i = 0; i < n; i++) {
-                TableWriter.Row row = writer.newRow(0);
-                row.putByte(0, rnd.nextByte());
-                row.putShort(1, rnd.nextShort());
-
-                if (rnd.nextInt() % 4 == 0) {
-                    row.putInt(2, Numbers.INT_NaN);
-                } else {
-                    row.putInt(2, rnd.nextInt());
-                }
-
-                if (rnd.nextInt() % 4 == 0) {
-                    row.putLong(3, Numbers.LONG_NaN);
-                } else {
-                    row.putLong(3, rnd.nextLong());
-                }
-
-                if (rnd.nextInt() % 4 == 0) {
-                    row.putLong(4, Numbers.LONG_NaN);
-                } else {
-                    row.putDate(4, rnd.nextLong());
-                }
-
-                if (rnd.nextInt() % 4 == 0) {
-                    row.putLong(5, Numbers.LONG_NaN);
-                } else {
-                    row.putTimestamp(5, rnd.nextLong());
-                }
-
-                if (rnd.nextInt() % 4 == 0) {
-                    row.putFloat(6, Float.NaN);
-                } else {
-                    row.putFloat(6, rnd.nextFloat2());
-                }
-
-                if (rnd.nextInt() % 4 == 0) {
-                    row.putDouble(7, Double.NaN);
-                } else {
-                    row.putDouble(7, rnd.nextDouble2());
-                }
-
-                if (rnd.nextInt() % 4 == 0) {
-                    row.putStr(8, null);
-                } else {
-                    row.putStr(8, rnd.nextChars(5));
-                }
-
-                if (rnd.nextInt() % 4 == 0) {
-                    row.putSym(9, null);
-                } else {
-                    row.putSym(9, rnd.nextChars(3));
-                }
-
-                row.putBool(10, rnd.nextBoolean());
-
-                if (rnd.nextInt() % 4 == 0) {
-                    row.putBin(11, null);
-                } else {
-                    binarySequence.of(rnd.nextBytes(25));
-                    row.putBin(11, binarySequence);
-                }
-                row.append();
-            }
-            writer.commit();
-        }
     }
 
     private void populate(Rnd rnd, StringSink sink, CompactMap map, long lo, long hi, int prefixLen) {

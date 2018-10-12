@@ -43,6 +43,7 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
     private long recordOffset;
     private long varAppendOffset = 0L;
     private long nextRecordOffset = -1L;
+    private RecordCursor symbolTableResolver;
 
     public RecordChain(@Transient ColumnTypes columnTypes, RecordSink recordSink, long pageSize) {
         this.mem = new VirtualMemory(pageSize);
@@ -57,7 +58,6 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
 
             switch (type) {
                 case ColumnType.STRING:
-                case ColumnType.SYMBOL:
                 case ColumnType.BINARY:
                     columnOffsets[i] = varOffset;
                     varOffset += 8;
@@ -143,7 +143,6 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
     public long put(Record record, long prevRecordOffset) {
         long offset = beginRecord(prevRecordOffset);
         recordSink.copy(record, this);
-//        putRecord0(record);
         return offset;
     }
 
@@ -216,6 +215,10 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
         putLong(value);
     }
 
+    public void setSymbolTableResolver(RecordCursor resolver) {
+        this.symbolTableResolver = resolver;
+    }
+
     private static long rowToDataOffset(long row) {
         return row + 8;
     }
@@ -262,12 +265,6 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
         }
 
         @Override
-        public CharSequence getStr(int col) {
-            long offset = varWidthColumnOffset(col);
-            return offset == -1 ? null : mem.getStr(offset);
-        }
-
-        @Override
         public int getInt(int col) {
             return mem.getInt(fixedWithColumnOffset(col));
         }
@@ -288,6 +285,12 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
         }
 
         @Override
+        public CharSequence getStr(int col) {
+            long offset = varWidthColumnOffset(col);
+            return offset == -1 ? null : mem.getStr(offset);
+        }
+
+        @Override
         public CharSequence getStrB(int col) {
             long offset = varWidthColumnOffset(col);
             return offset == -1 ? null : mem.getStr2(offset);
@@ -304,7 +307,7 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
 
         @Override
         public CharSequence getSym(int col) {
-            return getStr(col);
+            return symbolTableResolver.getSymbolTable(col).value(getInt(col));
         }
 
         private long fixedWithColumnOffset(int index) {

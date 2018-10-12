@@ -25,6 +25,8 @@ package com.questdb.cairo;
 
 import com.questdb.std.Files;
 import com.questdb.std.FilesFacade;
+import com.questdb.std.Numbers;
+import com.questdb.std.Rnd;
 import com.questdb.std.str.Path;
 
 import static com.questdb.cairo.TableUtils.META_FILE_NAME;
@@ -103,4 +105,89 @@ public class CairoTestUtils {
                 .col("date", ColumnType.DATE);
     }
 
+    public static void createTestTable(int n, Rnd rnd, TestRecord.ArrayBinarySequence binarySequence) {
+        try (TableModel model = new TableModel(AbstractCairoTest.configuration, "x", PartitionBy.NONE)) {
+            model
+                    .col("a", ColumnType.BYTE)
+                    .col("b", ColumnType.SHORT)
+                    .col("c", ColumnType.INT)
+                    .col("d", ColumnType.LONG)
+                    .col("e", ColumnType.DATE)
+                    .col("f", ColumnType.TIMESTAMP)
+                    .col("g", ColumnType.FLOAT)
+                    .col("h", ColumnType.DOUBLE)
+                    .col("i", ColumnType.STRING)
+                    .col("j", ColumnType.SYMBOL)
+                    .col("k", ColumnType.BOOLEAN)
+                    .col("l", ColumnType.BINARY);
+            create(model);
+        }
+
+        try (TableWriter writer = new TableWriter(AbstractCairoTest.configuration, "x")) {
+            for (int i = 0; i < n; i++) {
+                TableWriter.Row row = writer.newRow(0);
+                row.putByte(0, rnd.nextByte());
+                row.putShort(1, rnd.nextShort());
+
+                if (rnd.nextInt() % 4 == 0) {
+                    row.putInt(2, Numbers.INT_NaN);
+                } else {
+                    row.putInt(2, rnd.nextInt());
+                }
+
+                if (rnd.nextInt() % 4 == 0) {
+                    row.putLong(3, Numbers.LONG_NaN);
+                } else {
+                    row.putLong(3, rnd.nextLong());
+                }
+
+                if (rnd.nextInt() % 4 == 0) {
+                    row.putLong(4, Numbers.LONG_NaN);
+                } else {
+                    row.putDate(4, rnd.nextLong());
+                }
+
+                if (rnd.nextInt() % 4 == 0) {
+                    row.putLong(5, Numbers.LONG_NaN);
+                } else {
+                    row.putTimestamp(5, rnd.nextLong());
+                }
+
+                if (rnd.nextInt() % 4 == 0) {
+                    row.putFloat(6, Float.NaN);
+                } else {
+                    row.putFloat(6, rnd.nextFloat2());
+                }
+
+                if (rnd.nextInt() % 4 == 0) {
+                    row.putDouble(7, Double.NaN);
+                } else {
+                    row.putDouble(7, rnd.nextDouble2());
+                }
+
+                if (rnd.nextInt() % 4 == 0) {
+                    row.putStr(8, null);
+                } else {
+                    row.putStr(8, rnd.nextChars(5));
+                }
+
+                if (rnd.nextInt() % 4 == 0) {
+                    row.putSym(9, null);
+                } else {
+                    row.putSym(9, rnd.nextChars(3));
+                }
+
+                row.putBool(10, rnd.nextBoolean());
+
+                if (rnd.nextInt() % 4 == 0) {
+                    row.putBin(11, null);
+                } else {
+                    binarySequence.of(rnd.nextBytes(25));
+                    row.putBin(11, binarySequence);
+                }
+                row.append();
+            }
+            writer.commit();
+        }
+    }
 }

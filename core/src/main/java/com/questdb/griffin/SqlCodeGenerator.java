@@ -27,6 +27,7 @@ import com.questdb.cairo.*;
 import com.questdb.cairo.sql.*;
 import com.questdb.griffin.engine.RecordComparatorCompiler;
 import com.questdb.griffin.engine.SortedLightRecordCursorFactory;
+import com.questdb.griffin.engine.SortedRecordCursorFactory;
 import com.questdb.griffin.engine.functions.columns.SymbolColumn;
 import com.questdb.griffin.engine.groupby.*;
 import com.questdb.griffin.engine.table.*;
@@ -301,10 +302,31 @@ public class SqlCodeGenerator {
                     }
                 }
 
-                return new SortedLightRecordCursorFactory(
+                if (recordCursorFactory.isRandomAccessCursor()) {
+                    return new SortedLightRecordCursorFactory(
+                            configuration,
+                            orderedMetadata,
+                            recordCursorFactory,
+                            recordComparatorCompiler.compile(metadata, listColumnFilter)
+                    );
+                }
+
+                // when base record cursor does not support random access
+                // we have to copy entire record into ordered structure
+
+                entityColumnFilter.of(orderedMetadata.getColumnCount());
+
+                return new SortedRecordCursorFactory(
                         configuration,
                         orderedMetadata,
                         recordCursorFactory,
+                        orderedMetadata,
+                        RecordSinkFactory.getInstance(
+                                asm,
+                                orderedMetadata,
+                                entityColumnFilter,
+                                false
+                        ),
                         recordComparatorCompiler.compile(metadata, listColumnFilter)
                 );
             }

@@ -80,8 +80,8 @@ public class RecordTreeChain implements Closeable, Mutable {
         Misc.free(mem);
     }
 
-    public RecordCursor getCursor() {
-        cursor.toTop();
+    public TreeCursor getCursor(RecordCursor base) {
+        cursor.of(base);
         return cursor;
     }
 
@@ -297,12 +297,13 @@ public class RecordTreeChain implements Closeable, Mutable {
         }
     }
 
-    private class TreeCursor implements RecordCursor {
-
+    public class TreeCursor implements RecordCursor {
         private long current;
+        private RecordCursor base;
 
         @Override
         public void close() {
+            base.close();
         }
 
         @Override
@@ -312,7 +313,7 @@ public class RecordTreeChain implements Closeable, Mutable {
 
         @Override
         public SymbolTable getSymbolTable(int columnIndex) {
-            return null;
+            return base.getSymbolTable(columnIndex);
         }
 
         @Override
@@ -327,7 +328,7 @@ public class RecordTreeChain implements Closeable, Mutable {
             }
 
             recordChain.of(topOf(current));
-            return true;
+            return recordChain.hasNext();
         }
 
         @Override
@@ -354,6 +355,12 @@ public class RecordTreeChain implements Closeable, Mutable {
                 }
             }
             recordChain.of(topOf(current = p));
+        }
+
+        private void of(RecordCursor base) {
+            this.base = base;
+            recordChain.setSymbolTableResolver(base);
+            toTop();
         }
     }
 }

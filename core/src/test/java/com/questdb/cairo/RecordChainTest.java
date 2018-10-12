@@ -24,32 +24,36 @@
 package com.questdb.cairo;
 
 import com.questdb.cairo.sql.Record;
+import com.questdb.cairo.sql.RecordCursor;
+import com.questdb.cairo.sql.RecordMetadata;
 import com.questdb.std.BytecodeAssembler;
 import com.questdb.std.LongList;
+import com.questdb.std.Rnd;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
 public class RecordChainTest extends AbstractCairoTest {
     public static final long SIZE_4M = 4 * 1024 * 1024L;
-    private static final GenericRecordMetadata metadata;
     private static final BytecodeAssembler asm = new BytecodeAssembler();
     private static final EntityColumnFilter entityColumnFilter = new EntityColumnFilter();
 
     @Test
     public void testClear() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            Record record = new TestRecord();
-            entityColumnFilter.of(metadata.getColumnCount());
-            RecordSink recordSink = RecordSinkFactory.getInstance(asm, metadata, entityColumnFilter, true);
-            try (RecordChain chain = new RecordChain(metadata, recordSink, SIZE_4M)) {
-                Assert.assertFalse(chain.hasNext());
-                populateChain(chain, record);
-                chain.toTop();
-                Assert.assertTrue(chain.hasNext());
-                chain.clear();
-                chain.toTop();
-                Assert.assertFalse(chain.hasNext());
+            CairoTestUtils.createTestTable(10000, new Rnd(), new TestRecord.ArrayBinarySequence());
+            try (TableReader reader = new TableReader(configuration, "x")) {
+                entityColumnFilter.of(reader.getColumnCount());
+                RecordSink recordSink = RecordSinkFactory.getInstance(asm, reader.getMetadata(), entityColumnFilter, false);
+                try (RecordChain chain = new RecordChain(reader.getMetadata(), recordSink, SIZE_4M)) {
+                    Assert.assertFalse(chain.hasNext());
+                    populateChain(chain, reader);
+                    chain.toTop();
+                    Assert.assertTrue(chain.hasNext());
+                    chain.clear();
+                    chain.toTop();
+                    Assert.assertFalse(chain.hasNext());
+                }
             }
         });
     }
@@ -58,47 +62,45 @@ public class RecordChainTest extends AbstractCairoTest {
     public void testPseudoRandomAccess() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             int N = 10000;
-            entityColumnFilter.of(metadata.getColumnCount());
-            RecordSink recordSink = RecordSinkFactory.getInstance(asm, metadata, entityColumnFilter, true);
-            try (RecordChain chain = new RecordChain(metadata, recordSink, SIZE_4M)) {
-                Record chainRecord = chain.getRecord();
-                Record record = new TestRecord();
-                LongList rows = new LongList();
-                long o = -1L;
-                for (int i = 0; i < N; i++) {
-                    o = chain.put(record, o);
-                    rows.add(o);
-                }
+            CairoTestUtils.createTestTable(N, new Rnd(), new TestRecord.ArrayBinarySequence());
+            try (TableReader reader = new TableReader(configuration, "x")) {
+                entityColumnFilter.of(reader.getMetadata().getColumnCount());
+                RecordSink recordSink = RecordSinkFactory.getInstance(asm, reader.getMetadata(), entityColumnFilter, false);
+                try (RecordChain chain = new RecordChain(reader.getMetadata(), recordSink, SIZE_4M)) {
+                    LongList rows = new LongList();
+                    Record chainRecord = chain.getRecord();
+                    RecordCursor cursor = reader.getCursor();
+                    Record cursorRecord = cursor.getRecord();
 
-                Assert.assertEquals(N, rows.size());
+                    chain.setSymbolTableResolver(cursor);
 
-                Record expected = new TestRecord();
+                    long o = -1L;
+                    while (cursor.hasNext()) {
+                        o = chain.put(cursorRecord, o);
+                        rows.add(o);
+                    }
 
-                for (int i = 0, n = rows.size(); i < n; i++) {
-                    long row = rows.getQuick(i);
-                    chain.recordAt(row);
-                    Assert.assertEquals(row, chainRecord.getRowId());
-                    assertSame(expected, chainRecord);
-                }
+                    Assert.assertEquals(N, rows.size());
+                    cursor.toTop();
 
-                Record expected2 = new TestRecord();
-                Record rec2 = chain.newRecord();
+                    for (int i = 0, n = rows.size(); i < n; i++) {
+                        long row = rows.getQuick(i);
+                        Assert.assertTrue(cursor.hasNext());
+                        chain.recordAt(row);
+                        Assert.assertEquals(row, chainRecord.getRowId());
+                        assertSame(cursorRecord, chainRecord, reader.getMetadata());
+                    }
 
-                for (int i = 0, n = rows.size(); i < n; i++) {
-                    long row = rows.getQuick(i);
-                    chain.recordAt(rec2, row);
-                    Assert.assertEquals(row, rec2.getRowId());
-                    assertSame(expected2, rec2);
-                }
+                    Record rec2 = chain.newRecord();
+                    cursor.toTop();
 
-                Record expected3 = new TestRecord();
-                Record rec3 = chain.getRecord();
-
-                for (int i = 0, n = rows.size(); i < n; i++) {
-                    long row = rows.getQuick(i);
-                    chain.recordAt(rec3, row);
-                    Assert.assertEquals(row, rec3.getRowId());
-                    assertSame(expected3, rec3);
+                    for (int i = 0, n = rows.size(); i < n; i++) {
+                        long row = rows.getQuick(i);
+                        Assert.assertTrue(cursor.hasNext());
+                        chain.recordAt(rec2, row);
+                        Assert.assertEquals(row, rec2.getRowId());
+                        assertSame(cursorRecord, rec2, reader.getMetadata());
+                    }
                 }
             }
         });
@@ -123,78 +125,49 @@ public class RecordChainTest extends AbstractCairoTest {
     public void testWriteAndRead() throws Exception {
         TestUtils.assertMemoryLeak(
                 () -> {
-                    final int N = 10000;
-                    Record record = new TestRecord();
-                    //3686831118
-                    //2768496651
+                    final int N = 10000 * 2;
+                    CairoTestUtils.createTestTable(N, new Rnd(), new TestRecord.ArrayBinarySequence());
+                    try (TableReader reader = new TableReader(configuration, "x")) {
+                        entityColumnFilter.of(reader.getMetadata().getColumnCount());
+                        RecordSink recordSink = RecordSinkFactory.getInstance(asm, reader.getMetadata(), entityColumnFilter, false);
 
-//                    CollectionRecordMetadata mm = new CollectionRecordMetadata();
-//                    mm.add(new RecordColumnMetadataImpl("int", ColumnType.INT));
-//                    mm.add(new RecordColumnMetadataImpl("long", ColumnType.LONG));
-//                    mm.add(new RecordColumnMetadataImpl("short", ColumnType.SHORT));
-//                    mm.add(new RecordColumnMetadataImpl("double", ColumnType.DOUBLE));
-//                    mm.add(new RecordColumnMetadataImpl("float", ColumnType.FLOAT));
-//                    mm.add(new RecordColumnMetadataImpl("str", ColumnType.STRING));
-//                    mm.add(new RecordColumnMetadataImpl("byte", ColumnType.BYTE));
-//                    mm.add(new RecordColumnMetadataImpl("date", ColumnType.DATE));
-//                    mm.add(new RecordColumnMetadataImpl("bool", ColumnType.BOOLEAN));
-//                    mm.add(new RecordColumnMetadataImpl("str2", ColumnType.STRING));
-//                    mm.add(new RecordColumnMetadataImpl("sym", ColumnType.SYMBOL));
-//
-//
-//                    TestRecord2 rec2 = new TestRecord2();
-//                    try (RecordList records = new RecordList(mm, 4 * 1024 * 1024)) {
-//                        long o = -1L;
-//                        long t = 0;
-//                        for (int i = -N; i < N; i++) {
-//                            if (i == 0) {
-//                                t = System.nanoTime();
-//                            }
-//                            o = records.append(rec2, o);
-//                        }
-//                        System.out.println(System.nanoTime() - t);
-//                    }
-//
-
-                    entityColumnFilter.of(metadata.getColumnCount());
-                    RecordSink recordSink = RecordSinkFactory.getInstance(asm, metadata, entityColumnFilter, true);
-
-                    try (RecordChain chain = new RecordChain(metadata, recordSink, 4 * 1024 * 1024L)) {
-                        long o = -1L;
-//                        long t = 0;
-                        for (int i = -N; i < N; i++) {
-//                            if (i == 0) {
-//                                t = System.nanoTime();
-//                            }
-                            o = chain.put(record, o);
+                        try (RecordChain chain = new RecordChain(reader.getMetadata(), recordSink, 4 * 1024 * 1024L)) {
+                            populateChain(chain, reader);
+                            assertChain(chain, N, reader);
+                            assertChain(chain, N, reader);
                         }
-//                        System.out.println("RecordChain append time: " + (System.nanoTime() - t));
-                        assertChain(chain, new TestRecord(), N * 2);
-                        assertChain(chain, new TestRecord(), N * 2);
                     }
                 }
         );
     }
 
-    private static void populateChain(RecordChain chain, Record record) {
+    private static void populateChain(RecordChain chain, TableReader reader) {
+        RecordCursor cursor = reader.getCursor();
+        final Record record = cursor.getRecord();
+        chain.setSymbolTableResolver(cursor);
         long o = -1L;
-        for (int i = 0; i < 10000; i++) {
+        while (cursor.hasNext()) {
             o = chain.put(record, o);
         }
     }
 
-    private void assertChain(RecordChain chain, Record r2, long expectedCount) {
+    private void assertChain(RecordChain chain, long expectedCount, TableReader reader) {
         long count = 0L;
         chain.toTop();
-        Record record = chain.getRecord();
+        Record chainRecord = chain.getRecord();
+        RecordCursor cursor = reader.getCursor();
+        Record readerRecord = cursor.getRecord();
+        chain.setSymbolTableResolver(cursor);
+
         while (chain.hasNext()) {
-            assertSame(r2, record);
+            Assert.assertTrue(cursor.hasNext());
+            assertSame(readerRecord, chainRecord, reader.getMetadata());
             count++;
         }
         Assert.assertEquals(expectedCount, count);
     }
 
-    private void assertSame(Record expected, Record actual) {
+    private void assertSame(Record expected, Record actual, RecordMetadata metadata) {
         for (int i = 0; i < metadata.getColumnCount(); i++) {
             switch (metadata.getColumnType(i)) {
                 case ColumnType.INT:
@@ -252,20 +225,27 @@ public class RecordChainTest extends AbstractCairoTest {
 
     private void testChainReuseWithClearFunction(ClearFunc clear) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            Record record = new TestRecord();
-            Record expected = new TestRecord();
             final int N = 10000;
-            entityColumnFilter.of(metadata.getColumnCount());
-            RecordSink recordSink = RecordSinkFactory.getInstance(asm, metadata, entityColumnFilter, true);
-            try (RecordChain chain = new RecordChain(metadata, recordSink, 4 * 1024 * 1024L)) {
+            Rnd rnd = new Rnd();
 
-                populateChain(chain, record);
-                assertChain(chain, expected, N);
+            // in a spirit of using only whats available in this package
+            // we create temporary table the hard way
 
-                clear.clear(chain);
+            CairoTestUtils.createTestTable(N, rnd, new TestRecord.ArrayBinarySequence());
+            try (TableReader reader = new TableReader(configuration, "x")) {
 
-                populateChain(chain, record);
-                assertChain(chain, expected, N);
+                entityColumnFilter.of(reader.getMetadata().getColumnCount());
+                RecordSink recordSink = RecordSinkFactory.getInstance(asm, reader.getMetadata(), entityColumnFilter, false);
+                try (RecordChain chain = new RecordChain(reader.getMetadata(), recordSink, 4 * 1024 * 1024L)) {
+
+                    populateChain(chain, reader);
+                    assertChain(chain, N, reader);
+
+                    clear.clear(chain);
+
+                    populateChain(chain, reader);
+                    assertChain(chain, N, reader);
+                }
             }
         });
     }
@@ -273,94 +253,5 @@ public class RecordChainTest extends AbstractCairoTest {
     @FunctionalInterface
     private interface ClearFunc {
         void clear(RecordChain chain);
-    }
-/*
-
-    public class TestRecord2 implements com.questdb.store.Record {
-        final Rnd rnd = new Rnd();
-
-
-        @Override
-        public boolean getBool(int col) {
-            return rnd.nextBoolean();
-        }
-
-        @Override
-        public byte getByte(int col) {
-            return rnd.nextByte();
-        }
-
-        @Override
-        public long getDate(int col) {
-            return rnd.nextPositiveLong();
-        }
-
-        @Override
-        public double getDouble(int col) {
-            return rnd.nextDouble2();
-        }
-
-        @Override
-        public float getFloat(int col) {
-            return rnd.nextFloat2();
-        }
-
-        @Override
-        public CharSequence getFlyweightStr(int col) {
-            return rnd.nextInt() % 16 == 0 ? null : rnd.nextChars(15);
-        }
-
-        @Override
-        public CharSequence getFlyweightStrB(int col) {
-            return rnd.nextInt() % 16 == 0 ? null : rnd.nextChars(15);
-        }
-
-        @Override
-        public int getInt(int col) {
-            return rnd.nextInt();
-        }
-
-        @Override
-        public long getLong(int col) {
-            return rnd.nextLong();
-        }
-
-        @Override
-        public long getRowId() {
-            return -1;
-        }
-
-        @Override
-        public short getShort(int col) {
-            return rnd.nextShort();
-        }
-
-        @Override
-        public int getStrLen(int col) {
-            return 15;
-        }
-
-        @Override
-        public CharSequence getSym(int col) {
-            return rnd.nextChars(10);
-        }
-    }
-*/
-
-    static {
-        metadata = new GenericRecordMetadata();
-        metadata.add(new TableColumnMetadata("int", ColumnType.INT));
-        metadata.add(new TableColumnMetadata("long", ColumnType.LONG));
-        metadata.add(new TableColumnMetadata("short", ColumnType.SHORT));
-        metadata.add(new TableColumnMetadata("double", ColumnType.DOUBLE));
-        metadata.add(new TableColumnMetadata("float", ColumnType.FLOAT));
-        metadata.add(new TableColumnMetadata("str", ColumnType.STRING));
-        metadata.add(new TableColumnMetadata("byte", ColumnType.BYTE));
-        metadata.add(new TableColumnMetadata("date", ColumnType.DATE));
-        metadata.add(new TableColumnMetadata("bool", ColumnType.BOOLEAN));
-        metadata.add(new TableColumnMetadata("str2", ColumnType.STRING));
-        metadata.add(new TableColumnMetadata("sym", ColumnType.SYMBOL));
-        metadata.add(new TableColumnMetadata("bin", ColumnType.BINARY));
-        metadata.add(new TableColumnMetadata("ts", ColumnType.TIMESTAMP));
     }
 }
