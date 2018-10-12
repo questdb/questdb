@@ -74,6 +74,7 @@ public class WriterPool extends AbstractPool implements ResourcePool<TableWriter
      * Pool constructor. WriterPool root directory is passed via configuration.
      *
      * @param configuration configuration parameters.
+     * @param workScheduler scheduler instance to allow index to be built in parallel
      */
     public WriterPool(CairoConfiguration configuration, CairoWorkScheduler workScheduler) {
         super(configuration, configuration.getInactiveWriterTTL());

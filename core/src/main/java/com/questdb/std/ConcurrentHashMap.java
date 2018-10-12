@@ -767,6 +767,8 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
      * then this method returns {@code v}; otherwise it returns
      * {@code null}.  (There can be at most one such mapping.)
      *
+     * @param key map key value
+     * @return value to which specified key is mapped
      * @throws NullPointerException if the specified key is null
      */
     public V get(CharSequence key) {

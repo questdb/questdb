@@ -227,12 +227,14 @@ public class TableWriter implements Closeable {
      * Pending transaction will be committed before function attempts to add column. Even when function is unsuccessful it may
      * still have committed transaction.
      *
-     * @param name            of column either ASCII or UTF8 encoded.
-     * @param symbolCapacity  when column type is SYMBOL this parameter specifies approximate capacity for symbol map.
-     *                        It should be equal to number of unique symbol values stored in the table and getting this
-     *                        value badly wrong will cause performance degradation.
-     * @param symbolCacheFlag when set to true, symbol values will be cached on Java heap.
-     * @param type            {@link ColumnType}
+     * @param name                    of column either ASCII or UTF8 encoded.
+     * @param symbolCapacity          when column type is SYMBOL this parameter specifies approximate capacity for symbol map.
+     *                                It should be equal to number of unique symbol values stored in the table and getting this
+     *                                value badly wrong will cause performance degradation.
+     * @param symbolCacheFlag         when set to true, symbol values will be cached on Java heap.
+     * @param type                    {@link ColumnType}
+     * @param indexFlag               configures column to be indexed or not
+     * @param indexValueBlockCapacity approximation of number of rows for single index key
      */
     public void addColumn(
             CharSequence name,

@@ -33,8 +33,10 @@ public final class TimestampSamplerFactory {
     /**
      * Parses strings such as '10m', '3M', '5d', '12h', 'y', '35s'
      *
-     * @param cs the key
+     * @param cs       the key
+     * @param position position in SQL text to report error against
      * @return instance of appropriate TimestampSampler
+     * @throws SqlException when input string is invalid
      */
     public static TimestampSampler getInstance(CharSequence cs, int position) throws SqlException {
         int k = -1;

@@ -80,6 +80,9 @@ public class LineProtoLexer implements Mutable, Closeable {
 
     /**
      * Parses line-protocol as UTF8-encoded sequence of bytes.
+     *
+     * @param bytesPtr byte array address
+     * @param hi       high watermark for byte array address
      */
     public void parse(long bytesPtr, long hi) {
         long p = bytesPtr;
