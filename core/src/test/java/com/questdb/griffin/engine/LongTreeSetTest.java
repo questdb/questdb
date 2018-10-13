@@ -23,6 +23,7 @@
 
 package com.questdb.griffin.engine;
 
+import com.questdb.griffin.engine.table.LongTreeSet;
 import com.questdb.std.LongList;
 import com.questdb.std.Rnd;
 import com.questdb.test.tools.TestUtils;

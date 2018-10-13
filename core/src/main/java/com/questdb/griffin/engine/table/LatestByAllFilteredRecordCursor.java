@@ -28,7 +28,6 @@ import com.questdb.cairo.map.Map;
 import com.questdb.cairo.map.MapKey;
 import com.questdb.cairo.sql.DataFrame;
 import com.questdb.cairo.sql.Function;
-import com.questdb.griffin.engine.LongTreeSet;
 import com.questdb.griffin.engine.functions.bind.BindVariableService;
 import com.questdb.std.Rows;
 import org.jetbrains.annotations.NotNull;

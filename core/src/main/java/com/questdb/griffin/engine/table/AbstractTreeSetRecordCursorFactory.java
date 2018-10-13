@@ -27,7 +27,6 @@ import com.questdb.cairo.CairoConfiguration;
 import com.questdb.cairo.sql.DataFrameCursor;
 import com.questdb.cairo.sql.DataFrameCursorFactory;
 import com.questdb.cairo.sql.RecordMetadata;
-import com.questdb.griffin.engine.LongTreeSet;
 import com.questdb.griffin.engine.functions.bind.BindVariableService;
 
 abstract class AbstractTreeSetRecordCursorFactory extends AbstractDataFrameRecordCursorFactory {

@@ -21,7 +21,7 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.engine;
+package com.questdb.griffin.engine.orderby;
 
 import com.questdb.cairo.AbstractRecordCursorFactory;
 import com.questdb.cairo.CairoConfiguration;

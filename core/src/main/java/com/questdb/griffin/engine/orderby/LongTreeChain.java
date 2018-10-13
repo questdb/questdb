@@ -21,11 +21,12 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.engine;
+package com.questdb.griffin.engine.orderby;
 
 import com.questdb.cairo.VirtualMemory;
 import com.questdb.cairo.sql.Record;
 import com.questdb.cairo.sql.RecordCursor;
+import com.questdb.griffin.engine.AbstractRedBlackTree;
 import com.questdb.std.Misc;
 
 public class LongTreeChain extends AbstractRedBlackTree {

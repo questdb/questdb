@@ -23,6 +23,7 @@
 
 package com.questdb.griffin.engine.table;
 
+import com.questdb.griffin.engine.EmptyTableRecordCursor;
 import org.junit.Test;
 
 public class EmptyTableRecordCursorTest {

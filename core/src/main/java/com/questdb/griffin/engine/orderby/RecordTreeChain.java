@@ -21,7 +21,7 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.engine;
+package com.questdb.griffin.engine.orderby;
 
 import com.questdb.cairo.ColumnTypes;
 import com.questdb.cairo.RecordChain;

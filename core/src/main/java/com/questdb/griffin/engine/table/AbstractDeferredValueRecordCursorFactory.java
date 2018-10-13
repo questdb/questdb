@@ -24,6 +24,7 @@
 package com.questdb.griffin.engine.table;
 
 import com.questdb.cairo.sql.*;
+import com.questdb.griffin.engine.EmptyTableRecordCursor;
 import com.questdb.griffin.engine.functions.bind.BindVariableService;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;

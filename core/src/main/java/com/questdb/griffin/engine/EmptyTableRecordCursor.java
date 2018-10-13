@@ -21,7 +21,7 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.engine.table;
+package com.questdb.griffin.engine;
 
 import com.questdb.cairo.TableReaderRecord;
 import com.questdb.cairo.sql.Record;

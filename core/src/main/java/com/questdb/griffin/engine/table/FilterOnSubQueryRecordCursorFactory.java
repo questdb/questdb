@@ -25,6 +25,7 @@ package com.questdb.griffin.engine.table;
 
 import com.questdb.cairo.ColumnType;
 import com.questdb.cairo.sql.*;
+import com.questdb.griffin.engine.EmptyTableRecordCursor;
 import com.questdb.griffin.engine.StrTypeCaster;
 import com.questdb.griffin.engine.SymbolTypeCaster;
 import com.questdb.griffin.engine.TypeCaster;

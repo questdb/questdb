@@ -21,7 +21,9 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.engine;
+package com.questdb.griffin.engine.table;
+
+import com.questdb.griffin.engine.AbstractRedBlackTree;
 
 public class LongTreeSet extends AbstractRedBlackTree {
 

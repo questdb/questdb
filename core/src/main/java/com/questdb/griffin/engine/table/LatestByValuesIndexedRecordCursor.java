@@ -26,7 +26,6 @@ package com.questdb.griffin.engine.table;
 import com.questdb.cairo.BitmapIndexReader;
 import com.questdb.cairo.sql.DataFrame;
 import com.questdb.cairo.sql.RowCursor;
-import com.questdb.griffin.engine.LongTreeSet;
 import com.questdb.griffin.engine.functions.bind.BindVariableService;
 import com.questdb.std.IntHashSet;
 import com.questdb.std.Rows;

@@ -24,7 +24,6 @@
 package com.questdb.griffin.engine.table;
 
 import com.questdb.cairo.sql.DataFrameCursor;
-import com.questdb.griffin.engine.LongTreeSet;
 import com.questdb.griffin.engine.functions.bind.BindVariableService;
 import com.questdb.std.Rows;
 

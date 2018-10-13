@@ -25,11 +25,11 @@ package com.questdb.griffin;
 
 import com.questdb.cairo.*;
 import com.questdb.cairo.sql.*;
-import com.questdb.griffin.engine.RecordComparatorCompiler;
-import com.questdb.griffin.engine.SortedLightRecordCursorFactory;
-import com.questdb.griffin.engine.SortedRecordCursorFactory;
 import com.questdb.griffin.engine.functions.columns.SymbolColumn;
 import com.questdb.griffin.engine.groupby.*;
+import com.questdb.griffin.engine.orderby.RecordComparatorCompiler;
+import com.questdb.griffin.engine.orderby.SortedLightRecordCursorFactory;
+import com.questdb.griffin.engine.orderby.SortedRecordCursorFactory;
 import com.questdb.griffin.engine.table.*;
 import com.questdb.griffin.model.ExpressionNode;
 import com.questdb.griffin.model.IntrinsicModel;
