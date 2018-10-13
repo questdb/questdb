@@ -250,10 +250,18 @@ public class RecordComparatorCompiler {
                     comparatorClass = Integer.class;
                     break;
                 case ColumnType.LONG:
-                case ColumnType.DATE:
-                case ColumnType.TIMESTAMP:
                     fieldType = "J";
                     getterNameA = "getLong";
+                    comparatorClass = Long.class;
+                    break;
+                case ColumnType.DATE:
+                    fieldType = "J";
+                    getterNameA = "getDate";
+                    comparatorClass = Long.class;
+                    break;
+                case ColumnType.TIMESTAMP:
+                    fieldType = "J";
+                    getterNameA = "getTimestamp";
                     comparatorClass = Long.class;
                     break;
                 case ColumnType.SHORT:
