@@ -34,6 +34,17 @@ public class GenericRecordMetadata extends BaseRecordMetadata {
         this.timestampIndex = -1;
     }
 
+    public static void copyColumns(RecordMetadata from, GenericRecordMetadata to) {
+        for (int i = 0, n = from.getColumnCount(); i < n; i++) {
+            to.add(new TableColumnMetadata(
+                    from.getColumnName(i).toString(),
+                    from.getColumnType(i),
+                    from.isColumnIndexed(i),
+                    from.getIndexValueBlockCapacity(i)
+            ));
+        }
+    }
+
     public static GenericRecordMetadata copyOf(RecordMetadata that) {
         GenericRecordMetadata metadata = copyOfSansTimestamp(that);
         metadata.setTimestampIndex(that.getTimestampIndex());
@@ -42,14 +53,7 @@ public class GenericRecordMetadata extends BaseRecordMetadata {
 
     public static GenericRecordMetadata copyOfSansTimestamp(RecordMetadata that) {
         GenericRecordMetadata metadata = new GenericRecordMetadata();
-        for (int i = 0, n = that.getColumnCount(); i < n; i++) {
-            metadata.add(new TableColumnMetadata(
-                    that.getColumnName(i).toString(),
-                    that.getColumnType(i),
-                    that.isColumnIndexed(i),
-                    that.getIndexValueBlockCapacity(i)
-            ));
-        }
+        copyColumns(that, metadata);
         return metadata;
     }
 

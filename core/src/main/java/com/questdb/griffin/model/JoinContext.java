@@ -23,14 +23,18 @@
 
 package com.questdb.griffin.model;
 
-import com.questdb.std.*;
+import com.questdb.cairo.ListColumnFilter;
+import com.questdb.std.IntHashSet;
+import com.questdb.std.Mutable;
+import com.questdb.std.ObjList;
+import com.questdb.std.ObjectFactory;
 
 public class JoinContext implements Mutable {
     public static final ObjectFactory<JoinContext> FACTORY = JoinContext::new;
     private static final int TYPICAL_NUMBER_OF_JOIN_COLUMNS = 4;
 
-    public final IntList aIndexes = new IntList(TYPICAL_NUMBER_OF_JOIN_COLUMNS);
-    public final IntList bIndexes = new IntList(TYPICAL_NUMBER_OF_JOIN_COLUMNS);
+    public final ListColumnFilter aIndexes = new ListColumnFilter();
+    public final ListColumnFilter bIndexes = new ListColumnFilter();
     public final ObjList<CharSequence> aNames = new ObjList<>(TYPICAL_NUMBER_OF_JOIN_COLUMNS);
     public final ObjList<CharSequence> bNames = new ObjList<>(TYPICAL_NUMBER_OF_JOIN_COLUMNS);
     public final ObjList<ExpressionNode> aNodes = new ObjList<>(TYPICAL_NUMBER_OF_JOIN_COLUMNS);

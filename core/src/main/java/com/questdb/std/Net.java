@@ -77,6 +77,12 @@ public final class Net {
         return Unsafe.getUnsafe().getInt(msgPtr + MMSGHDR_BUFFER_LENGTH_OFFSET);
     }
 
+    // todo: implement and test
+    public native static int configureNoLinger(long fd);
+
+    // todo: implement and test
+    public native static int connect(long fd, long sockaddr);
+
     public native static long getPeerIP(long fd);
 
     public native static int getPeerPort(long fd);
@@ -92,6 +98,29 @@ public final class Net {
     public native static void listen(long fd, int backlog);
 
     public static native long msgHeaders(int blockSize, int count);
+
+    public static int parseIPv4(CharSequence address) {
+        int ip = 0;
+        int count = 0;
+        int lo = 0;
+        int hi;
+        try {
+            while ((hi = Chars.indexOf(address, lo, '.')) > -1) {
+                int n = Numbers.parseInt(address, lo, hi);
+                ip = (ip << 8) | n;
+                count++;
+                lo = hi + 1;
+            }
+
+            if (count != 3) {
+                throw new NetworkError("Invalid ip address: " + address);
+            }
+
+            return (ip << 8) | Numbers.parseInt(address, lo, address.length());
+        } catch (NumericException e) {
+            throw new NetworkError("Invalid ip address: " + address);
+        }
+    }
 
     public static native int recv(long fd, long ptr, int len);
 
@@ -130,29 +159,6 @@ public final class Net {
     private native static int getEwouldblock();
 
     private native static long sockaddr(int address, int port);
-
-    private static int parseIPv4(CharSequence address) {
-        int ip = 0;
-        int count = 0;
-        int lo = 0;
-        int hi;
-        try {
-            while ((hi = Chars.indexOf(address, lo, '.')) > -1) {
-                int n = Numbers.parseInt(address, lo, hi);
-                ip = (ip << 8) | n;
-                count++;
-                lo = hi + 1;
-            }
-
-            if (count != 3) {
-                throw new NetworkError("Invalid ip address: " + address);
-            }
-
-            return (ip << 8) | Numbers.parseInt(address, lo, address.length());
-        } catch (NumericException e) {
-            throw new NetworkError("Invalid ip address: " + address);
-        }
-    }
 
     static {
         Os.init();

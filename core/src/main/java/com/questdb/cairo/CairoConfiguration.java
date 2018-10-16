@@ -97,6 +97,8 @@ public interface CairoConfiguration {
 
     int getSqlTreePageSize();
 
+    int getSqlHashJoinLightValuePageSize();
+
     long getWorkStealTimeoutNanos();
 
     boolean isParallelIndexingEnabled();

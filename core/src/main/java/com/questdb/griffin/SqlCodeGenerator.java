@@ -27,14 +27,12 @@ import com.questdb.cairo.*;
 import com.questdb.cairo.sql.*;
 import com.questdb.griffin.engine.functions.columns.SymbolColumn;
 import com.questdb.griffin.engine.groupby.*;
+import com.questdb.griffin.engine.join.HashJoinRecordCursorFactory;
 import com.questdb.griffin.engine.orderby.RecordComparatorCompiler;
 import com.questdb.griffin.engine.orderby.SortedLightRecordCursorFactory;
 import com.questdb.griffin.engine.orderby.SortedRecordCursorFactory;
 import com.questdb.griffin.engine.table.*;
-import com.questdb.griffin.model.ExpressionNode;
-import com.questdb.griffin.model.IntrinsicModel;
-import com.questdb.griffin.model.QueryColumn;
-import com.questdb.griffin.model.QueryModel;
+import com.questdb.griffin.model.*;
 import com.questdb.std.*;
 import org.jetbrains.annotations.NotNull;
 
@@ -45,7 +43,7 @@ public class SqlCodeGenerator {
     private final BytecodeAssembler asm = new BytecodeAssembler();
     // this list is used to generate record sinks
     private final ListColumnFilter listColumnFilter = new ListColumnFilter();
-    private final SingleColumnType latestByColumnTypes = new SingleColumnType();
+    private final SingleColumnType singleColumnType = new SingleColumnType();
     private final CairoConfiguration configuration;
     private final RecordComparatorCompiler recordComparatorCompiler;
     private final IntHashSet intHashSet = new IntHashSet();
@@ -69,6 +67,45 @@ public class SqlCodeGenerator {
         return GenericRecordMetadata.copyOf(that);
     }
 
+    private RecordCursorFactory createHashJoin(QueryModel model, RecordCursorFactory master, RecordCursorFactory slave) {
+        final JoinContext jc = model.getContext();
+        final RecordMetadata masterMetadata = master.getMetadata();
+        final RecordMetadata slaveMetadata = slave.getMetadata();
+        final RecordSink masterSink = RecordSinkFactory.getInstance(
+                asm,
+                masterMetadata,
+                jc.bIndexes,
+                false
+        );
+
+        final RecordSink slaveSink = RecordSinkFactory.getInstance(
+                asm,
+                slaveMetadata,
+                jc.aIndexes,
+                false);
+
+        for (int i = 0, n = jc.aIndexes.size(); i < n; i++) {
+            keyTypes.add(slaveMetadata.getColumnType(jc.aIndexes.getColumnIndex(i)));
+        }
+
+        GenericRecordMetadata m = GenericRecordMetadata.copyOfSansTimestamp(masterMetadata);
+        GenericRecordMetadata.copyColumns(slaveMetadata, m);
+
+        valueTypes.reset();
+        valueTypes.add(ColumnType.LONG);
+        return new HashJoinRecordCursorFactory(
+                configuration,
+                m,
+                master,
+                slave,
+                keyTypes,
+                valueTypes,
+                masterSink,
+                slaveSink,
+                masterMetadata.getColumnCount()
+        );
+    }
+
     RecordCursorFactory generate(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
         clearState();
         return generateQuery(model, executionContext);
@@ -82,6 +119,71 @@ public class SqlCodeGenerator {
         }
 
         return function.getRecordCursorFactory();
+    }
+
+    private RecordCursorFactory generateJoins(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
+
+
+        // very cool, we have columns with 'model' and join semantics are within 'nestedModel'
+        // before we crack on we go ahead and comp
+        final ObjList<QueryModel> joinModels = model.getJoinModels();
+        IntList ordered = model.getOrderedJoinModels();
+        RecordCursorFactory master = null;
+
+        try {
+            for (int i = 0, n = ordered.size(); i < n; i++) {
+                int index = ordered.getQuick(i);
+                QueryModel m = joinModels.getQuick(index);
+
+                // compile
+                RecordCursorFactory slave = generateQuery(m, executionContext);
+
+                // check if this is the root of joins
+                if (master == null) {
+                    // This is an opportunistic check of order by clause
+                    // to determine if we can get away ordering main record source only
+                    // Ordering main record source could benefit from rowid access thus
+                    // making it faster compared to ordering of join record source that
+                    // doesn't allow rowid access.
+                    master = slave;
+                } else {
+                    // not the root, join to "master"
+                    switch (m.getJoinType()) {
+                        case QueryModel.JOIN_CROSS:
+                            assert false;
+                            break;
+                        case QueryModel.JOIN_ASOF:
+                            assert false;
+                            break;
+                        default:
+                            master = createHashJoin(m, master, slave);
+                            break;
+                    }
+                }
+
+                // check if there are post-filters
+                ExpressionNode filter = m.getPostJoinWhereClause();
+                if (filter != null) {
+                    master = new FilteredRecordCursorFactory(master, functionParser.parseFunction(filter, master.getMetadata(), executionContext));
+                }
+            }
+
+            // unfortunately we had to go all out to create join metadata
+            // now it is time to check if we have constant conditions
+
+
+            ExpressionNode constFilter = model.getConstWhereClause();
+            if (constFilter != null) {
+                Function function = functionParser.parseFunction(constFilter, null, executionContext);
+                if (!function.getBool(null)) {
+                    return new EmptyTableRecordCursorFactory(master.getMetadata());
+                }
+            }
+            return master;
+        } catch (CairoException e) {
+            Misc.free(master);
+            throw e;
+        }
     }
 
     @NotNull
@@ -225,7 +327,7 @@ public class SqlCodeGenerator {
                 configuration,
                 dataFrameCursorFactory,
                 RecordSinkFactory.getInstance(asm, metadata, listColumnFilter, false),
-                latestByColumnTypes.of(metadata.getColumnType(latestByIndex)),
+                singleColumnType.of(metadata.getColumnType(latestByIndex)),
                 filter
         );
     }
@@ -240,12 +342,10 @@ public class SqlCodeGenerator {
             }
 
         }
-        assert model.getNestedModel() != null;
-        return generateQuery(model.getNestedModel(), executionContext);
+        return generateSubQuery(model, executionContext);
     }
 
-    private RecordCursorFactory generateOrderBy(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
-        final RecordCursorFactory recordCursorFactory = generateSelect(model, executionContext);
+    private RecordCursorFactory generateOrderBy(RecordCursorFactory recordCursorFactory, QueryModel model) throws SqlException {
         try {
             final ObjList<ExpressionNode> orderBy = model.getOrderBy();
             final int size = orderBy.size();
@@ -339,7 +439,7 @@ public class SqlCodeGenerator {
     }
 
     private RecordCursorFactory generateQuery(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
-        return generateOrderBy(model, executionContext);
+        return generateOrderBy(generateSelect(model, executionContext), model);
     }
 
     @NotNull
@@ -349,7 +449,7 @@ public class SqlCodeGenerator {
 
         assert model.getNestedModel() != null;
         final int fillCount = sampleByFill.size();
-        final RecordCursorFactory factory = generateQuery(model.getNestedModel(), executionContext);
+        final RecordCursorFactory factory = generateSubQuery(model, executionContext);
         try {
             keyTypes.reset();
             valueTypes.reset();
@@ -441,6 +541,9 @@ public class SqlCodeGenerator {
     private RecordCursorFactory generateSelect(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
         switch (model.getSelectModelType()) {
             case QueryModel.SELECT_MODEL_CHOOSE:
+                if (model.getNestedModel().getJoinModels().size() > 1) {
+                    return generateJoins(model, executionContext);
+                }
                 return generateSelectChoose(model, executionContext);
             case QueryModel.SELECT_MODEL_GROUP_BY:
                 return generateSelectGroupBy(model, executionContext);
@@ -454,13 +557,12 @@ public class SqlCodeGenerator {
     }
 
     private RecordCursorFactory generateSelectAnalytic(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
-        assert model.getNestedModel() != null;
-        return generateQuery(model.getNestedModel(), executionContext);
+        return generateSubQuery(model, executionContext);
     }
 
     private RecordCursorFactory generateSelectChoose(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
         assert model.getNestedModel() != null;
-        final RecordCursorFactory factory = generateQuery(model.getNestedModel(), executionContext);
+        final RecordCursorFactory factory = generateSubQuery(model, executionContext);
         final RecordMetadata metadata = factory.getMetadata();
         final int selectColumnCount = model.getColumns().size();
         final ExpressionNode timestamp = model.getTimestamp();
@@ -521,7 +623,7 @@ public class SqlCodeGenerator {
             return generateSampleBy(model, executionContext, sampleByNode);
         }
 
-        final RecordCursorFactory factory = generateQuery(model.getNestedModel(), executionContext);
+        final RecordCursorFactory factory = generateSubQuery(model, executionContext);
         try {
             keyTypes.reset();
             valueTypes.reset();
@@ -547,7 +649,7 @@ public class SqlCodeGenerator {
 
     private RecordCursorFactory generateSelectVirtual(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
         assert model.getNestedModel() != null;
-        final RecordCursorFactory factory = generateQuery(model.getNestedModel(), executionContext);
+        final RecordCursorFactory factory = generateSubQuery(model, executionContext);
 
         try {
             final int columnCount = model.getColumns().size();
@@ -599,6 +701,11 @@ public class SqlCodeGenerator {
             factory.close();
             throw e;
         }
+    }
+
+    private RecordCursorFactory generateSubQuery(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
+        assert model.getNestedModel() != null;
+        return generateQuery(model.getNestedModel(), executionContext);
     }
 
     @SuppressWarnings("ConstantConditions")
@@ -766,7 +873,7 @@ public class SqlCodeGenerator {
                     configuration,
                     new FullBwdDataFrameCursorFactory(engine, tableName, model.getTableVersion()),
                     RecordSinkFactory.getInstance(asm, metadata, listColumnFilter, false),
-                    latestByColumnTypes.of(metadata.getColumnType(latestByIndex)),
+                    singleColumnType.of(metadata.getColumnType(latestByIndex)),
                     null
             );
         }

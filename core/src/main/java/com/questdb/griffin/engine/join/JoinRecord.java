@@ -21,11 +21,29 @@
  *
  ******************************************************************************/
 
-package com.questdb.cairo;
+package com.questdb.griffin.engine.join;
 
 import com.questdb.cairo.sql.Record;
 
-@FunctionalInterface
-public interface RecordSink {
-    void copy(Record r, RecordSinkSPI w);
+public class JoinRecord implements Record {
+    private final int split;
+    private Record master;
+    private Record slave;
+
+    public JoinRecord(int split) {
+        this.split = split;
+    }
+
+    @Override
+    public long getLong(int col) {
+        if (col < split) {
+            return master.getLong(col);
+        }
+        return slave.getLong(col - split);
+    }
+
+    void of(Record master, Record slave) {
+        this.master = master;
+        this.slave = slave;
+    }
 }

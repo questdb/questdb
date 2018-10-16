@@ -213,6 +213,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getSqlHashJoinLightValuePageSize() {
+        return Numbers.SIZE_1MB;
+    }
+
+    @Override
     public long getWorkStealTimeoutNanos() {
         return 10000;
     }

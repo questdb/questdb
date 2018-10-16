@@ -167,6 +167,20 @@ JNIEXPORT jint JNICALL Java_com_questdb_std_Net_configureNonBlocking
     return 0;
 }
 
+JNIEXPORT jint JNICALL Java_com_questdb_std_Net_configureNoLinger
+        (JNIEnv *e, jclass cl, jlong fd) {
+    struct linger sl;
+    sl.l_onoff = 1;
+    sl.l_linger = 0;
+    return setsockopt((int) fd, SOL_SOCKET, SO_LINGER, &sl, sizeof(sl));
+}
+
+JNIEXPORT jint JNICALL Java_com_questdb_std_Net_connect
+        (JNIEnv *e, jclass cl, jlong fd, jlong sockAddr) {
+    return connect((int) fd, (const struct sockaddr *) sockAddr, sizeof(struct sockaddr));
+}
+
+
 JNIEXPORT jint JNICALL Java_com_questdb_std_Net_setSndBuf
         (JNIEnv *e, jclass cl, jlong fd, jint size) {
     jint sz = size;

@@ -63,6 +63,22 @@ JNIEXPORT void JNICALL Java_com_questdb_std_Net_freeSockAddr
 
 /*
  * Class:     com_questdb_std_Net
+ * Method:    connect
+ * Signature: (JJ)I
+ */
+JNIEXPORT jint JNICALL Java_com_questdb_std_Net_connect
+        (JNIEnv *, jclass, jlong, jlong);
+
+/*
+ * Class:     com_questdb_std_Net
+ * Method:    configureNoLinger
+ * Signature: (J)I
+ */
+JNIEXPORT jint JNICALL Java_com_questdb_std_Net_configureNoLinger
+        (JNIEnv *, jclass, jlong);
+
+/*
+ * Class:     com_questdb_std_Net
  * Method:    getPeerIP
  * Signature: (J)J
  */
