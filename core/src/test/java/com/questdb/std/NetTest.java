@@ -24,7 +24,6 @@
 package com.questdb.std;
 
 import org.junit.Assert;
-import org.junit.Ignore;
 import org.junit.Test;
 
 import java.util.concurrent.CountDownLatch;
@@ -32,7 +31,6 @@ import java.util.concurrent.TimeUnit;
 
 public class NetTest {
     @Test
-    @Ignore
     public void testNoLinger() throws InterruptedException {
         bindAcceptConnectClose();
         bindAcceptConnectClose();
