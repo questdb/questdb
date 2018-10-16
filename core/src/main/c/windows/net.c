@@ -124,8 +124,6 @@ JNIEXPORT jboolean JNICALL Java_com_questdb_std_Net_join
     return TRUE;
 }
 
-
-
 JNIEXPORT jboolean JNICALL Java_com_questdb_std_Net_bindUdp
         (JNIEnv *e, jclass cl, jlong fd, jint address, jint port) {
 
@@ -142,6 +140,11 @@ JNIEXPORT jboolean JNICALL Java_com_questdb_std_Net_bindUdp
 
     SaveLastError();
     return FALSE;
+}
+
+JNIEXPORT jint JNICALL Java_com_questdb_std_Net_connect
+        (JNIEnv *e, jclass cl, jlong fd, jlong sockAddr) {
+    return connect((SOCKET) fd, (const struct sockaddr *) sockAddr, sizeof(struct sockaddr));
 }
 
 JNIEXPORT void JNICALL Java_com_questdb_std_Net_listen
@@ -198,6 +201,14 @@ JNIEXPORT jint JNICALL Java_com_questdb_std_Net_sendTo
         (JNIEnv *e, jclass cl, jlong fd, jlong ptr, jint len, jlong sockaddr) {
     return (jint) sendto((SOCKET) fd, (const void *) ptr, len, 0, (const struct sockaddr *) sockaddr,
                          sizeof(struct sockaddr_in));
+}
+
+JNIEXPORT jint JNICALL Java_com_questdb_std_Net_configureNoLinger
+        (JNIEnv *e, jclass cl, jlong fd) {
+    struct linger sl;
+    sl.l_onoff = 1;
+    sl.l_linger = 0;
+    return setsockopt((SOCKET) (int) fd, SOL_SOCKET, SO_LINGER, (const char *) &sl, sizeof(struct linger));
 }
 
 JNIEXPORT jint JNICALL Java_com_questdb_std_Net_setSndBuf
