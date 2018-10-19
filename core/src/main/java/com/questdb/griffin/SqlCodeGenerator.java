@@ -77,6 +77,20 @@ public class SqlCodeGenerator {
         );
     }
 
+    private RecordSink compileRecordSinkFromVaniallaNames(ObjList<CharSequence> columnNames, RecordMetadata masterMetadata) {
+        listColumnFilter.clear();
+        for (int i = 0, n = columnNames.size(); i < n; i++) {
+            listColumnFilter.add(masterMetadata.getColumnIndex(columnNames.getQuick(i)));
+        }
+
+        return RecordSinkFactory.getInstance(
+                asm,
+                masterMetadata,
+                listColumnFilter,
+                false
+        );
+    }
+
     private RecordMetadata copyMetadata(RecordMetadata that) {
         // todo: this metadata is immutable. Ideally we shouldn't be creating metadata for the same table over and over
         return GenericRecordMetadata.copyOf(that);
@@ -87,16 +101,28 @@ public class SqlCodeGenerator {
             RecordCursorFactory master,
             CharSequence masterAlias,
             RecordCursorFactory slave,
-            CharSequence slaveAlias
+            CharSequence slaveAlias,
+            boolean vanillaMaster
     ) {
+        /*
+         * JoinContext provides the following information:
+         * a/bIndexes - index of model where join column is coming from
+         * a/bNames - name of columns in respective models, these column names are not prefixed with table aliases
+         * a/bNodes - the original column references, that can include table alias. Sometimes it doesn't when column name is unambiguous
+         *
+         * a/b are "inverted" in that "a" for slave and "b" for master
+         *
+         * The issue is when we use model indexes and vanilla column names they would only work on single-table
+         * record cursor but original names with prefixed columns will only work with JoinRecordMetadata
+         */
         final JoinContext jc = model.getContext();
         final RecordMetadata masterMetadata = master.getMetadata();
         final RecordMetadata slaveMetadata = slave.getMetadata();
-        final RecordSink masterSink = compileRecordSink(jc.bNodes, masterMetadata);
-        final RecordSink slaveSink = compileRecordSink(jc.aNodes, slaveMetadata);
+        final RecordSink masterSink = vanillaMaster ? compileRecordSinkFromVaniallaNames(jc.bNames, masterMetadata) : compileRecordSink(jc.bNodes, masterMetadata);
+        final RecordSink slaveSink = compileRecordSinkFromVaniallaNames(jc.bNames, slaveMetadata);
 
         for (int i = 0, n = jc.aNodes.size(); i < n; i++) {
-            keyTypes.add(slaveMetadata.getColumnType(jc.aNodes.getQuick(i).token));
+            keyTypes.add(slaveMetadata.getColumnType(jc.aNames.getQuick(i)));
         }
 
         JoinRecordMetadata m = new JoinRecordMetadata(
@@ -204,7 +230,9 @@ public class SqlCodeGenerator {
         CharSequence masterAlias = null;
 
         try {
-            for (int i = 0, n = ordered.size(); i < n; i++) {
+            int n = ordered.size();
+            assert n > 0;
+            for (int i = 0; i < n; i++) {
                 int index = ordered.getQuick(i);
                 QueryModel m = joinModels.getQuick(index);
 
@@ -230,7 +258,7 @@ public class SqlCodeGenerator {
                             assert false;
                             break;
                         default:
-                            master = createHashJoin(m, master, masterAlias, slave, m.getName());
+                            master = createHashJoin(m, master, masterAlias, slave, m.getName(), index == 1);
                             masterAlias = null;
                             break;
                     }
