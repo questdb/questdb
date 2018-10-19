@@ -80,9 +80,9 @@ JNIEXPORT jint JNICALL Java_com_questdb_std_Net_configureNoLinger
 /*
  * Class:     com_questdb_std_Net
  * Method:    getPeerIP
- * Signature: (J)J
+ * Signature: (J)I
  */
-JNIEXPORT jlong JNICALL Java_com_questdb_std_Net_getPeerIP
+JNIEXPORT jint JNICALL Java_com_questdb_std_Net_getPeerIP
         (JNIEnv *, jclass, jlong);
 
 /*

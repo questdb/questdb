@@ -35,13 +35,8 @@ public class BaseRecordMetadata implements RecordMetadata {
     protected int columnCount;
 
     @Override
-    public int getColumnIndexQuiet(CharSequence columnName) {
-        return columnNameIndexMap.get(columnName);
-    }
-
-    @Override
-    public CharSequence getColumnName(int columnIndex) {
-        return getColumnQuick(columnIndex).getName();
+    public int getColumnCount() {
+        return columnCount;
     }
 
     @Override
@@ -50,8 +45,13 @@ public class BaseRecordMetadata implements RecordMetadata {
     }
 
     @Override
-    public int getColumnCount() {
-        return columnCount;
+    public int getColumnIndexQuiet(CharSequence columnName) {
+        return columnNameIndexMap.get(columnName);
+    }
+
+    @Override
+    public CharSequence getColumnName(int columnIndex) {
+        return getColumnQuick(columnIndex).getName();
     }
 
     @Override
@@ -67,6 +67,10 @@ public class BaseRecordMetadata implements RecordMetadata {
     @Override
     public boolean isColumnIndexed(int columnIndex) {
         return getColumnQuick(columnIndex).isIndexed();
+    }
+
+    public TableColumnMetadata getColumnMetadata(int columnIndex) {
+        return columnMetadata.getQuick(columnIndex);
     }
 
     public TableColumnMetadata getColumnQuick(int index) {

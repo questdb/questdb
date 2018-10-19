@@ -487,6 +487,19 @@ public class FastMap implements Map {
         }
 
         @Override
+        public void putStr(CharSequence value, int lo, int hi) {
+            int len = hi - lo;
+            checkSize((len << 1) + 4);
+            Unsafe.getUnsafe().putInt(appendAddress, len);
+            appendAddress += 4;
+            for (int i = lo; i < hi; i++) {
+                Unsafe.getUnsafe().putChar(appendAddress + ((i - lo) << 1), value.charAt(i));
+            }
+            appendAddress += len << 1;
+            writeOffset();
+        }
+
+        @Override
         @SuppressWarnings("unused")
         public void putTimestamp(long value) {
             putLong(value);

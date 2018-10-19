@@ -23,6 +23,8 @@
 
 package com.questdb.std;
 
+import com.questdb.std.str.StringSink;
+import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -43,10 +45,14 @@ public class NetTest {
         Assert.assertTrue(Net.bindTcp(fd, 0, port));
         Net.listen(fd, 1024);
 
+        // make sure peerIp in correct byte order
+        StringSink sink = new StringSink();
+
         CountDownLatch haltLatch = new CountDownLatch(1);
 
         new Thread(() -> {
             long clientfd = Net.accept(fd);
+            Net.appendIP4(sink, Net.getPeerIP(clientfd));
             Net.configureNoLinger(clientfd);
             Net.close(clientfd);
             haltLatch.countDown();
@@ -59,5 +65,7 @@ public class NetTest {
         haltLatch.await(10, TimeUnit.SECONDS);
         Net.close(clientFd);
         Net.close(fd);
+
+        TestUtils.assertEquals("127.0.0.1", sink);
     }
 }

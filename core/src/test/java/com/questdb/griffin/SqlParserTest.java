@@ -2320,6 +2320,43 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testJoinTriangle() throws Exception {
+        assertQuery(
+                "select-choose" +
+                        " o.a a," +
+                        " o.b b," +
+                        " o.c c," +
+                        " c.c c1," +
+                        " c.d d," +
+                        " c.e e," +
+                        " d.b b1," +
+                        " d.d d1," +
+                        " d.quantity quantity" +
+                        " from (" +
+                        "orders o" +
+                        " join customers c on c.c = o.c" +
+                        " join orderDetails d on d.d = c.d and d.b = o.b" +
+                        ")",
+                "orders o" +
+                        " join customers c on(c)" +
+                        " join orderDetails d on o.b = d.b and c.d = d.d",
+
+                modelOf("orders")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.INT)
+                        .col("c", ColumnType.LONG),
+                modelOf("customers")
+                        .col("c", ColumnType.LONG)
+                        .col("d", ColumnType.INT)
+                        .col("e", ColumnType.INT),
+                modelOf("orderDetails")
+                        .col("b", ColumnType.INT)
+                        .col("d", ColumnType.INT)
+                        .col("quantity", ColumnType.DOUBLE)
+        );
+    }
+
+    @Test
     public void testJoinWith() throws SqlException {
         assertQuery(
                 "select-choose" +

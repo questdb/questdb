@@ -28,6 +28,7 @@ import com.questdb.cairo.sql.*;
 import com.questdb.griffin.engine.functions.columns.SymbolColumn;
 import com.questdb.griffin.engine.groupby.*;
 import com.questdb.griffin.engine.join.HashJoinRecordCursorFactory;
+import com.questdb.griffin.engine.join.JoinRecordMetadata;
 import com.questdb.griffin.engine.orderby.RecordComparatorCompiler;
 import com.questdb.griffin.engine.orderby.SortedLightRecordCursorFactory;
 import com.questdb.griffin.engine.orderby.SortedRecordCursorFactory;
@@ -62,34 +63,48 @@ public class SqlCodeGenerator {
         // todo: clear
     }
 
+    private RecordSink compileRecordSink(ObjList<ExpressionNode> columnNames, RecordMetadata masterMetadata) {
+        listColumnFilter.clear();
+        for (int i = 0, n = columnNames.size(); i < n; i++) {
+            listColumnFilter.add(masterMetadata.getColumnIndex(columnNames.getQuick(i).token));
+        }
+
+        return RecordSinkFactory.getInstance(
+                asm,
+                masterMetadata,
+                listColumnFilter,
+                false
+        );
+    }
+
     private RecordMetadata copyMetadata(RecordMetadata that) {
         // todo: this metadata is immutable. Ideally we shouldn't be creating metadata for the same table over and over
         return GenericRecordMetadata.copyOf(that);
     }
 
-    private RecordCursorFactory createHashJoin(QueryModel model, RecordCursorFactory master, RecordCursorFactory slave) {
+    private RecordCursorFactory createHashJoin(
+            QueryModel model,
+            RecordCursorFactory master,
+            CharSequence masterAlias,
+            RecordCursorFactory slave,
+            CharSequence slaveAlias
+    ) {
         final JoinContext jc = model.getContext();
         final RecordMetadata masterMetadata = master.getMetadata();
         final RecordMetadata slaveMetadata = slave.getMetadata();
-        final RecordSink masterSink = RecordSinkFactory.getInstance(
-                asm,
-                masterMetadata,
-                jc.bIndexes,
-                false
-        );
+        final RecordSink masterSink = compileRecordSink(jc.bNodes, masterMetadata);
+        final RecordSink slaveSink = compileRecordSink(jc.aNodes, slaveMetadata);
 
-        final RecordSink slaveSink = RecordSinkFactory.getInstance(
-                asm,
-                slaveMetadata,
-                jc.aIndexes,
-                false);
-
-        for (int i = 0, n = jc.aIndexes.size(); i < n; i++) {
-            keyTypes.add(slaveMetadata.getColumnType(jc.aIndexes.getColumnIndex(i)));
+        for (int i = 0, n = jc.aNodes.size(); i < n; i++) {
+            keyTypes.add(slaveMetadata.getColumnType(jc.aNodes.getQuick(i).token));
         }
 
-        GenericRecordMetadata m = GenericRecordMetadata.copyOfSansTimestamp(masterMetadata);
-        GenericRecordMetadata.copyColumns(slaveMetadata, m);
+        JoinRecordMetadata m = new JoinRecordMetadata(
+                masterMetadata.getColumnCount() + slaveMetadata.getColumnCount()
+        );
+
+        m.copyColumnMetadataFrom(masterAlias, masterMetadata);
+        m.copyColumnMetadataFrom(slaveAlias, slaveMetadata);
 
         valueTypes.reset();
         valueTypes.add(ColumnType.LONG);
@@ -108,7 +123,7 @@ public class SqlCodeGenerator {
 
     RecordCursorFactory generate(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
         clearState();
-        return generateQuery(model, executionContext);
+        return generateQuery(model, executionContext, true);
     }
 
     private RecordCursorFactory generateFunctionQuery(QueryModel model) throws SqlException {
@@ -125,10 +140,68 @@ public class SqlCodeGenerator {
 
 
         // very cool, we have columns with 'model' and join semantics are within 'nestedModel'
-        // before we crack on we go ahead and comp
+        // before we crack on we go ahead and compile join models
+
+
         final ObjList<QueryModel> joinModels = model.getJoinModels();
+/*
+        final int joinModelsSize = joinModels.size();
+        ObjList<RecordCursorFactory> factories = new ObjList<>(joinModelsSize);
+
+        for (int i = 0; i < joinModelsSize; i++) {
+            factories.add(generateQuery(joinModels.getQuick(i), executionContext));
+        }
+
+        final GenericRecordMetadata mm = new GenericRecordMetadata();
+        // column pointer has two components - factory index and column index.
+        // each of these are INTs but we will store them as single packed long for now
+        final LongList columnPointers = new LongList();
+        final ObjList<QueryColumn> selectColumns = model.getColumns();
+        final int selectColumnSize = selectColumns.size();
+        assert selectColumnSize > 0;
+
+
+        for (int i = 0; i < selectColumnSize; i++) {
+            CharSequence column = selectColumns.getQuick(i).getAst().token;
+
+            int dot = Chars.indexOf(column, '.');
+            int aliasIndex = -1;
+            int columnIndex = -1;
+
+            if (dot == -1) {
+                for (int k = 0; k < factories.size(); k++) {
+                    RecordMetadata metadata = factories.getQuick(k).getMetadata();
+                    columnIndex = metadata.getColumnIndexQuiet(column);
+                    if (columnIndex != -1) {
+                        aliasIndex = k;
+                        break;
+                    }
+                }
+            } else {
+                aliasIndex = nested.getAliasIndex(column, 0, dot);
+                assert aliasIndex != -1;
+                // todo: add method that looks up column based on a part of char sequence
+                columnIndex = factories.getQuick(aliasIndex).getMetadata().getColumnIndex(Chars.stringOf(column).substring(dot + 1));
+            }
+
+            assert aliasIndex != -1;
+            assert columnIndex != -1;
+
+            columnPointers.add((((long) aliasIndex) << 32) | columnIndex);
+
+            RecordMetadata fm = factories.getQuick(aliasIndex).getMetadata();
+            mm.add(new TableColumnMetadata(
+                    Chars.stringOf(fm.getColumnName(columnIndex)),
+                    fm.getColumnType(columnIndex)
+            ));
+        }
+
+
+//        final ObjList<QueryModel> joinModels = model.getJoinModels();
+*/
         IntList ordered = model.getOrderedJoinModels();
         RecordCursorFactory master = null;
+        CharSequence masterAlias = null;
 
         try {
             for (int i = 0, n = ordered.size(); i < n; i++) {
@@ -136,7 +209,7 @@ public class SqlCodeGenerator {
                 QueryModel m = joinModels.getQuick(index);
 
                 // compile
-                RecordCursorFactory slave = generateQuery(m, executionContext);
+                RecordCursorFactory slave = generateQuery(m, executionContext, i > 0);
 
                 // check if this is the root of joins
                 if (master == null) {
@@ -146,6 +219,7 @@ public class SqlCodeGenerator {
                     // making it faster compared to ordering of join record source that
                     // doesn't allow rowid access.
                     master = slave;
+                    masterAlias = m.getName();
                 } else {
                     // not the root, join to "master"
                     switch (m.getJoinType()) {
@@ -156,7 +230,8 @@ public class SqlCodeGenerator {
                             assert false;
                             break;
                         default:
-                            master = createHashJoin(m, master, slave);
+                            master = createHashJoin(m, master, masterAlias, slave, m.getName());
+                            masterAlias = null;
                             break;
                     }
                 }
@@ -438,18 +513,18 @@ public class SqlCodeGenerator {
         }
     }
 
-    private RecordCursorFactory generateQuery(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
-        return generateOrderBy(generateSelect(model, executionContext), model);
+    private RecordCursorFactory generateQuery(QueryModel model, SqlExecutionContext executionContext, boolean processJoins) throws SqlException {
+        return generateOrderBy(generateSelect(model, executionContext, processJoins), model);
     }
 
     @NotNull
     private RecordCursorFactory generateSampleBy(QueryModel model, SqlExecutionContext executionContext, ExpressionNode sampleByNode) throws SqlException {
+        final RecordCursorFactory factory = generateSubQuery(model, executionContext);
         final ObjList<ExpressionNode> sampleByFill = model.getSampleByFill();
         final TimestampSampler timestampSampler = TimestampSamplerFactory.getInstance(sampleByNode.token, sampleByNode.position);
 
         assert model.getNestedModel() != null;
         final int fillCount = sampleByFill.size();
-        final RecordCursorFactory factory = generateSubQuery(model, executionContext);
         try {
             keyTypes.reset();
             valueTypes.reset();
@@ -538,12 +613,9 @@ public class SqlCodeGenerator {
         }
     }
 
-    private RecordCursorFactory generateSelect(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
+    private RecordCursorFactory generateSelect(QueryModel model, SqlExecutionContext executionContext, boolean processJoins) throws SqlException {
         switch (model.getSelectModelType()) {
             case QueryModel.SELECT_MODEL_CHOOSE:
-                if (model.getNestedModel().getJoinModels().size() > 1) {
-                    return generateJoins(model, executionContext);
-                }
                 return generateSelectChoose(model, executionContext);
             case QueryModel.SELECT_MODEL_GROUP_BY:
                 return generateSelectGroupBy(model, executionContext);
@@ -552,6 +624,9 @@ public class SqlCodeGenerator {
             case QueryModel.SELECT_MODEL_ANALYTIC:
                 return generateSelectAnalytic(model, executionContext);
             default:
+                if (model.getJoinModels().size() > 1 && processJoins) {
+                    return generateJoins(model, executionContext);
+                }
                 return generateNoSelect(model, executionContext);
         }
     }
@@ -705,7 +780,7 @@ public class SqlCodeGenerator {
 
     private RecordCursorFactory generateSubQuery(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
         assert model.getNestedModel() != null;
-        return generateQuery(model.getNestedModel(), executionContext);
+        return generateQuery(model.getNestedModel(), executionContext, true);
     }
 
     @SuppressWarnings("ConstantConditions")

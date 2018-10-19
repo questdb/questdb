@@ -433,6 +433,14 @@ public class CompactMap implements Map {
             }
         }
 
+        public void putStr(CharSequence value, int lo, int hi) {
+            // offset of string value relative to record start
+            entries.putLong(currentEntrySize);
+            int len = hi - lo;
+            entries.putStr(currentEntryOffset + currentEntrySize, value, lo, len);
+            currentEntrySize += len * 2 + 4;
+        }
+
         @Override
         public void putTimestamp(long value) {
             putLong(value);

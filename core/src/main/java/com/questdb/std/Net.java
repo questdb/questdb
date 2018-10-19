@@ -44,7 +44,10 @@ public final class Net {
     public native static long accept(long fd);
 
     public static void appendIP4(CharSink sink, long ip) {
-        sink.put(ip & 0xff).put('.').put((ip >> 8) & 0xff).put('.').put((ip >> 16) & 0xff).put('.').put((ip >> 24) & 0xff);
+        sink.put((ip >> 24) & 0xff).put('.')
+                .put((ip >> 16) & 0xff).put('.')
+                .put((ip >> 8) & 0xff).put('.')
+                .put(ip & 0xff);
     }
 
     public native static boolean bindTcp(long fd, int address, int port);
@@ -63,7 +66,11 @@ public final class Net {
         return Files.close(fd);
     }
 
+    public native static int configureNoLinger(long fd);
+
     public static native int configureNonBlocking(long fd);
+
+    public native static int connect(long fd, long sockaddr);
 
     public static native void freeMsgHeaders(long msgHeaders);
 
@@ -77,13 +84,7 @@ public final class Net {
         return Unsafe.getUnsafe().getInt(msgPtr + MMSGHDR_BUFFER_LENGTH_OFFSET);
     }
 
-    // todo: implement and test
-    public native static int configureNoLinger(long fd);
-
-    // todo: implement and test
-    public native static int connect(long fd, long sockaddr);
-
-    public native static long getPeerIP(long fd);
+    public native static int getPeerIP(long fd);
 
     public native static int getPeerPort(long fd);
 
@@ -138,6 +139,8 @@ public final class Net {
         return sockaddr(parseIPv4(address), port);
     }
 
+    public native static long sockaddr(int address, int port);
+
     public native static long socketTcp(boolean blocking);
 
     public static long socketUdp() {
@@ -157,8 +160,6 @@ public final class Net {
     private static native long getMsgHeaderBufferLengthOffset();
 
     private native static int getEwouldblock();
-
-    private native static long sockaddr(int address, int port);
 
     static {
         Os.init();

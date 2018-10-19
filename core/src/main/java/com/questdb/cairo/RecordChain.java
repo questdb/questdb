@@ -210,6 +210,14 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
         }
     }
 
+    public void putStr(CharSequence value, int lo, int hi) {
+        final int len = hi - lo;
+        mem.putLong(rowToDataOffset(recordOffset), varAppendOffset);
+        recordOffset += 8;
+        mem.putStr(varAppendOffset, value, lo, len);
+        varAppendOffset += len * 2 + 4;
+    }
+
     @Override
     public void putTimestamp(long value) {
         putLong(value);

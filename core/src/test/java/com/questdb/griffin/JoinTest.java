@@ -45,7 +45,7 @@ public class JoinTest extends AbstractGriffinTest {
                 compiler.compile("create table x (a int, c int)", bindVariableService);
                 compiler.compile("create table y (b int, c int)", bindVariableService);
                 compiler.compile("create table z (d int, c int)", bindVariableService);
-                printSqlResult("", "select a, b, d from x join y on(c) join z on (c) where a + b > 10", null, null, null, false);
+                printSqlResult("", "select x.a, b, d from x join y on(c) join z on (c) where a + b > 10", null, null, null, false);
                 Assert.assertEquals(0, engine.getBusyReaderCount());
                 Assert.assertEquals(0, engine.getBusyWriterCount());
             } finally {
