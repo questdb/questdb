@@ -24,6 +24,8 @@
 package com.questdb.griffin.engine.join;
 
 import com.questdb.cairo.sql.Record;
+import com.questdb.std.BinarySequence;
+import com.questdb.std.str.CharSink;
 
 public class JoinRecord implements Record {
     private final int split;
@@ -40,6 +42,132 @@ public class JoinRecord implements Record {
             return master.getLong(col);
         }
         return slave.getLong(col - split);
+    }
+
+    @Override
+    public BinarySequence getBin(int col) {
+        if (col < split) {
+            return master.getBin(col);
+        }
+        return slave.getBin(col - split);
+    }
+
+    @Override
+    public long getBinLen(int col) {
+        if (col < split) {
+            return master.getBinLen(col);
+        }
+        return slave.getBinLen(col - split);
+    }
+
+    @Override
+    public boolean getBool(int col) {
+        if (col < split) {
+            return master.getBool(col);
+        }
+        return slave.getBool(col - split);
+    }
+
+    @Override
+    public byte getByte(int col) {
+        if (col < split) {
+            return master.getByte(col);
+        }
+        return slave.getByte(col - split);
+    }
+
+    @Override
+    public long getDate(int col) {
+        if (col < split) {
+            return master.getDate(col);
+        }
+        return slave.getDate(col - split);
+    }
+
+    @Override
+    public double getDouble(int col) {
+        if (col < split) {
+            return master.getDouble(col);
+        }
+        return slave.getDouble(col - split);
+    }
+
+    @Override
+    public float getFloat(int col) {
+        if (col < split) {
+            return master.getFloat(col);
+        }
+        return slave.getFloat(col - split);
+    }
+
+    @Override
+    public int getInt(int col) {
+        if (col < split) {
+            return master.getInt(col);
+        }
+        return slave.getInt(col - split);
+    }
+
+    @Override
+    public long getRowId() {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public short getShort(int col) {
+        if (col < split) {
+            return master.getShort(col);
+        }
+        return slave.getShort(col - split);
+    }
+
+    @Override
+    public CharSequence getStr(int col) {
+        if (col < split) {
+            return master.getStr(col);
+        }
+        return slave.getStr(col - split);
+    }
+
+    @Override
+    public void getStr(int col, CharSink sink) {
+        if (col < split) {
+            master.getStr(col, sink);
+        } else {
+            slave.getStr(col - split, sink);
+        }
+    }
+
+    @Override
+    public CharSequence getStrB(int col) {
+        if (col < split) {
+            return master.getStrB(col);
+        }
+        return slave.getStrB(col - split);
+    }
+
+    @Override
+    public int getStrLen(int col) {
+        if (col < split) {
+            return master.getStrLen(col);
+        }
+        return slave.getStrLen(col - split);
+    }
+
+    @Override
+    public CharSequence getSym(int col) {
+        if (col < split) {
+            return master.getSym(col);
+        }
+        return slave.getSym(col - split);
+    }
+
+    @Override
+    public long getTimestamp(int col) {
+        if (col < split) {
+            return master.getTimestamp(col);
+        }
+        return slave.getTimestamp(col - split);
     }
 
     void of(Record master, Record slave) {

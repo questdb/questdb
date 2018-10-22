@@ -23,16 +23,17 @@
 
 package com.questdb.griffin.engine.join;
 
+import com.questdb.cairo.AbstractCairoTest;
 import com.questdb.cairo.ColumnType;
 import com.questdb.std.str.StringSink;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class JoinRecordMetadataTest {
+public class JoinRecordMetadataTest extends AbstractCairoTest {
     @Test
     public void testSimple() {
-        JoinRecordMetadata metadata = new JoinRecordMetadata(10);
+        JoinRecordMetadata metadata = new JoinRecordMetadata(configuration, 10);
         metadata.add("a", "x", ColumnType.INT);
         metadata.add("a", "y", ColumnType.DOUBLE);
         metadata.add("a", "m", ColumnType.DOUBLE);

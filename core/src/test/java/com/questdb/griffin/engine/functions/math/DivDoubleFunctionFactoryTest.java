@@ -26,32 +26,36 @@ package com.questdb.griffin.engine.functions.math;
 import com.questdb.griffin.FunctionFactory;
 import com.questdb.griffin.SqlException;
 import com.questdb.griffin.engine.AbstractFunctionFactoryTest;
-import com.questdb.std.Numbers;
 import org.junit.Test;
 
-public class SubtractIntFunctionFactoryTest extends AbstractFunctionFactoryTest {
+public class DivDoubleFunctionFactoryTest extends AbstractFunctionFactoryTest {
+    @Test
+    public void testDivByZero() throws SqlException {
+        call(10d, 0d).andAssert(Double.POSITIVE_INFINITY, 0.000001);
+    }
+
     @Test
     public void testLeftNan() throws SqlException {
-        call(Numbers.INT_NaN, 5).andAssert(Numbers.INT_NaN);
+        call(Double.NaN, 5d).andAssert(Double.NaN, 0);
     }
 
     @Test
     public void testNegative() throws SqlException {
-        call(-3, 4).andAssert(-7);
+        call(-3d, 4d).andAssert(-0.75d, 0.000001);
     }
 
     @Test
     public void testRightNan() throws SqlException {
-        call(123, Numbers.INT_NaN).andAssert(Numbers.INT_NaN);
+        call(123d, Double.NaN).andAssert(Double.NaN, 0.000001);
     }
 
     @Test
     public void testSimple() throws SqlException {
-        call(10, 8).andAssert(2);
+        call(10d, 8d).andAssert(1.25d, 0.000001);
     }
 
     @Override
     protected FunctionFactory getFunctionFactory() {
-        return new SubtractIntFunctionFactory();
+        return new DivDoubleFunctionFactory();
     }
 }

@@ -21,43 +21,58 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.engine.functions.str;
+package com.questdb.griffin.engine.functions.math;
 
 import com.questdb.cairo.CairoConfiguration;
 import com.questdb.cairo.sql.Function;
 import com.questdb.cairo.sql.Record;
 import com.questdb.griffin.FunctionFactory;
-import com.questdb.griffin.engine.functions.SymbolFunction;
-import com.questdb.griffin.engine.functions.UnaryFunction;
+import com.questdb.griffin.engine.functions.BinaryFunction;
+import com.questdb.griffin.engine.functions.LongFunction;
+import com.questdb.std.Numbers;
 import com.questdb.std.ObjList;
 
-public class ToSymbolFuctionFactory implements FunctionFactory {
+public class SubLongFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "to_symbol(S)";
+        return "-(LL)";
     }
 
     @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
-        return new ToSymbolFunction(position, args.getQuick(0));
+    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration1) {
+        return new SubtractIntVVFunc(position, args.getQuick(0), args.getQuick(1));
     }
 
-    private static class ToSymbolFunction extends SymbolFunction implements UnaryFunction {
-        private final Function arg;
+    private static class SubtractIntVVFunc extends LongFunction implements BinaryFunction {
+        final Function left;
+        final Function right;
 
-        public ToSymbolFunction(int position, Function arg) {
+        public SubtractIntVVFunc(int position, Function left, Function right) {
             super(position);
-            this.arg = arg;
+            this.left = left;
+            this.right = right;
         }
 
         @Override
-        public Function getArg() {
-            return arg;
+        public Function getLeft() {
+            return left;
         }
 
         @Override
-        public CharSequence getSymbol(Record rec) {
-            return arg.getStr(rec);
+        public Function getRight() {
+            return right;
+        }
+
+        @Override
+        public long getLong(Record rec) {
+            long l = left.getLong(rec);
+            long r = right.getLong(rec);
+
+            if (l == Numbers.LONG_NaN || r == Numbers.LONG_NaN) {
+                return Numbers.LONG_NaN;
+            }
+
+            return l - r;
         }
     }
 }

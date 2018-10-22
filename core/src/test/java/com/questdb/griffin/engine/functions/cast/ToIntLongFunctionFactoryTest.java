@@ -21,43 +21,32 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.engine.functions.math;
+package com.questdb.griffin.engine.functions.cast;
 
-import com.questdb.cairo.CairoConfiguration;
-import com.questdb.cairo.sql.Function;
-import com.questdb.cairo.sql.Record;
 import com.questdb.griffin.FunctionFactory;
-import com.questdb.griffin.engine.functions.ByteFunction;
-import com.questdb.griffin.engine.functions.UnaryFunction;
-import com.questdb.std.ObjList;
+import com.questdb.griffin.SqlException;
+import com.questdb.griffin.engine.AbstractFunctionFactoryTest;
+import com.questdb.std.Numbers;
+import org.junit.Test;
 
-public class ToByteIntFunctionFactory implements FunctionFactory {
-    @Override
-    public String getSignature() {
-        return "to_byte(I)";
+public class ToIntLongFunctionFactoryTest extends AbstractFunctionFactoryTest {
+    @Test
+    public void testNan() throws SqlException {
+        call(Numbers.LONG_NaN).andAssert(Numbers.INT_NaN);
+    }
+
+    @Test
+    public void testNegative() throws SqlException {
+        call(-3L).andAssert(-3);
+    }
+
+    @Test
+    public void testPositive() throws SqlException {
+        call(4567L).andAssert(4567);
     }
 
     @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
-        return new Func(position, args.getQuick(0));
-    }
-
-    private static class Func extends ByteFunction implements UnaryFunction {
-        private final Function arg;
-
-        public Func(int position, Function arg) {
-            super(position);
-            this.arg = arg;
-        }
-
-        @Override
-        public Function getArg() {
-            return arg;
-        }
-
-        @Override
-        public byte getByte(Record rec) {
-            return (byte) arg.getInt(rec);
-        }
+    protected FunctionFactory getFunctionFactory() {
+        return new ToIntLongFunctionFactory();
     }
 }

@@ -43,7 +43,8 @@ public class SqlCodeGenerator {
     private final CairoEngine engine;
     private final BytecodeAssembler asm = new BytecodeAssembler();
     // this list is used to generate record sinks
-    private final ListColumnFilter listColumnFilter = new ListColumnFilter();
+    private final ListColumnFilter listColumnFilterA = new ListColumnFilter();
+    private final ListColumnFilter listColumnFilterB = new ListColumnFilter();
     private final SingleColumnType singleColumnType = new SingleColumnType();
     private final CairoConfiguration configuration;
     private final RecordComparatorCompiler recordComparatorCompiler;
@@ -63,46 +64,16 @@ public class SqlCodeGenerator {
         // todo: clear
     }
 
-    private RecordSink compileRecordSink(ObjList<ExpressionNode> columnNames, RecordMetadata masterMetadata) {
-        listColumnFilter.clear();
-        for (int i = 0, n = columnNames.size(); i < n; i++) {
-            listColumnFilter.add(masterMetadata.getColumnIndex(columnNames.getQuick(i).token));
-        }
-
-        return RecordSinkFactory.getInstance(
-                asm,
-                masterMetadata,
-                listColumnFilter,
-                false
-        );
-    }
-
-    private RecordSink compileRecordSinkFromVaniallaNames(ObjList<CharSequence> columnNames, RecordMetadata masterMetadata) {
-        listColumnFilter.clear();
-        for (int i = 0, n = columnNames.size(); i < n; i++) {
-            listColumnFilter.add(masterMetadata.getColumnIndex(columnNames.getQuick(i)));
-        }
-
-        return RecordSinkFactory.getInstance(
-                asm,
-                masterMetadata,
-                listColumnFilter,
-                false
-        );
-    }
-
     private RecordMetadata copyMetadata(RecordMetadata that) {
         // todo: this metadata is immutable. Ideally we shouldn't be creating metadata for the same table over and over
         return GenericRecordMetadata.copyOf(that);
     }
 
     private RecordCursorFactory createHashJoin(
-            QueryModel model,
             RecordCursorFactory master,
             CharSequence masterAlias,
             RecordCursorFactory slave,
-            CharSequence slaveAlias,
-            boolean vanillaMaster
+            CharSequence slaveAlias
     ) {
         /*
          * JoinContext provides the following information:
@@ -115,17 +86,24 @@ public class SqlCodeGenerator {
          * The issue is when we use model indexes and vanilla column names they would only work on single-table
          * record cursor but original names with prefixed columns will only work with JoinRecordMetadata
          */
-        final JoinContext jc = model.getContext();
         final RecordMetadata masterMetadata = master.getMetadata();
         final RecordMetadata slaveMetadata = slave.getMetadata();
-        final RecordSink masterSink = vanillaMaster ? compileRecordSinkFromVaniallaNames(jc.bNames, masterMetadata) : compileRecordSink(jc.bNodes, masterMetadata);
-        final RecordSink slaveSink = compileRecordSinkFromVaniallaNames(jc.bNames, slaveMetadata);
+        final RecordSink masterSink = RecordSinkFactory.getInstance(
+                asm,
+                masterMetadata,
+                listColumnFilterB,
+                true
+        );
 
-        for (int i = 0, n = jc.aNodes.size(); i < n; i++) {
-            keyTypes.add(slaveMetadata.getColumnType(jc.aNames.getQuick(i)));
-        }
+        final RecordSink slaveSink = RecordSinkFactory.getInstance(
+                asm,
+                slaveMetadata,
+                listColumnFilterA,
+                true
+        );
 
         JoinRecordMetadata m = new JoinRecordMetadata(
+                configuration,
                 masterMetadata.getColumnCount() + slaveMetadata.getColumnCount()
         );
 
@@ -163,68 +141,7 @@ public class SqlCodeGenerator {
     }
 
     private RecordCursorFactory generateJoins(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
-
-
-        // very cool, we have columns with 'model' and join semantics are within 'nestedModel'
-        // before we crack on we go ahead and compile join models
-
-
         final ObjList<QueryModel> joinModels = model.getJoinModels();
-/*
-        final int joinModelsSize = joinModels.size();
-        ObjList<RecordCursorFactory> factories = new ObjList<>(joinModelsSize);
-
-        for (int i = 0; i < joinModelsSize; i++) {
-            factories.add(generateQuery(joinModels.getQuick(i), executionContext));
-        }
-
-        final GenericRecordMetadata mm = new GenericRecordMetadata();
-        // column pointer has two components - factory index and column index.
-        // each of these are INTs but we will store them as single packed long for now
-        final LongList columnPointers = new LongList();
-        final ObjList<QueryColumn> selectColumns = model.getColumns();
-        final int selectColumnSize = selectColumns.size();
-        assert selectColumnSize > 0;
-
-
-        for (int i = 0; i < selectColumnSize; i++) {
-            CharSequence column = selectColumns.getQuick(i).getAst().token;
-
-            int dot = Chars.indexOf(column, '.');
-            int aliasIndex = -1;
-            int columnIndex = -1;
-
-            if (dot == -1) {
-                for (int k = 0; k < factories.size(); k++) {
-                    RecordMetadata metadata = factories.getQuick(k).getMetadata();
-                    columnIndex = metadata.getColumnIndexQuiet(column);
-                    if (columnIndex != -1) {
-                        aliasIndex = k;
-                        break;
-                    }
-                }
-            } else {
-                aliasIndex = nested.getAliasIndex(column, 0, dot);
-                assert aliasIndex != -1;
-                // todo: add method that looks up column based on a part of char sequence
-                columnIndex = factories.getQuick(aliasIndex).getMetadata().getColumnIndex(Chars.stringOf(column).substring(dot + 1));
-            }
-
-            assert aliasIndex != -1;
-            assert columnIndex != -1;
-
-            columnPointers.add((((long) aliasIndex) << 32) | columnIndex);
-
-            RecordMetadata fm = factories.getQuick(aliasIndex).getMetadata();
-            mm.add(new TableColumnMetadata(
-                    Chars.stringOf(fm.getColumnName(columnIndex)),
-                    fm.getColumnType(columnIndex)
-            ));
-        }
-
-
-//        final ObjList<QueryModel> joinModels = model.getJoinModels();
-*/
         IntList ordered = model.getOrderedJoinModels();
         RecordCursorFactory master = null;
         CharSequence masterAlias = null;
@@ -234,10 +151,10 @@ public class SqlCodeGenerator {
             assert n > 0;
             for (int i = 0; i < n; i++) {
                 int index = ordered.getQuick(i);
-                QueryModel m = joinModels.getQuick(index);
+                QueryModel slaveModel = joinModels.getQuick(index);
 
                 // compile
-                RecordCursorFactory slave = generateQuery(m, executionContext, i > 0);
+                RecordCursorFactory slave = generateQuery(slaveModel, executionContext, i > 0);
 
                 // check if this is the root of joins
                 if (master == null) {
@@ -247,10 +164,10 @@ public class SqlCodeGenerator {
                     // making it faster compared to ordering of join record source that
                     // doesn't allow rowid access.
                     master = slave;
-                    masterAlias = m.getName();
+                    masterAlias = slaveModel.getName();
                 } else {
                     // not the root, join to "master"
-                    switch (m.getJoinType()) {
+                    switch (slaveModel.getJoinType()) {
                         case QueryModel.JOIN_CROSS:
                             assert false;
                             break;
@@ -258,14 +175,35 @@ public class SqlCodeGenerator {
                             assert false;
                             break;
                         default:
-                            master = createHashJoin(m, master, masterAlias, slave, m.getName(), index == 1);
+                            // calculate column indexes
+                            final JoinContext jc = slaveModel.getContext();
+                            final RecordMetadata masterMetadata = master.getMetadata();
+                            final RecordMetadata slaveMetadata = slave.getMetadata();
+                            lookupColumnIndexesUsingVanillaNames(listColumnFilterA, jc.aNames, slaveMetadata);
+                            if (index == 1) {
+                                lookupColumnIndexesUsingVanillaNames(listColumnFilterB, jc.bNames, masterMetadata);
+                            } else {
+                                lookupColumnIndexes(listColumnFilterB, jc.bNodes, masterMetadata);
+                            }
+
+                            // compare types and populate keyTypes
+                            keyTypes.reset();
+                            for (int k = 0, m = listColumnFilterA.getColumnCount(); k < m; k++) {
+                                int columnType = masterMetadata.getColumnType(listColumnFilterB.getColumnIndex(k));
+                                if (columnType != slaveMetadata.getColumnType(listColumnFilterA.getColumnIndex(k))) {
+                                    // index in column filter and join context is the same
+                                    throw SqlException.$(jc.aNodes.getQuick(k).position, "join column type mismatch");
+                                }
+                                keyTypes.add(columnType);
+                            }
+                            master = createHashJoin(master, masterAlias, slave, slaveModel.getName());
                             masterAlias = null;
                             break;
                     }
                 }
 
                 // check if there are post-filters
-                ExpressionNode filter = m.getPostJoinWhereClause();
+                ExpressionNode filter = slaveModel.getPostJoinWhereClause();
                 if (filter != null) {
                     master = new FilteredRecordCursorFactory(master, functionParser.parseFunction(filter, master.getMetadata(), executionContext));
                 }
@@ -273,13 +211,19 @@ public class SqlCodeGenerator {
 
             // unfortunately we had to go all out to create join metadata
             // now it is time to check if we have constant conditions
-
-
             ExpressionNode constFilter = model.getConstWhereClause();
             if (constFilter != null) {
                 Function function = functionParser.parseFunction(constFilter, null, executionContext);
                 if (!function.getBool(null)) {
-                    return new EmptyTableRecordCursorFactory(master.getMetadata());
+                    // do not copy metadata here
+                    // this would have been JoinRecordMetadata, which is new instance anyway
+                    // we have to make sure that this metadata is safely transitioned
+                    // to empty cursor factory
+                    JoinRecordMetadata metadata = (JoinRecordMetadata) master.getMetadata();
+                    metadata.incrementRefCount();
+                    RecordCursorFactory factory = new EmptyTableRecordCursorFactory(metadata);
+                    Misc.free(master);
+                    return factory;
                 }
             }
             return master;
@@ -423,13 +367,13 @@ public class SqlCodeGenerator {
                     filter);
         }
 
-        listColumnFilter.clear();
-        listColumnFilter.add(latestByIndex);
+        listColumnFilterA.clear();
+        listColumnFilterA.add(latestByIndex);
         return new LatestByAllFilteredRecordCursorFactory(
                 copyMetadata(metadata),
                 configuration,
                 dataFrameCursorFactory,
-                RecordSinkFactory.getInstance(asm, metadata, listColumnFilter, false),
+                RecordSinkFactory.getInstance(asm, metadata, listColumnFilterA, false),
                 singleColumnType.of(metadata.getColumnType(latestByIndex)),
                 filter
         );
@@ -457,7 +401,7 @@ public class SqlCodeGenerator {
 
                 final RecordMetadata metadata = recordCursorFactory.getMetadata();
                 final IntList orderByDirection = model.getOrderByDirection();
-                listColumnFilter.clear();
+                listColumnFilterA.clear();
                 intHashSet.clear();
 
                 // column index sign indicates direction
@@ -474,9 +418,9 @@ public class SqlCodeGenerator {
                     // we also maintain unique set of column indexes for better performance
                     if (intHashSet.add(index)) {
                         if (orderByDirection.getQuick(i) == QueryModel.ORDER_DIRECTION_DESCENDING) {
-                            listColumnFilter.add(-index - 1);
+                            listColumnFilterA.add(-index - 1);
                         } else {
-                            listColumnFilter.add(index + 1);
+                            listColumnFilterA.add(index + 1);
                         }
                     }
                 }
@@ -510,7 +454,7 @@ public class SqlCodeGenerator {
                             configuration,
                             orderedMetadata,
                             recordCursorFactory,
-                            recordComparatorCompiler.compile(metadata, listColumnFilter)
+                            recordComparatorCompiler.compile(metadata, listColumnFilterA)
                     );
                 }
 
@@ -530,7 +474,7 @@ public class SqlCodeGenerator {
                                 entityColumnFilter,
                                 false
                         ),
-                        recordComparatorCompiler.compile(metadata, listColumnFilter)
+                        recordComparatorCompiler.compile(metadata, listColumnFilterA)
                 );
             }
 
@@ -556,7 +500,7 @@ public class SqlCodeGenerator {
         try {
             keyTypes.reset();
             valueTypes.reset();
-            listColumnFilter.clear();
+            listColumnFilterA.clear();
 
             if (fillCount == 0 || fillCount == 1 && Chars.equals(sampleByFill.getQuick(0).token, "none")) {
                 return new SampleByFillNoneRecordCursorFactory(
@@ -564,7 +508,7 @@ public class SqlCodeGenerator {
                         factory,
                         timestampSampler,
                         model,
-                        listColumnFilter,
+                        listColumnFilterA,
                         functionParser,
                         executionContext,
                         asm,
@@ -580,7 +524,7 @@ public class SqlCodeGenerator {
                         factory,
                         timestampSampler,
                         model,
-                        listColumnFilter,
+                        listColumnFilterA,
                         functionParser,
                         executionContext,
                         asm,
@@ -595,7 +539,7 @@ public class SqlCodeGenerator {
                         factory,
                         timestampSampler,
                         model,
-                        listColumnFilter,
+                        listColumnFilterA,
                         functionParser,
                         executionContext,
                         asm,
@@ -610,7 +554,7 @@ public class SqlCodeGenerator {
                         factory,
                         timestampSampler,
                         model,
-                        listColumnFilter,
+                        listColumnFilterA,
                         functionParser,
                         executionContext,
                         asm,
@@ -627,7 +571,7 @@ public class SqlCodeGenerator {
                     factory,
                     timestampSampler,
                     model,
-                    listColumnFilter,
+                    listColumnFilterA,
                     functionParser,
                     executionContext,
                     asm,
@@ -676,7 +620,11 @@ public class SqlCodeGenerator {
         if (timestamp == null && metadata.getColumnCount() == selectColumnCount) {
             entity = true;
             for (int i = 0; i < selectColumnCount; i++) {
-                if (!Chars.equals(metadata.getColumnName(i), model.getColumns().getQuick(i).getAst().token)) {
+                QueryColumn qc = model.getColumns().getQuick(i);
+                if (
+                        !Chars.equals(metadata.getColumnName(i), qc.getAst().token) ||
+                                qc.getAlias() != null
+                ) {
                     entity = false;
                     break;
                 }
@@ -730,13 +678,13 @@ public class SqlCodeGenerator {
         try {
             keyTypes.reset();
             valueTypes.reset();
-            listColumnFilter.clear();
+            listColumnFilterA.clear();
 
             return new GroupByRecordCursorFactory(
                     configuration,
                     factory,
                     model,
-                    listColumnFilter,
+                    listColumnFilterA,
                     functionParser,
                     executionContext,
                     asm,
@@ -969,16 +917,38 @@ public class SqlCodeGenerator {
                         null);
             }
 
-            listColumnFilter.clear();
-            listColumnFilter.add(latestByIndex);
+            listColumnFilterA.clear();
+            listColumnFilterA.add(latestByIndex);
             return new LatestByAllFilteredRecordCursorFactory(
                     copyMetadata(metadata),
                     configuration,
                     new FullBwdDataFrameCursorFactory(engine, tableName, model.getTableVersion()),
-                    RecordSinkFactory.getInstance(asm, metadata, listColumnFilter, false),
+                    RecordSinkFactory.getInstance(asm, metadata, listColumnFilterA, false),
                     singleColumnType.of(metadata.getColumnType(latestByIndex)),
                     null
             );
+        }
+    }
+
+    private void lookupColumnIndexes(
+            ListColumnFilter filter,
+            ObjList<ExpressionNode> columnNames,
+            RecordMetadata masterMetadata
+    ) {
+        filter.clear();
+        for (int i = 0, n = columnNames.size(); i < n; i++) {
+            filter.add(masterMetadata.getColumnIndex(columnNames.getQuick(i).token));
+        }
+    }
+
+    private void lookupColumnIndexesUsingVanillaNames(
+            ListColumnFilter filter,
+            ObjList<CharSequence> columnNames,
+            RecordMetadata metadata
+    ) {
+        filter.clear();
+        for (int i = 0, n = columnNames.size(); i < n; i++) {
+            filter.add(metadata.getColumnIndex(columnNames.getQuick(i)));
         }
     }
 

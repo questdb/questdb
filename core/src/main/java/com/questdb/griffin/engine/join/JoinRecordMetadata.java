@@ -31,21 +31,26 @@ import com.questdb.cairo.map.MapValue;
 import com.questdb.cairo.sql.RecordMetadata;
 import com.questdb.std.CharSequenceIntHashMap;
 import com.questdb.std.Chars;
+import com.questdb.std.Misc;
 import com.questdb.std.ObjList;
+import com.questdb.std.str.CharSink;
 
-public class JoinRecordMetadata extends BaseRecordMetadata {
+import java.io.Closeable;
+
+public class JoinRecordMetadata extends BaseRecordMetadata implements Closeable {
 
     private final static ColumnTypes keyTypes;
     private final static ColumnTypes valueTypes;
-    private final StringBuilder builder = new StringBuilder();
     private final Map map;
+    private int refCount;
 
-    public JoinRecordMetadata(int columnCount) {
-        this.map = new FastMap(16 * 1024, keyTypes, valueTypes, columnCount * 2, 0.6);
+    public JoinRecordMetadata(CairoConfiguration configuration, int columnCount) {
+        this.map = new FastMap(configuration.getSqlJoinMetadataPageSize(), keyTypes, valueTypes, columnCount * 2, 0.6);
         this.timestampIndex = -1;
         this.columnCount = 0;
         this.columnNameIndexMap = new CharSequenceIntHashMap(columnCount);
         this.columnMetadata = new ObjList<>(columnCount);
+        this.refCount = 1;
     }
 
     public void add(CharSequence tableAlias, CharSequence columnName, int columnType) {
@@ -67,10 +72,10 @@ public class JoinRecordMetadata extends BaseRecordMetadata {
         }
 
         value.putLong(0, columnCount++);
-        builder.setLength(0);
+        final CharSink b = Misc.getThreadLocalBuilder();
         TableColumnMetadata cm;
         if (dot == -1) {
-            cm = new TableColumnMetadata(builder.append(tableAlias).append('.').append(columnName).toString(), columnType);
+            cm = new TableColumnMetadata(b.put(tableAlias).put('.').put(columnName).toString(), columnType);
         } else {
             cm = new TableColumnMetadata(Chars.stringOf(columnName), columnType);
         }
@@ -94,6 +99,17 @@ public class JoinRecordMetadata extends BaseRecordMetadata {
         for (int i = 0, n = fromMetadata.getColumnCount(); i < n; i++) {
             add(alias, fromMetadata.getColumnName(i), fromMetadata.getColumnType(i));
         }
+    }
+
+    @Override
+    public void close() {
+        if (--refCount < 1) {
+            map.close();
+        }
+    }
+
+    public void incrementRefCount() {
+        refCount++;
     }
 
     @Override

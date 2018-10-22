@@ -179,7 +179,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
         }
     }
 
-    private static void assertVariableColumns(RecordCursorFactory factory) {
+    public static void assertVariableColumns(RecordCursorFactory factory) {
         try (RecordCursor cursor = factory.getCursor(bindVariableService)) {
             RecordMetadata metadata = factory.getMetadata();
             final int columnCount = metadata.getColumnCount();

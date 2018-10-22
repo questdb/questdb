@@ -21,47 +21,48 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.engine.functions.rnd;
+package com.questdb.griffin.engine.functions.cast;
 
 import com.questdb.cairo.CairoConfiguration;
 import com.questdb.cairo.sql.Function;
 import com.questdb.cairo.sql.Record;
 import com.questdb.griffin.FunctionFactory;
-import com.questdb.griffin.SqlException;
-import com.questdb.griffin.engine.functions.StatelessFunction;
-import com.questdb.griffin.engine.functions.SymbolFunction;
+import com.questdb.griffin.engine.functions.DateFunction;
+import com.questdb.griffin.engine.functions.UnaryFunction;
+import com.questdb.griffin.engine.functions.constants.DateConstant;
 import com.questdb.std.ObjList;
-import com.questdb.std.Rnd;
 
-public class RndSymbolListFunctionFactory implements FunctionFactory {
+public class ToDateLongFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "rnd_symbol(V)";
+        return "to_date(L)";
     }
 
     @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) throws SqlException {
-        final ObjList<String> symbols = new ObjList<>(args.size());
-        RndStringlListFunctionFactory.copyConstants(args, symbols);
-
-        return new Func(position, symbols, configuration);
+    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
+        Function arg = args.getQuick(0);
+        if (arg.isConstant()) {
+            return new DateConstant(position, arg.getLong(null));
+        }
+        return new Func(position, arg);
     }
 
-    private static final class Func extends SymbolFunction implements StatelessFunction {
-        private final ObjList<String> symbols;
-        private final Rnd rnd;
-        private final int count;
+    private static class Func extends DateFunction implements UnaryFunction {
+        private final Function arg;
 
-        public Func(int position, ObjList<String> symbols, CairoConfiguration configuration) {
+        public Func(int position, Function arg) {
             super(position);
-            this.rnd = SharedRandom.getRandom(configuration);
-            this.symbols = symbols;
-            this.count = symbols.size();
+            this.arg = arg;
         }
 
         @Override
-        public CharSequence getSymbol(Record rec) {
-            return symbols.getQuick(rnd.nextPositiveInt() % count);
+        public Function getArg() {
+            return arg;
+        }
+
+        @Override
+        public long getDate(Record rec) {
+            return arg.getLong(rec);
         }
     }
 }

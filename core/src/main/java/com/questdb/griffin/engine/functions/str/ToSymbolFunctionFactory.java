@@ -21,36 +21,31 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.engine.functions.date;
+package com.questdb.griffin.engine.functions.str;
 
 import com.questdb.cairo.CairoConfiguration;
 import com.questdb.cairo.sql.Function;
 import com.questdb.cairo.sql.Record;
 import com.questdb.griffin.FunctionFactory;
-import com.questdb.griffin.engine.functions.DateFunction;
+import com.questdb.griffin.engine.functions.SymbolFunction;
 import com.questdb.griffin.engine.functions.UnaryFunction;
-import com.questdb.griffin.engine.functions.constants.DateConstant;
 import com.questdb.std.ObjList;
 
-public class ToDateLongFunctionFactory implements FunctionFactory {
+public class ToSymbolFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "to_date(L)";
+        return "to_symbol(S)";
     }
 
     @Override
     public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
-        Function arg = args.getQuick(0);
-        if (arg.isConstant()) {
-            return new DateConstant(position, arg.getLong(null));
-        }
-        return new Func(position, arg);
+        return new ToSymbolFunction(position, args.getQuick(0));
     }
 
-    private static class Func extends DateFunction implements UnaryFunction {
+    private static class ToSymbolFunction extends SymbolFunction implements UnaryFunction {
         private final Function arg;
 
-        public Func(int position, Function arg) {
+        public ToSymbolFunction(int position, Function arg) {
             super(position);
             this.arg = arg;
         }
@@ -61,8 +56,8 @@ public class ToDateLongFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public long getDate(Record rec) {
-            return arg.getLong(rec);
+        public CharSequence getSymbol(Record rec) {
+            return arg.getStr(rec);
         }
     }
 }

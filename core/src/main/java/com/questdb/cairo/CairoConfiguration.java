@@ -102,4 +102,11 @@ public interface CairoConfiguration {
     long getWorkStealTimeoutNanos();
 
     boolean isParallelIndexingEnabled();
+
+    /**
+     * This holds table metadata, which is usually quite small. 16K page should be adequate.
+     *
+     * @return memory page size
+     */
+    int getSqlJoinMetadataPageSize();
 }

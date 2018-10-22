@@ -21,58 +21,45 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.engine.functions.math;
+package com.questdb.griffin.engine.functions.cast;
 
 import com.questdb.cairo.CairoConfiguration;
 import com.questdb.cairo.sql.Function;
 import com.questdb.cairo.sql.Record;
 import com.questdb.griffin.FunctionFactory;
-import com.questdb.griffin.engine.functions.BinaryFunction;
 import com.questdb.griffin.engine.functions.IntFunction;
+import com.questdb.griffin.engine.functions.UnaryFunction;
 import com.questdb.std.Numbers;
 import com.questdb.std.ObjList;
 
-public class SubtractIntFunctionFactory implements FunctionFactory {
+public class ToIntLongFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "-(II)";
+        return "to_int(L)";
     }
 
     @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration1) {
-        return new SubtractIntVVFunc(position, args.getQuick(0), args.getQuick(1));
+    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
+        return new Func(position, args.getQuick(0));
     }
 
-    private static class SubtractIntVVFunc extends IntFunction implements BinaryFunction {
-        final Function left;
-        final Function right;
+    private static class Func extends IntFunction implements UnaryFunction {
+        private final Function arg;
 
-        public SubtractIntVVFunc(int position, Function left, Function right) {
+        public Func(int position, Function arg) {
             super(position);
-            this.left = left;
-            this.right = right;
+            this.arg = arg;
+        }
+
+        @Override
+        public Function getArg() {
+            return arg;
         }
 
         @Override
         public int getInt(Record rec) {
-            int l = left.getInt(rec);
-            int r = right.getInt(rec);
-
-            if (l == Numbers.INT_NaN || r == Numbers.INT_NaN) {
-                return Numbers.INT_NaN;
-            }
-
-            return l - r;
-        }
-
-        @Override
-        public Function getLeft() {
-            return left;
-        }
-
-        @Override
-        public Function getRight() {
-            return right;
+            final long value = arg.getLong(rec);
+            return value == Numbers.LONG_NaN ? Numbers.INT_NaN : (int) value;
         }
     }
 }

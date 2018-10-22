@@ -196,7 +196,7 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
 
         Function func = expr("a + :xyz + :xyz - :zz")
                 .withFunction(new AddIntFunctionFactory())
-                .withFunction(new SubtractIntFunctionFactory())
+                .withFunction(new SubIntFunctionFactory())
                 .withColumn("a", ColumnType.INT, 22)
                 .$();
 

@@ -21,47 +21,58 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.engine.functions.rnd;
+package com.questdb.griffin.engine.functions.math;
 
 import com.questdb.cairo.CairoConfiguration;
 import com.questdb.cairo.sql.Function;
 import com.questdb.cairo.sql.Record;
 import com.questdb.griffin.FunctionFactory;
-import com.questdb.griffin.SqlException;
-import com.questdb.griffin.engine.functions.StatelessFunction;
-import com.questdb.griffin.engine.functions.SymbolFunction;
+import com.questdb.griffin.engine.functions.BinaryFunction;
+import com.questdb.griffin.engine.functions.IntFunction;
+import com.questdb.std.Numbers;
 import com.questdb.std.ObjList;
-import com.questdb.std.Rnd;
 
-public class RndSymbolListFunctionFactory implements FunctionFactory {
+public class SubIntFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "rnd_symbol(V)";
+        return "-(II)";
     }
 
     @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) throws SqlException {
-        final ObjList<String> symbols = new ObjList<>(args.size());
-        RndStringlListFunctionFactory.copyConstants(args, symbols);
-
-        return new Func(position, symbols, configuration);
+    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration1) {
+        return new SubtractIntVVFunc(position, args.getQuick(0), args.getQuick(1));
     }
 
-    private static final class Func extends SymbolFunction implements StatelessFunction {
-        private final ObjList<String> symbols;
-        private final Rnd rnd;
-        private final int count;
+    private static class SubtractIntVVFunc extends IntFunction implements BinaryFunction {
+        final Function left;
+        final Function right;
 
-        public Func(int position, ObjList<String> symbols, CairoConfiguration configuration) {
+        public SubtractIntVVFunc(int position, Function left, Function right) {
             super(position);
-            this.rnd = SharedRandom.getRandom(configuration);
-            this.symbols = symbols;
-            this.count = symbols.size();
+            this.left = left;
+            this.right = right;
         }
 
         @Override
-        public CharSequence getSymbol(Record rec) {
-            return symbols.getQuick(rnd.nextPositiveInt() % count);
+        public int getInt(Record rec) {
+            int l = left.getInt(rec);
+            int r = right.getInt(rec);
+
+            if (l == Numbers.INT_NaN || r == Numbers.INT_NaN) {
+                return Numbers.INT_NaN;
+            }
+
+            return l - r;
+        }
+
+        @Override
+        public Function getLeft() {
+            return left;
+        }
+
+        @Override
+        public Function getRight() {
+            return right;
         }
     }
 }

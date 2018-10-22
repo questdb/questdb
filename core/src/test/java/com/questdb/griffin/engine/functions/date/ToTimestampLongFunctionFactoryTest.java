@@ -26,6 +26,7 @@ package com.questdb.griffin.engine.functions.date;
 import com.questdb.griffin.FunctionFactory;
 import com.questdb.griffin.SqlException;
 import com.questdb.griffin.engine.AbstractFunctionFactoryTest;
+import com.questdb.griffin.engine.functions.cast.ToTimestampLongFunctionFactory;
 import com.questdb.std.Numbers;
 import org.junit.Test;
 

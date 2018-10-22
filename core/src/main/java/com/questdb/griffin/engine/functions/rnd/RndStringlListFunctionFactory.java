@@ -44,6 +44,11 @@ public class RndStringlListFunctionFactory implements FunctionFactory {
     @Override
     public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) throws SqlException {
         final ObjList<String> symbols = new ObjList<>(args.size());
+        copyConstants(args, symbols);
+        return new Func(position, symbols, configuration);
+    }
+
+    static void copyConstants(ObjList<Function> args, ObjList<String> symbols) throws SqlException {
         for (int i = 0, n = args.size(); i < n; i++) {
             Function f = args.getQuick(i);
             if (f.getType() != ColumnType.STRING || !f.isConstant()) {
@@ -51,8 +56,6 @@ public class RndStringlListFunctionFactory implements FunctionFactory {
             }
             symbols.add(Chars.toString(f.getStr(null)));
         }
-
-        return new Func(position, symbols, configuration);
     }
 
     private static final class Func extends StrFunction implements StatelessFunction {

@@ -21,47 +21,50 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.engine.functions.rnd;
+package com.questdb.griffin.engine.functions.math;
 
 import com.questdb.cairo.CairoConfiguration;
 import com.questdb.cairo.sql.Function;
 import com.questdb.cairo.sql.Record;
 import com.questdb.griffin.FunctionFactory;
-import com.questdb.griffin.SqlException;
-import com.questdb.griffin.engine.functions.StatelessFunction;
-import com.questdb.griffin.engine.functions.SymbolFunction;
+import com.questdb.griffin.engine.functions.BinaryFunction;
+import com.questdb.griffin.engine.functions.DoubleFunction;
 import com.questdb.std.ObjList;
-import com.questdb.std.Rnd;
 
-public class RndSymbolListFunctionFactory implements FunctionFactory {
+public class DivDoubleFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "rnd_symbol(V)";
+        return "/(DD)";
     }
 
     @Override
-    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) throws SqlException {
-        final ObjList<String> symbols = new ObjList<>(args.size());
-        RndStringlListFunctionFactory.copyConstants(args, symbols);
-
-        return new Func(position, symbols, configuration);
+    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
+        return new Func(position, args.getQuick(0), args.getQuick(1));
     }
 
-    private static final class Func extends SymbolFunction implements StatelessFunction {
-        private final ObjList<String> symbols;
-        private final Rnd rnd;
-        private final int count;
+    private static class Func extends DoubleFunction implements BinaryFunction {
+        private final Function left;
+        private final Function right;
 
-        public Func(int position, ObjList<String> symbols, CairoConfiguration configuration) {
+        public Func(int position, Function left, Function right) {
             super(position);
-            this.rnd = SharedRandom.getRandom(configuration);
-            this.symbols = symbols;
-            this.count = symbols.size();
+            this.left = left;
+            this.right = right;
         }
 
         @Override
-        public CharSequence getSymbol(Record rec) {
-            return symbols.getQuick(rnd.nextPositiveInt() % count);
+        public double getDouble(Record rec) {
+            return left.getDouble(rec) / right.getDouble(rec);
+        }
+
+        @Override
+        public Function getLeft() {
+            return left;
+        }
+
+        @Override
+        public Function getRight() {
+            return right;
         }
     }
 }

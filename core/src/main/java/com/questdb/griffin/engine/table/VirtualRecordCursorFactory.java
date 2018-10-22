@@ -69,6 +69,6 @@ public class VirtualRecordCursorFactory extends AbstractRecordCursorFactory {
 
     @Override
     public boolean isRandomAccessCursor() {
-        return true;
+        return base.isRandomAccessCursor();
     }
 }

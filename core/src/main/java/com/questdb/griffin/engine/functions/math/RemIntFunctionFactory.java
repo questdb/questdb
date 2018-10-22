@@ -27,37 +27,44 @@ import com.questdb.cairo.CairoConfiguration;
 import com.questdb.cairo.sql.Function;
 import com.questdb.cairo.sql.Record;
 import com.questdb.griffin.FunctionFactory;
-import com.questdb.griffin.engine.functions.ShortFunction;
-import com.questdb.griffin.engine.functions.UnaryFunction;
+import com.questdb.griffin.engine.functions.BinaryFunction;
+import com.questdb.griffin.engine.functions.IntFunction;
 import com.questdb.std.ObjList;
 
-public class ToShortIntFunctionFactory implements FunctionFactory {
+public class RemIntFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "to_short(I)";
+        return "%(II)";
     }
 
     @Override
     public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
-        return new Func(position, args.getQuick(0));
+        return new Func(position, args.getQuick(0), args.getQuick(1));
     }
 
-    private static class Func extends ShortFunction implements UnaryFunction {
-        private final Function arg;
+    private static class Func extends IntFunction implements BinaryFunction {
+        private final Function left;
+        private final Function right;
 
-        public Func(int position, Function arg) {
+        public Func(int position, Function left, Function right) {
             super(position);
-            this.arg = arg;
+            this.left = left;
+            this.right = right;
         }
 
         @Override
-        public Function getArg() {
-            return arg;
+        public int getInt(Record rec) {
+            return left.getInt(rec) % right.getInt(rec);
         }
 
         @Override
-        public short getShort(Record rec) {
-            return (short) arg.getInt(rec);
+        public Function getLeft() {
+            return left;
+        }
+
+        @Override
+        public Function getRight() {
+            return right;
         }
     }
 }

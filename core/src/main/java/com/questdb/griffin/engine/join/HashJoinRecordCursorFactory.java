@@ -28,10 +28,7 @@ import com.questdb.cairo.map.Map;
 import com.questdb.cairo.map.MapFactory;
 import com.questdb.cairo.map.MapKey;
 import com.questdb.cairo.map.MapValue;
-import com.questdb.cairo.sql.Record;
-import com.questdb.cairo.sql.RecordCursor;
-import com.questdb.cairo.sql.RecordCursorFactory;
-import com.questdb.cairo.sql.RecordMetadata;
+import com.questdb.cairo.sql.*;
 import com.questdb.griffin.engine.functions.bind.BindVariableService;
 import com.questdb.std.Misc;
 import com.questdb.std.Transient;
@@ -71,6 +68,7 @@ public class HashJoinRecordCursorFactory extends AbstractRecordCursorFactory {
     public void close() {
         joinKeyMap.close();
         slaveChain.close();
+        ((JoinRecordMetadata) getMetadata()).close();
         masterFactory.close();
         slaveFactory.close();
     }
@@ -95,6 +93,7 @@ public class HashJoinRecordCursorFactory extends AbstractRecordCursorFactory {
 
     private void buildMapOfSlaveRecords(RecordCursor slaveCursor) {
         slaveChain.clear();
+        joinKeyMap.clear();
         final Record record = slaveCursor.getRecord();
         while (slaveCursor.hasNext()) {
             MapKey key = joinKeyMap.withKey();
@@ -115,11 +114,21 @@ public class HashJoinRecordCursorFactory extends AbstractRecordCursorFactory {
         private Record masterRecord;
         private Record slaveRecord;
         private LongChain.TreeCursor slaveChainCursor;
+        private final int columnSplit;
 
         public HashJoinRecordCursor(int columnSplit, Map joinKeyMap, LongChain slaveChain) {
             this.record = new JoinRecord(columnSplit);
             this.joinKeyMap = joinKeyMap;
             this.slaveChain = slaveChain;
+            this.columnSplit = columnSplit;
+        }
+
+        @Override
+        public SymbolTable getSymbolTable(int columnIndex) {
+            if (columnIndex < columnSplit) {
+                return masterCursor.getSymbolTable(columnIndex);
+            }
+            return slaveCursor.getSymbolTable(columnIndex - columnSplit);
         }
 
         @Override
@@ -137,6 +146,7 @@ public class HashJoinRecordCursorFactory extends AbstractRecordCursorFactory {
         public boolean hasNext() {
             if (slaveChainCursor != null && slaveChainCursor.hasNext()) {
                 slaveCursor.recordAt(slaveChainCursor.next());
+                return true;
             }
 
             while (masterCursor.hasNext()) {

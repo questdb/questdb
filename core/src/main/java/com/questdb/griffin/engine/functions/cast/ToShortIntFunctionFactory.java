@@ -21,22 +21,43 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.engine.functions.math;
+package com.questdb.griffin.engine.functions.cast;
 
+import com.questdb.cairo.CairoConfiguration;
+import com.questdb.cairo.sql.Function;
+import com.questdb.cairo.sql.Record;
 import com.questdb.griffin.FunctionFactory;
-import com.questdb.griffin.SqlException;
-import com.questdb.griffin.engine.AbstractFunctionFactoryTest;
-import com.questdb.griffin.engine.functions.cast.ToShortIntFunctionFactory;
-import org.junit.Test;
+import com.questdb.griffin.engine.functions.ShortFunction;
+import com.questdb.griffin.engine.functions.UnaryFunction;
+import com.questdb.std.ObjList;
 
-public class ToShortIntFunctionFactoryTest extends AbstractFunctionFactoryTest {
-    @Test
-    public void testSimple() throws SqlException {
-        call(123).andAssert((short) 123);
+public class ToShortIntFunctionFactory implements FunctionFactory {
+    @Override
+    public String getSignature() {
+        return "to_short(I)";
     }
 
     @Override
-    protected FunctionFactory getFunctionFactory() {
-        return new ToShortIntFunctionFactory();
+    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
+        return new Func(position, args.getQuick(0));
+    }
+
+    private static class Func extends ShortFunction implements UnaryFunction {
+        private final Function arg;
+
+        public Func(int position, Function arg) {
+            super(position);
+            this.arg = arg;
+        }
+
+        @Override
+        public Function getArg() {
+            return arg;
+        }
+
+        @Override
+        public short getShort(Record rec) {
+            return (short) arg.getInt(rec);
+        }
     }
 }

@@ -26,6 +26,7 @@ package com.questdb.griffin.engine.functions.math;
 import com.questdb.griffin.FunctionFactory;
 import com.questdb.griffin.SqlException;
 import com.questdb.griffin.engine.AbstractFunctionFactoryTest;
+import com.questdb.griffin.engine.functions.cast.ToByteIntFunctionFactory;
 import org.junit.Test;
 
 public class ToByteIntFunctionFactoryTest extends AbstractFunctionFactoryTest {

@@ -95,6 +95,23 @@ public class SqlParserTest extends AbstractGriffinTest {
         );
     }
 
+
+    @Test
+    public void testInnerJoinPostFilter() throws SqlException {
+        assertQuery("select-virtual c, a, b, d, d - b column from (select-choose z.c c, x.a a, b, d from (x join (y where b < 20) y on y.m = x.c join z on z.c = x.c))",
+                "select z.c, x.a, b, d, d-b from x join y on y.m = x.c join z on (c) where y.b < 20",
+                modelOf("x")
+                        .col("c", ColumnType.INT)
+                        .col("a", ColumnType.INT),
+                modelOf("y")
+                        .col("m", ColumnType.INT)
+                        .col("b", ColumnType.INT),
+                modelOf("z")
+                        .col("c", ColumnType.INT)
+                        .col("d", ColumnType.INT)
+        );
+    }
+
     @Test
     public void testAsOfJoinColumnAliasNull() throws SqlException {
         assertQuery(
@@ -275,6 +292,13 @@ public class SqlParserTest extends AbstractGriffinTest {
                 modelOf("x")
                         .col("x", ColumnType.INT)
                         .col("a", ColumnType.INT));
+    }
+
+    @Test
+    public void testSelectColumnWithAlias() throws SqlException {
+        assertQuery(
+                "select-virtual a, rnd_int() c from (select-choose x a from (long_sequence(5)))",
+                "select x a, rnd_int() c from long_sequence(5)");
     }
 
     @Test

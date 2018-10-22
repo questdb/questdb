@@ -1076,7 +1076,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
     public void testSymbolFunction() throws SqlException {
         functions.add(new LengthStrFunctionFactory());
         functions.add(new LengthSymbolFunctionFactory());
-        functions.add(new SubtractIntFunctionFactory());
+        functions.add(new SubIntFunctionFactory());
 
         FunctionParser functionParser = createFunctionParser();
         final GenericRecordMetadata metadata = new GenericRecordMetadata();

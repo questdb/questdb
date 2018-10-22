@@ -21,48 +21,50 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.engine.functions.date;
+package com.questdb.griffin.engine.functions.math;
 
 import com.questdb.cairo.CairoConfiguration;
 import com.questdb.cairo.sql.Function;
 import com.questdb.cairo.sql.Record;
 import com.questdb.griffin.FunctionFactory;
-import com.questdb.griffin.engine.functions.TimestampFunction;
-import com.questdb.griffin.engine.functions.UnaryFunction;
-import com.questdb.griffin.engine.functions.constants.TimestampConstant;
+import com.questdb.griffin.engine.functions.BinaryFunction;
+import com.questdb.griffin.engine.functions.LongFunction;
 import com.questdb.std.ObjList;
 
-public class ToTimestampLongFunctionFactory implements FunctionFactory {
+public class RemLongFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "to_timestamp(L)";
+        return "%(LL)";
     }
 
     @Override
     public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
-        Function var = args.getQuick(0);
-        if (var.isConstant()) {
-            return new TimestampConstant(position, var.getLong(null));
-        }
-        return new Func(position, var);
+        return new Func(position, args.getQuick(0), args.getQuick(1));
     }
 
-    private static class Func extends TimestampFunction implements UnaryFunction {
-        private final Function arg;
+    private static class Func extends LongFunction implements BinaryFunction {
+        private final Function left;
+        private final Function right;
 
-        public Func(int position, Function arg) {
+        public Func(int position, Function left, Function right) {
             super(position);
-            this.arg = arg;
+            this.left = left;
+            this.right = right;
         }
 
         @Override
-        public Function getArg() {
-            return arg;
+        public Function getLeft() {
+            return left;
         }
 
         @Override
-        public long getTimestamp(Record rec) {
-            return arg.getLong(rec);
+        public Function getRight() {
+            return right;
+        }
+
+        @Override
+        public long getLong(Record rec) {
+            return left.getLong(rec) % right.getLong(rec);
         }
     }
 }

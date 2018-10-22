@@ -21,32 +21,37 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.engine.table;
+package com.questdb.griffin.engine.functions.math;
 
-import com.questdb.cairo.AbstractRecordCursorFactory;
-import com.questdb.cairo.sql.RecordCursor;
-import com.questdb.cairo.sql.RecordMetadata;
-import com.questdb.griffin.engine.EmptyTableRecordCursor;
-import com.questdb.griffin.engine.functions.bind.BindVariableService;
-import com.questdb.std.Misc;
+import com.questdb.griffin.FunctionFactory;
+import com.questdb.griffin.SqlException;
+import com.questdb.griffin.engine.AbstractFunctionFactoryTest;
+import com.questdb.std.Numbers;
+import org.junit.Test;
 
-public class EmptyTableRecordCursorFactory extends AbstractRecordCursorFactory {
-    public EmptyTableRecordCursorFactory(RecordMetadata metadata) {
-        super(metadata);
+public class SubIntFunctionFactoryTest extends AbstractFunctionFactoryTest {
+    @Test
+    public void testLeftNan() throws SqlException {
+        call(Numbers.INT_NaN, 5).andAssert(Numbers.INT_NaN);
+    }
+
+    @Test
+    public void testNegative() throws SqlException {
+        call(-3, 4).andAssert(-7);
+    }
+
+    @Test
+    public void testRightNan() throws SqlException {
+        call(123, Numbers.INT_NaN).andAssert(Numbers.INT_NaN);
+    }
+
+    @Test
+    public void testSimple() throws SqlException {
+        call(10, 8).andAssert(2);
     }
 
     @Override
-    public RecordCursor getCursor(BindVariableService bindVariableService) {
-        return EmptyTableRecordCursor.INSTANCE;
-    }
-
-    @Override
-    public boolean isRandomAccessCursor() {
-        return false;
-    }
-
-    @Override
-    public void close() {
-        Misc.free(getMetadata());
+    protected FunctionFactory getFunctionFactory() {
+        return new SubIntFunctionFactory();
     }
 }
