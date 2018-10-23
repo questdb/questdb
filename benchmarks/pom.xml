@@ -52,7 +52,7 @@
         <dependency>
             <groupId>org.questdb</groupId>
             <artifactId>questdb-core</artifactId>
-            <version>3.0.2</version>
+            <version>3.0.3-SNAPSHOT</version>
         </dependency>
     </dependencies>
 
