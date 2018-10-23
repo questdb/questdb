@@ -229,7 +229,7 @@ JNIEXPORT jint JNICALL Java_com_questdb_std_Net_getEwouldblock
     return WSAEWOULDBLOCK;
 }
 
-JNIEXPORT jlong JNICALL Java_com_questdb_std_Net_getPeerIP
+JNIEXPORT jint JNICALL Java_com_questdb_std_Net_getPeerIP
         (JNIEnv *e, jclass cl, jlong fd) {
 
     struct sockaddr peer;
@@ -237,10 +237,9 @@ JNIEXPORT jlong JNICALL Java_com_questdb_std_Net_getPeerIP
 
     if (getpeername((SOCKET) fd, &peer, &nameLen) == 0) {
         if (peer.sa_family == AF_INET) {
-            return inet_addr(inet_ntoa(((struct sockaddr_in *)&peer)->sin_addr));
-        } else {
-            return -2;
+            return ntohl(((struct sockaddr_in *) &peer)->sin_addr.s_addr);
         }
+        return -2;
     }
     return -1;
 }

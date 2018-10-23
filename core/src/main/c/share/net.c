@@ -210,7 +210,6 @@ JNIEXPORT jint JNICALL Java_com_questdb_std_Net_getPeerIP
         return -2;
     }
     return -1;
-
 }
 
 JNIEXPORT jint JNICALL Java_com_questdb_std_Net_getPeerPort
