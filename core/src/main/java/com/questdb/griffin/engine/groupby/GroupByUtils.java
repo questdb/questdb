@@ -24,7 +24,9 @@
 package com.questdb.griffin.engine.groupby;
 
 import com.questdb.cairo.*;
+import com.questdb.cairo.map.MapValue;
 import com.questdb.cairo.sql.Function;
+import com.questdb.cairo.sql.Record;
 import com.questdb.cairo.sql.RecordMetadata;
 import com.questdb.griffin.FunctionParser;
 import com.questdb.griffin.SqlException;
@@ -184,6 +186,18 @@ class GroupByUtils {
                     Chars.toString(column.getName()),
                     type
             ));
+        }
+    }
+
+    static void updateFunctions(ObjList<GroupByFunction> groupByFunctions, int n, MapValue value, Record record) {
+        if (value.isNew()) {
+            for (int i = 0; i < n; i++) {
+                groupByFunctions.getQuick(i).computeFirst(value, record);
+            }
+        } else {
+            for (int i = 0; i < n; i++) {
+                groupByFunctions.getQuick(i).computeNext(value, record);
+            }
         }
     }
 }

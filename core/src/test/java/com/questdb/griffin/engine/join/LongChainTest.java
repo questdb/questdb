@@ -39,12 +39,12 @@ public class LongChainTest {
                 final int N = 1000;
                 final int nChains = 10;
                 final Rnd rnd = new Rnd();
-                final LongList tails = new LongList(nChains);
+                final LongList heads = new LongList(nChains);
                 final ObjList<LongList> expectedValues = new ObjList<>();
 
                 for (int i = 0; i < nChains; i++) {
                     LongList expected = new LongList(N);
-                    tails.add(populateChain(chain, rnd, expected));
+                    heads.add(populateChain(chain, rnd, expected));
                     expectedValues.add(expected);
                     Assert.assertEquals(N, expected.size());
                 }
@@ -52,12 +52,11 @@ public class LongChainTest {
 
                 // values are be in reverse order
                 for (int i = 0; i < nChains; i++) {
-                    LongChain.TreeCursor cursor = chain.getCursor(tails.getQuick(i));
+                    LongChain.TreeCursor cursor = chain.getCursor(heads.getQuick(i));
                     LongList expected = expectedValues.get(i);
                     int count = 0;
-                    int n = expected.size() - 1;
                     while (cursor.hasNext()) {
-                        Assert.assertEquals(expected.getQuick(n--), cursor.next());
+                        Assert.assertEquals(expected.getQuick(count), cursor.next());
                         count++;
                     }
                     Assert.assertEquals(N, count);
@@ -67,12 +66,16 @@ public class LongChainTest {
     }
 
     private long populateChain(LongChain chain, Rnd rnd, LongList expectedValues) {
+        long head = -1;
         long tail = -1;
         for (int i = 0; i < 1000; i++) {
             long expected = rnd.nextLong();
             tail = chain.put(tail, expected);
             expectedValues.add(expected);
+            if (i == 0) {
+                head = tail;
+            }
         }
-        return tail;
+        return head;
     }
 }

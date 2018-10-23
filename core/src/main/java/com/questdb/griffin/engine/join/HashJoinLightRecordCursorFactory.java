@@ -33,16 +33,16 @@ import com.questdb.griffin.engine.functions.bind.BindVariableService;
 import com.questdb.std.Misc;
 import com.questdb.std.Transient;
 
-public class HashJoinRecordCursorFactory extends AbstractRecordCursorFactory {
+public class HashJoinLightRecordCursorFactory extends AbstractRecordCursorFactory {
     private final Map joinKeyMap;
-    private final RecordChain slaveChain;
+    private final LongChain slaveChain;
     private final RecordCursorFactory masterFactory;
     private final RecordCursorFactory slaveFactory;
     private final RecordSink masterSink;
-    private final RecordSink slaveKeySink;
+    private final RecordSink slaveSink;
     private final HashJoinRecordCursor cursor;
 
-    public HashJoinRecordCursorFactory(
+    public HashJoinLightRecordCursorFactory(
             CairoConfiguration configuration,
             RecordMetadata metadata,
             RecordCursorFactory masterFactory,
@@ -50,8 +50,7 @@ public class HashJoinRecordCursorFactory extends AbstractRecordCursorFactory {
             @Transient ColumnTypes joinColumnTypes,
             @Transient ColumnTypes valueTypes, // this expected to be just LONG, we store chain references in map
             RecordSink masterSink,
-            RecordSink slaveKeySink,
-            RecordSink slaveChainSink,
+            RecordSink slaveSink,
             int columnSplit
 
     ) {
@@ -59,9 +58,9 @@ public class HashJoinRecordCursorFactory extends AbstractRecordCursorFactory {
         this.masterFactory = masterFactory;
         this.slaveFactory = slaveFactory;
         joinKeyMap = MapFactory.createMap(configuration, joinColumnTypes, valueTypes);
-        slaveChain = new RecordChain(slaveFactory.getMetadata(), slaveChainSink, configuration.getSqlHashJoinValuePageSize());
+        slaveChain = new LongChain(configuration.getSqlHashJoinLightValuePageSize());
         this.masterSink = masterSink;
-        this.slaveKeySink = slaveKeySink;
+        this.slaveSink = slaveSink;
         this.cursor = new HashJoinRecordCursor(columnSplit, joinKeyMap, slaveChain);
     }
 
@@ -98,30 +97,30 @@ public class HashJoinRecordCursorFactory extends AbstractRecordCursorFactory {
         final Record record = slaveCursor.getRecord();
         while (slaveCursor.hasNext()) {
             MapKey key = joinKeyMap.withKey();
-            key.put(record, slaveKeySink);
+            key.put(record, slaveSink);
             MapValue value = key.createValue();
             if (value.isNew()) {
-                long offset = slaveChain.put(record, -1);
+                final long offset = slaveChain.put(-1, record.getRowId());
                 value.putLong(0, offset);
                 value.putLong(1, offset);
             } else {
-                value.putLong(1, slaveChain.put(record, value.getLong(1)));
+                value.putLong(1, slaveChain.put(value.getLong(1), record.getRowId()));
             }
         }
     }
 
     private class HashJoinRecordCursor implements RecordCursor {
         private final JoinRecord record;
-        private final RecordChain slaveChain;
+        private final LongChain slaveChain;
         private final Map joinKeyMap;
         private final int columnSplit;
         private RecordCursor masterCursor;
         private RecordCursor slaveCursor;
         private Record masterRecord;
         private Record slaveRecord;
-        private boolean useSlaveCursor;
+        private LongChain.TreeCursor slaveChainCursor;
 
-        public HashJoinRecordCursor(int columnSplit, Map joinKeyMap, RecordChain slaveChain) {
+        public HashJoinRecordCursor(int columnSplit, Map joinKeyMap, LongChain slaveChain) {
             this.record = new JoinRecord(columnSplit);
             this.joinKeyMap = joinKeyMap;
             this.slaveChain = slaveChain;
@@ -149,7 +148,8 @@ public class HashJoinRecordCursorFactory extends AbstractRecordCursorFactory {
 
         @Override
         public boolean hasNext() {
-            if (useSlaveCursor && slaveChain.hasNext()) {
+            if (slaveChainCursor != null && slaveChainCursor.hasNext()) {
+                slaveCursor.recordAt(slaveChainCursor.next());
                 return true;
             }
 
@@ -158,11 +158,11 @@ public class HashJoinRecordCursorFactory extends AbstractRecordCursorFactory {
                 key.put(masterRecord, masterSink);
                 MapValue value = key.findValue();
                 if (value != null) {
-                    slaveChain.of(value.getLong(0));
+                    slaveChainCursor = slaveChain.getCursor(value.getLong(0));
                     // we know cursor has values
                     // advance to get first value
-                    slaveChain.hasNext();
-                    useSlaveCursor = true;
+                    slaveChainCursor.hasNext();
+                    slaveCursor.recordAt(slaveChainCursor.next());
                     return true;
                 }
             }
@@ -187,17 +187,16 @@ public class HashJoinRecordCursorFactory extends AbstractRecordCursorFactory {
         @Override
         public void toTop() {
             masterCursor.toTop();
-            useSlaveCursor = false;
+            slaveChainCursor = null;
         }
 
         void of(RecordCursor masterCursor, RecordCursor slaveCursor) {
             this.masterCursor = masterCursor;
             this.slaveCursor = slaveCursor;
             this.masterRecord = masterCursor.getRecord();
-            this.slaveRecord = slaveChain.getRecord();
-            this.slaveChain.setSymbolTableResolver(slaveCursor);
+            this.slaveRecord = slaveCursor.getRecord();
             record.of(masterRecord, slaveRecord);
-            useSlaveCursor = false;
+            slaveChainCursor = null;
         }
     }
 }

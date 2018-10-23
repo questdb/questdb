@@ -95,9 +95,13 @@ public interface CairoConfiguration {
 
     int getSqlSortLightValuePageSize();
 
+    int getSqlHashJoinValuePageSize();
+
     int getSqlTreePageSize();
 
     int getSqlHashJoinLightValuePageSize();
+
+    int getSqlSortValuePageSize();
 
     long getWorkStealTimeoutNanos();
 

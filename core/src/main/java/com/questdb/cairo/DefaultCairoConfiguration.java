@@ -208,6 +208,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getSqlHashJoinValuePageSize() {
+        return Numbers.SIZE_1MB * 16;
+    }
+
+    @Override
     public int getSqlTreePageSize() {
         return Numbers.SIZE_1MB;
     }
@@ -215,6 +220,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getSqlHashJoinLightValuePageSize() {
         return Numbers.SIZE_1MB;
+    }
+
+    @Override
+    public int getSqlSortValuePageSize() {
+        return Numbers.SIZE_1MB * 16;
     }
 
     @Override

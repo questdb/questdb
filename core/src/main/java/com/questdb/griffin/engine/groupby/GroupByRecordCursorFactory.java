@@ -117,15 +117,7 @@ public class GroupByRecordCursorFactory implements RecordCursorFactory {
                 final MapKey key = dataMap.withKey();
                 mapSink.copy(baseRecord, key);
                 MapValue value = key.createValue();
-                if (value.isNew()) {
-                    for (int i = 0; i < n; i++) {
-                        groupByFunctions.getQuick(i).computeFirst(value, baseRecord);
-                    }
-                } else {
-                    for (int i = 0; i < n; i++) {
-                        groupByFunctions.getQuick(i).computeNext(value, baseRecord);
-                    }
-                }
+                GroupByUtils.updateFunctions(groupByFunctions, n, value, baseRecord);
             }
             return initFunctionsAndCursor(bindVariableService, dataMap.getCursor(), baseCursor);
         } catch (CairoException e) {

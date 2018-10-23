@@ -55,7 +55,10 @@ public class LongChain implements Closeable, Mutable {
 
     public long put(long parentOffset, long value) {
         final long appendOffset = valueChain.getAppendOffset();
-        valueChain.putLong(parentOffset);
+        if (parentOffset != -1) {
+            valueChain.putLong(parentOffset, appendOffset);
+        }
+        valueChain.putLong(-1);
         valueChain.putLong(value);
         return appendOffset;
     }

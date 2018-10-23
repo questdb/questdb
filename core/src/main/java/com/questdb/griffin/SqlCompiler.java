@@ -1008,6 +1008,10 @@ public class SqlCompiler implements Closeable {
         }
     }
 
+    void setFullSatJoins(boolean value) {
+        codeGenerator.setFullFatJoins(value);
+    }
+
     // this exposed for testing only
     ExpressionNode parseExpression(CharSequence expression, QueryModel model) throws SqlException {
         clear();

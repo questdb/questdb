@@ -50,7 +50,7 @@ public class SortedRecordCursorFactory extends AbstractRecordCursorFactory {
                 recordSink,
                 comparator,
                 configuration.getSqlSortKeyPageSize(),
-                configuration.getSqlSortLightValuePageSize());
+                configuration.getSqlSortValuePageSize());
         this.base = base;
         this.cursor = new SortedRecordCursor(chain);
     }

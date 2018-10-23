@@ -28,6 +28,7 @@ import com.questdb.cairo.sql.*;
 import com.questdb.griffin.engine.EmptyTableRecordCursorFactory;
 import com.questdb.griffin.engine.functions.columns.SymbolColumn;
 import com.questdb.griffin.engine.groupby.*;
+import com.questdb.griffin.engine.join.HashJoinLightRecordCursorFactory;
 import com.questdb.griffin.engine.join.HashJoinRecordCursorFactory;
 import com.questdb.griffin.engine.join.JoinRecordMetadata;
 import com.questdb.griffin.engine.orderby.RecordComparatorCompiler;
@@ -53,6 +54,7 @@ public class SqlCodeGenerator {
     private final ArrayColumnTypes keyTypes = new ArrayColumnTypes();
     private final ArrayColumnTypes valueTypes = new ArrayColumnTypes();
     private final EntityColumnFilter entityColumnFilter = new EntityColumnFilter();
+    private boolean fullFatJoins = false;
 
     public SqlCodeGenerator(CairoEngine engine, CairoConfiguration configuration, FunctionParser functionParser) {
         this.engine = engine;
@@ -89,14 +91,14 @@ public class SqlCodeGenerator {
          */
         final RecordMetadata masterMetadata = master.getMetadata();
         final RecordMetadata slaveMetadata = slave.getMetadata();
-        final RecordSink masterSink = RecordSinkFactory.getInstance(
+        final RecordSink masterKeySink = RecordSinkFactory.getInstance(
                 asm,
                 masterMetadata,
                 listColumnFilterB,
                 true
         );
 
-        final RecordSink slaveSink = RecordSinkFactory.getInstance(
+        final RecordSink slaveKeySink = RecordSinkFactory.getInstance(
                 asm,
                 slaveMetadata,
                 listColumnFilterA,
@@ -113,6 +115,29 @@ public class SqlCodeGenerator {
 
         valueTypes.reset();
         valueTypes.add(ColumnType.LONG);
+        valueTypes.add(ColumnType.LONG);
+        if (slave.isRandomAccessCursor() && !fullFatJoins) {
+            return new HashJoinLightRecordCursorFactory(
+                    configuration,
+                    m,
+                    master,
+                    slave,
+                    keyTypes,
+                    valueTypes,
+                    masterKeySink,
+                    slaveKeySink,
+                    masterMetadata.getColumnCount()
+            );
+        }
+
+        entityColumnFilter.of(slaveMetadata.getColumnCount());
+        RecordSink slaveSink = RecordSinkFactory.getInstance(
+                asm,
+                slaveMetadata,
+                entityColumnFilter,
+                false
+        );
+
         return new HashJoinRecordCursorFactory(
                 configuration,
                 m,
@@ -120,7 +145,8 @@ public class SqlCodeGenerator {
                 slave,
                 keyTypes,
                 valueTypes,
-                masterSink,
+                masterKeySink,
+                slaveKeySink,
                 slaveSink,
                 masterMetadata.getColumnCount()
         );
@@ -951,6 +977,10 @@ public class SqlCodeGenerator {
         for (int i = 0, n = columnNames.size(); i < n; i++) {
             filter.add(metadata.getColumnIndex(columnNames.getQuick(i)));
         }
+    }
+
+    void setFullFatJoins(boolean fullFatJoins) {
+        this.fullFatJoins = fullFatJoins;
     }
 
     private int validateSubQueryColumnAndGetType(IntrinsicModel intrinsicModel, RecordMetadata metadata) throws SqlException {

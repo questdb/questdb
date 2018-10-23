@@ -116,15 +116,7 @@ class SampleByFillNoneRecordCursor implements DelegatingRecordCursor {
                 keyMapSink.copy(baseRecord, key);
                 final MapValue value = key.createValue();
 
-                if (value.isNew()) {
-                    for (int i = 0; i < n; i++) {
-                        groupByFunctions.getQuick(i).computeFirst(value, baseRecord);
-                    }
-                } else {
-                    for (int i = 0; i < n; i++) {
-                        groupByFunctions.getQuick(i).computeNext(value, baseRecord);
-                    }
-                }
+                GroupByUtils.updateFunctions(groupByFunctions, n, value, baseRecord);
 
                 // carry on with the loop if we still have data
                 if (base.hasNext()) {
