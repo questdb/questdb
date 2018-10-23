@@ -62,7 +62,7 @@ class SampleByFillPrevRecordCursor implements DelegatingRecordCursor {
         this.timestampIndex = timestampIndex;
         this.keyMapSink = keyMapSink;
         this.timestampSampler = timestampSampler;
-        VirtualRecord rec = new VirtualRecord(recordFunctions);
+        VirtualRecord rec = new VirtualRecordNoRowid(recordFunctions);
         rec.of(map.getRecord());
         this.record = rec;
         this.symbolTableIndex = symbolTableIndex;

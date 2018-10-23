@@ -91,7 +91,7 @@ public class SplitVirtualRecord implements Record {
 
     @Override
     public long getRowId() {
-        return base.getRowId();
+        throw new UnsupportedOperationException();
     }
 
     @Override

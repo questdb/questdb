@@ -21,48 +21,17 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.engine;
+package com.questdb.cairo.sql;
 
-import com.questdb.cairo.sql.Record;
-import com.questdb.cairo.sql.RecordCursor;
-import com.questdb.cairo.sql.VirtualRecordNoRowid;
 import com.questdb.std.ObjList;
 
-final public class EmptyTableRecordCursor implements RecordCursor {
-    public static final EmptyTableRecordCursor INSTANCE = new EmptyTableRecordCursor();
-
-    private final Record record = new VirtualRecordNoRowid(new ObjList<>());
-
-    @Override
-    public void close() {
+public class VirtualRecordNoRowid extends VirtualRecord {
+    public VirtualRecordNoRowid(ObjList<? extends Function> functions) {
+        super(functions);
     }
 
     @Override
-    public Record getRecord() {
-        return record;
-    }
-
-    @Override
-    public boolean hasNext() {
-        return false;
-    }
-
-    @Override
-    public Record newRecord() {
+    public long getRowId() {
         throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public void recordAt(Record record, long atRowId) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public void recordAt(long rowId) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public void toTop() {
     }
 }

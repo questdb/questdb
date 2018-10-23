@@ -21,18 +21,22 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.engine.table;
+package com.questdb.griffin.engine;
 
 import com.questdb.cairo.AbstractRecordCursorFactory;
 import com.questdb.cairo.sql.RecordCursor;
 import com.questdb.cairo.sql.RecordMetadata;
-import com.questdb.griffin.engine.EmptyTableRecordCursor;
 import com.questdb.griffin.engine.functions.bind.BindVariableService;
 import com.questdb.std.Misc;
 
 public class EmptyTableRecordCursorFactory extends AbstractRecordCursorFactory {
     public EmptyTableRecordCursorFactory(RecordMetadata metadata) {
         super(metadata);
+    }
+
+    @Override
+    public void close() {
+        Misc.free(getMetadata());
     }
 
     @Override
@@ -43,10 +47,5 @@ public class EmptyTableRecordCursorFactory extends AbstractRecordCursorFactory {
     @Override
     public boolean isRandomAccessCursor() {
         return false;
-    }
-
-    @Override
-    public void close() {
-        Misc.free(getMetadata());
     }
 }

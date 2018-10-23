@@ -132,6 +132,31 @@ public class AbstractGriffinTest extends AbstractCairoTest {
                 TestUtils.assertEquals(expected, sink);
             } else {
                 Assert.assertFalse(factory.isRandomAccessCursor());
+                try {
+                    record.getRowId();
+                    Assert.fail();
+                } catch (UnsupportedOperationException ignore) {
+                }
+
+                try {
+                    cursor.newRecord();
+                    Assert.fail();
+                } catch (UnsupportedOperationException ignore) {
+                }
+
+                try {
+                    cursor.recordAt(0);
+                    Assert.fail();
+                } catch (UnsupportedOperationException ignore) {
+                }
+
+                try {
+                    cursor.recordAt(record, 0);
+                    Assert.fail();
+                } catch (UnsupportedOperationException ignore) {
+                }
+
+
             }
         }
     }

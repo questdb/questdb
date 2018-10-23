@@ -25,6 +25,7 @@ package com.questdb.griffin;
 
 import com.questdb.cairo.*;
 import com.questdb.cairo.sql.*;
+import com.questdb.griffin.engine.EmptyTableRecordCursorFactory;
 import com.questdb.griffin.engine.functions.columns.SymbolColumn;
 import com.questdb.griffin.engine.groupby.*;
 import com.questdb.griffin.engine.join.HashJoinRecordCursorFactory;

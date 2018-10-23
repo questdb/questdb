@@ -168,15 +168,17 @@ class SampleByFillValueRecordCursor implements DelegatingRecordCursor {
 
     @Override
     public Record newRecord() {
-        return null;
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void recordAt(Record record, long atRowId) {
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void recordAt(long rowId) {
+        throw new UnsupportedOperationException();
     }
 
     @Override

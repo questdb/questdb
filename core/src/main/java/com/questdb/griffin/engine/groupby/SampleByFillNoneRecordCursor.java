@@ -60,7 +60,7 @@ class SampleByFillNoneRecordCursor implements DelegatingRecordCursor {
         this.timestampIndex = timestampIndex;
         this.keyMapSink = keyMapSink;
         this.timestampSampler = timestampSampler;
-        VirtualRecord rec = new VirtualRecord(recordFunctions);
+        VirtualRecord rec = new VirtualRecordNoRowid(recordFunctions);
         rec.of(map.getRecord());
         this.record = rec;
         this.symbolTableIndex = symbolTableIndex;
@@ -162,6 +162,7 @@ class SampleByFillNoneRecordCursor implements DelegatingRecordCursor {
 
     @Override
     public void recordAt(Record record, long atRowId) {
+        throw new UnsupportedOperationException();
     }
 
     @Override
