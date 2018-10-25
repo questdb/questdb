@@ -40,6 +40,121 @@ public class JoinTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testAsOfJoin() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try {
+                final String expected = "i\tsym\tamt\tprice\ttimestamp\ttimestamp1\n" +
+                        "1\tmsft\t22.463000000000\tNaN\t2018-01-01T00:12:00.000000Z\t\n" +
+                        "2\tgoogl\t29.920000000000\t0.885000000000\t2018-01-01T00:24:00.000000Z\t2018-01-01T00:24:00.000000Z\n" +
+                        "3\tmsft\t65.086000000000\t0.566000000000\t2018-01-01T00:36:00.000000Z\t2018-01-01T00:36:00.000000Z\n" +
+                        "4\tibm\t98.563000000000\t0.405000000000\t2018-01-01T00:48:00.000000Z\t2018-01-01T00:34:00.000000Z\n" +
+                        "5\tmsft\t50.938000000000\t0.545000000000\t2018-01-01T01:00:00.000000Z\t2018-01-01T00:46:00.000000Z\n" +
+                        "6\tibm\t76.110000000000\t0.954000000000\t2018-01-01T01:12:00.000000Z\t2018-01-01T00:56:00.000000Z\n" +
+                        "7\tmsft\t55.992000000000\t0.545000000000\t2018-01-01T01:24:00.000000Z\t2018-01-01T00:46:00.000000Z\n" +
+                        "8\tibm\t23.905000000000\t0.954000000000\t2018-01-01T01:36:00.000000Z\t2018-01-01T00:56:00.000000Z\n" +
+                        "9\tgoogl\t67.786000000000\t0.198000000000\t2018-01-01T01:48:00.000000Z\t2018-01-01T01:00:00.000000Z\n" +
+                        "10\tgoogl\t38.540000000000\t0.198000000000\t2018-01-01T02:00:00.000000Z\t2018-01-01T01:00:00.000000Z\n";
+
+                compiler.compile("create table x as (select to_int(x) i, rnd_symbol('msft','ibm', 'googl') sym, round(rnd_double(0)*100, 3) amt, to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp from long_sequence(10)) timestamp (timestamp)", bindVariableService);
+                compiler.compile("create table y as (select to_int(x) i, rnd_symbol('msft','ibm', 'googl') sym2, round(rnd_double(0), 3) price, to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp from long_sequence(30)) timestamp(timestamp)", bindVariableService);
+
+                assertJoinQueryAndCache(expected, "select x.i, x.sym, x.amt, price, x.timestamp, y.timestamp from x asof join y on y.sym2 = x.sym");
+
+                compiler.compile("insert into x select * from (select to_int(x + 10) i, rnd_symbol('msft','ibm', 'googl') sym, round(rnd_double(0)*100, 3) amt, to_timestamp('2018-01', 'yyyy-MM') + (x + 10) * 720000000 timestamp from long_sequence(10)) timestamp(timestamp)", bindVariableService);
+                compiler.compile("insert into y select * from (select to_int(x + 30) i, rnd_symbol('msft','ibm', 'googl') sym2, round(rnd_double(0), 3) price, to_timestamp('2018-01', 'yyyy-MM') + (x + 30) * 120000000 timestamp from long_sequence(30)) timestamp(timestamp)", bindVariableService);
+
+                assertJoinQuery("i\tsym\tamt\tprice\ttimestamp\ttimestamp1\n" +
+                                "1\tmsft\t22.463000000000\tNaN\t2018-01-01T00:12:00.000000Z\t\n" +
+                                "2\tgoogl\t29.920000000000\t0.885000000000\t2018-01-01T00:24:00.000000Z\t2018-01-01T00:24:00.000000Z\n" +
+                                "3\tmsft\t65.086000000000\t0.566000000000\t2018-01-01T00:36:00.000000Z\t2018-01-01T00:36:00.000000Z\n" +
+                                "4\tibm\t98.563000000000\t0.405000000000\t2018-01-01T00:48:00.000000Z\t2018-01-01T00:34:00.000000Z\n" +
+                                "5\tmsft\t50.938000000000\t0.545000000000\t2018-01-01T01:00:00.000000Z\t2018-01-01T00:46:00.000000Z\n" +
+                                "6\tibm\t76.110000000000\t0.337000000000\t2018-01-01T01:12:00.000000Z\t2018-01-01T01:12:00.000000Z\n" +
+                                "7\tmsft\t55.992000000000\t0.226000000000\t2018-01-01T01:24:00.000000Z\t2018-01-01T01:16:00.000000Z\n" +
+                                "8\tibm\t23.905000000000\t0.767000000000\t2018-01-01T01:36:00.000000Z\t2018-01-01T01:36:00.000000Z\n" +
+                                "9\tgoogl\t67.786000000000\t0.101000000000\t2018-01-01T01:48:00.000000Z\t2018-01-01T01:48:00.000000Z\n" +
+                                "10\tgoogl\t38.540000000000\t0.690000000000\t2018-01-01T02:00:00.000000Z\t2018-01-01T02:00:00.000000Z\n" +
+                                "11\tmsft\t68.069000000000\t0.051000000000\t2018-01-01T02:12:00.000000Z\t2018-01-01T01:50:00.000000Z\n" +
+                                "12\tmsft\t24.008000000000\t0.051000000000\t2018-01-01T02:24:00.000000Z\t2018-01-01T01:50:00.000000Z\n" +
+                                "13\tgoogl\t94.559000000000\t0.690000000000\t2018-01-01T02:36:00.000000Z\t2018-01-01T02:00:00.000000Z\n" +
+                                "14\tibm\t62.474000000000\t0.068000000000\t2018-01-01T02:48:00.000000Z\t2018-01-01T01:40:00.000000Z\n" +
+                                "15\tmsft\t39.017000000000\t0.051000000000\t2018-01-01T03:00:00.000000Z\t2018-01-01T01:50:00.000000Z\n" +
+                                "16\tgoogl\t10.643000000000\t0.690000000000\t2018-01-01T03:12:00.000000Z\t2018-01-01T02:00:00.000000Z\n" +
+                                "17\tmsft\t7.246000000000\t0.051000000000\t2018-01-01T03:24:00.000000Z\t2018-01-01T01:50:00.000000Z\n" +
+                                "18\tmsft\t36.798000000000\t0.051000000000\t2018-01-01T03:36:00.000000Z\t2018-01-01T01:50:00.000000Z\n" +
+                                "19\tmsft\t66.980000000000\t0.051000000000\t2018-01-01T03:48:00.000000Z\t2018-01-01T01:50:00.000000Z\n" +
+                                "20\tgoogl\t26.369000000000\t0.690000000000\t2018-01-01T04:00:00.000000Z\t2018-01-01T02:00:00.000000Z\n",
+                        "select x.i, x.sym, x.amt, price, x.timestamp, y.timestamp from x asof join y on y.sym2 = x.sym");
+
+                Assert.assertEquals(0, engine.getBusyReaderCount());
+                Assert.assertEquals(0, engine.getBusyWriterCount());
+            } finally {
+                engine.releaseAllWriters();
+                engine.releaseAllReaders();
+            }
+        });
+    }
+
+    @Test
+    public void testCrossJoinAllTypes() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try {
+                final String expected = "kk\ta\tb\tc\td\te\tf\tg\ti\tj\tk\tl\tm\tn\tkk1\ta1\tb1\tc1\td1\te1\tf1\tg1\ti1\tj1\tk1\tl1\tm1\tn1\n" +
+                        "1\t1569490116\tfalse\tZ\tNaN\t0.7611\t428\t2015-05-16T20:27:48.158Z\tVTJW\t-8671107786057422727\t1970-01-01T00:00:00.000000Z\t26\t00000000 68 61 26 af 19 c4 95 94 36 53 49\tFOWLPD\t1\t1196016669\tfalse\tW\t0.882822836670\t0.7230\t845\t2015-08-26T10:57:26.275Z\tOOZZ\t9029468389542245059\t1970-01-01T00:00:00.000000Z\t46\t00000000 e5 61 2f 64 0e 2c 7f d7 6f b8 c9 ae 28 c7 84 47\tDSWUGSHOLNV\n" +
+                        "1\t1569490116\tfalse\tZ\tNaN\t0.7611\t428\t2015-05-16T20:27:48.158Z\tVTJW\t-8671107786057422727\t1970-01-01T00:00:00.000000Z\t26\t00000000 68 61 26 af 19 c4 95 94 36 53 49\tFOWLPD\t1\t183633043\ttrue\tB\t0.944165897553\t0.3457\t459\t2015-12-23T11:21:02.321Z\t\t-3289070757475856942\t1970-01-01T00:16:40.000000Z\t40\t00000000 f2 3c ed 39 ac a8 3b a6 dc 3b 7d 2b e3 92 fe 69\n" +
+                        "00000010 38 e1\tVLTOVLJ\n" +
+                        "1\t1569490116\tfalse\tZ\tNaN\t0.7611\t428\t2015-05-16T20:27:48.158Z\tVTJW\t-8671107786057422727\t1970-01-01T00:00:00.000000Z\t26\t00000000 68 61 26 af 19 c4 95 94 36 53 49\tFOWLPD\t1\t-101516094\tfalse\tG\t0.982066273567\t0.5357\t792\t2015-12-04T15:38:03.249Z\tVDZJ\t5703149806881083206\t1970-01-01T00:33:20.000000Z\t36\t00000000 68 79 8b 43 1d 57 34 04 23 8d d8 57\tWVDKFLOPJOXPK\n" +
+                        "2\t-1271909747\ttrue\tB\tNaN\t0.1250\t524\t2015-02-23T11:11:04.998Z\t\t-8955092533521658248\t1970-01-01T00:16:40.000000Z\t3\t00000000 de e4 7c d2 35 07 42 fc 31 79\tRSZSRYRFBVTMHG\t1\t1196016669\tfalse\tW\t0.882822836670\t0.7230\t845\t2015-08-26T10:57:26.275Z\tOOZZ\t9029468389542245059\t1970-01-01T00:00:00.000000Z\t46\t00000000 e5 61 2f 64 0e 2c 7f d7 6f b8 c9 ae 28 c7 84 47\tDSWUGSHOLNV\n" +
+                        "2\t-1271909747\ttrue\tB\tNaN\t0.1250\t524\t2015-02-23T11:11:04.998Z\t\t-8955092533521658248\t1970-01-01T00:16:40.000000Z\t3\t00000000 de e4 7c d2 35 07 42 fc 31 79\tRSZSRYRFBVTMHG\t1\t183633043\ttrue\tB\t0.944165897553\t0.3457\t459\t2015-12-23T11:21:02.321Z\t\t-3289070757475856942\t1970-01-01T00:16:40.000000Z\t40\t00000000 f2 3c ed 39 ac a8 3b a6 dc 3b 7d 2b e3 92 fe 69\n" +
+                        "00000010 38 e1\tVLTOVLJ\n" +
+                        "2\t-1271909747\ttrue\tB\tNaN\t0.1250\t524\t2015-02-23T11:11:04.998Z\t\t-8955092533521658248\t1970-01-01T00:16:40.000000Z\t3\t00000000 de e4 7c d2 35 07 42 fc 31 79\tRSZSRYRFBVTMHG\t1\t-101516094\tfalse\tG\t0.982066273567\t0.5357\t792\t2015-12-04T15:38:03.249Z\tVDZJ\t5703149806881083206\t1970-01-01T00:33:20.000000Z\t36\t00000000 68 79 8b 43 1d 57 34 04 23 8d d8 57\tWVDKFLOPJOXPK\n";
+
+                compiler.compile("create table x as (select" +
+                        " to_int(x) kk, " +
+                        " rnd_int() a," +
+                        " rnd_boolean() b," +
+                        " rnd_str(1,1,2) c," +
+                        " rnd_double(2) d," +
+                        " rnd_float(2) e," +
+                        " rnd_short(10,1024) f," +
+                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                        " rnd_symbol(4,4,4,2) i," +
+                        " rnd_long() j," +
+                        " timestamp_sequence(to_timestamp(0), 1000000000) k," +
+                        " rnd_byte(2,50) l," +
+                        " rnd_bin(10, 20, 2) m," +
+                        " rnd_str(5,16,2) n" +
+                        " from long_sequence(2))", bindVariableService);
+
+                compiler.compile("create table y as (select" +
+                        " to_int((x-1)/4 + 1) kk," +
+                        " rnd_int() a," +
+                        " rnd_boolean() b," +
+                        " rnd_str(1,1,2) c," +
+                        " rnd_double(2) d," +
+                        " rnd_float(2) e," +
+                        " rnd_short(10,1024) f," +
+                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                        " rnd_symbol(4,4,4,2) i," +
+                        " rnd_long() j," +
+                        " timestamp_sequence(to_timestamp(0), 1000000000) k," +
+                        " rnd_byte(2,50) l," +
+                        " rnd_bin(10, 20, 2) m," +
+                        " rnd_str(5,16,2) n" +
+                        " from long_sequence(3))", bindVariableService);
+
+                // filter is applied to final join result
+                assertJoinQuery(expected, "select * from x cross join y");
+                Assert.assertEquals(0, engine.getBusyReaderCount());
+                Assert.assertEquals(0, engine.getBusyWriterCount());
+            } finally {
+                engine.releaseAllWriters();
+                engine.releaseAllReaders();
+            }
+        });
+    }
+
+    @Test
     public void testJoinConstantFalse() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try {
@@ -242,65 +357,6 @@ public class JoinTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testCrossJoinAllTypes() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            try {
-                final String expected = "kk\ta\tb\tc\td\te\tf\tg\ti\tj\tk\tl\tm\tn\tkk1\ta1\tb1\tc1\td1\te1\tf1\tg1\ti1\tj1\tk1\tl1\tm1\tn1\n" +
-                        "1\t1569490116\tfalse\tZ\tNaN\t0.7611\t428\t2015-05-16T20:27:48.158Z\tVTJW\t-8671107786057422727\t1970-01-01T00:00:00.000000Z\t26\t00000000 68 61 26 af 19 c4 95 94 36 53 49\tFOWLPD\t1\t1196016669\tfalse\tW\t0.882822836670\t0.7230\t845\t2015-08-26T10:57:26.275Z\tOOZZ\t9029468389542245059\t1970-01-01T00:00:00.000000Z\t46\t00000000 e5 61 2f 64 0e 2c 7f d7 6f b8 c9 ae 28 c7 84 47\tDSWUGSHOLNV\n" +
-                        "1\t1569490116\tfalse\tZ\tNaN\t0.7611\t428\t2015-05-16T20:27:48.158Z\tVTJW\t-8671107786057422727\t1970-01-01T00:00:00.000000Z\t26\t00000000 68 61 26 af 19 c4 95 94 36 53 49\tFOWLPD\t1\t183633043\ttrue\tB\t0.944165897553\t0.3457\t459\t2015-12-23T11:21:02.321Z\t\t-3289070757475856942\t1970-01-01T00:16:40.000000Z\t40\t00000000 f2 3c ed 39 ac a8 3b a6 dc 3b 7d 2b e3 92 fe 69\n" +
-                        "00000010 38 e1\tVLTOVLJ\n" +
-                        "1\t1569490116\tfalse\tZ\tNaN\t0.7611\t428\t2015-05-16T20:27:48.158Z\tVTJW\t-8671107786057422727\t1970-01-01T00:00:00.000000Z\t26\t00000000 68 61 26 af 19 c4 95 94 36 53 49\tFOWLPD\t1\t-101516094\tfalse\tG\t0.982066273567\t0.5357\t792\t2015-12-04T15:38:03.249Z\tVDZJ\t5703149806881083206\t1970-01-01T00:33:20.000000Z\t36\t00000000 68 79 8b 43 1d 57 34 04 23 8d d8 57\tWVDKFLOPJOXPK\n" +
-                        "2\t-1271909747\ttrue\tB\tNaN\t0.1250\t524\t2015-02-23T11:11:04.998Z\t\t-8955092533521658248\t1970-01-01T00:16:40.000000Z\t3\t00000000 de e4 7c d2 35 07 42 fc 31 79\tRSZSRYRFBVTMHG\t1\t1196016669\tfalse\tW\t0.882822836670\t0.7230\t845\t2015-08-26T10:57:26.275Z\tOOZZ\t9029468389542245059\t1970-01-01T00:00:00.000000Z\t46\t00000000 e5 61 2f 64 0e 2c 7f d7 6f b8 c9 ae 28 c7 84 47\tDSWUGSHOLNV\n" +
-                        "2\t-1271909747\ttrue\tB\tNaN\t0.1250\t524\t2015-02-23T11:11:04.998Z\t\t-8955092533521658248\t1970-01-01T00:16:40.000000Z\t3\t00000000 de e4 7c d2 35 07 42 fc 31 79\tRSZSRYRFBVTMHG\t1\t183633043\ttrue\tB\t0.944165897553\t0.3457\t459\t2015-12-23T11:21:02.321Z\t\t-3289070757475856942\t1970-01-01T00:16:40.000000Z\t40\t00000000 f2 3c ed 39 ac a8 3b a6 dc 3b 7d 2b e3 92 fe 69\n" +
-                        "00000010 38 e1\tVLTOVLJ\n" +
-                        "2\t-1271909747\ttrue\tB\tNaN\t0.1250\t524\t2015-02-23T11:11:04.998Z\t\t-8955092533521658248\t1970-01-01T00:16:40.000000Z\t3\t00000000 de e4 7c d2 35 07 42 fc 31 79\tRSZSRYRFBVTMHG\t1\t-101516094\tfalse\tG\t0.982066273567\t0.5357\t792\t2015-12-04T15:38:03.249Z\tVDZJ\t5703149806881083206\t1970-01-01T00:33:20.000000Z\t36\t00000000 68 79 8b 43 1d 57 34 04 23 8d d8 57\tWVDKFLOPJOXPK\n";
-
-                compiler.compile("create table x as (select" +
-                        " to_int(x) kk, " +
-                        " rnd_int() a," +
-                        " rnd_boolean() b," +
-                        " rnd_str(1,1,2) c," +
-                        " rnd_double(2) d," +
-                        " rnd_float(2) e," +
-                        " rnd_short(10,1024) f," +
-                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
-                        " rnd_symbol(4,4,4,2) i," +
-                        " rnd_long() j," +
-                        " timestamp_sequence(to_timestamp(0), 1000000000) k," +
-                        " rnd_byte(2,50) l," +
-                        " rnd_bin(10, 20, 2) m," +
-                        " rnd_str(5,16,2) n" +
-                        " from long_sequence(2))", bindVariableService);
-
-                compiler.compile("create table y as (select" +
-                        " to_int((x-1)/4 + 1) kk," +
-                        " rnd_int() a," +
-                        " rnd_boolean() b," +
-                        " rnd_str(1,1,2) c," +
-                        " rnd_double(2) d," +
-                        " rnd_float(2) e," +
-                        " rnd_short(10,1024) f," +
-                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
-                        " rnd_symbol(4,4,4,2) i," +
-                        " rnd_long() j," +
-                        " timestamp_sequence(to_timestamp(0), 1000000000) k," +
-                        " rnd_byte(2,50) l," +
-                        " rnd_bin(10, 20, 2) m," +
-                        " rnd_str(5,16,2) n" +
-                        " from long_sequence(3))", bindVariableService);
-
-                // filter is applied to final join result
-                assertJoinQuery(expected, "select * from x cross join y");
-                Assert.assertEquals(0, engine.getBusyReaderCount());
-                Assert.assertEquals(0, engine.getBusyWriterCount());
-            } finally {
-                engine.releaseAllWriters();
-                engine.releaseAllReaders();
-            }
-        });
-    }
-
-    @Test
     public void testJoinInnerAllTypesFF() throws Exception {
         testFullFat(this::testJoinInnerAllTypes);
     }
@@ -403,7 +459,7 @@ public class JoinTest extends AbstractGriffinTest {
                 compiler.compile("create table z as (select to_int((x-1)/2 + 1) c, abs(rnd_int() % 1000) d from long_sequence(16))", bindVariableService);
 
                 // filter is applied to intermediate join result
-                assertJoinQuery(expected, "select z.c, x.a, b, d, d-b from x join y on y.m = x.c join z on (c) where y.b < 20");
+                assertJoinQueryAndCache(expected, "select z.c, x.a, b, d, d-b from x join y on y.m = x.c join z on (c) where y.b < 20");
 
                 compiler.compile("insert into x select to_int(x+6) c, abs(rnd_int() % 650) a from long_sequence(3)", bindVariableService);
                 compiler.compile("insert into y select to_int((x+19)/4 + 1) m, abs(rnd_int() % 100) b from long_sequence(16)", bindVariableService);
@@ -501,8 +557,17 @@ public class JoinTest extends AbstractGriffinTest {
                 compiler.compile("create table x as (select to_int(x) c, abs(rnd_int() % 650) a from long_sequence(10))", bindVariableService);
                 compiler.compile("create table y as (select x, to_int(2*((x-1)/2))+2 m, abs(rnd_int() % 100) b from long_sequence(10))", bindVariableService);
 
-                // master records should be filtered out because slave records missing
-                assertJoinQuery(expected, "select x.c, x.a, b from x join y on y.m = x.c");
+                assertJoinQueryAndCache(expected, "select x.c, x.a, b from x join y on y.m = x.c");
+
+                compiler.compile("insert into x select to_int(x+10) c, abs(rnd_int() % 650) a from long_sequence(4)", bindVariableService);
+                compiler.compile("insert into y select x, to_int(2*((x-1+10)/2))+2 m, abs(rnd_int() % 100) b from long_sequence(6)", bindVariableService);
+
+                assertJoinQuery(expected +
+                                "12\t347\t7\n" +
+                                "12\t347\t0\n" +
+                                "14\t197\t50\n" +
+                                "14\t197\t68\n",
+                        "select x.c, x.a, b from x join y on y.m = x.c");
 
                 Assert.assertEquals(0, engine.getBusyReaderCount());
                 Assert.assertEquals(0, engine.getBusyWriterCount());
@@ -613,7 +678,7 @@ public class JoinTest extends AbstractGriffinTest {
                 compiler.compile("create table z as (select rnd_symbol('D','B',null,'A') c, abs(rnd_int() % 1000) d from long_sequence(16))", bindVariableService);
 
                 // filter is applied to intermediate join result
-                assertJoinQuery(expected, "select x.c xc, z.c zc, y.m yc, x.a, b, d, d-b from x join y on y.m = x.c join z on (c)");
+                assertJoinQueryAndCache(expected, "select x.c xc, z.c zc, y.m yc, x.a, b, d, d-b from x join y on y.m = x.c join z on (c)");
 
                 compiler.compile("insert into x select rnd_symbol('L','K','P') c, abs(rnd_int() % 650) a from long_sequence(3)", bindVariableService);
                 compiler.compile("insert into y select rnd_symbol('P','L','K') m, abs(rnd_int() % 100) b from long_sequence(6)", bindVariableService);
@@ -663,7 +728,7 @@ public class JoinTest extends AbstractGriffinTest {
                 compiler.compile("create table z as (select to_int((x-1)/2 + 1) c, abs(rnd_int() % 1000) d from long_sequence(16))", bindVariableService);
 
                 // filter is applied to intermediate join result
-                assertJoinQuery(expected, "select z.c, x.a, b, d, a+b from x join y on y.m = x.c join z on (c) where a+b < 300");
+                assertJoinQueryAndCache(expected, "select z.c, x.a, b, d, a+b from x join y on y.m = x.c join z on (c) where a+b < 300");
 
                 compiler.compile("insert into x select to_int(x+6) c, abs(rnd_int() % 650) a from long_sequence(3)", bindVariableService);
                 compiler.compile("insert into y select to_int((x+19)/4 + 1) m, abs(rnd_int() % 100) b from long_sequence(16)", bindVariableService);
@@ -795,7 +860,19 @@ public class JoinTest extends AbstractGriffinTest {
                 compiler.compile("create table y as (select x, to_int(2*((x-1)/2))+2 m, abs(rnd_int() % 100) b from long_sequence(10))", bindVariableService);
 
                 // master records should be filtered out because slave records missing
-                assertJoinQuery(expected, "select x.c, x.a, b from x outer join y on y.m = x.c");
+                assertJoinQueryAndCache(expected, "select x.c, x.a, b from x outer join y on y.m = x.c");
+
+                compiler.compile("insert into x select to_int(x+10) c, abs(rnd_int() % 650) a from long_sequence(4)", bindVariableService);
+                compiler.compile("insert into y select x, to_int(2*((x-1+10)/2))+2 m, abs(rnd_int() % 100) b from long_sequence(6)", bindVariableService);
+
+                assertJoinQuery(expected +
+                                "11\t467\tNaN\n" +
+                                "12\t347\t7\n" +
+                                "12\t347\t0\n" +
+                                "13\t244\tNaN\n" +
+                                "14\t197\t50\n" +
+                                "14\t197\t68\n",
+                        "select x.c, x.a, b from x outer join y on y.m = x.c");
 
                 Assert.assertEquals(0, engine.getBusyReaderCount());
                 Assert.assertEquals(0, engine.getBusyWriterCount());
@@ -804,6 +881,11 @@ public class JoinTest extends AbstractGriffinTest {
                 engine.releaseAllReaders();
             }
         });
+    }
+
+    @Test
+    public void testJoinOuterNoSlaveRecordsFF() throws Exception {
+        testFullFat(this::testJoinOuterNoSlaveRecords);
     }
 
     @Test
@@ -836,13 +918,24 @@ public class JoinTest extends AbstractGriffinTest {
 
     private void assertJoinQuery(String expected, String query) throws IOException, SqlException {
         try (final RecordCursorFactory factory = compiler.compile(query, bindVariableService)) {
-            Assert.assertEquals(-1, factory.getMetadata().getTimestampIndex());
+//            Assert.assertEquals(-1, factory.getMetadata().getTimestampIndex());
             assertCursor(expected, factory, false);
             // make sure we get the same outcome when we get factory to create new cursor
             assertCursor(expected, factory, false);
             // make sure strings, binary fields and symbols are compliant with expected record behaviour
             assertVariableColumns(factory);
         }
+    }
+
+    private void assertJoinQueryAndCache(String expected, String query) throws IOException, SqlException {
+        final RecordCursorFactory factory = compiler.compile(query, bindVariableService);
+        Assert.assertEquals(-1, factory.getMetadata().getTimestampIndex());
+        assertCursor(expected, factory, false);
+        // make sure we get the same outcome when we get factory to create new cursor
+        assertCursor(expected, factory, false);
+        // make sure strings, binary fields and symbols are compliant with expected record behaviour
+        assertVariableColumns(factory);
+        compiler.cache(query, factory);
     }
 
     private void testFullFat(TestMethod method) throws Exception {
