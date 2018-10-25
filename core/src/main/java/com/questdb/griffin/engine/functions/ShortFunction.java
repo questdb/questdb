@@ -44,6 +44,11 @@ public abstract class ShortFunction implements Function {
     }
 
     @Override
+    public long getBinLen(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public final boolean getBool(Record rec) {
         throw new UnsupportedOperationException();
     }

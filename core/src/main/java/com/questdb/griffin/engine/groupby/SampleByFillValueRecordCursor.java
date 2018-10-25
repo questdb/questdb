@@ -35,7 +35,7 @@ import com.questdb.std.IntIntHashMap;
 import com.questdb.std.Numbers;
 import com.questdb.std.ObjList;
 
-class SampleByFillValueRecordCursor implements DelegatingRecordCursor {
+class SampleByFillValueRecordCursor implements DelegatingRecordCursor, NoRandomAccessRecordCursor {
     private final Map map;
     private final RecordSink keyMapSink;
     private final ObjList<GroupByFunction> groupByFunctions;
@@ -164,21 +164,6 @@ class SampleByFillValueRecordCursor implements DelegatingRecordCursor {
 
             return refreshCursorAndRecord();
         }
-    }
-
-    @Override
-    public Record newRecord() {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public void recordAt(Record record, long atRowId) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public void recordAt(long rowId) {
-        throw new UnsupportedOperationException();
     }
 
     @Override

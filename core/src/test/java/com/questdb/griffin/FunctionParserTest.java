@@ -460,6 +460,11 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
             public boolean isConstant() {
                 return true;
             }
+
+            @Override
+            public long getBinLen(Record rec) {
+                return -1;
+            }
         };
 
         functions.add(new FunctionFactory() {

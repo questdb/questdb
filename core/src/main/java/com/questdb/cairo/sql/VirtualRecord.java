@@ -46,11 +46,7 @@ public class VirtualRecord implements Record {
 
     @Override
     public long getBinLen(int col) {
-        BinarySequence sequence = getBin(col);
-        if (sequence == null) {
-            return -1L;
-        }
-        return sequence.length();
+        return getFunction(col).getBinLen(base);
     }
 
     @Override

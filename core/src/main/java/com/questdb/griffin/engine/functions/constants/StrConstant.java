@@ -23,20 +23,27 @@
 
 package com.questdb.griffin.engine.functions.constants;
 
+import com.questdb.cairo.TableUtils;
 import com.questdb.cairo.sql.Record;
 import com.questdb.griffin.engine.functions.StrFunction;
 import com.questdb.std.Chars;
 
 public class StrConstant extends StrFunction implements ConstantFunction {
     private final String value;
+    private final int length;
 
     public StrConstant(int position, CharSequence value) {
         super(position);
-        assert value != null;
-        if (Chars.startsWith(value, '\'')) {
-            this.value = Chars.toString(value, 1, value.length() - 1);
+        if (value == null) {
+            this.value = null;
+            this.length = TableUtils.NULL_LEN;
         } else {
-            this.value = Chars.toString(value);
+            if (Chars.startsWith(value, '\'')) {
+                this.value = Chars.toString(value, 1, value.length() - 1);
+            } else {
+                this.value = Chars.toString(value);
+            }
+            this.length = this.value.length();
         }
     }
 
@@ -48,5 +55,10 @@ public class StrConstant extends StrFunction implements ConstantFunction {
     @Override
     public CharSequence getStrB(Record rec) {
         return value;
+    }
+
+    @Override
+    public int getStrLen(Record rec) {
+        return length;
     }
 }

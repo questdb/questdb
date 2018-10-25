@@ -45,6 +45,11 @@ public abstract class BooleanFunction implements Function {
     }
 
     @Override
+    public long getBinLen(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public final byte getByte(Record rec) {
         throw new UnsupportedOperationException();
     }

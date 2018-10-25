@@ -23,12 +23,12 @@
 
 package com.questdb.griffin.engine;
 
+import com.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import com.questdb.cairo.sql.Record;
-import com.questdb.cairo.sql.RecordCursor;
 import com.questdb.cairo.sql.VirtualRecordNoRowid;
 import com.questdb.std.ObjList;
 
-final public class EmptyTableRecordCursor implements RecordCursor {
+final public class EmptyTableRecordCursor implements NoRandomAccessRecordCursor {
     public static final EmptyTableRecordCursor INSTANCE = new EmptyTableRecordCursor();
 
     private final Record record = new VirtualRecordNoRowid(new ObjList<>());
@@ -45,21 +45,6 @@ final public class EmptyTableRecordCursor implements RecordCursor {
     @Override
     public boolean hasNext() {
         return false;
-    }
-
-    @Override
-    public Record newRecord() {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public void recordAt(Record record, long atRowId) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public void recordAt(long rowId) {
-        throw new UnsupportedOperationException();
     }
 
     @Override

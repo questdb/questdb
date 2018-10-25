@@ -38,8 +38,8 @@ public class HashJoinLightRecordCursorFactory extends AbstractRecordCursorFactor
     private final LongChain slaveChain;
     private final RecordCursorFactory masterFactory;
     private final RecordCursorFactory slaveFactory;
-    private final RecordSink masterSink;
-    private final RecordSink slaveSink;
+    private final RecordSink masterKeySink;
+    private final RecordSink slaveKeySink;
     private final HashJoinRecordCursor cursor;
 
     public HashJoinLightRecordCursorFactory(
@@ -49,8 +49,8 @@ public class HashJoinLightRecordCursorFactory extends AbstractRecordCursorFactor
             RecordCursorFactory slaveFactory,
             @Transient ColumnTypes joinColumnTypes,
             @Transient ColumnTypes valueTypes, // this expected to be just LONG, we store chain references in map
-            RecordSink masterSink,
-            RecordSink slaveSink,
+            RecordSink masterKeySink,
+            RecordSink slaveKeySink,
             int columnSplit
 
     ) {
@@ -59,8 +59,8 @@ public class HashJoinLightRecordCursorFactory extends AbstractRecordCursorFactor
         this.slaveFactory = slaveFactory;
         joinKeyMap = MapFactory.createMap(configuration, joinColumnTypes, valueTypes);
         slaveChain = new LongChain(configuration.getSqlHashJoinLightValuePageSize());
-        this.masterSink = masterSink;
-        this.slaveSink = slaveSink;
+        this.masterKeySink = masterKeySink;
+        this.slaveKeySink = slaveKeySink;
         this.cursor = new HashJoinRecordCursor(columnSplit, joinKeyMap, slaveChain);
     }
 
@@ -97,19 +97,19 @@ public class HashJoinLightRecordCursorFactory extends AbstractRecordCursorFactor
         final Record record = slaveCursor.getRecord();
         while (slaveCursor.hasNext()) {
             MapKey key = joinKeyMap.withKey();
-            key.put(record, slaveSink);
+            key.put(record, slaveKeySink);
             MapValue value = key.createValue();
             if (value.isNew()) {
-                final long offset = slaveChain.put(-1, record.getRowId());
+                final long offset = slaveChain.put(record.getRowId(), -1);
                 value.putLong(0, offset);
                 value.putLong(1, offset);
             } else {
-                value.putLong(1, slaveChain.put(value.getLong(1), record.getRowId()));
+                value.putLong(1, slaveChain.put(record.getRowId(), value.getLong(1)));
             }
         }
     }
 
-    private class HashJoinRecordCursor implements RecordCursor {
+    private class HashJoinRecordCursor implements NoRandomAccessRecordCursor {
         private final JoinRecord record;
         private final LongChain slaveChain;
         private final Map joinKeyMap;
@@ -155,7 +155,7 @@ public class HashJoinLightRecordCursorFactory extends AbstractRecordCursorFactor
 
             while (masterCursor.hasNext()) {
                 MapKey key = joinKeyMap.withKey();
-                key.put(masterRecord, masterSink);
+                key.put(masterRecord, masterKeySink);
                 MapValue value = key.findValue();
                 if (value != null) {
                     slaveChainCursor = slaveChain.getCursor(value.getLong(0));
@@ -167,21 +167,6 @@ public class HashJoinLightRecordCursorFactory extends AbstractRecordCursorFactor
                 }
             }
             return false;
-        }
-
-        @Override
-        public Record newRecord() {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public void recordAt(Record record, long atRowId) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public void recordAt(long rowId) {
-            throw new UnsupportedOperationException();
         }
 
         @Override

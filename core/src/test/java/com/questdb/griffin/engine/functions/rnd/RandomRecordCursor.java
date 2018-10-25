@@ -23,11 +23,11 @@
 
 package com.questdb.griffin.engine.functions.rnd;
 
+import com.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import com.questdb.cairo.sql.Record;
-import com.questdb.cairo.sql.RecordCursor;
 import com.questdb.cairo.sql.SymbolTable;
 
-class RandomRecordCursor implements RecordCursor {
+class RandomRecordCursor implements NoRandomAccessRecordCursor {
     private final long recordCount;
     private final Record record;
 
@@ -54,23 +54,8 @@ class RandomRecordCursor implements RecordCursor {
     }
 
     @Override
-    public Record newRecord() {
-        return record;
-    }
-
-    @Override
     public boolean hasNext() {
         return recordIndex++ < recordCount;
-    }
-
-    @Override
-    public void recordAt(Record record, long atRowId) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public void recordAt(long rowId) {
-        throw new UnsupportedOperationException();
     }
 
     @Override

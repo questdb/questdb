@@ -28,9 +28,7 @@ import com.questdb.cairo.sql.*;
 import com.questdb.griffin.engine.EmptyTableRecordCursorFactory;
 import com.questdb.griffin.engine.functions.columns.SymbolColumn;
 import com.questdb.griffin.engine.groupby.*;
-import com.questdb.griffin.engine.join.HashJoinLightRecordCursorFactory;
-import com.questdb.griffin.engine.join.HashJoinRecordCursorFactory;
-import com.questdb.griffin.engine.join.JoinRecordMetadata;
+import com.questdb.griffin.engine.join.*;
 import com.questdb.griffin.engine.orderby.RecordComparatorCompiler;
 import com.questdb.griffin.engine.orderby.SortedLightRecordCursorFactory;
 import com.questdb.griffin.engine.orderby.SortedRecordCursorFactory;
@@ -76,7 +74,8 @@ public class SqlCodeGenerator {
             RecordCursorFactory master,
             CharSequence masterAlias,
             RecordCursorFactory slave,
-            CharSequence slaveAlias
+            CharSequence slaveAlias,
+            int joinType
     ) {
         /*
          * JoinContext provides the following information:
@@ -117,7 +116,21 @@ public class SqlCodeGenerator {
         valueTypes.add(ColumnType.LONG);
         valueTypes.add(ColumnType.LONG);
         if (slave.isRandomAccessCursor() && !fullFatJoins) {
-            return new HashJoinLightRecordCursorFactory(
+            if (joinType == QueryModel.JOIN_INNER) {
+                return new HashJoinLightRecordCursorFactory(
+                        configuration,
+                        m,
+                        master,
+                        slave,
+                        keyTypes,
+                        valueTypes,
+                        masterKeySink,
+                        slaveKeySink,
+                        masterMetadata.getColumnCount()
+                );
+            }
+
+            return new HashOuterJoinLightRecordCursorFactory(
                     configuration,
                     m,
                     master,
@@ -138,7 +151,22 @@ public class SqlCodeGenerator {
                 false
         );
 
-        return new HashJoinRecordCursorFactory(
+        if (joinType == QueryModel.JOIN_INNER) {
+            return new HashJoinRecordCursorFactory(
+                    configuration,
+                    m,
+                    master,
+                    slave,
+                    keyTypes,
+                    valueTypes,
+                    masterKeySink,
+                    slaveKeySink,
+                    slaveSink,
+                    masterMetadata.getColumnCount()
+            );
+        }
+
+        return new HashOuterJoinRecordCursorFactory(
                 configuration,
                 m,
                 master,
@@ -194,18 +222,33 @@ public class SqlCodeGenerator {
                     masterAlias = slaveModel.getName();
                 } else {
                     // not the root, join to "master"
-                    switch (slaveModel.getJoinType()) {
+                    final int joinType = slaveModel.getJoinType();
+                    final RecordMetadata masterMetadata = master.getMetadata();
+                    final RecordMetadata slaveMetadata = slave.getMetadata();
+
+                    switch (joinType) {
                         case QueryModel.JOIN_CROSS:
-                            assert false;
-                            break;
+                            JoinRecordMetadata metadata = new JoinRecordMetadata(
+                                    configuration,
+                                    masterMetadata.getColumnCount() + slaveMetadata.getColumnCount()
+                            );
+
+                            metadata.copyColumnMetadataFrom(masterAlias, masterMetadata);
+                            metadata.copyColumnMetadataFrom(slaveModel.getName(), slaveMetadata);
+
+                            return new CrossJoinRecordCursorFactory(
+                                    metadata,
+                                    master,
+                                    slave,
+                                    masterMetadata.getColumnCount()
+                            );
+
                         case QueryModel.JOIN_ASOF:
                             assert false;
                             break;
                         default:
                             // calculate column indexes
                             final JoinContext jc = slaveModel.getContext();
-                            final RecordMetadata masterMetadata = master.getMetadata();
-                            final RecordMetadata slaveMetadata = slave.getMetadata();
                             lookupColumnIndexesUsingVanillaNames(listColumnFilterA, jc.aNames, slaveMetadata);
                             if (index == 1) {
                                 lookupColumnIndexesUsingVanillaNames(listColumnFilterB, jc.bNames, masterMetadata);
@@ -223,7 +266,10 @@ public class SqlCodeGenerator {
                                 }
                                 keyTypes.add(columnType);
                             }
-                            master = createHashJoin(master, masterAlias, slave, slaveModel.getName());
+
+                            // setup for inner and outer joins is the same
+
+                            master = createHashJoin(master, masterAlias, slave, slaveModel.getName(), joinType);
                             masterAlias = null;
                             break;
                     }

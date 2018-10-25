@@ -23,6 +23,7 @@
 
 package com.questdb.griffin.engine.functions.bind;
 
+import com.questdb.cairo.TableUtils;
 import com.questdb.cairo.sql.Record;
 import com.questdb.griffin.engine.functions.BinFunction;
 import com.questdb.griffin.engine.functions.StatelessFunction;
@@ -39,5 +40,10 @@ public class BinBindVariable extends BinFunction implements StatelessFunction {
     @Override
     public BinarySequence getBin(Record rec) {
         return value;
+    }
+
+    @Override
+    public long getBinLen(Record rec) {
+        return value == null ? TableUtils.NULL_LEN : value.length();
     }
 }

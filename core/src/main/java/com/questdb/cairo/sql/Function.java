@@ -37,6 +37,8 @@ public interface Function extends Closeable {
 
     BinarySequence getBin(Record rec);
 
+    long getBinLen(Record rec);
+
     boolean getBool(Record rec);
 
     byte getByte(Record rec);

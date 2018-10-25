@@ -70,7 +70,7 @@ public class LongChainTest {
         long tail = -1;
         for (int i = 0; i < 1000; i++) {
             long expected = rnd.nextLong();
-            tail = chain.put(tail, expected);
+            tail = chain.put(expected, tail);
             expectedValues.add(expected);
             if (i == 0) {
                 head = tail;

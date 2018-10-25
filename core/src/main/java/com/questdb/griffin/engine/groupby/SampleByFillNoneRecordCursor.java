@@ -33,7 +33,7 @@ import com.questdb.griffin.engine.functions.TimestampFunction;
 import com.questdb.std.IntIntHashMap;
 import com.questdb.std.ObjList;
 
-class SampleByFillNoneRecordCursor implements DelegatingRecordCursor {
+class SampleByFillNoneRecordCursor implements DelegatingRecordCursor, NoRandomAccessRecordCursor {
     private final Map map;
     private final RecordSink keyMapSink;
     private final ObjList<GroupByFunction> groupByFunctions;
@@ -145,21 +145,6 @@ class SampleByFillNoneRecordCursor implements DelegatingRecordCursor {
             // we do not need to clear map, it is empty anyway
             lastTimestamp = nextTimestamp;
         }
-    }
-
-    @Override
-    public Record newRecord() {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public void recordAt(Record record, long atRowId) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public void recordAt(long rowId) {
-        throw new UnsupportedOperationException();
     }
 
     @Override

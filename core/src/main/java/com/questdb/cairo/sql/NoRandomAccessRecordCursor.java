@@ -21,28 +21,21 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.engine.functions.columns;
+package com.questdb.cairo.sql;
 
-import com.questdb.cairo.sql.Record;
-import com.questdb.griffin.engine.functions.BinFunction;
-import com.questdb.griffin.engine.functions.StatelessFunction;
-import com.questdb.std.BinarySequence;
-
-public class BinColumn extends BinFunction implements StatelessFunction {
-    private final int columnIndex;
-
-    public BinColumn(int position, int columnIndex) {
-        super(position);
-        this.columnIndex = columnIndex;
+public interface NoRandomAccessRecordCursor extends RecordCursor {
+    @Override
+    default Record newRecord() {
+        throw new UnsupportedOperationException();
     }
 
     @Override
-    public BinarySequence getBin(Record rec) {
-        return rec.getBin(columnIndex);
+    default void recordAt(Record record, long atRowId) {
+        throw new UnsupportedOperationException();
     }
 
     @Override
-    public long getBinLen(Record rec) {
-        return rec.getBinLen(columnIndex);
+    default void recordAt(long rowId) {
+        throw new UnsupportedOperationException();
     }
 }

@@ -42,62 +42,57 @@ public class LinkFunction implements Function {
 
     @Override
     public void close() {
-        assert base != null;
-        base.close();
+        getBase().close();
     }
 
     @Override
     public BinarySequence getBin(Record rec) {
-        assert base != null;
-        return base.getBin(rec);
+        return getBase().getBin(rec);
+    }
+
+    @Override
+    public long getBinLen(Record rec) {
+        return getBase().getBinLen(rec);
     }
 
     @Override
     public boolean getBool(Record rec) {
-        assert base != null;
-        return base.getBool(rec);
+        return getBase().getBool(rec);
     }
 
     @Override
     public byte getByte(Record rec) {
-        assert base != null;
-        return base.getByte(rec);
+        return getBase().getByte(rec);
     }
 
     @Override
     public long getDate(Record rec) {
-        assert base != null;
-        return base.getDate(rec);
+        return getBase().getDate(rec);
     }
 
     @Override
     public double getDouble(Record rec) {
-        assert base != null;
-        return base.getDouble(rec);
+        return getBase().getDouble(rec);
     }
 
     @Override
     public float getFloat(Record rec) {
-        assert base != null;
-        return base.getFloat(rec);
+        return getBase().getFloat(rec);
     }
 
     @Override
     public int getInt(Record rec) {
-        assert base != null;
-        return base.getInt(rec);
+        return getBase().getInt(rec);
     }
 
     @Override
     public long getLong(Record rec) {
-        assert base != null;
-        return base.getLong(rec);
+        return getBase().getLong(rec);
     }
 
     @Override
     public RecordMetadata getMetadata() {
-        assert base != null;
-        return base.getMetadata();
+        return getBase().getMetadata();
     }
 
     @Override
@@ -107,50 +102,42 @@ public class LinkFunction implements Function {
 
     @Override
     public RecordCursorFactory getRecordCursorFactory() {
-        assert base != null;
-        return base.getRecordCursorFactory();
+        return getBase().getRecordCursorFactory();
     }
 
     @Override
     public short getShort(Record rec) {
-        assert base != null;
-        return base.getShort(rec);
+        return getBase().getShort(rec);
     }
 
     @Override
     public CharSequence getStr(Record rec) {
-        assert base != null;
-        return base.getStr(rec);
+        return getBase().getStr(rec);
     }
 
     @Override
     public void getStr(Record rec, CharSink sink) {
-        assert base != null;
-        base.getStr(rec, sink);
+        getBase().getStr(rec, sink);
     }
 
     @Override
     public CharSequence getStrB(Record rec) {
-        assert base != null;
-        return base.getStrB(rec);
+        return getBase().getStrB(rec);
     }
 
     @Override
     public int getStrLen(Record rec) {
-        assert base != null;
-        return base.getStrLen(rec);
+        return getBase().getStrLen(rec);
     }
 
     @Override
     public CharSequence getSymbol(Record rec) {
-        assert base != null;
-        return base.getSymbol(rec);
+        return getBase().getSymbol(rec);
     }
 
     @Override
     public long getTimestamp(Record rec) {
-        assert base != null;
-        return base.getTimestamp(rec);
+        return getBase().getTimestamp(rec);
     }
 
     @Override
@@ -166,5 +153,10 @@ public class LinkFunction implements Function {
         }
         assert base.getType() == type;
         base.init(recordCursor, bindVariableService);
+    }
+
+    private Function getBase() {
+        assert base != null;
+        return base;
     }
 }

@@ -89,6 +89,11 @@ public class RndBinFunctionFactory implements FunctionFactory {
             sequence.len = lo + sequence.rnd.nextPositiveLong() % range;
             return sequence;
         }
+
+        @Override
+        public long getBinLen(Record rec) {
+            return sequence.len;
+        }
     }
 
     private static final class FixLenFunction extends BinFunction implements StatelessFunction {
@@ -109,6 +114,11 @@ public class RndBinFunctionFactory implements FunctionFactory {
                 return null;
             }
             return sequence;
+        }
+
+        @Override
+        public long getBinLen(Record rec) {
+            return sequence.len;
         }
     }
 

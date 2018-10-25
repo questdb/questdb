@@ -23,6 +23,7 @@
 
 package com.questdb.griffin.engine.functions;
 
+import com.questdb.cairo.TableUtils;
 import com.questdb.cairo.sql.Record;
 import com.questdb.std.BinarySequence;
 import org.junit.Assert;
@@ -35,6 +36,11 @@ public class BinFunctionTest {
         @Override
         public BinarySequence getBin(Record rec) {
             return null;
+        }
+
+        @Override
+        public long getBinLen(Record rec) {
+            return TableUtils.NULL_LEN;
         }
     };
 
