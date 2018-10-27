@@ -2520,6 +2520,26 @@ public class SqlCompilerTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInsertAsSelectFewerSelectColumns() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try {
+                compiler.compile("create table y as (select x, to_int(2*((x-1)/2))+2 m, abs(rnd_int() % 100) b from long_sequence(10))", bindVariableService);
+                try {
+                    compiler.compile("insert into y select to_int(2*((x-1+10)/2))+2 m, abs(rnd_int() % 100) b from long_sequence(6)", bindVariableService);
+                } catch (SqlException e) {
+                    Assert.assertEquals(14, e.getPosition());
+                    Assert.assertTrue(Chars.contains(e.getFlyweightMessage(), "not enough"));
+                }
+                Assert.assertEquals(0, engine.getBusyReaderCount());
+                Assert.assertEquals(0, engine.getBusyWriterCount());
+            } finally {
+                engine.releaseAllWriters();
+                engine.releaseAllReaders();
+            }
+        });
+    }
+
+    @Test
     public void testInsertAsSelectColumnSubset2() throws Exception {
         String expectedData = "a\tb\tc\td\te\tf\tg\tj\tk\tl\tm\tn\to\tp\n" +
                 "NaN\tNaN\tfalse\t\t0.804322409997\tNaN\t-13027\t\t\tNaN\tNaN\t\t0\t\n" +

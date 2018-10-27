@@ -330,8 +330,6 @@ public class SqlCodeGenerator {
                     }
 
                     // todo: full-fat asof join implementation
-                    // todo: insert as select produces NPE when select has fewer columns than target table
-
                     switch (joinType) {
                         case QueryModel.JOIN_CROSS:
                             return new CrossJoinRecordCursorFactory(

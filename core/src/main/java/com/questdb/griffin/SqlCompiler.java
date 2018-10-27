@@ -44,6 +44,29 @@ public class SqlCompiler implements Closeable {
     public static final ObjList<String> sqlControlSymbols = new ObjList<>(8);
     private final static Log LOG = LogFactory.getLog(SqlCompiler.class);
     private static final IntList castGroups = new IntList();
+
+    static {
+        castGroups.extendAndSet(ColumnType.BOOLEAN, 2);
+        castGroups.extendAndSet(ColumnType.BYTE, 1);
+        castGroups.extendAndSet(ColumnType.SHORT, 1);
+        castGroups.extendAndSet(ColumnType.INT, 1);
+        castGroups.extendAndSet(ColumnType.LONG, 1);
+        castGroups.extendAndSet(ColumnType.FLOAT, 1);
+        castGroups.extendAndSet(ColumnType.DOUBLE, 1);
+        castGroups.extendAndSet(ColumnType.DATE, 1);
+        castGroups.extendAndSet(ColumnType.TIMESTAMP, 1);
+        castGroups.extendAndSet(ColumnType.STRING, 3);
+        castGroups.extendAndSet(ColumnType.SYMBOL, 3);
+        castGroups.extendAndSet(ColumnType.BINARY, 4);
+
+        sqlControlSymbols.add("(");
+        sqlControlSymbols.add(")");
+        sqlControlSymbols.add(",");
+        sqlControlSymbols.add("/*");
+        sqlControlSymbols.add("*/");
+        sqlControlSymbols.add("--");
+    }
+
     private final SqlOptimiser optimiser;
     private final SqlParser parser;
     private final ObjectPool<ExpressionNode> sqlNodePool;
@@ -125,52 +148,6 @@ public class SqlCompiler implements Closeable {
                 lexer.defineSymbol(op.token);
             }
         }
-    }
-
-    public void cache(CharSequence query, RecordCursorFactory factory) {
-        sqlCache.put(query, factory);
-    }
-
-    @Override
-    public void close() {
-        Misc.free(path);
-        Misc.free(sqlCache);
-    }
-
-    public RecordCursorFactory compile(CharSequence query, BindVariableService bindVariableService) throws SqlException {
-
-        // short circuit to cache if there is anything there
-        RecordCursorFactory result = sqlCache.poll(query);
-        if (result != null) {
-            return result;
-        }
-
-        // This method will not populate sql cache directly;
-        // factories are assumed to be non reentrant and once
-        // factory is out of this method the caller assumes
-        // full ownership over it. In that however caller may
-        // chose to return factory back to this or any other
-        // instance of compiler for safekeeping
-
-        executionContext.with(bindVariableService);
-        ExecutionModel executionModel = compileExecutionModel(query, executionContext);
-        switch (executionModel.getModelType()) {
-            case ExecutionModel.QUERY:
-                return generate((QueryModel) executionModel, executionContext);
-            case ExecutionModel.CREATE_TABLE:
-                createTableWithRetries(query, executionModel);
-                break;
-            case ExecutionModel.INSERT_AS_SELECT:
-                executeWithRetries(
-                        query,
-                        insertAsSelectMethod,
-                        executionModel,
-                        configuration.getCreateAsSelectRetryCount());
-                break;
-            default:
-                break;
-        }
-        return null;
     }
 
     // Creates data type converter.
@@ -601,6 +578,52 @@ public class SqlCompiler implements Closeable {
                 || (from == ColumnType.SYMBOL && to == ColumnType.STRING);
     }
 
+    public void cache(CharSequence query, RecordCursorFactory factory) {
+        sqlCache.put(query, factory);
+    }
+
+    @Override
+    public void close() {
+        Misc.free(path);
+        Misc.free(sqlCache);
+    }
+
+    public RecordCursorFactory compile(CharSequence query, BindVariableService bindVariableService) throws SqlException {
+
+        // short circuit to cache if there is anything there
+        RecordCursorFactory result = sqlCache.poll(query);
+        if (result != null) {
+            return result;
+        }
+
+        // This method will not populate sql cache directly;
+        // factories are assumed to be non reentrant and once
+        // factory is out of this method the caller assumes
+        // full ownership over it. In that however caller may
+        // chose to return factory back to this or any other
+        // instance of compiler for safekeeping
+
+        executionContext.with(bindVariableService);
+        ExecutionModel executionModel = compileExecutionModel(query, executionContext);
+        switch (executionModel.getModelType()) {
+            case ExecutionModel.QUERY:
+                return generate((QueryModel) executionModel, executionContext);
+            case ExecutionModel.CREATE_TABLE:
+                createTableWithRetries(query, executionModel);
+                break;
+            case ExecutionModel.INSERT_AS_SELECT:
+                executeWithRetries(
+                        query,
+                        insertAsSelectMethod,
+                        executionModel,
+                        configuration.getCreateAsSelectRetryCount());
+                break;
+            default:
+                break;
+        }
+        return null;
+    }
+
     private void clear() {
         sqlNodePool.clear();
         characterStore.clear();
@@ -973,7 +996,12 @@ public class SqlCompiler implements Closeable {
                 copier = assembleRecordToRowCopier(asm, cursorMetadata, writerMetadata, listColumnFilter);
             } else {
 
-                for (int i = 0, n = writerMetadata.getColumnCount(); i < n; i++) {
+                final int n = writerMetadata.getColumnCount();
+                if (n > cursorMetadata.getColumnCount()) {
+                    throw SqlException.$(model.getSelectKeywordPosition(), "not enough columns selected");
+                }
+
+                for (int i = 0; i < n; i++) {
                     int fromType = cursorMetadata.getColumnType(i);
                     int toType = writerMetadata.getColumnType(i);
                     if (isAssignableFrom(toType, fromType)) {
@@ -1107,27 +1135,5 @@ public class SqlCompiler implements Closeable {
         void with(BindVariableService bindVariableService) {
             this.bindVariableService = bindVariableService;
         }
-    }
-
-    static {
-        castGroups.extendAndSet(ColumnType.BOOLEAN, 2);
-        castGroups.extendAndSet(ColumnType.BYTE, 1);
-        castGroups.extendAndSet(ColumnType.SHORT, 1);
-        castGroups.extendAndSet(ColumnType.INT, 1);
-        castGroups.extendAndSet(ColumnType.LONG, 1);
-        castGroups.extendAndSet(ColumnType.FLOAT, 1);
-        castGroups.extendAndSet(ColumnType.DOUBLE, 1);
-        castGroups.extendAndSet(ColumnType.DATE, 1);
-        castGroups.extendAndSet(ColumnType.TIMESTAMP, 1);
-        castGroups.extendAndSet(ColumnType.STRING, 3);
-        castGroups.extendAndSet(ColumnType.SYMBOL, 3);
-        castGroups.extendAndSet(ColumnType.BINARY, 4);
-
-        sqlControlSymbols.add("(");
-        sqlControlSymbols.add(")");
-        sqlControlSymbols.add(",");
-        sqlControlSymbols.add("/*");
-        sqlControlSymbols.add("*/");
-        sqlControlSymbols.add("--");
     }
 }

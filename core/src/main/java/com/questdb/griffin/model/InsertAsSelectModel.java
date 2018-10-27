@@ -32,6 +32,7 @@ public class InsertAsSelectModel implements ExecutionModel, Mutable, Sinkable {
     private final IntList columnPositions = new IntList();
     private ExpressionNode tableName;
     private QueryModel queryModel;
+    private int selectKeywordPosition;
 
     private InsertAsSelectModel() {
     }
@@ -50,6 +51,7 @@ public class InsertAsSelectModel implements ExecutionModel, Mutable, Sinkable {
         this.queryModel = null;
         this.columnSet.clear();
         this.columnPositions.clear();
+        this.selectKeywordPosition = 0;
     }
 
     public int getColumnPosition(int columnIndex) {
@@ -58,6 +60,14 @@ public class InsertAsSelectModel implements ExecutionModel, Mutable, Sinkable {
 
     public CharSequenceHashSet getColumnSet() {
         return columnSet;
+    }
+
+    public int getSelectKeywordPosition() {
+        return selectKeywordPosition;
+    }
+
+    public void setSelectKeywordPosition(int selectKeywordPosition) {
+        this.selectKeywordPosition = selectKeywordPosition;
     }
 
     @Override

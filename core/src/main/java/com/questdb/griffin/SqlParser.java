@@ -642,7 +642,6 @@ public final class SqlParser {
 
         CharSequence tok = tok(lexer, "'(' or 'select'");
 
-
         if (Chars.equals(tok, '(')) {
             do {
                 tok = tok(lexer, "column");
@@ -661,6 +660,7 @@ public final class SqlParser {
         }
 
         if (Chars.equals(tok, "select")) {
+            model.setSelectKeywordPosition(lexer.lastTokenPosition());
             lexer.unparse();
             final QueryModel queryModel = parseDml(lexer);
             model.setQueryModel(queryModel);
