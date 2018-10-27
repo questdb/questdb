@@ -307,6 +307,16 @@ public class SqlCodeGenerator {
                     final RecordMetadata masterMetadata = master.getMetadata();
                     final RecordMetadata slaveMetadata = slave.getMetadata();
 
+                    if (joinType == QueryModel.JOIN_ASOF) {
+                        if (masterMetadata.getTimestampIndex() == -1) {
+                            throw SqlException.$(slaveModel.getJoinKeywordPosition(), "left side of ASOF join has no timestamp");
+                        }
+
+                        if (slaveMetadata.getTimestampIndex() == -1) {
+                            throw SqlException.$(slaveModel.getJoinKeywordPosition(), "right side of ASOF join has no timestamp");
+                        }
+                    }
+
                     metadata = new JoinRecordMetadata(
                             configuration,
                             masterMetadata.getColumnCount() + slaveMetadata.getColumnCount()
@@ -315,13 +325,11 @@ public class SqlCodeGenerator {
                     metadata.copyColumnMetadataFrom(masterAlias, masterMetadata);
                     metadata.copyColumnMetadataFrom(slaveModel.getName(), slaveMetadata);
 
-                    // todo: asof join requires timestamps, make sure error is reported correctly when timestamps are missing
+                    if (masterMetadata.getTimestampIndex() != -1) {
+                        metadata.setTimestampIndex(masterMetadata.getTimestampIndex());
+                    }
+
                     // todo: full-fat asof join implementation
-
-                    // todo: asof join result must have timestamp
-                    // todo: any other job must propagate timestamp from master
-
-                    // todo: test for timestamps
                     // todo: insert as select produces NPE when select has fewer columns than target table
 
                     switch (joinType) {

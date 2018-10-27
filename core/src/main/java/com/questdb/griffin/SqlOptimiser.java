@@ -243,7 +243,6 @@ class SqlOptimiser {
                     }
                 }
             }
-
         }
     }
 

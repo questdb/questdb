@@ -191,7 +191,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
         }
     }
 
-    private static void assertTimestampColumnValues(RecordCursorFactory factory) {
+    protected static void assertTimestampColumnValues(RecordCursorFactory factory) {
         int index = factory.getMetadata().getTimestampIndex();
         long timestamp = Long.MIN_VALUE;
         try (RecordCursor cursor = factory.getCursor(bindVariableService)) {

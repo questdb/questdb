@@ -36,6 +36,37 @@ public final class SqlParser {
     private static final CharSequenceHashSet columnAliasStop = new CharSequenceHashSet();
     private static final CharSequenceHashSet groupByStopSet = new CharSequenceHashSet();
     private static final CharSequenceIntHashMap joinStartSet = new CharSequenceIntHashMap();
+
+    static {
+        tableAliasStop.add("where");
+        tableAliasStop.add("latest");
+        tableAliasStop.add("join");
+        tableAliasStop.add("inner");
+        tableAliasStop.add("outer");
+        tableAliasStop.add("asof");
+        tableAliasStop.add("cross");
+        tableAliasStop.add("sample");
+        tableAliasStop.add("order");
+        tableAliasStop.add("on");
+        tableAliasStop.add("timestamp");
+        tableAliasStop.add("limit");
+        tableAliasStop.add(")");
+        //
+        columnAliasStop.add("from");
+        columnAliasStop.add(",");
+        columnAliasStop.add("over");
+        //
+        groupByStopSet.add("order");
+        groupByStopSet.add(")");
+        groupByStopSet.add(",");
+
+        joinStartSet.put("join", QueryModel.JOIN_INNER);
+        joinStartSet.put("inner", QueryModel.JOIN_INNER);
+        joinStartSet.put("outer", QueryModel.JOIN_OUTER);
+        joinStartSet.put("cross", QueryModel.JOIN_CROSS);
+        joinStartSet.put("asof", QueryModel.JOIN_ASOF);
+    }
+
     private final ObjectPool<ExpressionNode> sqlNodePool;
     private final ExpressionTreeBuilder expressionTreeBuilder = new ExpressionTreeBuilder();
     private final ObjectPool<QueryModel> queryModelPool;
@@ -642,6 +673,7 @@ public final class SqlParser {
     private QueryModel parseJoin(GenericLexer lexer, CharSequence tok, int joinType, QueryModel parent) throws SqlException {
         QueryModel joinModel = queryModelPool.next();
         joinModel.setJoinType(joinType);
+        joinModel.setJoinKeywordPosition(lexer.lastTokenPosition());
 
         if (!Chars.equals(tok, "join")) {
             expectTok(lexer, "join");
@@ -1056,35 +1088,5 @@ public final class SqlParser {
                 break;
 
         }
-    }
-
-    static {
-        tableAliasStop.add("where");
-        tableAliasStop.add("latest");
-        tableAliasStop.add("join");
-        tableAliasStop.add("inner");
-        tableAliasStop.add("outer");
-        tableAliasStop.add("asof");
-        tableAliasStop.add("cross");
-        tableAliasStop.add("sample");
-        tableAliasStop.add("order");
-        tableAliasStop.add("on");
-        tableAliasStop.add("timestamp");
-        tableAliasStop.add("limit");
-        tableAliasStop.add(")");
-        //
-        columnAliasStop.add("from");
-        columnAliasStop.add(",");
-        columnAliasStop.add("over");
-        //
-        groupByStopSet.add("order");
-        groupByStopSet.add(")");
-        groupByStopSet.add(",");
-
-        joinStartSet.put("join", QueryModel.JOIN_INNER);
-        joinStartSet.put("inner", QueryModel.JOIN_INNER);
-        joinStartSet.put("outer", QueryModel.JOIN_OUTER);
-        joinStartSet.put("cross", QueryModel.JOIN_CROSS);
-        joinStartSet.put("asof", QueryModel.JOIN_ASOF);
     }
 }

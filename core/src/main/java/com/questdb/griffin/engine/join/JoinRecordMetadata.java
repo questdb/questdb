@@ -131,6 +131,10 @@ public class JoinRecordMetadata extends BaseRecordMetadata implements Closeable 
         return -1;
     }
 
+    public void setTimestampIndex(int index) {
+        this.timestampIndex = index;
+    }
+
     static {
         final ArrayColumnTypes kt = new ArrayColumnTypes();
         kt.add(ColumnType.STRING);

@@ -83,6 +83,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private JoinContext context;
     private ExpressionNode joinCriteria;
     private int joinType;
+    private int joinKeywordPosition;
     private IntList orderedJoinModels = orderedJoinModels2;
     private ExpressionNode limitLo;
     private ExpressionNode limitHi;
@@ -91,6 +92,16 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     private QueryModel() {
         joinModels.add(this);
+    }
+
+    private static void aliasToSink(CharSequence alias, CharSink sink) {
+        sink.put(' ');
+        boolean quote = Chars.indexOf(alias, ' ') != -1;
+        if (quote) {
+            sink.put('\'').put(alias).put('\'');
+        } else {
+            sink.put(alias);
+        }
     }
 
     public boolean addAliasIndex(ExpressionNode node, int index) {
@@ -166,6 +177,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         latestBy = null;
         joinCriteria = null;
         joinType = JOIN_INNER;
+        joinKeywordPosition = 0;
         orderedJoinModels1.clear();
         orderedJoinModels2.clear();
         parsedWhereConsts.clear();
@@ -293,6 +305,14 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public void setJoinType(int joinType) {
         this.joinType = joinType;
+    }
+
+    public int getJoinKeywordPosition() {
+        return joinKeywordPosition;
+    }
+
+    public void setJoinKeywordPosition(int position) {
+        this.joinKeywordPosition = position;
     }
 
     public ExpressionNode getLatestBy() {
@@ -505,16 +525,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     @Override
     public CharSequence translateAlias(CharSequence column) {
         return aliasToColumnMap.get(column);
-    }
-
-    private static void aliasToSink(CharSequence alias, CharSink sink) {
-        sink.put(' ');
-        boolean quote = Chars.indexOf(alias, ' ') != -1;
-        if (quote) {
-            sink.put('\'').put(alias).put('\'');
-        } else {
-            sink.put(alias);
-        }
     }
 
     private String getSelectModelTypeText() {
