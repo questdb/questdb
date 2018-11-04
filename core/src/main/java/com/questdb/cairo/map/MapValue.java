@@ -66,4 +66,6 @@ public interface MapValue extends Record {
     void putShort(int index, short value);
 
     void putTimestamp(int columnIndex, long value);
+
+    void setMapRecordHere();
 }

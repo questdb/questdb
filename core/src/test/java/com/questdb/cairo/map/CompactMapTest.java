@@ -527,7 +527,7 @@ public class CompactMapTest extends AbstractCairoTest {
 
                 try (CompactMap map = new CompactMap(
                         1024 * 1024,
-                        new SymbolAsIntTypes(reader.getMetadata()),
+                        new SymbolAsIntTypes().of(reader.getMetadata()),
                         new ArrayColumnTypes().reset()
                                 .add(ColumnType.LONG)
                                 .add(ColumnType.INT)

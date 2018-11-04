@@ -386,22 +386,9 @@ public class FastMap implements Map {
                 }
 
                 checkSize((int) len);
-
-
                 int l = (int) (len - 4);
-                long offset = 4L;
-                long pos = 0;
-
                 Unsafe.getUnsafe().putInt(appendAddress, l);
-                while (true) {
-                    long copied = value.copyTo(appendAddress + offset, pos, l);
-                    if (copied == l) {
-                        break;
-                    }
-                    l -= copied;
-                    pos += copied;
-                    offset += copied;
-                }
+                value.copyTo(appendAddress + 4L, 0L, l);
                 appendAddress += len;
                 writeOffset();
             }

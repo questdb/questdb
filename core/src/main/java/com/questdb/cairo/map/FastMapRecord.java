@@ -26,6 +26,7 @@ package com.questdb.cairo.map;
 import com.questdb.cairo.ColumnType;
 import com.questdb.cairo.ColumnTypes;
 import com.questdb.cairo.TableUtils;
+import com.questdb.cairo.sql.RecordCursor;
 import com.questdb.std.BinarySequence;
 import com.questdb.std.Transient;
 import com.questdb.std.Unsafe;
@@ -44,6 +45,7 @@ final class FastMapRecord implements MapRecord {
     private long address0;
     private long address1;
     private long address2;
+    private RecordCursor symbolTableResolver;
 
     FastMapRecord(
             int valueOffsets[],
@@ -57,6 +59,7 @@ final class FastMapRecord implements MapRecord {
         this.keyBlockOffset = keyBlockOffset;
         this.keyDataOffset = keyDataOffset;
         this.value = value;
+        this.value.linkRecord(this); // provides feature to position this record at location of map value
 
         int n = keyTypes.getColumnCount();
 
@@ -147,23 +150,6 @@ final class FastMapRecord implements MapRecord {
     }
 
     @Override
-    public CharSequence getStr(int columnIndex) {
-        assert columnIndex < csA.length;
-        return getStr0(columnIndex, Unsafe.arrayGet(csA, columnIndex));
-    }
-
-    @Override
-    public void getStr(int columnIndex, CharSink sink) {
-        long address = addressOfColumn(columnIndex);
-        int len = Unsafe.getUnsafe().getInt(address);
-        address += 4;
-        for (int i = 0; i < len; i++) {
-            sink.put(Unsafe.getUnsafe().getChar(address));
-            address += 2;
-        }
-    }
-
-    @Override
     public int getInt(int columnIndex) {
         return Unsafe.getUnsafe().getInt(addressOfColumn(columnIndex));
     }
@@ -184,6 +170,23 @@ final class FastMapRecord implements MapRecord {
     }
 
     @Override
+    public CharSequence getStr(int columnIndex) {
+        assert columnIndex < csA.length;
+        return getStr0(columnIndex, Unsafe.arrayGet(csA, columnIndex));
+    }
+
+    @Override
+    public void getStr(int columnIndex, CharSink sink) {
+        long address = addressOfColumn(columnIndex);
+        int len = Unsafe.getUnsafe().getInt(address);
+        address += 4;
+        for (int i = 0; i < len; i++) {
+            sink.put(Unsafe.getUnsafe().getChar(address));
+            address += 2;
+        }
+    }
+
+    @Override
     public CharSequence getStrB(int columnIndex) {
         return getStr0(columnIndex, Unsafe.arrayGet(csB, columnIndex));
     }
@@ -194,8 +197,18 @@ final class FastMapRecord implements MapRecord {
     }
 
     @Override
+    public CharSequence getSym(int col) {
+        return symbolTableResolver.getSymbolTable(col).value(getInt(col));
+    }
+
+    @Override
     public MapValue getValue() {
         return value.of(address0, false);
+    }
+
+    @Override
+    public void setSymbolTableResolver(RecordCursor resolver) {
+        this.symbolTableResolver = resolver;
     }
 
     private long addressOfColumn(int index) {

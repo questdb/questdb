@@ -29,6 +29,7 @@ final class FastMapValue implements MapValue {
     private final int valueOffsets[];
     private long address;
     private boolean _new;
+    private FastMapRecord record; // double-linked
 
     public FastMapValue(int[] valueOffsets) {
         this.valueOffsets = valueOffsets;
@@ -134,8 +135,17 @@ final class FastMapValue implements MapValue {
         putLong(columnIndex, value);
     }
 
+    @Override
+    public void setMapRecordHere() {
+        this.record.of(address);
+    }
+
     private long address0(int index) {
         return address + Unsafe.arrayGet(valueOffsets, index);
+    }
+
+    void linkRecord(FastMapRecord record) {
+        this.record = record;
     }
 
     FastMapValue of(long address, boolean _new) {

@@ -74,7 +74,7 @@ public class RecordValueSinkFactoryTest extends AbstractCairoTest {
         }
 
         try (TableReader reader = new TableReader(configuration, "all")) {
-            final SymbolAsIntTypes valueTypes = new SymbolAsIntTypes(reader.getMetadata());
+            final SymbolAsIntTypes valueTypes = new SymbolAsIntTypes().of(reader.getMetadata());
             try (final Map map = new FastMap(Numbers.SIZE_1MB, keyTypes, valueTypes, N, 0.5)) {
 
                 EntityColumnFilter columnFilter = new EntityColumnFilter();
@@ -113,6 +113,97 @@ public class RecordValueSinkFactoryTest extends AbstractCairoTest {
                     Assert.assertEquals(rnd.nextBoolean(), value.getBool(7));
                     Assert.assertEquals(rnd.nextLong(), value.getDate(8));
                     Assert.assertEquals(rnd.nextLong(), value.getTimestamp(9));
+                }
+            }
+        }
+    }
+
+    @Test
+    public void testSubset() {
+        SingleColumnType keyTypes = new SingleColumnType(ColumnType.INT);
+        try (TableModel model = new TableModel(configuration, "all", PartitionBy.NONE)
+                .col("int", ColumnType.INT)
+                .col("short", ColumnType.SHORT)
+                .col("byte", ColumnType.BYTE)
+                .col("double", ColumnType.DOUBLE)
+                .col("float", ColumnType.FLOAT)
+                .col("long", ColumnType.LONG)
+                .col("sym", ColumnType.SYMBOL).symbolCapacity(64)
+                .col("bool", ColumnType.BOOLEAN)
+                .col("date", ColumnType.DATE)
+                .col("ts", ColumnType.TIMESTAMP)
+        ) {
+            CairoTestUtils.create(model);
+        }
+
+        final int N = 1024;
+        final Rnd rnd = new Rnd();
+        try (TableWriter writer = new TableWriter(configuration, "all")) {
+
+            for (int i = 0; i < N; i++) {
+                TableWriter.Row row = writer.newRow(0);
+                row.putInt(0, rnd.nextInt());
+                row.putShort(1, rnd.nextShort());
+                row.putByte(2, rnd.nextByte());
+                row.putDouble(3, rnd.nextDouble2());
+                row.putFloat(4, rnd.nextFloat2());
+                row.putLong(5, rnd.nextLong());
+                row.putSym(6, rnd.nextChars(10));
+                row.putBool(7, rnd.nextBoolean());
+                row.putDate(8, rnd.nextLong());
+                row.putTimestamp(9, rnd.nextLong());
+                row.append();
+            }
+            writer.commit();
+        }
+
+        try (TableReader reader = new TableReader(configuration, "all")) {
+            ArrayColumnTypes valueTypes = new ArrayColumnTypes();
+            valueTypes.add(ColumnType.BOOLEAN);
+            valueTypes.add(ColumnType.TIMESTAMP);
+            valueTypes.add(ColumnType.INT);
+            try (final Map map = new FastMap(Numbers.SIZE_1MB, keyTypes, valueTypes, N, 0.5)) {
+
+                ListColumnFilter columnFilter = new ListColumnFilter();
+                columnFilter.add(7);
+                columnFilter.add(9);
+                columnFilter.add(6);
+
+
+                RecordValueSink sink = RecordValueSinkFactory.getInstance(new BytecodeAssembler(), reader.getMetadata(), columnFilter);
+                RecordCursor cursor = reader.getCursor();
+                final Record record = cursor.getRecord();
+
+                int index = 0;
+                while (cursor.hasNext()) {
+                    MapKey key = map.withKey();
+                    key.putInt(index++);
+                    MapValue value = key.createValue();
+                    sink.copy(record, value);
+                }
+
+                Assert.assertEquals(N, index);
+
+                rnd.reset();
+
+                SymbolTable symbolTable = reader.getSymbolMapReader(6);
+
+                for (int i = 0; i < N; i++) {
+                    MapKey key = map.withKey();
+                    key.putInt(i);
+                    MapValue value = key.findValue();
+
+                    Assert.assertNotNull(value);
+                    rnd.nextInt(); // 0
+                    rnd.nextShort(); // 1
+                    rnd.nextByte(); // 2
+                    rnd.nextDouble2(); // 3
+                    rnd.nextFloat2(); // 4
+                    rnd.nextLong(); // 5
+                    Assert.assertEquals(symbolTable.getQuick(rnd.nextChars(10)), value.getInt(2)); // 6
+                    Assert.assertEquals(rnd.nextBoolean(), value.getBool(0)); // 7
+                    rnd.nextLong(); // 8
+                    Assert.assertEquals(rnd.nextLong(), value.getTimestamp(1)); // 9
                 }
             }
         }

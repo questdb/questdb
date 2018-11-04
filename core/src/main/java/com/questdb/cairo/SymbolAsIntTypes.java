@@ -24,11 +24,7 @@
 package com.questdb.cairo;
 
 public class SymbolAsIntTypes implements ColumnTypes {
-    private final ColumnTypes base;
-
-    public SymbolAsIntTypes(ColumnTypes base) {
-        this.base = base;
-    }
+    private ColumnTypes base;
 
     @Override
     public int getColumnCount() {
@@ -39,5 +35,10 @@ public class SymbolAsIntTypes implements ColumnTypes {
     public int getColumnType(int columnIndex) {
         final int type = base.getColumnType(columnIndex);
         return type == ColumnType.SYMBOL ? ColumnType.INT : type;
+    }
+
+    public SymbolAsIntTypes of(ColumnTypes base) {
+        this.base = base;
+        return this;
     }
 }

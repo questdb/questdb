@@ -24,6 +24,7 @@
 package com.questdb.griffin;
 
 import com.questdb.cairo.*;
+import com.questdb.cairo.map.RecordValueSinkFactory;
 import com.questdb.cairo.sql.*;
 import com.questdb.griffin.engine.EmptyTableRecordCursorFactory;
 import com.questdb.griffin.engine.functions.columns.SymbolColumn;
@@ -52,6 +53,7 @@ public class SqlCodeGenerator {
     private final ArrayColumnTypes keyTypes = new ArrayColumnTypes();
     private final ArrayColumnTypes valueTypes = new ArrayColumnTypes();
     private final EntityColumnFilter entityColumnFilter = new EntityColumnFilter();
+    private final SymbolAsIntTypes symbolAsIntTypes = new SymbolAsIntTypes();
     private boolean fullFatJoins = false;
 
     public SqlCodeGenerator(CairoEngine engine, CairoConfiguration configuration, FunctionParser functionParser) {
@@ -73,78 +75,16 @@ public class SqlCodeGenerator {
     private RecordCursorFactory createAsOfJoin(
             RecordMetadata metadata,
             RecordCursorFactory master,
+            RecordSink masterKeySink,
             RecordCursorFactory slave,
-            int joinType
+            RecordSink slaveKeySink,
+            int columnSplit
     ) {
-        /*
-         * JoinContext provides the following information:
-         * a/bIndexes - index of model where join column is coming from
-         * a/bNames - name of columns in respective models, these column names are not prefixed with table aliases
-         * a/bNodes - the original column references, that can include table alias. Sometimes it doesn't when column name is unambiguous
-         *
-         * a/b are "inverted" in that "a" for slave and "b" for master
-         *
-         * The issue is when we use model indexes and vanilla column names they would only work on single-table
-         * record cursor but original names with prefixed columns will only work with JoinRecordMetadata
-         */
-        final RecordMetadata masterMetadata = master.getMetadata();
-        final RecordMetadata slaveMetadata = slave.getMetadata();
-        final RecordSink masterKeySink = RecordSinkFactory.getInstance(
-                asm,
-                masterMetadata,
-                listColumnFilterB,
-                true
-        );
-
-        final RecordSink slaveKeySink = RecordSinkFactory.getInstance(
-                asm,
-                slaveMetadata,
-                listColumnFilterA,
-                true
-        );
-
         valueTypes.reset();
         valueTypes.add(ColumnType.LONG);
         valueTypes.add(ColumnType.LONG);
 
-        if (slave.isRandomAccessCursor() && !fullFatJoins) {
-            return new AsOfJoinLightRecordCursorFactory(
-                    configuration,
-                    metadata,
-                    master,
-                    slave,
-                    keyTypes,
-                    valueTypes,
-                    masterKeySink,
-                    slaveKeySink,
-                    masterMetadata.getColumnCount()
-            );
-        }
-
-        entityColumnFilter.of(slaveMetadata.getColumnCount());
-        RecordSink slaveSink = RecordSinkFactory.getInstance(
-                asm,
-                slaveMetadata,
-                entityColumnFilter,
-                false
-        );
-
-        if (joinType == QueryModel.JOIN_INNER) {
-            return new HashJoinRecordCursorFactory(
-                    configuration,
-                    metadata,
-                    master,
-                    slave,
-                    keyTypes,
-                    valueTypes,
-                    masterKeySink,
-                    slaveKeySink,
-                    slaveSink,
-                    masterMetadata.getColumnCount()
-            );
-        }
-
-        return new HashOuterJoinRecordCursorFactory(
+        return new AsOfJoinLightRecordCursorFactory(
                 configuration,
                 metadata,
                 master,
@@ -153,9 +93,48 @@ public class SqlCodeGenerator {
                 valueTypes,
                 masterKeySink,
                 slaveKeySink,
-                slaveSink,
-                masterMetadata.getColumnCount()
+                columnSplit
         );
+    }
+
+    @NotNull
+    private RecordCursorFactory createFullFatAsOfJoin(
+            RecordCursorFactory master,
+            RecordMetadata masterMetadata,
+            CharSequence masterAlias,
+            RecordCursorFactory slave,
+            RecordMetadata slaveMetadata,
+            CharSequence slaveAlias
+    ) {
+        RecordSink masterSink = RecordSinkFactory.getInstance(
+                asm,
+                masterMetadata,
+                listColumnFilterB,
+                true
+        );
+
+        JoinRecordMetadata metadata = createJoinMetadata(masterAlias, masterMetadata, slaveAlias, slaveMetadata);
+
+        entityColumnFilter.of(slaveMetadata.getColumnCount());
+        master = new AsOfJoinRecordCursorFactory(
+                configuration,
+                metadata,
+                master,
+                slave,
+                keyTypes,
+                slaveMetadata,
+                symbolAsIntTypes.of(slaveMetadata),
+                masterSink,
+                RecordSinkFactory.getInstance(
+                        asm,
+                        slaveMetadata,
+                        listColumnFilterA,
+                        true
+                ),
+                masterMetadata.getColumnCount(),
+                RecordValueSinkFactory.getInstance(asm, slaveMetadata, entityColumnFilter)
+        );
+        return master;
     }
 
     private RecordCursorFactory createHashJoin(
@@ -260,6 +239,23 @@ public class SqlCodeGenerator {
         );
     }
 
+    @NotNull
+    private JoinRecordMetadata createJoinMetadata(CharSequence masterAlias, RecordMetadata masterMetadata, CharSequence slaveAlias, RecordMetadata slaveMetadata) {
+        JoinRecordMetadata metadata;
+        metadata = new JoinRecordMetadata(
+                configuration,
+                masterMetadata.getColumnCount() + slaveMetadata.getColumnCount()
+        );
+
+        metadata.copyColumnMetadataFrom(masterAlias, masterMetadata);
+        metadata.copyColumnMetadataFrom(slaveAlias, slaveMetadata);
+
+        if (masterMetadata.getTimestampIndex() != -1) {
+            metadata.setTimestampIndex(masterMetadata.getTimestampIndex());
+        }
+        return metadata;
+    }
+
     RecordCursorFactory generate(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
         clearState();
         return generateQuery(model, executionContext, true);
@@ -280,7 +276,6 @@ public class SqlCodeGenerator {
         IntList ordered = model.getOrderedJoinModels();
         RecordCursorFactory master = null;
         CharSequence masterAlias = null;
-        JoinRecordMetadata metadata = null;
 
         try {
             int n = ordered.size();
@@ -317,41 +312,67 @@ public class SqlCodeGenerator {
                         }
                     }
 
-                    metadata = new JoinRecordMetadata(
-                            configuration,
-                            masterMetadata.getColumnCount() + slaveMetadata.getColumnCount()
-                    );
-
-                    metadata.copyColumnMetadataFrom(masterAlias, masterMetadata);
-                    metadata.copyColumnMetadataFrom(slaveModel.getName(), slaveMetadata);
-
-                    if (masterMetadata.getTimestampIndex() != -1) {
-                        metadata.setTimestampIndex(masterMetadata.getTimestampIndex());
-                    }
-
-                    // todo: full-fat asof join implementation
                     switch (joinType) {
                         case QueryModel.JOIN_CROSS:
                             return new CrossJoinRecordCursorFactory(
-                                    metadata,
+                                    createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata),
                                     master,
                                     slave,
                                     masterMetadata.getColumnCount()
                             );
                         case QueryModel.JOIN_ASOF:
                             processJoinContext(index == 1, slaveModel.getContext(), masterMetadata, slaveMetadata);
-                            master = createAsOfJoin(
-                                    metadata,
-                                    master,
-                                    slave,
-                                    joinType
-                            );
+                            if (slave.isRandomAccessCursor() && !fullFatJoins) {
+                                master = createAsOfJoin(
+                                        createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata),
+                                        master,
+                                        RecordSinkFactory.getInstance(
+                                                asm,
+                                                masterMetadata,
+                                                listColumnFilterB,
+                                                true
+                                        ),
+                                        slave,
+                                        RecordSinkFactory.getInstance(
+                                                asm,
+                                                slaveMetadata,
+                                                listColumnFilterA,
+                                                true
+                                        ),
+                                        masterMetadata.getColumnCount()
+                                );
+                            } else {
+                                // todo: this is a limiting test
+                                // map doesn't support variable length types in map value, which is ok
+                                // when we join tables on strings - technically string is the key
+                                // and we do not need to store it in value, but we will still reject
+                                //
+                                // never mind, this is a stop-gap measure until I understand the problem
+                                // fully
+
+                                for (int k = 0, m = slaveMetadata.getColumnCount(); k < m; k++) {
+                                    int type = slaveMetadata.getColumnType(k);
+                                    if (type == ColumnType.STRING || type == ColumnType.BINARY) {
+                                        throw SqlException
+                                                .position(slaveModel.getJoinKeywordPosition()).put("right side column '")
+                                                .put(slaveMetadata.getColumnName(k)).put("' is of unsupported type");
+                                    }
+                                }
+                                master = createFullFatAsOfJoin(
+                                        master,
+                                        masterMetadata,
+                                        masterAlias,
+                                        slave,
+                                        slaveMetadata,
+                                        slaveModel.getName()
+                                );
+                            }
                             masterAlias = null;
                             break;
                         default:
                             processJoinContext(index == 1, slaveModel.getContext(), masterMetadata, slaveMetadata);
                             master = createHashJoin(
-                                    metadata,
+                                    createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata),
                                     master,
                                     slave,
                                     joinType
@@ -378,7 +399,7 @@ public class SqlCodeGenerator {
                     // this would have been JoinRecordMetadata, which is new instance anyway
                     // we have to make sure that this metadata is safely transitioned
                     // to empty cursor factory
-                    metadata = (JoinRecordMetadata) master.getMetadata();
+                    JoinRecordMetadata metadata = (JoinRecordMetadata) master.getMetadata();
                     metadata.incrementRefCount();
                     RecordCursorFactory factory = new EmptyTableRecordCursorFactory(metadata);
                     Misc.free(master);
@@ -387,7 +408,6 @@ public class SqlCodeGenerator {
             }
             return master;
         } catch (CairoException | SqlException e) {
-            Misc.free(metadata);
             Misc.free(master);
             throw e;
         }

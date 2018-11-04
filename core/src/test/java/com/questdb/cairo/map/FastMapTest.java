@@ -612,7 +612,7 @@ public class FastMapTest extends AbstractCairoTest {
 
                 try (FastMap map = new FastMap(
                         Numbers.SIZE_1MB,
-                        new SymbolAsIntTypes(reader.getMetadata()),
+                        new SymbolAsIntTypes().of(reader.getMetadata()),
                         new ArrayColumnTypes().reset()
                                 .add(ColumnType.LONG)
                                 .add(ColumnType.INT)

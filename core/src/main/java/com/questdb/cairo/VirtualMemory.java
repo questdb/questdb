@@ -756,16 +756,7 @@ public class VirtualMemory implements Closeable {
     }
 
     private void putBinSequence(BinarySequence value, long pos, long len) {
-        long offset = 0L;
-        while (true) {
-            long copied = value.copyTo(appendPointer + offset, pos, len);
-            if (copied == len) {
-                break;
-            }
-            len -= copied;
-            pos += copied;
-            offset += copied;
-        }
+        value.copyTo(appendPointer, pos, len);
     }
 
     private void putBinSlit(long start, long len) {
@@ -1006,17 +997,24 @@ public class VirtualMemory implements Closeable {
         }
 
         @Override
-        public long copyTo(long address, long start, long length) {
-            long offset = this.offset + start;
-            int page = pageIndex(offset);
-            long pageSize = getPageSize(page);
-            long pageAddress = getPageAddress(page);
-            long offsetInPage = offsetInPage(offset);
-            long len = Math.min(length, pageSize - offsetInPage);
-            assert len > -1;
-            long srcAddress = pageAddress + offsetInPage;
-            Unsafe.getUnsafe().copyMemory(srcAddress, address, len);
-            return len;
+        public void copyTo(long address, long start, long length) {
+            do {
+                long offset = this.offset + start;
+                int page = pageIndex(offset);
+                long pageSize = getPageSize(page);
+                long pageAddress = getPageAddress(page);
+                long offsetInPage = offsetInPage(offset);
+                long len = Math.min(length, pageSize - offsetInPage);
+                assert len > -1;
+                long srcAddress = pageAddress + offsetInPage;
+                Unsafe.getUnsafe().copyMemory(srcAddress, address, len);
+                if (len == length) {
+                    break;
+                }
+                length -= len;
+                start += len;
+                address += len;
+            } while (true);
         }
 
         public long length() {

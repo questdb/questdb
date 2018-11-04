@@ -25,6 +25,7 @@ package com.questdb.cairo.map;
 
 import com.questdb.cairo.TableUtils;
 import com.questdb.cairo.VirtualMemory;
+import com.questdb.cairo.sql.RecordCursor;
 import com.questdb.std.BinarySequence;
 import com.questdb.std.Unsafe;
 
@@ -34,11 +35,13 @@ class CompactMapRecord implements MapRecord {
     private final long columnOffsets[];
     private final CompactMapValue value;
     private long offset;
+    private RecordCursor symbolTableResolver;
 
     public CompactMapRecord(VirtualMemory entries, long columnOffsets[], CompactMapValue value) {
         this.entries = entries;
         this.columnOffsets = columnOffsets;
         this.value = value;
+        this.value.linkRecord(this);
     }
 
     @SuppressWarnings("MethodDoesntCallSuperMethod")
@@ -86,15 +89,6 @@ class CompactMapRecord implements MapRecord {
     }
 
     @Override
-    public CharSequence getStr(int col) {
-        long o = getLong(col);
-        if (o == -1L) {
-            return null;
-        }
-        return entries.getStr(offset + o);
-    }
-
-    @Override
     public int getInt(int col) {
         return entries.getInt(getColumnOffset(col));
     }
@@ -112,6 +106,15 @@ class CompactMapRecord implements MapRecord {
     @Override
     public short getShort(int col) {
         return entries.getShort(getColumnOffset(col));
+    }
+
+    @Override
+    public CharSequence getStr(int col) {
+        long o = getLong(col);
+        if (o == -1L) {
+            return null;
+        }
+        return entries.getStr(offset + o);
     }
 
     @Override
@@ -133,9 +136,19 @@ class CompactMapRecord implements MapRecord {
     }
 
     @Override
+    public CharSequence getSym(int col) {
+        return symbolTableResolver.getSymbolTable(col).value(getInt(col));
+    }
+
+    @Override
     public MapValue getValue() {
         value.of(offset, false);
         return value;
+    }
+
+    @Override
+    public void setSymbolTableResolver(RecordCursor resolver) {
+        this.symbolTableResolver = resolver;
     }
 
     private long getColumnOffset(int columnIndex) {

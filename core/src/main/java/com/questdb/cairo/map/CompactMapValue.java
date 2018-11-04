@@ -32,6 +32,7 @@ class CompactMapValue implements MapValue {
     private final long columnOffsets[];
     private long currentValueOffset;
     private boolean _new;
+    private CompactMapRecord record;
 
     CompactMapValue(VirtualMemory entries, long[] columnOffsets) {
         this.entries = entries;
@@ -138,9 +139,18 @@ class CompactMapValue implements MapValue {
         putLong(columnIndex, value);
     }
 
+    @Override
+    public void setMapRecordHere() {
+        record.of(currentValueOffset);
+    }
+
     private long getValueColumnOffset(int columnIndex) {
         assert currentValueOffset != -1;
         return currentValueOffset + Unsafe.arrayGet(columnOffsets, columnIndex);
+    }
+
+    void linkRecord(CompactMapRecord record) {
+        this.record = record;
     }
 
     void of(long offset, boolean _new) {
