@@ -42,7 +42,7 @@ public class RndSymbolListFunctionFactory implements FunctionFactory {
     @Override
     public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) throws SqlException {
         final ObjList<String> symbols = new ObjList<>(args.size());
-        RndStringlListFunctionFactory.copyConstants(args, symbols);
+        RndStringListFunctionFactory.copyConstants(args, symbols);
 
         return new Func(position, symbols, configuration);
     }

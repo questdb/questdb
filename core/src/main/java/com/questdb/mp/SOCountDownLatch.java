@@ -53,7 +53,7 @@ public class SOCountDownLatch {
             LockSupport.parkNanos(nanos);
 
             if (System.nanoTime() < deadline) {
-                // this could be spurious wakeup, ignore is count is non-zero
+                // this could be spurious wakeup, ignore if count is non-zero
                 if (getCount() == 0) {
                     return true;
                 }

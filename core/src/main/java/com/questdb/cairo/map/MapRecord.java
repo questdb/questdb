@@ -25,9 +25,10 @@ package com.questdb.cairo.map;
 
 import com.questdb.cairo.sql.Record;
 import com.questdb.cairo.sql.RecordCursor;
+import com.questdb.std.IntList;
 
 public interface MapRecord extends Record {
     MapValue getValue();
 
-    void setSymbolTableResolver(RecordCursor resolver);
+    void setSymbolTableResolver(RecordCursor resolver, IntList symbolTableIndex);
 }

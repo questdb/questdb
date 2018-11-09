@@ -112,6 +112,7 @@ public class FastMap implements Map {
                         break;
                     case ColumnType.INT:
                     case ColumnType.FLOAT:
+                    case ColumnType.SYMBOL:
                         offset += 4;
                         break;
                     case ColumnType.LONG:

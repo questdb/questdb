@@ -137,6 +137,228 @@ public class JoinTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testAsOfFullFatJoinOnStr() throws Exception {
+        testFullFat(() -> TestUtils.assertMemoryLeak(() -> {
+            try {
+                final String query = "select x.i, x.c, y.c, x.amt, price, x.timestamp, y.timestamp from x asof join y on y.c = x.c";
+
+                compiler.compile(
+                        "create table x as (" +
+                                "select" +
+                                " to_int(x) i," +
+                                " rnd_symbol('msft','ibm', 'googl') sym," +
+                                " round(rnd_double(0)*100, 3) amt," +
+                                " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                                " rnd_boolean() b," +
+                                " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
+                                " rnd_double(2) d," +
+                                " rnd_float(2) e," +
+                                " rnd_short(10,1024) f," +
+                                " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                                " rnd_symbol(4,4,4,2) ik," +
+                                " rnd_long() j," +
+                                " timestamp_sequence(to_timestamp(0), 1000000000) k," +
+                                " rnd_byte(2,50) l," +
+                                " rnd_bin(10, 20, 2) m," +
+                                " rnd_str(5,16,2) n" +
+                                " from long_sequence(10)" +
+                                ") timestamp (timestamp)",
+                        bindVariableService
+                );
+                compiler.compile(
+                        "create table y as (" +
+                                "select" +
+                                " to_int(x) i," +
+                                " rnd_symbol('msft','ibm', 'googl') sym2," +
+                                " round(rnd_double(0), 3) price," +
+                                " to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp," +
+                                " rnd_boolean() b," +
+                                " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
+                                " rnd_double(2) d," +
+                                " rnd_float(2) e," +
+                                " rnd_short(10,1024) f," +
+                                " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                                " rnd_symbol(4,4,4,2) ik," +
+                                " rnd_long() j," +
+                                " timestamp_sequence(to_timestamp(0), 1000000000) k," +
+                                " rnd_byte(2,50) l," +
+                                " rnd_bin(10, 20, 2) m," +
+                                " rnd_str(5,16,2) n" +
+                                " from long_sequence(30)" +
+                                ") timestamp(timestamp)"
+                        , bindVariableService
+                );
+
+                try {
+                    compiler.compile(query, bindVariableService);
+                    Assert.fail();
+                } catch (SqlException e) {
+                    Assert.assertEquals(68, e.getPosition());
+                    Assert.assertTrue(Chars.contains(e.getMessage(), "right side column 'm' is of unsupported type"));
+                }
+
+                Assert.assertEquals(0, engine.getBusyReaderCount());
+                Assert.assertEquals(0, engine.getBusyWriterCount());
+            } finally {
+                engine.releaseAllWriters();
+                engine.releaseAllReaders();
+            }
+        }));
+    }
+
+    @Test
+    public void testAsOfFullFatJoinOnStrNoVar() throws Exception {
+        testFullFat(this::testAsOfJoinOnStrNoVar);
+    }
+
+    @Test
+    public void testAsOfFullFatJoinOnStrSubSelect() throws Exception {
+        testFullFat(() -> TestUtils.assertMemoryLeak(() -> {
+            try {
+                final String query = "select x.i, x.c, y.c, x.amt, price, x.timestamp, y.timestamp from x asof join (select c, price, timestamp from y) y on y.c = x.c";
+
+                final String expected = "i\tc\tc1\tamt\tprice\ttimestamp\ttimestamp1\n" +
+                        "1\tXYZ\t\t50.938000000000\tNaN\t2018-01-01T00:12:00.000000Z\t\n" +
+                        "2\tABC\tABC\t42.281000000000\t0.537000000000\t2018-01-01T00:24:00.000000Z\t2018-01-01T00:24:00.000000Z\n" +
+                        "3\tABC\tABC\t17.371000000000\t0.673000000000\t2018-01-01T00:36:00.000000Z\t2018-01-01T00:36:00.000000Z\n" +
+                        "4\tXYZ\tXYZ\t44.805000000000\t0.116000000000\t2018-01-01T00:48:00.000000Z\t2018-01-01T00:46:00.000000Z\n" +
+                        "5\t\t\t42.956000000000\t0.477000000000\t2018-01-01T01:00:00.000000Z\t2018-01-01T01:00:00.000000Z\n" +
+                        "6\tCDE\tCDE\t82.597000000000\t0.240000000000\t2018-01-01T01:12:00.000000Z\t2018-01-01T00:40:00.000000Z\n" +
+                        "7\tCDE\tCDE\t98.591000000000\t0.240000000000\t2018-01-01T01:24:00.000000Z\t2018-01-01T00:40:00.000000Z\n" +
+                        "8\tABC\tABC\t57.086000000000\t0.590000000000\t2018-01-01T01:36:00.000000Z\t2018-01-01T00:58:00.000000Z\n" +
+                        "9\t\t\t81.442000000000\t0.477000000000\t2018-01-01T01:48:00.000000Z\t2018-01-01T01:00:00.000000Z\n" +
+                        "10\tXYZ\tXYZ\t3.973000000000\t0.867000000000\t2018-01-01T02:00:00.000000Z\t2018-01-01T00:50:00.000000Z\n";
+
+                compiler.compile(
+                        "create table x as (" +
+                                "select" +
+                                " to_int(x) i," +
+                                " rnd_symbol('msft','ibm', 'googl') sym," +
+                                " round(rnd_double(0)*100, 3) amt," +
+                                " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                                " rnd_boolean() b," +
+                                " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
+                                " rnd_double(2) d," +
+                                " rnd_float(2) e," +
+                                " rnd_short(10,1024) f," +
+                                " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                                " rnd_symbol(4,4,4,2) ik," +
+                                " rnd_long() j," +
+                                " timestamp_sequence(to_timestamp(0), 1000000000) k," +
+                                " rnd_byte(2,50) l," +
+                                " rnd_bin(10, 20, 2) m," +
+                                " rnd_str(5,16,2) n" +
+                                " from long_sequence(10)" +
+                                ") timestamp (timestamp)",
+                        bindVariableService
+                );
+                compiler.compile(
+                        "create table y as (" +
+                                "select" +
+                                " to_int(x) i," +
+                                " rnd_symbol('msft','ibm', 'googl') sym2," +
+                                " round(rnd_double(0), 3) price," +
+                                " to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp," +
+                                " rnd_boolean() b," +
+                                " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
+                                " rnd_double(2) d," +
+                                " rnd_float(2) e," +
+                                " rnd_short(10,1024) f," +
+                                " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                                " rnd_symbol(4,4,4,2) ik," +
+                                " rnd_long() j," +
+                                " timestamp_sequence(to_timestamp(0), 1000000000) k," +
+                                " rnd_byte(2,50) l," +
+                                " rnd_bin(10, 20, 2) m," +
+                                " rnd_str(5,16,2) n" +
+                                " from long_sequence(30)" +
+                                ") timestamp(timestamp)"
+                        , bindVariableService
+                );
+
+                assertJoinQueryAndCache(expected, query, "timestamp");
+
+                compiler.compile(
+                        "insert into x select * from " +
+                                "(select" +
+                                " to_int(x + 10) i," +
+                                " rnd_symbol('msft','ibm', 'googl') sym," +
+                                " round(rnd_double(0)*100, 3) amt," +
+                                " to_timestamp('2018-01', 'yyyy-MM') + (x + 10) * 720000000 timestamp," +
+                                " rnd_boolean() b," +
+                                " rnd_str('ABC', 'CDE', null, 'KZZ') c," +
+                                " rnd_double(2) d," +
+                                " rnd_float(2) e," +
+                                " rnd_short(10,1024) f," +
+                                " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                                " rnd_symbol(4,4,4,2) ik," +
+                                " rnd_long() j," +
+                                " timestamp_sequence(to_timestamp(0), 1000000000) k," +
+                                " rnd_byte(2,50) l," +
+                                " rnd_bin(10, 20, 2) m," +
+                                " rnd_str(5,16,2) n" +
+                                " from long_sequence(10)" +
+                                ") timestamp(timestamp)"
+                        , bindVariableService
+                );
+                compiler.compile(
+                        "insert into y select * from " +
+                                "(select" +
+                                " to_int(x + 30) i," +
+                                " rnd_symbol('msft','ibm', 'googl') sym2," +
+                                " round(rnd_double(0), 3) price," +
+                                " to_timestamp('2018-01', 'yyyy-MM') + (x + 30) * 120000000 timestamp," +
+                                " rnd_boolean() b," +
+                                " rnd_str('ABC', 'CDE', null, 'KZZ') c," +
+                                " rnd_double(2) d," +
+                                " rnd_float(2) e," +
+                                " rnd_short(10,1024) f," +
+                                " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                                " rnd_symbol(4,4,4,2) ik," +
+                                " rnd_long() j," +
+                                " timestamp_sequence(to_timestamp(0), 1000000000) k," +
+                                " rnd_byte(2,50) l," +
+                                " rnd_bin(10, 20, 2) m," +
+                                " rnd_str(5,16,2) n" +
+                                " from long_sequence(30)" +
+                                ") timestamp(timestamp)"
+                        , bindVariableService
+                );
+
+                assertJoinQuery("i\tc\tc1\tamt\tprice\ttimestamp\ttimestamp1\n" +
+                                "1\tXYZ\t\t50.938000000000\tNaN\t2018-01-01T00:12:00.000000Z\t\n" +
+                                "2\tABC\tABC\t42.281000000000\t0.537000000000\t2018-01-01T00:24:00.000000Z\t2018-01-01T00:24:00.000000Z\n" +
+                                "3\tABC\tABC\t17.371000000000\t0.673000000000\t2018-01-01T00:36:00.000000Z\t2018-01-01T00:36:00.000000Z\n" +
+                                "4\tXYZ\tXYZ\t44.805000000000\t0.116000000000\t2018-01-01T00:48:00.000000Z\t2018-01-01T00:46:00.000000Z\n" +
+                                "5\t\t\t42.956000000000\t0.477000000000\t2018-01-01T01:00:00.000000Z\t2018-01-01T01:00:00.000000Z\n" +
+                                "6\tCDE\tCDE\t82.597000000000\t0.212000000000\t2018-01-01T01:12:00.000000Z\t2018-01-01T01:12:00.000000Z\n" +
+                                "7\tCDE\tCDE\t98.591000000000\t0.282000000000\t2018-01-01T01:24:00.000000Z\t2018-01-01T01:22:00.000000Z\n" +
+                                "8\tABC\tABC\t57.086000000000\t0.453000000000\t2018-01-01T01:36:00.000000Z\t2018-01-01T01:16:00.000000Z\n" +
+                                "9\t\t\t81.442000000000\t0.624000000000\t2018-01-01T01:48:00.000000Z\t2018-01-01T01:34:00.000000Z\n" +
+                                "10\tXYZ\tXYZ\t3.973000000000\t0.867000000000\t2018-01-01T02:00:00.000000Z\t2018-01-01T00:50:00.000000Z\n" +
+                                "11\t\t\t85.019000000000\t0.624000000000\t2018-01-01T02:12:00.000000Z\t2018-01-01T01:34:00.000000Z\n" +
+                                "12\tKZZ\tKZZ\t85.490000000000\t0.528000000000\t2018-01-01T02:24:00.000000Z\t2018-01-01T01:56:00.000000Z\n" +
+                                "13\tCDE\tCDE\t27.493000000000\t0.401000000000\t2018-01-01T02:36:00.000000Z\t2018-01-01T02:00:00.000000Z\n" +
+                                "14\tCDE\tCDE\t39.244000000000\t0.401000000000\t2018-01-01T02:48:00.000000Z\t2018-01-01T02:00:00.000000Z\n" +
+                                "15\tABC\tABC\t55.152000000000\t0.775000000000\t2018-01-01T03:00:00.000000Z\t2018-01-01T01:54:00.000000Z\n" +
+                                "16\tKZZ\tKZZ\t3.224000000000\t0.528000000000\t2018-01-01T03:12:00.000000Z\t2018-01-01T01:56:00.000000Z\n" +
+                                "17\t\t\t6.368000000000\t0.624000000000\t2018-01-01T03:24:00.000000Z\t2018-01-01T01:34:00.000000Z\n" +
+                                "18\tCDE\tCDE\t18.305000000000\t0.401000000000\t2018-01-01T03:36:00.000000Z\t2018-01-01T02:00:00.000000Z\n" +
+                                "19\tABC\tABC\t16.378000000000\t0.775000000000\t2018-01-01T03:48:00.000000Z\t2018-01-01T01:54:00.000000Z\n" +
+                                "20\t\t\t4.773000000000\t0.624000000000\t2018-01-01T04:00:00.000000Z\t2018-01-01T01:34:00.000000Z\n",
+                        query,
+                        "timestamp");
+
+                Assert.assertEquals(0, engine.getBusyReaderCount());
+                Assert.assertEquals(0, engine.getBusyWriterCount());
+            } finally {
+                engine.releaseAllWriters();
+                engine.releaseAllReaders();
+            }
+        }));
+    }
+
+    @Test
     public void testAsOfJoin() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try {
@@ -580,6 +802,297 @@ public class JoinTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testAsOfJoinOnStr() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try {
+                final String query = "select x.i, x.c, y.c, x.amt, price, x.timestamp, y.timestamp from x asof join y on y.c = x.c";
+
+                final String expected = "i\tc\tc1\tamt\tprice\ttimestamp\ttimestamp1\n" +
+                        "1\tXYZ\t\t50.938000000000\tNaN\t2018-01-01T00:12:00.000000Z\t\n" +
+                        "2\tABC\tABC\t42.281000000000\t0.537000000000\t2018-01-01T00:24:00.000000Z\t2018-01-01T00:24:00.000000Z\n" +
+                        "3\tABC\tABC\t17.371000000000\t0.673000000000\t2018-01-01T00:36:00.000000Z\t2018-01-01T00:36:00.000000Z\n" +
+                        "4\tXYZ\tXYZ\t44.805000000000\t0.116000000000\t2018-01-01T00:48:00.000000Z\t2018-01-01T00:46:00.000000Z\n" +
+                        "5\t\t\t42.956000000000\t0.477000000000\t2018-01-01T01:00:00.000000Z\t2018-01-01T01:00:00.000000Z\n" +
+                        "6\tCDE\tCDE\t82.597000000000\t0.240000000000\t2018-01-01T01:12:00.000000Z\t2018-01-01T00:40:00.000000Z\n" +
+                        "7\tCDE\tCDE\t98.591000000000\t0.240000000000\t2018-01-01T01:24:00.000000Z\t2018-01-01T00:40:00.000000Z\n" +
+                        "8\tABC\tABC\t57.086000000000\t0.590000000000\t2018-01-01T01:36:00.000000Z\t2018-01-01T00:58:00.000000Z\n" +
+                        "9\t\t\t81.442000000000\t0.477000000000\t2018-01-01T01:48:00.000000Z\t2018-01-01T01:00:00.000000Z\n" +
+                        "10\tXYZ\tXYZ\t3.973000000000\t0.867000000000\t2018-01-01T02:00:00.000000Z\t2018-01-01T00:50:00.000000Z\n";
+
+                compiler.compile(
+                        "create table x as (" +
+                                "select" +
+                                " to_int(x) i," +
+                                " rnd_symbol('msft','ibm', 'googl') sym," +
+                                " round(rnd_double(0)*100, 3) amt," +
+                                " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                                " rnd_boolean() b," +
+                                " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
+                                " rnd_double(2) d," +
+                                " rnd_float(2) e," +
+                                " rnd_short(10,1024) f," +
+                                " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                                " rnd_symbol(4,4,4,2) ik," +
+                                " rnd_long() j," +
+                                " timestamp_sequence(to_timestamp(0), 1000000000) k," +
+                                " rnd_byte(2,50) l," +
+                                " rnd_bin(10, 20, 2) m," +
+                                " rnd_str(5,16,2) n" +
+                                " from long_sequence(10)" +
+                                ") timestamp (timestamp)",
+                        bindVariableService
+                );
+                compiler.compile(
+                        "create table y as (" +
+                                "select" +
+                                " to_int(x) i," +
+                                " rnd_symbol('msft','ibm', 'googl') sym2," +
+                                " round(rnd_double(0), 3) price," +
+                                " to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp," +
+                                " rnd_boolean() b," +
+                                " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
+                                " rnd_double(2) d," +
+                                " rnd_float(2) e," +
+                                " rnd_short(10,1024) f," +
+                                " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                                " rnd_symbol(4,4,4,2) ik," +
+                                " rnd_long() j," +
+                                " timestamp_sequence(to_timestamp(0), 1000000000) k," +
+                                " rnd_byte(2,50) l," +
+                                " rnd_bin(10, 20, 2) m," +
+                                " rnd_str(5,16,2) n" +
+                                " from long_sequence(30)" +
+                                ") timestamp(timestamp)"
+                        , bindVariableService
+                );
+
+                assertJoinQueryAndCache(expected, query, "timestamp");
+
+                compiler.compile(
+                        "insert into x select * from " +
+                                "(select" +
+                                " to_int(x + 10) i," +
+                                " rnd_symbol('msft','ibm', 'googl') sym," +
+                                " round(rnd_double(0)*100, 3) amt," +
+                                " to_timestamp('2018-01', 'yyyy-MM') + (x + 10) * 720000000 timestamp," +
+                                " rnd_boolean() b," +
+                                " rnd_str('ABC', 'CDE', null, 'KZZ') c," +
+                                " rnd_double(2) d," +
+                                " rnd_float(2) e," +
+                                " rnd_short(10,1024) f," +
+                                " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                                " rnd_symbol(4,4,4,2) ik," +
+                                " rnd_long() j," +
+                                " timestamp_sequence(to_timestamp(0), 1000000000) k," +
+                                " rnd_byte(2,50) l," +
+                                " rnd_bin(10, 20, 2) m," +
+                                " rnd_str(5,16,2) n" +
+                                " from long_sequence(10)" +
+                                ") timestamp(timestamp)"
+                        , bindVariableService
+                );
+                compiler.compile(
+                        "insert into y select * from " +
+                                "(select" +
+                                " to_int(x + 30) i," +
+                                " rnd_symbol('msft','ibm', 'googl') sym2," +
+                                " round(rnd_double(0), 3) price," +
+                                " to_timestamp('2018-01', 'yyyy-MM') + (x + 30) * 120000000 timestamp," +
+                                " rnd_boolean() b," +
+                                " rnd_str('ABC', 'CDE', null, 'KZZ') c," +
+                                " rnd_double(2) d," +
+                                " rnd_float(2) e," +
+                                " rnd_short(10,1024) f," +
+                                " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                                " rnd_symbol(4,4,4,2) ik," +
+                                " rnd_long() j," +
+                                " timestamp_sequence(to_timestamp(0), 1000000000) k," +
+                                " rnd_byte(2,50) l," +
+                                " rnd_bin(10, 20, 2) m," +
+                                " rnd_str(5,16,2) n" +
+                                " from long_sequence(30)" +
+                                ") timestamp(timestamp)"
+                        , bindVariableService
+                );
+
+                assertJoinQuery("i\tc\tc1\tamt\tprice\ttimestamp\ttimestamp1\n" +
+                                "1\tXYZ\t\t50.938000000000\tNaN\t2018-01-01T00:12:00.000000Z\t\n" +
+                                "2\tABC\tABC\t42.281000000000\t0.537000000000\t2018-01-01T00:24:00.000000Z\t2018-01-01T00:24:00.000000Z\n" +
+                                "3\tABC\tABC\t17.371000000000\t0.673000000000\t2018-01-01T00:36:00.000000Z\t2018-01-01T00:36:00.000000Z\n" +
+                                "4\tXYZ\tXYZ\t44.805000000000\t0.116000000000\t2018-01-01T00:48:00.000000Z\t2018-01-01T00:46:00.000000Z\n" +
+                                "5\t\t\t42.956000000000\t0.477000000000\t2018-01-01T01:00:00.000000Z\t2018-01-01T01:00:00.000000Z\n" +
+                                "6\tCDE\tCDE\t82.597000000000\t0.212000000000\t2018-01-01T01:12:00.000000Z\t2018-01-01T01:12:00.000000Z\n" +
+                                "7\tCDE\tCDE\t98.591000000000\t0.282000000000\t2018-01-01T01:24:00.000000Z\t2018-01-01T01:22:00.000000Z\n" +
+                                "8\tABC\tABC\t57.086000000000\t0.453000000000\t2018-01-01T01:36:00.000000Z\t2018-01-01T01:16:00.000000Z\n" +
+                                "9\t\t\t81.442000000000\t0.624000000000\t2018-01-01T01:48:00.000000Z\t2018-01-01T01:34:00.000000Z\n" +
+                                "10\tXYZ\tXYZ\t3.973000000000\t0.867000000000\t2018-01-01T02:00:00.000000Z\t2018-01-01T00:50:00.000000Z\n" +
+                                "11\t\t\t85.019000000000\t0.624000000000\t2018-01-01T02:12:00.000000Z\t2018-01-01T01:34:00.000000Z\n" +
+                                "12\tKZZ\tKZZ\t85.490000000000\t0.528000000000\t2018-01-01T02:24:00.000000Z\t2018-01-01T01:56:00.000000Z\n" +
+                                "13\tCDE\tCDE\t27.493000000000\t0.401000000000\t2018-01-01T02:36:00.000000Z\t2018-01-01T02:00:00.000000Z\n" +
+                                "14\tCDE\tCDE\t39.244000000000\t0.401000000000\t2018-01-01T02:48:00.000000Z\t2018-01-01T02:00:00.000000Z\n" +
+                                "15\tABC\tABC\t55.152000000000\t0.775000000000\t2018-01-01T03:00:00.000000Z\t2018-01-01T01:54:00.000000Z\n" +
+                                "16\tKZZ\tKZZ\t3.224000000000\t0.528000000000\t2018-01-01T03:12:00.000000Z\t2018-01-01T01:56:00.000000Z\n" +
+                                "17\t\t\t6.368000000000\t0.624000000000\t2018-01-01T03:24:00.000000Z\t2018-01-01T01:34:00.000000Z\n" +
+                                "18\tCDE\tCDE\t18.305000000000\t0.401000000000\t2018-01-01T03:36:00.000000Z\t2018-01-01T02:00:00.000000Z\n" +
+                                "19\tABC\tABC\t16.378000000000\t0.775000000000\t2018-01-01T03:48:00.000000Z\t2018-01-01T01:54:00.000000Z\n" +
+                                "20\t\t\t4.773000000000\t0.624000000000\t2018-01-01T04:00:00.000000Z\t2018-01-01T01:34:00.000000Z\n",
+                        query,
+                        "timestamp");
+
+                Assert.assertEquals(0, engine.getBusyReaderCount());
+                Assert.assertEquals(0, engine.getBusyWriterCount());
+            } finally {
+                engine.releaseAllWriters();
+                engine.releaseAllReaders();
+            }
+        });
+    }
+
+    @Test
+    public void testAsOfJoinOnStrNoVar() throws Exception {
+        // there are no variable length columns in slave table other than the one we join on
+        TestUtils.assertMemoryLeak(() -> {
+            try {
+                final String query = "select x.i, x.c, y.c, x.amt, price, x.timestamp, y.timestamp from x asof join y on y.c = x.c";
+
+                final String expected = "i\tc\tc1\tamt\tprice\ttimestamp\ttimestamp1\n" +
+                        "1\tXYZ\tXYZ\t50.938000000000\t0.294000000000\t2018-01-01T00:12:00.000000Z\t2018-01-01T00:10:00.000000Z\n" +
+                        "2\tABC\tABC\t42.281000000000\t0.167000000000\t2018-01-01T00:24:00.000000Z\t2018-01-01T00:22:00.000000Z\n" +
+                        "3\tABC\tABC\t17.371000000000\t0.167000000000\t2018-01-01T00:36:00.000000Z\t2018-01-01T00:22:00.000000Z\n" +
+                        "4\tXYZ\tXYZ\t44.805000000000\t0.790000000000\t2018-01-01T00:48:00.000000Z\t2018-01-01T00:46:00.000000Z\n" +
+                        "5\t\t\t42.956000000000\t0.288000000000\t2018-01-01T01:00:00.000000Z\t2018-01-01T00:48:00.000000Z\n" +
+                        "6\tCDE\tCDE\t82.597000000000\t0.820000000000\t2018-01-01T01:12:00.000000Z\t2018-01-01T01:00:00.000000Z\n" +
+                        "7\tCDE\tCDE\t98.591000000000\t0.820000000000\t2018-01-01T01:24:00.000000Z\t2018-01-01T01:00:00.000000Z\n" +
+                        "8\tABC\tABC\t57.086000000000\t0.319000000000\t2018-01-01T01:36:00.000000Z\t2018-01-01T00:38:00.000000Z\n" +
+                        "9\t\t\t81.442000000000\t0.288000000000\t2018-01-01T01:48:00.000000Z\t2018-01-01T00:48:00.000000Z\n" +
+                        "10\tXYZ\tXYZ\t3.973000000000\t0.160000000000\t2018-01-01T02:00:00.000000Z\t2018-01-01T00:52:00.000000Z\n";
+
+                compiler.compile(
+                        "create table x as (" +
+                                "select" +
+                                " to_int(x) i," +
+                                " rnd_symbol('msft','ibm', 'googl') sym," +
+                                " round(rnd_double(0)*100, 3) amt," +
+                                " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                                " rnd_boolean() b," +
+                                " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
+                                " rnd_double(2) d," +
+                                " rnd_float(2) e," +
+                                " rnd_short(10,1024) f," +
+                                " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                                " rnd_symbol(4,4,4,2) ik," +
+                                " rnd_long() j," +
+                                " timestamp_sequence(to_timestamp(0), 1000000000) k," +
+                                " rnd_byte(2,50) l," +
+                                " rnd_bin(10, 20, 2) m," +
+                                " rnd_str(5,16,2) n" +
+                                " from long_sequence(10)" +
+                                ") timestamp (timestamp)",
+                        bindVariableService
+                );
+                compiler.compile(
+                        "create table y as (" +
+                                "select" +
+                                " to_int(x) i," +
+                                " rnd_symbol('msft','ibm', 'googl') sym2," +
+                                " round(rnd_double(0), 3) price," +
+                                " to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp," +
+                                " rnd_boolean() b," +
+                                " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
+                                " rnd_double(2) d," +
+                                " rnd_float(2) e," +
+                                " rnd_short(10,1024) f," +
+                                " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                                " rnd_symbol(4,4,4,2) ik," +
+                                " rnd_long() j," +
+                                " timestamp_sequence(to_timestamp(0), 1000000000) k," +
+                                " rnd_byte(2,50) l" +
+                                " from long_sequence(30)" +
+                                ") timestamp(timestamp)"
+                        , bindVariableService
+                );
+
+                assertJoinQueryAndCache(expected, query, "timestamp");
+
+                compiler.compile(
+                        "insert into x select * from " +
+                                "(select" +
+                                " to_int(x + 10) i," +
+                                " rnd_symbol('msft','ibm', 'googl') sym," +
+                                " round(rnd_double(0)*100, 3) amt," +
+                                " to_timestamp('2018-01', 'yyyy-MM') + (x + 10) * 720000000 timestamp," +
+                                " rnd_boolean() b," +
+                                " rnd_str('ABC', 'CDE', null, 'KZZ') c," +
+                                " rnd_double(2) d," +
+                                " rnd_float(2) e," +
+                                " rnd_short(10,1024) f," +
+                                " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                                " rnd_symbol(4,4,4,2) ik," +
+                                " rnd_long() j," +
+                                " timestamp_sequence(to_timestamp(0), 1000000000) k," +
+                                " rnd_byte(2,50) l," +
+                                " rnd_bin(10, 20, 2) m," +
+                                " rnd_str(5,16,2) n" +
+                                " from long_sequence(10)" +
+                                ") timestamp(timestamp)"
+                        , bindVariableService
+                );
+                compiler.compile(
+                        "insert into y select * from " +
+                                "(select" +
+                                " to_int(x + 30) i," +
+                                " rnd_symbol('msft','ibm', 'googl') sym2," +
+                                " round(rnd_double(0), 3) price," +
+                                " to_timestamp('2018-01', 'yyyy-MM') + (x + 30) * 120000000 timestamp," +
+                                " rnd_boolean() b," +
+                                " rnd_str('ABC', 'CDE', null, 'KZZ') c," +
+                                " rnd_double(2) d," +
+                                " rnd_float(2) e," +
+                                " rnd_short(10,1024) f," +
+                                " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                                " rnd_symbol(4,4,4,2) ik," +
+                                " rnd_long() j," +
+                                " timestamp_sequence(to_timestamp(0), 1000000000) k," +
+                                " rnd_byte(2,50) l" +
+                                " from long_sequence(30)" +
+                                ") timestamp(timestamp)"
+                        , bindVariableService
+                );
+
+                assertJoinQuery("i\tc\tc1\tamt\tprice\ttimestamp\ttimestamp1\n" +
+                                "1\tXYZ\tXYZ\t50.938000000000\t0.294000000000\t2018-01-01T00:12:00.000000Z\t2018-01-01T00:10:00.000000Z\n" +
+                                "2\tABC\tABC\t42.281000000000\t0.167000000000\t2018-01-01T00:24:00.000000Z\t2018-01-01T00:22:00.000000Z\n" +
+                                "3\tABC\tABC\t17.371000000000\t0.167000000000\t2018-01-01T00:36:00.000000Z\t2018-01-01T00:22:00.000000Z\n" +
+                                "4\tXYZ\tXYZ\t44.805000000000\t0.790000000000\t2018-01-01T00:48:00.000000Z\t2018-01-01T00:46:00.000000Z\n" +
+                                "5\t\t\t42.956000000000\t0.288000000000\t2018-01-01T01:00:00.000000Z\t2018-01-01T00:48:00.000000Z\n" +
+                                "6\tCDE\tCDE\t82.597000000000\t0.190000000000\t2018-01-01T01:12:00.000000Z\t2018-01-01T01:06:00.000000Z\n" +
+                                "7\tCDE\tCDE\t98.591000000000\t0.201000000000\t2018-01-01T01:24:00.000000Z\t2018-01-01T01:20:00.000000Z\n" +
+                                "8\tABC\tABC\t57.086000000000\t0.359000000000\t2018-01-01T01:36:00.000000Z\t2018-01-01T01:24:00.000000Z\n" +
+                                "9\t\t\t81.442000000000\t0.920000000000\t2018-01-01T01:48:00.000000Z\t2018-01-01T01:48:00.000000Z\n" +
+                                "10\tXYZ\tXYZ\t3.973000000000\t0.160000000000\t2018-01-01T02:00:00.000000Z\t2018-01-01T00:52:00.000000Z\n" +
+                                "11\tABC\tABC\t22.372000000000\t0.359000000000\t2018-01-01T02:12:00.000000Z\t2018-01-01T01:24:00.000000Z\n" +
+                                "12\tABC\tABC\t48.423000000000\t0.359000000000\t2018-01-01T02:24:00.000000Z\t2018-01-01T01:24:00.000000Z\n" +
+                                "13\tKZZ\tKZZ\t74.174000000000\t0.853000000000\t2018-01-01T02:36:00.000000Z\t2018-01-01T01:56:00.000000Z\n" +
+                                "14\t\t\t87.184000000000\t0.469000000000\t2018-01-01T02:48:00.000000Z\t2018-01-01T01:52:00.000000Z\n" +
+                                "15\tABC\tABC\t66.993000000000\t0.359000000000\t2018-01-01T03:00:00.000000Z\t2018-01-01T01:24:00.000000Z\n" +
+                                "16\tABC\tABC\t19.968000000000\t0.359000000000\t2018-01-01T03:12:00.000000Z\t2018-01-01T01:24:00.000000Z\n" +
+                                "17\tABC\tABC\t34.368000000000\t0.359000000000\t2018-01-01T03:24:00.000000Z\t2018-01-01T01:24:00.000000Z\n" +
+                                "18\t\t\t1.869000000000\t0.469000000000\t2018-01-01T03:36:00.000000Z\t2018-01-01T01:52:00.000000Z\n" +
+                                "19\tABC\tABC\t85.427000000000\t0.359000000000\t2018-01-01T03:48:00.000000Z\t2018-01-01T01:24:00.000000Z\n" +
+                                "20\tABC\tABC\t54.586000000000\t0.359000000000\t2018-01-01T04:00:00.000000Z\t2018-01-01T01:24:00.000000Z\n",
+                        query,
+                        "timestamp");
+
+                Assert.assertEquals(0, engine.getBusyReaderCount());
+                Assert.assertEquals(0, engine.getBusyWriterCount());
+            } finally {
+                engine.releaseAllWriters();
+                engine.releaseAllReaders();
+            }
+        });
+    }
+
+    @Test
     public void testAsOfJoinSlaveSymbol() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try {
@@ -597,8 +1110,27 @@ public class JoinTest extends AbstractGriffinTest {
                         "9\tgoogl\tgoogl\t67.786000000000\t0.198000000000\t2018-01-01T01:48:00.000000Z\t2018-01-01T01:00:00.000000Z\n" +
                         "10\tgoogl\tgoogl\t38.540000000000\t0.198000000000\t2018-01-01T02:00:00.000000Z\t2018-01-01T01:00:00.000000Z\n";
 
-                compiler.compile("create table x as (select to_int(x) i, rnd_symbol('msft','ibm', 'googl') sym, round(rnd_double(0)*100, 3) amt, to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp from long_sequence(10)) timestamp (timestamp)", bindVariableService);
-                compiler.compile("create table y as (select to_int(x) i, rnd_symbol('msft','ibm', 'googl') sym2, round(rnd_double(0), 3) price, to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp from long_sequence(30)) timestamp(timestamp)", bindVariableService);
+                compiler.compile(
+                        "create table x as (" +
+                                "select" +
+                                " to_int(x) i," +
+                                " rnd_symbol('msft','ibm', 'googl') sym," +
+                                " round(rnd_double(0)*100, 3) amt," +
+                                " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp" +
+                                " from long_sequence(10)" +
+                                ") timestamp (timestamp)",
+                        bindVariableService
+                );
+                compiler.compile(
+                        "create table y as (" +
+                                "select" +
+                                " to_int(x) i," +
+                                " rnd_symbol('msft','ibm', 'googl') sym2," +
+                                " round(rnd_double(0), 3) price," +
+                                " to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp" +
+                                " from long_sequence(30)" +
+                                ") timestamp(timestamp)",
+                        bindVariableService);
 
                 assertJoinQueryAndCache(expected, query, "timestamp");
 

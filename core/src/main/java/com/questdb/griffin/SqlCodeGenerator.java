@@ -53,7 +53,6 @@ public class SqlCodeGenerator {
     private final ArrayColumnTypes keyTypes = new ArrayColumnTypes();
     private final ArrayColumnTypes valueTypes = new ArrayColumnTypes();
     private final EntityColumnFilter entityColumnFilter = new EntityColumnFilter();
-    private final SymbolAsIntTypes symbolAsIntTypes = new SymbolAsIntTypes();
     private boolean fullFatJoins = false;
 
     public SqlCodeGenerator(CairoEngine engine, CairoConfiguration configuration, FunctionParser functionParser) {
@@ -104,8 +103,35 @@ public class SqlCodeGenerator {
             CharSequence masterAlias,
             RecordCursorFactory slave,
             RecordMetadata slaveMetadata,
-            CharSequence slaveAlias
-    ) {
+            CharSequence slaveAlias,
+            int joinPosition
+    ) throws SqlException {
+
+        // create hash set of key columns to easily find them
+        intHashSet.clear();
+        for (int i = 0, n = listColumnFilterA.getColumnCount(); i < n; i++) {
+            intHashSet.add(listColumnFilterA.getColumnIndex(i));
+        }
+
+
+        // map doesn't support variable length types in map value, which is ok
+        // when we join tables on strings - technically string is the key
+        // and we do not need to store it in value, but we will still reject
+        //
+        // never mind, this is a stop-gap measure until I understand the problem
+        // fully
+
+        for (int k = 0, m = slaveMetadata.getColumnCount(); k < m; k++) {
+            if (intHashSet.excludes(k)) {
+                int type = slaveMetadata.getColumnType(k);
+                if (type == ColumnType.STRING || type == ColumnType.BINARY) {
+                    throw SqlException
+                            .position(joinPosition).put("right side column '")
+                            .put(slaveMetadata.getColumnName(k)).put("' is of unsupported type");
+                }
+            }
+        }
+
         RecordSink masterSink = RecordSinkFactory.getInstance(
                 asm,
                 masterMetadata,
@@ -113,17 +139,62 @@ public class SqlCodeGenerator {
                 true
         );
 
-        JoinRecordMetadata metadata = createJoinMetadata(masterAlias, masterMetadata, slaveAlias, slaveMetadata);
+        JoinRecordMetadata metadata = new JoinRecordMetadata(
+                configuration,
+                masterMetadata.getColumnCount() + slaveMetadata.getColumnCount()
+        );
 
-        entityColumnFilter.of(slaveMetadata.getColumnCount());
+        // metadata will have master record verbatim
+        metadata.copyColumnMetadataFrom(masterAlias, masterMetadata);
+
+        // slave record is split across key and value of map
+        // the rationale is not to store columns twice
+        // especially when map value does not support variable
+        // length types
+
+
+        final IntList columnIndex = new IntList(slaveMetadata.getColumnCount());
+        // In map record value columns go first, so at this stage
+        // we add to metadata all slave columns that are not keys.
+        // Add same columns to filter while we are in this loop.
+        listColumnFilterB.clear();
+        valueTypes.reset();
+        ArrayColumnTypes slaveTypes = new ArrayColumnTypes();
+        for (int i = 0, n = slaveMetadata.getColumnCount(); i < n; i++) {
+            if (intHashSet.excludes(i)) {
+                int type = slaveMetadata.getColumnType(i);
+                metadata.add(slaveAlias, slaveMetadata.getColumnName(i), type);
+                listColumnFilterB.add(i);
+                columnIndex.add(i);
+                valueTypes.add(type);
+                slaveTypes.add(type);
+            }
+        }
+
+        // now add key columns to metadata
+        for (int i = 0, n = listColumnFilterA.getColumnCount(); i < n; i++) {
+            int index = listColumnFilterA.getColumnIndex(i);
+            int type = slaveMetadata.getColumnType(index);
+            if (type == ColumnType.SYMBOL) {
+                type = ColumnType.STRING;
+            }
+            metadata.add(slaveAlias, slaveMetadata.getColumnName(index), type);
+            columnIndex.add(index);
+            slaveTypes.add(type);
+        }
+
+        if (masterMetadata.getTimestampIndex() != -1) {
+            metadata.setTimestampIndex(masterMetadata.getTimestampIndex());
+        }
+
         master = new AsOfJoinRecordCursorFactory(
                 configuration,
                 metadata,
                 master,
                 slave,
                 keyTypes,
-                slaveMetadata,
-                symbolAsIntTypes.of(slaveMetadata),
+                valueTypes,
+                slaveTypes,
                 masterSink,
                 RecordSinkFactory.getInstance(
                         asm,
@@ -132,7 +203,8 @@ public class SqlCodeGenerator {
                         true
                 ),
                 masterMetadata.getColumnCount(),
-                RecordValueSinkFactory.getInstance(asm, slaveMetadata, entityColumnFilter)
+                RecordValueSinkFactory.getInstance(asm, slaveMetadata, listColumnFilterB),
+                columnIndex
         );
         return master;
     }
@@ -342,29 +414,14 @@ public class SqlCodeGenerator {
                                         masterMetadata.getColumnCount()
                                 );
                             } else {
-                                // todo: this is a limiting test
-                                // map doesn't support variable length types in map value, which is ok
-                                // when we join tables on strings - technically string is the key
-                                // and we do not need to store it in value, but we will still reject
-                                //
-                                // never mind, this is a stop-gap measure until I understand the problem
-                                // fully
-
-                                for (int k = 0, m = slaveMetadata.getColumnCount(); k < m; k++) {
-                                    int type = slaveMetadata.getColumnType(k);
-                                    if (type == ColumnType.STRING || type == ColumnType.BINARY) {
-                                        throw SqlException
-                                                .position(slaveModel.getJoinKeywordPosition()).put("right side column '")
-                                                .put(slaveMetadata.getColumnName(k)).put("' is of unsupported type");
-                                    }
-                                }
                                 master = createFullFatAsOfJoin(
                                         master,
                                         masterMetadata,
                                         masterAlias,
                                         slave,
                                         slaveMetadata,
-                                        slaveModel.getName()
+                                        slaveModel.getName(),
+                                        slaveModel.getJoinKeywordPosition()
                                 );
                             }
                             masterAlias = null;
@@ -1148,7 +1205,7 @@ public class SqlCodeGenerator {
                 // index in column filter and join context is the same
                 throw SqlException.$(jc.aNodes.getQuick(k).position, "join column type mismatch");
             }
-            keyTypes.add(columnType);
+            keyTypes.add(columnType == ColumnType.SYMBOL ? ColumnType.STRING : columnType);
         }
     }
 

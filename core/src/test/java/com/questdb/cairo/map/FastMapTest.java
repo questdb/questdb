@@ -507,11 +507,6 @@ public class FastMapTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testUnsupportedKeyValueSymbol() throws Exception {
-        testUnsupportedValueType(ColumnType.SYMBOL);
-    }
-
-    @Test
     public void testValueAccess() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)) {

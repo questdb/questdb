@@ -30,6 +30,7 @@ import com.questdb.cairo.RecordSink;
 import com.questdb.cairo.map.*;
 import com.questdb.cairo.sql.*;
 import com.questdb.griffin.engine.functions.bind.BindVariableService;
+import com.questdb.std.IntList;
 import com.questdb.std.Misc;
 import com.questdb.std.Transient;
 
@@ -40,24 +41,26 @@ public class AsOfJoinRecordCursorFactory extends AbstractRecordCursorFactory {
     private final RecordSink masterKeySink;
     private final RecordSink slaveKeySink;
     private final AsOfJoinRecordCursor cursor;
+    private final IntList columnIndex;
 
     public AsOfJoinRecordCursorFactory(
             CairoConfiguration configuration,
             RecordMetadata metadata,
             RecordCursorFactory masterFactory,
             RecordCursorFactory slaveFactory,
-            @Transient ColumnTypes joinColumnTypes,
-            @Transient ColumnTypes slaveColumnTypes,
+            @Transient ColumnTypes mapKeyTypes,
             @Transient ColumnTypes mapValueTypes,
+            @Transient ColumnTypes slaveColumnTypes,
             RecordSink masterKeySink,
             RecordSink slaveKeySink,
             int columnSplit,
-            RecordValueSink slaveValueSink
+            RecordValueSink slaveValueSink,
+            IntList columnIndex // this column index will be used to retrieve symbol tables from underlying slave
     ) {
         super(metadata);
         this.masterFactory = masterFactory;
         this.slaveFactory = slaveFactory;
-        joinKeyMap = MapFactory.createMap(configuration, joinColumnTypes, mapValueTypes);
+        joinKeyMap = MapFactory.createMap(configuration, mapKeyTypes, mapValueTypes);
         this.masterKeySink = masterKeySink;
         this.slaveKeySink = slaveKeySink;
         this.cursor = new AsOfJoinRecordCursor(
@@ -68,6 +71,7 @@ public class AsOfJoinRecordCursorFactory extends AbstractRecordCursorFactory {
                 slaveFactory.getMetadata().getTimestampIndex(),
                 slaveValueSink
         );
+        this.columnIndex = columnIndex;
     }
 
     @Override
@@ -207,7 +211,7 @@ public class AsOfJoinRecordCursorFactory extends AbstractRecordCursorFactory {
             this.masterRecord = masterCursor.getRecord();
             this.slaveRecord = slaveCursor.getRecord();
             MapRecord mapRecord = joinKeyMap.getRecord();
-            mapRecord.setSymbolTableResolver(slaveCursor);
+            mapRecord.setSymbolTableResolver(slaveCursor, columnIndex);
             record.of(masterRecord, mapRecord);
         }
     }

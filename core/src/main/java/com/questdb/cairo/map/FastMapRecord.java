@@ -28,6 +28,7 @@ import com.questdb.cairo.ColumnTypes;
 import com.questdb.cairo.TableUtils;
 import com.questdb.cairo.sql.RecordCursor;
 import com.questdb.std.BinarySequence;
+import com.questdb.std.IntList;
 import com.questdb.std.Transient;
 import com.questdb.std.Unsafe;
 import com.questdb.std.str.CharSink;
@@ -46,6 +47,7 @@ final class FastMapRecord implements MapRecord {
     private long address1;
     private long address2;
     private RecordCursor symbolTableResolver;
+    private IntList symbolTableIndex;
 
     FastMapRecord(
             int valueOffsets[],
@@ -198,7 +200,7 @@ final class FastMapRecord implements MapRecord {
 
     @Override
     public CharSequence getSym(int col) {
-        return symbolTableResolver.getSymbolTable(col).value(getInt(col));
+        return symbolTableResolver.getSymbolTable(symbolTableIndex.getQuick(col)).value(getInt(col));
     }
 
     @Override
@@ -207,8 +209,9 @@ final class FastMapRecord implements MapRecord {
     }
 
     @Override
-    public void setSymbolTableResolver(RecordCursor resolver) {
+    public void setSymbolTableResolver(RecordCursor resolver, IntList symbolTableIndex) {
         this.symbolTableResolver = resolver;
+        this.symbolTableIndex = symbolTableIndex;
     }
 
     private long addressOfColumn(int index) {
