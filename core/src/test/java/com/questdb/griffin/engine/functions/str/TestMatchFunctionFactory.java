@@ -85,13 +85,13 @@ public class TestMatchFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public boolean isConstant() {
-            return false;
+        public void init(RecordCursor recordCursor, BindVariableService bindVariableService) {
+            openCounter.incrementAndGet();
         }
 
         @Override
-        public void init(RecordCursor recordCursor, BindVariableService bindVariableService) {
-            openCounter.incrementAndGet();
+        public boolean isConstant() {
+            return false;
         }
 
         @Override

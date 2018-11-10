@@ -28,8 +28,6 @@ import org.junit.Assert;
 import org.junit.Test;
 
 public class ByteFunctionTest {
-    // assert that all type casts that are not possible will throw exception
-
     private static final ByteFunction function = new ByteFunction(25) {
         @Override
         public byte getByte(Record rec) {
@@ -40,6 +38,12 @@ public class ByteFunctionTest {
     @Test(expected = UnsupportedOperationException.class)
     public void testGetBin() {
         function.getBin(null);
+    }
+
+    // assert that all type casts that are not possible will throw exception
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetBinLen() {
+        function.getBinLen(null);
     }
 
     @Test(expected = UnsupportedOperationException.class)

@@ -78,6 +78,12 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
 
         func.init(null, bindVariableService);
 
+        Function func2 = expr("length(:x)")
+                .withFunction(new LengthBinFunctionFactory())
+                .$();
+
+        func2.init(null, bindVariableService);
+
         TestUtils.assertEquals("00000000 56 54 4a 57 43 50 53 57 48 59 52 58 50 45 48 4e\n" +
                         "00000010 52 58 47 5a 53 58 55 58 49 42 42 54 47 50 47 57\n" +
                         "00000020 46 46 59 55 44 45 59 59 51 45 48 42 48 46 4f 57\n" +
@@ -95,6 +101,9 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
                         "000000e0 46 4d 42 45 5a 47 48 57 56 44 4b 46 4c 4f 50 4a\n" +
                         "000000f0 4f 58 50 4b 52 47 49 49 48 59 48 42 4f 51 4d 59",
                 func.getStr(builder.getRecord()));
+
+        // check that bin bind variable length is accurate
+        Assert.assertEquals(256, func2.getLong(builder.getRecord()));
 
         sequence.of(rnd.nextBytes(16));
 

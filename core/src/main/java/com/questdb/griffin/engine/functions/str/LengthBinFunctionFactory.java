@@ -21,26 +21,43 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.engine.groupby;
+package com.questdb.griffin.engine.functions.str;
 
+import com.questdb.cairo.CairoConfiguration;
+import com.questdb.cairo.sql.Function;
 import com.questdb.cairo.sql.Record;
-import com.questdb.griffin.engine.functions.DoubleFunction;
+import com.questdb.griffin.FunctionFactory;
+import com.questdb.griffin.engine.functions.LongFunction;
+import com.questdb.griffin.engine.functions.UnaryFunction;
+import com.questdb.std.ObjList;
 
-public class DoubleInterpolator extends DoubleFunction {
-
-    private final int valueIndex;
-
-    public DoubleInterpolator(int position, int valueIndex) {
-        super(position);
-        this.valueIndex = valueIndex;
+public class LengthBinFunctionFactory implements FunctionFactory {
+    @Override
+    public String getSignature() {
+        return "length(U)";
     }
 
     @Override
-    public double getDouble(Record rec) {
-        return rec.getDouble(valueIndex);
+    public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
+        return new LengthFunc(position, args.getQuick(0));
     }
 
-    public int getValueIndex() {
-        return valueIndex;
+    private static class LengthFunc extends LongFunction implements UnaryFunction {
+        private final Function arg;
+
+        public LengthFunc(int position, Function arg) {
+            super(position);
+            this.arg = arg;
+        }
+
+        @Override
+        public Function getArg() {
+            return arg;
+        }
+
+        @Override
+        public long getLong(Record rec) {
+            return arg.getBinLen(rec);
+        }
     }
 }

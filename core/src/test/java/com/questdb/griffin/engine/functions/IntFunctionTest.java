@@ -43,6 +43,11 @@ public class IntFunctionTest {
     }
 
     @Test(expected = UnsupportedOperationException.class)
+    public void testGetBinLen() {
+        function.getBinLen(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
     public void testGetBool() {
         function.getBool(null);
     }

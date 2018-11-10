@@ -43,6 +43,11 @@ public class BooleanFunctionTest {
     }
 
     @Test(expected = UnsupportedOperationException.class)
+    public void testGetBinLen() {
+        function.getBinLen(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
     public void testGetByte() {
         function.getByte(null);
     }

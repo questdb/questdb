@@ -29,6 +29,7 @@ import com.questdb.cairo.sql.Record;
 import com.questdb.griffin.FunctionFactory;
 import com.questdb.griffin.engine.functions.BinaryFunction;
 import com.questdb.griffin.engine.functions.LongFunction;
+import com.questdb.std.Numbers;
 import com.questdb.std.ObjList;
 
 public class RemLongFunctionFactory implements FunctionFactory {
@@ -64,7 +65,17 @@ public class RemLongFunctionFactory implements FunctionFactory {
 
         @Override
         public long getLong(Record rec) {
-            return left.getLong(rec) % right.getLong(rec);
+            final long r = right.getLong(rec);
+            if (r == 0 || r == Numbers.LONG_NaN) {
+                return Numbers.LONG_NaN;
+            }
+
+            final long l = left.getLong(rec);
+            if (l == Numbers.LONG_NaN) {
+                return Numbers.LONG_NaN;
+            }
+
+            return l % r;
         }
     }
 }

@@ -56,8 +56,18 @@ public class RoundDoubleFunctionFactory implements FunctionFactory {
 
         @Override
         public double getDouble(Record rec) {
+            final double l = left.getDouble(rec);
+            if (l != l) {
+                return l;
+            }
+
+            final int r = right.getInt(rec);
+            if (r == Numbers.INT_NaN) {
+                return Double.NaN;
+            }
+
             try {
-                return Numbers.roundHalfUp(left.getDouble(rec), right.getInt(rec));
+                return Numbers.roundHalfUp(l, r);
             } catch (NumericException e) {
                 return Double.NaN;
             }

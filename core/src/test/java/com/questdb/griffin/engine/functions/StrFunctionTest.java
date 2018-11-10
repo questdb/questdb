@@ -38,13 +38,18 @@ public class StrFunctionTest {
 
         @Override
         public CharSequence getStrB(Record rec) {
-            return "b";
+            return "a";
         }
     };
 
     @Test(expected = UnsupportedOperationException.class)
     public void testGetBin() {
         function.getBin(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetBinLen() {
+        function.getBinLen(null);
     }
 
     @Test(expected = UnsupportedOperationException.class)
@@ -100,6 +105,11 @@ public class StrFunctionTest {
     @Test(expected = UnsupportedOperationException.class)
     public void testGetShort() {
         function.getShort(null);
+    }
+
+    @Test
+    public void testGetStrLen() {
+        Assert.assertEquals(1, function.getStrLen(null));
     }
 
     @Test(expected = UnsupportedOperationException.class)

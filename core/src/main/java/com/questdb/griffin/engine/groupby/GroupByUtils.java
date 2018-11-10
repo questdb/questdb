@@ -94,7 +94,7 @@ class GroupByUtils {
 
         final int timestampIndex = metadata.getTimestampIndex();
         final ObjList<QueryColumn> columns = model.getColumns();
-        assert timestampIndex != -1;
+//        assert timestampIndex != -1;
 
         int keyColumnIndex = valueTypes.getColumnCount();
         int valueColumnIndex = 0;
