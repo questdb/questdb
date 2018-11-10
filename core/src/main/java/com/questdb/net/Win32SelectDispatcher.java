@@ -102,7 +102,10 @@ public class Win32SelectDispatcher<C extends Context> extends SynchronizedJob im
         writeFdSet.close();
 
         for (int i = 0, n = pending.size(); i < n; i++) {
-            Net.close(pending.get(i, M_FD));
+            final long fd = pending.get(i, M_FD);
+            if (Net.close(fd) != 0) {
+                LOG.error().$("failed to close [fd=").$(fd).$(", errno=").$(Os.errno()).$(']').$();
+            }
             Misc.free(pending.get(i));
         }
 
@@ -145,16 +148,20 @@ public class Win32SelectDispatcher<C extends Context> extends SynchronizedJob im
             LOG.info().$(" Connected ").$(_fd).$();
 
             if (Net.configureNonBlocking(_fd) < 0) {
-                LOG.error().$("Cannot make FD non-blocking").$();
-                Net.close(_fd);
+                LOG.error().$("Cannot make FD non-blocking [fd=").$(_fd).$(", errno=").$(Os.errno()).$(']').$();
+                if (Net.close(_fd) != 0) {
+                    LOG.error().$("failed to close [fd=").$(_fd).$(", errno=").$(Os.errno()).$(']').$();
+                }
                 continue;
             }
 
             connectionCount++;
 
             if (connectionCount > maxConnections) {
-                LOG.info().$("Too many connections, kicking out ").$(_fd).$();
-                Net.close(_fd);
+                LOG.info().$("Too many connections, kicking out [fd=").$(_fd).$(']').$();
+                if (Net.close(_fd) != 0) {
+                    LOG.error().$("failed to close [fd=").$(_fd).$(", errno=").$(Os.errno()).$(']').$();
+                }
                 connectionCount--;
                 return;
             }

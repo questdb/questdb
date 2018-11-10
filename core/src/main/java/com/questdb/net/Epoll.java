@@ -23,6 +23,8 @@
 
 package com.questdb.net;
 
+import com.questdb.log.Log;
+import com.questdb.log.LogFactory;
 import com.questdb.std.Net;
 import com.questdb.std.Os;
 import com.questdb.std.Unsafe;
@@ -36,6 +38,7 @@ public final class Epoll implements Closeable {
     public static final int EPOLLOUT;
     public static final int EPOLL_CTL_ADD;
     public static final int EPOLL_CTL_MOD;
+    private static final Log LOG = LogFactory.getLog(Epoll.class);
     private static final short DATA_OFFSET;
     private static final short EVENTS_OFFSET;
     private static final int EPOLLONESHOT;
@@ -57,7 +60,9 @@ public final class Epoll implements Closeable {
         if (closed) {
             return;
         }
-        Net.close(epfd);
+        if (Net.close(epfd) != 0) {
+            LOG.error().$("failed to close epoll [fd=").$(epfd).$(", errno=").$(Os.errno()).$(']').$();
+        }
         Unsafe.free(events, SIZEOF_EVENT * (long) capacity);
         closed = true;
     }

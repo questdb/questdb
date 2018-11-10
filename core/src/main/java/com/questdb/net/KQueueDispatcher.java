@@ -26,10 +26,7 @@ package com.questdb.net;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.mp.*;
-import com.questdb.std.LongMatrix;
-import com.questdb.std.Misc;
-import com.questdb.std.Net;
-import com.questdb.std.ObjectFactory;
+import com.questdb.std.*;
 import com.questdb.std.ex.NetworkError;
 import com.questdb.std.time.MillisecondClock;
 
@@ -89,7 +86,9 @@ public class KQueueDispatcher<C extends Context> extends SynchronizedJob impleme
     @Override
     public void close() {
         this.kqueue.close();
-        Net.close(socketFd);
+        if (Net.close(socketFd) != 0) {
+            LOG.error().$("failed to close socket [fd=").$(socketFd).$(", errno=").$(Os.errno()).$(']').$();
+        }
         int n = pending.size();
         for (int i = 0; i < n; i++) {
             Misc.free(pending.get(i));
@@ -123,16 +122,20 @@ public class KQueueDispatcher<C extends Context> extends SynchronizedJob impleme
         }
 
         if (Net.configureNonBlocking(_fd) < 0) {
-            LOG.error().$("Cannot make FD non-blocking").$();
-            Net.close(_fd);
+            LOG.error().$("Cannot make FD non-blocking [fd=").$(_fd).$(", errno=").$(Os.errno()).$(']').$();
+            if (Net.close(_fd) != 0) {
+                LOG.error().$("failed to close [fd=").$(_fd).$(", errno=").$(Os.errno()).$(']').$();
+            }
             return -1;
         }
 
         connectionCount++;
 
         if (connectionCount > maxConnections) {
-            LOG.info().$("Too many connections, kicking out ").$(_fd).$();
-            Net.close(_fd);
+            LOG.info().$("Too many connections, kicking out [fd=").$(_fd).$(']').$();
+            if (Net.close(_fd) != 0) {
+                LOG.error().$("failed to close [fd=").$(_fd).$(", errno=").$(Os.errno()).$(']').$();
+            }
             connectionCount--;
             return -1;
         }

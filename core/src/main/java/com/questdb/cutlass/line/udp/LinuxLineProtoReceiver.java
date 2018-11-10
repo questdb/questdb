@@ -97,7 +97,11 @@ public class LinuxLineProtoReceiver implements Closeable, Job {
     @Override
     public void close() {
         if (fd > -1) {
-            nf.close(fd);
+            if (nf.close(fd) != 0) {
+                LOG.error().$("failed to close [fd=").$(fd).$(", errno=").$(Os.errno()).$(']').$();
+            } else {
+                LOG.info().$("closed [fd=").$(fd).$(']').$();
+            }
             if (msgVec != 0) {
                 nf.freeMsgHeaders(msgVec);
             }

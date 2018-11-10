@@ -23,13 +23,17 @@
 
 package com.questdb.net;
 
+import com.questdb.log.Log;
+import com.questdb.log.LogFactory;
 import com.questdb.std.ByteBuffers;
 import com.questdb.std.Net;
 import com.questdb.std.NetworkChannel;
+import com.questdb.std.Os;
 
 import java.nio.ByteBuffer;
 
 public class NetworkChannelImpl implements NetworkChannel {
+    private static final Log LOG = LogFactory.getLog(NetworkChannelImpl.class);
     private final long fd;
     private final long ip;
     private long totalWritten = 0;
@@ -62,7 +66,9 @@ public class NetworkChannelImpl implements NetworkChannel {
 
     @Override
     public void close() {
-        Net.close(fd);
+        if (Net.close(fd) != 0) {
+            LOG.error().$("failed to close [fd=").$(fd).$(", errno=").$(Os.errno()).$(']').$();
+        }
     }
 
     @Override

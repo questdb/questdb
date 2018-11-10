@@ -23,8 +23,11 @@
 
 package com.questdb.cutlass.line.udp;
 
+import com.questdb.log.Log;
+import com.questdb.log.LogFactory;
 import com.questdb.std.Chars;
 import com.questdb.std.Net;
+import com.questdb.std.Os;
 import com.questdb.std.Unsafe;
 import com.questdb.std.str.AbstractCharSink;
 import com.questdb.std.str.CharSink;
@@ -32,6 +35,8 @@ import com.questdb.std.str.CharSink;
 import java.io.Closeable;
 
 public class LineProtoSender extends AbstractCharSink implements Closeable {
+    private static final Log LOG = LogFactory.getLog(LineProtoSender.class);
+
     private final int capacity;
     private final long bufA;
     private final long bufB;
@@ -72,7 +77,9 @@ public class LineProtoSender extends AbstractCharSink implements Closeable {
 
     @Override
     public void close() {
-        Net.close(fd);
+        if (Net.close(fd) != 0) {
+            LOG.error().$("failed to close UDP socket [fd=").$(fd).$(", errno=").$(Os.errno()).$(']').$();
+        }
         Net.freeSockAddr(sockaddr);
         Unsafe.free(bufA, capacity);
         Unsafe.free(bufB, capacity);

@@ -87,7 +87,9 @@ public class EpollDispatcher<C extends Context> extends SynchronizedJob implemen
     @Override
     public void close() {
         this.epoll.close();
-        Net.close(socketFd);
+        if (Net.close(socketFd) != 0) {
+            LOG.error().$("failed to close socket [fd=").$(socketFd).$(", errno=").$(Os.errno()).$(']').$();
+        }
         int n = pending.size();
         for (int i = 0; i < n; i++) {
             Misc.free(pending.get(i));
@@ -123,15 +125,19 @@ public class EpollDispatcher<C extends Context> extends SynchronizedJob implemen
             LOG.info().$(" Connected ").$(_fd).$();
 
             if (Net.configureNonBlocking(_fd) < 0) {
-                LOG.error().$("Cannot make FD non-blocking").$();
-                Net.close(_fd);
+                LOG.error().$("Cannot make FD non-blocking [fd=").$(_fd).$(", errno=").$(Os.errno()).$(']').$();
+                if (Net.close(_fd) != 0) {
+                    LOG.error().$("failed to close [fd=").$(_fd).$(", errno=").$(Os.errno()).$(']').$();
+                }
             }
 
             connectionCount++;
 
             if (connectionCount > maxConnections) {
-                LOG.info().$("Too many connections, kicking out ").$(_fd).$();
-                Net.close(_fd);
+                LOG.info().$("Too many connections, kicking out [fd=").$(_fd).$(']').$();
+                if (Net.close(_fd) != 0) {
+                    LOG.error().$("failed to close [fd=").$(_fd).$(", errno=").$(Os.errno()).$(']').$();
+                }
                 connectionCount--;
                 return;
             }

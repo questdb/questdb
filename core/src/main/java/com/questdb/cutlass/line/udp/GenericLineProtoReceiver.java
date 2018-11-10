@@ -99,7 +99,11 @@ public class GenericLineProtoReceiver implements Closeable, Job {
     @Override
     public void close() {
         if (fd > -1) {
-            nf.close(fd);
+            if (nf.close(fd) != 0) {
+                LOG.error().$("failed to close [fd=").$(fd).$(", errno=").$(Os.errno()).$(']').$();
+            } else {
+                LOG.info().$("closed [fd=").$(fd).$(']').$();
+            }
             if (buf != 0) {
                 Unsafe.free(buf, bufLen);
             }
@@ -109,7 +113,6 @@ public class GenericLineProtoReceiver implements Closeable, Job {
             }
 
             Misc.free(lexer);
-            LOG.info().$("closed [fd=").$(fd).$(']').$();
             fd = -1;
         }
     }

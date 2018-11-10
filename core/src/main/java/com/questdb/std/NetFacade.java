@@ -28,7 +28,7 @@ public interface NetFacade {
 
     boolean bindUdp(long fd, CharSequence IPv4Address, int port);
 
-    void close(long fd);
+    int close(long fd);
 
     void freeMsgHeaders(long msgVec);
 

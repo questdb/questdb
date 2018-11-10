@@ -37,8 +37,8 @@ public class NetFacadeImpl implements NetFacade {
     }
 
     @Override
-    public void close(long fd) {
-        Net.close(fd);
+    public int close(long fd) {
+        return Net.close(fd);
     }
 
     @Override
