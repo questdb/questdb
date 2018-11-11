@@ -55,8 +55,7 @@ public class NetTest {
                 Net.listen(fd, 64);
                 barrier.await();
                 fileDescriptor.set(fd);
-                System.out.println(Net.accept(fd));
-                System.out.println(Os.errno());
+                Net.accept(fd);
             } catch (InterruptedException | BrokenBarrierException e) {
                 e.printStackTrace();
             } finally {
@@ -67,7 +66,7 @@ public class NetTest {
 
         barrier.await();
         Thread.sleep(500);
-        Net.shutdownAll(fileDescriptor.get());
+        Net.abortAccept(fileDescriptor.get());
         Assert.assertTrue(haltLatch.await(2, TimeUnit.SECONDS));
     }
 

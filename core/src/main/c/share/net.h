@@ -103,10 +103,10 @@ JNIEXPORT jboolean JNICALL Java_com_questdb_std_Net_isDead
 
 /*
  * Class:     com_questdb_std_Net
- * Method:    shutdownAll
+ * Method:    abortAccept
  * Signature: (J)I
  */
-JNIEXPORT jint JNICALL Java_com_questdb_std_Net_shutdownAll
+JNIEXPORT jint JNICALL Java_com_questdb_std_Net_abortAccept
         (JNIEnv *, jclass, jlong);
 
 /*
