@@ -77,7 +77,6 @@ JNIEXPORT void JNICALL Java_com_questdb_std_Net_freeSockAddr
     }
 }
 
-
 JNIEXPORT jint JNICALL Java_com_questdb_std_Net_sendTo
         (JNIEnv *e, jclass cl, jlong fd, jlong ptr, jint len, jlong sockaddr) {
     return (jint) sendto((int) fd, (const void *) ptr, (size_t) len, 0, (const struct sockaddr *) sockaddr,
@@ -109,7 +108,6 @@ JNIEXPORT jboolean JNICALL Java_com_questdb_std_Net_join
                                                                                                     : JNI_TRUE);
 }
 
-
 JNIEXPORT jlong JNICALL Java_com_questdb_std_Net_accept
         (JNIEnv *e, jobject cl, jlong fd) {
     return accept((int) fd, NULL, NULL);
@@ -138,7 +136,6 @@ JNIEXPORT jint JNICALL Java_com_questdb_std_Net_send
     return convert_error(send((int) fd, (const void *) ptr, (size_t) len, 0));
 }
 
-
 JNIEXPORT jint JNICALL Java_com_questdb_std_Net_recv
         (JNIEnv *e, jclass cl, jlong fd, jlong ptr, jint len) {
     return convert_error(recv((int) fd, (void *) ptr, (size_t) len, 0));
@@ -148,11 +145,6 @@ JNIEXPORT jboolean JNICALL Java_com_questdb_std_Net_isDead
         (JNIEnv *e, jclass cl, jlong fd) {
     int c;
     return (jboolean) (recv((int) fd, &c, 1, 0) == 0);
-}
-
-JNIEXPORT jint JNICALL Java_com_questdb_std_Net_abortAccept
-        (JNIEnv *e, jclass cl, jlong fd) {
-    return shutdown((int) fd, SHUT_RDWR); 
 }
 
 JNIEXPORT jint JNICALL Java_com_questdb_std_Net_configureNonBlocking

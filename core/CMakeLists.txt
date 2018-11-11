@@ -26,13 +26,13 @@ if (APPLE)
             src/main/c/osx/kqueue.h
             src/main/c/osx/kqueue.c
             src/main/c/share/net.c
-            src/main/c/osx/affinity.c)
+            src/main/c/osx/affinity.c src/main/c/osx/accept.c)
 elseif (UNIX)
     include_directories($ENV{JAVA_HOME}/include/linux/)
     set(OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/src/main/resources/binaries/linux)
     set(SOURCE_FILES ${SOURCE_FILES}
             src/main/c/share/net.c
-            src/main/c/linux/epoll.h src/main/c/linux/epoll.c src/main/c/linux/recvmmsg.c src/main/c/linux/affinity.c)
+            src/main/c/linux/epoll.h src/main/c/linux/epoll.c src/main/c/linux/recvmmsg.c src/main/c/linux/affinity.c src/main/c/linux/accept.c)
 endif (APPLE)
 
 if (WIN32)
