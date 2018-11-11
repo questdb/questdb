@@ -31,7 +31,7 @@
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     </properties>
 
-    <version>3.0.3</version>
+    <version>3.0.4-SNAPSHOT</version>
     <groupId>org.questdb</groupId>
     <artifactId>questdb-core</artifactId>
     <packaging>jar</packaging>
