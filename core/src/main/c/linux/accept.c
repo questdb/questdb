@@ -23,6 +23,7 @@
 
 #include <jni.h>
 #include <unistd.h>
+#include <sys/socket.h>
 #include "../share/net.h"
 
 JNIEXPORT jint JNICALL Java_com_questdb_std_Net_abortAccept
