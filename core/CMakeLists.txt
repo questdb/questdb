@@ -44,7 +44,7 @@ if (WIN32)
             src/main/c/windows/net.c
             src/main/c/windows/select.h
             src/main/c/windows/errno.h
-            src/main/c/windows/select.c src/main/c/windows/timer.c src/main/c/windows/timer.h)
+            src/main/c/windows/select.c src/main/c/windows/timer.c src/main/c/windows/timer.h src/main/c/windows/accept.c)
 else ()
     set(SOURCE_FILES
             ${SOURCE_FILES}

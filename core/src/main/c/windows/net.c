@@ -24,7 +24,6 @@
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include "../share/net.h"
-#include "../share/os.h"
 #include "errno.h"
 
 JNIEXPORT jlong JNICALL Java_com_questdb_std_Net_socketTcp
@@ -114,7 +113,7 @@ JNIEXPORT jboolean JNICALL Java_com_questdb_std_Net_bindTcp
 JNIEXPORT jboolean JNICALL Java_com_questdb_std_Net_join
         (JNIEnv *e, jclass cl, jlong fd, jint bindAddress, jint groupAddress) {
     struct ip_mreq_source imr;
-    imr.imr_multiaddr.s_addr  = htonl((u_long) groupAddress);
+    imr.imr_multiaddr.s_addr = htonl((u_long) groupAddress);
     imr.imr_sourceaddr.s_addr = 0;
     imr.imr_interface.s_addr = htonl((u_long) bindAddress);
     if (setsockopt((SOCKET) fd, IPPROTO_IP, IP_ADD_MEMBERSHIP, (char *) &imr, sizeof(imr)) < 0) {
@@ -134,7 +133,7 @@ JNIEXPORT jboolean JNICALL Java_com_questdb_std_Net_bindUdp
     RecvAddr.sin_addr.s_addr = htonl((u_long) address);
     RecvAddr.sin_port = htons((u_short) port);
 
-    if (bind((SOCKET) fd, (SOCKADDR*) &RecvAddr, sizeof(RecvAddr)) == 0) {
+    if (bind((SOCKET) fd, (SOCKADDR *) &RecvAddr, sizeof(RecvAddr)) == 0) {
         return TRUE;
     }
 
@@ -252,7 +251,7 @@ JNIEXPORT jint JNICALL Java_com_questdb_std_Net_getPeerPort
 
     if (getpeername((SOCKET) fd, &peer, &nameLen) == 0) {
         if (peer.sa_family == AF_INET) {
-            return ntohs(((struct sockaddr_in *)&peer)->sin_port);
+            return ntohs(((struct sockaddr_in *) &peer)->sin_port);
         } else {
             return -2;
         }
