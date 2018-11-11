@@ -39,11 +39,27 @@ JNIEXPORT jboolean JNICALL Java_com_questdb_std_Net_bindUdp
 
 /*
  * Class:     com_questdb_std_Net
+ * Method:    configureNoLinger
+ * Signature: (J)I
+ */
+JNIEXPORT jint JNICALL Java_com_questdb_std_Net_configureNoLinger
+        (JNIEnv *, jclass, jlong);
+
+/*
+ * Class:     com_questdb_std_Net
  * Method:    configureNonBlocking
  * Signature: (J)I
  */
 JNIEXPORT jint JNICALL Java_com_questdb_std_Net_configureNonBlocking
         (JNIEnv *, jclass, jlong);
+
+/*
+ * Class:     com_questdb_std_Net
+ * Method:    connect
+ * Signature: (JJ)I
+ */
+JNIEXPORT jint JNICALL Java_com_questdb_std_Net_connect
+        (JNIEnv *, jclass, jlong, jlong);
 
 /*
  * Class:     com_questdb_std_Net
@@ -59,22 +75,6 @@ JNIEXPORT void JNICALL Java_com_questdb_std_Net_freeMsgHeaders
  * Signature: (J)V
  */
 JNIEXPORT void JNICALL Java_com_questdb_std_Net_freeSockAddr
-        (JNIEnv *, jclass, jlong);
-
-/*
- * Class:     com_questdb_std_Net
- * Method:    connect
- * Signature: (JJ)I
- */
-JNIEXPORT jint JNICALL Java_com_questdb_std_Net_connect
-        (JNIEnv *, jclass, jlong, jlong);
-
-/*
- * Class:     com_questdb_std_Net
- * Method:    configureNoLinger
- * Signature: (J)I
- */
-JNIEXPORT jint JNICALL Java_com_questdb_std_Net_configureNoLinger
         (JNIEnv *, jclass, jlong);
 
 /*
@@ -99,6 +99,14 @@ JNIEXPORT jint JNICALL Java_com_questdb_std_Net_getPeerPort
  * Signature: (J)Z
  */
 JNIEXPORT jboolean JNICALL Java_com_questdb_std_Net_isDead
+        (JNIEnv *, jclass, jlong);
+
+/*
+ * Class:     com_questdb_std_Net
+ * Method:    shutdownAll
+ * Signature: (J)I
+ */
+JNIEXPORT jint JNICALL Java_com_questdb_std_Net_shutdownAll
         (JNIEnv *, jclass, jlong);
 
 /*
@@ -175,6 +183,14 @@ JNIEXPORT jint JNICALL Java_com_questdb_std_Net_setSndBuf
 
 /*
  * Class:     com_questdb_std_Net
+ * Method:    sockaddr
+ * Signature: (II)J
+ */
+JNIEXPORT jlong JNICALL Java_com_questdb_std_Net_sockaddr
+        (JNIEnv *, jclass, jint, jint);
+
+/*
+ * Class:     com_questdb_std_Net
  * Method:    socketTcp
  * Signature: (Z)J
  */
@@ -220,14 +236,6 @@ JNIEXPORT jlong JNICALL Java_com_questdb_std_Net_getMsgHeaderBufferLengthOffset
  */
 JNIEXPORT jint JNICALL Java_com_questdb_std_Net_getEwouldblock
         (JNIEnv *, jclass);
-
-/*
- * Class:     com_questdb_std_Net
- * Method:    sockaddr
- * Signature: (II)J
- */
-JNIEXPORT jlong JNICALL Java_com_questdb_std_Net_sockaddr
-        (JNIEnv *, jclass, jint, jint);
 
 #ifdef __cplusplus
 }

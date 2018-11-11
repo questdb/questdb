@@ -90,6 +90,8 @@ public final class Net {
 
     public static native boolean isDead(long fd);
 
+    public static native int shutdownAll(long fd);
+
     public static boolean join(long fd, CharSequence bindIPv4Address, CharSequence groupIPv4Address) {
         return join(fd, parseIPv4(bindIPv4Address), parseIPv4(groupIPv4Address));
     }

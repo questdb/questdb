@@ -150,6 +150,11 @@ JNIEXPORT jboolean JNICALL Java_com_questdb_std_Net_isDead
     return (jboolean) (recv((int) fd, &c, 1, 0) == 0);
 }
 
+JNIEXPORT jint JNICALL Java_com_questdb_std_Net_shutdownAll
+        (JNIEnv *e, jclass cl, jlong fd) {
+    return shutdown((int) fd, SHUT_RDWR);
+}
+
 JNIEXPORT jint JNICALL Java_com_questdb_std_Net_configureNonBlocking
         (JNIEnv *e, jclass cl, jlong fd) {
     int flags;

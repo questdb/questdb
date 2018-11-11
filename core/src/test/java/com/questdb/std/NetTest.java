@@ -28,14 +28,47 @@ import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.util.concurrent.BrokenBarrierException;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
 
 public class NetTest {
     @Test
     public void testNoLinger() throws InterruptedException {
         bindAcceptConnectClose();
         bindAcceptConnectClose();
+    }
+
+    @Test
+    public void testSocketShutdown() throws BrokenBarrierException, InterruptedException {
+        final CyclicBarrier barrier = new CyclicBarrier(2);
+        final CountDownLatch haltLatch = new CountDownLatch(1);
+        final AtomicLong fileDescriptor = new AtomicLong();
+
+        new Thread(() -> {
+            long fd = Net.socketTcp(true);
+            try {
+                Net.configureNoLinger(fd);
+                Assert.assertTrue(Net.bindTcp(fd, 0, 19004));
+                Net.listen(fd, 64);
+                barrier.await();
+                fileDescriptor.set(fd);
+                System.out.println(Net.accept(fd));
+                System.out.println(Os.errno());
+            } catch (InterruptedException | BrokenBarrierException e) {
+                e.printStackTrace();
+            } finally {
+                Net.close(fd);
+                haltLatch.countDown();
+            }
+        }).start();
+
+        barrier.await();
+        Thread.sleep(500);
+        Net.shutdownAll(fileDescriptor.get());
+        Assert.assertTrue(haltLatch.await(2, TimeUnit.SECONDS));
     }
 
     private void bindAcceptConnectClose() throws InterruptedException {
