@@ -31,10 +31,7 @@ import com.questdb.griffin.FunctionParser;
 import com.questdb.griffin.SqlException;
 import com.questdb.griffin.SqlExecutionContext;
 import com.questdb.griffin.engine.functions.GroupByFunction;
-import com.questdb.griffin.engine.functions.constants.DoubleConstant;
-import com.questdb.griffin.engine.functions.constants.FloatConstant;
-import com.questdb.griffin.engine.functions.constants.IntConstant;
-import com.questdb.griffin.engine.functions.constants.LongConstant;
+import com.questdb.griffin.engine.functions.constants.*;
 import com.questdb.griffin.model.ExpressionNode;
 import com.questdb.griffin.model.QueryModel;
 import com.questdb.std.*;
@@ -141,9 +138,14 @@ public class SampleByFillValueRecordCursorFactory extends AbstractSampleByRecord
                         case ColumnType.DOUBLE:
                             placeholderFunctions.add(new DoubleConstant(function.getPosition(), Numbers.parseDouble(fillNode.token)));
                             break;
-                        // todo: support and test all types
+                        case ColumnType.SHORT:
+                            placeholderFunctions.add(new ShortConstant(function.getPosition(), (short) Numbers.parseInt(fillNode.token)));
+                            break;
+                        case ColumnType.BYTE:
+                            placeholderFunctions.add(new ByteConstant(function.getPosition(), (byte) Numbers.parseInt(fillNode.token)));
+                            break;
                         default:
-                            assert false;
+                            throw SqlException.$(function.getPosition(), "Unsupported type: ").put(ColumnType.nameOf(function.getType()));
                     }
                 } catch (NumericException e) {
                     throw SqlException.position(fillNode.position).put("invalid number: ").put(fillNode.token);

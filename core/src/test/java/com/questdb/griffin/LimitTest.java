@@ -400,6 +400,66 @@ public class LimitTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testRangeVariable() throws Exception {
+        String query = "select * from y limit :lo,:hi";
+        TestUtils.assertMemoryLeak(() -> {
+            try {
+                String expected1 = "i\tsym2\tprice\ttimestamp\tb\tc\td\te\tf\tg\tik\tj\tk\tl\tm\tn\n" +
+                        "5\tgoogl\t0.868000000000\t2018-01-01T00:10:00.000000Z\ttrue\tZ\t0.427470428635\t0.0212\t179\t\t\t5746626297238459939\t1970-01-01T01:06:40.000000Z\t35\t00000000 91 88 28 a5 18 93 bd 0b 61 f5 5d d0 eb\tRGIIH\n" +
+                        "6\tmsft\t0.297000000000\t2018-01-01T00:12:00.000000Z\tfalse\tY\t0.267212048922\t0.1326\t215\t\t\t-8534688874718947140\t1970-01-01T01:23:20.000000Z\t34\t00000000 1c 0b 20 a2 86 89 37 11 2c 14\tUSZMZVQE\n" +
+                        "7\tgoogl\t0.076000000000\t2018-01-01T00:14:00.000000Z\ttrue\tE\t0.760625263412\t0.0658\t1018\t2015-02-23T07:09:35.550Z\tPEHN\t7797019568426198829\t1970-01-01T01:40:00.000000Z\t10\t00000000 80 c9 eb a3 67 7a 1a 79 e4 35 e4 3a dc 5c 65 ff\tIGYVFZ\n" +
+                        "8\tibm\t0.543000000000\t2018-01-01T00:16:00.000000Z\ttrue\tO\t0.483525620204\t0.8688\t355\t2015-09-06T20:21:06.672Z\t\t-9219078548506735248\t1970-01-01T01:56:40.000000Z\t33\t00000000 b3 14 cd 47 0b 0c 39 12 f7 05 10 f4 6d f1\tXUKLGMXSLUQ\n";
+
+                String expected2 = "i\tsym2\tprice\ttimestamp\tb\tc\td\te\tf\tg\tik\tj\tk\tl\tm\tn\n" +
+                        "7\tgoogl\t0.076000000000\t2018-01-01T00:14:00.000000Z\ttrue\tE\t0.760625263412\t0.0658\t1018\t2015-02-23T07:09:35.550Z\tPEHN\t7797019568426198829\t1970-01-01T01:40:00.000000Z\t10\t00000000 80 c9 eb a3 67 7a 1a 79 e4 35 e4 3a dc 5c 65 ff\tIGYVFZ\n" +
+                        "8\tibm\t0.543000000000\t2018-01-01T00:16:00.000000Z\ttrue\tO\t0.483525620204\t0.8688\t355\t2015-09-06T20:21:06.672Z\t\t-9219078548506735248\t1970-01-01T01:56:40.000000Z\t33\t00000000 b3 14 cd 47 0b 0c 39 12 f7 05 10 f4 6d f1\tXUKLGMXSLUQ\n" +
+                        "9\tmsft\t0.623000000000\t2018-01-01T00:18:00.000000Z\tfalse\tI\t0.878611111254\t0.9966\t403\t2015-08-19T00:36:24.375Z\tCPSW\t-8506266080452644687\t1970-01-01T02:13:20.000000Z\t6\t00000000 9a ef 88 cb 4b a1 cf cf 41 7d a6\t\n" +
+                        "10\tmsft\t0.509000000000\t2018-01-01T00:20:00.000000Z\ttrue\tI\t0.491532681548\t0.0024\t195\t2015-10-15T17:45:21.025Z\t\t3987576220753016999\t1970-01-01T02:30:00.000000Z\t20\t00000000 96 37 08 dd 98 ef 54 88 2a a2\t\n" +
+                        "11\tmsft\t0.578000000000\t2018-01-01T00:22:00.000000Z\ttrue\tP\t0.746701366813\t0.5795\t122\t2015-11-25T07:36:56.937Z\t\t2004830221820243556\t1970-01-01T02:46:40.000000Z\t45\t00000000 a0 dd 44 11 e2 a3 24 4e 44 a8 0d fe 27 ec 53 13\n" +
+                        "00000010 5d b2 15 e7\tWGRMDGGIJYDVRV\n" +
+                        "12\tmsft\t0.661000000000\t2018-01-01T00:24:00.000000Z\ttrue\tO\t0.013960795460\t0.8136\t345\t2015-08-18T10:31:42.373Z\tVTJW\t5045825384817367685\t1970-01-01T03:03:20.000000Z\t23\t00000000 51 9d 5d 28 ac 02 2e fe 05 3b 94 5f ec d3 dc f8\n" +
+                        "00000010 43\tJCTIZKYFLUHZ\n";
+
+                compiler.compile(
+                        "create table y as (" +
+                                "select" +
+                                " to_int(x) i," +
+                                " rnd_symbol('msft','ibm', 'googl') sym2," +
+                                " round(rnd_double(0), 3) price," +
+                                " to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp," +
+                                " rnd_boolean() b," +
+                                " rnd_str(1,1,2) c," +
+                                " rnd_double(2) d," +
+                                " rnd_float(2) e," +
+                                " rnd_short(10,1024) f," +
+                                " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                                " rnd_symbol(4,4,4,2) ik," +
+                                " rnd_long() j," +
+                                " timestamp_sequence(to_timestamp(0), 1000000000) k," +
+                                " rnd_byte(2,50) l," +
+                                " rnd_bin(10, 20, 2) m," +
+                                " rnd_str(5,16,2) n" +
+                                " from long_sequence(30)" +
+                                ") timestamp(timestamp)"
+                        , bindVariableService
+                );
+
+                bindVariableService.setLong("lo", 4);
+                bindVariableService.setInt("hi", 8);
+
+                assertQueryAndCache(expected1, query, "timestamp", true);
+                bindVariableService.setLong("lo", 6);
+                bindVariableService.setInt("hi", 12);
+
+                assertQueryAndCache(expected2, query, "timestamp", true);
+            } finally {
+                engine.releaseAllWriters();
+                engine.releaseAllReaders();
+            }
+        });
+    }
+
+    @Test
     public void testTopRange() throws Exception {
         String expected = "i\tsym2\tprice\ttimestamp\tb\tc\td\te\tf\tg\tik\tj\tk\tl\tm\tn\n" +
                 "5\tgoogl\t0.868000000000\t2018-01-01T00:10:00.000000Z\ttrue\tZ\t0.427470428635\t0.0212\t179\t\t\t5746626297238459939\t1970-01-01T01:06:40.000000Z\t35\t00000000 91 88 28 a5 18 93 bd 0b 61 f5 5d d0 eb\tRGIIH\n" +

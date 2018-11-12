@@ -2235,6 +2235,46 @@ public class SqlCompilerTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCreateTableFail() throws Exception {
+
+        FilesFacade ff = new FilesFacadeImpl() {
+            int count = 8; // this count is very deliberately coincidental with
+
+            // number of rows we are appending
+            @Override
+            public long mmap(long fd, long len, long offset, int mode) {
+                if (count-- > 0) {
+                    return super.mmap(fd, len, offset, mode);
+                }
+                return -1;
+            }
+        };
+
+        CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+            @Override
+            public FilesFacade getFilesFacade() {
+                return ff;
+            }
+        };
+
+        TestUtils.assertMemoryLeak(() -> {
+            try (Engine engine = new Engine(configuration)) {
+                try (SqlCompiler compiler = new SqlCompiler(engine, configuration)) {
+                    try {
+                        compiler.compile("create table x as (select to_int(x) c, abs(rnd_int() % 650) a from long_sequence(5000000))", bindVariableService);
+                        Assert.fail();
+                    } catch (CairoException e) {
+                        Assert.assertTrue(Chars.contains(e.getMessage(), "Cannot mmap"));
+                    }
+
+                    Assert.assertEquals(0, engine.getBusyReaderCount());
+                    Assert.assertEquals(0, engine.getBusyWriterCount());
+                }
+            }
+        });
+    }
+
+    @Test
     public void testCreateTableUtf8() throws SqlException, IOException {
         compiler.compile("create table доходы(экспорт int)", bindVariableService);
 
@@ -2520,26 +2560,6 @@ public class SqlCompilerTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testInsertAsSelectFewerSelectColumns() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            try {
-                compiler.compile("create table y as (select x, to_int(2*((x-1)/2))+2 m, abs(rnd_int() % 100) b from long_sequence(10))", bindVariableService);
-                try {
-                    compiler.compile("insert into y select to_int(2*((x-1+10)/2))+2 m, abs(rnd_int() % 100) b from long_sequence(6)", bindVariableService);
-                } catch (SqlException e) {
-                    Assert.assertEquals(14, e.getPosition());
-                    Assert.assertTrue(Chars.contains(e.getFlyweightMessage(), "not enough"));
-                }
-                Assert.assertEquals(0, engine.getBusyReaderCount());
-                Assert.assertEquals(0, engine.getBusyWriterCount());
-            } finally {
-                engine.releaseAllWriters();
-                engine.releaseAllReaders();
-            }
-        });
-    }
-
-    @Test
     public void testInsertAsSelectColumnSubset2() throws Exception {
         String expectedData = "a\tb\tc\td\te\tf\tg\tj\tk\tl\tm\tn\to\tp\n" +
                 "NaN\tNaN\tfalse\t\t0.804322409997\tNaN\t-13027\t\t\tNaN\tNaN\t\t0\t\n" +
@@ -2761,6 +2781,26 @@ public class SqlCompilerTest extends AbstractCairoTest {
                     TestUtils.assertContains(e.getMessage(), errorMessage);
                 }
 
+                Assert.assertEquals(0, engine.getBusyReaderCount());
+                Assert.assertEquals(0, engine.getBusyWriterCount());
+            } finally {
+                engine.releaseAllWriters();
+                engine.releaseAllReaders();
+            }
+        });
+    }
+
+    @Test
+    public void testInsertAsSelectFewerSelectColumns() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try {
+                compiler.compile("create table y as (select x, to_int(2*((x-1)/2))+2 m, abs(rnd_int() % 100) b from long_sequence(10))", bindVariableService);
+                try {
+                    compiler.compile("insert into y select to_int(2*((x-1+10)/2))+2 m, abs(rnd_int() % 100) b from long_sequence(6)", bindVariableService);
+                } catch (SqlException e) {
+                    Assert.assertEquals(14, e.getPosition());
+                    Assert.assertTrue(Chars.contains(e.getFlyweightMessage(), "not enough"));
+                }
                 Assert.assertEquals(0, engine.getBusyReaderCount());
                 Assert.assertEquals(0, engine.getBusyWriterCount());
             } finally {

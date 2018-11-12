@@ -32,7 +32,7 @@ import com.questdb.cairo.sql.*;
 import com.questdb.griffin.FunctionParser;
 import com.questdb.griffin.SqlException;
 import com.questdb.griffin.SqlExecutionContext;
-import com.questdb.griffin.engine.EmptyTableRecordCursor;
+import com.questdb.griffin.engine.EmptyTableRandomRecordCursor;
 import com.questdb.griffin.engine.functions.GroupByFunction;
 import com.questdb.griffin.engine.functions.bind.BindVariableService;
 import com.questdb.griffin.engine.functions.columns.TimestampColumn;
@@ -150,7 +150,7 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
                     interpolatorFunctions.add(InterpolationUtil.INTERPOLATE_TIMESTAMP);
                     break;
                 default:
-                    throw new UnsupportedOperationException();
+                    throw SqlException.$(function.getPosition(), "Unsupported type: ").put(ColumnType.nameOf(function.getType()));
             }
         }
 
@@ -178,7 +178,6 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
 
     @Override
     public void close() {
-        // todo: test that functions are indeed being freed
         for (int i = 0, n = recordFunctions.size(); i < n; i++) {
             recordFunctions.getQuick(i).close();
         }
@@ -211,7 +210,7 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
             // no data, nothing to do
             if (recordKeyMap.size() == 0) {
                 baseCursor.close();
-                return EmptyTableRecordCursor.INSTANCE;
+                return EmptyTableRandomRecordCursor.INSTANCE;
             }
 
             // topTop() is guaranteeing that we get
@@ -365,7 +364,6 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
             return initFunctionsAndCursor(bindVariableService, dataMap.getCursor(), baseCursor);
         } catch (CairoException e) {
             baseCursor.close();
-            //todo: free other things
             throw e;
         }
     }

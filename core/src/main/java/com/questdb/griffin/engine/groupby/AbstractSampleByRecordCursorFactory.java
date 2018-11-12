@@ -97,17 +97,22 @@ public class AbstractSampleByRecordCursorFactory implements RecordCursorFactory 
         this.mapSink = RecordSinkFactory.getInstance(asm, metadata, listColumnFilter, false);
         // this is the map itself, which we must not forget to free when factory closes
         this.map = MapFactory.createMap(configuration, keyTypes, valueTypes);
-        this.base = base;
-        this.metadata = groupByMetadata;
-        this.cursor = cursorLambda.createCursor(
-                map,
-                mapSink,
-                timestampSampler,
-                metadata.getTimestampIndex(),
-                groupByFunctions,
-                recordFunctions,
-                symbolTableIndex
-        );
+        try {
+            this.base = base;
+            this.metadata = groupByMetadata;
+            this.cursor = cursorLambda.createCursor(
+                    map,
+                    mapSink,
+                    timestampSampler,
+                    metadata.getTimestampIndex(),
+                    groupByFunctions,
+                    recordFunctions,
+                    symbolTableIndex
+            );
+        } catch (SqlException | CairoException e) {
+            map.close();
+            throw e;
+        }
     }
 
     @Override
@@ -148,6 +153,7 @@ public class AbstractSampleByRecordCursorFactory implements RecordCursorFactory 
 
         // empty map? this means that base cursor was empty
         if (map.size() == 0) {
+            baseCursor.close();
             return EmptyTableRecordCursor.INSTANCE;
         }
 

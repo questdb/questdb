@@ -41,6 +41,20 @@ public final class Net {
     private Net() {
     }
 
+    /**
+     * Aborts blocking accept() call. On Darwin and Windows
+     * this method simply closes the underlying file descriptor.
+     * On Linux this method calls shutdown().
+     * <p>
+     * Once accept() exists it is by convention liable for
+     * closing its own file descriptor.
+     *
+     * @param fd file descriptor
+     * @return 0 when call was successful and -1 otherwise. In case of
+     * error errno() would return error code.
+     */
+    public static native int abortAccept(long fd);
+
     public native static long accept(long fd);
 
     public static void appendIP4(CharSink sink, long ip) {
@@ -89,8 +103,6 @@ public final class Net {
     public native static int getPeerPort(long fd);
 
     public static native boolean isDead(long fd);
-
-    public static native int abortAccept(long fd);
 
     public static boolean join(long fd, CharSequence bindIPv4Address, CharSequence groupIPv4Address) {
         return join(fd, parseIPv4(bindIPv4Address), parseIPv4(groupIPv4Address));

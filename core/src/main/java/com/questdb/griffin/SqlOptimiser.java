@@ -2131,16 +2131,14 @@ class SqlOptimiser {
         private CharSequenceIntHashMap nameTypeMap;
 
         @Override
-        public void visit(ExpressionNode node) throws SqlException {
+        public void visit(ExpressionNode node) {
             if (node.type == ExpressionNode.LITERAL) {
                 final int dot = Chars.indexOf(node.token, '.');
                 int index = dot == -1 ? nameTypeMap.keyIndex(node.token) : nameTypeMap.keyIndex(node.token, dot + 1, node.token.length());
-                if (index < 0) {
-                    if (nameTypeMap.valueAt(index) != ExpressionNode.LITERAL) {
-                        throw NonLiteralException.INSTANCE;
-                    }
-                } else {
-                    throw SqlException.invalidColumn(node.position, node.token);
+                // these columns are pre-validated
+                assert index < 0;
+                if (nameTypeMap.valueAt(index) != ExpressionNode.LITERAL) {
+                    throw NonLiteralException.INSTANCE;
                 }
             }
         }
