@@ -26,12 +26,13 @@ package com.questdb.griffin.engine;
 import com.questdb.cairo.AbstractRecordCursorFactory;
 import com.questdb.cairo.sql.*;
 import com.questdb.griffin.engine.functions.bind.BindVariableService;
+import org.jetbrains.annotations.Nullable;
 
-public class LimitRecordCustorFactory extends AbstractRecordCursorFactory {
+public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
     private final RecordCursorFactory base;
     private final LimitRecordCursor cursor;
 
-    public LimitRecordCustorFactory(RecordCursorFactory base, Function loFunction, Function hiFunction) {
+    public LimitRecordCursorFactory(RecordCursorFactory base, Function loFunction, @Nullable Function hiFunction) {
         super(base.getMetadata());
         this.base = base;
         this.cursor = new LimitRecordCursor(loFunction, hiFunction);
@@ -39,7 +40,7 @@ public class LimitRecordCustorFactory extends AbstractRecordCursorFactory {
 
     @Override
     public RecordCursor getCursor(BindVariableService bindVariableService) {
-        cursor.of(base.getCursor(bindVariableService));
+        cursor.of(base.getCursor(bindVariableService), bindVariableService);
         return cursor;
     }
 
@@ -48,7 +49,7 @@ public class LimitRecordCustorFactory extends AbstractRecordCursorFactory {
         return base.isRandomAccessCursor();
     }
 
-    private static class LimitRecordCursor implements DelegatingRecordCursor {
+    private static class LimitRecordCursor implements RecordCursor {
         private final Function loFunction;
         private final Function hiFunction;
         private RecordCursor base;
@@ -94,24 +95,29 @@ public class LimitRecordCustorFactory extends AbstractRecordCursorFactory {
             base.recordAt(rowId);
         }
 
+        public void of(RecordCursor base, BindVariableService bindVariableService) {
+            this.base = base;
+            loFunction.init(base, bindVariableService);
+            if (hiFunction != null) {
+                hiFunction.init(base, bindVariableService);
+            }
+            toTop();
+        }
+
         @Override
         public void toTop() {
             base.toTop();
             long lo = loFunction.getLong(null);
             if (lo < 0 && hiFunction == null) {
                 // last N rows
-                long count = 0;
-                while (base.hasNext()) {
-                    count++;
-                }
+                long count = countRows();
 
                 base.toTop();
                 // lo is negative, -5 for example
                 // if we have 12 records we need to skip 12-5 = 7
                 // if we have 4 records = return all of them
                 if (count > -lo) {
-                    count += lo;
-                    while (count-- > 0 && base.hasNext()) ;
+                    skipTo(count + lo);
                 }
                 // set limit to return remaining rows
                 limit = -lo;
@@ -125,39 +131,51 @@ public class LimitRecordCustorFactory extends AbstractRecordCursorFactory {
                     // right, here we are looking for something like
                     // -10,-5 five rows away from tail
 
-                    long count = 0;
-                    while (base.hasNext()) {
-                        count++;
-                    }
+                    if (lo < hi) {
+                        long count = countRows();
+                        // when count < -hi we have empty cursor
+                        if (count >= -hi) {
+                            base.toTop();
 
-                    // when count < -hi we have empty cursor
-                    if (count >= -hi) {
-                        base.toTop();
-
-                        if (count < -lo) {
-                            // if we asked for -9,-4 but there are 7 records in cursor
-                            // we would first ignore last 4 and return first 3
-                            limit = count + hi;
-                        } else {
-                            count += lo;
-                            while (count-- > 0 && base.hasNext()) ;
-                            limit = -lo + hi;
+                            if (count < -lo) {
+                                // if we asked for -9,-4 but there are 7 records in cursor
+                                // we would first ignore last 4 and return first 3
+                                limit = count + hi;
+                            } else {
+                                skipTo(count + lo);
+                                limit = -lo + hi;
+                            }
                         }
+                    } else {
+                        // this is invalid bottom range, for example -3, -10
+                        limit = 0;
                     }
                 } else {
-                    if (lo > 0) {
-                        long count = lo;
-                        while (--count > 0 && base.hasNext()) ;
+                    if (hi < 0) {
+                        limit = countRows() - lo + hi;
+                        base.toTop();
+                    } else {
+                        limit = hi - lo;
                     }
-                    limit = hi - lo + 1;
+
+                    if (lo > 0 && limit > 0) {
+                        skipTo(lo);
+                    }
                 }
             }
         }
 
-        @Override
-        public void of(RecordCursor base) {
-            this.base = base;
-            toTop();
+        private long countRows() {
+            long count = 0;
+            while (base.hasNext()) {
+                count++;
+            }
+            return count;
+        }
+
+        private void skipTo(long count) {
+            //noinspection StatementWithEmptyBody
+            while (count-- > 0 && base.hasNext()) ;
         }
     }
 }

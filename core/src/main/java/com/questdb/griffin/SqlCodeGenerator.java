@@ -27,8 +27,9 @@ import com.questdb.cairo.*;
 import com.questdb.cairo.map.RecordValueSinkFactory;
 import com.questdb.cairo.sql.*;
 import com.questdb.griffin.engine.EmptyTableRecordCursorFactory;
-import com.questdb.griffin.engine.LimitRecordCustorFactory;
+import com.questdb.griffin.engine.LimitRecordCursorFactory;
 import com.questdb.griffin.engine.functions.columns.SymbolColumn;
+import com.questdb.griffin.engine.functions.constants.LongConstant;
 import com.questdb.griffin.engine.groupby.*;
 import com.questdb.griffin.engine.join.*;
 import com.questdb.griffin.engine.orderby.RecordComparatorCompiler;
@@ -40,6 +41,7 @@ import com.questdb.std.*;
 import org.jetbrains.annotations.NotNull;
 
 public class SqlCodeGenerator {
+    private static final IntHashSet limitTypes = new IntHashSet();
     private final WhereClauseParser filterAnalyser = new WhereClauseParser();
     private final FunctionParser functionParser;
     private final CairoEngine engine;
@@ -625,11 +627,29 @@ public class SqlCodeGenerator {
             return factory;
         }
 
-        Function loFunc = functionParser.parseFunction(limitLo, factory.getMetadata(), executionContext);
-        Function hiFunc = functionParser.parseFunction(limitHi, factory.getMetadata(), executionContext);
+        final Function loFunc;
+        final Function hiFunc;
 
-        // todo: validate types and ranges
-        return new LimitRecordCustorFactory(factory, loFunc, hiFunc);
+        if (limitLo == null) {
+            loFunc = new LongConstant(0, 0L);
+        } else {
+            loFunc = functionParser.parseFunction(limitLo, EmptyRecordMetadata.INSTANCE, executionContext);
+            final int type = loFunc.getType();
+            if (limitTypes.excludes(type)) {
+                throw SqlException.$(limitLo.position, "invalid type: ").put(ColumnType.nameOf(type));
+            }
+        }
+
+        if (limitHi != null) {
+            hiFunc = functionParser.parseFunction(limitHi, EmptyRecordMetadata.INSTANCE, executionContext);
+            final int type = hiFunc.getType();
+            if (limitTypes.excludes(type)) {
+                throw SqlException.$(limitHi.position, "invalid type: ").put(ColumnType.nameOf(type));
+            }
+        } else {
+            hiFunc = null;
+        }
+        return new LimitRecordCursorFactory(factory, loFunc, hiFunc);
     }
 
     private RecordCursorFactory generateNoSelect(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
@@ -1251,4 +1271,12 @@ public class SqlCodeGenerator {
         }
         return firstColumnType;
     }
+
+    static {
+        limitTypes.add(ColumnType.LONG);
+        limitTypes.add(ColumnType.BYTE);
+        limitTypes.add(ColumnType.SHORT);
+        limitTypes.add(ColumnType.INT);
+    }
+
 }

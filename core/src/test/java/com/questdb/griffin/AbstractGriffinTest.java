@@ -209,11 +209,9 @@ public class AbstractGriffinTest extends AbstractCairoTest {
         }
 
         if (symbolIndexes != null) {
-            boolean tested = false;
             cursor.toTop();
             final Record record = cursor.getRecord();
             while (cursor.hasNext()) {
-                tested = true;
                 for (int i = 0, n = symbolIndexes.size(); i < n; i++) {
                     int column = symbolIndexes.getQuick(i);
                     SymbolTable symbolTable = cursor.getSymbolTable(column);
@@ -223,7 +221,6 @@ public class AbstractGriffinTest extends AbstractCairoTest {
                     TestUtils.assertEquals(sym, symbolTable.value(value));
                 }
             }
-            Assert.assertTrue(tested);
         }
     }
 
