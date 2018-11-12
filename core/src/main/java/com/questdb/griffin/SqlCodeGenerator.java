@@ -27,6 +27,7 @@ import com.questdb.cairo.*;
 import com.questdb.cairo.map.RecordValueSinkFactory;
 import com.questdb.cairo.sql.*;
 import com.questdb.griffin.engine.EmptyTableRecordCursorFactory;
+import com.questdb.griffin.engine.LimitRecordCustorFactory;
 import com.questdb.griffin.engine.functions.columns.SymbolColumn;
 import com.questdb.griffin.engine.groupby.*;
 import com.questdb.griffin.engine.join.*;
@@ -616,6 +617,21 @@ public class SqlCodeGenerator {
         );
     }
 
+    private RecordCursorFactory generateLimit(RecordCursorFactory factory, QueryModel model, SqlExecutionContext executionContext) throws SqlException {
+        ExpressionNode limitLo = model.getLimitLo();
+        ExpressionNode limitHi = model.getLimitHi();
+
+        if (limitLo == null && limitHi == null) {
+            return factory;
+        }
+
+        Function loFunc = functionParser.parseFunction(limitLo, factory.getMetadata(), executionContext);
+        Function hiFunc = functionParser.parseFunction(limitHi, factory.getMetadata(), executionContext);
+
+        // todo: validate types and ranges
+        return new LimitRecordCustorFactory(factory, loFunc, hiFunc);
+    }
+
     private RecordCursorFactory generateNoSelect(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
         ExpressionNode tableName = model.getTableName();
         if (tableName != null) {
@@ -723,7 +739,17 @@ public class SqlCodeGenerator {
     }
 
     private RecordCursorFactory generateQuery(QueryModel model, SqlExecutionContext executionContext, boolean processJoins) throws SqlException {
-        return generateOrderBy(generateSelect(model, executionContext, processJoins), model);
+        return generateLimit(
+                generateOrderBy(
+                        generateSelect(
+                                model,
+                                executionContext,
+                                processJoins),
+                        model
+                ),
+                model,
+                executionContext
+        );
     }
 
     @NotNull
@@ -998,9 +1024,6 @@ public class SqlCodeGenerator {
 
     @SuppressWarnings("ConstantConditions")
     private RecordCursorFactory generateTableQuery(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
-
-//        applyLimit(model);
-
         final ExpressionNode latestBy = model.getLatestBy();
         final ExpressionNode whereClause = model.getWhereClause();
 
