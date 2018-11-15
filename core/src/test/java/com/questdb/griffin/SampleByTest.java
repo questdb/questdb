@@ -27,6 +27,7 @@ import com.questdb.cairo.CairoConfiguration;
 import com.questdb.cairo.CairoException;
 import com.questdb.cairo.DefaultCairoConfiguration;
 import com.questdb.cairo.Engine;
+import com.questdb.cairo.sql.RecordCursor;
 import com.questdb.cairo.sql.RecordCursorFactory;
 import com.questdb.griffin.engine.functions.rnd.SharedRandom;
 import com.questdb.std.Chars;
@@ -141,6 +142,126 @@ public class SampleByTest extends AbstractGriffinTest {
                         "UU\t4\n" +
                         "PL\t4\n" +
                         "KK\t1\n",
+                true);
+    }
+
+    @Test
+    public void testGroupByEmpty() throws Exception {
+        assertQuery("c\tsum_t\n",
+                "select c, sum_t(d) from x",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " x," +
+                        " rnd_double(0) d," +
+                        " rnd_symbol('XY','ZP', null, 'UU') c" +
+                        " from" +
+                        " long_sequence(0)" +
+                        ")",
+                null,
+                "insert into x select * from (" +
+                        "select" +
+                        " x," +
+                        " rnd_double(0) d," +
+                        " rnd_symbol('KK', 'PL') c" +
+                        " from" +
+                        " long_sequence(5)" +
+                        ")",
+                "c\tsum_t\n" +
+                        "PL\t1.088880189118\n" +
+                        "KK\t2.614956708936\n",
+                true);
+    }
+
+    @Test
+    public void testGroupByFail() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+
+            compiler.compile(("create table x as " +
+                    "(" +
+                    "select" +
+                    " x," +
+                    " rnd_double(0) d," +
+                    " rnd_symbol('XY','ZP', null, 'UU') c" +
+                    " from" +
+                    " long_sequence(1000000)" +
+                    ")"), bindVariableService);
+
+            engine.releaseAllWriters();
+            engine.releaseAllReaders();
+
+            final FilesFacade ff = new FilesFacadeImpl() {
+                int count = 5;
+
+                @Override
+                public long mmap(long fd, long len, long offset, int mode) {
+                    System.out.println("mmmap");
+                    if (count-- > 0) {
+                        return super.mmap(fd, len, offset, mode);
+                    }
+                    return -1;
+                }
+            };
+
+            final CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+                @Override
+                public FilesFacade getFilesFacade() {
+                    return ff;
+                }
+            };
+
+            try (Engine engine = new Engine(configuration)) {
+                try (SqlCompiler compiler = new SqlCompiler(engine, configuration)) {
+                    try {
+                        try (RecordCursorFactory factory = compiler.compile("select c, sum_t(d) from x", bindVariableService)) {
+                            factory.getCursor(bindVariableService);
+                        }
+                        Assert.fail();
+                    } catch (CairoException e) {
+                        TestUtils.assertContains(e.getMessage(), "Cannot mmap");
+                    }
+                    Assert.assertEquals(0, engine.getBusyReaderCount());
+                    Assert.assertEquals(0, engine.getBusyWriterCount());
+                }
+                engine.releaseAllReaders();
+                engine.releaseAllWriters();
+            }
+        });
+    }
+
+    @Test
+    public void testGroupByFreesFunctions() throws Exception {
+        assertQuery("c\tsum_t\n" +
+                        "UU\t4.192763851972\n" +
+                        "XY\t5.326379743132\n" +
+                        "\t1.858671018923\n" +
+                        "ZP\t0.783663562521\n",
+                "select c, sum_t(d) from x",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " x," +
+                        " rnd_double(0) d," +
+                        " rnd_symbol('XY','ZP', null, 'UU') c" +
+                        " from" +
+                        " long_sequence(20)" +
+                        ")",
+                null,
+                "insert into x select * from (" +
+                        "select" +
+                        " x," +
+                        " rnd_double(0) d," +
+                        " rnd_symbol('KK', 'PL') c" +
+                        " from" +
+                        " long_sequence(5)" +
+                        ")",
+                "c\tsum_t\n" +
+                        "UU\t4.192763851972\n" +
+                        "XY\t5.326379743132\n" +
+                        "\t1.858671018923\n" +
+                        "ZP\t0.783663562521\n" +
+                        "KK\t1.643569909151\n" +
+                        "PL\t1.162716966946\n",
                 true);
     }
 
@@ -894,6 +1015,106 @@ public class SampleByTest extends AbstractGriffinTest {
                         "\t135.835983782176\t1970-01-04T06:00:00.000000Z\n" +
                         "UVSD\t49.428905119585\t1970-01-04T06:00:00.000000Z\n" +
                         "KGHV\t67.525095471124\t1970-01-04T09:00:00.000000Z\n",
+                false);
+    }
+
+    @Test
+    public void testSampleFillNoneDataGaps() throws Exception {
+        assertQuery("b\tsum\tk\n" +
+                        "\t11.427984775756\t1970-01-03T00:00:00.000000Z\n" +
+                        "VTJW\t42.177688419694\t1970-01-03T01:00:00.000000Z\n" +
+                        "RXGZ\t23.905290108465\t1970-01-03T02:00:00.000000Z\n" +
+                        "PEHN\t70.943604871712\t1970-01-03T03:00:00.000000Z\n" +
+                        "\t87.996347253916\t1970-01-03T04:00:00.000000Z\n" +
+                        "\t32.881769076795\t1970-01-03T05:00:00.000000Z\n" +
+                        "HYRX\t97.711031460512\t1970-01-03T06:00:00.000000Z\n" +
+                        "PEHN\t81.468079445006\t1970-01-03T07:00:00.000000Z\n" +
+                        "\t57.934663268622\t1970-01-03T08:00:00.000000Z\n" +
+                        "HYRX\t12.026122412833\t1970-01-03T09:00:00.000000Z\n" +
+                        "VTJW\t48.820511018587\t1970-01-03T10:00:00.000000Z\n" +
+                        "\t26.922103479745\t1970-01-03T11:00:00.000000Z\n" +
+                        "\t52.984059417621\t1970-01-03T12:00:00.000000Z\n" +
+                        "PEHN\t84.452581772111\t1970-01-03T13:00:00.000000Z\n" +
+                        "\t97.501988537251\t1970-01-03T14:00:00.000000Z\n" +
+                        "PEHN\t49.005104498852\t1970-01-03T15:00:00.000000Z\n" +
+                        "\t80.011211397392\t1970-01-03T16:00:00.000000Z\n" +
+                        "\t92.050039469858\t1970-01-03T17:00:00.000000Z\n" +
+                        "\t45.634456960908\t1970-01-03T18:00:00.000000Z\n" +
+                        "\t40.455469747939\t1970-01-03T19:00:00.000000Z\n",
+                "select b, sum(a), k from x sample by 30m fill(none)",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(to_timestamp(172800000000), 3600000000) k" +
+                        " from" +
+                        " long_sequence(20)" +
+                        ") timestamp(k) partition by NONE",
+                "k",
+                "insert into x select * from (" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(to_timestamp(277200000000), 3600000000) k" +
+                        " from" +
+                        " long_sequence(5)" +
+                        ") timestamp(k)",
+                "b\tsum\tk\n" +
+                        "\t11.427984775756\t1970-01-03T00:00:00.000000Z\n" +
+                        "VTJW\t42.177688419694\t1970-01-03T01:00:00.000000Z\n" +
+                        "RXGZ\t23.905290108465\t1970-01-03T02:00:00.000000Z\n" +
+                        "PEHN\t70.943604871712\t1970-01-03T03:00:00.000000Z\n" +
+                        "\t87.996347253916\t1970-01-03T04:00:00.000000Z\n" +
+                        "\t32.881769076795\t1970-01-03T05:00:00.000000Z\n" +
+                        "HYRX\t97.711031460512\t1970-01-03T06:00:00.000000Z\n" +
+                        "PEHN\t81.468079445006\t1970-01-03T07:00:00.000000Z\n" +
+                        "\t57.934663268622\t1970-01-03T08:00:00.000000Z\n" +
+                        "HYRX\t12.026122412833\t1970-01-03T09:00:00.000000Z\n" +
+                        "VTJW\t48.820511018587\t1970-01-03T10:00:00.000000Z\n" +
+                        "\t26.922103479745\t1970-01-03T11:00:00.000000Z\n" +
+                        "\t52.984059417621\t1970-01-03T12:00:00.000000Z\n" +
+                        "PEHN\t84.452581772111\t1970-01-03T13:00:00.000000Z\n" +
+                        "\t97.501988537251\t1970-01-03T14:00:00.000000Z\n" +
+                        "PEHN\t49.005104498852\t1970-01-03T15:00:00.000000Z\n" +
+                        "\t80.011211397392\t1970-01-03T16:00:00.000000Z\n" +
+                        "\t92.050039469858\t1970-01-03T17:00:00.000000Z\n" +
+                        "\t45.634456960908\t1970-01-03T18:00:00.000000Z\n" +
+                        "\t40.455469747939\t1970-01-03T19:00:00.000000Z\n" +
+                        "\t54.491550215189\t1970-01-04T05:00:00.000000Z\n" +
+                        "\t76.923818943378\t1970-01-04T06:00:00.000000Z\n" +
+                        "UVSD\t49.428905119585\t1970-01-04T07:00:00.000000Z\n" +
+                        "\t58.912164838798\t1970-01-04T08:00:00.000000Z\n" +
+                        "KGHV\t67.525095471124\t1970-01-04T09:00:00.000000Z\n",
+                false);
+    }
+
+    @Test
+    public void testSampleFillNoneEmpty() throws Exception {
+        assertQuery("b\tsum_t\tk\n",
+                "select b, sum_t(a), k from x sample by 3h fill(none)",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(to_timestamp(172800000000), 3600000000) k" +
+                        " from" +
+                        " long_sequence(0)" +
+                        ") timestamp(k) partition by NONE",
+                "k",
+                "insert into x select * from (" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(to_timestamp(277200000000), 3600000000) k" +
+                        " from" +
+                        " long_sequence(5)" +
+                        ") timestamp(k)",
+                "b\tsum_t\tk\n" +
+                        "IBBT\t0.359836721543\t1970-01-04T03:00:00.000000Z\n" +
+                        "\t202.746073098277\t1970-01-04T06:00:00.000000Z\n" +
+                        "\t57.934663268622\t1970-01-04T09:00:00.000000Z\n",
                 false);
     }
 
@@ -2161,6 +2382,89 @@ public class SampleByTest extends AbstractGriffinTest {
                         "WVDK\t20.560000000000\t0.0000\t0\t0\t0\t0\t1970-01-04T09:00:00.000000Z\n" +
                         "JOXP\t67.294055907736\t76.0625\t1165635863\t2316\t9\t-4547802916868961458\t1970-01-04T09:00:00.000000Z\n",
                 false);
+    }
+
+    @Test
+    public void testSampleFillValueAllTypesAndTruncate() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try {
+                compiler.compile((
+                        "create table x as " +
+                                "(" +
+                                "select" +
+                                " rnd_double(0)*100 a," +
+                                " rnd_symbol(5,4,4,1) b," +
+                                " rnd_float(0)*100 c," +
+                                " abs(rnd_int()) d," +
+                                " rnd_short() e," +
+                                " rnd_byte(3,10) f," +
+                                " rnd_long() g," +
+                                " timestamp_sequence(to_timestamp(172800000000), 3600000000) k" +
+                                " from" +
+                                " long_sequence(20)" +
+                                ") timestamp(k) partition by NONE"), bindVariableService);
+
+                try (final RecordCursorFactory factory = compiler.compile(
+                        "select b, sum(a), sum(c), sum(d), sum(e), sum(f), sum(g), k from x sample by 3h fill(20.56, 0, 0, 0, 0, 0)",
+                        bindVariableService)
+                ) {
+                    assertTimestamp("k", factory);
+                    String expected = "b\tsum\tsum1\tsum2\tsum3\tsum4\tsum5\tk\n" +
+                            "\t74.197525059489\t113.1213\t-1737520119\t868\t12\t-6307312481136788016\t1970-01-03T00:00:00.000000Z\n" +
+                            "CPSW\t0.359836721543\t76.7567\t113506296\t27809\t9\t-8889930662239044040\t1970-01-03T00:00:00.000000Z\n" +
+                            "PEHN\t20.560000000000\t0.0000\t0\t0\t0\t0\t1970-01-03T00:00:00.000000Z\n" +
+                            "RXGZ\t20.560000000000\t0.0000\t0\t0\t0\t0\t1970-01-03T00:00:00.000000Z\n" +
+                            "HYRX\t20.560000000000\t0.0000\t0\t0\t0\t0\t1970-01-03T00:00:00.000000Z\n" +
+                            "\t76.642567535961\t55.2249\t326010667\t-5741\t8\t7392877322819819290\t1970-01-03T03:00:00.000000Z\n" +
+                            "CPSW\t13.450170570900\t34.3569\t410717394\t18229\t10\t6820495939660535106\t1970-01-03T03:00:00.000000Z\n" +
+                            "PEHN\t15.786635599555\t12.5030\t264240638\t-7976\t6\t-8480005421611953360\t1970-01-03T03:00:00.000000Z\n" +
+                            "RXGZ\t20.560000000000\t0.0000\t0\t0\t0\t0\t1970-01-03T03:00:00.000000Z\n" +
+                            "HYRX\t20.560000000000\t0.0000\t0\t0\t0\t0\t1970-01-03T03:00:00.000000Z\n" +
+                            "\t85.059401417446\t92.1608\t301655269\t-14676\t12\t-2937111954994403426\t1970-01-03T06:00:00.000000Z\n" +
+                            "CPSW\t20.560000000000\t0.0000\t0\t0\t0\t0\t1970-01-03T06:00:00.000000Z\n" +
+                            "PEHN\t86.641589147185\t88.3742\t1566901076\t-3017\t3\t-5028301966399563827\t1970-01-03T06:00:00.000000Z\n" +
+                            "RXGZ\t20.560000000000\t0.0000\t0\t0\t0\t0\t1970-01-03T06:00:00.000000Z\n" +
+                            "HYRX\t20.560000000000\t0.0000\t0\t0\t0\t0\t1970-01-03T06:00:00.000000Z\n" +
+                            "\t106.781182496875\t103.1198\t-1265361864\t-2372\t12\t-1162868573414266742\t1970-01-03T09:00:00.000000Z\n" +
+                            "CPSW\t20.560000000000\t0.0000\t0\t0\t0\t0\t1970-01-03T09:00:00.000000Z\n" +
+                            "PEHN\t20.560000000000\t0.0000\t0\t0\t0\t0\t1970-01-03T09:00:00.000000Z\n" +
+                            "RXGZ\t3.831785863681\t42.0204\t1254404167\t1756\t5\t8702525427024484485\t1970-01-03T09:00:00.000000Z\n" +
+                            "HYRX\t20.560000000000\t0.0000\t0\t0\t0\t0\t1970-01-03T09:00:00.000000Z\n" +
+                            "\t117.609378432567\t189.8173\t-577162926\t-27064\t17\t2215137494070785317\t1970-01-03T12:00:00.000000Z\n" +
+                            "CPSW\t20.560000000000\t0.0000\t0\t0\t0\t0\t1970-01-03T12:00:00.000000Z\n" +
+                            "PEHN\t20.560000000000\t0.0000\t0\t0\t0\t0\t1970-01-03T12:00:00.000000Z\n" +
+                            "RXGZ\t20.560000000000\t0.0000\t0\t0\t0\t0\t1970-01-03T12:00:00.000000Z\n" +
+                            "HYRX\t24.008362859107\t76.5784\t2111250190\t-13252\t8\t7973684666911773753\t1970-01-03T12:00:00.000000Z\n" +
+                            "\t28.087836621127\t139.3070\t-1706978251\t11751\t17\t-8594661640328306402\t1970-01-03T15:00:00.000000Z\n" +
+                            "CPSW\t20.560000000000\t0.0000\t0\t0\t0\t0\t1970-01-03T15:00:00.000000Z\n" +
+                            "PEHN\t20.560000000000\t0.0000\t0\t0\t0\t0\t1970-01-03T15:00:00.000000Z\n" +
+                            "RXGZ\t20.560000000000\t0.0000\t0\t0\t0\t0\t1970-01-03T15:00:00.000000Z\n" +
+                            "HYRX\t2.683686301370\t10.6430\t502711083\t-8221\t9\t-7709579215942154242\t1970-01-03T15:00:00.000000Z\n" +
+                            "\t75.171605517508\t120.5189\t-1932725894\t514\t11\t-2863260545700031392\t1970-01-03T18:00:00.000000Z\n" +
+                            "CPSW\t20.560000000000\t0.0000\t0\t0\t0\t0\t1970-01-03T18:00:00.000000Z\n" +
+                            "PEHN\t20.560000000000\t0.0000\t0\t0\t0\t0\t1970-01-03T18:00:00.000000Z\n" +
+                            "RXGZ\t20.560000000000\t0.0000\t0\t0\t0\t0\t1970-01-03T18:00:00.000000Z\n" +
+                            "HYRX\t20.560000000000\t0.0000\t0\t0\t0\t0\t1970-01-03T18:00:00.000000Z\n";
+                    assertCursor(expected, factory, false);
+                    // make sure we get the same outcome when we get factory to create new cursor
+                    assertCursor(expected, factory, false);
+                    // make sure strings, binary fields and symbols are compliant with expected record behaviour
+                    assertVariableColumns(factory);
+
+                    compiler.compile("truncate table x", bindVariableService);
+                    try (RecordCursor cursor = factory.getCursor(bindVariableService)) {
+                        sink.clear();
+                        printer.print(cursor, factory.getMetadata(), true);
+                        TestUtils.assertEquals("b\tsum\tsum1\tsum2\tsum3\tsum4\tsum5\tk\n", sink);
+                    }
+                }
+                Assert.assertEquals(0, engine.getBusyReaderCount());
+                Assert.assertEquals(0, engine.getBusyWriterCount());
+            } finally {
+                engine.releaseAllWriters();
+                engine.releaseAllReaders();
+            }
+        });
     }
 
     @Test

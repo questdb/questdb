@@ -44,29 +44,6 @@ public class SqlCompiler implements Closeable {
     public static final ObjList<String> sqlControlSymbols = new ObjList<>(8);
     private final static Log LOG = LogFactory.getLog(SqlCompiler.class);
     private static final IntList castGroups = new IntList();
-
-    static {
-        castGroups.extendAndSet(ColumnType.BOOLEAN, 2);
-        castGroups.extendAndSet(ColumnType.BYTE, 1);
-        castGroups.extendAndSet(ColumnType.SHORT, 1);
-        castGroups.extendAndSet(ColumnType.INT, 1);
-        castGroups.extendAndSet(ColumnType.LONG, 1);
-        castGroups.extendAndSet(ColumnType.FLOAT, 1);
-        castGroups.extendAndSet(ColumnType.DOUBLE, 1);
-        castGroups.extendAndSet(ColumnType.DATE, 1);
-        castGroups.extendAndSet(ColumnType.TIMESTAMP, 1);
-        castGroups.extendAndSet(ColumnType.STRING, 3);
-        castGroups.extendAndSet(ColumnType.SYMBOL, 3);
-        castGroups.extendAndSet(ColumnType.BINARY, 4);
-
-        sqlControlSymbols.add("(");
-        sqlControlSymbols.add(")");
-        sqlControlSymbols.add(",");
-        sqlControlSymbols.add("/*");
-        sqlControlSymbols.add("*/");
-        sqlControlSymbols.add("--");
-    }
-
     private final SqlOptimiser optimiser;
     private final SqlParser parser;
     private final ObjectPool<ExpressionNode> sqlNodePool;
@@ -88,6 +65,7 @@ public class SqlCompiler implements Closeable {
     private final ExecutableMethod createTableMethod = this::createTable;
     private final SqlExecutionContextImpl executionContext = new SqlExecutionContextImpl();
     private final AssociativeCache<RecordCursorFactory> sqlCache;
+    private final ObjList<TableWriter> tableWriters = new ObjList<>();
 
     public SqlCompiler(CairoEngine engine, CairoConfiguration configuration) {
         this(engine, configuration, null);
@@ -148,6 +126,57 @@ public class SqlCompiler implements Closeable {
                 lexer.defineSymbol(op.token);
             }
         }
+    }
+
+    public void cache(CharSequence query, RecordCursorFactory factory) {
+        sqlCache.put(query, factory);
+    }
+
+    @Override
+    public void close() {
+        Misc.free(path);
+        Misc.free(sqlCache);
+    }
+
+    public RecordCursorFactory compile(CharSequence query, BindVariableService bindVariableService) throws SqlException {
+
+        // short circuit to cache if there is anything there
+        RecordCursorFactory result = sqlCache.poll(query);
+        if (result != null) {
+            return result;
+        }
+
+        // This method will not populate sql cache directly;
+        // factories are assumed to be non reentrant and once
+        // factory is out of this method the caller assumes
+        // full ownership over it. In that however caller may
+        // chose to return factory back to this or any other
+        // instance of compiler for safekeeping
+
+        executionContext.with(bindVariableService);
+
+        ExecutionModel executionModel = compileExecutionModel(query, executionContext);
+        if (executionModel == null) {
+            return null;
+        }
+
+        switch (executionModel.getModelType()) {
+            case ExecutionModel.QUERY:
+                return generate((QueryModel) executionModel, executionContext);
+            case ExecutionModel.CREATE_TABLE:
+                createTableWithRetries(query, executionModel);
+                break;
+            case ExecutionModel.INSERT_AS_SELECT:
+                executeWithRetries(
+                        query,
+                        insertAsSelectMethod,
+                        executionModel,
+                        configuration.getCreateAsSelectRetryCount());
+                break;
+            default:
+                break;
+        }
+        return null;
     }
 
     // Creates data type converter.
@@ -578,52 +607,6 @@ public class SqlCompiler implements Closeable {
                 || (from == ColumnType.SYMBOL && to == ColumnType.STRING);
     }
 
-    public void cache(CharSequence query, RecordCursorFactory factory) {
-        sqlCache.put(query, factory);
-    }
-
-    @Override
-    public void close() {
-        Misc.free(path);
-        Misc.free(sqlCache);
-    }
-
-    public RecordCursorFactory compile(CharSequence query, BindVariableService bindVariableService) throws SqlException {
-
-        // short circuit to cache if there is anything there
-        RecordCursorFactory result = sqlCache.poll(query);
-        if (result != null) {
-            return result;
-        }
-
-        // This method will not populate sql cache directly;
-        // factories are assumed to be non reentrant and once
-        // factory is out of this method the caller assumes
-        // full ownership over it. In that however caller may
-        // chose to return factory back to this or any other
-        // instance of compiler for safekeeping
-
-        executionContext.with(bindVariableService);
-        ExecutionModel executionModel = compileExecutionModel(query, executionContext);
-        switch (executionModel.getModelType()) {
-            case ExecutionModel.QUERY:
-                return generate((QueryModel) executionModel, executionContext);
-            case ExecutionModel.CREATE_TABLE:
-                createTableWithRetries(query, executionModel);
-                break;
-            case ExecutionModel.INSERT_AS_SELECT:
-                executeWithRetries(
-                        query,
-                        insertAsSelectMethod,
-                        executionModel,
-                        configuration.getCreateAsSelectRetryCount());
-                break;
-            default:
-                break;
-        }
-        return null;
-    }
-
     private void clear() {
         sqlNodePool.clear();
         characterStore.clear();
@@ -634,6 +617,14 @@ public class SqlCompiler implements Closeable {
     }
 
     private ExecutionModel compileExecutionModel(GenericLexer lexer, SqlExecutionContext executionContext) throws SqlException {
+
+        CharSequence tok = SqlUtil.fetchNext(lexer);
+        if (Chars.equals(tok, "truncate")) {
+            truncateTables(lexer);
+            return null;
+        }
+
+        lexer.unparse();
         ExecutionModel model = parser.parse(lexer, executionContext);
         switch (model.getModelType()) {
             case ExecutionModel.QUERY:
@@ -933,14 +924,9 @@ public class SqlCompiler implements Closeable {
     }
 
     private void insertAsSelect(ExecutionModel executionModel, SqlExecutionContext executionContext) throws SqlException {
-        InsertAsSelectModel model = (InsertAsSelectModel) executionModel;
-
-        final FilesFacade ff = configuration.getFilesFacade();
+        final InsertAsSelectModel model = (InsertAsSelectModel) executionModel;
         final ExpressionNode name = model.getTableName();
-
-        if (TableUtils.exists(ff, path, configuration.getRoot(), name.token) == TableUtils.TABLE_DOES_NOT_EXIST) {
-            throw SqlException.$(name.position, "table does not exist");
-        }
+        tableExistsOrFail(name.position, name.token);
 
         try (TableWriter writer = engine.getWriter(name.token);
              RecordCursorFactory factory = generate(model.getQueryModel(), executionContext)) {
@@ -1036,10 +1022,6 @@ public class SqlCompiler implements Closeable {
         }
     }
 
-    void setFullSatJoins(boolean value) {
-        codeGenerator.setFullFatJoins(value);
-    }
-
     // this exposed for testing only
     ExpressionNode parseExpression(CharSequence expression, QueryModel model) throws SqlException {
         clear();
@@ -1062,6 +1044,65 @@ public class SqlCompiler implements Closeable {
         }
         LOG.error().$("failed to clean up after create table failure [path=").$(path).$(", errno=").$(ff.errno()).$(']').$();
         return false;
+    }
+
+    void setFullSatJoins(boolean value) {
+        codeGenerator.setFullFatJoins(value);
+    }
+
+    private void tableExistsOrFail(int position, CharSequence tableName) throws SqlException {
+        if (TableUtils.exists(configuration.getFilesFacade(), path, configuration.getRoot(), tableName) == TableUtils.TABLE_DOES_NOT_EXIST) {
+            throw SqlException.$(position, "table '").put(tableName).put("' does not exist");
+        }
+    }
+
+    private void truncateTables(GenericLexer lexer) throws SqlException {
+        CharSequence tok;
+        tok = SqlUtil.fetchNext(lexer);
+        if (!Chars.equals("table", tok)) {
+            throw SqlException.$(lexer.lastTokenPosition(), "'table' expected");
+        }
+
+        tableWriters.clear();
+        try {
+            try {
+                while (true) {
+                    tok = SqlUtil.fetchNext(lexer);
+
+                    if (tok == null || Chars.equals(tok, ',')) {
+                        throw SqlException.$(lexer.getPosition(), "table name expected");
+                    }
+
+                    tableExistsOrFail(lexer.lastTokenPosition(), tok);
+
+                    try {
+                        tableWriters.add(engine.getWriter(tok));
+                    } catch (CairoException e) {
+                        LOG.info().$("failed to lock table for truncate: ").$((Sinkable) e).$();
+                        throw SqlException.$(lexer.lastTokenPosition(), "table '").put(tok).put("' is busy");
+                    }
+                    tok = SqlUtil.fetchNext(lexer);
+
+                    if (tok != null && Chars.equals(tok, ',')) {
+                        continue;
+                    }
+                    break;
+                }
+            } catch (SqlException e) {
+                for (int i = 0, n = tableWriters.size(); i < n; i++) {
+                    tableWriters.getQuick(i).close();
+                }
+                throw e;
+            }
+
+            for (int i = 0, n = tableWriters.size(); i < n; i++) {
+                try (TableWriter writer = tableWriters.getQuick(i)) {
+                    writer.truncate();
+                }
+            }
+        } finally {
+            tableWriters.clear();
+        }
     }
 
     private InsertAsSelectModel validateAndOptimiseInsertAsSelect(InsertAsSelectModel model, SqlExecutionContext executionContext) throws SqlException {
@@ -1135,5 +1176,27 @@ public class SqlCompiler implements Closeable {
         void with(BindVariableService bindVariableService) {
             this.bindVariableService = bindVariableService;
         }
+    }
+
+    static {
+        castGroups.extendAndSet(ColumnType.BOOLEAN, 2);
+        castGroups.extendAndSet(ColumnType.BYTE, 1);
+        castGroups.extendAndSet(ColumnType.SHORT, 1);
+        castGroups.extendAndSet(ColumnType.INT, 1);
+        castGroups.extendAndSet(ColumnType.LONG, 1);
+        castGroups.extendAndSet(ColumnType.FLOAT, 1);
+        castGroups.extendAndSet(ColumnType.DOUBLE, 1);
+        castGroups.extendAndSet(ColumnType.DATE, 1);
+        castGroups.extendAndSet(ColumnType.TIMESTAMP, 1);
+        castGroups.extendAndSet(ColumnType.STRING, 3);
+        castGroups.extendAndSet(ColumnType.SYMBOL, 3);
+        castGroups.extendAndSet(ColumnType.BINARY, 4);
+
+        sqlControlSymbols.add("(");
+        sqlControlSymbols.add(")");
+        sqlControlSymbols.add(",");
+        sqlControlSymbols.add("/*");
+        sqlControlSymbols.add("*/");
+        sqlControlSymbols.add("--");
     }
 }

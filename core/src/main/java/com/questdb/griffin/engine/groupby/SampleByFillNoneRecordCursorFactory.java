@@ -82,6 +82,7 @@ public class SampleByFillNoneRecordCursorFactory extends AbstractSampleByRecordC
             return initFunctionsAndCursor(bindVariableService, baseCursor);
         }
 
+        baseCursor.close();
         return EmptyTableRecordCursor.INSTANCE;
     }
 

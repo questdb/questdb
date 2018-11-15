@@ -282,6 +282,9 @@ public class TableWriter implements Closeable {
             } catch (CairoException e) {
                 runFragile(RECOVER_FROM_SYMBOL_MAP_WRITER_FAILURE, name, e);
             }
+        } else {
+            // maintain sparse list of symbol writers
+            symbolMapWriters.extendAndSet(columnCount, null);
         }
 
         // add column objects
@@ -960,6 +963,7 @@ public class TableWriter implements Closeable {
     private void configureColumnMemory() {
         int expectedMapWriters = txMem.getInt(TX_OFFSET_MAP_WRITER_COUNT);
         long nextSymbolCountOffset = TableUtils.getSymbolWriterIndexOffset(0);
+        this.symbolMapWriters.setPos(columnCount);
         for (int i = 0; i < columnCount; i++) {
             int type = metadata.getColumnType(i);
             configureColumn(type, metadata.isColumnIndexed(i));

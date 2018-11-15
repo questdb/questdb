@@ -68,9 +68,9 @@ public final class Numbers {
 
         long factor = Unsafe.arrayGet(pow10, scale);
         long scaled = (long) (d * factor + 0.5);
-        int targetScale = scale + 1;
-        while (targetScale < 20 && Unsafe.arrayGet(pow10, targetScale) <= scaled) {
-            factor = Unsafe.arrayGet(pow10, targetScale++);
+        int targetScale = scale;
+        //noinspection StatementWithEmptyBody
+        while (++targetScale < 20 && Unsafe.arrayGet(pow10, targetScale) <= scaled) {
         }
 
         // factor overflow, fallback to slow method rather than throwing exception
@@ -79,6 +79,7 @@ public final class Numbers {
             return;
         }
 
+        factor = Unsafe.arrayGet(pow10, targetScale - 1);
         while (targetScale > 0) {
             if (targetScale-- == scale) {
                 sink.put('.');

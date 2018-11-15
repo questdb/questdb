@@ -292,7 +292,7 @@ public class TableReader implements Closeable {
             int copyFrom = Unsafe.getUnsafe().getInt(index + i * 8);
 
             // don't copy entries to themselves, unless symbol map was deleted
-            if (copyFrom == i + 1) {
+            if (copyFrom == i + 1 && copyFrom < columnCount) {
                 SymbolMapReader reader = symbolMapReaders.getQuick(copyFrom);
                 if (reader != null && reader.isDeleted()) {
                     symbolMapReaders.setQuick(copyFrom, reloadSymbolMapReader(copyFrom, reader));
@@ -717,7 +717,9 @@ public class TableReader implements Closeable {
 
     private void openSymbolMaps() {
         int symbolColumnIndex = 0;
-        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+        final int columnCount = metadata.getColumnCount();
+        symbolMapReaders.setPos(columnCount);
+        for (int i = 0; i < columnCount; i++) {
             if (metadata.getColumnType(i) == ColumnType.SYMBOL) {
                 SymbolMapReaderImpl symbolMapReader = new SymbolMapReaderImpl(configuration, path, metadata.getColumnName(i), symbolCountSnapshot.getQuick(symbolColumnIndex++));
                 symbolMapReaders.extendAndSet(i, symbolMapReader);

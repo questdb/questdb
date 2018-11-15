@@ -99,7 +99,6 @@ public class GroupByRecordCursorFactory implements RecordCursorFactory {
 
     @Override
     public void close() {
-        // todo: test that functions are indeed being freed
         for (int i = 0, n = recordFunctions.size(); i < n; i++) {
             recordFunctions.getQuick(i).close();
         }
@@ -122,7 +121,6 @@ public class GroupByRecordCursorFactory implements RecordCursorFactory {
             return initFunctionsAndCursor(bindVariableService, dataMap.getCursor(), baseCursor);
         } catch (CairoException e) {
             baseCursor.close();
-            //todo: free other things
             throw e;
         }
     }

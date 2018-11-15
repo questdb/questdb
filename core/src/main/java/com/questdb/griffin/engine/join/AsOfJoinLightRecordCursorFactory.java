@@ -131,7 +131,6 @@ public class AsOfJoinLightRecordCursorFactory extends AbstractRecordCursorFactor
             if (columnIndex < columnSplit) {
                 return masterCursor.getSymbolTable(columnIndex);
             }
-            // todo: test symbol on slave table
             return slaveCursor.getSymbolTable(columnIndex - columnSplit);
         }
 

@@ -107,7 +107,8 @@ class SampleByFillNoneRecordCursor implements DelegatingRecordCursor, NoRandomAc
         this.map.clear();
 
         // looks like we need to populate key map
-
+        // at the start of this loop 'lastTimestamp' will be set to timestamp
+        // of first record in base cursor
         int n = groupByFunctions.size();
         while (true) {
             long timestamp = timestampSampler.round(baseRecord.getTimestamp(timestampIndex));
@@ -128,7 +129,6 @@ class SampleByFillNoneRecordCursor implements DelegatingRecordCursor, NoRandomAc
                 baseRecord = null;
                 // reset map iterator
                 map.getCursor();
-
                 // we do not have any more data, let map take over
                 return mapHasNext();
             }
@@ -139,11 +139,7 @@ class SampleByFillNoneRecordCursor implements DelegatingRecordCursor, NoRandomAc
             // and build another map
             this.nextTimestamp = timestamp;
             this.map.getCursor();
-            if (mapHasNext()) {
-                return true;
-            }
-            // we do not need to clear map, it is empty anyway
-            lastTimestamp = nextTimestamp;
+            return mapHasNext();
         }
     }
 

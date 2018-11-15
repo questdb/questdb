@@ -28,10 +28,10 @@ import com.questdb.cairo.sql.Function;
 import com.questdb.griffin.FunctionFactory;
 import com.questdb.std.ObjList;
 
-public class TestSumDoubleGroupByFunctionFactory implements FunctionFactory {
+public class TestSumStringGroupByFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "sum_t(D)";
+        return "sum_t(S)";
     }
 
     @Override
@@ -41,6 +41,6 @@ public class TestSumDoubleGroupByFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) {
-        return new TestSumDoubleGroupByFunction(position, args.getQuick(0));
+        return new TestSumStringGroupByFunction(position, args.getQuick(0));
     }
 }

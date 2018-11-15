@@ -33,13 +33,13 @@ import com.questdb.griffin.engine.functions.GroupByFunction;
 import com.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
 
-public class SumDoubleGroupByFunction extends DoubleFunction implements GroupByFunction {
+public class TestSumDoubleGroupByFunction extends DoubleFunction implements GroupByFunction {
     private final Function value;
     private int valueIndex;
     // allocate just to test that close() is correctly invoked
     private long mem = Unsafe.malloc(1024);
 
-    public SumDoubleGroupByFunction(int position, @NotNull Function value) {
+    public TestSumDoubleGroupByFunction(int position, @NotNull Function value) {
         super(position);
         this.value = value;
     }

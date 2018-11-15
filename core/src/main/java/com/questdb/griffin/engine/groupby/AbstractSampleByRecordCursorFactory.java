@@ -117,7 +117,6 @@ public class AbstractSampleByRecordCursorFactory implements RecordCursorFactory 
 
     @Override
     public void close() {
-        // todo: test that functions are indeed being freed
         for (int i = 0, n = recordFunctions.size(); i < n; i++) {
             recordFunctions.getQuick(i).close();
         }

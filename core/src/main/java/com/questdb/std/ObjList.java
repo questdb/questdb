@@ -113,6 +113,7 @@ public class ObjList<T> implements Mutable, Sinkable {
      * @return element at the specified position.
      */
     public T getQuick(int index) {
+        assert index < pos;
         return Unsafe.arrayGet(buffer, index);
     }
 

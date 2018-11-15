@@ -2988,7 +2988,7 @@ public class SqlCompilerTest extends AbstractCairoTest {
                 "select" +
                 " rnd_double(2)," +
                 " timestamp_sequence(to_timestamp(0), 1000000000)" +
-                " from long_sequence(30)", 12, "table does not exist");
+                " from long_sequence(30)", 12, "table 'x' does not exist");
     }
 
     @Test

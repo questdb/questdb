@@ -116,7 +116,7 @@ public class BusyPollTest extends AbstractCairoTest {
                         } finally {
                             Unsafe.free(addr, blobSize);
                         }
-                    } catch (Exception e) {
+                    } catch (Throwable e) {
                         e.printStackTrace();
                         errorCount.incrementAndGet();
                     } finally {
@@ -145,7 +145,7 @@ public class BusyPollTest extends AbstractCairoTest {
                                 }
                             }
                         }
-                    } catch (Exception e) {
+                    } catch (Throwable e) {
                         e.printStackTrace();
                         errorCount.incrementAndGet();
                     } finally {

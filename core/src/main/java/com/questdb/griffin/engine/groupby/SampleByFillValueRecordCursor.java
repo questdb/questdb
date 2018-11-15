@@ -119,7 +119,8 @@ class SampleByFillValueRecordCursor implements DelegatingRecordCursor, NoRandomA
         if (this.nextTimestamp > nextTimestamp) {
             this.lastTimestamp = nextTimestamp;
             // reset iterator on map and stream contents
-            return refreshCursorAndRecord();
+            refreshCursorAndRecord();
+            return true;
         }
 
         this.lastTimestamp = this.nextTimestamp;
@@ -162,7 +163,8 @@ class SampleByFillValueRecordCursor implements DelegatingRecordCursor, NoRandomA
                 this.nextTimestamp = timestamp;
             }
 
-            return refreshCursorAndRecord();
+            refreshCursorAndRecord();
+            return true;
         }
     }
 
@@ -199,13 +201,9 @@ class SampleByFillValueRecordCursor implements DelegatingRecordCursor, NoRandomA
         this.lastTimestamp = this.nextTimestamp;
     }
 
-    private boolean refreshCursorAndRecord() {
-        // todo: should be able to refresh cursor
-        RecordCursor cursor = this.map.getCursor();
-        if (cursor.hasNext()) {
-            return refreshRecord();
-        }
-        return false;
+    private void refreshCursorAndRecord() {
+        this.map.getCursor().hasNext();
+        refreshRecord();
     }
 
     private boolean refreshRecord() {
