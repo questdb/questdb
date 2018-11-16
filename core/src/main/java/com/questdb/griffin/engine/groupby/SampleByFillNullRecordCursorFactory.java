@@ -31,10 +31,7 @@ import com.questdb.griffin.FunctionParser;
 import com.questdb.griffin.SqlException;
 import com.questdb.griffin.SqlExecutionContext;
 import com.questdb.griffin.engine.functions.GroupByFunction;
-import com.questdb.griffin.engine.functions.constants.DoubleConstant;
-import com.questdb.griffin.engine.functions.constants.FloatConstant;
-import com.questdb.griffin.engine.functions.constants.IntConstant;
-import com.questdb.griffin.engine.functions.constants.LongConstant;
+import com.questdb.griffin.engine.functions.constants.*;
 import com.questdb.griffin.model.QueryModel;
 import com.questdb.std.*;
 import org.jetbrains.annotations.NotNull;
@@ -79,21 +76,26 @@ public class SampleByFillNullRecordCursorFactory extends AbstractSampleByRecordC
             ObjList<GroupByFunction> groupByFunctions,
             ObjList<Function> recordFunctions,
             IntIntHashMap symbolTableIndex
-    ) {
-        return new SampleByFillValueRecordCursor(
-                map,
-                mapSink,
-                groupByFunctions,
-                recordFunctions,
-                createPlaceholderFunctions(recordFunctions),
-                timestampIndex,
-                timestampSampler,
-                symbolTableIndex
-        );
+    ) throws SqlException {
+        try {
+            return new SampleByFillValueRecordCursor(
+                    map,
+                    mapSink,
+                    groupByFunctions,
+                    recordFunctions,
+                    createPlaceholderFunctions(recordFunctions),
+                    timestampIndex,
+                    timestampSampler,
+                    symbolTableIndex
+            );
+        } catch (SqlException e) {
+            GroupByUtils.closeGroupByFunctions(groupByFunctions);
+            throw e;
+        }
     }
 
     @NotNull
-    private static ObjList<Function> createPlaceholderFunctions(ObjList<Function> recordFunctions) {
+    private static ObjList<Function> createPlaceholderFunctions(ObjList<Function> recordFunctions) throws SqlException {
         final ObjList<Function> placeholderFunctions = new ObjList<>();
         for (int i = 0, n = recordFunctions.size(); i < n; i++) {
             Function function = recordFunctions.getQuick(i);
@@ -111,8 +113,14 @@ public class SampleByFillNullRecordCursorFactory extends AbstractSampleByRecordC
                     case ColumnType.DOUBLE:
                         placeholderFunctions.add(new DoubleConstant(function.getPosition(), Double.NaN));
                         break;
+                    case ColumnType.BYTE:
+                        placeholderFunctions.add(new ByteConstant(function.getPosition(), (byte) 0));
+                        break;
+                    case ColumnType.SHORT:
+                        placeholderFunctions.add(new ShortConstant(function.getPosition(), (short) 0));
+                        break;
                     default:
-                        assert false;
+                        throw SqlException.$(function.getPosition(), "Unsupported type: ").put(ColumnType.nameOf(function.getType()));
                 }
             } else {
                 placeholderFunctions.add(function);

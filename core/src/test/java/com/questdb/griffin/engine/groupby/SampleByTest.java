@@ -21,7 +21,7 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin;
+package com.questdb.griffin.engine.groupby;
 
 import com.questdb.cairo.CairoConfiguration;
 import com.questdb.cairo.CairoException;
@@ -29,6 +29,9 @@ import com.questdb.cairo.DefaultCairoConfiguration;
 import com.questdb.cairo.Engine;
 import com.questdb.cairo.sql.RecordCursor;
 import com.questdb.cairo.sql.RecordCursorFactory;
+import com.questdb.griffin.AbstractGriffinTest;
+import com.questdb.griffin.SqlCompiler;
+import com.questdb.griffin.SqlException;
 import com.questdb.griffin.engine.functions.rnd.SharedRandom;
 import com.questdb.std.Chars;
 import com.questdb.std.FilesFacade;
@@ -195,7 +198,6 @@ public class SampleByTest extends AbstractGriffinTest {
 
                 @Override
                 public long mmap(long fd, long len, long offset, int mode) {
-                    System.out.println("mmmap");
                     if (count-- > 0) {
                         return super.mmap(fd, len, offset, mode);
                     }
@@ -846,6 +848,71 @@ public class SampleByTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testSampleFillLinearBadType() throws Exception {
+        assertFailure(
+                "select b, sum_t(b), k from x sample by 3h fill(linear)",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_str(1,1,2) b," +
+                        " timestamp_sequence(to_timestamp(172800000000), 3600000000) k" +
+                        " from" +
+                        " long_sequence(20)" +
+                        ") timestamp(k) partition by NONE",
+                10,
+                "Unsupported type"
+        );
+    }
+
+    @Test
+    public void testSampleFillLinearByMonth() throws Exception {
+        assertQuery("b\tsum_t\tk\n" +
+                        "\t54112.404059386576\t1970-01-01T00:00:00.000000Z\n" +
+                        "VTJW\t11209.880434660998\t1970-01-01T00:00:00.000000Z\n" +
+                        "RXGZ\t9939.438287132382\t1970-01-01T00:00:00.000000Z\n" +
+                        "PEHN\t11042.882403279874\t1970-01-01T00:00:00.000000Z\n" +
+                        "HYRX\t11080.174817969956\t1970-01-01T00:00:00.000000Z\n" +
+                        "CPSW\t9310.397369439000\t1970-01-01T00:00:00.000000Z\n" +
+                        "\t53936.039113863768\t1970-04-01T00:00:00.000000Z\n" +
+                        "HYRX\t10382.092656987054\t1970-04-01T00:00:00.000000Z\n" +
+                        "CPSW\t11677.451781387846\t1970-04-01T00:00:00.000000Z\n" +
+                        "RXGZ\t12082.973980924520\t1970-04-01T00:00:00.000000Z\n" +
+                        "VTJW\t11574.354700279142\t1970-04-01T00:00:00.000000Z\n" +
+                        "PEHN\t11225.427167029598\t1970-04-01T00:00:00.000000Z\n" +
+                        "\t53719.385598369832\t1970-07-01T00:00:00.000000Z\n" +
+                        "VTJW\t10645.216313875992\t1970-07-01T00:00:00.000000Z\n" +
+                        "RXGZ\t12441.881371617534\t1970-07-01T00:00:00.000000Z\n" +
+                        "HYRX\t10478.918039106036\t1970-07-01T00:00:00.000000Z\n" +
+                        "CPSW\t11215.534064219256\t1970-07-01T00:00:00.000000Z\n" +
+                        "PEHN\t12053.625707887684\t1970-07-01T00:00:00.000000Z\n" +
+                        "\t54106.362147164440\t1970-10-01T00:00:00.000000Z\n" +
+                        "HYRX\t11883.354138407446\t1970-10-01T00:00:00.000000Z\n" +
+                        "RXGZ\t11608.715762809448\t1970-10-01T00:00:00.000000Z\n" +
+                        "CPSW\t11623.362686708584\t1970-10-01T00:00:00.000000Z\n" +
+                        "PEHN\t11258.550294609914\t1970-10-01T00:00:00.000000Z\n" +
+                        "VTJW\t10865.136275604094\t1970-10-01T00:00:00.000000Z\n" +
+                        "\t33152.562899296544\t1971-01-01T00:00:00.000000Z\n" +
+                        "PEHN\t7219.259660624380\t1971-01-01T00:00:00.000000Z\n" +
+                        "CPSW\t6038.834871820060\t1971-01-01T00:00:00.000000Z\n" +
+                        "RXGZ\t5862.505042201944\t1971-01-01T00:00:00.000000Z\n" +
+                        "VTJW\t6677.581919995402\t1971-01-01T00:00:00.000000Z\n" +
+                        "HYRX\t5998.730211949622\t1971-01-01T00:00:00.000000Z\n",
+                "select b, sum_t(a), k from x sample by 3M fill(linear)",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(to_timestamp(172800000000), 3600000000) k" +
+                        " from" +
+                        " long_sequence(10000)" +
+                        ") timestamp(k) partition by NONE",
+                "k",
+                true);
+    }
+
+    @Test
     public void testSampleFillLinearConstructorFail() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try {
@@ -1015,6 +1082,185 @@ public class SampleByTest extends AbstractGriffinTest {
                         "\t135.835983782176\t1970-01-04T06:00:00.000000Z\n" +
                         "UVSD\t49.428905119585\t1970-01-04T06:00:00.000000Z\n" +
                         "KGHV\t67.525095471124\t1970-01-04T09:00:00.000000Z\n",
+                false);
+    }
+
+    @Test
+    public void testSampleFillNoneAllTypes() throws Exception {
+        assertQuery("b\tsum\tsum1\tsum2\tsum3\tsum4\tsum5\tk\n" +
+                        "\t74.197525059489\t113.1213\t-1737520119\t868\t12\t-6307312481136788016\t1970-01-03T00:00:00.000000Z\n" +
+                        "CPSW\t0.359836721543\t76.7567\t113506296\t27809\t9\t-8889930662239044040\t1970-01-03T00:00:00.000000Z\n" +
+                        "PEHN\tNaN\tNaN\tNaN\t0\t0\tNaN\t1970-01-03T00:00:00.000000Z\n" +
+                        "RXGZ\tNaN\tNaN\tNaN\t0\t0\tNaN\t1970-01-03T00:00:00.000000Z\n" +
+                        "HYRX\tNaN\tNaN\tNaN\t0\t0\tNaN\t1970-01-03T00:00:00.000000Z\n" +
+                        "\t76.642567535961\t55.2249\t326010667\t-5741\t8\t7392877322819819290\t1970-01-03T03:00:00.000000Z\n" +
+                        "CPSW\t13.450170570900\t34.3569\t410717394\t18229\t10\t6820495939660535106\t1970-01-03T03:00:00.000000Z\n" +
+                        "PEHN\t15.786635599555\t12.5030\t264240638\t-7976\t6\t-8480005421611953360\t1970-01-03T03:00:00.000000Z\n" +
+                        "RXGZ\tNaN\tNaN\tNaN\t0\t0\tNaN\t1970-01-03T03:00:00.000000Z\n" +
+                        "HYRX\tNaN\tNaN\tNaN\t0\t0\tNaN\t1970-01-03T03:00:00.000000Z\n" +
+                        "\t85.059401417446\t92.1608\t301655269\t-14676\t12\t-2937111954994403426\t1970-01-03T06:00:00.000000Z\n" +
+                        "CPSW\tNaN\tNaN\tNaN\t0\t0\tNaN\t1970-01-03T06:00:00.000000Z\n" +
+                        "PEHN\t86.641589147185\t88.3742\t1566901076\t-3017\t3\t-5028301966399563827\t1970-01-03T06:00:00.000000Z\n" +
+                        "RXGZ\tNaN\tNaN\tNaN\t0\t0\tNaN\t1970-01-03T06:00:00.000000Z\n" +
+                        "HYRX\tNaN\tNaN\tNaN\t0\t0\tNaN\t1970-01-03T06:00:00.000000Z\n" +
+                        "\t106.781182496875\t103.1198\t-1265361864\t-2372\t12\t-1162868573414266742\t1970-01-03T09:00:00.000000Z\n" +
+                        "CPSW\tNaN\tNaN\tNaN\t0\t0\tNaN\t1970-01-03T09:00:00.000000Z\n" +
+                        "PEHN\tNaN\tNaN\tNaN\t0\t0\tNaN\t1970-01-03T09:00:00.000000Z\n" +
+                        "RXGZ\t3.831785863681\t42.0204\t1254404167\t1756\t5\t8702525427024484485\t1970-01-03T09:00:00.000000Z\n" +
+                        "HYRX\tNaN\tNaN\tNaN\t0\t0\tNaN\t1970-01-03T09:00:00.000000Z\n" +
+                        "\t117.609378432567\t189.8173\t-577162926\t-27064\t17\t2215137494070785317\t1970-01-03T12:00:00.000000Z\n" +
+                        "CPSW\tNaN\tNaN\tNaN\t0\t0\tNaN\t1970-01-03T12:00:00.000000Z\n" +
+                        "PEHN\tNaN\tNaN\tNaN\t0\t0\tNaN\t1970-01-03T12:00:00.000000Z\n" +
+                        "RXGZ\tNaN\tNaN\tNaN\t0\t0\tNaN\t1970-01-03T12:00:00.000000Z\n" +
+                        "HYRX\t24.008362859107\t76.5784\t2111250190\t-13252\t8\t7973684666911773753\t1970-01-03T12:00:00.000000Z\n" +
+                        "\t28.087836621127\t139.3070\t-1706978251\t11751\t17\t-8594661640328306402\t1970-01-03T15:00:00.000000Z\n" +
+                        "CPSW\tNaN\tNaN\tNaN\t0\t0\tNaN\t1970-01-03T15:00:00.000000Z\n" +
+                        "PEHN\tNaN\tNaN\tNaN\t0\t0\tNaN\t1970-01-03T15:00:00.000000Z\n" +
+                        "RXGZ\tNaN\tNaN\tNaN\t0\t0\tNaN\t1970-01-03T15:00:00.000000Z\n" +
+                        "HYRX\t2.683686301370\t10.6430\t502711083\t-8221\t9\t-7709579215942154242\t1970-01-03T15:00:00.000000Z\n" +
+                        "\t75.171605517508\t120.5189\t-1932725894\t514\t11\t-2863260545700031392\t1970-01-03T18:00:00.000000Z\n" +
+                        "CPSW\tNaN\tNaN\tNaN\t0\t0\tNaN\t1970-01-03T18:00:00.000000Z\n" +
+                        "PEHN\tNaN\tNaN\tNaN\t0\t0\tNaN\t1970-01-03T18:00:00.000000Z\n" +
+                        "RXGZ\tNaN\tNaN\tNaN\t0\t0\tNaN\t1970-01-03T18:00:00.000000Z\n" +
+                        "HYRX\tNaN\tNaN\tNaN\t0\t0\tNaN\t1970-01-03T18:00:00.000000Z\n",
+                "select b, sum(a), sum(c), sum(d), sum(e), sum(f), sum(g), k from x sample by 3h fill(null)",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " rnd_float(0)*100 c," +
+                        " abs(rnd_int()) d," +
+                        " rnd_short() e," +
+                        " rnd_byte(3,10) f," +
+                        " rnd_long() g," +
+                        " timestamp_sequence(to_timestamp(172800000000), 3600000000) k" +
+                        " from" +
+                        " long_sequence(20)" +
+                        ") timestamp(k) partition by NONE",
+                "k",
+                "insert into x select * from (" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " rnd_float(0)*100 c," +
+                        " abs(rnd_int()) d," +
+                        " rnd_short() e," +
+                        " rnd_byte(3,10) f," +
+                        " rnd_long() g," +
+                        " timestamp_sequence(to_timestamp(277200000000), 3600000000) k" +
+                        " from" +
+                        " long_sequence(5)" +
+                        ") timestamp(k)",
+                "b\tsum\tsum1\tsum2\tsum3\tsum4\tsum5\tk\n" +
+                        "\t74.197525059489\t113.1213\t-1737520119\t868\t12\t-6307312481136788016\t1970-01-03T00:00:00.000000Z\n" +
+                        "CPSW\t0.359836721543\t76.7567\t113506296\t27809\t9\t-8889930662239044040\t1970-01-03T00:00:00.000000Z\n" +
+                        "PEHN\tNaN\tNaN\tNaN\t0\t0\tNaN\t1970-01-03T00:00:00.000000Z\n" +
+                        "RXGZ\tNaN\tNaN\tNaN\t0\t0\tNaN\t1970-01-03T00:00:00.000000Z\n" +
+                        "HYRX\tNaN\tNaN\tNaN\t0\t0\tNaN\t1970-01-03T00:00:00.000000Z\n" +
+                        "EZGH\tNaN\tNaN\tNaN\t0\t0\tNaN\t1970-01-03T00:00:00.000000Z\n" +
+                        "FLOP\tNaN\tNaN\tNaN\t0\t0\tNaN\t1970-01-03T00:00:00.000000Z\n" +
+                        "WVDK\tNaN\tNaN\tNaN\t0\t0\tNaN\t1970-01-03T00:00:00.000000Z\n" +
+                        "JOXP\tNaN\tNaN\tNaN\t0\t0\tNaN\t1970-01-03T00:00:00.000000Z\n" +
+                        "\t76.642567535961\t55.2249\t326010667\t-5741\t8\t7392877322819819290\t1970-01-03T03:00:00.000000Z\n" +
+                        "CPSW\t13.450170570900\t34.3569\t410717394\t18229\t10\t6820495939660535106\t1970-01-03T03:00:00.000000Z\n" +
+                        "PEHN\t15.786635599555\t12.5030\t264240638\t-7976\t6\t-8480005421611953360\t1970-01-03T03:00:00.000000Z\n" +
+                        "RXGZ\tNaN\tNaN\tNaN\t0\t0\tNaN\t1970-01-03T03:00:00.000000Z\n" +
+                        "HYRX\tNaN\tNaN\tNaN\t0\t0\tNaN\t1970-01-03T03:00:00.000000Z\n" +
+                        "EZGH\tNaN\tNaN\tNaN\t0\t0\tNaN\t1970-01-03T03:00:00.000000Z\n" +
+                        "FLOP\tNaN\tNaN\tNaN\t0\t0\tNaN\t1970-01-03T03:00:00.000000Z\n" +
+                        "WVDK\tNaN\tNaN\tNaN\t0\t0\tNaN\t1970-01-03T03:00:00.000000Z\n" +
+                        "JOXP\tNaN\tNaN\tNaN\t0\t0\tNaN\t1970-01-03T03:00:00.000000Z\n" +
+                        "\t85.059401417446\t92.1608\t301655269\t-14676\t12\t-2937111954994403426\t1970-01-03T06:00:00.000000Z\n" +
+                        "CPSW\tNaN\tNaN\tNaN\t0\t0\tNaN\t1970-01-03T06:00:00.000000Z\n" +
+                        "PEHN\t86.641589147185\t88.3742\t1566901076\t-3017\t3\t-5028301966399563827\t1970-01-03T06:00:00.000000Z\n" +
+                        "RXGZ\tNaN\tNaN\tNaN\t0\t0\tNaN\t1970-01-03T06:00:00.000000Z\n" +
+                        "HYRX\tNaN\tNaN\tNaN\t0\t0\tNaN\t1970-01-03T06:00:00.000000Z\n" +
+                        "EZGH\tNaN\tNaN\tNaN\t0\t0\tNaN\t1970-01-03T06:00:00.000000Z\n" +
+                        "FLOP\tNaN\tNaN\tNaN\t0\t0\tNaN\t1970-01-03T06:00:00.000000Z\n" +
+                        "WVDK\tNaN\tNaN\tNaN\t0\t0\tNaN\t1970-01-03T06:00:00.000000Z\n" +
+                        "JOXP\tNaN\tNaN\tNaN\t0\t0\tNaN\t1970-01-03T06:00:00.000000Z\n" +
+                        "\t106.781182496875\t103.1198\t-1265361864\t-2372\t12\t-1162868573414266742\t1970-01-03T09:00:00.000000Z\n" +
+                        "CPSW\tNaN\tNaN\tNaN\t0\t0\tNaN\t1970-01-03T09:00:00.000000Z\n" +
+                        "PEHN\tNaN\tNaN\tNaN\t0\t0\tNaN\t1970-01-03T09:00:00.000000Z\n" +
+                        "RXGZ\t3.831785863681\t42.0204\t1254404167\t1756\t5\t8702525427024484485\t1970-01-03T09:00:00.000000Z\n" +
+                        "HYRX\tNaN\tNaN\tNaN\t0\t0\tNaN\t1970-01-03T09:00:00.000000Z\n" +
+                        "EZGH\tNaN\tNaN\tNaN\t0\t0\tNaN\t1970-01-03T09:00:00.000000Z\n" +
+                        "FLOP\tNaN\tNaN\tNaN\t0\t0\tNaN\t1970-01-03T09:00:00.000000Z\n" +
+                        "WVDK\tNaN\tNaN\tNaN\t0\t0\tNaN\t1970-01-03T09:00:00.000000Z\n" +
+                        "JOXP\tNaN\tNaN\tNaN\t0\t0\tNaN\t1970-01-03T09:00:00.000000Z\n" +
+                        "\t117.609378432567\t189.8173\t-577162926\t-27064\t17\t2215137494070785317\t1970-01-03T12:00:00.000000Z\n" +
+                        "CPSW\tNaN\tNaN\tNaN\t0\t0\tNaN\t1970-01-03T12:00:00.000000Z\n" +
+                        "PEHN\tNaN\tNaN\tNaN\t0\t0\tNaN\t1970-01-03T12:00:00.000000Z\n" +
+                        "RXGZ\tNaN\tNaN\tNaN\t0\t0\tNaN\t1970-01-03T12:00:00.000000Z\n" +
+                        "HYRX\t24.008362859107\t76.5784\t2111250190\t-13252\t8\t7973684666911773753\t1970-01-03T12:00:00.000000Z\n" +
+                        "EZGH\tNaN\tNaN\tNaN\t0\t0\tNaN\t1970-01-03T12:00:00.000000Z\n" +
+                        "FLOP\tNaN\tNaN\tNaN\t0\t0\tNaN\t1970-01-03T12:00:00.000000Z\n" +
+                        "WVDK\tNaN\tNaN\tNaN\t0\t0\tNaN\t1970-01-03T12:00:00.000000Z\n" +
+                        "JOXP\tNaN\tNaN\tNaN\t0\t0\tNaN\t1970-01-03T12:00:00.000000Z\n" +
+                        "\t28.087836621127\t139.3070\t-1706978251\t11751\t17\t-8594661640328306402\t1970-01-03T15:00:00.000000Z\n" +
+                        "CPSW\tNaN\tNaN\tNaN\t0\t0\tNaN\t1970-01-03T15:00:00.000000Z\n" +
+                        "PEHN\tNaN\tNaN\tNaN\t0\t0\tNaN\t1970-01-03T15:00:00.000000Z\n" +
+                        "RXGZ\tNaN\tNaN\tNaN\t0\t0\tNaN\t1970-01-03T15:00:00.000000Z\n" +
+                        "HYRX\t2.683686301370\t10.6430\t502711083\t-8221\t9\t-7709579215942154242\t1970-01-03T15:00:00.000000Z\n" +
+                        "EZGH\tNaN\tNaN\tNaN\t0\t0\tNaN\t1970-01-03T15:00:00.000000Z\n" +
+                        "FLOP\tNaN\tNaN\tNaN\t0\t0\tNaN\t1970-01-03T15:00:00.000000Z\n" +
+                        "WVDK\tNaN\tNaN\tNaN\t0\t0\tNaN\t1970-01-03T15:00:00.000000Z\n" +
+                        "JOXP\tNaN\tNaN\tNaN\t0\t0\tNaN\t1970-01-03T15:00:00.000000Z\n" +
+                        "\t75.171605517508\t120.5189\t-1932725894\t514\t11\t-2863260545700031392\t1970-01-03T18:00:00.000000Z\n" +
+                        "CPSW\tNaN\tNaN\tNaN\t0\t0\tNaN\t1970-01-03T18:00:00.000000Z\n" +
+                        "PEHN\tNaN\tNaN\tNaN\t0\t0\tNaN\t1970-01-03T18:00:00.000000Z\n" +
+                        "RXGZ\tNaN\tNaN\tNaN\t0\t0\tNaN\t1970-01-03T18:00:00.000000Z\n" +
+                        "HYRX\tNaN\tNaN\tNaN\t0\t0\tNaN\t1970-01-03T18:00:00.000000Z\n" +
+                        "EZGH\tNaN\tNaN\tNaN\t0\t0\tNaN\t1970-01-03T18:00:00.000000Z\n" +
+                        "FLOP\tNaN\tNaN\tNaN\t0\t0\tNaN\t1970-01-03T18:00:00.000000Z\n" +
+                        "WVDK\tNaN\tNaN\tNaN\t0\t0\tNaN\t1970-01-03T18:00:00.000000Z\n" +
+                        "JOXP\tNaN\tNaN\tNaN\t0\t0\tNaN\t1970-01-03T18:00:00.000000Z\n" +
+                        "\tNaN\tNaN\tNaN\t0\t0\tNaN\t1970-01-03T21:00:00.000000Z\n" +
+                        "CPSW\tNaN\tNaN\tNaN\t0\t0\tNaN\t1970-01-03T21:00:00.000000Z\n" +
+                        "PEHN\tNaN\tNaN\tNaN\t0\t0\tNaN\t1970-01-03T21:00:00.000000Z\n" +
+                        "RXGZ\tNaN\tNaN\tNaN\t0\t0\tNaN\t1970-01-03T21:00:00.000000Z\n" +
+                        "HYRX\tNaN\tNaN\tNaN\t0\t0\tNaN\t1970-01-03T21:00:00.000000Z\n" +
+                        "EZGH\tNaN\tNaN\tNaN\t0\t0\tNaN\t1970-01-03T21:00:00.000000Z\n" +
+                        "FLOP\tNaN\tNaN\tNaN\t0\t0\tNaN\t1970-01-03T21:00:00.000000Z\n" +
+                        "WVDK\tNaN\tNaN\tNaN\t0\t0\tNaN\t1970-01-03T21:00:00.000000Z\n" +
+                        "JOXP\tNaN\tNaN\tNaN\t0\t0\tNaN\t1970-01-03T21:00:00.000000Z\n" +
+                        "\tNaN\tNaN\tNaN\t0\t0\tNaN\t1970-01-04T00:00:00.000000Z\n" +
+                        "CPSW\tNaN\tNaN\tNaN\t0\t0\tNaN\t1970-01-04T00:00:00.000000Z\n" +
+                        "PEHN\tNaN\tNaN\tNaN\t0\t0\tNaN\t1970-01-04T00:00:00.000000Z\n" +
+                        "RXGZ\tNaN\tNaN\tNaN\t0\t0\tNaN\t1970-01-04T00:00:00.000000Z\n" +
+                        "HYRX\tNaN\tNaN\tNaN\t0\t0\tNaN\t1970-01-04T00:00:00.000000Z\n" +
+                        "EZGH\tNaN\tNaN\tNaN\t0\t0\tNaN\t1970-01-04T00:00:00.000000Z\n" +
+                        "FLOP\tNaN\tNaN\tNaN\t0\t0\tNaN\t1970-01-04T00:00:00.000000Z\n" +
+                        "WVDK\tNaN\tNaN\tNaN\t0\t0\tNaN\t1970-01-04T00:00:00.000000Z\n" +
+                        "JOXP\tNaN\tNaN\tNaN\t0\t0\tNaN\t1970-01-04T00:00:00.000000Z\n" +
+                        "\t20.585069039325\t98.8401\t1278547815\t17250\t3\t-6703401424236463520\t1970-01-04T03:00:00.000000Z\n" +
+                        "CPSW\tNaN\tNaN\tNaN\t0\t0\tNaN\t1970-01-04T03:00:00.000000Z\n" +
+                        "PEHN\tNaN\tNaN\tNaN\t0\t0\tNaN\t1970-01-04T03:00:00.000000Z\n" +
+                        "RXGZ\tNaN\tNaN\tNaN\t0\t0\tNaN\t1970-01-04T03:00:00.000000Z\n" +
+                        "HYRX\tNaN\tNaN\tNaN\t0\t0\tNaN\t1970-01-04T03:00:00.000000Z\n" +
+                        "EZGH\tNaN\tNaN\tNaN\t0\t0\tNaN\t1970-01-04T03:00:00.000000Z\n" +
+                        "FLOP\tNaN\tNaN\tNaN\t0\t0\tNaN\t1970-01-04T03:00:00.000000Z\n" +
+                        "WVDK\tNaN\tNaN\tNaN\t0\t0\tNaN\t1970-01-04T03:00:00.000000Z\n" +
+                        "JOXP\tNaN\tNaN\tNaN\t0\t0\tNaN\t1970-01-04T03:00:00.000000Z\n" +
+                        "\tNaN\tNaN\tNaN\t0\t0\tNaN\t1970-01-04T06:00:00.000000Z\n" +
+                        "CPSW\tNaN\tNaN\tNaN\t0\t0\tNaN\t1970-01-04T06:00:00.000000Z\n" +
+                        "PEHN\tNaN\tNaN\tNaN\t0\t0\tNaN\t1970-01-04T06:00:00.000000Z\n" +
+                        "RXGZ\tNaN\tNaN\tNaN\t0\t0\tNaN\t1970-01-04T06:00:00.000000Z\n" +
+                        "HYRX\tNaN\tNaN\tNaN\t0\t0\tNaN\t1970-01-04T06:00:00.000000Z\n" +
+                        "EZGH\t5.024615679069\t38.4225\t370796356\t5422\t3\t4959459375462458218\t1970-01-04T06:00:00.000000Z\n" +
+                        "FLOP\t17.180291960857\t5.1585\t532016913\t-3028\t7\t2282781332678491916\t1970-01-04T06:00:00.000000Z\n" +
+                        "WVDK\t54.669009214053\t35.6811\t874367915\t-23001\t10\t9089874911309539983\t1970-01-04T06:00:00.000000Z\n" +
+                        "JOXP\tNaN\tNaN\tNaN\t0\t0\tNaN\t1970-01-04T06:00:00.000000Z\n" +
+                        "\tNaN\tNaN\tNaN\t0\t0\tNaN\t1970-01-04T09:00:00.000000Z\n" +
+                        "CPSW\tNaN\tNaN\tNaN\t0\t0\tNaN\t1970-01-04T09:00:00.000000Z\n" +
+                        "PEHN\tNaN\tNaN\tNaN\t0\t0\tNaN\t1970-01-04T09:00:00.000000Z\n" +
+                        "RXGZ\tNaN\tNaN\tNaN\t0\t0\tNaN\t1970-01-04T09:00:00.000000Z\n" +
+                        "HYRX\tNaN\tNaN\tNaN\t0\t0\tNaN\t1970-01-04T09:00:00.000000Z\n" +
+                        "EZGH\tNaN\tNaN\tNaN\t0\t0\tNaN\t1970-01-04T09:00:00.000000Z\n" +
+                        "FLOP\tNaN\tNaN\tNaN\t0\t0\tNaN\t1970-01-04T09:00:00.000000Z\n" +
+                        "WVDK\tNaN\tNaN\tNaN\t0\t0\tNaN\t1970-01-04T09:00:00.000000Z\n" +
+                        "JOXP\t67.294055907736\t76.0625\t1165635863\t2316\t9\t-4547802916868961458\t1970-01-04T09:00:00.000000Z\n",
                 false);
     }
 
@@ -1261,6 +1507,115 @@ public class SampleByTest extends AbstractGriffinTest {
                         "UVSD\tNaN\t1970-01-04T09:00:00.000000Z\n" +
                         "KGHV\t67.525095471124\t1970-01-04T09:00:00.000000Z\n",
                 false);
+    }
+
+    @Test
+    public void testSampleFillNullBadType() throws Exception {
+        assertFailure(
+                "select b, sum_t(b), k from x sample by 3h fill(null)",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_str(1,1,2) b," +
+                        " timestamp_sequence(to_timestamp(172800000000), 3600000000) k" +
+                        " from" +
+                        " long_sequence(20)" +
+                        ") timestamp(k) partition by NONE",
+                10,
+                "Unsupported type"
+        );
+    }
+
+    @Test
+    public void testSampleFillNullDay() throws Exception {
+        assertQuery("b\tsum\tk\n" +
+                        "\t5777.418391000034\t1970-01-01T00:00:00.000000Z\n" +
+                        "VTJW\t1625.610380713817\t1970-01-01T00:00:00.000000Z\n" +
+                        "RXGZ\t1412.038590639350\t1970-01-01T00:00:00.000000Z\n" +
+                        "PEHN\t1103.691956777804\t1970-01-01T00:00:00.000000Z\n" +
+                        "HYRX\t1244.932150897452\t1970-01-01T00:00:00.000000Z\n" +
+                        "CPSW\t767.342385768801\t1970-01-01T00:00:00.000000Z\n" +
+                        "\t4695.687057334280\t1970-01-13T00:00:00.000000Z\n" +
+                        "VTJW\t878.513464919190\t1970-01-13T00:00:00.000000Z\n" +
+                        "RXGZ\t719.035202186062\t1970-01-13T00:00:00.000000Z\n" +
+                        "PEHN\t751.454927852314\t1970-01-13T00:00:00.000000Z\n" +
+                        "HYRX\t732.944056645521\t1970-01-13T00:00:00.000000Z\n" +
+                        "CPSW\t1012.865585349937\t1970-01-13T00:00:00.000000Z\n",
+                "select b, sum(a), k from x sample by 12d fill(null)",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(to_timestamp(172800000000), 3600000000) k" +
+                        " from" +
+                        " long_sequence(400)" +
+                        ") timestamp(k) partition by NONE",
+                "k",
+                false);
+    }
+
+    @Test
+    public void testSampleFillNullMonth() throws Exception {
+        assertQuery(
+                "b\tsum\tk\n" +
+                        "\t54112.404059386576\t1970-01-01T00:00:00.000000Z\n" +
+                        "VTJW\t11209.880434660998\t1970-01-01T00:00:00.000000Z\n" +
+                        "RXGZ\t9939.438287132382\t1970-01-01T00:00:00.000000Z\n" +
+                        "PEHN\t11042.882403279874\t1970-01-01T00:00:00.000000Z\n" +
+                        "HYRX\t11080.174817969956\t1970-01-01T00:00:00.000000Z\n" +
+                        "CPSW\t9310.397369439000\t1970-01-01T00:00:00.000000Z\n" +
+                        "\t2030.155438151525\t1970-04-01T00:00:00.000000Z\n" +
+                        "VTJW\t680.416344135958\t1970-04-01T00:00:00.000000Z\n" +
+                        "RXGZ\t534.733385281313\t1970-04-01T00:00:00.000000Z\n" +
+                        "PEHN\t359.891979199214\t1970-04-01T00:00:00.000000Z\n" +
+                        "HYRX\t487.361172719468\t1970-04-01T00:00:00.000000Z\n" +
+                        "CPSW\t444.970484588731\t1970-04-01T00:00:00.000000Z\n",
+                "select b, sum(a), k from x sample by 3M fill(null)",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(to_timestamp(172800000000), 3600000000) k" +
+                        " from" +
+                        " long_sequence(2200)" +
+                        ") timestamp(k) partition by NONE",
+                "k",
+                false
+        );
+    }
+
+    @Test
+    public void testSampleFillNullYear() throws Exception {
+        assertQuery(
+                "b\tsum\tk\n" +
+                        "\t433413.612901176960\t1970-01-01T00:00:00.000000Z\n" +
+                        "VTJW\t87351.541927459600\t1970-01-01T00:00:00.000000Z\n" +
+                        "RXGZ\t88650.231612464544\t1970-01-01T00:00:00.000000Z\n" +
+                        "PEHN\t91229.031954294304\t1970-01-01T00:00:00.000000Z\n" +
+                        "HYRX\t87026.718735230112\t1970-01-01T00:00:00.000000Z\n" +
+                        "CPSW\t87762.478425828496\t1970-01-01T00:00:00.000000Z\n" +
+                        "\t315056.784555843712\t1972-01-01T00:00:00.000000Z\n" +
+                        "VTJW\t61084.814285205680\t1972-01-01T00:00:00.000000Z\n" +
+                        "RXGZ\t63886.423482740584\t1972-01-01T00:00:00.000000Z\n" +
+                        "PEHN\t64376.579921839208\t1972-01-01T00:00:00.000000Z\n" +
+                        "HYRX\t64680.372828808416\t1972-01-01T00:00:00.000000Z\n" +
+                        "CPSW\t60814.765754379168\t1972-01-01T00:00:00.000000Z\n",
+                "select b, sum(a), k from x sample by 2y fill(null)",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(to_timestamp(172800000000), 3600000000) k" +
+                        " from" +
+                        " long_sequence(30000)" +
+                        ") timestamp(k) partition by NONE",
+                "k",
+                false
+        );
     }
 
     @Test
@@ -2206,6 +2561,72 @@ public class SampleByTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testSampleFillValueAllKeyTypes() throws Exception {
+        assertQuery("b\th\ti\tj\tl\tsum\tsum1\tsum2\tsum3\tsum4\tsum5\tk\n" +
+                        "\tFFYUDEYY\t00000000 49 b4 59 7e 3b 08 a1 1e 38 8d 1b 9e f4 c8 39 09\t2015-09-16T21:59:49.857Z\tfalse\t11.427984775756\t42.1777\t1432278050\t13216\t4\t5539350449504785212\t1970-01-03T00:00:00.000000Z\n" +
+                        "HYRX\tGETJR\t\t2015-04-09T11:42:28.332Z\tfalse\t12.026122412833\t48.8205\t458818940\t3282\t8\t-6253307669002054137\t1970-01-03T00:00:00.000000Z\n" +
+                        "\tZVDZJ\t00000000 e3 f1 f1 1e ca 9c 1d 06 ac 37 c8 cd 82 89 2b 4d\t2015-08-26T10:57:26.275Z\ttrue\t5.048190020054\t0.1108\t66297136\t-5637\t7\t9036423629723776443\t1970-01-03T00:00:00.000000Z\n" +
+                        "\tLYXWCK\t00000000 47 dc d2 85 7f a5 b8 7b 4a 9d 46 7c 8d\t2015-07-13T12:15:31.895Z\ttrue\t20.560000000000\t0.0000\t0\t0\t0\t0\t1970-01-03T00:00:00.000000Z\n" +
+                        "\t\t00000000 49 1c f2 3c ed 39 ac a8 3b a6\t2015-01-08T06:16:03.023Z\tfalse\t20.560000000000\t0.0000\t0\t0\t0\t0\t1970-01-03T00:00:00.000000Z\n" +
+                        "RXGZ\tVLJUM\t00000000 29 5e 69 c6 eb ea c3 c9 73 93 46 fe\t2015-06-28T03:15:43.251Z\tfalse\t20.560000000000\t0.0000\t0\t0\t0\t0\t1970-01-03T00:00:00.000000Z\n" +
+                        "\tHWVDKF\t00000000 f5 5d d0 eb 67 44 a7 6a 71 34 e0\t2015-12-05T03:07:39.553Z\ttrue\t20.560000000000\t0.0000\t0\t0\t0\t0\t1970-01-03T00:00:00.000000Z\n" +
+                        "HYRX\tNZHZS\t\t2015-10-11T07:06:57.173Z\ttrue\t20.560000000000\t0.0000\t0\t0\t0\t0\t1970-01-03T00:00:00.000000Z\n" +
+                        "RXGZ\tEBNDCQCE\t00000000 e9 0c ea 4e ea 8b f5 0f 2d b3\t2015-03-25T11:25:58.599Z\tfalse\t20.560000000000\t0.0000\t0\t0\t0\t0\t1970-01-03T00:00:00.000000Z\n" +
+                        "\tUIZUL\t00000000 54 52 d0 29 26 c5 aa da 18 ce 5f b2 8b 5c 54 90\t\ttrue\t20.560000000000\t0.0000\t0\t0\t0\t0\t1970-01-03T00:00:00.000000Z\n" +
+                        "\tFFYUDEYY\t00000000 49 b4 59 7e 3b 08 a1 1e 38 8d 1b 9e f4 c8 39 09\t2015-09-16T21:59:49.857Z\tfalse\t20.560000000000\t0.0000\t0\t0\t0\t0\t1970-01-03T03:00:00.000000Z\n" +
+                        "HYRX\tGETJR\t\t2015-04-09T11:42:28.332Z\tfalse\t20.560000000000\t0.0000\t0\t0\t0\t0\t1970-01-03T03:00:00.000000Z\n" +
+                        "\tZVDZJ\t00000000 e3 f1 f1 1e ca 9c 1d 06 ac 37 c8 cd 82 89 2b 4d\t2015-08-26T10:57:26.275Z\ttrue\t20.560000000000\t0.0000\t0\t0\t0\t0\t1970-01-03T03:00:00.000000Z\n" +
+                        "\tLYXWCK\t00000000 47 dc d2 85 7f a5 b8 7b 4a 9d 46 7c 8d\t2015-07-13T12:15:31.895Z\ttrue\t11.585982949541\t81.6418\t998315423\t-5585\t7\t8587391969565958670\t1970-01-03T03:00:00.000000Z\n" +
+                        "\t\t00000000 49 1c f2 3c ed 39 ac a8 3b a6\t2015-01-08T06:16:03.023Z\tfalse\t19.751370382305\t68.0687\t544695670\t-1464\t6\t-5024542231726589509\t1970-01-03T03:00:00.000000Z\n" +
+                        "RXGZ\tVLJUM\t00000000 29 5e 69 c6 eb ea c3 c9 73 93 46 fe\t2015-06-28T03:15:43.251Z\tfalse\t84.384595639148\t48.9274\t1100812407\t-32358\t10\t5398991075259361292\t1970-01-03T03:00:00.000000Z\n" +
+                        "\tHWVDKF\t00000000 f5 5d d0 eb 67 44 a7 6a 71 34 e0\t2015-12-05T03:07:39.553Z\ttrue\t20.560000000000\t0.0000\t0\t0\t0\t0\t1970-01-03T03:00:00.000000Z\n" +
+                        "HYRX\tNZHZS\t\t2015-10-11T07:06:57.173Z\ttrue\t20.560000000000\t0.0000\t0\t0\t0\t0\t1970-01-03T03:00:00.000000Z\n" +
+                        "RXGZ\tEBNDCQCE\t00000000 e9 0c ea 4e ea 8b f5 0f 2d b3\t2015-03-25T11:25:58.599Z\tfalse\t20.560000000000\t0.0000\t0\t0\t0\t0\t1970-01-03T03:00:00.000000Z\n" +
+                        "\tUIZUL\t00000000 54 52 d0 29 26 c5 aa da 18 ce 5f b2 8b 5c 54 90\t\ttrue\t20.560000000000\t0.0000\t0\t0\t0\t0\t1970-01-03T03:00:00.000000Z\n" +
+                        "\tFFYUDEYY\t00000000 49 b4 59 7e 3b 08 a1 1e 38 8d 1b 9e f4 c8 39 09\t2015-09-16T21:59:49.857Z\tfalse\t20.560000000000\t0.0000\t0\t0\t0\t0\t1970-01-03T06:00:00.000000Z\n" +
+                        "HYRX\tGETJR\t\t2015-04-09T11:42:28.332Z\tfalse\t20.560000000000\t0.0000\t0\t0\t0\t0\t1970-01-03T06:00:00.000000Z\n" +
+                        "\tZVDZJ\t00000000 e3 f1 f1 1e ca 9c 1d 06 ac 37 c8 cd 82 89 2b 4d\t2015-08-26T10:57:26.275Z\ttrue\t20.560000000000\t0.0000\t0\t0\t0\t0\t1970-01-03T06:00:00.000000Z\n" +
+                        "\tLYXWCK\t00000000 47 dc d2 85 7f a5 b8 7b 4a 9d 46 7c 8d\t2015-07-13T12:15:31.895Z\ttrue\t20.560000000000\t0.0000\t0\t0\t0\t0\t1970-01-03T06:00:00.000000Z\n" +
+                        "\t\t00000000 49 1c f2 3c ed 39 ac a8 3b a6\t2015-01-08T06:16:03.023Z\tfalse\t20.560000000000\t0.0000\t0\t0\t0\t0\t1970-01-03T06:00:00.000000Z\n" +
+                        "RXGZ\tVLJUM\t00000000 29 5e 69 c6 eb ea c3 c9 73 93 46 fe\t2015-06-28T03:15:43.251Z\tfalse\t20.560000000000\t0.0000\t0\t0\t0\t0\t1970-01-03T06:00:00.000000Z\n" +
+                        "\tHWVDKF\t00000000 f5 5d d0 eb 67 44 a7 6a 71 34 e0\t2015-12-05T03:07:39.553Z\ttrue\t85.931314807243\t10.5273\t2105201404\t5667\t8\t-8994301462266164776\t1970-01-03T06:00:00.000000Z\n" +
+                        "HYRX\tNZHZS\t\t2015-10-11T07:06:57.173Z\ttrue\t63.412928948436\t5.0246\t1377625589\t-25710\t3\t2151565237758036093\t1970-01-03T06:00:00.000000Z\n" +
+                        "RXGZ\tEBNDCQCE\t00000000 e9 0c ea 4e ea 8b f5 0f 2d b3\t2015-03-25T11:25:58.599Z\tfalse\t85.843084380450\t54.6690\t903066492\t-2990\t4\t-1134031357796740497\t1970-01-03T06:00:00.000000Z\n" +
+                        "\tUIZUL\t00000000 54 52 d0 29 26 c5 aa da 18 ce 5f b2 8b 5c 54 90\t\ttrue\t20.560000000000\t0.0000\t0\t0\t0\t0\t1970-01-03T06:00:00.000000Z\n" +
+                        "\tFFYUDEYY\t00000000 49 b4 59 7e 3b 08 a1 1e 38 8d 1b 9e f4 c8 39 09\t2015-09-16T21:59:49.857Z\tfalse\t20.560000000000\t0.0000\t0\t0\t0\t0\t1970-01-03T09:00:00.000000Z\n" +
+                        "HYRX\tGETJR\t\t2015-04-09T11:42:28.332Z\tfalse\t20.560000000000\t0.0000\t0\t0\t0\t0\t1970-01-03T09:00:00.000000Z\n" +
+                        "\tZVDZJ\t00000000 e3 f1 f1 1e ca 9c 1d 06 ac 37 c8 cd 82 89 2b 4d\t2015-08-26T10:57:26.275Z\ttrue\t20.560000000000\t0.0000\t0\t0\t0\t0\t1970-01-03T09:00:00.000000Z\n" +
+                        "\tLYXWCK\t00000000 47 dc d2 85 7f a5 b8 7b 4a 9d 46 7c 8d\t2015-07-13T12:15:31.895Z\ttrue\t20.560000000000\t0.0000\t0\t0\t0\t0\t1970-01-03T09:00:00.000000Z\n" +
+                        "\t\t00000000 49 1c f2 3c ed 39 ac a8 3b a6\t2015-01-08T06:16:03.023Z\tfalse\t20.560000000000\t0.0000\t0\t0\t0\t0\t1970-01-03T09:00:00.000000Z\n" +
+                        "RXGZ\tVLJUM\t00000000 29 5e 69 c6 eb ea c3 c9 73 93 46 fe\t2015-06-28T03:15:43.251Z\tfalse\t20.560000000000\t0.0000\t0\t0\t0\t0\t1970-01-03T09:00:00.000000Z\n" +
+                        "\tHWVDKF\t00000000 f5 5d d0 eb 67 44 a7 6a 71 34 e0\t2015-12-05T03:07:39.553Z\ttrue\t20.560000000000\t0.0000\t0\t0\t0\t0\t1970-01-03T09:00:00.000000Z\n" +
+                        "HYRX\tNZHZS\t\t2015-10-11T07:06:57.173Z\ttrue\t20.560000000000\t0.0000\t0\t0\t0\t0\t1970-01-03T09:00:00.000000Z\n" +
+                        "RXGZ\tEBNDCQCE\t00000000 e9 0c ea 4e ea 8b f5 0f 2d b3\t2015-03-25T11:25:58.599Z\tfalse\t20.560000000000\t0.0000\t0\t0\t0\t0\t1970-01-03T09:00:00.000000Z\n" +
+                        "\tUIZUL\t00000000 54 52 d0 29 26 c5 aa da 18 ce 5f b2 8b 5c 54 90\t\ttrue\t21.485589614091\t6.2027\t358259591\t-29980\t8\t-8841102831894340636\t1970-01-03T09:00:00.000000Z\n",
+                "select b, h, i, j, l, sum(a), sum(c), sum(d), sum(e), sum(f), sum(g), k from x sample by 3h fill(20.56, 0, 0, 0, 0, 0)",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " rnd_float(0)*100 c," +
+                        " abs(rnd_int()) d," +
+                        " rnd_short() e," +
+                        " rnd_byte(3,10) f," +
+                        " rnd_long() g," +
+                        " rnd_str(5,8,2) h," +
+                        " rnd_bin(10, 20, 2) i," +
+                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) j," +
+                        " rnd_boolean() l," +
+                        " timestamp_sequence(to_timestamp(172800000000), 3600000000) k" +
+                        " from" +
+                        " long_sequence(10)" +
+                        ") timestamp(k) partition by NONE",
+                "k",
+                false);
+    }
+
+    @Test
     public void testSampleFillValueAllTypes() throws Exception {
         assertQuery("b\tsum\tsum1\tsum2\tsum3\tsum4\tsum5\tk\n" +
                         "\t74.197525059489\t113.1213\t-1737520119\t868\t12\t-6307312481136788016\t1970-01-03T00:00:00.000000Z\n" +
@@ -2468,6 +2889,24 @@ public class SampleByTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testSampleFillValueBadType() throws Exception {
+        assertFailure(
+                "select b, sum_t(b), k from x sample by 3h fill(20.56)",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_str(1,1,2) b," +
+                        " timestamp_sequence(to_timestamp(172800000000), 3600000000) k" +
+                        " from" +
+                        " long_sequence(20)" +
+                        ") timestamp(k) partition by NONE",
+                10,
+                "Unsupported type"
+        );
+    }
+
+    @Test
     public void testSampleFillValueEmpty() throws Exception {
         assertQuery("b\tsum\tk\n",
                 "select b, sum(a), k from x sample by 3h fill(20.56)",
@@ -2487,7 +2926,7 @@ public class SampleByTest extends AbstractGriffinTest {
     @Test
     public void testSampleFillValueInvalid() throws Exception {
         assertFailure(
-                "select b, sum(a), sum(c), sum(d), sum(e), sum(f), sum(g), k from x sample by 3h fill(20.56, none, 0, 0, 0)",
+                "select b, sum_t(a), sum(c), sum(d), sum(e), sum(f), sum(g), k from x sample by 3h fill(20.56, none, 0, 0, 0)",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -2502,7 +2941,7 @@ public class SampleByTest extends AbstractGriffinTest {
                         " from" +
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
-                92,
+                94,
                 "invalid number"
         );
     }

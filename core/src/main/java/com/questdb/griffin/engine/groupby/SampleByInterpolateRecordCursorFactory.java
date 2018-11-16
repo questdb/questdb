@@ -141,15 +141,8 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
                     storeYFunctions.add(InterpolationUtil.STORE_Y_FLOAT);
                     interpolatorFunctions.add(InterpolationUtil.INTERPOLATE_FLOAT);
                     break;
-                case ColumnType.DATE:
-                    storeYFunctions.add(InterpolationUtil.STORE_Y_DATE);
-                    interpolatorFunctions.add(InterpolationUtil.INTERPOLATE_DATE);
-                    break;
-                case ColumnType.TIMESTAMP:
-                    storeYFunctions.add(InterpolationUtil.STORE_Y_TIMESTAMP);
-                    interpolatorFunctions.add(InterpolationUtil.INTERPOLATE_TIMESTAMP);
-                    break;
                 default:
+                    GroupByUtils.closeGroupByFunctions(groupByFunctions);
                     throw SqlException.$(function.getPosition(), "Unsupported type: ").put(ColumnType.nameOf(function.getType()));
             }
         }

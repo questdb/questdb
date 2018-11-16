@@ -34,8 +34,6 @@ public class InterpolationUtil {
     static final StoreYFunction STORE_Y_SHORT = InterpolationUtil::storeYShort;
     static final StoreYFunction STORE_Y_INT = InterpolationUtil::storeYInt;
     static final StoreYFunction STORE_Y_LONG = InterpolationUtil::storeYLong;
-    static final StoreYFunction STORE_Y_DATE = InterpolationUtil::storeYLong;
-    static final StoreYFunction STORE_Y_TIMESTAMP = InterpolationUtil::storeYLong;
 
     static final InterpolatorFunction INTERPOLATE_DOUBLE = InterpolationUtil::interpolateDouble;
     static final InterpolatorFunction INTERPOLATE_FLOAT = InterpolationUtil::interpolateFloat;
@@ -43,8 +41,6 @@ public class InterpolationUtil {
     static final InterpolatorFunction INTERPOLATE_SHORT = InterpolationUtil::interpolateShort;
     static final InterpolatorFunction INTERPOLATE_INT = InterpolationUtil::interpolateInt;
     static final InterpolatorFunction INTERPOLATE_LONG = InterpolationUtil::interpolateLong;
-    static final InterpolatorFunction INTERPOLATE_DATE = InterpolationUtil::interpolateDate;
-    static final InterpolatorFunction INTERPOLATE_TIMESTAMP = InterpolationUtil::interpolateTimestamp;
 
     public static void interpolateByte(
             GroupByFunction function,
@@ -63,27 +59,6 @@ public class InterpolationUtil {
                         Unsafe.getUnsafe().getByte(y1Address),
                         x2,
                         Unsafe.getUnsafe().getByte(y2Address)
-                )
-        );
-    }
-
-    public static void interpolateDate(
-            GroupByFunction function,
-            MapValue mapValue,
-            long x,
-            long x1,
-            long x2,
-            long y1Address,
-            long y2Address
-    ) {
-        function.setDate(
-                mapValue,
-                (long) interpolate(
-                        x,
-                        x1,
-                        Unsafe.getUnsafe().getLong(y1Address),
-                        x2,
-                        Unsafe.getUnsafe().getLong(y2Address)
                 )
         );
     }
@@ -168,27 +143,6 @@ public class InterpolationUtil {
                         Unsafe.getUnsafe().getShort(y1Address),
                         x2,
                         Unsafe.getUnsafe().getShort(y2Address)
-                )
-        );
-    }
-
-    public static void interpolateTimestamp(
-            GroupByFunction function,
-            MapValue mapValue,
-            long x,
-            long x1,
-            long x2,
-            long y1Address,
-            long y2Address
-    ) {
-        function.setTimestamp(
-                mapValue,
-                (long) interpolate(
-                        x,
-                        x1,
-                        Unsafe.getUnsafe().getLong(y1Address),
-                        x2,
-                        Unsafe.getUnsafe().getLong(y2Address)
                 )
         );
     }

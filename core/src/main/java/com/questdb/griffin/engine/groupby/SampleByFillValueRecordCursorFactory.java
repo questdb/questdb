@@ -94,16 +94,22 @@ public class SampleByFillValueRecordCursorFactory extends AbstractSampleByRecord
             IntIntHashMap symbolTableIndex,
             @NotNull ObjList<ExpressionNode> fillValues
     ) throws SqlException {
-        return new SampleByFillValueRecordCursor(
-                map,
-                sink,
-                groupByFunctions,
-                recordFunctions,
-                createPlaceholderFunctions(recordFunctions, fillValues),
-                timestampIndex,
-                timestampSampler,
-                symbolTableIndex
-        );
+        try {
+            final ObjList<Function> placeholderFunctions = createPlaceholderFunctions(recordFunctions, fillValues);
+            return new SampleByFillValueRecordCursor(
+                    map,
+                    sink,
+                    groupByFunctions,
+                    recordFunctions,
+                    placeholderFunctions,
+                    timestampIndex,
+                    timestampSampler,
+                    symbolTableIndex
+            );
+        } catch (SqlException e) {
+            GroupByUtils.closeGroupByFunctions(groupByFunctions);
+            throw e;
+        }
     }
 
     @NotNull

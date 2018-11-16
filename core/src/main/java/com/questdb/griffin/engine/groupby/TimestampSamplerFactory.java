@@ -100,6 +100,9 @@ public final class TimestampSamplerFactory {
 
             }
         } catch (NumericException ignore) {
+            // we are parsing a pre-validated number
+            // but we have to deal with checked exception anyway
+            assert false;
         }
 
         throw SqlException.$(position + k, "unsupported interval qualifier");

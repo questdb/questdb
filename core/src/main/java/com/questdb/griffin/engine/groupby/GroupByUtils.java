@@ -200,4 +200,10 @@ class GroupByUtils {
             }
         }
     }
+
+    static void closeGroupByFunctions(ObjList<GroupByFunction> groupByFunctions) {
+        for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
+            groupByFunctions.getQuick(i).close();
+        }
+    }
 }
