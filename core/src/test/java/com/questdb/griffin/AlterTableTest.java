@@ -23,18 +23,12 @@
 
 package com.questdb.griffin;
 
-import com.questdb.cairo.TableWriter;
 import com.questdb.griffin.engine.functions.rnd.SharedRandom;
 import com.questdb.std.Rnd;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
-import org.junit.Ignore;
 import org.junit.Test;
-
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.CyclicBarrier;
-import java.util.concurrent.TimeUnit;
 
 public class AlterTableTest extends AbstractGriffinTest {
 
@@ -44,7 +38,6 @@ public class AlterTableTest extends AbstractGriffinTest {
     }
 
     @Test
-    @Ignore
     public void testAddTwoColumns() throws Exception {
         TestUtils.assertMemoryLeak(
                 () -> {
@@ -81,6 +74,23 @@ public class AlterTableTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testExpectActionKeyword() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try {
+                createX();
+                compiler.compile("alter table x", bindVariableService);
+                Assert.fail();
+            } catch (SqlException e) {
+                Assert.assertEquals(13, e.getPosition());
+                TestUtils.assertContains(e.getFlyweightMessage(), "'add' or 'drop' expected");
+            } finally {
+                engine.releaseAllReaders();
+                engine.releaseAllWriters();
+            }
+        });
+    }
+
+    @Test
     public void testExpectTableKeyword() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try {
@@ -102,24 +112,6 @@ public class AlterTableTest extends AbstractGriffinTest {
             } catch (SqlException e) {
                 Assert.assertEquals(11, e.getPosition());
                 TestUtils.assertContains(e.getFlyweightMessage(), "table name expected");
-            }
-        });
-    }
-
-    @Test
-    public void testExpectTableName2() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            try {
-                createX();
-
-                compiler.compile("truncate table x,", bindVariableService);
-                Assert.fail();
-            } catch (SqlException e) {
-                Assert.assertEquals(17, e.getPosition());
-                TestUtils.assertContains(e.getFlyweightMessage(), "table name expected");
-            } finally {
-                engine.releaseAllReaders();
-                engine.releaseAllWriters();
             }
         });
     }
@@ -161,167 +153,17 @@ public class AlterTableTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testTableBusy() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            createX();
-            createY();
-
-            assertQuery(
-                    "count\n" +
-                            "10\n",
-                    "select count() from x",
-                    null,
-                    true
-            );
-
-            assertQuery(
-                    "count\n" +
-                            "20\n",
-                    "select count() from y",
-                    null,
-                    true
-            );
-
-            CyclicBarrier useBarrier = new CyclicBarrier(2);
-            CyclicBarrier releaseBarrier = new CyclicBarrier(2);
-            CountDownLatch haltLatch = new CountDownLatch(1);
-
-            new Thread(() -> {
-                // lock table and wait until main thread uses it
-                try (TableWriter ignore = engine.getWriter("y")) {
-                    useBarrier.await();
-                    releaseBarrier.await();
-                } catch (Exception e) {
-                    e.printStackTrace();
-                }
-
-                haltLatch.countDown();
-
-            }).start();
-
-            useBarrier.await();
-            try {
-                Assert.assertNull(compiler.compile("truncate table x,y", bindVariableService));
-                Assert.fail();
-            } catch (SqlException e) {
-                Assert.assertEquals(17, e.getPosition());
-                TestUtils.assertContains(e.getFlyweightMessage(), "table 'y' is busy");
-            }
-
-            releaseBarrier.await();
-
-            assertQuery(
-                    "count\n" +
-                            "10\n",
-                    "select count() from x",
-                    null,
-                    true
-            );
-
-            assertQuery(
-                    "count\n" +
-                            "20\n",
-                    "select count() from y",
-                    null,
-                    true
-            );
-
-            haltLatch.await(1, TimeUnit.SECONDS);
-
-            engine.releaseAllWriters();
-            engine.releaseAllReaders();
-        });
-    }
-
-    @Test
     public void testTableDoesNotExist() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             createX();
-            createY();
-
-            assertQuery(
-                    "count\n" +
-                            "10\n",
-                    "select count() from x",
-                    null,
-                    true
-            );
-
-            assertQuery(
-                    "count\n" +
-                            "20\n",
-                    "select count() from y",
-                    null,
-                    true
-            );
 
             try {
-                Assert.assertNull(compiler.compile("truncate table x, y,z", bindVariableService));
+                Assert.assertNull(compiler.compile("alter table y", bindVariableService));
                 Assert.fail();
             } catch (SqlException e) {
-                Assert.assertEquals(20, e.getPosition());
-                TestUtils.assertContains(e.getFlyweightMessage(), "table 'z' does not");
+                Assert.assertEquals(12, e.getPosition());
+                TestUtils.assertContains(e.getFlyweightMessage(), "table 'y' does not");
             }
-
-            assertQuery(
-                    "count\n" +
-                            "10\n",
-                    "select count() from x",
-                    null,
-                    true
-            );
-
-            assertQuery(
-                    "count\n" +
-                            "20\n",
-                    "select count() from y",
-                    null,
-                    true
-            );
-
-            engine.releaseAllWriters();
-            engine.releaseAllReaders();
-        });
-    }
-
-    @Test
-    public void testTwoTables() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            createX();
-            createY();
-
-            assertQuery(
-                    "count\n" +
-                            "10\n",
-                    "select count() from x",
-                    null,
-                    true
-            );
-
-            assertQuery(
-                    "count\n" +
-                            "20\n",
-                    "select count() from y",
-                    null,
-                    true
-            );
-
-            Assert.assertNull(compiler.compile("truncate table x, y", bindVariableService));
-
-            assertQuery(
-                    "count\n",
-                    "select count() from x",
-                    null,
-                    true
-            );
-
-            assertQuery(
-                    "count\n",
-                    "select count() from y",
-                    null,
-                    true
-            );
-
 
             engine.releaseAllWriters();
             engine.releaseAllReaders();
@@ -349,32 +191,6 @@ public class AlterTableTest extends AbstractGriffinTest {
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n" +
                         " from long_sequence(10)" +
-                        ") timestamp (timestamp)",
-                bindVariableService
-        );
-    }
-
-    private void createY() throws SqlException {
-        compiler.compile(
-                "create table y as (" +
-                        "select" +
-                        " to_int(x) i," +
-                        " rnd_symbol('msft','ibm', 'googl') sym," +
-                        " round(rnd_double(0)*100, 3) amt," +
-                        " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
-                        " rnd_boolean() b," +
-                        " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
-                        " rnd_double(2) d," +
-                        " rnd_float(2) e," +
-                        " rnd_short(10,1024) f," +
-                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
-                        " rnd_symbol(4,4,4,2) ik," +
-                        " rnd_long() j," +
-                        " timestamp_sequence(to_timestamp(0), 1000000000) k," +
-                        " rnd_byte(2,50) l," +
-                        " rnd_bin(10, 20, 2) m," +
-                        " rnd_str(5,16,2) n" +
-                        " from long_sequence(20)" +
                         ") timestamp (timestamp)",
                 bindVariableService
         );

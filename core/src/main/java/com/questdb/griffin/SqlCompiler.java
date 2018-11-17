@@ -609,7 +609,7 @@ public class SqlCompiler implements Closeable {
 
             tok = SqlUtil.fetchNext(lexer);
             if (tok == null) {
-                throw SqlException.$(lexer.getPosition(), "'add' or 'remove' expected");
+                throw SqlException.$(lexer.getPosition(), "'add' or 'drop' expected");
             }
 
             if (Chars.equals("add", tok)) {

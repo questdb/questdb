@@ -28,6 +28,7 @@ import com.questdb.cairo.ColumnTypes;
 import com.questdb.cairo.TableUtils;
 import com.questdb.cairo.sql.Function;
 import com.questdb.cairo.sql.Record;
+import com.questdb.cairo.sql.SymbolTable;
 import com.questdb.cairo.sql.VirtualRecord;
 import com.questdb.griffin.engine.functions.BinFunction;
 import com.questdb.griffin.engine.functions.SymbolFunction;
@@ -62,7 +63,7 @@ public class NullRecordFactory {
     private static final SymbolFunction SYMBOL_NULL = new SymbolFunction(0) {
         @Override
         public int getInt(Record rec) {
-            return TableUtils.NULL_LEN;
+            return SymbolTable.VALUE_IS_NULL;
         }
 
         @Override

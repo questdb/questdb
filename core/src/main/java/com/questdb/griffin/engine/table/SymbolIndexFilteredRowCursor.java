@@ -26,6 +26,7 @@ package com.questdb.griffin.engine.table;
 import com.questdb.cairo.BitmapIndexReader;
 import com.questdb.cairo.TableReader;
 import com.questdb.cairo.TableReaderRecord;
+import com.questdb.cairo.TableUtils;
 import com.questdb.cairo.sql.DataFrame;
 import com.questdb.cairo.sql.Function;
 import com.questdb.cairo.sql.RowCursor;
@@ -69,7 +70,7 @@ class SymbolIndexFilteredRowCursor implements RowCursor {
     }
 
     public final void of(int symbolKey) {
-        this.symbolKey = symbolKey + 1;
+        this.symbolKey = TableUtils.toIndexKey(symbolKey);
     }
 
     public SymbolIndexFilteredRowCursor of(DataFrame dataFrame) {

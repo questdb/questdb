@@ -23,6 +23,7 @@
 
 package com.questdb.cairo;
 
+import com.questdb.cairo.sql.SymbolTable;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.std.CharSequenceIntHashMap;
@@ -367,6 +368,10 @@ public final class TableUtils {
         } finally {
             path.trimTo(plen);
         }
+    }
+
+    public static int toIndexKey(int symbolKey) {
+        return symbolKey == SymbolTable.VALUE_IS_NULL ? 0 : symbolKey + 1;
     }
 
     static {

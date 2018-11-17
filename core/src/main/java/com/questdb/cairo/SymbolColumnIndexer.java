@@ -66,7 +66,7 @@ class SymbolColumnIndexer implements ColumnIndexer, Closeable {
         // while we may have to read column starting with zero offset
         // index values have to be adjusted to partition-level row id
         for (long lo = loRow - columnTop; lo < hiRow; lo++) {
-            writer.add(mem.getInt(lo * 4) + 1, lo + columnTop);
+            writer.add(TableUtils.toIndexKey(mem.getInt(lo * 4)), lo + columnTop);
         }
     }
 

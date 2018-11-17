@@ -23,6 +23,7 @@
 
 package com.questdb.griffin.engine.table;
 
+import com.questdb.cairo.TableUtils;
 import com.questdb.cairo.sql.DataFrameCursorFactory;
 import com.questdb.cairo.sql.Function;
 import com.questdb.cairo.sql.RecordMetadata;
@@ -47,6 +48,6 @@ public class LatestByValueDeferredIndexedFilteredRecordCursorFactory extends Abs
     @Override
     protected AbstractDataFrameRecordCursor createDataFrameCursorFor(int symbolKey) {
         assert filter != null;
-        return new LatestByValueIndexedFilteredRecordCursor(columnIndex, symbolKey + 1, filter);
+        return new LatestByValueIndexedFilteredRecordCursor(columnIndex, TableUtils.toIndexKey(symbolKey), filter);
     }
 }

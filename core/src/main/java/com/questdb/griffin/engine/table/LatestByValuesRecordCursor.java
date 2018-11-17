@@ -23,6 +23,7 @@
 
 package com.questdb.griffin.engine.table;
 
+import com.questdb.cairo.TableUtils;
 import com.questdb.cairo.sql.DataFrame;
 import com.questdb.griffin.engine.functions.bind.BindVariableService;
 import com.questdb.std.IntHashSet;
@@ -55,7 +56,7 @@ class LatestByValuesRecordCursor extends AbstractTreeSetRecordCursor {
             record.jumpTo(frame.getPartitionIndex(), rowHi);
             for (long row = rowHi; row >= rowLo; row--) {
                 record.setRecordIndex(row);
-                int key = record.getInt(columnIndex) + 1;
+                int key = TableUtils.toIndexKey(record.getInt(columnIndex));
                 int index = map.keyIndex(key);
                 if (index < 0) {
                     if (map.valueAt(index) == 0) {

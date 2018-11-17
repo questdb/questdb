@@ -23,6 +23,7 @@
 
 package com.questdb.griffin.engine.table;
 
+import com.questdb.cairo.TableUtils;
 import com.questdb.cairo.sql.*;
 import com.questdb.griffin.engine.functions.bind.BindVariableService;
 import org.jetbrains.annotations.NotNull;
@@ -38,7 +39,7 @@ public class LatestByValueIndexedFilteredRecordCursorFactory extends AbstractDat
             int symbolKey,
             @NotNull Function filter) {
         super(metadata, dataFrameCursorFactory);
-        this.cursor = new LatestByValueIndexedFilteredRecordCursor(columnIndex, symbolKey + 1, filter);
+        this.cursor = new LatestByValueIndexedFilteredRecordCursor(columnIndex, TableUtils.toIndexKey(symbolKey), filter);
         this.filter = filter;
     }
 

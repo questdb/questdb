@@ -26,6 +26,7 @@ package com.questdb.griffin.engine.table;
 import com.questdb.cairo.BitmapIndexReader;
 import com.questdb.cairo.EmptyRowCursor;
 import com.questdb.cairo.TableReader;
+import com.questdb.cairo.TableUtils;
 import com.questdb.cairo.sql.DataFrame;
 import com.questdb.cairo.sql.RowCursor;
 import com.questdb.cairo.sql.RowCursorFactory;
@@ -59,7 +60,7 @@ public class DeferredSymbolIndexRowCursorFactory implements RowCursorFactory {
     public void prepareCursor(TableReader tableReader) {
         int symbolKey = tableReader.getSymbolMapReader(columnIndex).getQuick(symbol);
         if (symbolKey != SymbolTable.VALUE_NOT_FOUND) {
-            this.symbolKey = symbolKey + 1;
+            this.symbolKey = TableUtils.toIndexKey(symbolKey);
         }
     }
 }

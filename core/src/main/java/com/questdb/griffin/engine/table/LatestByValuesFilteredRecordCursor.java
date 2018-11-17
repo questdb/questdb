@@ -23,6 +23,7 @@
 
 package com.questdb.griffin.engine.table;
 
+import com.questdb.cairo.TableUtils;
 import com.questdb.cairo.sql.DataFrame;
 import com.questdb.cairo.sql.Function;
 import com.questdb.griffin.engine.functions.bind.BindVariableService;
@@ -71,7 +72,7 @@ class LatestByValuesFilteredRecordCursor extends AbstractTreeSetRecordCursor {
             for (long row = rowHi; row >= rowLo; row--) {
                 record.setRecordIndex(row);
                 if (filter.getBool(record)) {
-                    int key = record.getInt(columnIndex) + 1;
+                    int key = TableUtils.toIndexKey(record.getInt(columnIndex));
                     int index = map.keyIndex(key);
                     if (index < 0) {
                         if (map.valueAt(index) == 0) {

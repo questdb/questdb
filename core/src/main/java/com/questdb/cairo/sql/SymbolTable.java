@@ -23,9 +23,11 @@
 
 package com.questdb.cairo.sql;
 
+import com.questdb.std.Numbers;
+
 public interface SymbolTable {
     int VALUE_NOT_FOUND = -2;
-    int VALUE_IS_NULL = -1;
+    int VALUE_IS_NULL = Numbers.INT_NaN;
 
     int getQuick(CharSequence value);
 

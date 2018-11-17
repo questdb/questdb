@@ -24,6 +24,7 @@
 package com.questdb.griffin.engine.table;
 
 import com.questdb.cairo.BitmapIndexReader;
+import com.questdb.cairo.TableUtils;
 import com.questdb.cairo.sql.DataFrame;
 import com.questdb.cairo.sql.RowCursor;
 import com.questdb.cairo.sql.RowCursorFactory;
@@ -35,7 +36,7 @@ public class SymbolIndexRowCursorFactory implements RowCursorFactory {
 
     public SymbolIndexRowCursorFactory(int columnIndex, int symbolKey, boolean cachedIndexReaderCursor) {
         this.columnIndex = columnIndex;
-        this.symbolKey = symbolKey + 1;
+        this.symbolKey = TableUtils.toIndexKey(symbolKey);
         this.cachedIndexReaderCursor = cachedIndexReaderCursor;
     }
 

@@ -25,6 +25,7 @@ package com.questdb.griffin.engine.table;
 
 import com.questdb.cairo.CairoConfiguration;
 import com.questdb.cairo.ColumnType;
+import com.questdb.cairo.TableUtils;
 import com.questdb.cairo.sql.*;
 import com.questdb.griffin.engine.StrTypeCaster;
 import com.questdb.griffin.engine.SymbolTypeCaster;
@@ -95,7 +96,7 @@ public class LatestBySubQueryRecordCursorFactory extends AbstractTreeSetRecordCu
             while (cursor.hasNext()) {
                 int symbolKey = symbolTable.getQuick(typeCaster.getValue(record, 0));
                 if (symbolKey != SymbolTable.VALUE_NOT_FOUND) {
-                    symbolKeys.add(symbolKey + 1);
+                    symbolKeys.add(TableUtils.toIndexKey(symbolKey));
                 }
             }
         }

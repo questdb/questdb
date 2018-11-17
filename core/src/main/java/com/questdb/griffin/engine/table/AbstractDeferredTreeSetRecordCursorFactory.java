@@ -25,6 +25,7 @@ package com.questdb.griffin.engine.table;
 
 import com.questdb.cairo.CairoConfiguration;
 import com.questdb.cairo.SymbolMapReader;
+import com.questdb.cairo.TableUtils;
 import com.questdb.cairo.sql.DataFrameCursor;
 import com.questdb.cairo.sql.DataFrameCursorFactory;
 import com.questdb.cairo.sql.RecordMetadata;
@@ -72,7 +73,7 @@ public abstract class AbstractDeferredTreeSetRecordCursorFactory extends Abstrac
                 }
                 deferredSymbols.add(Chars.toString(symbol));
             } else {
-                symbolKeys.add(symbolKey + 1);
+                symbolKeys.add(TableUtils.toIndexKey(symbolKey));
             }
         }
 
@@ -89,7 +90,7 @@ public abstract class AbstractDeferredTreeSetRecordCursorFactory extends Abstrac
                 CharSequence symbol = deferredSymbols.get(i);
                 int symbolKey = symbolTable.getQuick(symbol);
                 if (symbolKey != SymbolTable.VALUE_NOT_FOUND) {
-                    symbolKeys.add(symbolKey + 1);
+                    symbolKeys.add(TableUtils.toIndexKey(symbolKey));
                     deferredSymbols.remove(symbol);
                     n--;
                 } else {
