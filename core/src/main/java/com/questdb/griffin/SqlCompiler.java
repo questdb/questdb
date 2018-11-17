@@ -140,43 +140,27 @@ public class SqlCompiler implements Closeable {
 
     public RecordCursorFactory compile(CharSequence query, BindVariableService bindVariableService) throws SqlException {
 
+        // these are quick executions that do not require building of a model
+        //
+        lexer.of(query);
+        CharSequence tok = SqlUtil.fetchNext(lexer);
+        if (Chars.equals(tok, "truncate")) {
+            truncateTables(lexer);
+            return null;
+        }
+
+        if (Chars.equals(tok, "alter")) {
+            alterTable(lexer);
+            return null;
+        }
+
         // short circuit to cache if there is anything there
         RecordCursorFactory result = sqlCache.poll(query);
         if (result != null) {
             return result;
         }
 
-        // This method will not populate sql cache directly;
-        // factories are assumed to be non reentrant and once
-        // factory is out of this method the caller assumes
-        // full ownership over it. In that however caller may
-        // chose to return factory back to this or any other
-        // instance of compiler for safekeeping
-
-        executionContext.with(bindVariableService);
-
-        ExecutionModel executionModel = compileExecutionModel(query, executionContext);
-        if (executionModel == null) {
-            return null;
-        }
-
-        switch (executionModel.getModelType()) {
-            case ExecutionModel.QUERY:
-                return generate((QueryModel) executionModel, executionContext);
-            case ExecutionModel.CREATE_TABLE:
-                createTableWithRetries(query, executionModel);
-                break;
-            case ExecutionModel.INSERT_AS_SELECT:
-                executeWithRetries(
-                        query,
-                        insertAsSelectMethod,
-                        executionModel,
-                        configuration.getCreateAsSelectRetryCount());
-                break;
-            default:
-                break;
-        }
-        return null;
+        return compileUsingModel(query, bindVariableService);
     }
 
     // Creates data type converter.
@@ -607,6 +591,85 @@ public class SqlCompiler implements Closeable {
                 || (from == ColumnType.SYMBOL && to == ColumnType.STRING);
     }
 
+    private void alterTable(GenericLexer lexer) throws SqlException {
+        CharSequence tok;
+        tok = SqlUtil.fetchNext(lexer);
+        if (!Chars.equals("table", tok)) {
+            throw SqlException.$(lexer.lastTokenPosition(), "'table' expected");
+        }
+
+        tok = SqlUtil.fetchNext(lexer);
+        if (tok == null) {
+            throw SqlException.$(lexer.getPosition(), "table name expected");
+        }
+
+        tableExistsOrFail(lexer.lastTokenPosition(), tok);
+
+        try (TableWriter writer = engine.getWriter(tok)) {
+
+            tok = SqlUtil.fetchNext(lexer);
+            if (tok == null) {
+                throw SqlException.$(lexer.getPosition(), "'add' or 'remove' expected");
+            }
+
+            if (Chars.equals("add", tok)) {
+                // add columns to table
+                tok = SqlUtil.fetchNext(lexer);
+
+                if (tok == null || !Chars.equals(tok, "column")) {
+                    throw SqlException.$(lexer.getPosition(), "'column' expected");
+                }
+
+                do {
+                    int tableNamePosition = lexer.getPosition();
+
+                    tok = SqlUtil.fetchNext(lexer);
+                    if (tok == null) {
+                        throw SqlException.$(lexer.getPosition(), "column name expected");
+                    }
+
+                    int index = writer.getMetadata().getColumnIndexQuiet(tok);
+                    if (index != -1) {
+                        throw SqlException.$(lexer.lastTokenPosition(), "column '").put(tok).put("' already exists");
+                    }
+
+                    CharSequence columnName = GenericLexer.immutableOf(tok);
+
+                    tok = SqlUtil.fetchNext(lexer);
+
+                    if (tok == null) {
+                        throw SqlException.$(lexer.getPosition(), "column type expected");
+                    }
+
+                    int type = ColumnType.columnTypeOf(tok);
+                    if (type == -1) {
+                        throw SqlException.$(lexer.lastTokenPosition(), "invalid type");
+                    }
+
+                    try {
+                        writer.addColumn(columnName, type);
+                    } catch (CairoException e) {
+                        throw SqlException.$(tableNamePosition, "Cannot add column. Try again later.");
+                    }
+
+                    tok = SqlUtil.fetchNext(lexer);
+
+                    if (tok == null) {
+                        break;
+                    }
+
+                    if (!Chars.equals(tok, ',')) {
+                        throw SqlException.$(lexer.lastTokenPosition(), "',' expected");
+                    }
+
+                } while (true);
+            }
+        } catch (CairoException e) {
+            LOG.info().$("failed to lock table for alter: ").$((Sinkable) e).$();
+            throw SqlException.$(lexer.lastTokenPosition(), "table '").put(tok).put("' is busy");
+        }
+    }
+
     private void clear() {
         sqlNodePool.clear();
         characterStore.clear();
@@ -617,14 +680,6 @@ public class SqlCompiler implements Closeable {
     }
 
     private ExecutionModel compileExecutionModel(GenericLexer lexer, SqlExecutionContext executionContext) throws SqlException {
-
-        CharSequence tok = SqlUtil.fetchNext(lexer);
-        if (Chars.equals(tok, "truncate")) {
-            truncateTables(lexer);
-            return null;
-        }
-
-        lexer.unparse();
         ExecutionModel model = parser.parse(lexer, executionContext);
         switch (model.getModelType()) {
             case ExecutionModel.QUERY:
@@ -640,6 +695,37 @@ public class SqlCompiler implements Closeable {
         clear();
         lexer.of(query);
         return compileExecutionModel(lexer, executionContext);
+    }
+
+    @Nullable
+    private RecordCursorFactory compileUsingModel(CharSequence query, BindVariableService bindVariableService) throws SqlException {
+        // This method will not populate sql cache directly;
+        // factories are assumed to be non reentrant and once
+        // factory is out of this method the caller assumes
+        // full ownership over it. In that however caller may
+        // chose to return factory back to this or any other
+        // instance of compiler for safekeeping
+
+        executionContext.with(bindVariableService);
+
+        ExecutionModel executionModel = compileExecutionModel(query, executionContext);
+        switch (executionModel.getModelType()) {
+            case ExecutionModel.QUERY:
+                return generate((QueryModel) executionModel, executionContext);
+            case ExecutionModel.CREATE_TABLE:
+                createTableWithRetries(query, executionModel);
+                break;
+            case ExecutionModel.INSERT_AS_SELECT:
+                executeWithRetries(
+                        query,
+                        insertAsSelectMethod,
+                        executionModel,
+                        configuration.getCreateAsSelectRetryCount());
+                break;
+            default:
+                break;
+        }
+        return null;
     }
 
     private void copyOrdered(TableWriter writer, RecordCursor cursor, RecordToRowCopier copier, int cursorTimestampIndex) {

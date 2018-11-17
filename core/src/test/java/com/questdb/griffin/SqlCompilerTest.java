@@ -1862,7 +1862,7 @@ public class SqlCompilerTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCreateAsSelectInvalidTimestamp() {
+    public void testCreateAsSelectInvalidTimestamp() throws Exception {
         assertFailure(88, "TIMESTAMP column expected",
                 "create table y as (" +
                         "select * from random_cursor(" +
@@ -2320,7 +2320,7 @@ public class SqlCompilerTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testDuplicateTableName() throws SqlException {
+    public void testDuplicateTableName() throws Exception {
         compiler.compile("create table x (" +
                         "a INT, " +
                         "b BYTE, " +
@@ -2340,7 +2340,7 @@ public class SqlCompilerTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testExecuteQuery() {
+    public void testExecuteQuery() throws Exception {
         assertFailure(
                 58,
                 "not a TIMESTAMP",
@@ -2773,13 +2773,7 @@ public class SqlCompilerTest extends AbstractCairoTest {
                 if (ddl != null) {
                     compiler.compile(ddl, bindVariableService);
                 }
-                try {
-                    compiler.compile(insert, bindVariableService);
-                    Assert.fail();
-                } catch (SqlException e) {
-                    Assert.assertEquals(errorPosition, e.getPosition());
-                    TestUtils.assertContains(e.getMessage(), errorMessage);
-                }
+                assertFailure0(errorPosition, errorMessage, insert);
 
                 Assert.assertEquals(0, engine.getBusyReaderCount());
                 Assert.assertEquals(0, engine.getBusyWriterCount());
@@ -3426,7 +3420,13 @@ public class SqlCompilerTest extends AbstractCairoTest {
         }
     }
 
-    private void assertFailure(int position, CharSequence expectedMessage, CharSequence sql) {
+    protected void assertFailure(int position, CharSequence expectedMessage, CharSequence sql) throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            assertFailure0(position, expectedMessage, sql);
+        });
+    }
+
+    private void assertFailure0(int position, CharSequence expectedMessage, CharSequence sql) {
         try {
             compiler.compile(sql, bindVariableService);
             Assert.fail();

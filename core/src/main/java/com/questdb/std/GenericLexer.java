@@ -221,6 +221,7 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
         this._len = hi;
         this.next = null;
         this.unparsed = null;
+        this.last = null;
     }
 
     public void unparse() {
