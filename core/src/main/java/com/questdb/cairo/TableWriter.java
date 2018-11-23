@@ -230,11 +230,11 @@ public class TableWriter implements Closeable {
      * @param name                    of column either ASCII or UTF8 encoded.
      * @param symbolCapacity          when column type is SYMBOL this parameter specifies approximate capacity for symbol map.
      *                                It should be equal to number of unique symbol values stored in the table and getting this
-     *                                value badly wrong will cause performance degradation.
+     *                                value badly wrong will cause performance degradation. Must be power of 2
      * @param symbolCacheFlag         when set to true, symbol values will be cached on Java heap.
      * @param type                    {@link ColumnType}
      * @param indexFlag               configures column to be indexed or not
-     * @param indexValueBlockCapacity approximation of number of rows for single index key
+     * @param indexValueBlockCapacity approximation of number of rows for single index key, must be power of 2
      */
     public void addColumn(
             CharSequence name,
@@ -244,6 +244,9 @@ public class TableWriter implements Closeable {
             boolean indexFlag,
             int indexValueBlockCapacity
     ) {
+
+        assert indexValueBlockCapacity == Numbers.ceilPow2(indexValueBlockCapacity);
+        assert symbolCapacity == Numbers.ceilPow2(symbolCapacity);
 
         checkDistressed();
 

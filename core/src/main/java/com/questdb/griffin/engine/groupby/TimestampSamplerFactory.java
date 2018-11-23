@@ -41,7 +41,6 @@ public final class TimestampSamplerFactory {
     public static TimestampSampler getInstance(CharSequence cs, int position) throws SqlException {
         int k = -1;
 
-
         if (cs == null) {
             throw SqlException.$(position, "missing interval");
         }

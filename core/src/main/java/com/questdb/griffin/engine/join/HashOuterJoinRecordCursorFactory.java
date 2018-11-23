@@ -97,10 +97,9 @@ public class HashOuterJoinRecordCursorFactory extends AbstractRecordCursorFactor
         return false;
     }
 
-    private void buildMapOfSlaveRecords(RecordCursor slaveCursor) {
-        slaveChain.clear();
+    static void buildMap(RecordCursor slaveCursor, Record record, Map joinKeyMap, RecordSink slaveKeySink, RecordChain slaveChain) {
         joinKeyMap.clear();
-        final Record record = slaveCursor.getRecord();
+        slaveChain.clear();
         while (slaveCursor.hasNext()) {
             MapKey key = joinKeyMap.withKey();
             key.put(record, slaveKeySink);
@@ -113,6 +112,10 @@ public class HashOuterJoinRecordCursorFactory extends AbstractRecordCursorFactor
                 value.putLong(1, slaveChain.put(record, value.getLong(1)));
             }
         }
+    }
+
+    private void buildMapOfSlaveRecords(RecordCursor slaveCursor) {
+        buildMap(slaveCursor, slaveCursor.getRecord(), joinKeyMap, slaveKeySink, slaveChain);
     }
 
     private class HashJoinRecordCursor implements NoRandomAccessRecordCursor {

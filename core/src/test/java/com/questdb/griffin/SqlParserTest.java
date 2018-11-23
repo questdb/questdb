@@ -2492,7 +2492,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     public void testLatestBySyntax() {
         assertSyntaxError(
                 "select * from tab latest",
-                18,
+                24,
                 "'by' expected"
         );
     }

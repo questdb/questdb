@@ -616,8 +616,12 @@ public class SqlCompiler implements Closeable {
                 // add columns to table
                 tok = SqlUtil.fetchNext(lexer);
 
-                if (tok == null || !Chars.equals(tok, "column")) {
+                if (tok == null) {
                     throw SqlException.$(lexer.getPosition(), "'column' expected");
+                }
+
+                if (!Chars.equals(tok, "column")) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "'column' expected");
                 }
 
                 do {
@@ -646,13 +650,70 @@ public class SqlCompiler implements Closeable {
                         throw SqlException.$(lexer.lastTokenPosition(), "invalid type");
                     }
 
-                    try {
-                        writer.addColumn(columnName, type);
-                    } catch (CairoException e) {
-                        throw SqlException.$(tableNamePosition, "Cannot add column. Try again later.");
-                    }
-
                     tok = SqlUtil.fetchNext(lexer);
+
+                    if (type == ColumnType.SYMBOL && tok != null && !Chars.equals(tok, ',')) {
+
+                        final int capacity;
+                        if (Chars.equals(tok, "capacity")) {
+                            tok = SqlUtil.fetchNext(lexer);
+
+                            if (tok == null) {
+                                throw SqlException.$(lexer.getPosition(), "symbol capacity expected");
+                            }
+                            try {
+                                capacity = Numbers.parseInt(tok);
+                            } catch (NumericException e) {
+                                throw SqlException.$(lexer.lastTokenPosition(), "numeric capacity expected");
+                            }
+
+                            tok = SqlUtil.fetchNext(lexer);
+                        } else {
+                            capacity = configuration.getDefaultSymbolCapacity();
+                        }
+
+                        final boolean cache;
+                        if (Chars.equalsNc("cache", tok)) {
+                            cache = true;
+                            tok = SqlUtil.fetchNext(lexer);
+                        } else if (Chars.equalsNc("nocache", tok)) {
+                            cache = false;
+                            tok = SqlUtil.fetchNext(lexer);
+                        } else {
+                            cache = configuration.getDefaultSymbolCacheFlag();
+                        }
+
+                        final boolean indexed = Chars.equalsNc("index", tok);
+                        if (indexed) {
+                            tok = SqlUtil.fetchNext(lexer);
+                        }
+
+                        final int indexValueBlockCapacity;
+                        if (Chars.equalsNc("capacity", tok)) {
+                            tok = SqlUtil.fetchNext(lexer);
+                            if (tok == null) {
+                                throw SqlException.$(lexer.getPosition(), "symbol capacity expected");
+                            }
+
+                            try {
+                                indexValueBlockCapacity = Numbers.parseInt(tok);
+                            } catch (NumericException e) {
+                                throw SqlException.$(lexer.lastTokenPosition(), "numeric capacity expected");
+                            }
+                            tok = SqlUtil.fetchNext(lexer);
+                        } else {
+                            indexValueBlockCapacity = configuration.getIndexValueBlockSize();
+                        }
+
+                        writer.addColumn(columnName, type, Numbers.ceilPow2(capacity), cache, indexed, Numbers.ceilPow2(indexValueBlockCapacity));
+                    } else {
+
+                        try {
+                            writer.addColumn(columnName, type);
+                        } catch (CairoException e) {
+                            throw SqlException.$(tableNamePosition, "Cannot add column. Try again later.");
+                        }
+                    }
 
                     if (tok == null) {
                         break;

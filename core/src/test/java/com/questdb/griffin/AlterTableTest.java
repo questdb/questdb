@@ -23,6 +23,9 @@
 
 package com.questdb.griffin;
 
+import com.questdb.cairo.SymbolMapReader;
+import com.questdb.cairo.TableReader;
+import com.questdb.cairo.TableWriter;
 import com.questdb.griffin.engine.functions.rnd.SharedRandom;
 import com.questdb.std.Rnd;
 import com.questdb.test.tools.TestUtils;
@@ -30,11 +33,207 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
+
 public class AlterTableTest extends AbstractGriffinTest {
 
     @Before
     public void setUp3() {
         SharedRandom.RANDOM.set(new Rnd());
+    }
+
+    @Test
+    public void testAddBadSyntax() throws Exception {
+        assertFailure("alter table x add column abc int k", 33, "',' expected");
+    }
+
+    @Test
+    public void testAddBusyTable() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            CountDownLatch allHaltLatch = new CountDownLatch(1);
+            try {
+                createX();
+                AtomicInteger errorCounter = new AtomicInteger();
+
+                // start a thread that would lock table we
+                // about to alter
+                CyclicBarrier startBarrier = new CyclicBarrier(2);
+                CountDownLatch haltLatch = new CountDownLatch(1);
+                new Thread(() -> {
+                    try (TableWriter ignore = engine.getWriter("x")) {
+                        // make sure writer is locked before test begins
+                        startBarrier.await();
+                        // make sure we don't release writer until main test finishes
+                        Assert.assertTrue(haltLatch.await(5, TimeUnit.SECONDS));
+                    } catch (Throwable e) {
+                        e.printStackTrace();
+                        errorCounter.incrementAndGet();
+                    } finally {
+                        engine.releaseAllReaders();
+                        engine.releaseAllWriters();
+
+                        allHaltLatch.countDown();
+                    }
+                }).start();
+
+                startBarrier.await();
+                try {
+                    compiler.compile("alter table x add column xx int", bindVariableService);
+                    Assert.fail();
+                } finally {
+                    haltLatch.countDown();
+                }
+            } catch (SqlException e) {
+                Assert.assertEquals(12, e.getPosition());
+                TestUtils.assertContains(e.getFlyweightMessage(), "table 'x' is busy");
+            }
+
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+
+            allHaltLatch.await(2, TimeUnit.SECONDS);
+        });
+    }
+
+    @Test
+    public void testAddDuplicateColumn() throws Exception {
+        assertFailure("alter table x add column d int", 25, "column 'd' already exists");
+    }
+
+    @Test
+    public void testAddExpectColumnKeyword() throws Exception {
+        assertFailure("alter table x add", 17, "'column' expected");
+    }
+
+    @Test
+    public void testAddExpectColumnName() throws Exception {
+        assertFailure("alter table x add column", 24, "column name expected");
+    }
+
+    @Test
+    public void testAddExpectColumnType() throws Exception {
+        assertFailure("alter table x add column abc", 28, "column type expected");
+    }
+
+    @Test
+    public void testAddInvalidType() throws Exception {
+        assertFailure("alter table x add column abc blah", 29, "invalid type");
+    }
+
+    @Test
+    public void testAddSymbolCapacity() throws Exception {
+        TestUtils.assertMemoryLeak(
+                () -> {
+                    try {
+                        createX();
+
+                        Assert.assertNull(compiler.compile("alter table x add column meh symbol capacity 2048", bindVariableService));
+
+                        try (TableReader reader = engine.getReader("x", 1)) {
+                            SymbolMapReader smr = reader.getSymbolMapReader(16);
+                            Assert.assertNotNull(smr);
+                            Assert.assertEquals(2048, smr.getSymbolCapacity());
+                            Assert.assertFalse(reader.getMetadata().isColumnIndexed(16));
+                            Assert.assertEquals(configuration.getIndexValueBlockSize(), reader.getMetadata().getIndexValueBlockCapacity(16));
+                            Assert.assertEquals(configuration.getDefaultSymbolCacheFlag(), smr.isCached());
+                        }
+
+                        Assert.assertEquals(0, engine.getBusyWriterCount());
+                        Assert.assertEquals(0, engine.getBusyReaderCount());
+                    } finally {
+                        engine.releaseAllReaders();
+                        engine.releaseAllWriters();
+                    }
+                }
+        );
+    }
+
+    @Test
+    public void testAddSymbolIndex() throws Exception {
+        TestUtils.assertMemoryLeak(
+                () -> {
+                    try {
+                        createX();
+
+                        Assert.assertNull(compiler.compile("alter table x add column meh symbol index", bindVariableService));
+
+                        try (TableReader reader = engine.getReader("x", 1)) {
+                            SymbolMapReader smr = reader.getSymbolMapReader(16);
+                            Assert.assertNotNull(smr);
+                            Assert.assertEquals(configuration.getDefaultSymbolCapacity(), smr.getSymbolCapacity());
+                            Assert.assertTrue(reader.getMetadata().isColumnIndexed(16));
+                            Assert.assertEquals(configuration.getIndexValueBlockSize(), reader.getMetadata().getIndexValueBlockCapacity(16));
+                            Assert.assertEquals(configuration.getDefaultSymbolCacheFlag(), smr.isCached());
+                        }
+
+                        Assert.assertEquals(0, engine.getBusyWriterCount());
+                        Assert.assertEquals(0, engine.getBusyReaderCount());
+                    } finally {
+                        engine.releaseAllReaders();
+                        engine.releaseAllWriters();
+                    }
+                }
+        );
+    }
+
+    @Test
+    public void testAddSymbolIndexCapacity() throws Exception {
+        TestUtils.assertMemoryLeak(
+                () -> {
+                    try {
+                        createX();
+
+                        Assert.assertNull(compiler.compile("alter table x add column meh symbol index capacity 9000", bindVariableService));
+
+                        try (TableReader reader = engine.getReader("x", 1)) {
+                            SymbolMapReader smr = reader.getSymbolMapReader(16);
+                            Assert.assertNotNull(smr);
+                            Assert.assertEquals(configuration.getDefaultSymbolCapacity(), smr.getSymbolCapacity());
+                            Assert.assertTrue(reader.getMetadata().isColumnIndexed(16));
+                            // power of 2
+                            Assert.assertEquals(16384, reader.getMetadata().getIndexValueBlockCapacity(16));
+                            Assert.assertEquals(configuration.getDefaultSymbolCacheFlag(), smr.isCached());
+                        }
+
+                        Assert.assertEquals(0, engine.getBusyWriterCount());
+                        Assert.assertEquals(0, engine.getBusyReaderCount());
+                    } finally {
+                        engine.releaseAllReaders();
+                        engine.releaseAllWriters();
+                    }
+                }
+        );
+    }
+
+    @Test
+    public void testAddSymbolNoCache() throws Exception {
+        TestUtils.assertMemoryLeak(
+                () -> {
+                    try {
+                        createX();
+
+                        Assert.assertNull(compiler.compile("alter table x add column meh symbol nocache", bindVariableService));
+
+                        try (TableReader reader = engine.getReader("x", 1)) {
+                            SymbolMapReader smr = reader.getSymbolMapReader(16);
+                            Assert.assertNotNull(smr);
+                            Assert.assertEquals(configuration.getDefaultSymbolCapacity(), smr.getSymbolCapacity());
+                            Assert.assertFalse(reader.getMetadata().isColumnIndexed(16));
+                            Assert.assertEquals(configuration.getIndexValueBlockSize(), reader.getMetadata().getIndexValueBlockCapacity(16));
+                            Assert.assertFalse(smr.isCached());
+                        }
+
+                        Assert.assertEquals(0, engine.getBusyWriterCount());
+                        Assert.assertEquals(0, engine.getBusyReaderCount());
+                    } finally {
+                        engine.releaseAllReaders();
+                        engine.releaseAllWriters();
+                    }
+                }
+        );
     }
 
     @Test
@@ -74,46 +273,23 @@ public class AlterTableTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testAddUnknown() throws Exception {
+        assertFailure("alter table x add blah", 18, "'column' expected");
+    }
+
+    @Test
     public void testExpectActionKeyword() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            try {
-                createX();
-                compiler.compile("alter table x", bindVariableService);
-                Assert.fail();
-            } catch (SqlException e) {
-                Assert.assertEquals(13, e.getPosition());
-                TestUtils.assertContains(e.getFlyweightMessage(), "'add' or 'drop' expected");
-            } finally {
-                engine.releaseAllReaders();
-                engine.releaseAllWriters();
-            }
-        });
+        assertFailure("alter table x", 13, "'add' or 'drop' expected");
     }
 
     @Test
     public void testExpectTableKeyword() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            try {
-                compiler.compile("alter x", bindVariableService);
-                Assert.fail();
-            } catch (SqlException e) {
-                Assert.assertEquals(6, e.getPosition());
-                TestUtils.assertContains(e.getFlyweightMessage(), "'table' expected");
-            }
-        });
+        assertFailure("alter x", 6, "'table' expected");
     }
 
     @Test
     public void testExpectTableName() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            try {
-                compiler.compile("alter table", bindVariableService);
-                Assert.fail();
-            } catch (SqlException e) {
-                Assert.assertEquals(11, e.getPosition());
-                TestUtils.assertContains(e.getFlyweightMessage(), "table name expected");
-            }
-        });
+        assertFailure("alter table", 11, "table name expected");
     }
 
     @Test
@@ -154,19 +330,22 @@ public class AlterTableTest extends AbstractGriffinTest {
 
     @Test
     public void testTableDoesNotExist() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            createX();
+        assertFailure("alter table y", 12, "table 'y' does not");
+    }
 
+    private void assertFailure(String sql, int position, String message) throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
             try {
-                Assert.assertNull(compiler.compile("alter table y", bindVariableService));
+                createX();
+                compiler.compile(sql, bindVariableService);
                 Assert.fail();
             } catch (SqlException e) {
-                Assert.assertEquals(12, e.getPosition());
-                TestUtils.assertContains(e.getFlyweightMessage(), "table 'y' does not");
+                Assert.assertEquals(position, e.getPosition());
+                TestUtils.assertContains(e.getFlyweightMessage(), message);
             }
 
-            engine.releaseAllWriters();
             engine.releaseAllReaders();
+            engine.releaseAllWriters();
         });
     }
 

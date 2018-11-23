@@ -169,7 +169,7 @@ public final class SqlParser {
     private void expectTok(GenericLexer lexer, CharSequence expected) throws SqlException {
         CharSequence tok = optTok(lexer);
         if (tok == null) {
-            throw SqlException.position(lexer.lastTokenPosition()).put('\'').put(expected).put("' expected");
+            throw SqlException.position(lexer.getPosition()).put('\'').put(expected).put("' expected");
         }
         expectTok(lexer, tok, expected);
     }
