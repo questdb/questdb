@@ -1747,7 +1747,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                     }
 
                     writer.removeColumn("c");
-                    writer.addColumn("c", ColumnType.SYMBOL, N, true, true, 8);
+                    writer.addColumn("c", ColumnType.SYMBOL, Numbers.ceilPow2(N), true, true, 8);
 
                     for (int i = 0; i < M; i++) {
                         TableWriter.Row row = writer.newRow(timestamp += increment);
@@ -1903,7 +1903,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                     }
 
                     writer.removeColumn("c");
-                    writer.addColumn("c", ColumnType.SYMBOL, N, true, true, 8);
+                    writer.addColumn("c", ColumnType.SYMBOL, Numbers.ceilPow2(N), true, true, 8);
 
                     for (int i = 0; i < M; i++) {
                         TableWriter.Row row = writer.newRow(timestamp += increment);

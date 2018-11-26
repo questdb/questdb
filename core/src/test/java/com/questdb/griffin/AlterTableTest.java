@@ -114,6 +114,42 @@ public class AlterTableTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testAddSymbolExpectCapacity() throws Exception {
+        assertFailure("alter table x add column abc symbol capacity", 44, "symbol capacity expected");
+    }
+
+    @Test
+    public void testAddSymbolExpectCapacityTooHigh() throws Exception {
+        assertFailure("alter table x add column abc symbol capacity 1073741825 nocache", 45, "max symbol capacity is");
+    }
+
+    @Test
+    public void testAddSymbolExpectCapacityTooHigh2() throws Exception {
+        // cached symbol capacity is lower due to JVM limits
+        assertFailure("alter table x add column abc symbol capacity 1073741824", 45, "max cached symbol capacity is");
+    }
+
+    @Test
+    public void testAddSymbolExpectCapacityTooLow() throws Exception {
+        assertFailure("alter table x add column abc symbol capacity -100", 45, "min symbol capacity is");
+    }
+
+    @Test
+    public void testAddSymbolExpectCapacityTooLow2() throws Exception {
+        assertFailure("alter table x add column abc symbol capacity 1", 45, "min symbol capacity is");
+    }
+
+    @Test
+    public void testAddSymbolExpectNumericCapacity() throws Exception {
+        assertFailure("alter table x add column abc symbol capacity 1b", 45, "numeric capacity expected");
+    }
+
+    @Test
+    public void testAddSymbolInvalidIndexCapacity() throws Exception {
+        assertFailure("alter table x add column abc symbol index capacity a0", 51, "numeric capacity expected");
+    }
+
+    @Test
     public void testAddExpectColumnType() throws Exception {
         assertFailure("alter table x add column abc", 28, "column type expected");
     }

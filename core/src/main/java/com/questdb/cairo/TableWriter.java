@@ -245,8 +245,8 @@ public class TableWriter implements Closeable {
             int indexValueBlockCapacity
     ) {
 
-        assert indexValueBlockCapacity == Numbers.ceilPow2(indexValueBlockCapacity);
-        assert symbolCapacity == Numbers.ceilPow2(symbolCapacity);
+        assert indexValueBlockCapacity == Numbers.ceilPow2(indexValueBlockCapacity) : "power of 2 expected";
+        assert symbolCapacity == Numbers.ceilPow2(symbolCapacity) : "power of 2 expected";
 
         checkDistressed();
 

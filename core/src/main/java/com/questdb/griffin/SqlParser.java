@@ -361,6 +361,7 @@ public final class SqlParser {
 
         if (type == ColumnType.SYMBOL) {
             if (Chars.equals(optTok(lexer), "capacity")) {
+                // todo: validate capacity
                 columnCastModel.setSymbolCapacity(expectInt(lexer));
             } else {
                 lexer.unparse();
@@ -393,6 +394,7 @@ public final class SqlParser {
                     tok = tok(lexer, "'capacity', 'nocache', 'cache', 'index' or ')'");
 
                     if (Chars.equals(tok, "capacity")) {
+                        // todo: validate capacity
                         model.symbolCapacity(expectInt(lexer));
                         tok = tok(lexer, "'nocache', 'cache', 'index' or ')'");
                     }
@@ -430,6 +432,7 @@ public final class SqlParser {
         final int columnIndex = getCreateTableColumnIndex(model, expectLiteral(lexer).token, lexer.lastTokenPosition());
 
         if (Chars.equals(tok(lexer, "'capacity'"), "capacity")) {
+            // todo: validate capacity
             model.setIndexFlags(columnIndex, true, Numbers.ceilPow2(expectInt(lexer)) - 1);
         } else {
             model.setIndexFlags(columnIndex, true, configuration.getIndexValueBlockSize());
@@ -454,6 +457,7 @@ public final class SqlParser {
         }
 
         expectTok(lexer, tok, "capacity");
+        // todo: validate capacity
         model.setIndexFlags(true, expectInt(lexer));
         return null;
     }

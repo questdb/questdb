@@ -652,27 +652,47 @@ public class SqlCompiler implements Closeable {
 
                     tok = SqlUtil.fetchNext(lexer);
 
+                    final int indexValueBlockCapacity;
+                    final boolean cache;
+                    final int symbolCapacity;
+                    final boolean indexed;
+
                     if (type == ColumnType.SYMBOL && tok != null && !Chars.equals(tok, ',')) {
 
-                        final int capacity;
                         if (Chars.equals(tok, "capacity")) {
                             tok = SqlUtil.fetchNext(lexer);
 
                             if (tok == null) {
                                 throw SqlException.$(lexer.getPosition(), "symbol capacity expected");
                             }
+
+                            final boolean negative;
+                            final int errorPos = lexer.lastTokenPosition();
+                            if (Chars.equals(tok, '-')) {
+                                negative = true;
+                                tok = SqlUtil.fetchNext(lexer);
+                            } else {
+                                negative = false;
+                            }
+
                             try {
-                                capacity = Numbers.parseInt(tok);
+                                symbolCapacity = Numbers.parseInt(tok);
                             } catch (NumericException e) {
                                 throw SqlException.$(lexer.lastTokenPosition(), "numeric capacity expected");
                             }
 
+                            if (negative || symbolCapacity < TableUtils.MIN_SYMBOL_CAPACITY) {
+                                throw SqlException.$(errorPos, "min symbol capacity is ").put(TableUtils.MIN_SYMBOL_CAPACITY);
+                            }
+                            if (symbolCapacity > TableUtils.MAX_SYMBOL_CAPACITY) {
+                                throw SqlException.$(errorPos, "max symbol capacity is ").put(TableUtils.MAX_SYMBOL_CAPACITY);
+                            }
+
                             tok = SqlUtil.fetchNext(lexer);
                         } else {
-                            capacity = configuration.getDefaultSymbolCapacity();
+                            symbolCapacity = configuration.getDefaultSymbolCapacity();
                         }
 
-                        final boolean cache;
                         if (Chars.equalsNc("cache", tok)) {
                             cache = true;
                             tok = SqlUtil.fetchNext(lexer);
@@ -683,16 +703,19 @@ public class SqlCompiler implements Closeable {
                             cache = configuration.getDefaultSymbolCacheFlag();
                         }
 
-                        final boolean indexed = Chars.equalsNc("index", tok);
+                        if (cache && symbolCapacity > TableUtils.MAX_SYMBOL_CAPACITY_CACHED) {
+                            throw SqlException.$(lexer.lastTokenPosition(), "max cached symbol capacity is ").put(TableUtils.MAX_SYMBOL_CAPACITY_CACHED);
+                        }
+
+                        indexed = Chars.equalsNc("index", tok);
                         if (indexed) {
                             tok = SqlUtil.fetchNext(lexer);
                         }
 
-                        final int indexValueBlockCapacity;
                         if (Chars.equalsNc("capacity", tok)) {
                             tok = SqlUtil.fetchNext(lexer);
                             if (tok == null) {
-                                throw SqlException.$(lexer.getPosition(), "symbol capacity expected");
+                                throw SqlException.$(lexer.getPosition(), "symbol index capacity expected");
                             }
 
                             try {
@@ -704,15 +727,23 @@ public class SqlCompiler implements Closeable {
                         } else {
                             indexValueBlockCapacity = configuration.getIndexValueBlockSize();
                         }
-
-                        writer.addColumn(columnName, type, Numbers.ceilPow2(capacity), cache, indexed, Numbers.ceilPow2(indexValueBlockCapacity));
                     } else {
+                        cache = false;
+                        indexValueBlockCapacity = configuration.getIndexValueBlockSize();
+                        symbolCapacity = configuration.getDefaultSymbolCapacity();
+                        indexed = false;
+                    }
 
-                        try {
-                            writer.addColumn(columnName, type);
-                        } catch (CairoException e) {
-                            throw SqlException.$(tableNamePosition, "Cannot add column. Try again later.");
-                        }
+                    try {
+                        writer.addColumn(
+                                columnName,
+                                type,
+                                Numbers.ceilPow2(symbolCapacity),
+                                cache, indexed,
+                                Numbers.ceilPow2(indexValueBlockCapacity)
+                        );
+                    } catch (CairoException e) {
+                        throw SqlException.$(tableNamePosition, "Cannot add column. Try again later.");
                     }
 
                     if (tok == null) {

@@ -26,10 +26,7 @@ package com.questdb.cairo;
 import com.questdb.cairo.sql.SymbolTable;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
-import com.questdb.std.CharSequenceIntHashMap;
-import com.questdb.std.FilesFacade;
-import com.questdb.std.Os;
-import com.questdb.std.Unsafe;
+import com.questdb.std.*;
 import com.questdb.std.microtime.DateFormat;
 import com.questdb.std.microtime.DateFormatCompiler;
 import com.questdb.std.microtime.Dates;
@@ -45,6 +42,9 @@ public final class TableUtils {
     public static final long META_OFFSET_COLUMN_TYPES = 128;
     public static final int INITIAL_TXN = 0;
     public static final int NULL_LEN = -1;
+    public static final int MIN_SYMBOL_CAPACITY = 2;
+    public static final int MAX_SYMBOL_CAPACITY = Numbers.ceilPow2(Integer.MAX_VALUE);
+    public static final int MAX_SYMBOL_CAPACITY_CACHED = Numbers.ceilPow2(1_000_000);
     static final byte TODO_RESTORE_META = 2;
     static final byte TODO_TRUNCATE = 1;
     static final DateFormat fmtDay;
@@ -52,7 +52,6 @@ public final class TableUtils {
     static final DateFormat fmtYear;
     static final String ARCHIVE_FILE_NAME = "_archive";
     static final String DEFAULT_PARTITION_NAME = "default";
-
     // transaction file structure
     static final long TX_OFFSET_TXN = 0;
     static final long TX_OFFSET_TRANSIENT_ROW_COUNT = 8;
@@ -176,6 +175,10 @@ public final class TableUtils {
         // make sure we put append pointer behind our data so that
         // files does not get truncated when closing
         txMem.jumpTo(getPartitionTableIndexOffset(symbolMapCount, 0));
+    }
+
+    public static int toIndexKey(int symbolKey) {
+        return symbolKey == SymbolTable.VALUE_IS_NULL ? 0 : symbolKey + 1;
     }
 
     public static void validate(FilesFacade ff, ReadOnlyMemory metaMem, CharSequenceIntHashMap nameIndex) {
@@ -368,10 +371,6 @@ public final class TableUtils {
         } finally {
             path.trimTo(plen);
         }
-    }
-
-    public static int toIndexKey(int symbolKey) {
-        return symbolKey == SymbolTable.VALUE_IS_NULL ? 0 : symbolKey + 1;
     }
 
     static {
