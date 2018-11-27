@@ -160,7 +160,7 @@ public final class Net {
     public static long socketUdp() {
         long fd = socketUdp0();
         if (fd != -1L) {
-            Files.OPEN_FILE_COUNT.incrementAndGet();
+            Files.bumpFileCount();
         }
         return fd;
     }

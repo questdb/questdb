@@ -185,8 +185,9 @@ JNIEXPORT jint JNICALL Java_com_questdb_std_Files_close0
     jint r = CloseHandle((HANDLE) fd);
     if (!r) {
         SaveLastError();
+        return -1;
     }
-    return r;
+    return 0;
 }
 
 JNIEXPORT jlong JNICALL Java_com_questdb_std_Files_dup

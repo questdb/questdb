@@ -160,7 +160,7 @@ public final class Files {
     public static long openAppend(LPSZ lpsz) {
         long fd = openAppend(lpsz.address());
         if (fd != -1) {
-            OPEN_FILE_COUNT.incrementAndGet();
+            bumpFileCount();
         }
         return fd;
     }
@@ -168,7 +168,7 @@ public final class Files {
     public static long openRO(LPSZ lpsz) {
         long fd = openRO(lpsz.address());
         if (fd != -1) {
-            OPEN_FILE_COUNT.incrementAndGet();
+            bumpFileCount();
         }
         return fd;
     }
@@ -176,9 +176,13 @@ public final class Files {
     public static long openRW(LPSZ lpsz) {
         long fd = openRW(lpsz.address());
         if (fd != -1) {
-            OPEN_FILE_COUNT.incrementAndGet();
+            bumpFileCount();
         }
         return fd;
+    }
+
+    static void bumpFileCount() {
+        OPEN_FILE_COUNT.incrementAndGet();
     }
 
     public native static long read(long fd, long address, long len, long offset);
