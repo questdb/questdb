@@ -24,6 +24,7 @@
 package com.questdb.cairo;
 
 import com.questdb.cairo.sql.SymbolTable;
+import com.questdb.griffin.SqlException;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.std.*;
@@ -237,6 +238,15 @@ public final class TableUtils {
         } catch (CairoException e) {
             nameIndex.clear();
             throw e;
+        }
+    }
+
+    public static void validateSymbolCapacity(int position, int symbolCapacity) throws SqlException {
+        if (symbolCapacity < MIN_SYMBOL_CAPACITY) {
+            throw SqlException.$(position, "min symbol capacity is ").put(MIN_SYMBOL_CAPACITY);
+        }
+        if (symbolCapacity > MAX_SYMBOL_CAPACITY) {
+            throw SqlException.$(position, "max symbol capacity is ").put(MAX_SYMBOL_CAPACITY);
         }
     }
 

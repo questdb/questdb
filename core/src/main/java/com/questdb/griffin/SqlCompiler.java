@@ -654,7 +654,7 @@ public class SqlCompiler implements Closeable {
 
                     final int indexValueBlockCapacity;
                     final boolean cache;
-                    final int symbolCapacity;
+                    int symbolCapacity;
                     final boolean indexed;
 
                     if (type == ColumnType.SYMBOL && tok != null && !Chars.equals(tok, ',')) {
@@ -681,17 +681,17 @@ public class SqlCompiler implements Closeable {
                                 throw SqlException.$(lexer.lastTokenPosition(), "numeric capacity expected");
                             }
 
-                            if (negative || symbolCapacity < TableUtils.MIN_SYMBOL_CAPACITY) {
-                                throw SqlException.$(errorPos, "min symbol capacity is ").put(TableUtils.MIN_SYMBOL_CAPACITY);
+                            if (negative) {
+                                symbolCapacity = -symbolCapacity;
                             }
-                            if (symbolCapacity > TableUtils.MAX_SYMBOL_CAPACITY) {
-                                throw SqlException.$(errorPos, "max symbol capacity is ").put(TableUtils.MAX_SYMBOL_CAPACITY);
-                            }
+
+                            TableUtils.validateSymbolCapacity(errorPos, symbolCapacity);
 
                             tok = SqlUtil.fetchNext(lexer);
                         } else {
                             symbolCapacity = configuration.getDefaultSymbolCapacity();
                         }
+
 
                         if (Chars.equalsNc("cache", tok)) {
                             cache = true;

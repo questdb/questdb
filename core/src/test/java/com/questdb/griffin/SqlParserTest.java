@@ -95,23 +95,6 @@ public class SqlParserTest extends AbstractGriffinTest {
         );
     }
 
-
-    @Test
-    public void testInnerJoinPostFilter() throws SqlException {
-        assertQuery("select-virtual c, a, b, d, d - b column from (select-choose z.c c, x.a a, b, d from (x join (y where b < 20) y on y.m = x.c join z on z.c = x.c))",
-                "select z.c, x.a, b, d, d-b from x join y on y.m = x.c join z on (c) where y.b < 20",
-                modelOf("x")
-                        .col("c", ColumnType.INT)
-                        .col("a", ColumnType.INT),
-                modelOf("y")
-                        .col("m", ColumnType.INT)
-                        .col("b", ColumnType.INT),
-                modelOf("z")
-                        .col("c", ColumnType.INT)
-                        .col("d", ColumnType.INT)
-        );
-    }
-
     @Test
     public void testAsOfJoinColumnAliasNull() throws SqlException {
         assertQuery(
@@ -292,13 +275,6 @@ public class SqlParserTest extends AbstractGriffinTest {
                 modelOf("x")
                         .col("x", ColumnType.INT)
                         .col("a", ColumnType.INT));
-    }
-
-    @Test
-    public void testSelectColumnWithAlias() throws SqlException {
-        assertQuery(
-                "select-virtual a, rnd_int() c from (select-choose x a from (long_sequence(5)))",
-                "select x a, rnd_int() c from long_sequence(5)");
     }
 
     @Test
@@ -630,9 +606,52 @@ public class SqlParserTest extends AbstractGriffinTest {
 
     @Test
     public void testCreateTableCastDef() throws SqlException {
+        // these numbers in expected string are position of type keyword
         assertCreateTable(
                 "create table x as (select-choose a, b, c from (tab)), cast(a as DOUBLE:35), cast(c as SYMBOL:54 capacity 128)",
                 "create table x as (tab), cast(a as double), cast(c as symbol)",
+                modelOf("tab")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.LONG)
+                        .col("c", ColumnType.STRING)
+
+        );
+    }
+
+    @Test
+    public void testCreateTableCastDefSymbolCapacityHigh() {
+        assertSyntaxError(
+                "create table x as (tab), cast(a as double), cast(c as symbol capacity 1100000000)",
+                70,
+                "max symbol capacity is",
+                modelOf("tab")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.LONG)
+                        .col("c", ColumnType.STRING)
+
+        );
+    }
+
+    @Test
+    public void testCreateTableCastDefSymbolCapacityLow() {
+        assertSyntaxError(
+                "create table x as (tab), cast(a as double), cast(c as symbol capacity -10)",
+                70,
+                "min symbol capacity is",
+                modelOf("tab")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.LONG)
+                        .col("c", ColumnType.STRING)
+
+        );
+    }
+
+    @Test
+    public void testCreateTableCastRoundedCapacityDef() throws SqlException {
+        // 20 is rounded to next power of 2, which is 32
+        assertCreateTable(
+                "create table x as (select-choose a, b, c from (tab)), cast(a as DOUBLE:35), cast(c as SYMBOL:54 capacity 32)",
+                "create table x as (tab), cast(a as double), cast(c as symbol capacity 20)",
                 modelOf("tab")
                         .col("a", ColumnType.INT)
                         .col("b", ColumnType.LONG)
@@ -1022,6 +1041,79 @@ public class SqlParserTest extends AbstractGriffinTest {
                         "y BOOLEAN) " +
                         ", index (a capacity 16) " +
                         ", index (x capacity 24) " +
+                        "timestamp(t) " +
+                        "partition by MONTH");
+    }
+
+    @Test
+    public void testCreateTableSymbolCapacityHigh() {
+        assertSyntaxError(
+                "create table x (" +
+                        "a INT, " +
+                        "b BYTE, " +
+                        "g DATE, " +
+                        "h BINARY, " +
+                        "t TIMESTAMP, " +
+                        "x SYMBOL capacity 1100000000, " +
+                        "z STRING, " +
+                        "bool BOOLEAN) " +
+                        "timestamp(t) " +
+                        "partition by YEAR",
+                80,
+                "max symbol capacity is"
+        );
+    }
+
+    @Test
+    public void testCreateTableSymbolCapacityLow() {
+        assertSyntaxError(
+                "create table x (" +
+                        "a INT, " +
+                        "b BYTE, " +
+                        "g DATE, " +
+                        "h BINARY, " +
+                        "t TIMESTAMP, " +
+                        "x SYMBOL capacity -10, " +
+                        "z STRING, " +
+                        "bool BOOLEAN) " +
+                        "timestamp(t) " +
+                        "partition by YEAR",
+                80,
+                "min symbol capacity is"
+        );
+    }
+
+    @Test
+    public void testCreateTableSymbolCapacityRounding() throws SqlException {
+        assertCreateTable(
+                "create table x (" +
+                        "a INT," +
+                        " b BYTE," +
+                        " c SHORT," +
+                        " t TIMESTAMP," +
+                        " d LONG," +
+                        " e FLOAT," +
+                        " f DOUBLE," +
+                        " g DATE," +
+                        " h BINARY," +
+                        " x SYMBOL capacity 512 cache," +
+                        " z STRING," +
+                        " y BOOLEAN)" +
+                        " timestamp(t)" +
+                        " partition by MONTH",
+                "create table x (" +
+                        "a INT, " +
+                        "b BYTE, " +
+                        "c SHORT, " +
+                        "t TIMESTAMP, " +
+                        "d LONG, " +
+                        "e FLOAT, " +
+                        "f DOUBLE, " +
+                        "g DATE, " +
+                        "h BINARY, " +
+                        "x SYMBOL capacity 500, " +
+                        "z STRING, " +
+                        "y BOOLEAN) " +
                         "timestamp(t) " +
                         "partition by MONTH");
     }
@@ -1480,6 +1572,22 @@ public class SqlParserTest extends AbstractGriffinTest {
                 "customers join orders on customers.customerId = orders.customerId where 'WTBHZVPVZZ' = productName",
                 modelOf("customers").col("customerId", ColumnType.INT),
                 modelOf("orders").col("customerId", ColumnType.INT).col("productName", ColumnType.STRING));
+    }
+
+    @Test
+    public void testInnerJoinPostFilter() throws SqlException {
+        assertQuery("select-virtual c, a, b, d, d - b column from (select-choose z.c c, x.a a, b, d from (x join (y where b < 20) y on y.m = x.c join z on z.c = x.c))",
+                "select z.c, x.a, b, d, d-b from x join y on y.m = x.c join z on (c) where y.b < 20",
+                modelOf("x")
+                        .col("c", ColumnType.INT)
+                        .col("a", ColumnType.INT),
+                modelOf("y")
+                        .col("m", ColumnType.INT)
+                        .col("b", ColumnType.INT),
+                modelOf("z")
+                        .col("c", ColumnType.INT)
+                        .col("d", ColumnType.INT)
+        );
     }
 
     @Test
@@ -3365,6 +3473,13 @@ public class SqlParserTest extends AbstractGriffinTest {
                 "Analytic function expected",
                 modelOf("tab").col("x", ColumnType.INT)
         );
+    }
+
+    @Test
+    public void testSelectColumnWithAlias() throws SqlException {
+        assertQuery(
+                "select-virtual a, rnd_int() c from (select-choose x a from (long_sequence(5)))",
+                "select x a, rnd_int() c from long_sequence(5)");
     }
 
     @Test

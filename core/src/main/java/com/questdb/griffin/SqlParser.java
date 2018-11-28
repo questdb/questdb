@@ -26,6 +26,7 @@ package com.questdb.griffin;
 import com.questdb.cairo.CairoConfiguration;
 import com.questdb.cairo.ColumnType;
 import com.questdb.cairo.PartitionBy;
+import com.questdb.cairo.TableUtils;
 import com.questdb.griffin.model.*;
 import com.questdb.std.*;
 
@@ -36,37 +37,6 @@ public final class SqlParser {
     private static final CharSequenceHashSet columnAliasStop = new CharSequenceHashSet();
     private static final CharSequenceHashSet groupByStopSet = new CharSequenceHashSet();
     private static final CharSequenceIntHashMap joinStartSet = new CharSequenceIntHashMap();
-
-    static {
-        tableAliasStop.add("where");
-        tableAliasStop.add("latest");
-        tableAliasStop.add("join");
-        tableAliasStop.add("inner");
-        tableAliasStop.add("outer");
-        tableAliasStop.add("asof");
-        tableAliasStop.add("cross");
-        tableAliasStop.add("sample");
-        tableAliasStop.add("order");
-        tableAliasStop.add("on");
-        tableAliasStop.add("timestamp");
-        tableAliasStop.add("limit");
-        tableAliasStop.add(")");
-        //
-        columnAliasStop.add("from");
-        columnAliasStop.add(",");
-        columnAliasStop.add("over");
-        //
-        groupByStopSet.add("order");
-        groupByStopSet.add(")");
-        groupByStopSet.add(",");
-
-        joinStartSet.put("join", QueryModel.JOIN_INNER);
-        joinStartSet.put("inner", QueryModel.JOIN_INNER);
-        joinStartSet.put("outer", QueryModel.JOIN_OUTER);
-        joinStartSet.put("cross", QueryModel.JOIN_CROSS);
-        joinStartSet.put("asof", QueryModel.JOIN_ASOF);
-    }
-
     private final ObjectPool<ExpressionNode> sqlNodePool;
     private final ExpressionTreeBuilder expressionTreeBuilder = new ExpressionTreeBuilder();
     private final ObjectPool<QueryModel> queryModelPool;
@@ -138,8 +108,17 @@ public final class SqlParser {
     }
 
     private int expectInt(GenericLexer lexer) throws SqlException {
+        CharSequence tok = tok(lexer, "integer");
+        boolean negative;
+        if (Chars.equals(tok, '-')) {
+            negative = true;
+            tok = tok(lexer, "integer");
+        } else {
+            negative = false;
+        }
         try {
-            return Numbers.parseInt(tok(lexer, "integer"));
+            int result = Numbers.parseInt(tok);
+            return negative ? -result : result;
         } catch (NumericException e) {
             throw err(lexer, "bad integer");
         }
@@ -361,8 +340,7 @@ public final class SqlParser {
 
         if (type == ColumnType.SYMBOL) {
             if (Chars.equals(optTok(lexer), "capacity")) {
-                // todo: validate capacity
-                columnCastModel.setSymbolCapacity(expectInt(lexer));
+                columnCastModel.setSymbolCapacity(parseSymbolCapacity(lexer));
             } else {
                 lexer.unparse();
                 columnCastModel.setSymbolCapacity(configuration.getDefaultSymbolCapacity());
@@ -394,8 +372,7 @@ public final class SqlParser {
                     tok = tok(lexer, "'capacity', 'nocache', 'cache', 'index' or ')'");
 
                     if (Chars.equals(tok, "capacity")) {
-                        // todo: validate capacity
-                        model.symbolCapacity(expectInt(lexer));
+                        model.symbolCapacity(parseSymbolCapacity(lexer));
                         tok = tok(lexer, "'nocache', 'cache', 'index' or ')'");
                     }
 
@@ -772,7 +749,6 @@ public final class SqlParser {
         model.setFrom(e);
         expectTok(lexer, "to");
 
-        //  todo: review and test
         e = expectExpr(lexer, null);
         if (e.type != ExpressionNode.LITERAL && e.type != ExpressionNode.CONSTANT) {
             throw SqlException.$(e.position, "literal or constant expected");
@@ -941,6 +917,13 @@ public final class SqlParser {
         return model;
     }
 
+    private int parseSymbolCapacity(GenericLexer lexer) throws SqlException {
+        final int errorPosition = lexer.getPosition();
+        final int symbolCapacity = expectInt(lexer);
+        TableUtils.validateSymbolCapacity(errorPosition, symbolCapacity);
+        return Numbers.ceilPow2(symbolCapacity);
+    }
+
     private ExpressionNode parseTimestamp(GenericLexer lexer, CharSequence tok) throws SqlException {
         if (Chars.equalsNc("timestamp", tok)) {
             expectTok(lexer, '(');
@@ -1092,5 +1075,35 @@ public final class SqlParser {
                 break;
 
         }
+    }
+
+    static {
+        tableAliasStop.add("where");
+        tableAliasStop.add("latest");
+        tableAliasStop.add("join");
+        tableAliasStop.add("inner");
+        tableAliasStop.add("outer");
+        tableAliasStop.add("asof");
+        tableAliasStop.add("cross");
+        tableAliasStop.add("sample");
+        tableAliasStop.add("order");
+        tableAliasStop.add("on");
+        tableAliasStop.add("timestamp");
+        tableAliasStop.add("limit");
+        tableAliasStop.add(")");
+        //
+        columnAliasStop.add("from");
+        columnAliasStop.add(",");
+        columnAliasStop.add("over");
+        //
+        groupByStopSet.add("order");
+        groupByStopSet.add(")");
+        groupByStopSet.add(",");
+
+        joinStartSet.put("join", QueryModel.JOIN_INNER);
+        joinStartSet.put("inner", QueryModel.JOIN_INNER);
+        joinStartSet.put("outer", QueryModel.JOIN_OUTER);
+        joinStartSet.put("cross", QueryModel.JOIN_CROSS);
+        joinStartSet.put("asof", QueryModel.JOIN_ASOF);
     }
 }
