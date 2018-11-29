@@ -339,11 +339,35 @@ public final class SqlParser {
         columnCastModel.setType(type, columnName.position, columnType.position);
 
         if (type == ColumnType.SYMBOL) {
-            if (Chars.equals(optTok(lexer), "capacity")) {
-                columnCastModel.setSymbolCapacity(parseSymbolCapacity(lexer));
+            CharSequence tok = tok(lexer, "'capacity', 'nocache', 'cache', 'index' or ')'");
+
+            int symbolCapacity;
+            int capacityPosition;
+            if (Chars.equals(tok, "capacity")) {
+                capacityPosition = lexer.getPosition();
+                columnCastModel.setSymbolCapacity(symbolCapacity = parseSymbolCapacity(lexer));
+                tok = tok(lexer, "'nocache', 'cache', 'index' or ')'");
             } else {
-                lexer.unparse();
                 columnCastModel.setSymbolCapacity(configuration.getDefaultSymbolCapacity());
+                symbolCapacity = -1;
+                capacityPosition = -1;
+            }
+
+            final boolean cached;
+            if (Chars.equals(tok, "nocache")) {
+                cached = false;
+            } else if (Chars.equals(tok, "cache")) {
+                cached = true;
+            } else {
+                cached = configuration.getDefaultSymbolCacheFlag();
+                lexer.unparse();
+            }
+
+            columnCastModel.setCached(cached);
+
+            if (cached && symbolCapacity != -1) {
+                assert capacityPosition != -1;
+                TableUtils.validateSymbolCapacityCached(true, symbolCapacity, capacityPosition);
             }
         }
 
@@ -371,17 +395,27 @@ public final class SqlParser {
                 case ColumnType.SYMBOL:
                     tok = tok(lexer, "'capacity', 'nocache', 'cache', 'index' or ')'");
 
+                    int symbolCapacity;
                     if (Chars.equals(tok, "capacity")) {
-                        model.symbolCapacity(parseSymbolCapacity(lexer));
+                        // when capacity is not set explicitly it will default via configuration
+                        model.symbolCapacity(symbolCapacity = parseSymbolCapacity(lexer));
                         tok = tok(lexer, "'nocache', 'cache', 'index' or ')'");
+                    } else {
+                        symbolCapacity = -1;
                     }
 
+                    final boolean cached;
                     if (Chars.equals(tok, "nocache")) {
-                        model.cached(false);
+                        cached = false;
                     } else if (Chars.equals(tok, "cache")) {
-                        model.cached(true);
+                        cached = true;
                     } else {
+                        cached = configuration.getDefaultSymbolCacheFlag();
                         lexer.unparse();
+                    }
+                    model.cached(cached);
+                    if (cached && symbolCapacity != -1) {
+                        TableUtils.validateSymbolCapacityCached(true, symbolCapacity, lexer.lastTokenPosition());
                     }
                     tok = parseCreateTableInlineIndexDef(lexer, model);
                     break;

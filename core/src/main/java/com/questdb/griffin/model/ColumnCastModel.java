@@ -34,6 +34,7 @@ public class ColumnCastModel implements Mutable {
     private int columnTypePos;
     private int columnNamePos;
     private int symbolCapacity;
+    private boolean cached;
 
     private ColumnCastModel() {
     }
@@ -69,6 +70,14 @@ public class ColumnCastModel implements Mutable {
 
     public void setSymbolCapacity(int symbolCapacity) {
         this.symbolCapacity = symbolCapacity;
+    }
+
+    public boolean isCached() {
+        return cached;
+    }
+
+    public void setCached(boolean cached) {
+        this.cached = cached;
     }
 
     public void setType(int columnType, int columnNamePos, int columnTypePos) {

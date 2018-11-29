@@ -383,6 +383,12 @@ public final class TableUtils {
         }
     }
 
+    public static void validateSymbolCapacityCached(boolean cache, int symbolCapacity, int cacheKeywordPosition) throws SqlException {
+        if (cache && symbolCapacity > MAX_SYMBOL_CAPACITY_CACHED) {
+            throw SqlException.$(cacheKeywordPosition, "max cached symbol capacity is ").put(MAX_SYMBOL_CAPACITY_CACHED);
+        }
+    }
+
     static {
         DateFormatCompiler compiler = new DateFormatCompiler();
         fmtDay = compiler.compile("yyyy-MM-dd");

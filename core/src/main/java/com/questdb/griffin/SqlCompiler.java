@@ -703,9 +703,7 @@ public class SqlCompiler implements Closeable {
                             cache = configuration.getDefaultSymbolCacheFlag();
                         }
 
-                        if (cache && symbolCapacity > TableUtils.MAX_SYMBOL_CAPACITY_CACHED) {
-                            throw SqlException.$(lexer.lastTokenPosition(), "max cached symbol capacity is ").put(TableUtils.MAX_SYMBOL_CAPACITY_CACHED);
-                        }
+                        TableUtils.validateSymbolCapacityCached(cache, symbolCapacity, lexer.lastTokenPosition());
 
                         indexed = Chars.equalsNc("index", tok);
                         if (indexed) {
@@ -1028,17 +1026,31 @@ public class SqlCompiler implements Closeable {
                 }
 
                 if (columnType == ColumnType.SYMBOL) {
-                    int symbolCapacity = model.getSymbolCapacity(i);
-                    if (symbolCapacity == -1) {
-                        symbolCapacity = configuration.getDefaultSymbolCapacity();
+                    final ColumnCastModel ccm = model.getColumnCastModels().get(metadata.getColumnName(i));
+                    int symbolCapacity;
+                    if (ccm != null) {
+                        symbolCapacity = ccm.getSymbolCapacity();
+                    } else {
+                        symbolCapacity = model.getSymbolCapacity(i);
+                        if (symbolCapacity == -1) {
+                            symbolCapacity = configuration.getDefaultSymbolCapacity();
+                        }
                     }
+
+                    boolean cached;
+                    if (ccm != null) {
+                        cached = ccm.isCached();
+                    } else {
+                        cached = model.getSymbolCacheFlag(i);
+                    }
+
                     SymbolMapWriter.createSymbolMapFiles(
                             ff,
                             mem,
                             path.trimTo(rootLen),
                             model.getColumnName(i),
                             symbolCapacity,
-                            model.getSymbolCacheFlag(i)
+                            cached
                     );
                     symbolMapCount++;
                 }

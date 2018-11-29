@@ -647,7 +647,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testCreateTableCastRoundedCapacityDef() throws SqlException {
+    public void testCreateTableCastRoundedSymbolCapacityDef() throws SqlException {
         // 20 is rounded to next power of 2, which is 32
         assertCreateTable(
                 "create table x as (select-choose a, b, c from (tab)), cast(a as DOUBLE:35), cast(c as SYMBOL:54 capacity 32)",
@@ -1084,7 +1084,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testCreateTableSymbolCapacityRounding() throws SqlException {
+    public void testCreateTableRoundedSymbolCapacity() throws SqlException {
         assertCreateTable(
                 "create table x (" +
                         "a INT," +
