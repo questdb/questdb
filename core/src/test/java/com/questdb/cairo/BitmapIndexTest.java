@@ -47,7 +47,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
         try {
             FilesFacade ff = configuration.getFilesFacade();
             try (AppendMemory mem = new AppendMemory(ff, BitmapIndexUtils.keyFileName(path, name), ff.getPageSize())) {
-                BitmapIndexWriter.initKeyMemory(mem, valueBlockCapacity);
+                BitmapIndexWriter.initKeyMemory(mem, Numbers.ceilPow2(valueBlockCapacity));
             }
             ff.touch(BitmapIndexUtils.valueFileName(path.trimTo(plen), name));
         } finally {

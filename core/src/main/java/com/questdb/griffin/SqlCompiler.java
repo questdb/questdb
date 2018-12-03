@@ -591,46 +591,48 @@ public class SqlCompiler implements Closeable {
                 || (from == ColumnType.SYMBOL && to == ColumnType.STRING);
     }
 
-    private void alterTable(GenericLexer lexer) throws SqlException {
-        CharSequence tok;
-        tok = SqlUtil.fetchNext(lexer);
-        if (!Chars.equals("table", tok)) {
-            throw SqlException.$(lexer.lastTokenPosition(), "'table' expected");
+    private static void expectKeyword(GenericLexer lexer, CharSequence keyword) throws SqlException {
+        CharSequence tok = SqlUtil.fetchNext(lexer);
+
+        if (tok == null) {
+            throw SqlException.position(lexer.getPosition()).put('\'').put(keyword).put("' expected");
         }
 
-        tok = SqlUtil.fetchNext(lexer);
-        if (tok == null) {
-            throw SqlException.$(lexer.getPosition(), "table name expected");
+        if (!Chars.equals(tok, keyword)) {
+            throw SqlException.position(lexer.lastTokenPosition()).put('\'').put(keyword).put("' expected");
         }
+    }
+
+    private static CharSequence expectToken(GenericLexer lexer, CharSequence expected) throws SqlException {
+        CharSequence tok = SqlUtil.fetchNext(lexer);
+
+        if (tok == null) {
+            throw SqlException.position(lexer.getPosition()).put(expected).put(" expected");
+        }
+
+        return tok;
+    }
+
+    private void alterTable(GenericLexer lexer) throws SqlException {
+        CharSequence tok;
+        expectKeyword(lexer, "table");
+        tok = expectToken(lexer, "table name");
 
         tableExistsOrFail(lexer.lastTokenPosition(), tok);
 
         try (TableWriter writer = engine.getWriter(tok)) {
 
-            tok = SqlUtil.fetchNext(lexer);
-            if (tok == null) {
-                throw SqlException.$(lexer.getPosition(), "'add' or 'drop' expected");
-            }
+            tok = expectToken(lexer, "'add' or 'drop'");
 
             if (Chars.equals("add", tok)) {
+
                 // add columns to table
-                tok = SqlUtil.fetchNext(lexer);
-
-                if (tok == null) {
-                    throw SqlException.$(lexer.getPosition(), "'column' expected");
-                }
-
-                if (!Chars.equals(tok, "column")) {
-                    throw SqlException.$(lexer.lastTokenPosition(), "'column' expected");
-                }
+                expectKeyword(lexer, "column");
 
                 do {
                     int tableNamePosition = lexer.getPosition();
 
-                    tok = SqlUtil.fetchNext(lexer);
-                    if (tok == null) {
-                        throw SqlException.$(lexer.getPosition(), "column name expected");
-                    }
+                    tok = expectToken(lexer, "column name");
 
                     int index = writer.getMetadata().getColumnIndexQuiet(tok);
                     if (index != -1) {
@@ -639,11 +641,7 @@ public class SqlCompiler implements Closeable {
 
                     CharSequence columnName = GenericLexer.immutableOf(tok);
 
-                    tok = SqlUtil.fetchNext(lexer);
-
-                    if (tok == null) {
-                        throw SqlException.$(lexer.getPosition(), "column type expected");
-                    }
+                    tok = expectToken(lexer, "column type");
 
                     int type = ColumnType.columnTypeOf(tok);
                     if (type == -1) {
@@ -660,17 +658,13 @@ public class SqlCompiler implements Closeable {
                     if (type == ColumnType.SYMBOL && tok != null && !Chars.equals(tok, ',')) {
 
                         if (Chars.equals(tok, "capacity")) {
-                            tok = SqlUtil.fetchNext(lexer);
-
-                            if (tok == null) {
-                                throw SqlException.$(lexer.getPosition(), "symbol capacity expected");
-                            }
+                            tok = expectToken(lexer, "symbol capacity");
 
                             final boolean negative;
                             final int errorPos = lexer.lastTokenPosition();
                             if (Chars.equals(tok, '-')) {
                                 negative = true;
-                                tok = SqlUtil.fetchNext(lexer);
+                                tok = expectToken(lexer, "symbol capacity");
                             } else {
                                 negative = false;
                             }
@@ -711,10 +705,7 @@ public class SqlCompiler implements Closeable {
                         }
 
                         if (Chars.equalsNc("capacity", tok)) {
-                            tok = SqlUtil.fetchNext(lexer);
-                            if (tok == null) {
-                                throw SqlException.$(lexer.getPosition(), "symbol index capacity expected");
-                            }
+                            tok = expectToken(lexer, "symbol index capacity");
 
                             try {
                                 indexValueBlockCapacity = Numbers.parseInt(tok);

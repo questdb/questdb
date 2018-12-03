@@ -203,6 +203,16 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable {
                 if (type == ColumnType.SYMBOL) {
                     sink.put(" capacity ");
                     sink.put(m.getSymbolCapacity());
+                    if (m.isCached()) {
+                        sink.put(" cache");
+                    } else {
+                        sink.put(" nocache");
+                    }
+
+                    if (m.isIndexed()) {
+                        sink.put(" index capacity ");
+                        sink.put(m.getIndexValueBlockSize());
+                    }
                 }
                 sink.put(')');
             }

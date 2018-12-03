@@ -27,6 +27,7 @@ import com.questdb.cairo.sql.RowCursor;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.std.Misc;
+import com.questdb.std.Numbers;
 import com.questdb.std.Unsafe;
 import com.questdb.std.str.Path;
 
@@ -55,6 +56,10 @@ public class BitmapIndexWriter implements Closeable {
     }
 
     public static void initKeyMemory(VirtualMemory keyMem, int blockValueCount) {
+
+        // block value count must be power of 2
+        assert blockValueCount == Numbers.ceilPow2(blockValueCount);
+
         keyMem.putByte(BitmapIndexUtils.SIGNATURE);
         keyMem.putLong(1); // SEQUENCE
         Unsafe.getUnsafe().storeFence();

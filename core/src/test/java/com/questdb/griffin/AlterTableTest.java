@@ -23,9 +23,7 @@
 
 package com.questdb.griffin;
 
-import com.questdb.cairo.SymbolMapReader;
-import com.questdb.cairo.TableReader;
-import com.questdb.cairo.TableWriter;
+import com.questdb.cairo.*;
 import com.questdb.griffin.engine.functions.rnd.SharedRandom;
 import com.questdb.std.Rnd;
 import com.questdb.test.tools.TestUtils;
@@ -132,6 +130,51 @@ public class AlterTableTest extends AbstractGriffinTest {
     @Test
     public void testAddSymbolExpectCapacityTooLow() throws Exception {
         assertFailure("alter table x add column abc symbol capacity -100", 45, "min symbol capacity is");
+    }
+
+    @Test
+    public void testAddSymbolCache() throws Exception {
+        TestUtils.assertMemoryLeak(
+                () -> {
+                    try {
+                        createX();
+
+                        engine.releaseAllWriters();
+                        engine.releaseAllReaders();
+
+                        // create default configuration with nocache
+
+                        CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+                            @Override
+                            public boolean getDefaultSymbolCacheFlag() {
+                                return false;
+                            }
+                        };
+
+                        try (Engine engine = new Engine(configuration)) {
+                            try (SqlCompiler compiler = new SqlCompiler(engine, configuration)) {
+                                Assert.assertNull(compiler.compile("alter table x add column meh symbol cache", bindVariableService));
+
+                                try (TableReader reader = engine.getReader("x", 1)) {
+                                    SymbolMapReader smr = reader.getSymbolMapReader(16);
+                                    Assert.assertNotNull(smr);
+                                    Assert.assertEquals(configuration.getDefaultSymbolCapacity(), smr.getSymbolCapacity());
+                                    Assert.assertFalse(reader.getMetadata().isColumnIndexed(16));
+                                    Assert.assertEquals(configuration.getIndexValueBlockSize(), reader.getMetadata().getIndexValueBlockCapacity(16));
+                                    Assert.assertTrue(smr.isCached());
+                                }
+
+                                Assert.assertEquals(0, engine.getBusyWriterCount());
+                                Assert.assertEquals(0, engine.getBusyReaderCount());
+                            }
+                        }
+
+                    } finally {
+                        engine.releaseAllReaders();
+                        engine.releaseAllWriters();
+                    }
+                }
+        );
     }
 
     @Test
@@ -273,6 +316,11 @@ public class AlterTableTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testAddSymbolIncorrectCapacity() throws Exception {
+        assertFailure("alter table x add column abc symbol capacity -", 46, "symbol capacity expected");
+    }
+
+    @Test
     public void testAddTwoColumns() throws Exception {
         TestUtils.assertMemoryLeak(
                 () -> {
@@ -321,6 +369,11 @@ public class AlterTableTest extends AbstractGriffinTest {
     @Test
     public void testExpectTableKeyword() throws Exception {
         assertFailure("alter x", 6, "'table' expected");
+    }
+
+    @Test
+    public void testExpectTableKeyword2() throws Exception {
+        assertFailure("alter", 5, "'table' expected");
     }
 
     @Test

@@ -35,6 +35,8 @@ public class ColumnCastModel implements Mutable {
     private int columnNamePos;
     private int symbolCapacity;
     private boolean cached;
+    private boolean indexed;
+    private int indexValueBlockSize;
 
     private ColumnCastModel() {
     }
@@ -54,6 +56,22 @@ public class ColumnCastModel implements Mutable {
 
     public int getColumnTypePos() {
         return columnTypePos;
+    }
+
+    public int getIndexValueBlockSize() {
+        return indexValueBlockSize;
+    }
+
+    public void setIndexValueBlockSize(int indexValueBlockSize) {
+        this.indexValueBlockSize = indexValueBlockSize;
+    }
+
+    public boolean isIndexed() {
+        return indexed;
+    }
+
+    public void setIndexed(boolean indexed) {
+        this.indexed = indexed;
     }
 
     public ExpressionNode getName() {

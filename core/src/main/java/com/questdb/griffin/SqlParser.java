@@ -369,6 +369,27 @@ public final class SqlParser {
                 assert capacityPosition != -1;
                 TableUtils.validateSymbolCapacityCached(true, symbolCapacity, capacityPosition);
             }
+
+            // parse index clause
+
+            tok = tok(lexer, "')', or 'index'");
+
+            if (Chars.equals(tok, "index")) {
+                columnCastModel.setIndexed(true);
+                tok = tok(lexer, "')', or 'capacity'");
+
+                if (Chars.equals(tok, "capacity")) {
+                    int errorPosition = lexer.getPosition();
+                    int indexValueBlockSize = expectInt(lexer);
+                    TableUtils.validateIndexValueBlockSize(errorPosition, indexValueBlockSize);
+                    columnCastModel.setIndexValueBlockSize(Numbers.ceilPow2(indexValueBlockSize));
+                } else {
+                    columnCastModel.setIndexValueBlockSize(configuration.getIndexValueBlockSize());
+                }
+            } else {
+                columnCastModel.setIndexed(false);
+                lexer.unparse();
+            }
         }
 
         expectTok(lexer, ')');
@@ -443,8 +464,10 @@ public final class SqlParser {
         final int columnIndex = getCreateTableColumnIndex(model, expectLiteral(lexer).token, lexer.lastTokenPosition());
 
         if (Chars.equals(tok(lexer, "'capacity'"), "capacity")) {
-            // todo: validate capacity
-            model.setIndexFlags(columnIndex, true, Numbers.ceilPow2(expectInt(lexer)) - 1);
+            int errorPosition = lexer.getPosition();
+            int indexValueBlockSize = expectInt(lexer);
+            TableUtils.validateIndexValueBlockSize(errorPosition, indexValueBlockSize);
+            model.setIndexFlags(columnIndex, true, Numbers.ceilPow2(indexValueBlockSize));
         } else {
             model.setIndexFlags(columnIndex, true, configuration.getIndexValueBlockSize());
             lexer.unparse();
@@ -468,8 +491,11 @@ public final class SqlParser {
         }
 
         expectTok(lexer, tok, "capacity");
-        // todo: validate capacity
-        model.setIndexFlags(true, expectInt(lexer));
+
+        int errorPosition = lexer.getPosition();
+        int indexValueBlockSize = expectInt(lexer);
+        TableUtils.validateIndexValueBlockSize(errorPosition, indexValueBlockSize);
+        model.setIndexFlags(true, Numbers.ceilPow2(indexValueBlockSize));
         return null;
     }
 

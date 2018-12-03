@@ -23,10 +23,7 @@
 
 package com.questdb.griffin;
 
-import com.questdb.cairo.CairoConfiguration;
-import com.questdb.cairo.CairoException;
-import com.questdb.cairo.DefaultCairoConfiguration;
-import com.questdb.cairo.Engine;
+import com.questdb.cairo.*;
 import com.questdb.cairo.sql.RecordCursorFactory;
 import com.questdb.griffin.engine.functions.rnd.SharedRandom;
 import com.questdb.griffin.engine.functions.str.TestMatchFunctionFactory;
@@ -56,6 +53,34 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testCreateTableSymbolColumnViaCastCached() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            Assert.assertNull(compiler.compile("create table x (col string)", bindVariableService));
+
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+
+            CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+                @Override
+                public boolean getDefaultSymbolCacheFlag() {
+                    return false;
+                }
+            };
+
+            try (
+                    Engine engine = new Engine(configuration);
+                    SqlCompiler compiler = new SqlCompiler(engine, configuration)
+            ) {
+                compiler.compile("create table y as (x), cast(col as symbol cache)", bindVariableService);
+
+                try (TableReader reader = engine.getReader("y", 0)) {
+                    Assert.assertTrue(reader.getSymbolMapReader(0).isCached());
+                }
+            }
+        });
+    }
+
+    @Test
     public void testCreateTableSymbolColumnViaCastCachedSymbolCapacityHigh() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             Assert.assertNull(compiler.compile("create table x (col string)", bindVariableService));
@@ -69,6 +94,22 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
             engine.releaseAllWriters();
             engine.releaseAllReaders();
+        });
+    }
+
+    @Test
+    public void testCreateTableSymbolColumnViaCastNocache() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            Assert.assertNull(compiler.compile("create table x (col string)", bindVariableService));
+
+            compiler.compile("create table y as (x), cast(col as symbol nocache)", bindVariableService);
+
+            try (TableReader reader = engine.getReader("y", 0)) {
+                Assert.assertFalse(reader.getSymbolMapReader(0).isCached());
+            }
+
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
         });
     }
 

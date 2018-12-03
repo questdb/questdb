@@ -594,7 +594,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     @Test
     public void testCreateTableCastCapacityDef() throws SqlException {
         assertCreateTable(
-                "create table x as (select-choose a, b, c from (tab)), cast(a as DOUBLE:35), cast(c as SYMBOL:54 capacity 16)",
+                "create table x as (select-choose a, b, c from (tab)), cast(a as DOUBLE:35), cast(c as SYMBOL:54 capacity 16 cache)",
                 "create table x as (tab), cast(a as double), cast(c as symbol capacity 16)",
                 modelOf("tab")
                         .col("a", ColumnType.INT)
@@ -608,8 +608,77 @@ public class SqlParserTest extends AbstractGriffinTest {
     public void testCreateTableCastDef() throws SqlException {
         // these numbers in expected string are position of type keyword
         assertCreateTable(
-                "create table x as (select-choose a, b, c from (tab)), cast(a as DOUBLE:35), cast(c as SYMBOL:54 capacity 128)",
+                "create table x as (select-choose a, b, c from (tab)), cast(a as DOUBLE:35), cast(c as SYMBOL:54 capacity 128 cache)",
                 "create table x as (tab), cast(a as double), cast(c as symbol)",
+                modelOf("tab")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.LONG)
+                        .col("c", ColumnType.STRING)
+
+        );
+    }
+
+    @Test
+    public void testCreateTableCastIndexCapacityHigh() {
+        assertSyntaxError(
+                "create table x as (tab), cast(a as double), cast(c as symbol capacity 20 nocache index capacity 100000000)",
+                96,
+                "max index block capacity is",
+                modelOf("tab")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.LONG)
+                        .col("c", ColumnType.STRING)
+
+        );
+    }
+
+    @Test
+    public void testCreateTableCastIndexCapacityLow() {
+        assertSyntaxError(
+                "create table x as (tab), cast(a as double), cast(c as symbol capacity 20 nocache index capacity 1)",
+                96,
+                "min index block capacity is",
+                modelOf("tab")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.LONG)
+                        .col("c", ColumnType.STRING)
+
+        );
+    }
+
+    @Test
+    public void testCreateTableCastIndexDef() throws SqlException {
+        assertCreateTable(
+                "create table x as (select-choose a, b, c from (tab)), cast(a as DOUBLE:35), cast(c as SYMBOL:54 capacity 32 nocache index capacity 512)",
+                "create table x as (tab), cast(a as double), cast(c as symbol capacity 20 nocache index capacity 300)",
+                modelOf("tab")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.LONG)
+                        .col("c", ColumnType.STRING)
+
+        );
+    }
+
+    @Test
+    public void testCreateTableCastIndexInvalidCapacity() {
+        assertSyntaxError(
+                "create table x as (tab), cast(a as double), cast(c as symbol capacity 20 nocache index capacity -)",
+                97,
+                "bad integer",
+                modelOf("tab")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.LONG)
+                        .col("c", ColumnType.STRING)
+
+        );
+    }
+
+    @Test
+    public void testCreateTableCastIndexNegativeCapacity() {
+        assertSyntaxError(
+                "create table x as (tab), cast(a as double), cast(c as symbol capacity 20 nocache index capacity -3)",
+                96,
+                "min index block capacity is",
                 modelOf("tab")
                         .col("a", ColumnType.INT)
                         .col("b", ColumnType.LONG)
@@ -650,7 +719,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     public void testCreateTableCastRoundedSymbolCapacityDef() throws SqlException {
         // 20 is rounded to next power of 2, which is 32
         assertCreateTable(
-                "create table x as (select-choose a, b, c from (tab)), cast(a as DOUBLE:35), cast(c as SYMBOL:54 capacity 32)",
+                "create table x as (select-choose a, b, c from (tab)), cast(a as DOUBLE:35), cast(c as SYMBOL:54 capacity 32 cache)",
                 "create table x as (tab), cast(a as double), cast(c as symbol capacity 20)",
                 modelOf("tab")
                         .col("a", ColumnType.INT)
@@ -770,6 +839,131 @@ public class SqlParserTest extends AbstractGriffinTest {
                         "g DATE, " +
                         "h BINARY, " +
                         "x SYMBOL index capacity 128, " +
+                        "z STRING, " +
+                        "y BOOLEAN) " +
+                        "timestamp(t) " +
+                        "partition by MONTH");
+    }
+
+    @Test
+    public void testCreateTableInPlaceIndexCapacityHigh() {
+        assertSyntaxError(
+                "create table x (" +
+                        "a INT, " +
+                        "b BYTE, " +
+                        "c SHORT, " +
+                        "t TIMESTAMP, " +
+                        "d LONG, " +
+                        "e FLOAT, " +
+                        "f DOUBLE, " +
+                        "g DATE, " +
+                        "h BINARY, " +
+                        "x SYMBOL index capacity 10000000, " +
+                        "z STRING, " +
+                        "y BOOLEAN) " +
+                        "timestamp(t) " +
+                        "partition by MONTH",
+                122,
+                "max index block capacity is"
+        );
+    }
+
+    @Test
+    public void testCreateTableInPlaceIndexCapacityInvalid() {
+        assertSyntaxError(
+                "create table x (" +
+                        "a INT, " +
+                        "b BYTE, " +
+                        "c SHORT, " +
+                        "t TIMESTAMP, " +
+                        "d LONG, " +
+                        "e FLOAT, " +
+                        "f DOUBLE, " +
+                        "g DATE, " +
+                        "h BINARY, " +
+                        "x SYMBOL index capacity -, " +
+                        "z STRING, " +
+                        "y BOOLEAN) " +
+                        "timestamp(t) " +
+                        "partition by MONTH",
+                123,
+                "bad integer"
+        );
+    }
+
+    @Test
+    public void testCreateTableInPlaceIndexCapacityLow() {
+        assertSyntaxError(
+                "create table x (" +
+                        "a INT, " +
+                        "b BYTE, " +
+                        "c SHORT, " +
+                        "t TIMESTAMP, " +
+                        "d LONG, " +
+                        "e FLOAT, " +
+                        "f DOUBLE, " +
+                        "g DATE, " +
+                        "h BINARY, " +
+                        "x SYMBOL index capacity 2, " +
+                        "z STRING, " +
+                        "y BOOLEAN) " +
+                        "timestamp(t) " +
+                        "partition by MONTH",
+                122,
+                "min index block capacity is"
+        );
+    }
+
+    @Test
+    public void testCreateTableInPlaceIndexCapacityLow2() {
+        assertSyntaxError(
+                "create table x (" +
+                        "a INT, " +
+                        "b BYTE, " +
+                        "c SHORT, " +
+                        "t TIMESTAMP, " +
+                        "d LONG, " +
+                        "e FLOAT, " +
+                        "f DOUBLE, " +
+                        "g DATE, " +
+                        "h BINARY, " +
+                        "x SYMBOL index capacity -9, " +
+                        "z STRING, " +
+                        "y BOOLEAN) " +
+                        "timestamp(t) " +
+                        "partition by MONTH",
+                122,
+                "min index block capacity is"
+        );
+    }
+
+    @Test
+    public void testCreateTableInPlaceIndexCapacityRounding() throws SqlException {
+        assertCreateTable(
+                "create table x (" +
+                        "a INT," +
+                        " b BYTE," +
+                        " c SHORT," +
+                        " t TIMESTAMP," +
+                        " d LONG," +
+                        " e FLOAT," +
+                        " f DOUBLE," +
+                        " g DATE," +
+                        " h BINARY," +
+                        " x SYMBOL capacity 128 cache index capacity 128," +
+                        " z STRING," +
+                        " y BOOLEAN) timestamp(t) partition by MONTH",
+                "create table x (" +
+                        "a INT, " +
+                        "b BYTE, " +
+                        "c SHORT, " +
+                        "t TIMESTAMP, " +
+                        "d LONG, " +
+                        "e FLOAT, " +
+                        "f DOUBLE, " +
+                        "g DATE, " +
+                        "h BINARY, " +
+                        "x SYMBOL index capacity 120, " +
                         "z STRING, " +
                         "y BOOLEAN) " +
                         "timestamp(t) " +
@@ -1043,6 +1237,102 @@ public class SqlParserTest extends AbstractGriffinTest {
                         ", index (x capacity 24) " +
                         "timestamp(t) " +
                         "partition by MONTH");
+    }
+
+    @Test
+    public void testCreateTableOutOfPlaceIndexCapacityHigh() {
+        assertSyntaxError(
+                "create table x (" +
+                        "a INT, " +
+                        "b BYTE, " +
+                        "c SHORT, " +
+                        "t TIMESTAMP, " +
+                        "d LONG, " +
+                        "e FLOAT, " +
+                        "f DOUBLE, " +
+                        "g DATE, " +
+                        "h BINARY, " +
+                        "x SYMBOL, " +
+                        "z STRING, " +
+                        "y BOOLEAN) " +
+                        ", index (a capacity 16) " +
+                        ", index (x capacity 10000000) " +
+                        "timestamp(t) " +
+                        "partition by MONTH",
+                173,
+                "max index block capacity is");
+    }
+
+    @Test
+    public void testCreateTableOutOfPlaceIndexCapacityInvalid() {
+        assertSyntaxError(
+                "create table x (" +
+                        "a INT, " +
+                        "b BYTE, " +
+                        "c SHORT, " +
+                        "t TIMESTAMP, " +
+                        "d LONG, " +
+                        "e FLOAT, " +
+                        "f DOUBLE, " +
+                        "g DATE, " +
+                        "h BINARY, " +
+                        "x SYMBOL, " +
+                        "z STRING, " +
+                        "y BOOLEAN) " +
+                        ", index (a capacity 16) " +
+                        ", index (x capacity -) " +
+                        "timestamp(t) " +
+                        "partition by MONTH",
+                174,
+                "bad integer");
+    }
+
+    @Test
+    public void testCreateTableOutOfPlaceIndexCapacityLow() {
+        assertSyntaxError(
+                "create table x (" +
+                        "a INT, " +
+                        "b BYTE, " +
+                        "c SHORT, " +
+                        "t TIMESTAMP, " +
+                        "d LONG, " +
+                        "e FLOAT, " +
+                        "f DOUBLE, " +
+                        "g DATE, " +
+                        "h BINARY, " +
+                        "x SYMBOL, " +
+                        "z STRING, " +
+                        "y BOOLEAN) " +
+                        ", index (a capacity 16) " +
+                        ", index (x capacity 1) " +
+                        "timestamp(t) " +
+                        "partition by MONTH",
+                173,
+                "min index block capacity is");
+    }
+
+    @Test
+    public void testCreateTableOutOfPlaceIndexCapacityLow2() {
+        assertSyntaxError(
+                "create table x (" +
+                        "a INT, " +
+                        "b BYTE, " +
+                        "c SHORT, " +
+                        "t TIMESTAMP, " +
+                        "d LONG, " +
+                        "e FLOAT, " +
+                        "f DOUBLE, " +
+                        "g DATE, " +
+                        "h BINARY, " +
+                        "x SYMBOL, " +
+                        "z STRING, " +
+                        "y BOOLEAN) " +
+                        ", index (a capacity 16) " +
+                        ", index (x capacity -10) " +
+                        "timestamp(t) " +
+                        "partition by MONTH",
+                173,
+                "min index block capacity is");
     }
 
     @Test

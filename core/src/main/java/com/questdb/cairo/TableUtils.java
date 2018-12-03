@@ -43,9 +43,7 @@ public final class TableUtils {
     public static final long META_OFFSET_COLUMN_TYPES = 128;
     public static final int INITIAL_TXN = 0;
     public static final int NULL_LEN = -1;
-    public static final int MIN_SYMBOL_CAPACITY = 2;
-    public static final int MAX_SYMBOL_CAPACITY = Numbers.ceilPow2(Integer.MAX_VALUE);
-    public static final int MAX_SYMBOL_CAPACITY_CACHED = Numbers.ceilPow2(1_000_000);
+    static final int MIN_INDEX_VALUE_BLOCK_SIZE = Numbers.ceilPow2(4);
     static final byte TODO_RESTORE_META = 2;
     static final byte TODO_TRUNCATE = 1;
     static final DateFormat fmtDay;
@@ -62,8 +60,6 @@ public final class TableUtils {
     static final long TX_OFFSET_PARTITION_TABLE_VERSION = 40;
     static final long TX_OFFSET_TXN_CHECK = 48;
     static final long TX_OFFSET_MAP_WRITER_COUNT = 56;
-    // INT - symbol map count, this is a variable part of transaction file
-    // below this offset we will have INT values for symbol map size
     /**
      * struct {
      * long txn;
@@ -84,8 +80,14 @@ public final class TableUtils {
     static final String META_PREV_FILE_NAME = "_meta.prev";
     static final String TODO_FILE_NAME = "_todo";
     static final long META_OFFSET_COUNT = 0;
+    // INT - symbol map count, this is a variable part of transaction file
+    // below this offset we will have INT values for symbol map size
     static final long META_OFFSET_PARTITION_BY = 4;
     static final long META_OFFSET_TIMESTAMP_INDEX = 8;
+    private static final int MIN_SYMBOL_CAPACITY = 2;
+    private static final int MAX_SYMBOL_CAPACITY = Numbers.ceilPow2(Integer.MAX_VALUE);
+    private static final int MAX_SYMBOL_CAPACITY_CACHED = Numbers.ceilPow2(1_000_000);
+    private static final int MAX_INDEX_VALUE_BLOCK_SIZE = Numbers.ceilPow2(8 * 1024 * 1024);
     private static final long META_COLUMN_DATA_SIZE = 16;
     private final static Log LOG = LogFactory.getLog(TableUtils.class);
 
@@ -241,12 +243,27 @@ public final class TableUtils {
         }
     }
 
+    public static void validateIndexValueBlockSize(int position, int indexValueBlockSize) throws SqlException {
+        if (indexValueBlockSize < MIN_INDEX_VALUE_BLOCK_SIZE) {
+            throw SqlException.$(position, "min index block capacity is ").put(MIN_INDEX_VALUE_BLOCK_SIZE);
+        }
+        if (indexValueBlockSize > MAX_INDEX_VALUE_BLOCK_SIZE) {
+            throw SqlException.$(position, "max index block capacity is ").put(MAX_INDEX_VALUE_BLOCK_SIZE);
+        }
+    }
+
     public static void validateSymbolCapacity(int position, int symbolCapacity) throws SqlException {
         if (symbolCapacity < MIN_SYMBOL_CAPACITY) {
             throw SqlException.$(position, "min symbol capacity is ").put(MIN_SYMBOL_CAPACITY);
         }
         if (symbolCapacity > MAX_SYMBOL_CAPACITY) {
             throw SqlException.$(position, "max symbol capacity is ").put(MAX_SYMBOL_CAPACITY);
+        }
+    }
+
+    public static void validateSymbolCapacityCached(boolean cache, int symbolCapacity, int cacheKeywordPosition) throws SqlException {
+        if (cache && symbolCapacity > MAX_SYMBOL_CAPACITY_CACHED) {
+            throw SqlException.$(cacheKeywordPosition, "max cached symbol capacity is ").put(MAX_SYMBOL_CAPACITY_CACHED);
         }
     }
 
@@ -380,12 +397,6 @@ public final class TableUtils {
             }
         } finally {
             path.trimTo(plen);
-        }
-    }
-
-    public static void validateSymbolCapacityCached(boolean cache, int symbolCapacity, int cacheKeywordPosition) throws SqlException {
-        if (cache && symbolCapacity > MAX_SYMBOL_CAPACITY_CACHED) {
-            throw SqlException.$(cacheKeywordPosition, "max cached symbol capacity is ").put(MAX_SYMBOL_CAPACITY_CACHED);
         }
     }
 

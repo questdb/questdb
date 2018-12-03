@@ -116,7 +116,7 @@ public class SymbolMapWriter implements Closeable {
             }
 
             mem.of(ff, BitmapIndexUtils.keyFileName(path.trimTo(plen), columnName), ff.getPageSize());
-            BitmapIndexWriter.initKeyMemory(mem, 4);
+            BitmapIndexWriter.initKeyMemory(mem, TableUtils.MIN_INDEX_VALUE_BLOCK_SIZE);
             ff.touch(BitmapIndexUtils.valueFileName(path.trimTo(plen), columnName));
         } finally {
             path.trimTo(plen);
