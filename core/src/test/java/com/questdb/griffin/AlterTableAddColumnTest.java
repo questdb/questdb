@@ -36,7 +36,7 @@ import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
-public class AlterTableTest extends AbstractGriffinTest {
+public class AlterTableAddColumnTest extends AbstractGriffinTest {
 
     @Before
     public void setUp3() {
@@ -382,7 +382,7 @@ public class AlterTableTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testHappyPath() throws Exception {
+    public void testAddColumn() throws Exception {
         TestUtils.assertMemoryLeak(
                 () -> {
                     try {

@@ -140,9 +140,11 @@ public class SqlCompiler implements Closeable {
 
     public RecordCursorFactory compile(CharSequence query, BindVariableService bindVariableService) throws SqlException {
 
+        //
         // these are quick executions that do not require building of a model
         //
         lexer.of(query);
+
         CharSequence tok = SqlUtil.fetchNext(lexer);
         if (Chars.equals(tok, "truncate")) {
             truncateTables(lexer);
@@ -616,139 +618,179 @@ public class SqlCompiler implements Closeable {
     private void alterTable(GenericLexer lexer) throws SqlException {
         CharSequence tok;
         expectKeyword(lexer, "table");
+
+        final int tableNamePosition = lexer.getPosition();
+
         tok = expectToken(lexer, "table name");
 
-        tableExistsOrFail(lexer.lastTokenPosition(), tok);
+        tableExistsOrFail(tableNamePosition, tok);
 
-        try (TableWriter writer = engine.getWriter(tok)) {
+        CharSequence tableName = GenericLexer.immutableOf(tok);
+        try (TableWriter writer = engine.getWriter(tableName)) {
 
             tok = expectToken(lexer, "'add' or 'drop'");
 
             if (Chars.equals("add", tok)) {
-
-                // add columns to table
-                expectKeyword(lexer, "column");
-
-                do {
-                    int tableNamePosition = lexer.getPosition();
-
-                    tok = expectToken(lexer, "column name");
-
-                    int index = writer.getMetadata().getColumnIndexQuiet(tok);
-                    if (index != -1) {
-                        throw SqlException.$(lexer.lastTokenPosition(), "column '").put(tok).put("' already exists");
-                    }
-
-                    CharSequence columnName = GenericLexer.immutableOf(tok);
-
-                    tok = expectToken(lexer, "column type");
-
-                    int type = ColumnType.columnTypeOf(tok);
-                    if (type == -1) {
-                        throw SqlException.$(lexer.lastTokenPosition(), "invalid type");
-                    }
-
-                    tok = SqlUtil.fetchNext(lexer);
-
-                    final int indexValueBlockCapacity;
-                    final boolean cache;
-                    int symbolCapacity;
-                    final boolean indexed;
-
-                    if (type == ColumnType.SYMBOL && tok != null && !Chars.equals(tok, ',')) {
-
-                        if (Chars.equals(tok, "capacity")) {
-                            tok = expectToken(lexer, "symbol capacity");
-
-                            final boolean negative;
-                            final int errorPos = lexer.lastTokenPosition();
-                            if (Chars.equals(tok, '-')) {
-                                negative = true;
-                                tok = expectToken(lexer, "symbol capacity");
-                            } else {
-                                negative = false;
-                            }
-
-                            try {
-                                symbolCapacity = Numbers.parseInt(tok);
-                            } catch (NumericException e) {
-                                throw SqlException.$(lexer.lastTokenPosition(), "numeric capacity expected");
-                            }
-
-                            if (negative) {
-                                symbolCapacity = -symbolCapacity;
-                            }
-
-                            TableUtils.validateSymbolCapacity(errorPos, symbolCapacity);
-
-                            tok = SqlUtil.fetchNext(lexer);
-                        } else {
-                            symbolCapacity = configuration.getDefaultSymbolCapacity();
-                        }
-
-
-                        if (Chars.equalsNc("cache", tok)) {
-                            cache = true;
-                            tok = SqlUtil.fetchNext(lexer);
-                        } else if (Chars.equalsNc("nocache", tok)) {
-                            cache = false;
-                            tok = SqlUtil.fetchNext(lexer);
-                        } else {
-                            cache = configuration.getDefaultSymbolCacheFlag();
-                        }
-
-                        TableUtils.validateSymbolCapacityCached(cache, symbolCapacity, lexer.lastTokenPosition());
-
-                        indexed = Chars.equalsNc("index", tok);
-                        if (indexed) {
-                            tok = SqlUtil.fetchNext(lexer);
-                        }
-
-                        if (Chars.equalsNc("capacity", tok)) {
-                            tok = expectToken(lexer, "symbol index capacity");
-
-                            try {
-                                indexValueBlockCapacity = Numbers.parseInt(tok);
-                            } catch (NumericException e) {
-                                throw SqlException.$(lexer.lastTokenPosition(), "numeric capacity expected");
-                            }
-                            tok = SqlUtil.fetchNext(lexer);
-                        } else {
-                            indexValueBlockCapacity = configuration.getIndexValueBlockSize();
-                        }
-                    } else {
-                        cache = false;
-                        indexValueBlockCapacity = configuration.getIndexValueBlockSize();
-                        symbolCapacity = configuration.getDefaultSymbolCapacity();
-                        indexed = false;
-                    }
-
-                    try {
-                        writer.addColumn(
-                                columnName,
-                                type,
-                                Numbers.ceilPow2(symbolCapacity),
-                                cache, indexed,
-                                Numbers.ceilPow2(indexValueBlockCapacity)
-                        );
-                    } catch (CairoException e) {
-                        throw SqlException.$(tableNamePosition, "Cannot add column. Try again later.");
-                    }
-
-                    if (tok == null) {
-                        break;
-                    }
-
-                    if (!Chars.equals(tok, ',')) {
-                        throw SqlException.$(lexer.lastTokenPosition(), "',' expected");
-                    }
-
-                } while (true);
+                alterTableAddColumn(tableNamePosition, writer, lexer);
+            } else if (Chars.equals("drop", tok)) {
+                alterTableDropColumn(tableNamePosition, writer, lexer);
             }
         } catch (CairoException e) {
             LOG.info().$("failed to lock table for alter: ").$((Sinkable) e).$();
-            throw SqlException.$(lexer.lastTokenPosition(), "table '").put(tok).put("' is busy");
+            throw SqlException.$(tableNamePosition, "table '").put(tableName).put("' is busy");
         }
+    }
+
+    private void alterTableAddColumn(int tableNamePosition, TableWriter writer, GenericLexer lexer) throws SqlException {
+        // add columns to table
+        expectKeyword(lexer, "column");
+
+        do {
+            CharSequence tok = expectToken(lexer, "column name");
+
+            int index = writer.getMetadata().getColumnIndexQuiet(tok);
+            if (index != -1) {
+                throw SqlException.$(lexer.lastTokenPosition(), "column '").put(tok).put("' already exists");
+            }
+
+            CharSequence columnName = GenericLexer.immutableOf(tok);
+
+            tok = expectToken(lexer, "column type");
+
+            int type = ColumnType.columnTypeOf(tok);
+            if (type == -1) {
+                throw SqlException.$(lexer.lastTokenPosition(), "invalid type");
+            }
+
+            tok = SqlUtil.fetchNext(lexer);
+
+            final int indexValueBlockCapacity;
+            final boolean cache;
+            int symbolCapacity;
+            final boolean indexed;
+
+            if (type == ColumnType.SYMBOL && tok != null && !Chars.equals(tok, ',')) {
+
+                if (Chars.equals(tok, "capacity")) {
+                    tok = expectToken(lexer, "symbol capacity");
+
+                    final boolean negative;
+                    final int errorPos = lexer.lastTokenPosition();
+                    if (Chars.equals(tok, '-')) {
+                        negative = true;
+                        tok = expectToken(lexer, "symbol capacity");
+                    } else {
+                        negative = false;
+                    }
+
+                    try {
+                        symbolCapacity = Numbers.parseInt(tok);
+                    } catch (NumericException e) {
+                        throw SqlException.$(lexer.lastTokenPosition(), "numeric capacity expected");
+                    }
+
+                    if (negative) {
+                        symbolCapacity = -symbolCapacity;
+                    }
+
+                    TableUtils.validateSymbolCapacity(errorPos, symbolCapacity);
+
+                    tok = SqlUtil.fetchNext(lexer);
+                } else {
+                    symbolCapacity = configuration.getDefaultSymbolCapacity();
+                }
+
+
+                if (Chars.equalsNc("cache", tok)) {
+                    cache = true;
+                    tok = SqlUtil.fetchNext(lexer);
+                } else if (Chars.equalsNc("nocache", tok)) {
+                    cache = false;
+                    tok = SqlUtil.fetchNext(lexer);
+                } else {
+                    cache = configuration.getDefaultSymbolCacheFlag();
+                }
+
+                TableUtils.validateSymbolCapacityCached(cache, symbolCapacity, lexer.lastTokenPosition());
+
+                indexed = Chars.equalsNc("index", tok);
+                if (indexed) {
+                    tok = SqlUtil.fetchNext(lexer);
+                }
+
+                if (Chars.equalsNc("capacity", tok)) {
+                    tok = expectToken(lexer, "symbol index capacity");
+
+                    try {
+                        indexValueBlockCapacity = Numbers.parseInt(tok);
+                    } catch (NumericException e) {
+                        throw SqlException.$(lexer.lastTokenPosition(), "numeric capacity expected");
+                    }
+                    tok = SqlUtil.fetchNext(lexer);
+                } else {
+                    indexValueBlockCapacity = configuration.getIndexValueBlockSize();
+                }
+            } else {
+                cache = false;
+                indexValueBlockCapacity = configuration.getIndexValueBlockSize();
+                symbolCapacity = configuration.getDefaultSymbolCapacity();
+                indexed = false;
+            }
+
+            try {
+                writer.addColumn(
+                        columnName,
+                        type,
+                        Numbers.ceilPow2(symbolCapacity),
+                        cache, indexed,
+                        Numbers.ceilPow2(indexValueBlockCapacity)
+                );
+            } catch (CairoException e) {
+                LOG.error().$("Cannot add column '").$(writer.getName()).$('.').$(columnName).$("'. Exception: ").$((Sinkable) e).$();
+                throw SqlException.$(tableNamePosition, "Cannot add column. Try again later.");
+            }
+
+            if (tok == null) {
+                break;
+            }
+
+            if (!Chars.equals(tok, ',')) {
+                throw SqlException.$(lexer.lastTokenPosition(), "',' expected");
+            }
+
+        } while (true);
+    }
+
+    private void alterTableDropColumn(int tableNamePosition, TableWriter writer, GenericLexer lexer) throws SqlException {
+        // add columns to table
+        expectKeyword(lexer, "column");
+
+        RecordMetadata metadata = writer.getMetadata();
+
+        do {
+            CharSequence tok = expectToken(lexer, "column name");
+
+            if (metadata.getColumnIndexQuiet(tok) == -1) {
+                throw SqlException.invalidColumn(lexer.lastTokenPosition(), tok);
+            }
+
+            try {
+                writer.removeColumn(tok);
+            } catch (CairoException e) {
+                LOG.error().$("Cannot drop column '").$(writer.getName()).$('.').$(tok).$("'. Exception: ").$((Sinkable) e).$();
+                throw SqlException.$(tableNamePosition, "Cannot add column. Try again later.");
+            }
+
+            tok = SqlUtil.fetchNext(lexer);
+
+            if (tok == null) {
+                break;
+            }
+
+            if (!Chars.equals(tok, ',')) {
+                throw SqlException.$(lexer.lastTokenPosition(), "',' expected");
+            }
+        } while (true);
     }
 
     private void clear() {
