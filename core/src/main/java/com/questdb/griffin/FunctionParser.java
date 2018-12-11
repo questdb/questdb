@@ -509,7 +509,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
                     if (match != MATCH_EXACT_MATCH) {
                         if (match == MATCH_FUZZY_MATCH) {
                             fuzzyMatchCount++;
-                        } else if (match == MATCH_PARTIAL_MATCH) {
+                        } else {
                             fuzzyMatchCount = 0;
                         }
                         bestMatch = match;

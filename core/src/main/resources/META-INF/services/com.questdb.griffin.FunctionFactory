@@ -72,17 +72,15 @@ com.questdb.griffin.engine.functions.bool.OrFunctionFactory
 com.questdb.griffin.engine.functions.bool.AndFunctionFactory
 
 # '='
-com.questdb.griffin.engine.functions.str.EqualsStrFunctionFactory
+com.questdb.griffin.engine.functions.eq.EqStrFunctionFactory
+com.questdb.griffin.engine.functions.eq.EqIntFunctionFactory
+com.questdb.griffin.engine.functions.eq.EqLongFunctionFactory
+com.questdb.griffin.engine.functions.eq.EqDoubleFunctionFactory
 
 # '>'
-
 com.questdb.griffin.engine.functions.gt.GtDoubleFunctionFactory
 
 # '<' operator
-
-#com.questdb.griffin.engine.functions.lt.LtDoubleVCFunctionFactory
-#com.questdb.griffin.engine.functions.lt.LtDoubleCCFunctionFactory
-#com.questdb.griffin.engine.functions.lt.LtDoubleCVFunctionFactory
 com.questdb.griffin.engine.functions.lt.LtDoubleVVFunctionFactory
 
 # '+' operator

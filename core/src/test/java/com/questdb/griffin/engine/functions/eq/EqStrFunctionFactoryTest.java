@@ -21,7 +21,7 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.engine.functions.str;
+package com.questdb.griffin.engine.functions.eq;
 
 import com.questdb.cairo.AbstractCairoTest;
 import com.questdb.cairo.Engine;
@@ -35,7 +35,7 @@ import com.questdb.test.tools.TestUtils;
 import org.junit.Before;
 import org.junit.Test;
 
-public class EqualsStrFunctionFactoryTest extends AbstractCairoTest {
+public class EqStrFunctionFactoryTest extends AbstractCairoTest {
 
     private static final BindVariableService bindVariableService = new BindVariableService();
     private static final Engine engine = new Engine(configuration);

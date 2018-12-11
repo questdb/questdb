@@ -21,7 +21,7 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin.engine.functions.str;
+package com.questdb.griffin.engine.functions.eq;
 
 import com.questdb.cairo.CairoConfiguration;
 import com.questdb.cairo.sql.Function;
@@ -33,7 +33,7 @@ import com.questdb.griffin.engine.functions.UnaryFunction;
 import com.questdb.std.Chars;
 import com.questdb.std.ObjList;
 
-public class EqualsStrFunctionFactory implements FunctionFactory {
+public class EqStrFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
         return "=(SS)";
