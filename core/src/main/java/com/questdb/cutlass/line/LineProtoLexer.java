@@ -25,6 +25,7 @@ package com.questdb.cutlass.line;
 
 import com.questdb.std.Chars;
 import com.questdb.std.Mutable;
+import com.questdb.std.Numbers;
 import com.questdb.std.Unsafe;
 import com.questdb.std.str.AbstractCharSequence;
 import com.questdb.std.str.AbstractCharSink;
@@ -43,8 +44,8 @@ public class LineProtoLexer implements Mutable, Closeable {
     private long buffer;
 
     private final CharSequenceCache charSequenceCache = address -> {
-        floatingCharSequence.lo = buffer + (int) (address >> 32);
-        floatingCharSequence.hi = buffer + ((int) address) - 2;
+        floatingCharSequence.lo = buffer + Numbers.decodeHighInt(address);
+        floatingCharSequence.hi = buffer + Numbers.decodeLowInt(address) - 2;
         return floatingCharSequence;
     };
 
@@ -331,9 +332,7 @@ public class LineProtoLexer implements Mutable, Closeable {
 
         @Override
         public long getCacheAddress() {
-            long lo = dstTop - buffer;
-            long hi = dstPos - buffer;
-            return (lo << 32) | hi;
+            return Numbers.encodeLowHighInts((int) (dstPos - buffer), (int) (dstTop - buffer));
         }
 
         @Override

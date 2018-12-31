@@ -363,7 +363,7 @@ public final class SqlParser {
                 lexer.unparse();
             }
 
-            columnCastModel.setCached(cached);
+            columnCastModel.setSymbolCacheFlag(cached);
 
             if (cached && symbolCapacity != -1) {
                 assert capacityPosition != -1;
@@ -412,37 +412,34 @@ public final class SqlParser {
             }
 
             CharSequence tok;
-            switch (type) {
-                case ColumnType.SYMBOL:
-                    tok = tok(lexer, "'capacity', 'nocache', 'cache', 'index' or ')'");
+            if (type == ColumnType.SYMBOL) {
+                tok = tok(lexer, "'capacity', 'nocache', 'cache', 'index' or ')'");
 
-                    int symbolCapacity;
-                    if (Chars.equals(tok, "capacity")) {
-                        // when capacity is not set explicitly it will default via configuration
-                        model.symbolCapacity(symbolCapacity = parseSymbolCapacity(lexer));
-                        tok = tok(lexer, "'nocache', 'cache', 'index' or ')'");
-                    } else {
-                        symbolCapacity = -1;
-                    }
+                int symbolCapacity;
+                if (Chars.equals(tok, "capacity")) {
+                    // when capacity is not set explicitly it will default via configuration
+                    model.symbolCapacity(symbolCapacity = parseSymbolCapacity(lexer));
+                    tok = tok(lexer, "'nocache', 'cache', 'index' or ')'");
+                } else {
+                    symbolCapacity = -1;
+                }
 
-                    final boolean cached;
-                    if (Chars.equals(tok, "nocache")) {
-                        cached = false;
-                    } else if (Chars.equals(tok, "cache")) {
-                        cached = true;
-                    } else {
-                        cached = configuration.getDefaultSymbolCacheFlag();
-                        lexer.unparse();
-                    }
-                    model.cached(cached);
-                    if (cached && symbolCapacity != -1) {
-                        TableUtils.validateSymbolCapacityCached(true, symbolCapacity, lexer.lastTokenPosition());
-                    }
-                    tok = parseCreateTableInlineIndexDef(lexer, model);
-                    break;
-                default:
-                    tok = null;
-                    break;
+                final boolean cached;
+                if (Chars.equals(tok, "nocache")) {
+                    cached = false;
+                } else if (Chars.equals(tok, "cache")) {
+                    cached = true;
+                } else {
+                    cached = configuration.getDefaultSymbolCacheFlag();
+                    lexer.unparse();
+                }
+                model.cached(cached);
+                if (cached && symbolCapacity != -1) {
+                    TableUtils.validateSymbolCapacityCached(true, symbolCapacity, lexer.lastTokenPosition());
+                }
+                tok = parseCreateTableInlineIndexDef(lexer, model);
+            } else {
+                tok = null;
             }
 
             if (tok == null) {

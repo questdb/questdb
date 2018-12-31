@@ -24,13 +24,15 @@
 package com.questdb.griffin.model;
 
 import com.questdb.cairo.ColumnType;
+import com.questdb.cairo.PartitionBy;
+import com.questdb.cairo.TableStructure;
 import com.questdb.std.*;
 import com.questdb.std.str.CharSink;
 
-public class CreateTableModel implements Mutable, ExecutionModel, Sinkable {
+public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, TableStructure {
     public static final ObjectFactory<CreateTableModel> FACTORY = CreateTableModel::new;
-    private static final long COLUMN_FLAG_CACHED = 1L;
-    private static final long COLUMN_FLAG_INDEXED = 2L;
+    private static final int COLUMN_FLAG_CACHED = 1;
+    private static final int COLUMN_FLAG_INDEXED = 2;
     private final CharSequenceObjHashMap<ColumnCastModel> columnCastModels = new CharSequenceObjHashMap<>();
     private final LongList columnBits = new LongList();
     private final ObjList<CharSequence> columnNames = new ObjList<>();
@@ -46,8 +48,8 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable {
     public boolean addColumn(CharSequence name, int type, int symbolCapacity) {
         if (columnNameIndexMap.put(name, columnNames.size())) {
             columnNames.add(Chars.stringOf(name));
-            columnBits.add(((long) symbolCapacity << 32) | type);
-            columnBits.add(COLUMN_FLAG_CACHED);
+            columnBits.add(Numbers.encodeLowHighInts(type, symbolCapacity));
+            columnBits.add(Numbers.encodeLowHighInts(COLUMN_FLAG_CACHED, 0));
             return true;
         }
         return false;
@@ -60,12 +62,11 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable {
     public CreateTableModel cached(boolean cached) {
         int last = columnBits.size() - 1;
         assert last > 0;
-        assert ((int) columnBits.getQuick(last - 1) == ColumnType.SYMBOL);
-        long bits = columnBits.getQuick(last);
+        assert getLowAt(last - 1) == ColumnType.SYMBOL;
         if (cached) {
-            columnBits.setQuick(last, bits | COLUMN_FLAG_CACHED);
+            columnBits.setQuick(last, Numbers.encodeLowHighInts(getLowAt(last) | COLUMN_FLAG_CACHED, getHighAt(last)));
         } else {
-            columnBits.setQuick(last, bits & ~COLUMN_FLAG_CACHED);
+            columnBits.setQuick(last, Numbers.encodeLowHighInts(getLowAt(last) & ~COLUMN_FLAG_CACHED, getHighAt(last)));
         }
         return this;
     }
@@ -86,28 +87,64 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable {
         return columnCastModels;
     }
 
+    @Override
     public int getColumnCount() {
         return columnNames.size();
     }
 
-    public int getColumnIndex(CharSequence columnName) {
-        return columnNameIndexMap.get(columnName);
-    }
-
+    @Override
     public CharSequence getColumnName(int index) {
         return columnNames.getQuick(index);
     }
 
+    @Override
     public int getColumnType(int index) {
-        return (int) columnBits.getQuick(index * 2);
+        return getLowAt(index * 2);
     }
 
+    @Override
     public int getIndexBlockCapacity(int index) {
-        return (int) (columnBits.getQuick(index * 2 + 1) >> 32);
+        return getHighAt(index * 2 + 1);
     }
 
+    @Override
     public boolean getIndexedFlag(int index) {
-        return (columnBits.getQuick(index * 2 + 1) & COLUMN_FLAG_INDEXED) == COLUMN_FLAG_INDEXED;
+        return (getLowAt(index * 2 + 1) & COLUMN_FLAG_INDEXED) != 0;
+    }
+
+    @Override
+    public int getPartitionBy() {
+        return partitionBy == null ? PartitionBy.NONE : PartitionBy.fromString(partitionBy.token);
+    }
+
+    public void setPartitionBy(ExpressionNode partitionBy) {
+        this.partitionBy = partitionBy;
+    }
+
+    @Override
+    public boolean getSymbolCacheFlag(int index) {
+        return (getLowAt(index * 2 + 1) & COLUMN_FLAG_CACHED) != 0;
+    }
+
+    @Override
+    public int getSymbolCapacity(int index) {
+        int capacity = getHighAt(index * 2);
+        assert capacity != -1;
+        return capacity;
+    }
+
+    @Override
+    public CharSequence getTableName() {
+        return name.token;
+    }
+
+    @Override
+    public int getTimestampIndex() {
+        return timestamp == null ? -1 : getColumnIndex(timestamp.token);
+    }
+
+    public int getColumnIndex(CharSequence columnName) {
+        return columnNameIndexMap.get(columnName);
     }
 
     @Override
@@ -123,28 +160,12 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable {
         this.name = name;
     }
 
-    public ExpressionNode getPartitionBy() {
-        return partitionBy;
-    }
-
-    public void setPartitionBy(ExpressionNode partitionBy) {
-        this.partitionBy = partitionBy;
-    }
-
     public QueryModel getQueryModel() {
         return queryModel;
     }
 
     public void setQueryModel(QueryModel queryModel) {
         this.queryModel = queryModel;
-    }
-
-    public boolean getSymbolCacheFlag(int index) {
-        return (columnBits.getQuick(index * 2 + 1) & COLUMN_FLAG_CACHED) == COLUMN_FLAG_CACHED;
-    }
-
-    public int getSymbolCapacity(int index) {
-        return (int) (columnBits.getQuick(index * 2) >> 32);
     }
 
     public ExpressionNode getTimestamp() {
@@ -164,12 +185,11 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable {
     }
 
     public void symbolCapacity(int capacity) {
-        int pos = columnBits.size() - 2;
+        final int pos = columnBits.size() - 2;
         assert pos > -1;
-        long bits = columnBits.getQuick(pos);
-        assert ((int) bits == ColumnType.SYMBOL);
-        bits = (((long) capacity) << 32) | (int) bits;
-        columnBits.setQuick(pos, bits);
+        final int type = getLowAt(pos);
+        assert type == ColumnType.SYMBOL;
+        columnBits.setQuick(pos, Numbers.encodeLowHighInts(type, capacity));
     }
 
     @Override
@@ -203,7 +223,7 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable {
                 if (type == ColumnType.SYMBOL) {
                     sink.put(" capacity ");
                     sink.put(m.getSymbolCapacity());
-                    if (m.isCached()) {
+                    if (m.getSymbolCacheFlag()) {
                         sink.put(" cache");
                     } else {
                         sink.put(" nocache");
@@ -251,19 +271,27 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable {
             sink.put(')');
         }
 
-        if (getPartitionBy() != null) {
-            sink.put(" partition by ").put(getPartitionBy().token);
+        if (partitionBy != null) {
+            sink.put(" partition by ").put(partitionBy.token);
         }
     }
 
-    private void setIndexFlags0(int columnIndex, boolean indexFlag, int indexValueBlockSize) {
-        assert columnIndex > 0;
-        long bits = columnBits.getQuick(columnIndex);
+    private int getHighAt(int index) {
+        return Numbers.decodeHighInt(columnBits.getQuick(index));
+    }
+
+    private int getLowAt(int index) {
+        return Numbers.decodeLowInt(columnBits.getQuick(index));
+    }
+
+    private void setIndexFlags0(int index, boolean indexFlag, int indexValueBlockSize) {
+        assert index > 0;
+        final int flags = getLowAt(index);
         if (indexFlag) {
             assert indexValueBlockSize > 1;
-            columnBits.setQuick(columnIndex, bits | ((long) Numbers.ceilPow2(indexValueBlockSize) << 32) | COLUMN_FLAG_INDEXED);
+            columnBits.setQuick(index, Numbers.encodeLowHighInts(flags | COLUMN_FLAG_INDEXED, Numbers.ceilPow2(indexValueBlockSize)));
         } else {
-            columnBits.setQuick(columnIndex, bits & ~COLUMN_FLAG_INDEXED);
+            columnBits.setQuick(index, Numbers.encodeLowHighInts(flags & ~COLUMN_FLAG_INDEXED, Numbers.ceilPow2(indexValueBlockSize)));
         }
     }
 }

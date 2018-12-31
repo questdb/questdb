@@ -30,11 +30,15 @@ import com.questdb.mp.Sequence;
 import com.questdb.std.FilesFacade;
 import com.questdb.std.ObjHashSet;
 import com.questdb.std.str.LPSZ;
+import com.questdb.std.str.Path;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
 public class EngineTest extends AbstractCairoTest {
+    private final static Path path = new Path();
+    private final static Path otherPath = new Path();
+
     @Test
     public void testAncillaries() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
@@ -138,7 +142,7 @@ public class EngineTest extends AbstractCairoTest {
 
         TestUtils.assertMemoryLeak(() -> {
             try (Engine engine = new Engine(configuration)) {
-                try (TableReader reader = engine.getReader("x", -1)) {
+                try (TableReader reader = engine.getReader("x", TableUtils.ANY_TABLE_VERSION)) {
                     Assert.assertNotNull(reader);
                     Assert.assertFalse(engine.lock("x"));
                     assertReader(engine, "x");
@@ -154,7 +158,7 @@ public class EngineTest extends AbstractCairoTest {
 
         TestUtils.assertMemoryLeak(() -> {
             try (Engine engine = new Engine(configuration)) {
-                engine.rename("x", "y");
+                engine.rename(path, "x", otherPath, "y");
 
                 assertWriter(engine, "y");
                 assertReader(engine, "y");
@@ -170,11 +174,11 @@ public class EngineTest extends AbstractCairoTest {
             try (Engine engine = new Engine(configuration)) {
                 assertReader(engine, "x");
                 assertWriter(engine, "x");
-                engine.remove("x");
-                Assert.assertEquals(TableUtils.TABLE_DOES_NOT_EXIST, engine.getStatus("x"));
+                engine.remove(path, "x");
+                Assert.assertEquals(TableUtils.TABLE_DOES_NOT_EXIST, engine.getStatus(path, "x"));
 
                 try {
-                    engine.getReader("x", -1);
+                    engine.getReader("x", TableUtils.ANY_TABLE_VERSION);
                     Assert.fail();
                 } catch (CairoException ignored) {
                 }
@@ -194,8 +198,8 @@ public class EngineTest extends AbstractCairoTest {
         createX();
 
         try (Engine engine = new Engine(configuration)) {
-            engine.remove("x");
-            Assert.assertEquals(TableUtils.TABLE_DOES_NOT_EXIST, engine.getStatus("x"));
+            engine.remove(path, "x");
+            Assert.assertEquals(TableUtils.TABLE_DOES_NOT_EXIST, engine.getStatus(path, "x"));
         }
     }
 
@@ -205,7 +209,7 @@ public class EngineTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             try (Engine engine = new Engine(configuration)) {
                 try {
-                    engine.remove("x");
+                    engine.remove(path, "x");
                     Assert.fail();
                 } catch (CairoException e) {
                     TestUtils.assertContains(e.getMessage(), "remove failed");
@@ -220,10 +224,10 @@ public class EngineTest extends AbstractCairoTest {
             createX();
 
             try (Engine engine = new Engine(configuration)) {
-                try (TableReader reader = engine.getReader("x", -1)) {
+                try (TableReader reader = engine.getReader("x", TableUtils.ANY_TABLE_VERSION)) {
                     Assert.assertNotNull(reader);
                     try {
-                        engine.remove("x");
+                        engine.remove(path, "x");
                         Assert.fail();
                     } catch (CairoException ignored) {
                     }
@@ -241,7 +245,7 @@ public class EngineTest extends AbstractCairoTest {
                 try (TableWriter writer = engine.getWriter("x")) {
                     Assert.assertNotNull(writer);
                     try {
-                        engine.remove("x");
+                        engine.remove(path, "x");
                         Assert.fail();
                     } catch (CairoException ignored) {
                     }
@@ -259,7 +263,7 @@ public class EngineTest extends AbstractCairoTest {
                 assertWriter(engine, "x");
                 assertReader(engine, "x");
 
-                engine.rename("x", "y");
+                engine.rename(path, "x", otherPath, "y");
 
                 assertWriter(engine, "y");
                 assertReader(engine, "y");
@@ -285,7 +289,7 @@ public class EngineTest extends AbstractCairoTest {
                     }
 
                     try {
-                        engine.rename("x", "y");
+                        engine.rename(path, "x", otherPath, "y");
                         Assert.fail();
                     } catch (CairoException e) {
                         TestUtils.assertContains(e.getMessage(), "Cannot lock");
@@ -325,7 +329,7 @@ public class EngineTest extends AbstractCairoTest {
                 assertReader(engine, "x");
                 assertWriter(engine, "x");
                 try {
-                    engine.rename("x", "y");
+                    engine.rename(path, "x", otherPath, "y");
                     Assert.fail();
                 } catch (CairoException e) {
                     TestUtils.assertContains(e.getMessage(), "Rename failed");
@@ -333,7 +337,7 @@ public class EngineTest extends AbstractCairoTest {
 
                 assertReader(engine, "x");
                 assertWriter(engine, "x");
-                engine.rename("x", "y");
+                engine.rename(path, "x", otherPath, "y");
                 assertReader(engine, "y");
                 assertWriter(engine, "y");
             }
@@ -352,7 +356,7 @@ public class EngineTest extends AbstractCairoTest {
             }
 
             try (Engine engine = new Engine(configuration)) {
-                engine.rename("x", "y");
+                engine.rename(path, "x", otherPath, "y");
                 Assert.fail();
             } catch (CairoException e) {
                 TestUtils.assertContains(e.getMessage(), "does not exist");
@@ -371,7 +375,7 @@ public class EngineTest extends AbstractCairoTest {
                 assertWriter(engine, "x");
                 assertReader(engine, "x");
                 try {
-                    engine.rename("x", "y");
+                    engine.rename(path, "x", otherPath, "y");
                     Assert.fail();
                 } catch (CairoException e) {
                     TestUtils.assertContains(e.getMessage(), "exists");
@@ -404,7 +408,7 @@ public class EngineTest extends AbstractCairoTest {
     }
 
     private void assertReader(Engine engine, String name) {
-        try (TableReader reader = engine.getReader(name, -1)) {
+        try (TableReader reader = engine.getReader(name, TableUtils.ANY_TABLE_VERSION)) {
             Assert.assertNotNull(reader);
         }
     }

@@ -71,7 +71,7 @@ public class DateLocale {
     }
 
     public TimeZoneRules getRules(CharSequence timeZoneName) throws NumericException {
-        return getZoneRules(Numbers.decodeInt(matchZone(timeZoneName, 0, timeZoneName.length())));
+        return getZoneRules(Numbers.decodeLowInt(matchZone(timeZoneName, 0, timeZoneName.length())));
     }
 
     public String getShortMonth(int index) {
@@ -158,7 +158,7 @@ public class DateLocale {
             }
 
             if (match) {
-                return (long) n << 32L | txt.charAt(0);
+                return Numbers.encodeLowHighInts(txt.charAt(0), n);
             }
         }
 

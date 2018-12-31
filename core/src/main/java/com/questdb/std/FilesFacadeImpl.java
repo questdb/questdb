@@ -178,7 +178,7 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
-    public long read(long fd, long buf, int len, long offset) {
+    public long read(long fd, long buf, long len, long offset) {
         return Files.read(fd, buf, len, offset);
     }
 

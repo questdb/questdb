@@ -166,7 +166,7 @@ public class TableReaderMetadataCorruptionTest extends AbstractCairoTest {
             try (Path path = new Path()) {
                 path.of(root).concat("x");
                 final int rootLen = path.length();
-                if (FilesFacadeImpl.INSTANCE.mkdirs(path.put(Files.SEPARATOR).$(), 509) == -1) {
+                if (FilesFacadeImpl.INSTANCE.mkdirs(path.put(Files.SEPARATOR).$(), configuration.getMkDirMode()) == -1) {
                     throw CairoException.instance(FilesFacadeImpl.INSTANCE.errno()).put("Cannot create dir: ").put(path);
                 }
 

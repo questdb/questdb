@@ -57,7 +57,7 @@ public class TimeZoneRuleFactory {
                     // this could be fixed offset, try parsing value as one
                     long offset = Dates.parseOffset(alias, 0, alias.length());
                     if (offset != Long.MIN_VALUE) {
-                        ruleList.add(new FixedTimeZoneRule(alias, Numbers.decodeInt(offset) * Dates.MILLI_MICROS));
+                        ruleList.add(new FixedTimeZoneRule(alias, Numbers.decodeLowInt(offset) * Dates.MILLI_MICROS));
                         ruleMap.put(key, index++);
                     }
                 } else {

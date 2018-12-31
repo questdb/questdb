@@ -77,7 +77,7 @@ public interface FilesFacade {
 
     long openRW(LPSZ name);
 
-    long read(long fd, long buf, int size, long offset);
+    long read(long fd, long buf, long size, long offset);
 
     boolean remove(LPSZ name);
 

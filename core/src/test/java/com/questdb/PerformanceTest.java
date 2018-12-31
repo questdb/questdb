@@ -23,9 +23,9 @@
 
 package com.questdb;
 
-import com.questdb.cairo.*;
 import com.questdb.cairo.ColumnType;
 import com.questdb.cairo.PartitionBy;
+import com.questdb.cairo.*;
 import com.questdb.ex.ParserException;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
@@ -54,7 +54,7 @@ import java.util.concurrent.TimeUnit;
 
 public class PerformanceTest extends AbstractTest {
 
-    private static final int TEST_DATA_SIZE = 1000000;
+    private static final int TEST_DATA_SIZE = 1_000_000;
     private static final Log LOG = LogFactory.getLog(PerformanceTest.class);
     private static boolean enabled = false;
 
@@ -86,7 +86,6 @@ public class PerformanceTest extends AbstractTest {
         }
     }
 
-    @SuppressWarnings("StatementWithEmptyBody")
     @Test
     public void testAllBySymbolValueOverIntervalNew() throws JournalException, ParserException, NumericException {
 
@@ -126,7 +125,7 @@ public class PerformanceTest extends AbstractTest {
         long result;
 
         CairoConfiguration configuration = new DefaultCairoConfiguration(getFactory().getConfiguration().getJournalBase().getAbsolutePath());
-        String symbols[] = {"AGK.L", "BP.L", "TLW.L", "ABF.L", "LLOY.L", "BT-A.L", "WTB.L", "RRS.L", "ADM.L", "GKN.L", "HSBA.L"};
+        String[] symbols = {"AGK.L", "BP.L", "TLW.L", "ABF.L", "LLOY.L", "BT-A.L", "WTB.L", "RRS.L", "ADM.L", "GKN.L", "HSBA.L"};
         try (TableModel model = new TableModel(configuration, "quote", PartitionBy.NONE)
                 .timestamp()
                 .col("sym", ColumnType.SYMBOL)

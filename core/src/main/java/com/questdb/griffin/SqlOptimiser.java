@@ -31,6 +31,7 @@ import com.questdb.cairo.sql.RecordMetadata;
 import com.questdb.griffin.model.*;
 import com.questdb.std.*;
 import com.questdb.std.str.FlyweightCharSequence;
+import com.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
 
 import java.util.ArrayDeque;
@@ -92,6 +93,7 @@ class SqlOptimiser {
     private final ColumnPrefixEraser columnPrefixEraser = new ColumnPrefixEraser();
     private int defaultAliasCount = 0;
     private ObjList<JoinContext> emittedJoinClauses;
+    private final Path path;
 
     SqlOptimiser(
             CairoConfiguration configuration,
@@ -101,7 +103,9 @@ class SqlOptimiser {
             ObjectPool<QueryColumn> queryColumnPool,
             ObjectPool<QueryModel> queryModelPool,
             PostOrderTreeTraversalAlgo traversalAlgo,
-            FunctionParser functionParser) {
+            FunctionParser functionParser,
+            Path path
+    ) {
         this.engine = engine;
         this.sqlNodePool = sqlNodePool;
         this.characterStore = characterStore;
@@ -110,6 +114,7 @@ class SqlOptimiser {
         this.queryColumnPool = queryColumnPool;
         this.functionParser = functionParser;
         this.contextPool = new ObjectPool<>(JoinContext.FACTORY, configuration.getSqlJoinContextPoolCapacity());
+        this.path = path;
     }
 
     private static void assertNotNull(ExpressionNode node, int position, String message) throws SqlException {
@@ -676,13 +681,10 @@ class SqlOptimiser {
 
             QueryModel m = joinModels.getQuick(index);
 
-            switch (m.getJoinType()) {
-                case QueryModel.JOIN_CROSS:
-                    cost += 10;
-                    break;
-                default:
-                    cost += 5;
-                    break;
+            if (m.getJoinType() == QueryModel.JOIN_CROSS) {
+                cost += 10;
+            } else {
+                cost += 5;
             }
 
             IntHashSet dependencies = m.getDependencies();
@@ -1218,7 +1220,7 @@ class SqlOptimiser {
             throw SqlException.$(tableNamePosition, "come on, where is table name?");
         }
 
-        int status = engine.getStatus(tableName, lo, hi);
+        int status = engine.getStatus(path, tableName, lo, hi);
 
         if (status == TableUtils.TABLE_DOES_NOT_EXIST) {
             throw SqlException.$(tableNamePosition, "table does not exist");
@@ -1228,7 +1230,7 @@ class SqlOptimiser {
             throw SqlException.$(tableNamePosition, "table directory is of unknown format");
         }
 
-        try (TableReader r = engine.getReader(tableLookupSequence.of(tableName, lo, hi - lo), -1)) {
+        try (TableReader r = engine.getReader(tableLookupSequence.of(tableName, lo, hi - lo), TableUtils.ANY_TABLE_VERSION)) {
             model.setTableVersion(r.getVersion());
             copyColumnsFromMetadata(model, r.getMetadata());
         } catch (EntryLockedException e) {
@@ -2152,11 +2154,6 @@ class SqlOptimiser {
     private static class LiteralRewritingVisitor implements PostOrderTreeTraversalAlgo.Visitor {
         private CharSequenceObjHashMap<CharSequence> nameTypeMap;
 
-        PostOrderTreeTraversalAlgo.Visitor of(CharSequenceObjHashMap<CharSequence> aliasToColumnMap) {
-            this.nameTypeMap = aliasToColumnMap;
-            return this;
-        }
-
         @Override
         public void visit(ExpressionNode node) {
             if (node.type == ExpressionNode.LITERAL) {
@@ -2174,19 +2171,14 @@ class SqlOptimiser {
                 }
             }
         }
+
+        PostOrderTreeTraversalAlgo.Visitor of(CharSequenceObjHashMap<CharSequence> aliasToColumnMap) {
+            this.nameTypeMap = aliasToColumnMap;
+            return this;
+        }
     }
 
     private class ColumnPrefixEraser implements PostOrderTreeTraversalAlgo.Visitor {
-
-        private ExpressionNode rewrite(ExpressionNode node) {
-            if (node != null && node.type == ExpressionNode.LITERAL) {
-                final int dot = Chars.indexOf(node.token, '.');
-                if (dot != -1) {
-                    return nextLiteral(node.token.subSequence(dot + 1, node.token.length()));
-                }
-            }
-            return node;
-        }
 
         @Override
         public void visit(ExpressionNode node) {
@@ -2208,6 +2200,16 @@ class SqlOptimiser {
             }
         }
 
+        private ExpressionNode rewrite(ExpressionNode node) {
+            if (node != null && node.type == ExpressionNode.LITERAL) {
+                final int dot = Chars.indexOf(node.token, '.');
+                if (dot != -1) {
+                    return nextLiteral(node.token.subSequence(dot + 1, node.token.length()));
+                }
+            }
+            return node;
+        }
+
 
     }
 
@@ -2216,6 +2218,30 @@ class SqlOptimiser {
         private ObjList<CharSequence> names;
         private int nullCount;
         private QueryModel model;
+
+        @Override
+        public void visit(ExpressionNode node) throws SqlException {
+            switch (node.type) {
+                case ExpressionNode.LITERAL:
+                    // ignore bind variables
+                    if (!Chars.startsWith(node.token, ':')) {
+                        int dot = Chars.indexOf(node.token, '.');
+                        CharSequence name = extractColumnName(node.token, dot);
+                        indexes.add(getIndexOfTableForColumn(model, node.token, dot, node.position));
+                        if (names != null) {
+                            names.add(name);
+                        }
+                    }
+                    break;
+                case ExpressionNode.CONSTANT:
+                    if (nullConstants.contains(node.token)) {
+                        nullCount++;
+                    }
+                    break;
+                default:
+                    break;
+            }
+        }
 
         private CharSequence extractColumnName(CharSequence token, int dot) {
             return dot == -1 ? token : token.subSequence(dot + 1, token.length());
@@ -2245,30 +2271,6 @@ class SqlOptimiser {
 
         private void withModel(QueryModel model) {
             this.model = model;
-        }
-
-        @Override
-        public void visit(ExpressionNode node) throws SqlException {
-            switch (node.type) {
-                case ExpressionNode.LITERAL:
-                    // ignore bind variables
-                    if (!Chars.startsWith(node.token, ':')) {
-                        int dot = Chars.indexOf(node.token, '.');
-                        CharSequence name = extractColumnName(node.token, dot);
-                        indexes.add(getIndexOfTableForColumn(model, node.token, dot, node.position));
-                        if (names != null) {
-                            names.add(name);
-                        }
-                    }
-                    break;
-                case ExpressionNode.CONSTANT:
-                    if (nullConstants.contains(node.token)) {
-                        nullCount++;
-                    }
-                    break;
-                default:
-                    break;
-            }
         }
     }
 

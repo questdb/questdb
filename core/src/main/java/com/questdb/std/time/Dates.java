@@ -534,9 +534,8 @@ final public class Dates {
                 if (hour > 23 || minute > 59) {
                     return Long.MIN_VALUE;
                 }
-                int min = hour * 60 + minute;
-                long r = ((long) (p - lo) << 32) | min;
-                return negative ? -r : r;
+                final int min = hour * 60 + minute;
+                return Numbers.encodeLowHighInts(negative ? -min : min, p - lo);
             default:
                 return Long.MIN_VALUE;
         }

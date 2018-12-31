@@ -125,7 +125,7 @@ public class BusyPollTest extends AbstractCairoTest {
                 }).start();
 
                 new Thread(() -> {
-                    try (TableReader reader = engine.getReader("xyz", 0)) {
+                    try (TableReader reader = engine.getReader("xyz", TableUtils.ANY_TABLE_VERSION)) {
                         Rnd rnd = new Rnd();
                         int count = 0;
                         final TableReaderIncrementalRecordCursor cursor = new TableReaderIncrementalRecordCursor();

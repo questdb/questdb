@@ -36,9 +36,6 @@ import org.jetbrains.annotations.Nullable;
 import java.io.Closeable;
 import java.util.ServiceLoader;
 
-import static com.questdb.cairo.TableUtils.META_FILE_NAME;
-import static com.questdb.cairo.TableUtils.TXN_FILE_NAME;
-
 
 public class SqlCompiler implements Closeable {
     public static final ObjList<String> sqlControlSymbols = new ObjList<>(8);
@@ -62,10 +59,11 @@ public class SqlCompiler implements Closeable {
     private final EntityColumnFilter entityColumnFilter = new EntityColumnFilter();
     private final IntIntHashMap typeCast = new IntIntHashMap();
     private final ExecutableMethod insertAsSelectMethod = this::insertAsSelect;
-    private final ExecutableMethod createTableMethod = this::createTable;
     private final SqlExecutionContextImpl executionContext = new SqlExecutionContextImpl();
     private final AssociativeCache<RecordCursorFactory> sqlCache;
     private final ObjList<TableWriter> tableWriters = new ObjList<>();
+    private final TableStructureAdapter tableStructureAdapter = new TableStructureAdapter();
+    private final ExecutableMethod createTableMethod = this::createTable;
 
     public SqlCompiler(CairoEngine engine, CairoConfiguration configuration) {
         this(engine, configuration, null);
@@ -97,7 +95,8 @@ public class SqlCompiler implements Closeable {
                 queryColumnPool,
                 queryModelPool,
                 postOrderTreeTraversalAlgo,
-                functionParser
+                functionParser,
+                path
         );
 
         parser = new SqlParser(
@@ -528,24 +527,18 @@ public class SqlCompiler implements Closeable {
                     break;
                 case ColumnType.SYMBOL:
                     asm.invokeInterface(rGetSym, 1);
-                    switch (to.getColumnType(toColumnIndex)) {
-                        case ColumnType.STRING:
-                            asm.invokeVirtual(wPutStr);
-                            break;
-                        default:
-                            asm.invokeVirtual(wPutSym);
-                            break;
+                    if (to.getColumnType(toColumnIndex) == ColumnType.STRING) {
+                        asm.invokeVirtual(wPutStr);
+                    } else {
+                        asm.invokeVirtual(wPutSym);
                     }
                     break;
                 case ColumnType.STRING:
                     asm.invokeInterface(rGetStr, 1);
-                    switch (to.getColumnType(toColumnIndex)) {
-                        case ColumnType.SYMBOL:
-                            asm.invokeVirtual(wPutSym);
-                            break;
-                        default:
-                            asm.invokeVirtual(wPutStr);
-                            break;
+                    if (to.getColumnType(toColumnIndex) == ColumnType.SYMBOL) {
+                        asm.invokeVirtual(wPutSym);
+                    } else {
+                        asm.invokeVirtual(wPutStr);
                     }
                     break;
                 case ColumnType.BINARY:
@@ -585,7 +578,6 @@ public class SqlCompiler implements Closeable {
         return to == from
                 || (
                 from >= ColumnType.BYTE
-                        && from <= ColumnType.DOUBLE
                         && to >= ColumnType.BYTE
                         && to <= ColumnType.DOUBLE
                         && from < to)
@@ -891,62 +883,6 @@ public class SqlCompiler implements Closeable {
         writer.commit();
     }
 
-    private void createEmptyTable(CreateTableModel model) {
-        final FilesFacade ff = configuration.getFilesFacade();
-        path.of(configuration.getRoot()).concat(model.getName().token);
-        final int rootLen = path.length();
-
-        try (AppendMemory mem = this.mem) {
-
-            mem.of(ff, path.trimTo(rootLen).concat(META_FILE_NAME).$(), ff.getPageSize());
-
-            int count = model.getColumnCount();
-            mem.putInt(count);
-            final ExpressionNode partitionBy = model.getPartitionBy();
-            if (partitionBy == null) {
-                mem.putInt(PartitionBy.NONE);
-            } else {
-                mem.putInt(PartitionBy.fromString(partitionBy.token));
-            }
-
-            final ExpressionNode timestamp = model.getTimestamp();
-            if (timestamp == null) {
-                mem.putInt(-1);
-            } else {
-                mem.putInt(model.getColumnIndex(timestamp.token));
-            }
-            mem.jumpTo(TableUtils.META_OFFSET_COLUMN_TYPES);
-
-            for (int i = 0; i < count; i++) {
-                mem.putByte((byte) model.getColumnType(i));
-                mem.putBool(model.getIndexedFlag(i));
-                mem.putInt(model.getIndexBlockCapacity(i));
-                mem.skip(10); // reserved
-            }
-            for (int i = 0; i < count; i++) {
-                mem.putStr(model.getColumnName(i));
-            }
-
-            // create symbol maps
-            int symbolMapCount = 0;
-            for (int i = 0; i < count; i++) {
-                if (model.getColumnType(i) == ColumnType.SYMBOL) {
-                    SymbolMapWriter.createSymbolMapFiles(
-                            ff,
-                            mem,
-                            path.trimTo(rootLen),
-                            model.getColumnName(i),
-                            model.getSymbolCapacity(i),
-                            model.getSymbolCacheFlag(i)
-                    );
-                    symbolMapCount++;
-                }
-            }
-            mem.of(ff, path.trimTo(rootLen).concat(TXN_FILE_NAME).$(), ff.getPageSize());
-            TableUtils.resetTxn(mem, symbolMapCount);
-        }
-    }
-
     private void createTable(final ExecutionModel model, SqlExecutionContext executionContext) throws SqlException {
         final CreateTableModel createTableModel = (CreateTableModel) model;
         final FilesFacade ff = configuration.getFilesFacade();
@@ -961,25 +897,27 @@ public class SqlCompiler implements Closeable {
             TableWriter writer = null;
 
             try {
-                if (ff.mkdir(path.chopZ().put(Files.SEPARATOR).$(), configuration.getMkDirMode()) != 0) {
-                    LOG.error().$("table already exists [path=").utf8(path).$(", errno=").$(ff.errno()).$(']').$();
-                    throw SqlException.$(name.position, "Cannot create table. See log for details.");
-                }
+//                if (ff.mkdir(path.chopZ().put(Files.SEPARATOR).$(), configuration.getMkDirMode()) != 0) {
+//                    LOG.error().$("table already exists [path=").utf8(path).$(", errno=").$(ff.errno()).$(']').$();
+//                    throw SqlException.$(name.position, "Cannot create table. See log for details.");
+//                }
 
                 try {
                     if (createTableModel.getQueryModel() == null) {
-                        createEmptyTable(createTableModel);
+                        TableUtils.createTable(
+                                configuration.getFilesFacade(),
+                                this.mem,
+                                this.path,
+                                configuration.getRoot(),
+                                createTableModel,
+                                configuration.getMkDirMode()
+                        );
                     } else {
                         writer = createTableFromCursor(createTableModel, executionContext);
                     }
-                } catch (SqlException e) {
-                    removeTableDirectory(createTableModel);
-                    throw e;
-                } catch (ReaderOutOfDateException e) {
-                    if (removeTableDirectory(createTableModel)) {
-                        throw e;
-                    }
-                    throw SqlException.$(0, "Concurrent modification cannot be handled. Failed to clean up. See log for more details.");
+                } catch (CairoException e) {
+                    LOG.error().$("could not create table [error=").$((Sinkable) e).$(']').$();
+                    throw SqlException.$(name.position, "Could not create table. See log for details.");
                 }
             } finally {
                 engine.unlock(name.token, writer);
@@ -991,105 +929,28 @@ public class SqlCompiler implements Closeable {
 
     private TableWriter createTableFromCursor(CreateTableModel model, SqlExecutionContext executionContext) throws SqlException {
         try (final RecordCursorFactory factory = generate(model.getQueryModel(), executionContext);
-             final RecordCursor cursor = factory.getCursor(executionContext.getBindVariableService())) {
+             final RecordCursor cursor = factory.getCursor(executionContext.getBindVariableService())
+        ) {
             typeCast.clear();
             final RecordMetadata metadata = factory.getMetadata();
             validateTableModelAndCreateTypeCast(model, metadata, typeCast);
-            createTableMetaFile(model, metadata, typeCast);
-            return copyTableData(model.getName().token, cursor, metadata);
-        }
-    }
+            TableUtils.createTable(
+                    configuration.getFilesFacade(),
+                    this.mem,
+                    this.path,
+                    configuration.getRoot(),
+                    tableStructureAdapter.of(model, metadata, typeCast),
+                    configuration.getMkDirMode()
+            );
 
-    private void createTableMetaFile(
-            CreateTableModel model,
-            RecordMetadata metadata,
-            @Transient IntIntHashMap typeCast) {
-        final FilesFacade ff = configuration.getFilesFacade();
-        path.of(configuration.getRoot()).concat(model.getName().token);
-        final int rootLen = path.length();
-
-        try (AppendMemory mem = this.mem) {
-
-            mem.of(ff, path.trimTo(rootLen).concat(META_FILE_NAME).$(), ff.getPageSize());
-
-            int count = model.getColumnCount();
-            mem.putInt(count);
-            final ExpressionNode partitionBy = model.getPartitionBy();
-            if (partitionBy == null) {
-                mem.putInt(PartitionBy.NONE);
-            } else {
-                mem.putInt(PartitionBy.fromString(partitionBy.token));
-            }
-
-            ExpressionNode timestamp = model.getTimestamp();
-            if (timestamp == null) {
-                mem.putInt(-1);
-            } else {
-                mem.putInt(model.getColumnIndex(timestamp.token));
-            }
-            mem.jumpTo(TableUtils.META_OFFSET_COLUMN_TYPES);
-
-            for (int i = 0; i < count; i++) {
-                // use type cast when available
-                int castIndex = typeCast.keyIndex(i);
-                if (castIndex < 0) {
-                    mem.putByte((byte) typeCast.valueAt(castIndex));
-                } else {
-                    mem.putByte((byte) metadata.getColumnType(i));
+            try {
+                return copyTableData(model.getName().token, cursor, metadata);
+            } catch (CairoException e) {
+                if (removeTableDirectory(model)) {
+                    throw e;
                 }
-                mem.putBool(model.getIndexedFlag(i));
-                mem.putInt(model.getIndexBlockCapacity(i));
-                mem.skip(10); // reserved
+                throw SqlException.$(0, "Concurrent modification cannot be handled. Failed to clean up. See log for more details.");
             }
-
-            for (int i = 0; i < count; i++) {
-                mem.putStr(model.getColumnName(i));
-            }
-
-            // create symbol maps
-            int symbolMapCount = 0;
-            for (int i = 0; i < count; i++) {
-
-                int columnType;
-                int castIndex = typeCast.keyIndex(i);
-                if (castIndex < 0) {
-                    columnType = typeCast.valueAt(castIndex);
-                } else {
-                    columnType = metadata.getColumnType(i);
-                }
-
-                if (columnType == ColumnType.SYMBOL) {
-                    final ColumnCastModel ccm = model.getColumnCastModels().get(metadata.getColumnName(i));
-                    int symbolCapacity;
-                    if (ccm != null) {
-                        symbolCapacity = ccm.getSymbolCapacity();
-                    } else {
-                        symbolCapacity = model.getSymbolCapacity(i);
-                        if (symbolCapacity == -1) {
-                            symbolCapacity = configuration.getDefaultSymbolCapacity();
-                        }
-                    }
-
-                    boolean cached;
-                    if (ccm != null) {
-                        cached = ccm.isCached();
-                    } else {
-                        cached = model.getSymbolCacheFlag(i);
-                    }
-
-                    SymbolMapWriter.createSymbolMapFiles(
-                            ff,
-                            mem,
-                            path.trimTo(rootLen),
-                            model.getColumnName(i),
-                            symbolCapacity,
-                            cached
-                    );
-                    symbolMapCount++;
-                }
-            }
-            mem.of(ff, path.trimTo(rootLen).concat(TXN_FILE_NAME).$(), ff.getPageSize());
-            TableUtils.resetTxn(mem, symbolMapCount);
         }
     }
 
@@ -1381,6 +1242,82 @@ public class SqlCompiler implements Closeable {
 
     public interface RecordToRowCopier {
         void copy(Record record, TableWriter.Row row);
+    }
+
+    private static class TableStructureAdapter implements TableStructure {
+        private CreateTableModel model;
+        private RecordMetadata metadata;
+        private IntIntHashMap typeCast;
+
+        @Override
+        public int getColumnCount() {
+            return model.getColumnCount();
+        }
+
+        @Override
+        public CharSequence getColumnName(int columnIndex) {
+            return model.getColumnName(columnIndex);
+        }
+
+        @Override
+        public int getColumnType(int columnIndex) {
+            int castIndex = typeCast.keyIndex(columnIndex);
+            if (castIndex < 0) {
+                return typeCast.valueAt(castIndex);
+            }
+            return metadata.getColumnType(columnIndex);
+        }
+
+        @Override
+        public int getIndexBlockCapacity(int columnIndex) {
+            return model.getIndexBlockCapacity(columnIndex);
+        }
+
+        @Override
+        public boolean getIndexedFlag(int columnIndex) {
+            return model.getIndexedFlag(columnIndex);
+        }
+
+        @Override
+        public int getPartitionBy() {
+            return model.getPartitionBy();
+        }
+
+        @Override
+        public boolean getSymbolCacheFlag(int columnIndex) {
+            final ColumnCastModel ccm = model.getColumnCastModels().get(metadata.getColumnName(columnIndex));
+            if (ccm != null) {
+                return ccm.getSymbolCacheFlag();
+            }
+            return model.getSymbolCacheFlag(columnIndex);
+        }
+
+        @Override
+        public int getSymbolCapacity(int columnIndex) {
+            final ColumnCastModel ccm = model.getColumnCastModels().get(metadata.getColumnName(columnIndex));
+            if (ccm != null) {
+                return ccm.getSymbolCapacity();
+            } else {
+                return model.getSymbolCapacity(columnIndex);
+            }
+        }
+
+        @Override
+        public CharSequence getTableName() {
+            return model.getTableName();
+        }
+
+        @Override
+        public int getTimestampIndex() {
+            return model.getTimestampIndex();
+        }
+
+        TableStructureAdapter of(CreateTableModel model, RecordMetadata metadata, IntIntHashMap typeCast) {
+            this.model = model;
+            this.metadata = metadata;
+            this.typeCast = typeCast;
+            return this;
+        }
     }
 
     private class SqlExecutionContextImpl implements SqlExecutionContext {

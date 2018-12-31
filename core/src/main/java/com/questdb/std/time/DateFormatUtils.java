@@ -502,15 +502,15 @@ public class DateFormatUtils {
 
     static long parseYearGreedy(CharSequence in, int pos, int hi) throws NumericException {
         long l = Numbers.parseIntSafely(in, pos, hi);
-        int len = Numbers.decodeLen(l);
+        int len = Numbers.decodeHighInt(l);
         int year;
         if (len == 2) {
-            year = adjustYear(Numbers.decodeInt(l));
+            year = adjustYear(Numbers.decodeLowInt(l));
         } else {
-            year = Numbers.decodeInt(l);
+            year = Numbers.decodeLowInt(l);
         }
 
-        return Numbers.encodeIntAndLen(year, len);
+        return Numbers.encodeLowHighInts(year, len);
     }
 
     static int adjustYear(int year) {

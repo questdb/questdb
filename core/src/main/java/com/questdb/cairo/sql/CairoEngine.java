@@ -25,6 +25,7 @@ package com.questdb.cairo.sql;
 
 import com.questdb.cairo.TableReader;
 import com.questdb.cairo.TableWriter;
+import com.questdb.std.str.Path;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
@@ -32,10 +33,10 @@ import java.io.Closeable;
 public interface CairoEngine extends Closeable {
     TableReader getReader(CharSequence tableName, long version);
 
-    int getStatus(CharSequence tableName, int lo, int hi);
+    int getStatus(Path path, CharSequence tableName, int lo, int hi);
 
-    default int getStatus(CharSequence tableName) {
-        return getStatus(tableName, 0, tableName.length());
+    default int getStatus(Path path, CharSequence tableName) {
+        return getStatus(path, tableName, 0, tableName.length());
     }
 
     TableWriter getWriter(CharSequence tableName);
@@ -47,4 +48,8 @@ public interface CairoEngine extends Closeable {
     boolean releaseAllWriters();
 
     void unlock(CharSequence tableName, @Nullable TableWriter writer);
+
+    void remove(Path path, CharSequence tableName);
+
+    void rename(Path path, CharSequence tableName, Path otherPath, String newName);
 }

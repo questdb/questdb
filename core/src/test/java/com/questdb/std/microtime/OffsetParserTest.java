@@ -160,6 +160,6 @@ public class OffsetParserTest {
 
     private static void assertThat(int expected, String offset) {
         long r = Dates.parseOffset(offset, 0, offset.length());
-        Assert.assertEquals(expected, Numbers.decodeInt(r));
+        Assert.assertEquals(expected, Numbers.decodeLowInt(r));
     }
 }

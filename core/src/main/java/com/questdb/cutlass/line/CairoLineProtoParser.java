@@ -68,7 +68,6 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
     private int columnType;
     private final FieldNameParser MY_FIELD_NAME = this::parseFieldName;
     private long tableName;
-    private final LineEndParser MY_NEW_LINE_END = this::createTableAndAppendRow;
     private LineEndParser onLineEnd;
     private FieldNameParser onFieldName;
     private FieldValueParser onFieldValue;
@@ -76,6 +75,8 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
     private final FieldValueParser MY_FIELD_VALUE = this::parseFieldValue;
     private final FieldValueParser MY_NEW_FIELD_VALUE = this::parseFieldValueNewTable;
     private final FieldValueParser MY_TAG_VALUE = this::parseTagValue;
+    private TableStructureAdapter tableStructureAdapter = new TableStructureAdapter();
+    private final LineEndParser MY_NEW_LINE_END = this::createTableAndAppendRow;
 
     public CairoLineProtoParser(CairoConfiguration configuration, ResourcePool<TableWriter> pool) {
         this.configuration = configuration;
@@ -245,63 +246,15 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
         switchModeToAppend();
     }
 
-    private void createTable(CharSequenceCache cache) {
-        path.of(configuration.getRoot()).concat(cache.get(tableName));
-        final int rootLen = path.length();
-        FilesFacade ff = configuration.getFilesFacade();
-        if (ff.mkdirs(path.put(Files.SEPARATOR).$(), configuration.getMkDirMode()) == -1) {
-            throw CairoException.instance(0).put("cannot create directory: ").put(path);
-        }
-
-        try (AppendMemory mem = appendMemory) {
-            mem.of(ff, path.trimTo(rootLen).concat(TableUtils.META_FILE_NAME).$(), configuration.getFilesFacade().getPageSize());
-
-            int count = columnNameType.size() / 2;
-            mem.putInt(count + 1);       // number of columns gathered + timestamp
-            mem.putInt(PartitionBy.NONE);     // not available on protocol
-            mem.putInt(count);                // timestamp is always last column
-            mem.jumpTo(TableUtils.META_OFFSET_COLUMN_TYPES);
-
-            for (int i = 0; i < count; i++) {
-                // type is second value in pair
-                mem.putByte((byte) columnNameType.getQuick(i * 2 + 1));
-                mem.putBool(false);
-                mem.putInt(0);
-                mem.skip(10); // reserved
-            }
-            mem.putByte((byte) ColumnType.TIMESTAMP);
-            mem.putBool(false);
-            mem.putInt(0);
-            mem.skip(10); // reserved
-
-            for (int i = 0; i < count; i++) {
-                mem.putStr(cache.get(columnNameType.getQuick(i * 2)));
-            }
-            mem.putStr("timestamp");
-
-            // create symbol maps
-            int symbolMapCount = 0;
-            for (int i = 0; i < count; i++) {
-                if ((int) columnNameType.getQuick(i * 2 + 1) == ColumnType.SYMBOL) {
-                    SymbolMapWriter.createSymbolMapFiles(
-                            ff,
-                            mem,
-                            path.trimTo(rootLen),
-                            cache.get(columnNameType.getQuick(i * 2)),
-                            configuration.getDefaultSymbolCapacity(),
-                            configuration.getDefaultSymbolCacheFlag()
-                    );
-                    symbolMapCount++;
-                }
-            }
-
-            mem.of(configuration.getFilesFacade(), path.trimTo(rootLen).concat(TableUtils.TXN_FILE_NAME).$(), configuration.getFilesFacade().getPageSize());
-            TableUtils.resetTxn(mem, symbolMapCount);
-        }
-    }
-
     private void createTableAndAppendRow(CharSequenceCache cache) {
-        createTable(cache);
+        TableUtils.createTable(
+                configuration.getFilesFacade(),
+                appendMemory,
+                path,
+                configuration.getRoot().toString(),
+                tableStructureAdapter.of(cache),
+                configuration.getMkDirMode()
+        );
         appendFirstRowAndCacheWriter(cache);
     }
 
@@ -533,6 +486,75 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
 
     private static class BadCastException extends Exception {
         private static final BadCastException INSTANCE = new BadCastException();
+    }
+
+    private class TableStructureAdapter implements TableStructure {
+        private CharSequenceCache cache;
+        private int columnCount;
+        private int timestampIndex;
+
+        @Override
+        public int getColumnCount() {
+            return columnCount;
+        }
+
+        @Override
+        public CharSequence getColumnName(int columnIndex) {
+            if (columnIndex == getTimestampIndex()) {
+                return "timestamp";
+            }
+            return cache.get(columnNameType.getQuick(columnIndex * 2));
+        }
+
+        @Override
+        public int getColumnType(int columnIndex) {
+            if (columnIndex == getTimestampIndex()) {
+                return ColumnType.TIMESTAMP;
+            }
+            return (int) columnNameType.getQuick(columnIndex * 2 + 1);
+        }
+
+        @Override
+        public int getIndexBlockCapacity(int columnIndex) {
+            return 0;
+        }
+
+        @Override
+        public boolean getIndexedFlag(int columnIndex) {
+            return false;
+        }
+
+        @Override
+        public int getPartitionBy() {
+            return PartitionBy.NONE;
+        }
+
+        @Override
+        public boolean getSymbolCacheFlag(int columnIndex) {
+            return configuration.getDefaultSymbolCacheFlag();
+        }
+
+        @Override
+        public int getSymbolCapacity(int columnIndex) {
+            return configuration.getDefaultSymbolCapacity();
+        }
+
+        @Override
+        public CharSequence getTableName() {
+            return cache.get(tableName);
+        }
+
+        @Override
+        public int getTimestampIndex() {
+            return timestampIndex;
+        }
+
+        TableStructureAdapter of(CharSequenceCache cache) {
+            this.cache = cache;
+            this.timestampIndex = columnNameType.size() / 2;
+            this.columnCount = timestampIndex + 1;
+            return this;
+        }
     }
 
     private class CacheEntry {

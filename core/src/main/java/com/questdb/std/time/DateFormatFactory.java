@@ -24,13 +24,12 @@
 package com.questdb.std.time;
 
 
-import com.questdb.std.Chars;
+import com.questdb.std.ConcurrentHashMap;
 
-import java.util.concurrent.ConcurrentHashMap;
 
 public class DateFormatFactory {
     private final static ThreadLocal<DateFormatCompiler> tlCompiler = ThreadLocal.withInitial(DateFormatCompiler::new);
-    private final ConcurrentHashMap<CharSequence, DateFormat> cache = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<DateFormat> cache = new ConcurrentHashMap<>();
 
     /**
      * Retrieves cached data format, if already exists of creates and caches new one. Concurrent behaviour is
@@ -43,6 +42,6 @@ public class DateFormatFactory {
      * @return compiled implementation of DateFormat
      */
     public DateFormat get(CharSequence pattern) {
-        return cache.computeIfAbsent(Chars.stringOf(pattern), p -> tlCompiler.get().compile(p));
+        return cache.computeIfAbsent(pattern, p -> tlCompiler.get().compile(p));
     }
 }

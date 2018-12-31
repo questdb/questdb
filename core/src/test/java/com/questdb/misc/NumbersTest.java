@@ -372,8 +372,8 @@ public class NumbersTest {
     public void testParseIntToDelim() throws Exception {
         String in = "1234x5";
         long val = Numbers.parseIntSafely(in, 0, in.length());
-        Assert.assertEquals(1234, Numbers.decodeInt(val));
-        Assert.assertEquals(4, Numbers.decodeLen(val));
+        Assert.assertEquals(1234, Numbers.decodeLowInt(val));
+        Assert.assertEquals(4, Numbers.decodeHighInt(val));
     }
 
     @Test(expected = NumericException.class)
@@ -386,8 +386,8 @@ public class NumbersTest {
     public void testParseIntToDelimNoChar() throws Exception {
         String in = "12345";
         long val = Numbers.parseIntSafely(in, 0, in.length());
-        Assert.assertEquals(12345, Numbers.decodeInt(val));
-        Assert.assertEquals(5, Numbers.decodeLen(val));
+        Assert.assertEquals(12345, Numbers.decodeLowInt(val));
+        Assert.assertEquals(5, Numbers.decodeHighInt(val));
     }
 
     @Test(expected = NumericException.class)

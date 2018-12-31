@@ -87,7 +87,7 @@ public class TableWriterTest extends AbstractCairoTest {
                 }
 
                 @Override
-                public long read(long fd, long buf, int len, long offset) {
+                public long read(long fd, long buf, long len, long offset) {
                     if (fd == this.fd) {
                         this.fd = -1;
                         return -1;
@@ -727,7 +727,7 @@ public class TableWriterTest extends AbstractCairoTest {
                 }
 
                 @Override
-                public long read(long fd, long buf, int len, long offset) {
+                public long read(long fd, long buf, long len, long offset) {
                     if (fd == this.fd) {
                         this.fd = -1;
                         return -1;
@@ -771,7 +771,7 @@ public class TableWriterTest extends AbstractCairoTest {
                 boolean fail = false;
 
                 @Override
-                public long read(long fd, long buf, int len, long offset) {
+                public long read(long fd, long buf, long len, long offset) {
                     if (fail) {
                         return -1;
                     }
@@ -1012,7 +1012,7 @@ public class TableWriterTest extends AbstractCairoTest {
                 }
 
                 @Override
-                public long read(long fd, long buf, int len, long offset) {
+                public long read(long fd, long buf, long len, long offset) {
                     return fail ? -1 : super.read(fd, buf, len, offset);
                 }
             }
@@ -1078,7 +1078,7 @@ public class TableWriterTest extends AbstractCairoTest {
                 boolean fail = false;
 
                 @Override
-                public long read(long fd, long buf, int len, long offset) {
+                public long read(long fd, long buf, long len, long offset) {
                     if (fail) {
                         return -1;
                     }
@@ -1311,7 +1311,7 @@ public class TableWriterTest extends AbstractCairoTest {
             }
 
             @Override
-            public long read(long fd, long buf, int len, long offset) {
+            public long read(long fd, long buf, long len, long offset) {
                 if (fd == this.fd) {
                     this.fd = -1;
                     return -1;
@@ -1338,7 +1338,7 @@ public class TableWriterTest extends AbstractCairoTest {
             }
 
             @Override
-            public long read(long fd, long buf, int len, long offset) {
+            public long read(long fd, long buf, long len, long offset) {
                 if (fd == this.fd) {
                     this.fd = -1;
                     return -1;
@@ -1488,7 +1488,7 @@ public class TableWriterTest extends AbstractCairoTest {
             }
 
             @Override
-            public long read(long fd, long buf, int len, long offset) {
+            public long read(long fd, long buf, long len, long offset) {
                 if (fd == this.fd) {
                     this.fd = -1;
                     return -1;
@@ -2992,7 +2992,7 @@ public class TableWriterTest extends AbstractCairoTest {
                 }
 
                 @Override
-                public long read(long fd, long buf, int len, long offset) {
+                public long read(long fd, long buf, long len, long offset) {
                     if (fd == this.fd) {
                         this.fd = -1;
                         return -1;

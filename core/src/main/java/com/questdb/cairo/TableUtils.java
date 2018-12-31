@@ -43,6 +43,7 @@ public final class TableUtils {
     public static final long META_OFFSET_COLUMN_TYPES = 128;
     public static final int INITIAL_TXN = 0;
     public static final int NULL_LEN = -1;
+    public static final int ANY_TABLE_VERSION = -1;
     static final int MIN_INDEX_VALUE_BLOCK_SIZE = Numbers.ceilPow2(4);
     static final byte TODO_RESTORE_META = 2;
     static final byte TODO_TRUNCATE = 1;
@@ -90,6 +91,60 @@ public final class TableUtils {
     private static final int MAX_INDEX_VALUE_BLOCK_SIZE = Numbers.ceilPow2(8 * 1024 * 1024);
     private static final long META_COLUMN_DATA_SIZE = 16;
     private final static Log LOG = LogFactory.getLog(TableUtils.class);
+
+    public static void createTable(
+            FilesFacade ff,
+            AppendMemory memory,
+            Path path,
+            CharSequence root,
+            TableStructure structure,
+            int mkDirMode
+    ) {
+        path.of(root).concat(structure.getTableName());
+
+        if (ff.mkdirs(path.put(Files.SEPARATOR).$(), mkDirMode) != 0) {
+            throw CairoException.instance(ff.errno()).put("could not create [dir=").put(path).put(']');
+        }
+
+        final int rootLen = path.length();
+
+        try (AppendMemory mem = memory) {
+            mem.of(ff, path.trimTo(rootLen).concat(META_FILE_NAME).$(), ff.getPageSize());
+            final int count = structure.getColumnCount();
+            mem.putInt(count);
+            mem.putInt(structure.getPartitionBy());
+            mem.putInt(structure.getTimestampIndex());
+            mem.jumpTo(TableUtils.META_OFFSET_COLUMN_TYPES);
+
+            for (int i = 0; i < count; i++) {
+                mem.putByte((byte) structure.getColumnType(i));
+                mem.putBool(structure.getIndexedFlag(i));
+                mem.putInt(structure.getIndexBlockCapacity(i));
+                mem.skip(10); // reserved
+            }
+            for (int i = 0; i < count; i++) {
+                mem.putStr(structure.getColumnName(i));
+            }
+
+            // create symbol maps
+            int symbolMapCount = 0;
+            for (int i = 0; i < count; i++) {
+                if (structure.getColumnType(i) == ColumnType.SYMBOL) {
+                    SymbolMapWriter.createSymbolMapFiles(
+                            ff,
+                            mem,
+                            path.trimTo(rootLen),
+                            structure.getColumnName(i),
+                            structure.getSymbolCapacity(i),
+                            structure.getSymbolCacheFlag(i)
+                    );
+                    symbolMapCount++;
+                }
+            }
+            mem.of(ff, path.trimTo(rootLen).concat(TXN_FILE_NAME).$(), ff.getPageSize());
+            TableUtils.resetTxn(mem, symbolMapCount);
+        }
+    }
 
     public static int exists(FilesFacade ff, Path path, CharSequence root, CharSequence name) {
         return exists(ff, path, root, name, 0, name.length());

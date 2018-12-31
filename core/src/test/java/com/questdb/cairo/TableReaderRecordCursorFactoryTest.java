@@ -52,7 +52,7 @@ public class TableReaderRecordCursorFactoryTest extends AbstractCairoTest {
             final String expectedMetadata = "{\"columnCount\":5,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\"STRING\"},{\"index\":1,\"name\":\"b\",\"type\":\"SYMBOL\",\"indexed\":true,\"indexValueBlockCapacity\":32},{\"index\":2,\"name\":\"i\",\"type\":\"INT\"},{\"index\":3,\"name\":\"c\",\"type\":\"SYMBOL\",\"indexed\":true,\"indexValueBlockCapacity\":32},{\"index\":4,\"name\":\"timestamp\",\"type\":\"TIMESTAMP\"}],\"timestampIndex\":4}";
 
             final Rnd rnd = new Rnd();
-            final String symbols[] = new String[N];
+            final String[] symbols = new String[N];
             final int M = 1000;
             final long increment = 1000000 * 60L * 10;
 
@@ -83,7 +83,7 @@ public class TableReaderRecordCursorFactoryTest extends AbstractCairoTest {
                 try (TableReader reader = engine.getReader("x", -1)) {
                     metadata = GenericRecordMetadata.copyOf(reader.getMetadata());
                 }
-                try (RecordCursorFactory factory = new TableReaderRecordCursorFactory(metadata, engine, "x", -1)) {
+                try (RecordCursorFactory factory = new TableReaderRecordCursorFactory(metadata, engine, "x", TableUtils.ANY_TABLE_VERSION)) {
 
                     long count = 0;
                     final BindVariableService bindVariableService = new BindVariableService();

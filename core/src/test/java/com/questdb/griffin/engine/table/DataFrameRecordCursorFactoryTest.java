@@ -49,7 +49,7 @@ public class DataFrameRecordCursorFactoryTest extends AbstractCairoTest {
             }
 
             final Rnd rnd = new Rnd();
-            final String symbols[] = new String[N];
+            final String[] symbols = new String[N];
             final int M = 1000;
             final long increment = 1000000 * 60L * 4;
 
@@ -78,13 +78,13 @@ public class DataFrameRecordCursorFactoryTest extends AbstractCairoTest {
                 int columnIndex;
                 int symbolKey;
                 RecordMetadata metadata;
-                try (TableReader reader = engine.getReader("x", -1)) {
+                try (TableReader reader = engine.getReader("x", TableUtils.ANY_TABLE_VERSION)) {
                     columnIndex = reader.getMetadata().getColumnIndexQuiet("b");
                     symbolKey = reader.getSymbolMapReader(columnIndex).getQuick(value);
                     metadata = GenericRecordMetadata.copyOf(reader.getMetadata());
                 }
                 SymbolIndexRowCursorFactory symbolIndexRowCursorFactory = new SymbolIndexRowCursorFactory(columnIndex, symbolKey, true);
-                FullFwdDataFrameCursorFactory dataFrameFactory = new FullFwdDataFrameCursorFactory(engine, "x", -1);
+                FullFwdDataFrameCursorFactory dataFrameFactory = new FullFwdDataFrameCursorFactory(engine, "x", TableUtils.ANY_TABLE_VERSION);
                 DataFrameRecordCursorFactory factory = new DataFrameRecordCursorFactory(metadata, dataFrameFactory, symbolIndexRowCursorFactory, null);
 
                 BindVariableService bindVariableService = new BindVariableService();

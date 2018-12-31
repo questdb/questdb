@@ -28,8 +28,8 @@ import com.questdb.std.str.Path;
 
 import java.io.Closeable;
 
-public class TableModel implements Closeable {
-    private static final long COLUMN_FLAG_CHACHED = 1L;
+public class TableModel implements TableStructure, Closeable {
+    private static final long COLUMN_FLAG_CACHED = 1L;
     private static final long COLUMN_FLAG_INDEXED = 2L;
     private final String name;
     private final int partitionBy;
@@ -52,9 +52,9 @@ public class TableModel implements Closeable {
         assert ((int) columnBits.getQuick(last - 1) == ColumnType.SYMBOL);
         long bits = columnBits.getQuick(last);
         if (cached) {
-            columnBits.setQuick(last, bits | COLUMN_FLAG_CHACHED);
+            columnBits.setQuick(last, bits | COLUMN_FLAG_CACHED);
         } else {
-            columnBits.setQuick(last, bits & ~COLUMN_FLAG_CHACHED);
+            columnBits.setQuick(last, bits & ~COLUMN_FLAG_CACHED);
         }
         return this;
     }
@@ -69,8 +69,12 @@ public class TableModel implements Closeable {
         columnNames.add(Chars.stringOf(name));
         // set default symbol capacity
         columnBits.add((128L << 32) | type);
-        columnBits.add(COLUMN_FLAG_CHACHED);
+        columnBits.add(COLUMN_FLAG_CACHED);
         return this;
+    }
+
+    public boolean getSymbolCacheFlag(int index) {
+        return (columnBits.getQuick(index * 2 + 1) & COLUMN_FLAG_CACHED) == COLUMN_FLAG_CACHED;
     }
 
     public CairoConfiguration getCairoCfg() {
@@ -113,8 +117,9 @@ public class TableModel implements Closeable {
         return path;
     }
 
-    public boolean getSymbolCacheFlag(int index) {
-        return (columnBits.getQuick(index * 2 + 1) & COLUMN_FLAG_CHACHED) == COLUMN_FLAG_CHACHED;
+    @Override
+    public CharSequence getTableName() {
+        return name;
     }
 
     public int getSymbolCapacity(int index) {

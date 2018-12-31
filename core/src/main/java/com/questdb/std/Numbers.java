@@ -495,19 +495,16 @@ public final class Numbers {
         return Integer.compare(anotherBits, thisBits);                          // (0.0, -0.0) or (NaN, !NaN)
     }
 
-    public static int decodeInt(long val) {
-        return val < 0 ? -((int) (-val & 0xffffffffL)) : (int) (val & 0xffffffffL);
+    public static int decodeHighInt(long val) {
+        return (int) (val >> 32);
     }
 
-    public static int decodeLen(long val) {
-        return (int) ((val > 0 ? val : -val) >> 32);
+    public static int decodeLowInt(long val) {
+        return (int) (val & 0xffffffffL);
     }
 
-    public static long encodeIntAndLen(int value, int len) {
-        if (value < 0) {
-            return -((((long) len) << 32L) | (-value));
-        }
-        return (((long) len) << 32L) | (value);
+    public static long encodeLowHighInts(int low, int high) {
+        return ((Integer.toUnsignedLong(high)) << 32L) | Integer.toUnsignedLong(low);
     }
 
     public static int msb(int value) {
@@ -815,7 +812,7 @@ public final class Numbers {
             throw NumericException.INSTANCE;
         }
 
-        return encodeIntAndLen(negative ? val : -val, i - p);
+        return encodeLowHighInts(negative ? val : -val, i - p);
     }
 
     public static int parseIntSize(CharSequence sequence) throws NumericException {

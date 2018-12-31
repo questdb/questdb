@@ -1815,7 +1815,7 @@ public class TableReaderTest extends AbstractCairoTest {
             }
 
             @Override
-            public long read(long fd, long buf, int len, long offset) {
+            public long read(long fd, long buf, long len, long offset) {
                 if (this.fd == fd && !recovered) {
                     return 0;
                 }

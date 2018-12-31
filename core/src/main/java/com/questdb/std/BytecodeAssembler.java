@@ -372,7 +372,7 @@ public class BytecodeAssembler {
 
     @SuppressWarnings("unchecked")
     public <T> Class<T> loadClass(Class<?> host) {
-        byte b[] = new byte[position()];
+        byte[] b = new byte[position()];
         System.arraycopy(buf.array(), 0, b, 0, b.length);
         return (Class<T>) Unsafe.getUnsafe().defineAnonymousClass(host, b, null);
     }
@@ -414,13 +414,10 @@ public class BytecodeAssembler {
             putShort(n = name.length());
             for (int i = 0; i < n; i++) {
                 char c = name.charAt(i);
-                switch (c) {
-                    case '.':
-                        putByte('/');
-                        break;
-                    default:
-                        putByte(c);
-                        break;
+                if (c == '.') {
+                    putByte('/');
+                } else {
+                    putByte(c);
                 }
             }
             int result = poolClass(this.poolCount++);
@@ -484,11 +481,27 @@ public class BytecodeAssembler {
         int index = utf8Cache.keyIndex(cs);
         if (index > -1) {
             putByte(0x01);
-            int n;
-            putShort(n = cs.length());
-            for (int i = 0; i < n; i++) {
-                putByte(cs.charAt(i));
+            int n = cs.length();
+            int pos = buf.position();
+            putShort(0);
+            for (int i = 0; i < n; ) {
+                final char c = cs.charAt(i++);
+                if (c < 128) {
+                    putByte(c);
+                } else {
+                    if (c < 2048) {
+                        putByte((char) (192 | c >> 6));
+                        putByte((char) (128 | c & 63));
+                    } else if (Character.isSurrogate(c)) {
+                        i = encodeSurrogate(c, cs, i, n);
+                    } else {
+                        putByte((char) (224 | c >> 12));
+                        putByte((char) (128 | c >> 6 & 63));
+                        putByte((char) (128 | c & 63));
+                    }
+                }
             }
+            buf.putShort(pos, (short) (buf.position() - pos - 2));
             utf8Cache.putAt(index, cs, poolCount);
             return this.poolCount++;
         }
@@ -616,6 +629,35 @@ public class BytecodeAssembler {
         putInt(0);
         // number of entries
         putShort(frameCount);
+    }
+
+    private int encodeSurrogate(char c, CharSequence in, int pos, int hi) {
+        int dword;
+        if (Character.isHighSurrogate(c)) {
+            if (hi - pos < 1) {
+                putByte('?');
+                return pos;
+            } else {
+                char c2 = in.charAt(pos++);
+                if (Character.isLowSurrogate(c2)) {
+                    dword = Character.toCodePoint(c, c2);
+                } else {
+                    putByte('?');
+                    return pos;
+                }
+            }
+        } else if (Character.isLowSurrogate(c)) {
+            putByte('?');
+            return pos;
+        } else {
+            dword = c;
+        }
+        putByte((char) (240 | dword >> 18));
+        putByte((char) (128 | dword >> 12 & 63));
+        putByte((char) (128 | dword >> 6 & 63));
+        putByte((char) (128 | dword & 63));
+
+        return pos;
     }
 
     private int genericGoto(int cmd) {

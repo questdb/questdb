@@ -358,8 +358,8 @@ public class GenericDateFormat extends AbstractDateFormat {
                 // AM/PM
                 case DateFormatCompiler.OP_AM_PM:
                     l = locale.matchAMPM(in, pos, hi);
-                    hourType = Numbers.decodeInt(l);
-                    pos += Numbers.decodeLen(l);
+                    hourType = Numbers.decodeLowInt(l);
+                    pos += Numbers.decodeHighInt(l);
                     break;
 
                 // MILLIS
@@ -375,8 +375,8 @@ public class GenericDateFormat extends AbstractDateFormat {
 
                 case DateFormatCompiler.OP_MILLIS_GREEDY:
                     l = Numbers.parseIntSafely(in, pos, hi);
-                    millis = Numbers.decodeInt(l);
-                    pos += Numbers.decodeLen(l);
+                    millis = Numbers.decodeLowInt(l);
+                    pos += Numbers.decodeHighInt(l);
                     break;
 
                 // SECOND
@@ -392,8 +392,8 @@ public class GenericDateFormat extends AbstractDateFormat {
 
                 case DateFormatCompiler.OP_SECOND_GREEDY:
                     l = Numbers.parseIntSafely(in, pos, hi);
-                    second = Numbers.decodeInt(l);
-                    pos += Numbers.decodeLen(l);
+                    second = Numbers.decodeLowInt(l);
+                    pos += Numbers.decodeHighInt(l);
                     break;
 
                 // MINUTE
@@ -409,8 +409,8 @@ public class GenericDateFormat extends AbstractDateFormat {
 
                 case DateFormatCompiler.OP_MINUTE_GREEDY:
                     l = Numbers.parseIntSafely(in, pos, hi);
-                    minute = Numbers.decodeInt(l);
-                    pos += Numbers.decodeLen(l);
+                    minute = Numbers.decodeLowInt(l);
+                    pos += Numbers.decodeHighInt(l);
                     break;
 
                 // HOUR (0-11)
@@ -432,8 +432,8 @@ public class GenericDateFormat extends AbstractDateFormat {
 
                 case DateFormatCompiler.OP_HOUR_12_GREEDY:
                     l = Numbers.parseIntSafely(in, pos, hi);
-                    hour = Numbers.decodeInt(l);
-                    pos += Numbers.decodeLen(l);
+                    hour = Numbers.decodeLowInt(l);
+                    pos += Numbers.decodeHighInt(l);
                     if (hourType == HOUR_24) {
                         hourType = HOUR_AM;
                     }
@@ -458,8 +458,8 @@ public class GenericDateFormat extends AbstractDateFormat {
 
                 case DateFormatCompiler.OP_HOUR_12_GREEDY_ONE_BASED:
                     l = Numbers.parseIntSafely(in, pos, hi);
-                    hour = Numbers.decodeInt(l) - 1;
-                    pos += Numbers.decodeLen(l);
+                    hour = Numbers.decodeLowInt(l) - 1;
+                    pos += Numbers.decodeHighInt(l);
                     if (hourType == HOUR_24) {
                         hourType = HOUR_AM;
                     }
@@ -478,8 +478,8 @@ public class GenericDateFormat extends AbstractDateFormat {
 
                 case DateFormatCompiler.OP_HOUR_24_GREEDY:
                     l = Numbers.parseIntSafely(in, pos, hi);
-                    hour = Numbers.decodeInt(l);
-                    pos += Numbers.decodeLen(l);
+                    hour = Numbers.decodeLowInt(l);
+                    pos += Numbers.decodeHighInt(l);
                     break;
 
                 // HOUR (1 - 24)
@@ -495,8 +495,8 @@ public class GenericDateFormat extends AbstractDateFormat {
 
                 case DateFormatCompiler.OP_HOUR_24_GREEDY_ONE_BASED:
                     l = Numbers.parseIntSafely(in, pos, hi);
-                    hour = Numbers.decodeInt(l) - 1;
-                    pos += Numbers.decodeLen(l);
+                    hour = Numbers.decodeLowInt(l) - 1;
+                    pos += Numbers.decodeHighInt(l);
                     break;
 
                 // DAY
@@ -510,15 +510,15 @@ public class GenericDateFormat extends AbstractDateFormat {
                     break;
                 case DateFormatCompiler.OP_DAY_GREEDY:
                     l = Numbers.parseIntSafely(in, pos, hi);
-                    day = Numbers.decodeInt(l);
-                    pos += Numbers.decodeLen(l);
+                    day = Numbers.decodeLowInt(l);
+                    pos += Numbers.decodeHighInt(l);
                     break;
 
                 case DateFormatCompiler.OP_DAY_NAME_LONG:
                 case DateFormatCompiler.OP_DAY_NAME_SHORT:
                     l = locale.matchWeekday(in, pos, hi);
                     // ignore weekday
-                    pos += Numbers.decodeLen(l);
+                    pos += Numbers.decodeHighInt(l);
                     break;
 
                 case DateFormatCompiler.OP_DAY_OF_WEEK:
@@ -539,15 +539,15 @@ public class GenericDateFormat extends AbstractDateFormat {
                     break;
                 case DateFormatCompiler.OP_MONTH_GREEDY:
                     l = Numbers.parseIntSafely(in, pos, hi);
-                    month = Numbers.decodeInt(l);
-                    pos += Numbers.decodeLen(l);
+                    month = Numbers.decodeLowInt(l);
+                    pos += Numbers.decodeHighInt(l);
                     break;
 
                 case DateFormatCompiler.OP_MONTH_SHORT_NAME:
                 case DateFormatCompiler.OP_MONTH_LONG_NAME:
                     l = locale.matchMonth(in, pos, hi);
-                    month = Numbers.decodeInt(l) + 1;
-                    pos += Numbers.decodeLen(l);
+                    month = Numbers.decodeLowInt(l) + 1;
+                    pos += Numbers.decodeHighInt(l);
                     break;
 
                 // YEAR
@@ -571,15 +571,15 @@ public class GenericDateFormat extends AbstractDateFormat {
                     break;
                 case DateFormatCompiler.OP_YEAR_GREEDY:
                     l = DateFormatUtils.parseYearGreedy(in, pos, hi);
-                    year = Numbers.decodeInt(l);
-                    pos += Numbers.decodeLen(l);
+                    year = Numbers.decodeLowInt(l);
+                    pos += Numbers.decodeHighInt(l);
                     break;
 
                 // ERA
                 case DateFormatCompiler.OP_ERA:
                     l = locale.matchEra(in, pos, hi);
-                    era = Numbers.decodeInt(l);
-                    pos += Numbers.decodeLen(l);
+                    era = Numbers.decodeLowInt(l);
+                    pos += Numbers.decodeHighInt(l);
                     break;
 
                 // TIMEZONE
@@ -594,11 +594,11 @@ public class GenericDateFormat extends AbstractDateFormat {
                     l = Dates.parseOffset(in, pos, hi);
                     if (l == Long.MIN_VALUE) {
                         l = locale.matchZone(in, pos, hi);
-                        timezone = Numbers.decodeInt(l);
+                        timezone = Numbers.decodeLowInt(l);
                     } else {
-                        offset = Numbers.decodeInt(l) * Dates.MINUTE_MILLIS;
+                        offset = Numbers.decodeLowInt(l) * Dates.MINUTE_MILLIS;
                     }
-                    pos += Numbers.decodeLen(l);
+                    pos += Numbers.decodeHighInt(l);
                     break;
 
                 // SEPARATORS

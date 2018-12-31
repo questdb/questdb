@@ -44,8 +44,6 @@ public class Engine implements Closeable, CairoEngine {
     private final WriterPool writerPool;
     private final ReaderPool readerPool;
     private final CairoConfiguration configuration;
-    private final Path path = new Path();
-    private final Path other = new Path();
 
     public Engine(CairoConfiguration configuration) {
         this(configuration, null);
@@ -65,8 +63,6 @@ public class Engine implements Closeable, CairoEngine {
     public void close() {
         Misc.free(writerPool);
         Misc.free(readerPool);
-        Misc.free(path);
-        Misc.free(other);
     }
 
     public int getBusyReaderCount() {
@@ -101,7 +97,7 @@ public class Engine implements Closeable, CairoEngine {
     }
 
     @Override
-    public int getStatus(CharSequence tableName, int lo, int hi) {
+    public int getStatus(Path path, CharSequence tableName, int lo, int hi) {
         return TableUtils.exists(configuration.getFilesFacade(), path, configuration.getRoot(), tableName, lo, hi);
     }
 
@@ -138,7 +134,8 @@ public class Engine implements Closeable, CairoEngine {
         writerPool.unlock(tableName, writer);
     }
 
-    public void remove(CharSequence tableName) {
+    @Override
+    public void remove(Path path, CharSequence tableName) {
         if (lock(tableName)) {
             try {
                 path.of(configuration.getRoot()).concat(tableName).$();
@@ -155,10 +152,11 @@ public class Engine implements Closeable, CairoEngine {
         throw CairoException.instance(configuration.getFilesFacade().errno()).put("Cannot lock ").put(tableName);
     }
 
-    public void rename(CharSequence tableName, String newName) {
+    @Override
+    public void rename(Path path, CharSequence tableName, Path otherPath, String newName) {
         if (lock(tableName)) {
             try {
-                rename0(tableName, newName);
+                rename0(path, tableName, otherPath, newName);
             } finally {
                 unlock(tableName, null);
             }
@@ -168,7 +166,7 @@ public class Engine implements Closeable, CairoEngine {
         }
     }
 
-    private void rename0(CharSequence tableName, CharSequence to) {
+    private void rename0(Path path, CharSequence tableName, Path otherPath, CharSequence to) {
         final FilesFacade ff = configuration.getFilesFacade();
         final CharSequence root = configuration.getRoot();
 
@@ -178,16 +176,16 @@ public class Engine implements Closeable, CairoEngine {
         }
 
         path.of(root).concat(tableName).$();
-        other.of(root).concat(to).$();
+        otherPath.of(root).concat(to).$();
 
-        if (ff.exists(other)) {
-            LOG.error().$("rename target exists [from='").$(tableName).$("', to='").$(other).$("']").$();
+        if (ff.exists(otherPath)) {
+            LOG.error().$("rename target exists [from='").$(tableName).$("', to='").$(otherPath).$("']").$();
             throw CairoException.instance(0).put("Rename target exists");
         }
 
-        if (!ff.rename(path, other)) {
+        if (!ff.rename(path, otherPath)) {
             int error = ff.errno();
-            LOG.error().$("rename failed [from='").$(path).$("', to='").$(other).$("', error=").$(error).$(']').$();
+            LOG.error().$("rename failed [from='").$(path).$("', to='").$(otherPath).$("', error=").$(error).$(']').$();
             throw CairoException.instance(error).put("Rename failed");
         }
     }

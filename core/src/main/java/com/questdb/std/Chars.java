@@ -251,6 +251,18 @@ public final class Chars {
         return -1;
     }
 
+    public static boolean isMalformed3(int b1, int b2, int b3) {
+        return b1 == -32 && (b2 & 224) == 128 || (b2 & 192) != 128 || (b3 & 192) != 128;
+    }
+
+    public static boolean isMalformed4(int b2, int b3, int b4) {
+        return (b2 & 192) != 128 || (b3 & 192) != 128 || (b4 & 192) != 128;
+    }
+
+    public static boolean isNotContinuation(int b) {
+        return (b & 192) != 128;
+    }
+
     public static boolean isQuoted(CharSequence s) {
         if (s == null || s.length() == 0) {
             return false;
@@ -549,17 +561,5 @@ public final class Chars {
 
         sink.put((char) (b1 << 6 ^ b2 ^ 3968));
         return 2;
-    }
-
-    private static boolean isNotContinuation(int b) {
-        return (b & 192) != 128;
-    }
-
-    private static boolean isMalformed3(int b1, int b2, int b3) {
-        return b1 == -32 && (b2 & 224) == 128 || (b2 & 192) != 128 || (b3 & 192) != 128;
-    }
-
-    private static boolean isMalformed4(int b2, int b3, int b4) {
-        return (b2 & 192) != 128 || (b3 & 192) != 128 || (b4 & 192) != 128;
     }
 }

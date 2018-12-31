@@ -99,9 +99,9 @@ public class DateToCharTZFunction extends AbstractVirtualColumn implements Funct
                 long l = Dates.parseOffset(tz, 0, tz.length());
                 try {
                     if (l == Long.MIN_VALUE) {
-                        rules = dateLocale.getZoneRules(Numbers.decodeInt(dateLocale.matchZone(tz, 0, tz.length())));
+                        rules = dateLocale.getZoneRules(Numbers.decodeLowInt(dateLocale.matchZone(tz, 0, tz.length())));
                     } else {
-                        offset = Numbers.decodeInt(l) * Dates.MINUTE_MILLIS;
+                        offset = Numbers.decodeLowInt(l) * Dates.MINUTE_MILLIS;
                         rules = null;
                     }
                 } catch (NumericException e) {
