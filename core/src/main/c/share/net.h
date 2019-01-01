@@ -15,6 +15,14 @@ extern "C" {
 #define com_questdb_std_Net_EOTHERDISCONNECT -2L
 /*
  * Class:     com_questdb_std_Net
+ * Method:    abortAccept
+ * Signature: (J)I
+ */
+JNIEXPORT jint JNICALL Java_com_questdb_std_Net_abortAccept
+        (JNIEnv *, jclass, jlong);
+
+/*
+ * Class:     com_questdb_std_Net
  * Method:    accept
  * Signature: (J)J
  */
@@ -103,14 +111,6 @@ JNIEXPORT jboolean JNICALL Java_com_questdb_std_Net_isDead
 
 /*
  * Class:     com_questdb_std_Net
- * Method:    abortAccept
- * Signature: (J)I
- */
-JNIEXPORT jint JNICALL Java_com_questdb_std_Net_abortAccept
-        (JNIEnv *, jclass, jlong);
-
-/*
- * Class:     com_questdb_std_Net
  * Method:    join
  * Signature: (JII)Z
  */
@@ -167,6 +167,14 @@ JNIEXPORT jint JNICALL Java_com_questdb_std_Net_sendTo
 
 /*
  * Class:     com_questdb_std_Net
+ * Method:    getRcvBuf
+ * Signature: (J)I
+ */
+JNIEXPORT jint JNICALL Java_com_questdb_std_Net_getRcvBuf
+        (JNIEnv *, jclass, jlong);
+
+/*
+ * Class:     com_questdb_std_Net
  * Method:    setRcvBuf
  * Signature: (JI)I
  */
@@ -175,11 +183,35 @@ JNIEXPORT jint JNICALL Java_com_questdb_std_Net_setRcvBuf
 
 /*
  * Class:     com_questdb_std_Net
+ * Method:    setTcpNoDelay
+ * Signature: (JZ)I
+ */
+JNIEXPORT jint JNICALL Java_com_questdb_std_Net_setTcpNoDelay
+        (JNIEnv *, jclass, jlong, jboolean);
+
+/*
+ * Class:     com_questdb_std_Net
+ * Method:    getTcpNoDelay
+ * Signature: (J)I
+ */
+JNIEXPORT jint JNICALL Java_com_questdb_std_Net_getTcpNoDelay
+        (JNIEnv *, jclass, jlong);
+
+/*
+ * Class:     com_questdb_std_Net
  * Method:    setSndBuf
  * Signature: (JI)I
  */
 JNIEXPORT jint JNICALL Java_com_questdb_std_Net_setSndBuf
         (JNIEnv *, jclass, jlong, jint);
+
+/*
+ * Class:     com_questdb_std_Net
+ * Method:    getSndBuf
+ * Signature: (J)I
+ */
+JNIEXPORT jint JNICALL Java_com_questdb_std_Net_getSndBuf
+        (JNIEnv *, jclass, jlong);
 
 /*
  * Class:     com_questdb_std_Net

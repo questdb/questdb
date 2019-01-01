@@ -25,11 +25,16 @@
 #include <sys/socket.h>
 #include <sys/fcntl.h>
 #include <netinet/in.h>
+#include <netinet/tcp.h>
 #include <arpa/inet.h>
 #include <unistd.h>
 #include <sys/errno.h>
 #include <stdlib.h>
 #include "net.h"
+
+int set_int_sockopt(int fd, int level, int opt, int value) {
+    return setsockopt(fd, level, opt, &value, sizeof(value));
+}
 
 JNIEXPORT jlong JNICALL Java_com_questdb_std_Net_socketTcp
         (JNIEnv *e, jclass cl, jboolean blocking) {
@@ -177,17 +182,44 @@ JNIEXPORT jint JNICALL Java_com_questdb_std_Net_connect
     return connect((int) fd, (const struct sockaddr *) sockAddr, sizeof(struct sockaddr));
 }
 
-
 JNIEXPORT jint JNICALL Java_com_questdb_std_Net_setSndBuf
         (JNIEnv *e, jclass cl, jlong fd, jint size) {
-    jint sz = size;
-    return setsockopt((int) fd, SOL_SOCKET, SO_SNDBUF, (char *) &sz, sizeof(sz));
+    return set_int_sockopt((int) fd, SOL_SOCKET, SO_SNDBUF, size);
+}
+
+int get_int_sockopt(int fd, int level, int opt) {
+    int size = 0;
+    socklen_t len = sizeof(size);
+    int result = getsockopt(fd, level, opt, &size, &len);
+    if (result == 0) {
+        return size;
+    }
+    return -1;
+}
+
+JNIEXPORT jint JNICALL Java_com_questdb_std_Net_getSndBuf
+        (JNIEnv *e, jclass cl, jlong fd) {
+    return get_int_sockopt((int) fd, SOL_SOCKET, SO_SNDBUF);
 }
 
 JNIEXPORT jint JNICALL Java_com_questdb_std_Net_setRcvBuf
         (JNIEnv *e, jclass cl, jlong fd, jint size) {
-    jint sz = size;
-    return setsockopt((int) fd, SOL_SOCKET, SO_RCVBUF, (char *) &sz, sizeof(sz));
+    return set_int_sockopt((int) fd, SOL_SOCKET, SO_RCVBUF, size);
+}
+
+JNIEXPORT jint JNICALL Java_com_questdb_std_Net_getRcvBuf
+        (JNIEnv *e, jclass cl, jlong fd) {
+    return get_int_sockopt((int) fd, SOL_SOCKET, SO_RCVBUF);
+}
+
+JNIEXPORT jint JNICALL Java_com_questdb_std_Net_setTcpNoDelay
+        (JNIEnv *e, jclass cl, jlong fd, jboolean noDelay) {
+    return set_int_sockopt((int) fd, SOL_TCP, TCP_NODELAY, noDelay);
+}
+
+JNIEXPORT jint JNICALL Java_com_questdb_std_Net_getTcpNoDelay
+        (JNIEnv *e, jclass cl, jlong fd) {
+    return get_int_sockopt((int) fd, SOL_TCP, TCP_NODELAY);
 }
 
 JNIEXPORT jint JNICALL Java_com_questdb_std_Net_getEwouldblock

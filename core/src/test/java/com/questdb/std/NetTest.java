@@ -70,6 +70,19 @@ public class NetTest {
         Assert.assertTrue(haltLatch.await(2, TimeUnit.SECONDS));
     }
 
+    @Test
+    public void testTcpNoDelay() {
+        long fd = Net.socketTcp(true);
+        try {
+            Assert.assertEquals(0, Net.setTcpNoDelay(fd, false));
+            Assert.assertEquals(0, Net.getTcpNoDelay(fd));
+            Assert.assertEquals(0, Net.setTcpNoDelay(fd, true));
+            Assert.assertEquals(1, Net.getTcpNoDelay(fd));
+        } finally {
+            Net.close(fd);
+        }
+    }
+
     private void bindAcceptConnectClose() throws InterruptedException {
         int port = 9992;
         long fd = Net.socketTcp(true);

@@ -145,9 +145,17 @@ public final class Net {
 
     public native static int sendTo(long fd, long ptr, int len, long sockaddr);
 
+    public native static int getRcvBuf(long fd);
+
     public native static int setRcvBuf(long fd, int size);
 
+    public native static int getSndBuf(long fd);
+
+    public native static int getTcpNoDelay(long fd);
+
     public native static int setSndBuf(long fd, int size);
+
+    public native static int setTcpNoDelay(long fd, boolean noDelay);
 
     public static long sockaddr(CharSequence address, int port) {
         return sockaddr(parseIPv4(address), port);
