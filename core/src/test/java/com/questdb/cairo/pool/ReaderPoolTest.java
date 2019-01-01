@@ -378,43 +378,45 @@ public class ReaderPoolTest extends AbstractCairoTest {
             CairoTestUtils.create(model);
         }
 
-        assertWithPool(pool -> {
-            AtomicInteger exceptionCount = new AtomicInteger();
-            CyclicBarrier barrier = new CyclicBarrier(2);
-            CountDownLatch stopLatch = new CountDownLatch(2);
+        for (int i = 0; i < 100; i++) {
+            assertWithPool(pool -> {
+                AtomicInteger exceptionCount = new AtomicInteger();
+                CyclicBarrier barrier = new CyclicBarrier(2);
+                CountDownLatch stopLatch = new CountDownLatch(2);
 
-            new Thread(() -> {
-                try {
-                    barrier.await();
-                    pool.close();
-                } catch (Exception e) {
-                    exceptionCount.incrementAndGet();
-                    e.printStackTrace();
-                } finally {
-                    stopLatch.countDown();
-                }
-            }).start();
-
-
-            new Thread(() -> {
-                try {
-                    barrier.await();
-                    try (TableReader reader = pool.get("xyz")) {
-                        Assert.assertNotNull(reader);
-                    } catch (PoolClosedException ignore) {
-                        // this can also happen when this thread is delayed enough for pool close to complete
+                new Thread(() -> {
+                    try {
+                        barrier.await();
+                        pool.close();
+                    } catch (Exception e) {
+                        exceptionCount.incrementAndGet();
+                        e.printStackTrace();
+                    } finally {
+                        stopLatch.countDown();
                     }
-                } catch (Exception e) {
-                    exceptionCount.incrementAndGet();
-                    e.printStackTrace();
-                } finally {
-                    stopLatch.countDown();
-                }
-            }).start();
+                }).start();
 
-            Assert.assertTrue(stopLatch.await(2, TimeUnit.SECONDS));
-            Assert.assertEquals(0, exceptionCount.get());
-        });
+
+                new Thread(() -> {
+                    try {
+                        barrier.await();
+                        try (TableReader reader = pool.get("xyz")) {
+                            Assert.assertNotNull(reader);
+                        } catch (PoolClosedException ignore) {
+                            // this can also happen when this thread is delayed enough for pool close to complete
+                        }
+                    } catch (Exception e) {
+                        exceptionCount.incrementAndGet();
+                        e.printStackTrace();
+                    } finally {
+                        stopLatch.countDown();
+                    }
+                }).start();
+
+                Assert.assertTrue(stopLatch.await(2, TimeUnit.SECONDS));
+                Assert.assertEquals(0, exceptionCount.get());
+            });
+        }
     }
 
     @Test
@@ -714,7 +716,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
             for (int k = 0; k < 10000; k++) {
                 // allocate 32 readers to get to the start race at edge of next entry
                 int n = 64;
-                TableReader readers[] = new TableReader[n];
+                TableReader[] readers = new TableReader[n];
                 try {
                     for (int i = 0; i < n; i++) {
                         readers[i] = pool.get("x");

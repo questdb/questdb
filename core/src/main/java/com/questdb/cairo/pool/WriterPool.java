@@ -127,13 +127,7 @@ public class WriterPool extends AbstractPool implements ResourcePool<TableWriter
             if (e.writer == null) {
                 return createWriter(tableName, e, thread);
             }
-
-            if (isClosed()) {
-                // pool closed but we somehow managed to lock writer
-                // make sure that interceptor cleared to allow calling thread close writer normally
-                e.goodby();
-            }
-            return logAndReturn(e, PoolListener.EV_GET);
+            return checkClosedAndGetWriter(tableName, e);
         } else {
             if (e.owner == thread) {
                 if (e.lockFd != -1L) {
@@ -146,31 +140,11 @@ public class WriterPool extends AbstractPool implements ResourcePool<TableWriter
                     // ensure consistent response
                     throw e.ex;
                 }
-
-                if (isClosed()) {
-                    LOG.info().$('\'').utf8(tableName).$("' born free").$();
-                    e.goodby();
-                }
-                return logAndReturn(e, PoolListener.EV_GET);
+                return checkClosedAndGetWriter(tableName, e);
             }
             LOG.error().$('\'').utf8(tableName).$("' is busy [owner=").$(owner).$(']').$();
             throw EntryUnavailableException.INSTANCE;
         }
-    }
-
-    /**
-     * Counts busy writers in pool.
-     *
-     * @return number of busy writer instances.
-     */
-    public int getBusyCount() {
-        int count = 0;
-        for (Entry e : entries.values()) {
-            if (e.owner != UNALLOCATED) {
-                count++;
-            }
-        }
-        return count;
     }
 
     /**
@@ -213,9 +187,34 @@ public class WriterPool extends AbstractPool implements ResourcePool<TableWriter
             return lockAndNotify(thread, e, tableName);
         }
 
-        LOG.error().$("cannot lock '").utf8(tableName).$("', busy [owner=").$(e.owner).$(", thread=").$(thread).$();
+        LOG.error().$("cannot lock '").utf8(tableName).$("', busy [owner=").$(e.owner).$(", thread=").$(thread).$(']').$();
         notifyListener(thread, tableName, PoolListener.EV_LOCK_BUSY);
         return false;
+    }
+
+    /**
+     * Counts busy writers in pool.
+     *
+     * @return number of busy writer instances.
+     */
+    public int getBusyCount() {
+        int count = 0;
+        for (Entry e : entries.values()) {
+            if (e.owner != UNALLOCATED) {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    private TableWriter checkClosedAndGetWriter(CharSequence tableName, Entry e) {
+        if (isClosed()) {
+            // pool closed but we somehow managed to lock writer
+            // make sure that interceptor cleared to allow calling thread close writer normally
+            LOG.info().$('\'').utf8(tableName).$("' born free").$();
+            return e.goodby();
+        }
+        return logAndReturn(e, PoolListener.EV_GET);
     }
 
     public int size() {
@@ -426,11 +425,13 @@ public class WriterPool extends AbstractPool implements ResourcePool<TableWriter
             return !WriterPool.this.returnToPool(this);
         }
 
-        public void goodby() {
+        public TableWriter goodby() {
+            TableWriter w = writer;
             if (writer != null) {
                 writer.setLifecycleManager(DefaultLifecycleManager.INSTANCE);
                 writer = null;
             }
+            return w;
         }
     }
 }

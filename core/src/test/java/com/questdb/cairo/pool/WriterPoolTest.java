@@ -261,48 +261,50 @@ public class WriterPoolTest extends AbstractCairoTest {
             CairoTestUtils.create(model);
         }
 
-        assertWithPool(pool -> {
-            AtomicInteger exceptionCount = new AtomicInteger();
-            CyclicBarrier barrier = new CyclicBarrier(2);
-            CountDownLatch stopLatch = new CountDownLatch(2);
+        for (int i = 0; i < 100; i++) {
+            assertWithPool(pool -> {
+                AtomicInteger exceptionCount = new AtomicInteger();
+                CyclicBarrier barrier = new CyclicBarrier(2);
+                CountDownLatch stopLatch = new CountDownLatch(2);
 
-            // make sure writer exists in pool
-            try (TableWriter writer = pool.get("xyz")) {
-                Assert.assertNotNull(writer);
-            }
-
-            new Thread(() -> {
-                try {
-                    barrier.await();
-                    pool.close();
-                } catch (Exception e) {
-                    exceptionCount.incrementAndGet();
-                    e.printStackTrace();
-                } finally {
-                    stopLatch.countDown();
+                // make sure writer exists in pool
+                try (TableWriter writer = pool.get("xyz")) {
+                    Assert.assertNotNull(writer);
                 }
-            }).start();
 
-
-            new Thread(() -> {
-                try {
-                    barrier.await();
-                    try (TableWriter reader = pool.get("xyz")) {
-                        Assert.assertNotNull(reader);
-                    } catch (PoolClosedException ignore) {
-                        // this can also happen when this thread is delayed enough for pool close to complete
+                new Thread(() -> {
+                    try {
+                        barrier.await();
+                        pool.close();
+                    } catch (Exception e) {
+                        exceptionCount.incrementAndGet();
+                        e.printStackTrace();
+                    } finally {
+                        stopLatch.countDown();
                     }
-                } catch (Exception e) {
-                    exceptionCount.incrementAndGet();
-                    e.printStackTrace();
-                } finally {
-                    stopLatch.countDown();
-                }
-            }).start();
+                }).start();
 
-            Assert.assertTrue(stopLatch.await(2, TimeUnit.SECONDS));
-            Assert.assertEquals(0, exceptionCount.get());
-        });
+
+                new Thread(() -> {
+                    try {
+                        barrier.await();
+                        try (TableWriter writer = pool.get("xyz")) {
+                            Assert.assertNotNull(writer);
+                        } catch (PoolClosedException | EntryUnavailableException ignore) {
+                            // this can also happen when this thread is delayed enough for pool close to complete
+                        }
+                    } catch (Exception e) {
+                        exceptionCount.incrementAndGet();
+                        e.printStackTrace();
+                    } finally {
+                        stopLatch.countDown();
+                    }
+                }).start();
+
+                Assert.assertTrue(stopLatch.await(2, TimeUnit.SECONDS));
+                Assert.assertEquals(0, exceptionCount.get());
+            });
+        }
     }
 
     @Test

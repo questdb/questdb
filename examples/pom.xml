@@ -29,7 +29,7 @@
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     </properties>
 
-    <version>3.0.6</version>
+    <version>3.0.7-SNAPSHOT</version>
     <groupId>org.questdb</groupId>
     <artifactId>examples</artifactId>
     <packaging>jar</packaging>
