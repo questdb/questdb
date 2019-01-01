@@ -26,6 +26,20 @@
 #include "../share/net.h"
 #include "errno.h"
 
+int get_int_sockopt(SOCKET fd, int level, int opt) {
+    char value = 0;
+    socklen_t len = sizeof(value);
+    int result = getsockopt(fd, level, opt, &value, &len);
+    if (result == 0) {
+        return value;
+    }
+    return -1;
+}
+
+int set_int_sockopt(SOCKET fd, int level, int opt, char value) {
+    return setsockopt(fd, level, opt, &value, sizeof(value));
+}
+
 JNIEXPORT jlong JNICALL Java_com_questdb_std_Net_socketTcp
         (JNIEnv *e, jclass cl, jboolean blocking) {
 
@@ -212,20 +226,37 @@ JNIEXPORT jint JNICALL Java_com_questdb_std_Net_configureNoLinger
 
 JNIEXPORT jint JNICALL Java_com_questdb_std_Net_setSndBuf
         (JNIEnv *e, jclass cl, jlong fd, jint size) {
-    jint sz = size;
-    return setsockopt((SOCKET) fd, SOL_SOCKET, SO_SNDBUF, (char *) &sz, sizeof(sz));
+    return set_int_sockopt((SOCKET) fd, SOL_SOCKET, SO_SNDBUF, (char) size);
 }
 
 JNIEXPORT jint JNICALL Java_com_questdb_std_Net_setRcvBuf
         (JNIEnv *e, jclass cl, jlong fd, jint size) {
-    jint sz = size;
-    return setsockopt((SOCKET) fd, SOL_SOCKET, SO_RCVBUF, (char *) &sz, sizeof(sz));
+    return set_int_sockopt((SOCKET) fd, SOL_SOCKET, SO_RCVBUF, (char) size);
 }
-
 
 JNIEXPORT jint JNICALL Java_com_questdb_std_Net_getEwouldblock
         (JNIEnv *e, jclass cl) {
     return WSAEWOULDBLOCK;
+}
+
+JNIEXPORT jint JNICALL Java_com_questdb_std_Net_getRcvBuf
+        (JNIEnv *e, jclass cl, jlong fd) {
+    return get_int_sockopt((SOCKET) fd, SOL_SOCKET, SO_RCVBUF);
+}
+
+JNIEXPORT jint JNICALL Java_com_questdb_std_Net_getSndBuf
+        (JNIEnv *e, jclass cl, jlong fd) {
+    return get_int_sockopt((SOCKET) fd, SOL_SOCKET, SO_SNDBUF);
+}
+
+JNIEXPORT jint JNICALL Java_com_questdb_std_Net_setTcpNoDelay
+        (JNIEnv *e, jclass cl, jlong fd, jboolean noDelay) {
+    return set_int_sockopt((SOCKET) fd, IPPROTO_TCP, TCP_NODELAY, noDelay);
+}
+
+JNIEXPORT jint JNICALL Java_com_questdb_std_Net_getTcpNoDelay
+        (JNIEnv *e, jclass cl, jlong fd) {
+    return get_int_sockopt((SOCKET) fd, IPPROTO_TCP, TCP_NODELAY);
 }
 
 JNIEXPORT jint JNICALL Java_com_questdb_std_Net_getPeerIP
