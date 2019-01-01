@@ -188,11 +188,11 @@ JNIEXPORT jint JNICALL Java_com_questdb_std_Net_setSndBuf
 }
 
 int get_int_sockopt(int fd, int level, int opt) {
-    int size = 0;
-    socklen_t len = sizeof(size);
-    int result = getsockopt(fd, level, opt, &size, &len);
+    int value = 0;
+    socklen_t len = sizeof(value);
+    int result = getsockopt(fd, level, opt, &value, &len);
     if (result == 0) {
-        return size;
+        return value;
     }
     return -1;
 }
@@ -214,12 +214,20 @@ JNIEXPORT jint JNICALL Java_com_questdb_std_Net_getRcvBuf
 
 JNIEXPORT jint JNICALL Java_com_questdb_std_Net_setTcpNoDelay
         (JNIEnv *e, jclass cl, jlong fd, jboolean noDelay) {
+#ifdef __APPLE__
+    return set_int_sockopt((int) fd, IPPROTO_TCP, TCP_NODELAY, noDelay);
+#else
     return set_int_sockopt((int) fd, SOL_TCP, TCP_NODELAY, noDelay);
+#endif
 }
 
 JNIEXPORT jint JNICALL Java_com_questdb_std_Net_getTcpNoDelay
         (JNIEnv *e, jclass cl, jlong fd) {
+#ifdef __APPLE__
+    return get_int_sockopt((int) fd, IPPROTO_TCP, TCP_NODELAY);
+#else
     return get_int_sockopt((int) fd, SOL_TCP, TCP_NODELAY);
+#endif
 }
 
 JNIEXPORT jint JNICALL Java_com_questdb_std_Net_getEwouldblock

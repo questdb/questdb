@@ -77,7 +77,7 @@ public class NetTest {
             Assert.assertEquals(0, Net.setTcpNoDelay(fd, false));
             Assert.assertEquals(0, Net.getTcpNoDelay(fd));
             Assert.assertEquals(0, Net.setTcpNoDelay(fd, true));
-            Assert.assertEquals(1, Net.getTcpNoDelay(fd));
+            Assert.assertTrue(Net.getTcpNoDelay(fd) > 0);
         } finally {
             Net.close(fd);
         }
