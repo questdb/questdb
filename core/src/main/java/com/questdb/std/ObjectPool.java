@@ -63,7 +63,7 @@ public class ObjectPool<T extends Mutable> implements Mutable {
     private void expand() {
         fill();
         size <<= 1;
-        LOG.info().$("pool resize [class=").$(factory.getClass().getName()).$(", size=").$(size).$();
+        LOG.info().$("pool resize [class=").$(factory.getClass().getName()).$(", size=").$(size).$(']').$();
     }
 
     private void fill() {

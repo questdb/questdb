@@ -42,11 +42,6 @@ public class DoubleProbe implements TypeProbe {
     }
 
     @Override
-    public String getFormat() {
-        return null;
-    }
-
-    @Override
     public int getType() {
         return ColumnType.DOUBLE;
     }

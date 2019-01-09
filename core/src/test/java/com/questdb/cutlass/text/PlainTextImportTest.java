@@ -32,7 +32,9 @@ import com.questdb.cairo.sql.RecordCursorFactory;
 import com.questdb.cutlass.json.JsonException;
 import com.questdb.griffin.SqlCompiler;
 import com.questdb.griffin.SqlException;
+import com.questdb.std.Files;
 import com.questdb.std.Unsafe;
+import com.questdb.std.str.Path;
 import com.questdb.std.time.DateFormatFactory;
 import com.questdb.std.time.DateLocale;
 import com.questdb.std.time.DateLocaleFactory;
@@ -109,7 +111,7 @@ public class PlainTextImportTest extends AbstractCairoTest {
 
             String expected = "№ПП\tОбъектыКонтрольногоМероприятия\tВидКонтрольногоМероприятия\tТемаКонтрольногоМероприятия\tПроверяемыйПериод\tНачалоПроверки\tОкончаниеПроверки\tВыявленныеНарушенияНедостатки\tРезультатыПроверки\n";
 
-            configureLoaderDefaults(textLoader, TextDelimiter.CSV, Atomicity.SKIP_ALL);
+            configureLoaderDefaults(textLoader, (byte) ',', Atomicity.SKIP_ALL);
             textLoader.setForceHeaders(true);
             textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
             try {
@@ -213,19 +215,23 @@ public class PlainTextImportTest extends AbstractCairoTest {
                     "35\tМуниципальное казенное учреждение «Административно-хозяйственная служба обеспечения деятельности органов местного самоуправления Ржевского сельского поселения муниципального района  «Ровеньский район» Белгородской области»\tПлановая   ревизия\tРевизия финансово-хозяйственной деятельности\t01.01.2017 г.  - 20.08.2018 г.\t20.08.2018 г.\t07.09.2018 г.\t- нарушение соблюдения норм Трудового кодекса РФ ст. 72, 100, 136;                                                                - нарушения в части правомерности начисления и выплаты стимулирующей части оплаты труда; - нарушения требований п.3 ,11, 108, 265 Инструкции Минфина №157н.\tВыдано представление об устранении выявленных нарушений в срок до 30.10.2018 года\n" +
                     "36\tМуниципальное казенное учреждение «Административно-хозяйственная служба обеспечения деятельности органов местного самоуправления городского поселения «Поселок Ровеньки» муниципального района «Ровеньский район» Белгородской области»\tПлановая   ревизия\tРевизия финансово-хозяйственной деятельности\t01.01.2017 г.-31.10.2018 г.\t15.10.2018 г.\t12.11.2018 г.\t- необоснованное использование бюджетных средств на сумму 828,7 тыс. руб.;                                                      - излишки нефинансовых активов у 1 материально-ответственного лица на сумму 139,9 тыс. рублей;                          - нарушение требований ст.19,21 Федеральным законом от 5 апреля 2013 года №44-ФЗ «О контрактной системе в сфере закупок, товаров, работ, услуг для обеспечения государственных и муниципальных нужд» и ч.2 ст.72 Бюджетного кодекса РФ;                                                   -  нарушение соблюдения норм Трудового кодекса РФ ст.136 и другие  нарушения в части обоснованности начисления компенсационных выплат за совмещение профессий и расширенный объем.\tВыдано представление об устранении нарушений в срок до 29.12.2018 года\n";
 
-            configureLoaderDefaults(textLoader, TextDelimiter.CSV, Atomicity.SKIP_COL);
+            configureLoaderDefaults(textLoader, (byte) ',', Atomicity.SKIP_COL);
             textLoader.setForceHeaders(true);
             textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
             playText(textLoader, csv, 1024, expected, (index, len, b) -> {
-                switch (index) {
-                    case 1560:
-                    case 1561:
-                    case 1562:
-                        return (byte) 160;
-                    default:
-                        return b;
-                }
-            });
+                        switch (index) {
+                            case 1560:
+                            case 1561:
+                            case 1562:
+                                return (byte) 160;
+                            default:
+                                return b;
+                        }
+                    },
+                    "{\"columnCount\":9,\"columns\":[{\"index\":0,\"name\":\"№ПП\",\"type\":\"STRING\"},{\"index\":1,\"name\":\"ОбъектыКонтрольногоМероприятия\",\"type\":\"STRING\"},{\"index\":2,\"name\":\"ВидКонтрольногоМероприятия\",\"type\":\"STRING\"},{\"index\":3,\"name\":\"ТемаКонтрольногоМероприятия\",\"type\":\"STRING\"},{\"index\":4,\"name\":\"ПроверяемыйПериод\",\"type\":\"STRING\"},{\"index\":5,\"name\":\"НачалоПроверки\",\"type\":\"STRING\"},{\"index\":6,\"name\":\"ОкончаниеПроверки\",\"type\":\"STRING\"},{\"index\":7,\"name\":\"ВыявленныеНарушенияНедостатки\",\"type\":\"STRING\"},{\"index\":8,\"name\":\"РезультатыПроверки\",\"type\":\"STRING\"}],\"timestampIndex\":-1}",
+                    36,
+                    36
+            );
         });
     }
 
@@ -312,19 +318,23 @@ public class PlainTextImportTest extends AbstractCairoTest {
                     "35\tМуниципальное казенное учреждение «Административно-хозяйственная служба обеспечения деятельности органов местного самоуправления Ржевского сельского поселения муниципального района  «Ровеньский район» Белгородской области»\tПлановая   ревизия\tРевизия финансово-хозяйственной деятельности\t01.01.2017 г.  - 20.08.2018 г.\t20.08.2018 г.\t07.09.2018 г.\t- нарушение соблюдения норм Трудового кодекса РФ ст. 72, 100, 136;                                                                - нарушения в части правомерности начисления и выплаты стимулирующей части оплаты труда; - нарушения требований п.3 ,11, 108, 265 Инструкции Минфина №157н.\tВыдано представление об устранении выявленных нарушений в срок до 30.10.2018 года\n" +
                     "36\tМуниципальное казенное учреждение «Административно-хозяйственная служба обеспечения деятельности органов местного самоуправления городского поселения «Поселок Ровеньки» муниципального района «Ровеньский район» Белгородской области»\tПлановая   ревизия\tРевизия финансово-хозяйственной деятельности\t01.01.2017 г.-31.10.2018 г.\t15.10.2018 г.\t12.11.2018 г.\t- необоснованное использование бюджетных средств на сумму 828,7 тыс. руб.;                                                      - излишки нефинансовых активов у 1 материально-ответственного лица на сумму 139,9 тыс. рублей;                          - нарушение требований ст.19,21 Федеральным законом от 5 апреля 2013 года №44-ФЗ «О контрактной системе в сфере закупок, товаров, работ, услуг для обеспечения государственных и муниципальных нужд» и ч.2 ст.72 Бюджетного кодекса РФ;                                                   -  нарушение соблюдения норм Трудового кодекса РФ ст.136 и другие  нарушения в части обоснованности начисления компенсационных выплат за совмещение профессий и расширенный объем.\tВыдано представление об устранении нарушений в срок до 29.12.2018 года\n";
 
-            configureLoaderDefaults(textLoader, TextDelimiter.CSV);
+            configureLoaderDefaults(textLoader);
             textLoader.setForceHeaders(true);
             textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
-            playText(textLoader, csv, 1024, expected, (index, len, b) -> {
-                switch (index) {
-                    case 256:
-                    case 257:
-                    case 258:
-                        return (byte) 160;
-                    default:
-                        return b;
-                }
-            });
+            playText(textLoader, csv, 2048, expected, (index, len, b) -> {
+                        switch (index) {
+                            case 256:
+                            case 257:
+                            case 258:
+                                return (byte) 160;
+                            default:
+                                return b;
+                        }
+                    },
+                    "{\"columnCount\":9,\"columns\":[{\"index\":0,\"name\":\"№ПП\",\"type\":\"INT\"},{\"index\":1,\"name\":\"ОбъектыКонтрольногоМероприятия\",\"type\":\"STRING\"},{\"index\":2,\"name\":\"ВидКонтрольногоМероприятия\",\"type\":\"STRING\"},{\"index\":3,\"name\":\"ТемаКонтрольногоМероприятия\",\"type\":\"STRING\"},{\"index\":4,\"name\":\"ПроверяемыйПериод\",\"type\":\"STRING\"},{\"index\":5,\"name\":\"f5\",\"type\":\"STRING\"},{\"index\":6,\"name\":\"ОкончаниеПроверки\",\"type\":\"STRING\"},{\"index\":7,\"name\":\"ВыявленныеНарушенияНедостатки\",\"type\":\"STRING\"},{\"index\":8,\"name\":\"РезультатыПроверки\",\"type\":\"STRING\"}],\"timestampIndex\":-1}",
+                    36,
+                    36
+            );
         });
     }
 
@@ -408,19 +418,64 @@ public class PlainTextImportTest extends AbstractCairoTest {
                     "35\tМуниципальное казенное учреждение «Административно-хозяйственная служба обеспечения деятельности органов местного самоуправления Ржевского сельского поселения муниципального района  «Ровеньский район» Белгородской области»\tПлановая   ревизия\tРевизия финансово-хозяйственной деятельности\t01.01.2017 г.  - 20.08.2018 г.\t20.08.2018 г.\t07.09.2018 г.\t- нарушение соблюдения норм Трудового кодекса РФ ст. 72, 100, 136;                                                                - нарушения в части правомерности начисления и выплаты стимулирующей части оплаты труда; - нарушения требований п.3 ,11, 108, 265 Инструкции Минфина №157н.\tВыдано представление об устранении выявленных нарушений в срок до 30.10.2018 года\n" +
                     "36\tМуниципальное казенное учреждение «Административно-хозяйственная служба обеспечения деятельности органов местного самоуправления городского поселения «Поселок Ровеньки» муниципального района «Ровеньский район» Белгородской области»\tПлановая   ревизия\tРевизия финансово-хозяйственной деятельности\t01.01.2017 г.-31.10.2018 г.\t15.10.2018 г.\t12.11.2018 г.\t- необоснованное использование бюджетных средств на сумму 828,7 тыс. руб.;                                                      - излишки нефинансовых активов у 1 материально-ответственного лица на сумму 139,9 тыс. рублей;                          - нарушение требований ст.19,21 Федеральным законом от 5 апреля 2013 года №44-ФЗ «О контрактной системе в сфере закупок, товаров, работ, услуг для обеспечения государственных и муниципальных нужд» и ч.2 ст.72 Бюджетного кодекса РФ;                                                   -  нарушение соблюдения норм Трудового кодекса РФ ст.136 и другие  нарушения в части обоснованности начисления компенсационных выплат за совмещение профессий и расширенный объем.\tВыдано представление об устранении нарушений в срок до 29.12.2018 года\n";
 
-            configureLoaderDefaults(textLoader, TextDelimiter.CSV, Atomicity.SKIP_ROW);
+            configureLoaderDefaults(textLoader, (byte) ',', Atomicity.SKIP_ROW);
             textLoader.setForceHeaders(true);
             textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
             playText(textLoader, csv, 1024, expected, (index, len, b) -> {
-                switch (index) {
-                    case 1560:
-                    case 1561:
-                    case 1562:
-                        return (byte) 160;
-                    default:
-                        return b;
+                        switch (index) {
+                            case 1560:
+                            case 1561:
+                            case 1562:
+                                return (byte) 160;
+                            default:
+                                return b;
+                        }
+                    },
+                    "{\"columnCount\":9,\"columns\":[{\"index\":0,\"name\":\"№ПП\",\"type\":\"STRING\"},{\"index\":1,\"name\":\"ОбъектыКонтрольногоМероприятия\",\"type\":\"STRING\"},{\"index\":2,\"name\":\"ВидКонтрольногоМероприятия\",\"type\":\"STRING\"},{\"index\":3,\"name\":\"ТемаКонтрольногоМероприятия\",\"type\":\"STRING\"},{\"index\":4,\"name\":\"ПроверяемыйПериод\",\"type\":\"STRING\"},{\"index\":5,\"name\":\"НачалоПроверки\",\"type\":\"STRING\"},{\"index\":6,\"name\":\"ОкончаниеПроверки\",\"type\":\"STRING\"},{\"index\":7,\"name\":\"ВыявленныеНарушенияНедостатки\",\"type\":\"STRING\"},{\"index\":8,\"name\":\"РезультатыПроверки\",\"type\":\"STRING\"}],\"timestampIndex\":-1}",
+                    36,
+                    35
+            );
+        });
+    }
+
+    @Test
+    public void testCannotOverwriteTable() throws Exception {
+        assertNoLeak(textLoader -> {
+            String csv = "\"\"\"CMP2\",8,8000,2.27636352181435,2015-01-29T19:15:09.000Z,2015-01-29 19:15:09,01/29/2015,323,TRUE,14925407\n" +
+                    "CMP1,2,1581,9.01423481060192,2015-01-30T19:15:09.000Z,2015-01-30 19:15:09,01/30/2015,9138,FALSE,68225213\n" +
+                    "CMP2,8,7067,9.6284336107783,2015-01-31T19:15:09.000Z,2015-01-31 19:15:09,01/31/2015,8197,TRUE,58403960\n" +
+                    "CMP1,8,5313,8.87764661805704,2015-02-01T19:15:09.000Z,2015-02-01 19:15:09,02/01/2015,2733,FALSE,69698373\n" +
+                    ",4,3883,7.96873019309714,2015-02-02T19:15:09.000Z,2015-02-02 19:15:09,02/02/2015,6912,TRUE,91147394\n" +
+                    "CMP1,7,4256,2.46553522534668,2015-02-03T19:15:09.000Z,2015-02-03 19:15:09,02/03/2015,9453,FALSE,50278940\n" +
+                    "CMP2,4,155,5.08547495584935,2015-02-04T19:15:09.000Z,2015-02-04 19:15:09,02/04/2015,8919,TRUE,8671995\n" +
+                    "\"CMP1\",7,4486,,2015-02-05T19:15:09.000Z,2015-02-05 19:15:09,02/05/2015,8670,FALSE,751877\n" +
+                    "CMP2,2,6641,0.0381825352087617,2015-02-06T19:15:09.000Z,2015-02-06 19:15:09,02/06/2015,8331,TRUE,40909232527\n" +
+                    "CMP1,1,3579,0.849663221742958,2015-02-07T19:15:09.000Z,2015-02-07 19:15:09,02/07/2015,9592,FALSE,11490662\n" +
+                    "CMP2,2,4770,2.85092033445835,2015-02-08T19:15:09.000Z,2015-02-08 19:15:09,02/08/2015,253,TRUE,33766814\n" +
+                    "CMP1,5,4938,4.42754498450086,2015-02-09T19:15:09.000Z,2015-02-09 19:15:09,02/09/2015,7817,FALSE,61983099\n";
+
+            compiler.compile("create table test" +
+                    "(a symbol" +
+                    ", b int" +
+                    ", c long" +
+                    ", d float" +
+                    ", e date" +
+                    ", f date" +
+                    ", g date" +
+                    ", h long" +
+                    ", i boolean" +
+                    ", k long" +
+                    ", t timestamp)", null);
+
+            configureLoaderDefaults(textLoader, (byte) -1, Atomicity.SKIP_ROW, true);
+            try (TableWriter ignore = engine.getWriter("test")) {
+                try {
+                    playText0(textLoader, csv, 1024, ENTITY_MANIPULATOR);
+                    Assert.fail();
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getMessage(), "Cannot lock");
                 }
-            });
+            }
         });
     }
 
@@ -447,9 +502,17 @@ public class PlainTextImportTest extends AbstractCairoTest {
                     "127,abc,2015-01-20T21:00:00.000Z,1.53321,TRUE,Lorem ipsum dolor sit amet.,112\r\n" +
                     "128,abc,2015-01-20T21:00:00.000Z,2.456,TRUE,Lorem ipsum dolor sit amet.,122\r\n";
 
-            configureLoaderDefaults(textLoader, TextDelimiter.CSV);
+            configureLoaderDefaults(textLoader, (byte) ',');
             textLoader.setForceHeaders(false);
-            playText(textLoader, csv, 85, expected);
+            playText(
+                    textLoader,
+                    csv,
+                    200,
+                    expected,
+                    "{\"columnCount\":7,\"columns\":[{\"index\":0,\"name\":\"f0\",\"type\":\"INT\"},{\"index\":1,\"name\":\"f1\",\"type\":\"STRING\"},{\"index\":2,\"name\":\"f2\",\"type\":\"DATE\"},{\"index\":3,\"name\":\"f3\",\"type\":\"DOUBLE\"},{\"index\":4,\"name\":\"f4\",\"type\":\"BOOLEAN\"},{\"index\":5,\"name\":\"f5\",\"type\":\"STRING\"},{\"index\":6,\"name\":\"f6\",\"type\":\"INT\"}],\"timestampIndex\":-1}",
+                    6,
+                    6
+            );
         });
     }
 
@@ -475,9 +538,17 @@ public class PlainTextImportTest extends AbstractCairoTest {
                     "127\tabc\t2015-01-20T21:00:00.000Z\t1.53321\tTRUE\tLorem ipsum dolor sit amet.\t112\n" +
                     "128\tabc\t2015-01-20T21:00:00.000Z\t2.456\tTRUE\tLorem ipsum dolor sit amet.\t\"";
 
-            configureLoaderDefaults(textLoader, TextDelimiter.TAB);
+            configureLoaderDefaults(textLoader, (byte) '\t');
             textLoader.setForceHeaders(false);
-            playText(textLoader, csv, 85, expected);
+            playText(
+                    textLoader,
+                    csv,
+                    85,
+                    expected,
+                    "{\"columnCount\":7,\"columns\":[{\"index\":0,\"name\":\"f0\",\"type\":\"INT\"},{\"index\":1,\"name\":\"f1\",\"type\":\"STRING\"},{\"index\":2,\"name\":\"f2\",\"type\":\"DATE\"},{\"index\":3,\"name\":\"f3\",\"type\":\"DOUBLE\"},{\"index\":4,\"name\":\"f4\",\"type\":\"BOOLEAN\"},{\"index\":5,\"name\":\"f5\",\"type\":\"STRING\"},{\"index\":6,\"name\":\"f6\",\"type\":\"INT\"}],\"timestampIndex\":-1}",
+                    5,
+                    5
+            );
         });
     }
 
@@ -492,8 +563,7 @@ public class PlainTextImportTest extends AbstractCairoTest {
                     "Всероссийские спортивные соревнования школьников «ПРЕЗИДЕНТСКИЕ СОСТЯЗАНИЯ»\t2017-07-03T00:00:00.000Z\n" +
                     "Всероссийские спортивные игры школьников «ПРЕЗИДЕНТСКИЕ СПОРТИВНЫЕ ИГРЫ»\t2018-03-10T00:00:00.000Z\n" +
                     "Всероссийский летний ФЕСТИВАЛЬ ГТО\t2016-02-28T00:00:00.000Z\n";
-            configureLoaderDefaults(textLoader, TextDelimiter.CSV);
-
+            configureLoaderDefaults(textLoader);
 
             playJson(textLoader, ("[\n" +
                     "  {\n" +
@@ -506,7 +576,15 @@ public class PlainTextImportTest extends AbstractCairoTest {
 
             textLoader.setForceHeaders(true);
             textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
-            playText(textLoader, csv, 1024, expected);
+            playText(
+                    textLoader,
+                    csv,
+                    1024,
+                    expected,
+                    "{\"columnCount\":2,\"columns\":[{\"index\":0,\"name\":\"name\",\"type\":\"STRING\"},{\"index\":1,\"name\":\"date\",\"type\":\"DATE\"}],\"timestampIndex\":-1}",
+                    3,
+                    3
+            );
         });
     }
 
@@ -522,7 +600,7 @@ public class PlainTextImportTest extends AbstractCairoTest {
                     "Всероссийские спортивные соревнования школьников «ПРЕЗИДЕНТСКИЕ СОСТЯЗАНИЯ»\t2017-07-03T00:00:00.000Z\n" +
                     "Всероссийские спортивные игры школьников «ПРЕЗИДЕНТСКИЕ СПОРТИВНЫЕ ИГРЫ»\t2018-03-10T00:00:00.000Z\n" +
                     "Всероссийский летний ФЕСТИВАЛЬ ГТО\t2016-02-28T00:00:00.000Z\n";
-            configureLoaderDefaults(textLoader, TextDelimiter.CSV, Atomicity.SKIP_COL);
+            configureLoaderDefaults(textLoader, (byte) ',', Atomicity.SKIP_COL);
 
             playJson(textLoader, ("[\n" +
                     "  {\n" +
@@ -534,7 +612,87 @@ public class PlainTextImportTest extends AbstractCairoTest {
 
             textLoader.setForceHeaders(true);
             textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
-            playText(textLoader, csv, 1024, expected);
+            playText(
+                    textLoader,
+                    csv,
+                    1024,
+                    expected,
+                    "{\"columnCount\":2,\"columns\":[{\"index\":0,\"name\":\"name\",\"type\":\"STRING\"},{\"index\":1,\"name\":\"date\",\"type\":\"DATE\"}],\"timestampIndex\":-1}",
+                    3,
+                    3
+            );
+        });
+    }
+
+    @Test
+    public void testDelimiterPriority() throws Exception {
+        assertNoLeak(textLoader -> {
+            final String expected = "f0\tf1\tf2\n" +
+                    ";;;\t;;\t0.000000000000\n" +
+                    ";;;\t;;\t0.000000000000\n";
+
+            String csv = ";;;,;;,....\n" +
+                    ";;;,;;,....\n";
+
+            configureLoaderDefaults(textLoader);
+            textLoader.setForceHeaders(false);
+            playText(
+                    textLoader,
+                    csv,
+                    200,
+                    expected,
+                    "{\"columnCount\":3,\"columns\":[{\"index\":0,\"name\":\"f0\",\"type\":\"STRING\"},{\"index\":1,\"name\":\"f1\",\"type\":\"STRING\"},{\"index\":2,\"name\":\"f2\",\"type\":\"DOUBLE\"}],\"timestampIndex\":-1}",
+                    2,
+                    2
+            );
+        });
+    }
+
+    @Test
+    public void testDelimiterPriority2() throws Exception {
+        assertNoLeak(textLoader -> {
+            final String expected = "f0\tf1\tf2\n" +
+                    "   \t  \t  \n" +
+                    "   \t  \t  \n";
+
+            String csv = "   |  |  \n" +
+                    "   |  |  \n";
+
+            configureLoaderDefaults(textLoader);
+            textLoader.setForceHeaders(false);
+            playText(
+                    textLoader,
+                    csv,
+                    200,
+                    expected,
+                    "{\"columnCount\":3,\"columns\":[{\"index\":0,\"name\":\"f0\",\"type\":\"STRING\"},{\"index\":1,\"name\":\"f1\",\"type\":\"STRING\"},{\"index\":2,\"name\":\"f2\",\"type\":\"STRING\"}],\"timestampIndex\":-1}",
+                    2,
+                    2
+            );
+        });
+    }
+
+    @Test
+    public void testDelimiterPriority3() throws Exception {
+        assertNoLeak(textLoader -> {
+            final String expected = "f0\tf1\tf2\tf3\n" +
+                    "+\t+\t+\t+\n" +
+                    "+\t+\t+\t+\n";
+
+            String csv = "+-+-+-+\n" +
+                    "+-+-+-+\n";
+
+            configureLoaderDefaults(textLoader);
+            textLoader.setForceHeaders(false);
+            playText(
+                    textLoader,
+                    csv,
+                    200,
+                    expected,
+                    "{\"columnCount\":4,\"columns\":[{\"index\":0,\"name\":\"f0\",\"type\":\"STRING\"},{\"index\":1,\"name\":\"f1\",\"type\":\"STRING\"},{\"index\":2,\"name\":\"f2\",\"type\":\"STRING\"},{\"index\":3,\"name\":\"f3\",\"type\":\"STRING\"}],\"timestampIndex\":-1}",
+                    2,
+                    2
+            );
         });
     }
 
@@ -556,10 +714,18 @@ public class PlainTextImportTest extends AbstractCairoTest {
                     "XYZ,16,TRUE,,GROUP2\n" +
                     "XCB,29,TRUE,this is not the end,GROUP2\n";
 
-            configureLoaderDefaults(textLoader, TextDelimiter.CSV);
+            configureLoaderDefaults(textLoader, (byte) ',');
             // at buffer size 85 "value" column type is determined to be INT,
             // which makes 14.4 not to parse
-            playText(textLoader, csv, 85, expected);
+            playText(
+                    textLoader,
+                    csv,
+                    85,
+                    expected,
+                    "{\"columnCount\":5,\"columns\":[{\"index\":0,\"name\":\"type\",\"type\":\"STRING\"},{\"index\":1,\"name\":\"value\",\"type\":\"INT\"},{\"index\":2,\"name\":\"active\",\"type\":\"BOOLEAN\"},{\"index\":3,\"name\":\"desc\",\"type\":\"STRING\"},{\"index\":4,\"name\":\"grp\",\"type\":\"STRING\"}],\"timestampIndex\":-1}",
+                    5,
+                    4
+            );
         });
     }
 
@@ -582,10 +748,17 @@ public class PlainTextImportTest extends AbstractCairoTest {
                     "XYZ,16,TRUE,,GROUP2\n" +
                     "XCB,29,TRUE,this is not the end,GROUP2\n";
 
-            configureLoaderDefaults(textLoader, TextDelimiter.CSV);
+            configureLoaderDefaults(textLoader, (byte) ',');
             // at buffer size 250 "value" is type is determined as DOUBLE
-            playText(textLoader, csv, 250, expected);
-            Assert.assertEquals(5, textLoader.getLineCount());
+            playText(
+                    textLoader,
+                    csv,
+                    250,
+                    expected,
+                    "{\"columnCount\":5,\"columns\":[{\"index\":0,\"name\":\"type\",\"type\":\"STRING\"},{\"index\":1,\"name\":\"value\",\"type\":\"DOUBLE\"},{\"index\":2,\"name\":\"active\",\"type\":\"BOOLEAN\"},{\"index\":3,\"name\":\"desc\",\"type\":\"STRING\"},{\"index\":4,\"name\":\"grp\",\"type\":\"STRING\"}],\"timestampIndex\":-1}",
+                    5,
+                    5
+            );
         });
     }
 
@@ -602,12 +775,19 @@ public class PlainTextImportTest extends AbstractCairoTest {
                     "CDE,bb,b,\"sentence 1\n" +
                     "sentence 2\",12\n";
 
-            configureLoaderDefaults(textLoader, TextDelimiter.CSV);
+            configureLoaderDefaults(textLoader);
             textLoader.setForceHeaders(true);
             textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
             // at buffer size 250 "value" is type is determined as DOUBLE
-            playText(textLoader, csv, 90, expected);
-            Assert.assertEquals(2, textLoader.getLineCount());
+            playText(
+                    textLoader,
+                    csv,
+                    90,
+                    expected,
+                    "{\"columnCount\":5,\"columns\":[{\"index\":0,\"name\":\"type\",\"type\":\"STRING\"},{\"index\":1,\"name\":\"value\",\"type\":\"STRING\"},{\"index\":2,\"name\":\"active\",\"type\":\"STRING\"},{\"index\":3,\"name\":\"desc\",\"type\":\"STRING\"},{\"index\":4,\"name\":\"_1\",\"type\":\"INT\"}],\"timestampIndex\":-1}",
+                    2,
+                    2
+            );
         });
     }
 
@@ -657,8 +837,16 @@ public class PlainTextImportTest extends AbstractCairoTest {
                     DateLocaleFactory.INSTANCE,
                     new DateFormatFactory()
             )) {
-                configureLoaderDefaults(loader, TextDelimiter.CSV);
-                playText(loader, csv, 240, expected);
+                configureLoaderDefaults(loader, (byte) ',');
+                playText(
+                        loader,
+                        csv,
+                        240,
+                        expected,
+                        "{\"columnCount\":10,\"columns\":[{\"index\":0,\"name\":\"f0\",\"type\":\"STRING\"},{\"index\":1,\"name\":\"f1\",\"type\":\"INT\"},{\"index\":2,\"name\":\"f2\",\"type\":\"INT\"},{\"index\":3,\"name\":\"f3\",\"type\":\"DOUBLE\"},{\"index\":4,\"name\":\"f4\",\"type\":\"DATE\"},{\"index\":5,\"name\":\"f5\",\"type\":\"DATE\"},{\"index\":6,\"name\":\"f6\",\"type\":\"DATE\"},{\"index\":7,\"name\":\"f7\",\"type\":\"INT\"},{\"index\":8,\"name\":\"f8\",\"type\":\"BOOLEAN\"},{\"index\":9,\"name\":\"f9\",\"type\":\"INT\"}],\"timestampIndex\":-1}",
+                        12,
+                        11
+                );
             }
         });
     }
@@ -746,10 +934,18 @@ public class PlainTextImportTest extends AbstractCairoTest {
                     "35\tМуниципальное казенное учреждение «Административно-хозяйственная служба обеспечения деятельности органов местного самоуправления Ржевского сельского поселения муниципального района  «Ровеньский район» Белгородской области»\tПлановая   ревизия\tРевизия финансово-хозяйственной деятельности\t01.01.2017 г.  - 20.08.2018 г.\t20.08.2018 г.\t07.09.2018 г.\t- нарушение соблюдения норм Трудового кодекса РФ ст. 72, 100, 136;                                                                - нарушения в части правомерности начисления и выплаты стимулирующей части оплаты труда; - нарушения требований п.3 ,11, 108, 265 Инструкции Минфина №157н.\tВыдано представление об устранении выявленных нарушений в срок до 30.10.2018 года\n" +
                     "36\tМуниципальное казенное учреждение «Административно-хозяйственная служба обеспечения деятельности органов местного самоуправления городского поселения «Поселок Ровеньки» муниципального района «Ровеньский район» Белгородской области»\tПлановая   ревизия\tРевизия финансово-хозяйственной деятельности\t01.01.2017 г.-31.10.2018 г.\t15.10.2018 г.\t12.11.2018 г.\t- необоснованное использование бюджетных средств на сумму 828,7 тыс. руб.;                                                      - излишки нефинансовых активов у 1 материально-ответственного лица на сумму 139,9 тыс. рублей;                          - нарушение требований ст.19,21 Федеральным законом от 5 апреля 2013 года №44-ФЗ «О контрактной системе в сфере закупок, товаров, работ, услуг для обеспечения государственных и муниципальных нужд» и ч.2 ст.72 Бюджетного кодекса РФ;                                                   -  нарушение соблюдения норм Трудового кодекса РФ ст.136 и другие  нарушения в части обоснованности начисления компенсационных выплат за совмещение профессий и расширенный объем.\tВыдано представление об устранении нарушений в срок до 29.12.2018 года\n";
 
-            configureLoaderDefaults(textLoader, TextDelimiter.CSV);
+            configureLoaderDefaults(textLoader, (byte) ',');
             textLoader.setForceHeaders(true);
             textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
-            playText(textLoader, csv, 10000, expected);
+            playText(
+                    textLoader,
+                    csv,
+                    10000,
+                    expected,
+                    "{\"columnCount\":9,\"columns\":[{\"index\":0,\"name\":\"_1\",\"type\":\"INT\"},{\"index\":1,\"name\":\"f1\",\"type\":\"STRING\"},{\"index\":2,\"name\":\"ВидКонтрольногоМероприятия\",\"type\":\"STRING\"},{\"index\":3,\"name\":\"ТемаКонтрольногоМероприятия\",\"type\":\"STRING\"},{\"index\":4,\"name\":\"ПроверяемыйПериод\",\"type\":\"STRING\"},{\"index\":5,\"name\":\"_123\",\"type\":\"STRING\"},{\"index\":6,\"name\":\"ОкончаниеПроверки\",\"type\":\"STRING\"},{\"index\":7,\"name\":\"ВыявленныеНарушенияНедостатки\",\"type\":\"STRING\"},{\"index\":8,\"name\":\"РезультатыПроверки\",\"type\":\"STRING\"}],\"timestampIndex\":-1}",
+                    36,
+                    36
+            );
         });
     }
 
@@ -800,8 +996,16 @@ public class PlainTextImportTest extends AbstractCairoTest {
                     DateLocaleFactory.INSTANCE,
                     new DateFormatFactory()
             )) {
-                configureLoaderDefaults(loader, TextDelimiter.CSV);
-                playText(loader, csv, 1024, expected);
+                configureLoaderDefaults(loader, (byte) ',');
+                playText(
+                        loader,
+                        csv,
+                        1024,
+                        expected,
+                        "{\"columnCount\":10,\"columns\":[{\"index\":0,\"name\":\"f0\",\"type\":\"STRING\"},{\"index\":1,\"name\":\"f1\",\"type\":\"INT\"},{\"index\":2,\"name\":\"f2\",\"type\":\"INT\"},{\"index\":3,\"name\":\"f3\",\"type\":\"DOUBLE\"},{\"index\":4,\"name\":\"f4\",\"type\":\"DATE\"},{\"index\":5,\"name\":\"f5\",\"type\":\"DATE\"},{\"index\":6,\"name\":\"f6\",\"type\":\"DATE\"},{\"index\":7,\"name\":\"f7\",\"type\":\"INT\"},{\"index\":8,\"name\":\"f8\",\"type\":\"BOOLEAN\"},{\"index\":9,\"name\":\"f9\",\"type\":\"LONG\"}],\"timestampIndex\":-1}",
+                        12,
+                        12
+                );
             }
         });
     }
@@ -890,10 +1094,18 @@ public class PlainTextImportTest extends AbstractCairoTest {
                     "35\tМуниципальное казенное учреждение «Административно-хозяйственная служба обеспечения деятельности органов местного самоуправления Ржевского сельского поселения муниципального района  «Ровеньский район» Белгородской области»\tПлановая   ревизия\tРевизия финансово-хозяйственной деятельности\t01.01.2017 г.  - 20.08.2018 г.\t20.08.2018 г.\t07.09.2018 г.\t- нарушение соблюдения норм Трудового кодекса РФ ст. 72, 100, 136;                                                                - нарушения в части правомерности начисления и выплаты стимулирующей части оплаты труда; - нарушения требований п.3 ,11, 108, 265 Инструкции Минфина №157н.\tВыдано представление об устранении выявленных нарушений в срок до 30.10.2018 года\n" +
                     "36\tМуниципальное казенное учреждение «Административно-хозяйственная служба обеспечения деятельности органов местного самоуправления городского поселения «Поселок Ровеньки» муниципального района «Ровеньский район» Белгородской области»\tПлановая   ревизия\tРевизия финансово-хозяйственной деятельности\t01.01.2017 г.-31.10.2018 г.\t15.10.2018 г.\t12.11.2018 г.\t- необоснованное использование бюджетных средств на сумму 828,7 тыс. руб.;                                                      - излишки нефинансовых активов у 1 материально-ответственного лица на сумму 139,9 тыс. рублей;                          - нарушение требований ст.19,21 Федеральным законом от 5 апреля 2013 года №44-ФЗ «О контрактной системе в сфере закупок, товаров, работ, услуг для обеспечения государственных и муниципальных нужд» и ч.2 ст.72 Бюджетного кодекса РФ;                                                   -  нарушение соблюдения норм Трудового кодекса РФ ст.136 и другие  нарушения в части обоснованности начисления компенсационных выплат за совмещение профессий и расширенный объем.\tВыдано представление об устранении нарушений в срок до 29.12.2018 года\n";
 
-            configureLoaderDefaults(textLoader, TextDelimiter.CSV);
+            configureLoaderDefaults(textLoader, (byte) ',');
             textLoader.setForceHeaders(true);
             textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
-            playText(textLoader, csv, 1024, expected);
+            playText(
+                    textLoader,
+                    csv,
+                    1024,
+                    expected,
+                    "{\"columnCount\":9,\"columns\":[{\"index\":0,\"name\":\"№ПП\",\"type\":\"STRING\"},{\"index\":1,\"name\":\"f1\",\"type\":\"STRING\"},{\"index\":2,\"name\":\"ВидКонтрольногоМероприятия\",\"type\":\"STRING\"},{\"index\":3,\"name\":\"ТемаКонтрольногоМероприятия\",\"type\":\"STRING\"},{\"index\":4,\"name\":\"ПроверяемыйПериод\",\"type\":\"STRING\"},{\"index\":5,\"name\":\"НачалоПроверки\",\"type\":\"STRING\"},{\"index\":6,\"name\":\"ОкончаниеПроверки\",\"type\":\"STRING\"},{\"index\":7,\"name\":\"ВыявленныеНарушенияНедостатки\",\"type\":\"STRING\"},{\"index\":8,\"name\":\"РезультатыПроверки\",\"type\":\"STRING\"}],\"timestampIndex\":-1}",
+                    36,
+                    36
+            );
         });
     }
 
@@ -914,9 +1126,47 @@ public class PlainTextImportTest extends AbstractCairoTest {
                     ",6,4527,2.48986426275223,2015-01-16T19:15:09.000Z,2015-01-16 19:15:09,01/16/2015,2719,FALSE,67489936\n" +
                     "CMP1,7,6460,6.39910243218765,2015-01-17T19:15:09.000Z,2015-01-17 19:15:09,01/17/2015,5142,TRUE,69744070\n";
 
-            configureLoaderDefaults(textLoader, TextDelimiter.CSV);
+            configureLoaderDefaults(textLoader, (byte) ',');
             textLoader.setForceHeaders(false);
-            playText(textLoader, csv, 260, expected);
+            playText(
+                    textLoader,
+                    csv,
+                    260,
+                    expected,
+                    "{\"columnCount\":10,\"columns\":[{\"index\":0,\"name\":\"StrSym\",\"type\":\"STRING\"},{\"index\":1,\"name\":\"IntSym\",\"type\":\"INT\"},{\"index\":2,\"name\":\"IntCol\",\"type\":\"INT\"},{\"index\":3,\"name\":\"DoubleCol\",\"type\":\"DOUBLE\"},{\"index\":4,\"name\":\"IsoDate\",\"type\":\"DATE\"},{\"index\":5,\"name\":\"Fmt1Date\",\"type\":\"DATE\"},{\"index\":6,\"name\":\"Fmt2Date\",\"type\":\"DATE\"},{\"index\":7,\"name\":\"Phone\",\"type\":\"INT\"},{\"index\":8,\"name\":\"boolean\",\"type\":\"BOOLEAN\"},{\"index\":9,\"name\":\"long\",\"type\":\"INT\"}],\"timestampIndex\":-1}",
+                    5,
+                    4
+            );
+        });
+    }
+
+    @Test
+    public void testNonTabularText() throws Exception {
+        assertNoLeak(textLoader -> {
+            String text = "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Pellentesque vitae justo mollis, placerat massa vel, ultricies dui. \n" +
+                    "Donec nibh orci, vulputate finibus imperdiet vel, hendrerit ultrices libero. Nulla tristique ipsum ex, efficitur gravida massa \n" +
+                    "condimentum a. Quisque id tellus in enim tempor fermentum. Nunc eu odio vel felis consectetur aliquet eget et nulla. Praesent \n" +
+                    "sit amet sapien magna. Phasellus ut tortor diam. Vestibulum tristique urna ipsum. Maecenas tempor lectus ac ligula dictum, \n" +
+                    "eu semper ante malesuada. Quisque bibendum egestas malesuada. Mauris suscipit orci tempor feugiat finibus. Quisque aliquam \n" +
+                    "elit ut nulla tincidunt, vel cursus diam commodo. Sed id nunc sollicitudin, ornare nisi eu, ultrices nunc. Phasellus ac libero \n" +
+                    "eu nisl volutpat viverra. Fusce eget fermentum massa, ut vulputate urna. Etiam in tristique nunc.";
+            configureLoaderDefaults(textLoader);
+            try {
+                playText0(textLoader, text, 512, ENTITY_MANIPULATOR);
+            } catch (UnknownDelimiterException ignore) {
+            }
+        });
+    }
+
+    @Test
+    public void testNonTabularTextOneLine() throws Exception {
+        assertNoLeak(textLoader -> {
+            String text = "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Pellentesque vitae justo mollis, placerat massa vel, ultricies dui.Donec nibh orci, vulputate finibus imperdiet vel, hendrerit ultrices libero. Nulla tristique ipsum ex, efficitur gravida massacondimentum a. Quisque id tellus in enim tempor fermentum. Nunc eu odio vel felis consectetur aliquet eget et nulla. Praesentsit amet sapien magna. Phasellus ut tortor diam. Vestibulum tristique urna ipsum. Maecenas tempor lectus ac ligula dictum,eu semper ante malesuada. Quisque bibendum egestas malesuada. Mauris suscipit orci tempor feugiat finibus. Quisque aliquamelit ut nulla tincidunt, vel cursus diam commodo. Sed id nunc sollicitudin, ornare nisi eu, ultrices nunc. Phasellus ac liberoeu nisl volutpat viverra. Fusce eget fermentum massa, ut vulputate urna. Etiam in tristique nunc.";
+            configureLoaderDefaults(textLoader);
+            try {
+                playText0(textLoader, text, 512, ENTITY_MANIPULATOR);
+            } catch (UnknownDelimiterException ignore) {
+            }
         });
     }
 
@@ -950,7 +1200,7 @@ public class PlainTextImportTest extends AbstractCairoTest {
                     "CMP2,2,4770,2.85092033445835,2015-02-08T19:15:09.000Z,2015-02-08 19:15:09,02/08/2015,253,TRUE,33766814\n" +
                     "CMP1,5,4938,4.42754498450086,2015-02-09T19:15:09.000Z,2015-02-09 19:15:09,02/09/2015,7817,FALSE,61983099\n";
 
-            configureLoaderDefaults(textLoader, TextDelimiter.CSV);
+            configureLoaderDefaults(textLoader);
 
             playJson(textLoader, ("[\n" +
                     "  {\n" +
@@ -959,7 +1209,15 @@ public class PlainTextImportTest extends AbstractCairoTest {
                     "  }\n" +
                     "]"));
             textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
-            playText(textLoader, csv, 1024, expected);
+            playText(
+                    textLoader,
+                    csv,
+                    1024,
+                    expected,
+                    "{\"columnCount\":10,\"columns\":[{\"index\":0,\"name\":\"f0\",\"type\":\"STRING\"},{\"index\":1,\"name\":\"f1\",\"type\":\"INT\"},{\"index\":2,\"name\":\"f2\",\"type\":\"INT\"},{\"index\":3,\"name\":\"f3\",\"type\":\"FLOAT\"},{\"index\":4,\"name\":\"f4\",\"type\":\"DATE\"},{\"index\":5,\"name\":\"f5\",\"type\":\"DATE\"},{\"index\":6,\"name\":\"f6\",\"type\":\"DATE\"},{\"index\":7,\"name\":\"f7\",\"type\":\"INT\"},{\"index\":8,\"name\":\"f8\",\"type\":\"BOOLEAN\"},{\"index\":9,\"name\":\"f9\",\"type\":\"LONG\"}],\"timestampIndex\":-1}",
+                    12,
+                    12
+            );
         });
     }
 
@@ -993,7 +1251,7 @@ public class PlainTextImportTest extends AbstractCairoTest {
                     "CMP2,2,4770,2.85092033445835,2015-02-08T19:15:09.000Z,2015-02-08 19:15:09,02/08/2015,253,TRUE,33766814\n" +
                     "CMP1,5,4938,4.42754498450086,2015-02-09T19:15:09.000Z,2015-02-09 19:15:09,02/09/2015,7817,FALSE,61983099\n";
 
-            configureLoaderDefaults(textLoader, TextDelimiter.CSV);
+            configureLoaderDefaults(textLoader, (byte) ',');
 
             playJson(textLoader, ("[\n" +
                     "  {\n" +
@@ -1002,7 +1260,15 @@ public class PlainTextImportTest extends AbstractCairoTest {
                     "  }\n" +
                     "]"));
             textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
-            playText(textLoader, csv, 1024, expected);
+            playText(
+                    textLoader,
+                    csv,
+                    1024,
+                    expected,
+                    "{\"columnCount\":10,\"columns\":[{\"index\":0,\"name\":\"f0\",\"type\":\"STRING\"},{\"index\":1,\"name\":\"f1\",\"type\":\"BYTE\"},{\"index\":2,\"name\":\"f2\",\"type\":\"INT\"},{\"index\":3,\"name\":\"f3\",\"type\":\"DOUBLE\"},{\"index\":4,\"name\":\"f4\",\"type\":\"DATE\"},{\"index\":5,\"name\":\"f5\",\"type\":\"DATE\"},{\"index\":6,\"name\":\"f6\",\"type\":\"DATE\"},{\"index\":7,\"name\":\"f7\",\"type\":\"INT\"},{\"index\":8,\"name\":\"f8\",\"type\":\"BOOLEAN\"},{\"index\":9,\"name\":\"f9\",\"type\":\"LONG\"}],\"timestampIndex\":-1}",
+                    12,
+                    12
+            );
         });
     }
 
@@ -1036,7 +1302,7 @@ public class PlainTextImportTest extends AbstractCairoTest {
                     "CMP2,2,4770,2.85092033445835,2015-02-08T19:15:09.000Z,2015-02-08 19:15:09,02/08/2015,253,TRUE,33766814\n" +
                     "CMP1,5,4938,4.42754498450086,2015-02-09T19:15:09.000Z,2015-02-09 19:15:09,02/09/2015,7817,FALSE,61983099\n";
 
-            configureLoaderDefaults(textLoader, TextDelimiter.CSV);
+            configureLoaderDefaults(textLoader);
 
             playJson(textLoader, ("[\n" +
                     "  {\n" +
@@ -1049,7 +1315,15 @@ public class PlainTextImportTest extends AbstractCairoTest {
                     "  }\n" +
                     "]"));
             textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
-            playText(textLoader, csv, 1024, expected);
+            playText(
+                    textLoader,
+                    csv,
+                    1024,
+                    expected,
+                    "{\"columnCount\":10,\"columns\":[{\"index\":0,\"name\":\"f0\",\"type\":\"STRING\"},{\"index\":1,\"name\":\"f1\",\"type\":\"SHORT\"},{\"index\":2,\"name\":\"f2\",\"type\":\"SHORT\"},{\"index\":3,\"name\":\"f3\",\"type\":\"DOUBLE\"},{\"index\":4,\"name\":\"f4\",\"type\":\"DATE\"},{\"index\":5,\"name\":\"f5\",\"type\":\"DATE\"},{\"index\":6,\"name\":\"f6\",\"type\":\"DATE\"},{\"index\":7,\"name\":\"f7\",\"type\":\"INT\"},{\"index\":8,\"name\":\"f8\",\"type\":\"BOOLEAN\"},{\"index\":9,\"name\":\"f9\",\"type\":\"LONG\"}],\"timestampIndex\":-1}",
+                    12,
+                    12
+            );
         });
     }
 
@@ -1073,7 +1347,7 @@ public class PlainTextImportTest extends AbstractCairoTest {
                     "CMP2,2,4770,2.85092033445835,2015-02-08T19:15:09.000Z,2015-02-08 19:15:09,02/08/2015,253,TRUE,33766814\n" +
                     "CMP1,5,4938,4.42754498450086,2015-02-09T19:15:09.000Z,2015-02-09 19:15:09,02/09/2015,7817,FALSE,61983099\n";
 
-            configureLoaderDefaults(loader, TextDelimiter.CSV);
+            configureLoaderDefaults(loader, (byte) ',');
 
             playJson(loader, ("[\n" +
                     "  {\n" +
@@ -1087,7 +1361,15 @@ public class PlainTextImportTest extends AbstractCairoTest {
                     "  }\n" +
                     "]"));
             loader.setState(TextLoader.ANALYZE_STRUCTURE);
-            playText(loader, csv, 1024, expected);
+            playText(
+                    loader,
+                    csv,
+                    1024,
+                    expected,
+                    "{\"columnCount\":10,\"columns\":[{\"index\":0,\"name\":\"f0\",\"type\":\"SHORT\"},{\"index\":1,\"name\":\"f1\",\"type\":\"INT\"},{\"index\":2,\"name\":\"f2\",\"type\":\"SHORT\"},{\"index\":3,\"name\":\"f3\",\"type\":\"DOUBLE\"},{\"index\":4,\"name\":\"f4\",\"type\":\"DATE\"},{\"index\":5,\"name\":\"f5\",\"type\":\"DATE\"},{\"index\":6,\"name\":\"f6\",\"type\":\"DATE\"},{\"index\":7,\"name\":\"f7\",\"type\":\"INT\"},{\"index\":8,\"name\":\"f8\",\"type\":\"BOOLEAN\"},{\"index\":9,\"name\":\"f9\",\"type\":\"LONG\"}],\"timestampIndex\":-1}",
+                    12,
+                    1
+            );
         });
     }
 
@@ -1121,7 +1403,7 @@ public class PlainTextImportTest extends AbstractCairoTest {
                     "CMP2,2,4770,2.85092033445835,2015-02-08T19:15:09.000Z,2015-02-08 19:15:09,02/08/2015,253,TRUE,33766814\n" +
                     "CMP1,5,4938,4.42754498450086,2015-02-09T19:15:09.000Z,2015-02-09 19:15:09,02/09/2015,7817,FALSE,61983099\n";
 
-            configureLoaderDefaults(textLoader, TextDelimiter.CSV);
+            configureLoaderDefaults(textLoader);
 
             playJson(textLoader, ("[\n" +
                     "  {\n" +
@@ -1130,31 +1412,139 @@ public class PlainTextImportTest extends AbstractCairoTest {
                     "  }\n" +
                     "]"));
             textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
-            playText(textLoader, csv, 1024, expected);
+            playText(
+                    textLoader,
+                    csv,
+                    1024,
+                    expected,
+                    "{\"columnCount\":10,\"columns\":[{\"index\":0,\"name\":\"f0\",\"type\":\"SYMBOL\"},{\"index\":1,\"name\":\"f1\",\"type\":\"INT\"},{\"index\":2,\"name\":\"f2\",\"type\":\"INT\"},{\"index\":3,\"name\":\"f3\",\"type\":\"DOUBLE\"},{\"index\":4,\"name\":\"f4\",\"type\":\"DATE\"},{\"index\":5,\"name\":\"f5\",\"type\":\"DATE\"},{\"index\":6,\"name\":\"f6\",\"type\":\"DATE\"},{\"index\":7,\"name\":\"f7\",\"type\":\"INT\"},{\"index\":8,\"name\":\"f8\",\"type\":\"BOOLEAN\"},{\"index\":9,\"name\":\"f9\",\"type\":\"LONG\"}],\"timestampIndex\":-1}",
+                    12,
+                    12
+            );
+        });
+    }
+
+    @Test
+    public void testOverwriteTable() throws Exception {
+        assertNoLeak(textLoader -> {
+            String expected = "f0\tf1\tf2\tf3\tf4\tf5\tf6\tf7\tf8\tf9\n" +
+                    "\"CMP2\t8\t8000\t2.276363521814\t2015-01-29T19:15:09.000Z\t2015-01-29T19:15:09.000Z\t2015-01-29T00:00:00.000Z\t323\ttrue\t14925407\n" +
+                    "CMP1\t2\t1581\t9.014234810602\t2015-01-30T19:15:09.000Z\t2015-01-30T19:15:09.000Z\t2015-01-30T00:00:00.000Z\t9138\tfalse\t68225213\n" +
+                    "CMP2\t8\t7067\t9.628433610778\t2015-01-31T19:15:09.000Z\t2015-01-31T19:15:09.000Z\t2015-01-31T00:00:00.000Z\t8197\ttrue\t58403960\n" +
+                    "CMP1\t8\t5313\t8.877646618057\t2015-02-01T19:15:09.000Z\t2015-02-01T19:15:09.000Z\t2015-02-01T00:00:00.000Z\t2733\tfalse\t69698373\n" +
+                    "\t4\t3883\t7.968730193097\t2015-02-02T19:15:09.000Z\t2015-02-02T19:15:09.000Z\t2015-02-02T00:00:00.000Z\t6912\ttrue\t91147394\n" +
+                    "CMP1\t7\t4256\t2.465535225347\t2015-02-03T19:15:09.000Z\t2015-02-03T19:15:09.000Z\t2015-02-03T00:00:00.000Z\t9453\tfalse\t50278940\n" +
+                    "CMP2\t4\t155\t5.085474955849\t2015-02-04T19:15:09.000Z\t2015-02-04T19:15:09.000Z\t2015-02-04T00:00:00.000Z\t8919\ttrue\t8671995\n" +
+                    "CMP1\t7\t4486\tNaN\t2015-02-05T19:15:09.000Z\t2015-02-05T19:15:09.000Z\t2015-02-05T00:00:00.000Z\t8670\tfalse\t751877\n" +
+                    "CMP2\t2\t6641\t0.038182535209\t2015-02-06T19:15:09.000Z\t2015-02-06T19:15:09.000Z\t2015-02-06T00:00:00.000Z\t8331\ttrue\t40909232527\n" +
+                    "CMP1\t1\t3579\t0.849663221743\t2015-02-07T19:15:09.000Z\t2015-02-07T19:15:09.000Z\t2015-02-07T00:00:00.000Z\t9592\tfalse\t11490662\n" +
+                    "CMP2\t2\t4770\t2.850920334458\t2015-02-08T19:15:09.000Z\t2015-02-08T19:15:09.000Z\t2015-02-08T00:00:00.000Z\t253\ttrue\t33766814\n" +
+                    "CMP1\t5\t4938\t4.427544984501\t2015-02-09T19:15:09.000Z\t2015-02-09T19:15:09.000Z\t2015-02-09T00:00:00.000Z\t7817\tfalse\t61983099\n";
+
+            String csv = "\"\"\"CMP2\",8,8000,2.27636352181435,2015-01-29T19:15:09.000Z,2015-01-29 19:15:09,01/29/2015,323,TRUE,14925407\n" +
+                    "CMP1,2,1581,9.01423481060192,2015-01-30T19:15:09.000Z,2015-01-30 19:15:09,01/30/2015,9138,FALSE,68225213\n" +
+                    "CMP2,8,7067,9.6284336107783,2015-01-31T19:15:09.000Z,2015-01-31 19:15:09,01/31/2015,8197,TRUE,58403960\n" +
+                    "CMP1,8,5313,8.87764661805704,2015-02-01T19:15:09.000Z,2015-02-01 19:15:09,02/01/2015,2733,FALSE,69698373\n" +
+                    ",4,3883,7.96873019309714,2015-02-02T19:15:09.000Z,2015-02-02 19:15:09,02/02/2015,6912,TRUE,91147394\n" +
+                    "CMP1,7,4256,2.46553522534668,2015-02-03T19:15:09.000Z,2015-02-03 19:15:09,02/03/2015,9453,FALSE,50278940\n" +
+                    "CMP2,4,155,5.08547495584935,2015-02-04T19:15:09.000Z,2015-02-04 19:15:09,02/04/2015,8919,TRUE,8671995\n" +
+                    "\"CMP1\",7,4486,,2015-02-05T19:15:09.000Z,2015-02-05 19:15:09,02/05/2015,8670,FALSE,751877\n" +
+                    "CMP2,2,6641,0.0381825352087617,2015-02-06T19:15:09.000Z,2015-02-06 19:15:09,02/06/2015,8331,TRUE,40909232527\n" +
+                    "CMP1,1,3579,0.849663221742958,2015-02-07T19:15:09.000Z,2015-02-07 19:15:09,02/07/2015,9592,FALSE,11490662\n" +
+                    "CMP2,2,4770,2.85092033445835,2015-02-08T19:15:09.000Z,2015-02-08 19:15:09,02/08/2015,253,TRUE,33766814\n" +
+                    "CMP1,5,4938,4.42754498450086,2015-02-09T19:15:09.000Z,2015-02-09 19:15:09,02/09/2015,7817,FALSE,61983099\n";
+
+            compiler.compile("create table test" +
+                    "(a symbol" +
+                    ", b int" +
+                    ", c long" +
+                    ", d float" +
+                    ", e date" +
+                    ", f date" +
+                    ", g date" +
+                    ", h long" +
+                    ", i boolean" +
+                    ", k long" +
+                    ", t timestamp)", null);
+
+            configureLoaderDefaults(textLoader, (byte) -1, Atomicity.SKIP_ROW, true);
+            playText(
+                    textLoader,
+                    csv,
+                    1024,
+                    expected,
+                    "{\"columnCount\":10,\"columns\":[{\"index\":0,\"name\":\"f0\",\"type\":\"STRING\"},{\"index\":1,\"name\":\"f1\",\"type\":\"INT\"},{\"index\":2,\"name\":\"f2\",\"type\":\"INT\"},{\"index\":3,\"name\":\"f3\",\"type\":\"DOUBLE\"},{\"index\":4,\"name\":\"f4\",\"type\":\"DATE\"},{\"index\":5,\"name\":\"f5\",\"type\":\"DATE\"},{\"index\":6,\"name\":\"f6\",\"type\":\"DATE\"},{\"index\":7,\"name\":\"f7\",\"type\":\"INT\"},{\"index\":8,\"name\":\"f8\",\"type\":\"BOOLEAN\"},{\"index\":9,\"name\":\"f9\",\"type\":\"LONG\"}],\"timestampIndex\":-1}",
+                    12,
+                    12
+            );
         });
     }
 
     @Test
     public void testReduceLinesForStats() throws Exception {
+        assertNoLeak(new DefaultTextConfiguration() {
+                         @Override
+                         public int getTextAnalysisMaxLines() {
+                             return 3;
+                         }
+                     },
+                textLoader -> {
+                    String expected = "StrSym\tIntSym\tIntCol\tDoubleCol\tIsoDate\tFmt1Date\tFmt2Date\tPhone\tboolean\tlong\n" +
+                            "CMP1\t7\t8284\t3.204578876030\t2015-01-13T19:15:09.000Z\t2015-01-13T19:15:09.000Z\t2015-01-13T00:00:00.000Z\t8284\ttrue\t10239799\n" +
+                            "CMP2\t3\t1066\t7.518668337725\t2015-01-14T19:15:09.000Z\t2015-01-14T19:15:09.000Z\t2015-01-14T00:00:00.000Z\t1066\tfalse\t23331405\n" +
+                            "CMP1\t4\t6938\t5.114077122416\t2015-01-15T19:15:09.000Z\t2015-01-15T19:15:09.000Z\t2015-01-15T00:00:00.000Z\t(099)889-776\ttrue\t55296137\n" +
+                            "CMP1\t7\t6460\t6.399102432188\t2015-01-17T19:15:09.000Z\t2015-01-17T19:15:09.000Z\t2015-01-17T00:00:00.000Z\t5142\ttrue\t69744070\n";
+
+
+                    String csv = "StrSym,Int Sym,Int_Col,DoubleCol,IsoDate,Fmt1Date,Fmt2Date,Phone,boolean,long\n" +
+                            "CMP1,7,8284,3.2045788760297,2015-01-13T19:15:09.000Z,2015-01-13 19:15:09,01/13/2015,8284,TRUE,10239799\n" +
+                            "CMP2,3,1066,7.5186683377251,2015-01-14T19:15:09.000Z,2015-01-14 19:15:09,01/14/2015,1066,FALSE,23331405\n" +
+                            "CMP1,4,6938,5.11407712241635,2015-01-15T19:15:09.000Z,2015-01-15 19:15:09,01/15/2015,(099)889-776,TRUE,55296137\n" +
+                            ",6.2,4527,2.48986426275223,2015-01-16T19:15:09.000Z,2015-01-16 19:15:09,01/16/2015,2719,FALSE,67489936\n" +
+                            "CMP1,7,6460,6.39910243218765,2015-01-17T19:15:09.000Z,2015-01-17 19:15:09,01/17/2015,5142,TRUE,69744070\n";
+
+                    configureLoaderDefaults(textLoader, (byte) ',');
+                    textLoader.setForceHeaders(false);
+                    playText(
+                            textLoader,
+                            csv,
+                            1024,
+                            expected,
+                            "{\"columnCount\":10,\"columns\":[{\"index\":0,\"name\":\"StrSym\",\"type\":\"STRING\"},{\"index\":1,\"name\":\"IntSym\",\"type\":\"INT\"},{\"index\":2,\"name\":\"IntCol\",\"type\":\"INT\"},{\"index\":3,\"name\":\"DoubleCol\",\"type\":\"DOUBLE\"},{\"index\":4,\"name\":\"IsoDate\",\"type\":\"DATE\"},{\"index\":5,\"name\":\"Fmt1Date\",\"type\":\"DATE\"},{\"index\":6,\"name\":\"Fmt2Date\",\"type\":\"DATE\"},{\"index\":7,\"name\":\"Phone\",\"type\":\"STRING\"},{\"index\":8,\"name\":\"boolean\",\"type\":\"BOOLEAN\"},{\"index\":9,\"name\":\"long\",\"type\":\"INT\"}],\"timestampIndex\":-1}",
+                            5,
+                            4
+                    );
+                });
+    }
+
+    @Test
+    public void testReservedTableName() throws Exception {
         assertNoLeak(textLoader -> {
-            String expected = "StrSym\tIntSym\tIntCol\tDoubleCol\tIsoDate\tFmt1Date\tFmt2Date\tPhone\tboolean\tlong\n" +
-                    "CMP1\t7\t8284\t3.204578876030\t2015-01-13T19:15:09.000Z\t2015-01-13T19:15:09.000Z\t2015-01-13T00:00:00.000Z\t8284\ttrue\t10239799\n" +
-                    "CMP2\t3\t1066\t7.518668337725\t2015-01-14T19:15:09.000Z\t2015-01-14T19:15:09.000Z\t2015-01-14T00:00:00.000Z\t1066\tfalse\t23331405\n" +
-                    "CMP1\t4\t6938\t5.114077122416\t2015-01-15T19:15:09.000Z\t2015-01-15T19:15:09.000Z\t2015-01-15T00:00:00.000Z\t(099)889-776\ttrue\t55296137\n" +
-                    "CMP1\t7\t6460\t6.399102432188\t2015-01-17T19:15:09.000Z\t2015-01-17T19:15:09.000Z\t2015-01-17T00:00:00.000Z\t5142\ttrue\t69744070\n";
+            String csv = "\"\"\"CMP2\",8,8000,2.27636352181435,2015-01-29T19:15:09.000Z,2015-01-29 19:15:09,01/29/2015,323,TRUE,14925407\n" +
+                    "CMP1,2,1581,9.01423481060192,2015-01-30T19:15:09.000Z,2015-01-30 19:15:09,01/30/2015,9138,FALSE,68225213\n" +
+                    "CMP2,8,7067,9.6284336107783,2015-01-31T19:15:09.000Z,2015-01-31 19:15:09,01/31/2015,8197,TRUE,58403960\n" +
+                    "CMP1,8,5313,8.87764661805704,2015-02-01T19:15:09.000Z,2015-02-01 19:15:09,02/01/2015,2733,FALSE,69698373\n" +
+                    ",4,3883,7.96873019309714,2015-02-02T19:15:09.000Z,2015-02-02 19:15:09,02/02/2015,6912,TRUE,91147394\n" +
+                    "CMP1,7,4256,2.46553522534668,2015-02-03T19:15:09.000Z,2015-02-03 19:15:09,02/03/2015,9453,FALSE,50278940\n" +
+                    "CMP2,4,155,5.08547495584935,2015-02-04T19:15:09.000Z,2015-02-04 19:15:09,02/04/2015,8919,TRUE,8671995\n" +
+                    "\"CMP1\",7,4486,,2015-02-05T19:15:09.000Z,2015-02-05 19:15:09,02/05/2015,8670,FALSE,751877\n" +
+                    "CMP2,2,6641,0.0381825352087617,2015-02-06T19:15:09.000Z,2015-02-06 19:15:09,02/06/2015,8331,TRUE,40909232527\n" +
+                    "CMP1,1,3579,0.849663221742958,2015-02-07T19:15:09.000Z,2015-02-07 19:15:09,02/07/2015,9592,FALSE,11490662\n" +
+                    "CMP2,2,4770,2.85092033445835,2015-02-08T19:15:09.000Z,2015-02-08 19:15:09,02/08/2015,253,TRUE,33766814\n" +
+                    "CMP1,5,4938,4.42754498450086,2015-02-09T19:15:09.000Z,2015-02-09 19:15:09,02/09/2015,7817,FALSE,61983099\n";
 
+            try (Path path = new Path()) {
+                path.of(configuration.getRoot()).concat("test").$();
+                Files.touch(path);
+            }
 
-            String csv = "StrSym,Int Sym,Int_Col,DoubleCol,IsoDate,Fmt1Date,Fmt2Date,Phone,boolean,long\n" +
-                    "CMP1,7,8284,3.2045788760297,2015-01-13T19:15:09.000Z,2015-01-13 19:15:09,01/13/2015,8284,TRUE,10239799\n" +
-                    "CMP2,3,1066,7.5186683377251,2015-01-14T19:15:09.000Z,2015-01-14 19:15:09,01/14/2015,1066,FALSE,23331405\n" +
-                    "CMP1,4,6938,5.11407712241635,2015-01-15T19:15:09.000Z,2015-01-15 19:15:09,01/15/2015,(099)889-776,TRUE,55296137\n" +
-                    ",6.2,4527,2.48986426275223,2015-01-16T19:15:09.000Z,2015-01-16 19:15:09,01/16/2015,2719,FALSE,67489936\n" +
-                    "CMP1,7,6460,6.39910243218765,2015-01-17T19:15:09.000Z,2015-01-17 19:15:09,01/17/2015,5142,TRUE,69744070\n";
-
-            configureLoaderDefaults(textLoader, TextDelimiter.CSV);
-            textLoader.setForceHeaders(false);
-            textLoader.setStatsLineCountLimit(3);
-            playText(textLoader, csv, 1024, expected);
+            configureLoaderDefaults(textLoader, (byte) -1, Atomicity.SKIP_ROW, true);
+            try {
+                playText0(textLoader, csv, 1024, ENTITY_MANIPULATOR);
+                Assert.fail();
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getMessage(), "name is reserved");
+            }
         });
     }
 
@@ -1181,9 +1571,78 @@ public class PlainTextImportTest extends AbstractCairoTest {
                     "127\tabc\t2015-01-20T21:00:00.000Z\t1.53321\tTRUE\tLorem ipsum dolor sit amet.\t112\n" +
                     "128\tabc\t2015-01-20T21:00:00.000Z\t2.456\tTRUE\tLorem ipsum dolor sit amet.\t122";
 
-            configureLoaderDefaults(textLoader, TextDelimiter.TAB);
+            configureLoaderDefaults(textLoader);
             textLoader.setForceHeaders(false);
-            playText(textLoader, csv, 85, expected);
+            playText(
+                    textLoader,
+                    csv,
+                    200,
+                    expected,
+                    "{\"columnCount\":7,\"columns\":[{\"index\":0,\"name\":\"f0\",\"type\":\"INT\"},{\"index\":1,\"name\":\"f1\",\"type\":\"STRING\"},{\"index\":2,\"name\":\"f2\",\"type\":\"DATE\"},{\"index\":3,\"name\":\"f3\",\"type\":\"DOUBLE\"},{\"index\":4,\"name\":\"f4\",\"type\":\"BOOLEAN\"},{\"index\":5,\"name\":\"f5\",\"type\":\"STRING\"},{\"index\":6,\"name\":\"f6\",\"type\":\"INT\"}],\"timestampIndex\":-1}",
+                    6,
+                    6
+            );
+        });
+    }
+
+    @Test
+    public void testSimplePipe() throws Exception {
+        assertNoLeak(textLoader -> {
+            final String expected = "f0\tf1\tf2\tf3\tf4\tf5\tf6\n" +
+                    "123\tabc\t2015-01-20T21:00:00.000Z\t3.141500000000\ttrue\tLorem ipsum dolor sit amet.\t122\n" +
+                    "124\tabc\t2015-01-20T21:00:00.000Z\t7.342000000000\tfalse\tLorem ipsum \n" +
+                    "\n" +
+                    "dolor \"sit\" amet.\t546756\n" +
+                    "125\tabc\t2015-01-20T21:00:00.000Z\t9.334000000000\tfalse\tLorem ipsum \"dolor\" sit amet.\t23\n" +
+                    "126\tabc\t2015-01-20T21:00:00.000Z\t1.345000000000\ttrue\tLorem, ipsum, dolor sit amet.\t434\n" +
+                    "127\tabc\t2015-01-20T21:00:00.000Z\t1.533210000000\ttrue\tLorem ipsum dolor sit amet.\t112\n" +
+                    "128\tabc\t2015-01-20T21:00:00.000Z\t2.456000000000\ttrue\tLorem ipsum dolor sit amet.\t122\n";
+
+            String csv = "123|abc|2015-01-20T21:00:00.000Z|3.1415|TRUE|Lorem ipsum dolor sit amet.|122\n" +
+                    "124|abc|2015-01-20T21:00:00.000Z|7.342|FALSE|\"Lorem ipsum \n" +
+                    "\n" +
+                    "dolor \"\"sit\"\" amet.\"|546756\n" +
+                    "125|abc|2015-01-20T21:00:00.000Z|9.334||\"Lorem ipsum \"\"dolor\"\" sit amet.\"|23\n" +
+                    "126|abc|2015-01-20T21:00:00.000Z|1.345|TRUE|\"Lorem, ipsum, dolor sit amet.\"|434\n" +
+                    "120|abc|2015-01-20T21:00:00.000Z|1.345|TRUE|\"Lorem, ipsum, dolor sit amet.\"|434|asdfasdf|asdfasdf|asdfasd\n" +
+                    "127|abc|2015-01-20T21:00:00.000Z|1.53321|TRUE|Lorem ipsum dolor sit amet.|112\n" +
+                    "128|abc|2015-01-20T21:00:00.000Z|2.456|TRUE|Lorem ipsum dolor sit amet.|122";
+
+            configureLoaderDefaults(textLoader);
+            textLoader.setForceHeaders(false);
+            playText(
+                    textLoader,
+                    csv,
+                    200,
+                    expected,
+                    "{\"columnCount\":7,\"columns\":[{\"index\":0,\"name\":\"f0\",\"type\":\"INT\"},{\"index\":1,\"name\":\"f1\",\"type\":\"STRING\"},{\"index\":2,\"name\":\"f2\",\"type\":\"DATE\"},{\"index\":3,\"name\":\"f3\",\"type\":\"DOUBLE\"},{\"index\":4,\"name\":\"f4\",\"type\":\"BOOLEAN\"},{\"index\":5,\"name\":\"f5\",\"type\":\"STRING\"},{\"index\":6,\"name\":\"f6\",\"type\":\"INT\"}],\"timestampIndex\":-1}",
+                    6,
+                    6
+            );
+        });
+    }
+
+    @Test
+    public void testSmallInitialBuffer() throws Exception {
+        assertNoLeak(textLoader -> {
+            String csv = "123\tabc\t2015-01-20T21:00:00.000Z\t3.1415\tTRUE\tLorem ipsum dolor sit amet.\t122\n" +
+                    "124\tabc\t2015-01-20T21:00:00.000Z\t7.342\tFALSE\t\"Lorem ipsum \n" +
+                    "\n" +
+                    "dolor \"\"sit\"\" amet.\"\t546756\n" +
+                    "125\tabc\t2015-01-20T21:00:00.000Z\t9.334\t\t\"Lorem ipsum \"\"dolor\"\" sit amet.\"\t23\n" +
+                    "126\tabc\t2015-01-20T21:00:00.000Z\t1.345\tTRUE\t\"Lorem, ipsum, dolor sit amet.\"\t434\n" +
+                    "120\tabc\t2015-01-20T21:00:00.000Z\t1.345\tTRUE\t\"Lorem, ipsum, dolor sit amet.\"\t434\tasdfasdf\tasdfasdf\tasdfasd\n" +
+                    "127\tabc\t2015-01-20T21:00:00.000Z\t1.53321\tTRUE\tLorem ipsum dolor sit amet.\t112\n" +
+                    "128\tabc\t2015-01-20T21:00:00.000Z\t2.456\tTRUE\tLorem ipsum dolor sit amet.\t122";
+
+            configureLoaderDefaults(textLoader, (byte) '\t');
+            textLoader.setForceHeaders(false);
+            try {
+                playText0(textLoader, csv, 1, ENTITY_MANIPULATOR);
+                Assert.fail();
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getMessage(), "cannot determine text structure");
+            }
         });
     }
 
@@ -1270,18 +1729,251 @@ public class PlainTextImportTest extends AbstractCairoTest {
                     "35\tМуниципальное казенное учреждение «Административно-хозяйственная служба обеспечения деятельности органов местного самоуправления Ржевского сельского поселения муниципального района  «Ровеньский район» Белгородской области»\tПлановая   ревизия\tРевизия финансово-хозяйственной деятельности\t01.01.2017 г.  - 20.08.2018 г.\t20.08.2018 г.\t07.09.2018 г.\t- нарушение соблюдения норм Трудового кодекса РФ ст. 72, 100, 136;                                                                - нарушения в части правомерности начисления и выплаты стимулирующей части оплаты труда; - нарушения требований п.3 ,11, 108, 265 Инструкции Минфина №157н.\tВыдано представление об устранении выявленных нарушений в срок до 30.10.2018 года\n" +
                     "36\tМуниципальное казенное учреждение «Административно-хозяйственная служба обеспечения деятельности органов местного самоуправления городского поселения «Поселок Ровеньки» муниципального района «Ровеньский район» Белгородской области»\tПлановая   ревизия\tРевизия финансово-хозяйственной деятельности\t01.01.2017 г.-31.10.2018 г.\t15.10.2018 г.\t12.11.2018 г.\t- необоснованное использование бюджетных средств на сумму 828,7 тыс. руб.;                                                      - излишки нефинансовых активов у 1 материально-ответственного лица на сумму 139,9 тыс. рублей;                          - нарушение требований ст.19,21 Федеральным законом от 5 апреля 2013 года №44-ФЗ «О контрактной системе в сфере закупок, товаров, работ, услуг для обеспечения государственных и муниципальных нужд» и ч.2 ст.72 Бюджетного кодекса РФ;                                                   -  нарушение соблюдения норм Трудового кодекса РФ ст.136 и другие  нарушения в части обоснованности начисления компенсационных выплат за совмещение профессий и расширенный объем.\tВыдано представление об устранении нарушений в срок до 29.12.2018 года\n";
 
-            configureLoaderDefaults(textLoader, TextDelimiter.CSV);
+            configureLoaderDefaults(textLoader);
             textLoader.setForceHeaders(true);
             textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
-            playText(textLoader, csv, 1024, expected);
+            playText(
+                    textLoader,
+                    csv,
+                    2048,
+                    expected,
+                    "{\"columnCount\":9,\"columns\":[{\"index\":0,\"name\":\"№ПП\",\"type\":\"INT\"},{\"index\":1,\"name\":\"ОбъектыКонтрольногоМероприятия\",\"type\":\"STRING\"},{\"index\":2,\"name\":\"ВидКонтрольногоМероприятия\",\"type\":\"STRING\"},{\"index\":3,\"name\":\"ТемаКонтрольногоМероприятия\",\"type\":\"STRING\"},{\"index\":4,\"name\":\"ПроверяемыйПериод\",\"type\":\"STRING\"},{\"index\":5,\"name\":\"НачалоПроверки\",\"type\":\"STRING\"},{\"index\":6,\"name\":\"ОкончаниеПроверки\",\"type\":\"STRING\"},{\"index\":7,\"name\":\"ВыявленныеНарушенияНедостатки\",\"type\":\"STRING\"},{\"index\":8,\"name\":\"РезультатыПроверки\",\"type\":\"STRING\"}],\"timestampIndex\":-1}",
+                    36,
+                    36
+            );
+        });
+    }
+
+    @Test
+    public void testUtf8Tab() throws Exception {
+        assertNoLeak(textLoader -> {
+            String csv = "№ПП\tОбъектыКонтрольногоМероприятия\tВидКонтрольногоМероприятия\tТемаКонтрольногоМероприятия\tПроверяемыйПериод\tНачалоПроверки\tОкончаниеПроверки\tВыявленныеНарушенияНедостатки\tРезультатыПроверки\n" +
+                    "1\tМуниципальное унитарное предприятие «Ровеньские тепловые сети»\tВнеплановая выездная проверка\tПроверка финансово-хозяйственной деятельности\t01.01.2015г. - 31.12.2015г.\t09.03.2016г.\t01.04.2016г.\t-нарушения в части начисления и выплаты заработной платы;                          - неэффективное использования денежных средств;                                            -недостатки в ведении учета работы хозяйственной деятельности предприятия.\tВыдано представление об устранении выявленных нарушений в срок до 30.04.2016 года\n" +
+                    "2\tОАО «Ровеньская АК №1468»\tВнеплановая выездная проверка Дополнительная выездная проверка\tПроверка финансово-хозяйственной деятельности ОАО «Ровеньская АК №1468» в рамках договора на выполнение перевозок пассажиров по маршрутам муниципального района «Ровеньский район» от 31.12.2015 года № 12-53\t01 - 29.02.16 г.  01.01.2016 г. -  31.01.2016 г.,   01.03.2016 г. - 30.04.2016 г.\t04.04.2016г.  10.05.2016г.\t15.04.2016г.  31.05.2016г.\tнарушения условий муниципального договора.\t\"Выдано предписание об устранении нарушений условий договора на выполнение \n" +
+                    "перевозок пассажиров по маршрутам муниципального района \n" +
+                    "«Ровеньский район» от 31.12.2015 года №12-53    в срок до 20.06.2016 года\"\n" +
+                    "3\tАдминистрация Нагорьевского сельского поселения муниципального района «Ровеньский район» Белгородской области\tПлановая выездная ревизия\tРевизия финансово-хозяйственной деятельности; проверка соблюдения требований  в сфере закупок в отношении вопросов, предусмотренных частью 8 статьи 99 Федерального закона о контрактной системе №44-фз\t01.01.2015 г. -                   31.01.2016 г.\t08.02.2016г перерыв 04.05.2016.\t04.03.2016г. 38 раб. дней 06.05.2016г.\tнарушения в части начисления и правомерности выплаты заработной платы;                                                               - нарушения ведения бухгалтерского учета.                                                             По ФЗ №44-фз нарушений не установлено.\tВыдано представление об устранении выявленных нарушений в срок до 01.07.2016 года\n" +
+                    "4\tМКУК «Нагорьевский сельский дом культуры»\tПлановая выездная ревизия\tРевизия финансово-хозяйственной деятельности; проверка соблюдения требований  в сфере закупок в отношении вопросов, предусмотренных частью 8 статьи 99 Федерального закона о контрактной системе №44-фз\t01.01.2015 г. - 31.05.2016 г.\t06.06.2016г.\t27.06.2016г.\tнарушения в части начисления и правомерности выплаты заработной платы;                                                                - нарушения ведения бухгалтерского учета.                                                                     По ФЗ №44-фз нарушений не установлено.\tВыдано представление об устранении выявленных нарушений в срок до 11.08.2016 года\n" +
+                    "5\tАдминистрация Верхнесеребрянского сельского поселения муниципального района «Ровеньский район» Белгородской области\tПлановая выездная ревизия\tРевизия финансово- хозяйственной деятельности, проверка соблюдения требований  в сфере закупок в отношении вопросов, предусмотренных частью 8 статьи 99 Федерального закона о контрактной системе №44-фз\t01.01.2015 г. - 30.06.2016 г.\t11.07.2016г.\t29.07.2016г.\tнарушения в части начисления и правомерности выплаты заработной платы;                                                                - нарушения ведения бухгалтерского учета.                                                                     По ФЗ №44-фз нарушений не установлено.\tВыдано представление об устранении выявленных нарушений в срок до 10.09.2016 года\n" +
+                    "6\tМуниципальное автономное учреждение «МФЦ Ровеньского района»\tВнеплановая выездная проверка\tПроверка финансово- хозяйственной деятельности\t01.01.2015 г. - 19.09.2016 г.\t18.08.2016г.\t19.09.2016г.\t- нарушения требований Правил организации деятельности многофункциональных центров предоставления государственных и муниципальных услуг, утвержденных постановлением Правительства РФ от 22.12.2012 года № 1376.\tВыдано предписание об устранении выявленных нарушений в срок до 31.10.2016 года с предоставлением отчета до 07.11.2016 года\n" +
+                    "7\tАдминистрация Лозовского сельского поселения муниципального района «Ровеньский район» Белгородской области\tПлановая выездная проверка\tПроверка соблюдения требований законодательства о контрактной системе в рамках полномочий, установленных частью 8 статьи 99 Федерального закона от 05.04.2013 г. №44-ФЗ «О контрактной системе в сфере закупок, товаров, работ, услуг для обеспечения государственных и муниципальных нужд»\t01.01.2015 г. - 31.08.2016 г.\t22.09.2016г.\t14.10.2016г.\tч.2 ст.34; п.4 ст.38; ст.94; ст.95; ч.3 ст.103 Федерального закона №44-ФЗ;    - п.1 ст.73 Бюджетного кодекса РФ- п.1 ст.432; п.3 ст.455; п.2 ст.465; п.1 ст.702 Гражданского кодекса РФ;           - п.11 ч.1 Инструкции по применению Единого плана счетов бухгалтерского учета, утвержденной приказом Минфина России от 01.12.2010 года N 157н.\tВыдано предписание об устранении нарушений законодательства в сфере закупок в срок до 21.11.2016 года\n" +
+                    "8\tАдминистрация Лозовского сельского поселения муниципального района «Ровеньский район» Белгородской области\tПлановая выездная ревизия\tРевизия финансово-хозяйственной деятельности\t01.01.2015 г. - 31.08.2016 г.\t22.09.2016г.\t14.10.2016г.\t-нарушения в части правомерности начисления и выплаты заработной платы;                                                             - излишки и недостача нефинансовых активов;                                                            - нецелевое использования имущества;                                                     -недостатки в ведении учета работы финансово-хозяйственной деятельности;                                                   - нарушения ведения бухгалтерского учета, оформления первичных учетных документов и регистров бухгалтерского учета.\tВыдано предписание об устранении выявленных нарушений в срок до 14.12.2016 года с предоставлением отчета до 19.12.2016 года\n" +
+                    "9\tМуниципальное казенное учреждение культуры «Верхнесеребрянский сельский дом культуры»\tПлановая выездная проверка\tПроверка соблюдения требований законодательства о контрактной системе в рамках полномочий, установленных частью 8 статьи 99 Федерального закона от 05.04.2013 г. №44-ФЗ «О контрактной системе в сфере закупок, товаров, работ, услуг для обеспечения государственных и муниципальных нужд»\t01.01.2015г — 31.10.2016г\t01.11.2016 г.\t11.11.2016 г.\tч.4 ст.30; ч.2 ст.34; п.4 ст.38; ст.94; ч. 2, ч.3 ст.103 Федерального закона №44-ФЗ;                                                           - п.2 ст.73 Бюджетного кодекса РФ;      - п.1 ст.432; п.3 ст.455; п.2 ст.465; п.1 ст.702 Гражданского кодекса РФ;           - ст. 9, 10 Федерального закона от 06.12.2011г.№ 402-ФЗ «О бухгалтерском учёте»;                              - п.9,11 ч.1 Инструкции по применению Единого плана счетов бухгалтерского учета, утвержденной приказом Минфина России от 01.12.2010 года  N 157н.\tВыдано предписание об устранении нарушений законодательства в сфере закупок в срок до 18.12.2016 года\n" +
+                    "10\tМуниципальное казенное учреждение культуры «Верхнесеребрянский сельский дом культуры»\tПлановая выездная ревизия\tРевизия финансово-хозяйственной деятельности\t01.01.2015г — 31.10.2016г\t03.08.2016г перерыв 26.10.2016.\t18.08.2016г. 48 раб. дней 11.11.2016г.\t-нарушения в части правомерности начисления и выплаты заработной платы;                                                             - излишки и недостача нефинансовых активов;                                                           -недостатки в ведении учета работы финансово-хозяйственной деятельности;                                                  - нарушения ведения бухгалтерского учета, оформления первичных учетных документов и регистров бухгалтерского учета.\tВыдано представление об устранении выявленных нарушений в срок до 31.01.2017 года с предоставлением отчета до 10.02.2017 года\n" +
+                    "11\tМБУСОССЗН \tПлановая выездная проверка\tПроверка соблюдения требований законодательства о контрактной системе в рамках полномочий, установленных частью 8 статьи 99 Федерального закона от 05.04.2013 г. №44-ФЗ «О контрактной системе в сфере закупок, товаров, работ, услуг для обеспечения государственных и муниципальных нужд»\t01.01.2016г — 30.11.2016г\t19.12.2016 г.\t29.12.2016 г.\tч.2 ст.34; ст.94; ч. 2, ч.3 ст.103 Федерального закона №44-ФЗ;                -  п.3 ст.455; п.2 ст.465 Гражданского кодекса РФ;                                                   - ст. 9, 10 Федерального закона от 06.12.2011г.№ 402-ФЗ «О бухгалтерском учёте»;                             - п.9,11 ч.1 Инструкции по применению Единого плана счетов бухгалтерского учета, утвержденной приказом Минфина России от 01.12.2010 года  № 157н.\tВыдано предписание об устранении нарушений законодательства в сфере закупок в срок до 29.01.2017 года\n" +
+                    "12\tАдминистрация Нагорьевского сельского поселения муниципального района «Ровеньский район» Белгородской области\tВнеплановая выездная проверка\tПроверка финансово-хозяйственной деятельности\t01.01.2016 г. -                   31.12.2016 г.\t23.01.2017г.\t15.02.2017 г.\t-нарушения в части правомерности начисления и выплаты заработной платы;                                                             - излишки и недостача нефинансовых активов;                                                            - неэффективое использование имущества;                                                     -недостатки в ведении учета работы финансово-хозяйственной деятельности;                                                   - нарушения ведения бухгалтерского учета, оформления первичных учетных документов и регистров бухгалтерского учета.\tВыдано предписание об устранении выявленных нарушений и недостатков в срок до 10.05.2017 года\n" +
+                    "13\tМКУК «Лозовский сельский дом культуры»\tПлановая камеральная проверка\tПроверка соблюдения требований законодательства о контрактной системе в рамках полномочий, установленных частью 8 статьи 99 Федерального закона от 05.04.2013 г. №44-ФЗ «О контрактной системе в сфере закупок, товаров, работ, услуг для обеспечения государственных и муниципальных нужд»\t01.01.2015 г. -                   31.12.2016 г.\t20.02.2017г.\t15.03.2017 г.\tч.2 ст.34, п.4 ст.38, ст.93, ст.94, ст.95, ст.103 Федерального закона №44-ФЗ;     - п.2 ст.73 Бюджетного кодекса РФ;       - п.1 ст.432, п.3 ст.455, п.2 ст.465, п.1 ст.702 Гражданского кодекса РФ;            - ст. 9, 10 Федерального закона от 06.12.2011г. № 402-ФЗ «О бухгалтерском учёте»;                                 - п.9,11 ч.1 Инструкции по применению Единого плана счетов бухгалтерского учета, утвержденной приказом Минфина России от 01.12.2010 года  № 157н.\tВыдано предписание об устранении выявленных нарушений  в срок до 18.04.2017 года\n" +
+                    "14\tАдминистрация Лозовского сельского поселения муниципального района «Ровеньский район» Белгородской области\tВнеплановая выездная проверка\tПроверка исполнения ранее выданного предписания главе администрации Лозовского сельского поселения\t-\t23.03.2017г.\t23.03.2017 г.\tНевыполнение в установленный срок законного предписания управления финансов и бюджетной политики администрации Ровеньского района (п.4 ст. 270.2 Бюджетного кодекса Российской Федерации).\tСоставлен протокол об административном правонарушении, ответственность за которое установлена частью 20 статьи 19.5 КоАП РФ. Дело об административном правонарушении направлено председателю Ровеньского районного суда.\n" +
+                    "15\tМуниципальное бюджетное общеобразовательное учреждение «Наголенская средняя общеобразовательная школа Ровеньского района Белгородской области»\tПлановая выездная проверка\tПроверка соблюдения требований законодательства о контрактной системе в рамках полномочий, установленных частью 8 статьи 99 Федерального закона от 05.04.2013 г. №44-ФЗ «О контрактной системе в сфере закупок, товаров, работ, услуг для обеспечения государственных и муниципальных нужд»\t01.01.2015г.- 31.12.2016г.\t20.03.2017г.\t11.04.2017г.\t- финансовое нарушение в сумме 0,5 тыс. рублей;                                                  - ч.2 ст.34, ч.2 ст.93, ч.9 ст.94, ст.95, ч.2 ст.103 Федерального закона №44-ФЗ;                                                                      - ст. 9, 10 Федерального закона от 06.12.2011г. № 402-ФЗ «О бухгалтерском учёте»;                                  - п.11 ч.1 Инструкции по применению Единого плана счетов бухгалтерского учета, утвержденной приказом Минфина России от 01.12.2010 года  №157н.\tВыдано предписание об устранении выявленных нарушений  в срок до 18.05.2017 года\n" +
+                    "16\tМуниципальное бюджетное общеобразовательное учреждение «Наголенская средняя общеобразовательная школа Ровеньского района Белгородской области»\tПлановая выездная ревизия\tРевизия финансово-хозяйственной деятельности   и проверка использования средств, выделенных на финансовое обеспечение муниципального задания на оказание муниципальных услуг\t01.01.2015 г.-                  31.01.2016 г.\t27.02.2017г.\t11.04.2017г.\tВыявлены нарушения в части правомерности начисления и выплаты заработной платы. Обнаружены недостатки в ведении учета работы финансово-хозяйственной деятельности: наличие недостоверной информации  о составе муниципального имущества и его использовании, завышение норм списания ГСМ и прочие. Выявлены нарушения ведения бухгалтерского учета и оформления первичных учетных документов и регистров бухгалтерского учета.\tНаправлено представление об устранении выявленных нарушений в срок до 23.06.2017 года\n" +
+                    "17\tМАУ «МФЦ Ровеньского района»\tПлановая выездная ревизия\tРевизия финансово-хозяйственной деятельности,  проверка исполнения предписания об устранении нарушений Администрации Ровеньского района Белгородской области от 14.10.2016 года №3001\t09.2016 г.-05.2017 г.\t19.04.2017г\t19.05.2017 г.\tУстановлены нарушения в части правомерности начисления и выплаты заработной платы.                      Выявлено неэффективное использование муниципального имущества.\tНаправлено представление об устранении выявленных нарушений в срок до 21.08.2017 года\n" +
+                    "18\tМБОУ «Новоалександровская средняя общеобразовательная школа Ровеньского района Белгородской области»\tПлановая выездная проверка\tПроверка соблюдения требований законодательства о контрактной системе в рамках полномочий, установленных частью 8 статьи 99 Федерального закона от 05.04.2013 г. №44-ФЗ «О контрактной системе в сфере закупок, товаров, работ, услуг для обеспечения государственных и муниципальных нужд»\t01.01.2016 г. - 30.05.2017 г.\t25.05.2017г\t20.06.2017 г.\t- ст.21, ч.2 ст.34, п.4 ст.38, ч.2 ст.93, ч.9, 11 ст.94, ст.95 Федерального закона №44-ФЗ;                                              - п.3 ст.455, п.2 ст.465 Гражданского кодекса РФ;                                                       - ст. 9, 10 Федерального закона от 06.12.2011г. №402-ФЗ «О бухгалтерском учёте»;                                  - п.9,11 ч.1 Инструкции по применению Единого плана счетов бухгалтерского учета, утвержденной приказом Минфина России от 01.12.2010 года  №157н.\tПредписание не выдано\n" +
+                    "19\tУправление сельского хозяйства, природопользования и развития сельских территорий\tПлановая выездная проверка\tПроверка целевого и эффективного использования средств, выделенных на реализацию подпрограммы_5 «Обеспечение реализации муниципальной программы» муниципальной программы Ровеньского района «Развитие сельского хозяйства в Ровеньском районе на 2015-2020 годы»\t01.01.2016 г. - 31.12.2016 г.\t19.01.2017 г. перерыв     01.06.2017 г.\t20.01.2017 г.  4мес. 11к.дн.    07.07.2017 г.\tКвартальные и годовой отчеты о реализации муниципальной программы «Развитие сельского хозяйства в Ровеньском районе на 2015-2020 годы» за 2016 год содержат недостатки.\tПредставление не выдано\n" +
+                    "20\tАдминистрация Новоалександровского сельского поселения муниципального района \tПлановая выездная проверка\tПроверка целевого, рационального и эффективного использования средств местного бюджета и имущества, находящегося в муниципальной собственности\t01.07.2016 г. - 30.06.2017 г.\t03.07.2017 г.\t04.08.2017 г.\t-нарушения в части правомерности начисления и выплаты заработной платы;                                                             - излишки нефинансовых активов;          - недостатки в ведении учета работы финансово-хозяйственной деятельности;                                                - нарушения ведения бухгалтерского учета, оформления первичных учетных документов и регистров бухгалтерского учета.\tНаправлено предписание об устранении нарушений в срок до 30.09.2017 года\n" +
+                    "21\tМуниципальное бюджетное общеобразовательное учреждение «Лознянская средняя общеобразовательная школа Ровеньского района Белгородской области»\tПлановая камеральная проверка\tПроверка соблюдения требований  в сфере закупок в отношении вопросов, предусмотренных частью 8 статьи 99 Федерального закона о контрактной системе\t01.01.2016 г. - 31.07.2017 г.\t07.08.2017 г.\t25.08.2017 г.\t- ч.10 ст.21, ч.2 ст.34, ч.2 ст.93, ч.9,11 ст.94, ст.95, ст.103 Федерального закона №44-ФЗ;                                             - п.3 ст.455; п.2 ст.465 Гражданского кодекса РФ.\tНаправлено предписание об устранении нарушений в срок до 29.09.2017 года\n" +
+                    "22\tМуниципальное бюджетное общеобразовательное учреждение «Новоалександровская средняя общеобразовательная школа Ровеньского района Белгородской области»\tПлановая выездная проверка\tПроверка использования субсидий на финансовое обеспечение выполнения муниципального задания и субсидий на иные цели\t01.01.2016 г. - 31.08.2017 г.\t01.09.2017 г.\t25.09.2017 г.\tУстановлены отдельные нарушения и недостатки в ведении финансово-хозяйственной деятельности учреждения, касающиеся правомерности и эффективности использования средств и имущества\tНаправлено представление об устранении выявленных нарушений в срок до 29.12.2017 года\n" +
+                    "23\tМуниципальное бюджетное общеобразовательное учреждение «Нижнесеребрянская основная общеобразовательная школа Ровеньского района Белгородской области»\tПлановая выездная проверка\tПроверка соблюдения требований  в сфере закупок в отношении вопросов, предусмотренных частью 8 статьи 99 Федерального закона о контрактной системе\t01.01.2016 г. - 31.09.2017 г.\t12.10.2017 г.\t27.10.2017 г.\t- ч.10 ст.21, ч.2 ст.34, ч.9 ст.94, ст.95, ч.2,3 ст.103 Федерального закона №44-ФЗ\tПредписание не выдано\n" +
+                    "24\tМуниципальное бюджетное учреждение дополнительного образования «Детская школа искусств» Ровеньского района Белгородской области\tВнеплановое обследование\tОбследование по вопросу обоснованности установления и правильности начисления выплат стимулирующего характера работникам учреждения\t01.01.2017 г. - 31.09.2017 г.\t18.10.2017 г.\t27.10.2017 г.\tНарушения Положения о распределении стимулирующей части фонда оплаты труда (приложение №3 к Положению об оплате труда работников МБУ ДО  «Детская школа искусств» Ровеньского района Белгородской области, утвержденного постановлением администрации Ровеньского района от 23.05.2017 г. №239) и Положения о распределении стимулирующей части фонда оплаты труда МБУ ДО  «Детская школа искусств» Ровеньского района Белгородской области, утвержденного 22.08.2017 г.\tВ адрес учредителя направлено письмо с предложениями о принятии мер по недопущению перечисленных в заключении нарушений\n" +
+                    "25\tМуниципальное автономное учреждение «Плавательный бассейн «Дельфин»\tПлановая ревизия\tРевизия финансово-хозяйственной деятельности\t01.09.2016 г. - 31.10.2017 г.\t30.10.2017 г.\t08.12.2017 г.\tНарушения финансовой дисциплины, касающиеся правомерности выплаты заработной платы, установления надбавок и доплат, правомерности и эффективности использования средств и имущества, а также другие нарушения и недостатки в ведении финансово-хозяйственной деятельности учреждения.\tНаправлено представление об устранении нарушений до 15.02.2018 года.    Главе администрации Ровеньского района и заместителю главы администрации Ровеньского района по социальной политики, культуре и спорту представлена информация о проведенном контрольном мероприятии\n" +
+                    "26\tМуниципальное бюджетное общеобразовательное учреждение «Нагорьевский детский сад»\tПлановая выездная проверка\tПроверка соблюдения требований  в сфере закупок в отношении вопросов, предусмотренных частью 8 статьи 99 Федерального закона о контрактной системе\t01.01.2017 г. - 31.11.2017 г.\t13.12.2017 г.\t27.12.2017 г.\t- ч.10 ст.21, ч.2 ст.34, ст.94, ст.95, ч.2 ст.103 Федерального закона №44-ФЗ;     - нарушения условий контрактов в части сроков оплаты.\tНаправлено предписание об устранении нарушений законодательства в сфере закупок в срок до 31.01.2018 года\n" +
+                    "27\tУправление образования администрации Ровеньского района Белгородской области\tПлановое обследование\tАнализ осуществления внутреннего финансового контроля и внутреннего финансового аудита                           за 2016-2017 годы\t01.01.2016 г. - 31.12.2017 г.\t05.02.2018 г.\t12.02.2018 г.\t- ч. 1, 2, 4 ст.160.2-1 Бюджетного кодекса Российской Федерации;                  - п.3.1 постановления администрации Ровеньского района от 30.10.2015 года №569;                               - п.п.4, 16, 20, 22, 23, 28, 30, 37 порядка осуществления главными распорядителями (распорядителями) средств бюджета Ровеньского района, главными администраторами (администраторами) доходов бюджета Ровеньского района, главными администраторами (администраторами) источников финансирования дефицита бюджета Ровеньского района внутреннего финансового контроля и внутреннего финансового аудита, утвержденного вышеуказанным постановлением.\tНаправлено представление об устранении нарушений в срок до 31.03.2018 года\n" +
+                    "28\tМуниципальное бюджетное общеобразовательное учреждение «Ладомировская средняя общеобразовательная школа Ровеньского района Белгородской области»\tПлановая камеральная проверка\tПроверка соблюдения требований  в сфере закупок в отношении вопросов, предусмотренных частью 8 статьи 99 Федерального закона о контрактной системе\t01.01.2017 г. - 31.01.2018 г.\t05.02.2018 г.\t26.02.2018 г.\t- ч.8 ст.17, ч.10-11 ст.21, ч.2 ст.34, ч.3 ст.94, ст.95 Федерального закона №44-ФЗ;                                                          - нарушения условий контрактов в части сроков оплаты.\tНаправлено предписание об устранении нарушений законодательства в сфере закупок в срок до 26.03.2018 года с предоставлением отчета до 30.03.2018 года\n" +
+                    "29\tУправление культуры и сельского туризма администрации Ровеньского района Белгородской области\tПлановое обследование\tАнализ осуществления внутреннего финансового контроля и внутреннего финансового аудита                           за 2016-2017 годы\t01.01.2016 г. - 31.12.2017 г.\t21.02.2018 г.\t02.03.2018 г.\t- ч. 1, 2, 4, 5 ст.160.2-1 Бюджетного кодекса Российской Федерации;                  - ч.3 ст.7 Федерального закона от 06.10.2003 года №131-ФЗ «Об общих принципах организации местного самоуправления в Российской Федерации»;                                                   - п.3 постановления администрации Ровеньского района от 30.10.2015 года №569;                                                      - п.п.4, 14, 16-20, 22-23, 28-30, 37 порядка осуществления главными распорядителями (распорядителями) средств бюджета Ровеньского района, главными администраторами (администраторами) доходов бюджета Ровеньского района, главными администраторами (администраторами) источников финансирования дефицита бюджета Ровеньского района внутреннего финансового контроля и внутреннего финансового аудита, утвержденного вышеуказанным постановлением.\tНаправлено представление об устранении нарушений в срок до 20.04.2018 года\n" +
+                    "30\tМуниципальное бюджетное дошкольное общеобразовательное учреждение «Харьковский детский сад Ровеньского района Белгородской области»\tПлановая выездная проверка\tПроверка соблюдения требований  в сфере закупок в отношении вопросов, предусмотренных частью 8 статьи 99 Федерального закона о контрактной системе\t01.01.2017 г. - 31.03.2018 г.\t06.04.2018 г.\t16.04.2018 г.\t- ч.4,6 ст.38, ч.8 ст.17, ч. 10,11,13 ст.21, ст.34, п.4,6 ст.38, ч.2 ст.93, ч.9 ст.94, ч.2 ст.103 Федерального закона №44-ФЗ;                                                             - п.1 ст. 708 Гражданского кодекса РФ; - ч.2 ст.72 Бюджетного Кодекса РФ;                                                              - ст. 9, 10 Федерального закона от 06.12.2011г. №402-ФЗ «О бухгалтерском учёте»;                                  - п.9,11 ч.1 Инструкции по применению Единого плана счетов бухгалтерского учета, утвержденной приказом Минфина России от 01.12.2010 года  №157н.\tНаправлено предписание об устранении нарушений законодательства в сфере закупок в срок до 28.05.2018 года с предоставлением отчета до 31.05.2018 года\n" +
+                    "31\tУправление сельского хозяйства, природопользования и развития сельских территорий\tВнеплановая камеральная проверка\tПроверка финансово- хозяйственной деятельности\t01.01.2016 г.-23.05.2018 г.\t16.05.2018 г.\t06.06.2018 г.\t- нарушения в части правомерности начисления и выплаты заработной платы;                                                            - нарушения и недостатки в ведении финансово-хозяйственной деятельности.\tНаправлено представление об устранении  нарушений в срок до 20.07.2018 года\n" +
+                    "32\tМуниципальное бюджетное дошкольное общеобразовательное учреждение «Харьковский детский сад Ровеньского района Белгородской области»\tПлановая ревизия\tРевизия финансово-хозяйственной деятельности\t01.01.2017 г. - 31.03.2018 г.\t14.03.2018 г. перерыв\t21.06.2018 г. 41 раб. день\t- нарушения соблюдения норм Трудового кодекса Российской Федерации ст.57, ст.60.1, ст.60.2, ч.3 ст.93, ст.100, ст.103, ч.1 ст.154, ст.284;                                             - нарушения в части правомерности начисления и выплаты заработной платы;                                                            - выявлены излишки и недостача нефинансовых активов.\tНаправлено представление об устранении выявленных нарушений в срок до 01.09.2018 года\n" +
+                    "33\tАдминистрации Ржевского сельского поселения муниципального района «Ровеньский район» Белгородской области\tПлановая выездная проверка\tПроверка целевого, рационального и эффективного использования средств местного бюджета и имущества, находящегося в муниципальной собственности\t01.01.2017  - 30.06.2018 г.\t09.07.2018 г.\t27.07.2018 г.\t- нарушения в части правомерности начисления и выплаты заработной платы;                                                            - нарушение соблюдения норм Трудового кодекса РФ ст.136, 284;      - недостатки в ведении учета работы финансово-хозяйственной деятельности;                                                - нарушения ведения бухгалтерского учета, оформления первичных учетных документов и регистров бухгалтерского учета.\tВыдано представление об устранении выявленных нарушений в срок до 29.09.2018 года\n" +
+                    "34\tАдминистрации Ржевского сельского поселения муниципального района «Ровеньский район» Белгородской области\tПлановая выездная  проверка\tПроверка соблюдения требований  в сфере закупок в отношении вопросов, предусмотренных частью 8 статьи 99 Федерального закона о контрактной системе\t01.01.2017 г. - 31.07.2018 г.\t02.08.2018 г.\t16.08.2018 г.\t- ч.4,6 ст.38, ч.7 ст.18, п.4 ч.1 ст.93, ч.3,ч. 6 ст.94 Федерального закона №44-ФЗ;                                                          - ст.457, ст.506 Гражданского кодекса РФ;                                                                 - ч.2 ст.72, п.1 ст.73 Бюджетного Кодекса РФ;                                                   - ст. 9, 10 Федерального закона от 06.12.2011г. №402-ФЗ «О бухгалтерском учёте»;                                - п.9,11 ч.1 Инструкции по применению Единого плана счетов бухгалтерского учета, утвержденной приказом Минфина России от 01.12.2010 года  №157н.\tНаправлено предписание об устранении нарушений законодательства в сфере закупок в срок до 20.09.2018 года с предоставлением отчета до 29.09.2018 года\n" +
+                    "35\tМуниципальное казенное учреждение «Административно-хозяйственная служба обеспечения деятельности органов местного самоуправления Ржевского сельского поселения муниципального района  «Ровеньский район» Белгородской области»\tПлановая   ревизия\tРевизия финансово-хозяйственной деятельности\t01.01.2017 г.  - 20.08.2018 г.\t20.08.2018 г.\t07.09.2018 г.\t- нарушение соблюдения норм Трудового кодекса РФ ст. 72, 100, 136;                                                                - нарушения в части правомерности начисления и выплаты стимулирующей части оплаты труда; - нарушения требований п.3 ,11, 108, 265 Инструкции Минфина №157н.\tВыдано представление об устранении выявленных нарушений в срок до 30.10.2018 года\n" +
+                    "36\tМуниципальное казенное учреждение «Административно-хозяйственная служба обеспечения деятельности органов местного самоуправления городского поселения «Поселок Ровеньки» муниципального района «Ровеньский район» Белгородской области»\tПлановая   ревизия\tРевизия финансово-хозяйственной деятельности\t01.01.2017 г.-31.10.2018 г.\t15.10.2018 г.\t12.11.2018 г.\t- необоснованное использование бюджетных средств на сумму 828,7 тыс. руб.;                                                      - излишки нефинансовых активов у 1 материально-ответственного лица на сумму 139,9 тыс. рублей;                          - нарушение требований ст.19,21 Федеральным законом от 5 апреля 2013 года №44-ФЗ «О контрактной системе в сфере закупок, товаров, работ, услуг для обеспечения государственных и муниципальных нужд» и ч.2 ст.72 Бюджетного кодекса РФ;                                                   -  нарушение соблюдения норм Трудового кодекса РФ ст.136 и другие  нарушения в части обоснованности начисления компенсационных выплат за совмещение профессий и расширенный объем.\tВыдано представление об устранении нарушений в срок до 29.12.2018 года\n";
+
+            String expected = "№ПП\tОбъектыКонтрольногоМероприятия\tВидКонтрольногоМероприятия\tТемаКонтрольногоМероприятия\tПроверяемыйПериод\tНачалоПроверки\tОкончаниеПроверки\tВыявленныеНарушенияНедостатки\tРезультатыПроверки\n" +
+                    "1\tМуниципальное унитарное предприятие «Ровеньские тепловые сети»\tВнеплановая выездная проверка\tПроверка финансово-хозяйственной деятельности\t01.01.2015г. - 31.12.2015г.\t09.03.2016г.\t01.04.2016г.\t-нарушения в части начисления и выплаты заработной платы;                          - неэффективное использования денежных средств;                                            -недостатки в ведении учета работы хозяйственной деятельности предприятия.\tВыдано представление об устранении выявленных нарушений в срок до 30.04.2016 года\n" +
+                    "2\tОАО «Ровеньская АК №1468»\tВнеплановая выездная проверка Дополнительная выездная проверка\tПроверка финансово-хозяйственной деятельности ОАО «Ровеньская АК №1468» в рамках договора на выполнение перевозок пассажиров по маршрутам муниципального района «Ровеньский район» от 31.12.2015 года № 12-53\t01 - 29.02.16 г.  01.01.2016 г. -  31.01.2016 г.,   01.03.2016 г. - 30.04.2016 г.\t04.04.2016г.  10.05.2016г.\t15.04.2016г.  31.05.2016г.\tнарушения условий муниципального договора.\tВыдано предписание об устранении нарушений условий договора на выполнение \n" +
+                    "перевозок пассажиров по маршрутам муниципального района \n" +
+                    "«Ровеньский район» от 31.12.2015 года №12-53    в срок до 20.06.2016 года\n" +
+                    "3\tАдминистрация Нагорьевского сельского поселения муниципального района «Ровеньский район» Белгородской области\tПлановая выездная ревизия\tРевизия финансово-хозяйственной деятельности; проверка соблюдения требований  в сфере закупок в отношении вопросов, предусмотренных частью 8 статьи 99 Федерального закона о контрактной системе №44-фз\t01.01.2015 г. -                   31.01.2016 г.\t08.02.2016г перерыв 04.05.2016.\t04.03.2016г. 38 раб. дней 06.05.2016г.\tнарушения в части начисления и правомерности выплаты заработной платы;                                                               - нарушения ведения бухгалтерского учета.                                                             По ФЗ №44-фз нарушений не установлено.\tВыдано представление об устранении выявленных нарушений в срок до 01.07.2016 года\n" +
+                    "4\tМКУК «Нагорьевский сельский дом культуры»\tПлановая выездная ревизия\tРевизия финансово-хозяйственной деятельности; проверка соблюдения требований  в сфере закупок в отношении вопросов, предусмотренных частью 8 статьи 99 Федерального закона о контрактной системе №44-фз\t01.01.2015 г. - 31.05.2016 г.\t06.06.2016г.\t27.06.2016г.\tнарушения в части начисления и правомерности выплаты заработной платы;                                                                - нарушения ведения бухгалтерского учета.                                                                     По ФЗ №44-фз нарушений не установлено.\tВыдано представление об устранении выявленных нарушений в срок до 11.08.2016 года\n" +
+                    "5\tАдминистрация Верхнесеребрянского сельского поселения муниципального района «Ровеньский район» Белгородской области\tПлановая выездная ревизия\tРевизия финансово- хозяйственной деятельности, проверка соблюдения требований  в сфере закупок в отношении вопросов, предусмотренных частью 8 статьи 99 Федерального закона о контрактной системе №44-фз\t01.01.2015 г. - 30.06.2016 г.\t11.07.2016г.\t29.07.2016г.\tнарушения в части начисления и правомерности выплаты заработной платы;                                                                - нарушения ведения бухгалтерского учета.                                                                     По ФЗ №44-фз нарушений не установлено.\tВыдано представление об устранении выявленных нарушений в срок до 10.09.2016 года\n" +
+                    "6\tМуниципальное автономное учреждение «МФЦ Ровеньского района»\tВнеплановая выездная проверка\tПроверка финансово- хозяйственной деятельности\t01.01.2015 г. - 19.09.2016 г.\t18.08.2016г.\t19.09.2016г.\t- нарушения требований Правил организации деятельности многофункциональных центров предоставления государственных и муниципальных услуг, утвержденных постановлением Правительства РФ от 22.12.2012 года № 1376.\tВыдано предписание об устранении выявленных нарушений в срок до 31.10.2016 года с предоставлением отчета до 07.11.2016 года\n" +
+                    "7\tАдминистрация Лозовского сельского поселения муниципального района «Ровеньский район» Белгородской области\tПлановая выездная проверка\tПроверка соблюдения требований законодательства о контрактной системе в рамках полномочий, установленных частью 8 статьи 99 Федерального закона от 05.04.2013 г. №44-ФЗ «О контрактной системе в сфере закупок, товаров, работ, услуг для обеспечения государственных и муниципальных нужд»\t01.01.2015 г. - 31.08.2016 г.\t22.09.2016г.\t14.10.2016г.\tч.2 ст.34; п.4 ст.38; ст.94; ст.95; ч.3 ст.103 Федерального закона №44-ФЗ;    - п.1 ст.73 Бюджетного кодекса РФ- п.1 ст.432; п.3 ст.455; п.2 ст.465; п.1 ст.702 Гражданского кодекса РФ;           - п.11 ч.1 Инструкции по применению Единого плана счетов бухгалтерского учета, утвержденной приказом Минфина России от 01.12.2010 года N 157н.\tВыдано предписание об устранении нарушений законодательства в сфере закупок в срок до 21.11.2016 года\n" +
+                    "8\tАдминистрация Лозовского сельского поселения муниципального района «Ровеньский район» Белгородской области\tПлановая выездная ревизия\tРевизия финансово-хозяйственной деятельности\t01.01.2015 г. - 31.08.2016 г.\t22.09.2016г.\t14.10.2016г.\t-нарушения в части правомерности начисления и выплаты заработной платы;                                                             - излишки и недостача нефинансовых активов;                                                            - нецелевое использования имущества;                                                     -недостатки в ведении учета работы финансово-хозяйственной деятельности;                                                   - нарушения ведения бухгалтерского учета, оформления первичных учетных документов и регистров бухгалтерского учета.\tВыдано предписание об устранении выявленных нарушений в срок до 14.12.2016 года с предоставлением отчета до 19.12.2016 года\n" +
+                    "9\tМуниципальное казенное учреждение культуры «Верхнесеребрянский сельский дом культуры»\tПлановая выездная проверка\tПроверка соблюдения требований законодательства о контрактной системе в рамках полномочий, установленных частью 8 статьи 99 Федерального закона от 05.04.2013 г. №44-ФЗ «О контрактной системе в сфере закупок, товаров, работ, услуг для обеспечения государственных и муниципальных нужд»\t01.01.2015г — 31.10.2016г\t01.11.2016 г.\t11.11.2016 г.\tч.4 ст.30; ч.2 ст.34; п.4 ст.38; ст.94; ч. 2, ч.3 ст.103 Федерального закона №44-ФЗ;                                                           - п.2 ст.73 Бюджетного кодекса РФ;      - п.1 ст.432; п.3 ст.455; п.2 ст.465; п.1 ст.702 Гражданского кодекса РФ;           - ст. 9, 10 Федерального закона от 06.12.2011г.№ 402-ФЗ «О бухгалтерском учёте»;                              - п.9,11 ч.1 Инструкции по применению Единого плана счетов бухгалтерского учета, утвержденной приказом Минфина России от 01.12.2010 года  N 157н.\tВыдано предписание об устранении нарушений законодательства в сфере закупок в срок до 18.12.2016 года\n" +
+                    "10\tМуниципальное казенное учреждение культуры «Верхнесеребрянский сельский дом культуры»\tПлановая выездная ревизия\tРевизия финансово-хозяйственной деятельности\t01.01.2015г — 31.10.2016г\t03.08.2016г перерыв 26.10.2016.\t18.08.2016г. 48 раб. дней 11.11.2016г.\t-нарушения в части правомерности начисления и выплаты заработной платы;                                                             - излишки и недостача нефинансовых активов;                                                           -недостатки в ведении учета работы финансово-хозяйственной деятельности;                                                  - нарушения ведения бухгалтерского учета, оформления первичных учетных документов и регистров бухгалтерского учета.\tВыдано представление об устранении выявленных нарушений в срок до 31.01.2017 года с предоставлением отчета до 10.02.2017 года\n" +
+                    "11\tМБУСОССЗН \tПлановая выездная проверка\tПроверка соблюдения требований законодательства о контрактной системе в рамках полномочий, установленных частью 8 статьи 99 Федерального закона от 05.04.2013 г. №44-ФЗ «О контрактной системе в сфере закупок, товаров, работ, услуг для обеспечения государственных и муниципальных нужд»\t01.01.2016г — 30.11.2016г\t19.12.2016 г.\t29.12.2016 г.\tч.2 ст.34; ст.94; ч. 2, ч.3 ст.103 Федерального закона №44-ФЗ;                -  п.3 ст.455; п.2 ст.465 Гражданского кодекса РФ;                                                   - ст. 9, 10 Федерального закона от 06.12.2011г.№ 402-ФЗ «О бухгалтерском учёте»;                             - п.9,11 ч.1 Инструкции по применению Единого плана счетов бухгалтерского учета, утвержденной приказом Минфина России от 01.12.2010 года  № 157н.\tВыдано предписание об устранении нарушений законодательства в сфере закупок в срок до 29.01.2017 года\n" +
+                    "12\tАдминистрация Нагорьевского сельского поселения муниципального района «Ровеньский район» Белгородской области\tВнеплановая выездная проверка\tПроверка финансово-хозяйственной деятельности\t01.01.2016 г. -                   31.12.2016 г.\t23.01.2017г.\t15.02.2017 г.\t-нарушения в части правомерности начисления и выплаты заработной платы;                                                             - излишки и недостача нефинансовых активов;                                                            - неэффективое использование имущества;                                                     -недостатки в ведении учета работы финансово-хозяйственной деятельности;                                                   - нарушения ведения бухгалтерского учета, оформления первичных учетных документов и регистров бухгалтерского учета.\tВыдано предписание об устранении выявленных нарушений и недостатков в срок до 10.05.2017 года\n" +
+                    "13\tМКУК «Лозовский сельский дом культуры»\tПлановая камеральная проверка\tПроверка соблюдения требований законодательства о контрактной системе в рамках полномочий, установленных частью 8 статьи 99 Федерального закона от 05.04.2013 г. №44-ФЗ «О контрактной системе в сфере закупок, товаров, работ, услуг для обеспечения государственных и муниципальных нужд»\t01.01.2015 г. -                   31.12.2016 г.\t20.02.2017г.\t15.03.2017 г.\tч.2 ст.34, п.4 ст.38, ст.93, ст.94, ст.95, ст.103 Федерального закона №44-ФЗ;     - п.2 ст.73 Бюджетного кодекса РФ;       - п.1 ст.432, п.3 ст.455, п.2 ст.465, п.1 ст.702 Гражданского кодекса РФ;            - ст. 9, 10 Федерального закона от 06.12.2011г. № 402-ФЗ «О бухгалтерском учёте»;                                 - п.9,11 ч.1 Инструкции по применению Единого плана счетов бухгалтерского учета, утвержденной приказом Минфина России от 01.12.2010 года  № 157н.\tВыдано предписание об устранении выявленных нарушений  в срок до 18.04.2017 года\n" +
+                    "14\tАдминистрация Лозовского сельского поселения муниципального района «Ровеньский район» Белгородской области\tВнеплановая выездная проверка\tПроверка исполнения ранее выданного предписания главе администрации Лозовского сельского поселения\t-\t23.03.2017г.\t23.03.2017 г.\tНевыполнение в установленный срок законного предписания управления финансов и бюджетной политики администрации Ровеньского района (п.4 ст. 270.2 Бюджетного кодекса Российской Федерации).\tСоставлен протокол об административном правонарушении, ответственность за которое установлена частью 20 статьи 19.5 КоАП РФ. Дело об административном правонарушении направлено председателю Ровеньского районного суда.\n" +
+                    "15\tМуниципальное бюджетное общеобразовательное учреждение «Наголенская средняя общеобразовательная школа Ровеньского района Белгородской области»\tПлановая выездная проверка\tПроверка соблюдения требований законодательства о контрактной системе в рамках полномочий, установленных частью 8 статьи 99 Федерального закона от 05.04.2013 г. №44-ФЗ «О контрактной системе в сфере закупок, товаров, работ, услуг для обеспечения государственных и муниципальных нужд»\t01.01.2015г.- 31.12.2016г.\t20.03.2017г.\t11.04.2017г.\t- финансовое нарушение в сумме 0,5 тыс. рублей;                                                  - ч.2 ст.34, ч.2 ст.93, ч.9 ст.94, ст.95, ч.2 ст.103 Федерального закона №44-ФЗ;                                                                      - ст. 9, 10 Федерального закона от 06.12.2011г. № 402-ФЗ «О бухгалтерском учёте»;                                  - п.11 ч.1 Инструкции по применению Единого плана счетов бухгалтерского учета, утвержденной приказом Минфина России от 01.12.2010 года  №157н.\tВыдано предписание об устранении выявленных нарушений  в срок до 18.05.2017 года\n" +
+                    "16\tМуниципальное бюджетное общеобразовательное учреждение «Наголенская средняя общеобразовательная школа Ровеньского района Белгородской области»\tПлановая выездная ревизия\tРевизия финансово-хозяйственной деятельности   и проверка использования средств, выделенных на финансовое обеспечение муниципального задания на оказание муниципальных услуг\t01.01.2015 г.-                  31.01.2016 г.\t27.02.2017г.\t11.04.2017г.\tВыявлены нарушения в части правомерности начисления и выплаты заработной платы. Обнаружены недостатки в ведении учета работы финансово-хозяйственной деятельности: наличие недостоверной информации  о составе муниципального имущества и его использовании, завышение норм списания ГСМ и прочие. Выявлены нарушения ведения бухгалтерского учета и оформления первичных учетных документов и регистров бухгалтерского учета.\tНаправлено представление об устранении выявленных нарушений в срок до 23.06.2017 года\n" +
+                    "17\tМАУ «МФЦ Ровеньского района»\tПлановая выездная ревизия\tРевизия финансово-хозяйственной деятельности,  проверка исполнения предписания об устранении нарушений Администрации Ровеньского района Белгородской области от 14.10.2016 года №3001\t09.2016 г.-05.2017 г.\t19.04.2017г\t19.05.2017 г.\tУстановлены нарушения в части правомерности начисления и выплаты заработной платы.                      Выявлено неэффективное использование муниципального имущества.\tНаправлено представление об устранении выявленных нарушений в срок до 21.08.2017 года\n" +
+                    "18\tМБОУ «Новоалександровская средняя общеобразовательная школа Ровеньского района Белгородской области»\tПлановая выездная проверка\tПроверка соблюдения требований законодательства о контрактной системе в рамках полномочий, установленных частью 8 статьи 99 Федерального закона от 05.04.2013 г. №44-ФЗ «О контрактной системе в сфере закупок, товаров, работ, услуг для обеспечения государственных и муниципальных нужд»\t01.01.2016 г. - 30.05.2017 г.\t25.05.2017г\t20.06.2017 г.\t- ст.21, ч.2 ст.34, п.4 ст.38, ч.2 ст.93, ч.9, 11 ст.94, ст.95 Федерального закона №44-ФЗ;                                              - п.3 ст.455, п.2 ст.465 Гражданского кодекса РФ;                                                       - ст. 9, 10 Федерального закона от 06.12.2011г. №402-ФЗ «О бухгалтерском учёте»;                                  - п.9,11 ч.1 Инструкции по применению Единого плана счетов бухгалтерского учета, утвержденной приказом Минфина России от 01.12.2010 года  №157н.\tПредписание не выдано\n" +
+                    "19\tУправление сельского хозяйства, природопользования и развития сельских территорий\tПлановая выездная проверка\tПроверка целевого и эффективного использования средств, выделенных на реализацию подпрограммы_5 «Обеспечение реализации муниципальной программы» муниципальной программы Ровеньского района «Развитие сельского хозяйства в Ровеньском районе на 2015-2020 годы»\t01.01.2016 г. - 31.12.2016 г.\t19.01.2017 г. перерыв     01.06.2017 г.\t20.01.2017 г.  4мес. 11к.дн.    07.07.2017 г.\tКвартальные и годовой отчеты о реализации муниципальной программы «Развитие сельского хозяйства в Ровеньском районе на 2015-2020 годы» за 2016 год содержат недостатки.\tПредставление не выдано\n" +
+                    "20\tАдминистрация Новоалександровского сельского поселения муниципального района \tПлановая выездная проверка\tПроверка целевого, рационального и эффективного использования средств местного бюджета и имущества, находящегося в муниципальной собственности\t01.07.2016 г. - 30.06.2017 г.\t03.07.2017 г.\t04.08.2017 г.\t-нарушения в части правомерности начисления и выплаты заработной платы;                                                             - излишки нефинансовых активов;          - недостатки в ведении учета работы финансово-хозяйственной деятельности;                                                - нарушения ведения бухгалтерского учета, оформления первичных учетных документов и регистров бухгалтерского учета.\tНаправлено предписание об устранении нарушений в срок до 30.09.2017 года\n" +
+                    "21\tМуниципальное бюджетное общеобразовательное учреждение «Лознянская средняя общеобразовательная школа Ровеньского района Белгородской области»\tПлановая камеральная проверка\tПроверка соблюдения требований  в сфере закупок в отношении вопросов, предусмотренных частью 8 статьи 99 Федерального закона о контрактной системе\t01.01.2016 г. - 31.07.2017 г.\t07.08.2017 г.\t25.08.2017 г.\t- ч.10 ст.21, ч.2 ст.34, ч.2 ст.93, ч.9,11 ст.94, ст.95, ст.103 Федерального закона №44-ФЗ;                                             - п.3 ст.455; п.2 ст.465 Гражданского кодекса РФ.\tНаправлено предписание об устранении нарушений в срок до 29.09.2017 года\n" +
+                    "22\tМуниципальное бюджетное общеобразовательное учреждение «Новоалександровская средняя общеобразовательная школа Ровеньского района Белгородской области»\tПлановая выездная проверка\tПроверка использования субсидий на финансовое обеспечение выполнения муниципального задания и субсидий на иные цели\t01.01.2016 г. - 31.08.2017 г.\t01.09.2017 г.\t25.09.2017 г.\tУстановлены отдельные нарушения и недостатки в ведении финансово-хозяйственной деятельности учреждения, касающиеся правомерности и эффективности использования средств и имущества\tНаправлено представление об устранении выявленных нарушений в срок до 29.12.2017 года\n" +
+                    "23\tМуниципальное бюджетное общеобразовательное учреждение «Нижнесеребрянская основная общеобразовательная школа Ровеньского района Белгородской области»\tПлановая выездная проверка\tПроверка соблюдения требований  в сфере закупок в отношении вопросов, предусмотренных частью 8 статьи 99 Федерального закона о контрактной системе\t01.01.2016 г. - 31.09.2017 г.\t12.10.2017 г.\t27.10.2017 г.\t- ч.10 ст.21, ч.2 ст.34, ч.9 ст.94, ст.95, ч.2,3 ст.103 Федерального закона №44-ФЗ\tПредписание не выдано\n" +
+                    "24\tМуниципальное бюджетное учреждение дополнительного образования «Детская школа искусств» Ровеньского района Белгородской области\tВнеплановое обследование\tОбследование по вопросу обоснованности установления и правильности начисления выплат стимулирующего характера работникам учреждения\t01.01.2017 г. - 31.09.2017 г.\t18.10.2017 г.\t27.10.2017 г.\tНарушения Положения о распределении стимулирующей части фонда оплаты труда (приложение №3 к Положению об оплате труда работников МБУ ДО  «Детская школа искусств» Ровеньского района Белгородской области, утвержденного постановлением администрации Ровеньского района от 23.05.2017 г. №239) и Положения о распределении стимулирующей части фонда оплаты труда МБУ ДО  «Детская школа искусств» Ровеньского района Белгородской области, утвержденного 22.08.2017 г.\tВ адрес учредителя направлено письмо с предложениями о принятии мер по недопущению перечисленных в заключении нарушений\n" +
+                    "25\tМуниципальное автономное учреждение «Плавательный бассейн «Дельфин»\tПлановая ревизия\tРевизия финансово-хозяйственной деятельности\t01.09.2016 г. - 31.10.2017 г.\t30.10.2017 г.\t08.12.2017 г.\tНарушения финансовой дисциплины, касающиеся правомерности выплаты заработной платы, установления надбавок и доплат, правомерности и эффективности использования средств и имущества, а также другие нарушения и недостатки в ведении финансово-хозяйственной деятельности учреждения.\tНаправлено представление об устранении нарушений до 15.02.2018 года.    Главе администрации Ровеньского района и заместителю главы администрации Ровеньского района по социальной политики, культуре и спорту представлена информация о проведенном контрольном мероприятии\n" +
+                    "26\tМуниципальное бюджетное общеобразовательное учреждение «Нагорьевский детский сад»\tПлановая выездная проверка\tПроверка соблюдения требований  в сфере закупок в отношении вопросов, предусмотренных частью 8 статьи 99 Федерального закона о контрактной системе\t01.01.2017 г. - 31.11.2017 г.\t13.12.2017 г.\t27.12.2017 г.\t- ч.10 ст.21, ч.2 ст.34, ст.94, ст.95, ч.2 ст.103 Федерального закона №44-ФЗ;     - нарушения условий контрактов в части сроков оплаты.\tНаправлено предписание об устранении нарушений законодательства в сфере закупок в срок до 31.01.2018 года\n" +
+                    "27\tУправление образования администрации Ровеньского района Белгородской области\tПлановое обследование\tАнализ осуществления внутреннего финансового контроля и внутреннего финансового аудита                           за 2016-2017 годы\t01.01.2016 г. - 31.12.2017 г.\t05.02.2018 г.\t12.02.2018 г.\t- ч. 1, 2, 4 ст.160.2-1 Бюджетного кодекса Российской Федерации;                  - п.3.1 постановления администрации Ровеньского района от 30.10.2015 года №569;                               - п.п.4, 16, 20, 22, 23, 28, 30, 37 порядка осуществления главными распорядителями (распорядителями) средств бюджета Ровеньского района, главными администраторами (администраторами) доходов бюджета Ровеньского района, главными администраторами (администраторами) источников финансирования дефицита бюджета Ровеньского района внутреннего финансового контроля и внутреннего финансового аудита, утвержденного вышеуказанным постановлением.\tНаправлено представление об устранении нарушений в срок до 31.03.2018 года\n" +
+                    "28\tМуниципальное бюджетное общеобразовательное учреждение «Ладомировская средняя общеобразовательная школа Ровеньского района Белгородской области»\tПлановая камеральная проверка\tПроверка соблюдения требований  в сфере закупок в отношении вопросов, предусмотренных частью 8 статьи 99 Федерального закона о контрактной системе\t01.01.2017 г. - 31.01.2018 г.\t05.02.2018 г.\t26.02.2018 г.\t- ч.8 ст.17, ч.10-11 ст.21, ч.2 ст.34, ч.3 ст.94, ст.95 Федерального закона №44-ФЗ;                                                          - нарушения условий контрактов в части сроков оплаты.\tНаправлено предписание об устранении нарушений законодательства в сфере закупок в срок до 26.03.2018 года с предоставлением отчета до 30.03.2018 года\n" +
+                    "29\tУправление культуры и сельского туризма администрации Ровеньского района Белгородской области\tПлановое обследование\tАнализ осуществления внутреннего финансового контроля и внутреннего финансового аудита                           за 2016-2017 годы\t01.01.2016 г. - 31.12.2017 г.\t21.02.2018 г.\t02.03.2018 г.\t- ч. 1, 2, 4, 5 ст.160.2-1 Бюджетного кодекса Российской Федерации;                  - ч.3 ст.7 Федерального закона от 06.10.2003 года №131-ФЗ «Об общих принципах организации местного самоуправления в Российской Федерации»;                                                   - п.3 постановления администрации Ровеньского района от 30.10.2015 года №569;                                                      - п.п.4, 14, 16-20, 22-23, 28-30, 37 порядка осуществления главными распорядителями (распорядителями) средств бюджета Ровеньского района, главными администраторами (администраторами) доходов бюджета Ровеньского района, главными администраторами (администраторами) источников финансирования дефицита бюджета Ровеньского района внутреннего финансового контроля и внутреннего финансового аудита, утвержденного вышеуказанным постановлением.\tНаправлено представление об устранении нарушений в срок до 20.04.2018 года\n" +
+                    "30\tМуниципальное бюджетное дошкольное общеобразовательное учреждение «Харьковский детский сад Ровеньского района Белгородской области»\tПлановая выездная проверка\tПроверка соблюдения требований  в сфере закупок в отношении вопросов, предусмотренных частью 8 статьи 99 Федерального закона о контрактной системе\t01.01.2017 г. - 31.03.2018 г.\t06.04.2018 г.\t16.04.2018 г.\t- ч.4,6 ст.38, ч.8 ст.17, ч. 10,11,13 ст.21, ст.34, п.4,6 ст.38, ч.2 ст.93, ч.9 ст.94, ч.2 ст.103 Федерального закона №44-ФЗ;                                                             - п.1 ст. 708 Гражданского кодекса РФ; - ч.2 ст.72 Бюджетного Кодекса РФ;                                                              - ст. 9, 10 Федерального закона от 06.12.2011г. №402-ФЗ «О бухгалтерском учёте»;                                  - п.9,11 ч.1 Инструкции по применению Единого плана счетов бухгалтерского учета, утвержденной приказом Минфина России от 01.12.2010 года  №157н.\tНаправлено предписание об устранении нарушений законодательства в сфере закупок в срок до 28.05.2018 года с предоставлением отчета до 31.05.2018 года\n" +
+                    "31\tУправление сельского хозяйства, природопользования и развития сельских территорий\tВнеплановая камеральная проверка\tПроверка финансово- хозяйственной деятельности\t01.01.2016 г.-23.05.2018 г.\t16.05.2018 г.\t06.06.2018 г.\t- нарушения в части правомерности начисления и выплаты заработной платы;                                                            - нарушения и недостатки в ведении финансово-хозяйственной деятельности.\tНаправлено представление об устранении  нарушений в срок до 20.07.2018 года\n" +
+                    "32\tМуниципальное бюджетное дошкольное общеобразовательное учреждение «Харьковский детский сад Ровеньского района Белгородской области»\tПлановая ревизия\tРевизия финансово-хозяйственной деятельности\t01.01.2017 г. - 31.03.2018 г.\t14.03.2018 г. перерыв\t21.06.2018 г. 41 раб. день\t- нарушения соблюдения норм Трудового кодекса Российской Федерации ст.57, ст.60.1, ст.60.2, ч.3 ст.93, ст.100, ст.103, ч.1 ст.154, ст.284;                                             - нарушения в части правомерности начисления и выплаты заработной платы;                                                            - выявлены излишки и недостача нефинансовых активов.\tНаправлено представление об устранении выявленных нарушений в срок до 01.09.2018 года\n" +
+                    "33\tАдминистрации Ржевского сельского поселения муниципального района «Ровеньский район» Белгородской области\tПлановая выездная проверка\tПроверка целевого, рационального и эффективного использования средств местного бюджета и имущества, находящегося в муниципальной собственности\t01.01.2017  - 30.06.2018 г.\t09.07.2018 г.\t27.07.2018 г.\t- нарушения в части правомерности начисления и выплаты заработной платы;                                                            - нарушение соблюдения норм Трудового кодекса РФ ст.136, 284;      - недостатки в ведении учета работы финансово-хозяйственной деятельности;                                                - нарушения ведения бухгалтерского учета, оформления первичных учетных документов и регистров бухгалтерского учета.\tВыдано представление об устранении выявленных нарушений в срок до 29.09.2018 года\n" +
+                    "34\tАдминистрации Ржевского сельского поселения муниципального района «Ровеньский район» Белгородской области\tПлановая выездная  проверка\tПроверка соблюдения требований  в сфере закупок в отношении вопросов, предусмотренных частью 8 статьи 99 Федерального закона о контрактной системе\t01.01.2017 г. - 31.07.2018 г.\t02.08.2018 г.\t16.08.2018 г.\t- ч.4,6 ст.38, ч.7 ст.18, п.4 ч.1 ст.93, ч.3,ч. 6 ст.94 Федерального закона №44-ФЗ;                                                          - ст.457, ст.506 Гражданского кодекса РФ;                                                                 - ч.2 ст.72, п.1 ст.73 Бюджетного Кодекса РФ;                                                   - ст. 9, 10 Федерального закона от 06.12.2011г. №402-ФЗ «О бухгалтерском учёте»;                                - п.9,11 ч.1 Инструкции по применению Единого плана счетов бухгалтерского учета, утвержденной приказом Минфина России от 01.12.2010 года  №157н.\tНаправлено предписание об устранении нарушений законодательства в сфере закупок в срок до 20.09.2018 года с предоставлением отчета до 29.09.2018 года\n" +
+                    "35\tМуниципальное казенное учреждение «Административно-хозяйственная служба обеспечения деятельности органов местного самоуправления Ржевского сельского поселения муниципального района  «Ровеньский район» Белгородской области»\tПлановая   ревизия\tРевизия финансово-хозяйственной деятельности\t01.01.2017 г.  - 20.08.2018 г.\t20.08.2018 г.\t07.09.2018 г.\t- нарушение соблюдения норм Трудового кодекса РФ ст. 72, 100, 136;                                                                - нарушения в части правомерности начисления и выплаты стимулирующей части оплаты труда; - нарушения требований п.3 ,11, 108, 265 Инструкции Минфина №157н.\tВыдано представление об устранении выявленных нарушений в срок до 30.10.2018 года\n" +
+                    "36\tМуниципальное казенное учреждение «Административно-хозяйственная служба обеспечения деятельности органов местного самоуправления городского поселения «Поселок Ровеньки» муниципального района «Ровеньский район» Белгородской области»\tПлановая   ревизия\tРевизия финансово-хозяйственной деятельности\t01.01.2017 г.-31.10.2018 г.\t15.10.2018 г.\t12.11.2018 г.\t- необоснованное использование бюджетных средств на сумму 828,7 тыс. руб.;                                                      - излишки нефинансовых активов у 1 материально-ответственного лица на сумму 139,9 тыс. рублей;                          - нарушение требований ст.19,21 Федеральным законом от 5 апреля 2013 года №44-ФЗ «О контрактной системе в сфере закупок, товаров, работ, услуг для обеспечения государственных и муниципальных нужд» и ч.2 ст.72 Бюджетного кодекса РФ;                                                   -  нарушение соблюдения норм Трудового кодекса РФ ст.136 и другие  нарушения в части обоснованности начисления компенсационных выплат за совмещение профессий и расширенный объем.\tВыдано представление об устранении нарушений в срок до 29.12.2018 года\n";
+
+            configureLoaderDefaults(textLoader);
+            textLoader.setForceHeaders(true);
+            textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
+            playText(
+                    textLoader,
+                    csv,
+                    2048,
+                    expected,
+                    "{\"columnCount\":9,\"columns\":[{\"index\":0,\"name\":\"№ПП\",\"type\":\"INT\"},{\"index\":1,\"name\":\"ОбъектыКонтрольногоМероприятия\",\"type\":\"STRING\"},{\"index\":2,\"name\":\"ВидКонтрольногоМероприятия\",\"type\":\"STRING\"},{\"index\":3,\"name\":\"ТемаКонтрольногоМероприятия\",\"type\":\"STRING\"},{\"index\":4,\"name\":\"ПроверяемыйПериод\",\"type\":\"STRING\"},{\"index\":5,\"name\":\"НачалоПроверки\",\"type\":\"STRING\"},{\"index\":6,\"name\":\"ОкончаниеПроверки\",\"type\":\"STRING\"},{\"index\":7,\"name\":\"ВыявленныеНарушенияНедостатки\",\"type\":\"STRING\"},{\"index\":8,\"name\":\"РезультатыПроверки\",\"type\":\"STRING\"}],\"timestampIndex\":-1}",
+                    36,
+                    36
+            );
+        });
+    }
+
+    @Test
+    public void testWriteErrors() throws Exception {
+        assertNoLeak(textLoader -> {
+            String expected = "f0\tf1\tf2\tf3\tf4\tf5\tf6\tf7\tf8\tf9\n" +
+                    "\"CMP2\t8\t8000\t2.276363521814\t2015-01-29T19:15:09.000Z\t2015-01-29T19:15:09.000Z\t2015-01-29T00:00:00.000Z\t323\ttrue\t14925407\n" +
+                    "CMP1\t2\t1581\t9.014234810602\t2015-01-30T19:15:09.000Z\t2015-01-30T19:15:09.000Z\t2015-01-30T00:00:00.000Z\t9138\tfalse\t68225213\n" +
+                    "CMP2\t8\t7067\t9.628433610778\t2015-01-31T19:15:09.000Z\t2015-01-31T19:15:09.000Z\t2015-01-31T00:00:00.000Z\t8197\ttrue\t58403960\n" +
+                    "CMP1\t8\t5313\t8.877646618057\t2015-02-01T19:15:09.000Z\t2015-02-01T19:15:09.000Z\t2015-02-01T00:00:00.000Z\t2733\tfalse\t69698373\n" +
+                    "\t4\t3883\t7.968730193097\t2015-02-02T19:15:09.000Z\t2015-02-02T19:15:09.000Z\t2015-02-02T00:00:00.000Z\t6912\ttrue\t91147394\n" +
+                    "CMP1\t7\t4256\t2.465535225347\t2015-02-03T19:15:09.000Z\t2015-02-03T19:15:09.000Z\t2015-02-03T00:00:00.000Z\t9453\tfalse\t50278940\n" +
+                    "CMP2\t4\t155\t5.085474955849\t2015-02-04T19:15:09.000Z\t2015-02-04T19:15:09.000Z\t2015-02-04T00:00:00.000Z\t8919\ttrue\t8671995\n" +
+                    "CMP1\t7\t4486\tNaN\t2015-02-05T19:15:09.000Z\t2015-02-05T19:15:09.000Z\t2015-02-05T00:00:00.000Z\t8670\tfalse\t751877\n" +
+                    "CMP2\t2\t4770\t2.850920334458\t2015-02-08T19:15:09.000Z\t2015-02-08T19:15:09.000Z\t2015-02-08T00:00:00.000Z\t253\ttrue\t33766814\n" +
+                    "CMP1\t5\t4938\t4.427544984501\t2015-02-09T19:15:09.000Z\t2015-02-09T19:15:09.000Z\t2015-02-09T00:00:00.000Z\t7817\tfalse\t61983099\n";
+
+            String csv = "\"\"\"CMP2\",8,8000,2.27636352181435,2015-01-29T19:15:09.000Z,2015-01-29 19:15:09,01/29/2015,323,TRUE,14925407\n" +
+                    "CMP1,2,1581,9.01423481060192,2015-01-30T19:15:09.000Z,2015-01-30 19:15:09,01/30/2015,9138,FALSE,68225213\n" +
+                    "CMP2,8,7067,9.6284336107783,2015-01-31T19:15:09.000Z,2015-01-31 19:15:09,01/31/2015,8197,TRUE,58403960\n" +
+                    "CMP1,8,5313,8.87764661805704,2015-02-01T19:15:09.000Z,2015-02-01 19:15:09,02/01/2015,2733,FALSE,69698373\n" +
+                    ",4,3883,7.96873019309714,2015-02-02T19:15:09.000Z,2015-02-02 19:15:09,02/02/2015,6912,TRUE,91147394\n" +
+                    "CMP1,7,4256,2.46553522534668,2015-02-03T19:15:09.000Z,2015-02-03 19:15:09,02/03/2015,9453,FALSE,50278940\n" +
+                    "CMP2,4,155,5.08547495584935,2015-02-04T19:15:09.000Z,2015-02-04 19:15:09,02/04/2015,8919,TRUE,8671995\n" +
+                    "\"CMP1\",7,4486,,2015-02-05T19:15:09.000Z,2015-02-05 19:15:09,02/05/2015,8670,FALSE,751877\n" +
+                    "CMP2,2,6641,0.0381825352087617,2015-02-06T19:15:09.000Z,2015-02-06 19:15:09,02/06/2015,8331,TRUE,40909232527\n" +
+                    "CMP1,1,xxx,0.849663221742958,2015-02-07T19:15:09.000Z,2015-02-07 19:15:09,02/07/2015,9592,FALSE,11490662\n" +
+                    "CMP2,2,4770,2.85092033445835,2015-02-08T19:15:09.000Z,2015-02-08 19:15:09,02/08/2015,253,TRUE,33766814\n" +
+                    "CMP1,5,4938,4.42754498450086,2015-02-09T19:15:09.000Z,2015-02-09 19:15:09,02/09/2015,7817,FALSE,61983099\n";
+
+            configureLoaderDefaults(textLoader);
+            playText0(textLoader, csv, 350, ENTITY_MANIPULATOR);
+            sink.clear();
+            textLoader.getMetadata().toJson(sink);
+            TestUtils.assertEquals("{\"columnCount\":10,\"columns\":[{\"index\":0,\"name\":\"f0\",\"type\":\"STRING\"},{\"index\":1,\"name\":\"f1\",\"type\":\"INT\"},{\"index\":2,\"name\":\"f2\",\"type\":\"INT\"},{\"index\":3,\"name\":\"f3\",\"type\":\"DOUBLE\"},{\"index\":4,\"name\":\"f4\",\"type\":\"DATE\"},{\"index\":5,\"name\":\"f5\",\"type\":\"DATE\"},{\"index\":6,\"name\":\"f6\",\"type\":\"DATE\"},{\"index\":7,\"name\":\"f7\",\"type\":\"INT\"},{\"index\":8,\"name\":\"f8\",\"type\":\"BOOLEAN\"},{\"index\":9,\"name\":\"f9\",\"type\":\"INT\"}],\"timestampIndex\":-1}", sink);
+            Assert.assertEquals((long) 12, textLoader.getParsedLineCount());
+            Assert.assertEquals((long) 10, textLoader.getWrittenLineCount());
+            Assert.assertEquals("[0,0,1,0,0,0,0,0,0,1]", textLoader.getColumnErrorCounts().toString());
+            assertTable(expected);
+            textLoader.clear();
+        });
+    }
+
+    @Test
+    public void testWriteToExistingTableTooFewColumns() throws Exception {
+        assertNoLeak(textLoader -> {
+            String csv = "\"\"\"CMP2\",8,8000,2.27636352181435,2015-01-29T19:15:09.000Z,2015-01-29 19:15:09,01/29/2015,323,TRUE,14925407\n" +
+                    "CMP1,2,1581,9.01423481060192,2015-01-30T19:15:09.000Z,2015-01-30 19:15:09,01/30/2015,9138,FALSE,68225213\n" +
+                    "CMP2,8,7067,9.6284336107783,2015-01-31T19:15:09.000Z,2015-01-31 19:15:09,01/31/2015,8197,TRUE,58403960\n" +
+                    "CMP1,8,5313,8.87764661805704,2015-02-01T19:15:09.000Z,2015-02-01 19:15:09,02/01/2015,2733,FALSE,69698373\n" +
+                    ",4,3883,7.96873019309714,2015-02-02T19:15:09.000Z,2015-02-02 19:15:09,02/02/2015,6912,TRUE,91147394\n" +
+                    "CMP1,7,4256,2.46553522534668,2015-02-03T19:15:09.000Z,2015-02-03 19:15:09,02/03/2015,9453,FALSE,50278940\n" +
+                    "CMP2,4,155,5.08547495584935,2015-02-04T19:15:09.000Z,2015-02-04 19:15:09,02/04/2015,8919,TRUE,8671995\n" +
+                    "\"CMP1\",7,4486,,2015-02-05T19:15:09.000Z,2015-02-05 19:15:09,02/05/2015,8670,FALSE,751877\n" +
+                    "CMP2,2,6641,0.0381825352087617,2015-02-06T19:15:09.000Z,2015-02-06 19:15:09,02/06/2015,8331,TRUE,40909232527\n" +
+                    "CMP1,1,3579,0.849663221742958,2015-02-07T19:15:09.000Z,2015-02-07 19:15:09,02/07/2015,9592,FALSE,11490662\n" +
+                    "CMP2,2,4770,2.85092033445835,2015-02-08T19:15:09.000Z,2015-02-08 19:15:09,02/08/2015,253,TRUE,33766814\n" +
+                    "CMP1,5,4938,4.42754498450086,2015-02-09T19:15:09.000Z,2015-02-09 19:15:09,02/09/2015,7817,FALSE,61983099\n";
+
+            compiler.compile("create table test(a int, b int)", null);
+            configureLoaderDefaults(textLoader);
+            try {
+                playText0(textLoader, csv, 1024, ENTITY_MANIPULATOR);
+                Assert.fail();
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getMessage(), "column count mismatch [textColumnCount=10, tableColumnCount=2, table=test]");
+            }
+        });
+    }
+
+    @Test
+    public void testWriteToExistingTableTooManyColumns() throws Exception {
+        assertNoLeak(textLoader -> {
+            String expected = "a\tb\tc\td\te\tf\tg\th\ti\tk\tt\n" +
+                    "\"CMP2\t8\t8000\t2.2764\t2015-01-29T19:15:09.000Z\t2015-01-29T19:15:09.000Z\t2015-01-29T00:00:00.000Z\t323\ttrue\t14925407\t\n" +
+                    "CMP1\t2\t1581\t9.0142\t2015-01-30T19:15:09.000Z\t2015-01-30T19:15:09.000Z\t2015-01-30T00:00:00.000Z\t9138\tfalse\t68225213\t\n" +
+                    "CMP2\t8\t7067\t9.6284\t2015-01-31T19:15:09.000Z\t2015-01-31T19:15:09.000Z\t2015-01-31T00:00:00.000Z\t8197\ttrue\t58403960\t\n" +
+                    "CMP1\t8\t5313\t8.8776\t2015-02-01T19:15:09.000Z\t2015-02-01T19:15:09.000Z\t2015-02-01T00:00:00.000Z\t2733\tfalse\t69698373\t\n" +
+                    "\t4\t3883\t7.9687\t2015-02-02T19:15:09.000Z\t2015-02-02T19:15:09.000Z\t2015-02-02T00:00:00.000Z\t6912\ttrue\t91147394\t\n" +
+                    "CMP1\t7\t4256\t2.4655\t2015-02-03T19:15:09.000Z\t2015-02-03T19:15:09.000Z\t2015-02-03T00:00:00.000Z\t9453\tfalse\t50278940\t\n" +
+                    "CMP2\t4\t155\t5.0855\t2015-02-04T19:15:09.000Z\t2015-02-04T19:15:09.000Z\t2015-02-04T00:00:00.000Z\t8919\ttrue\t8671995\t\n" +
+                    "CMP1\t7\t4486\tNaN\t2015-02-05T19:15:09.000Z\t2015-02-05T19:15:09.000Z\t2015-02-05T00:00:00.000Z\t8670\tfalse\t751877\t\n" +
+                    "CMP2\t2\t6641\t0.0382\t2015-02-06T19:15:09.000Z\t2015-02-06T19:15:09.000Z\t2015-02-06T00:00:00.000Z\t8331\ttrue\t40909232527\t\n" +
+                    "CMP1\t1\t3579\t0.8497\t2015-02-07T19:15:09.000Z\t2015-02-07T19:15:09.000Z\t2015-02-07T00:00:00.000Z\t9592\tfalse\t11490662\t\n" +
+                    "CMP2\t2\t4770\t2.8509\t2015-02-08T19:15:09.000Z\t2015-02-08T19:15:09.000Z\t2015-02-08T00:00:00.000Z\t253\ttrue\t33766814\t\n" +
+                    "CMP1\t5\t4938\t4.4275\t2015-02-09T19:15:09.000Z\t2015-02-09T19:15:09.000Z\t2015-02-09T00:00:00.000Z\t7817\tfalse\t61983099\t\n";
+
+            String csv = "\"\"\"CMP2\",8,8000,2.27636352181435,2015-01-29T19:15:09.000Z,2015-01-29 19:15:09,01/29/2015,323,TRUE,14925407\n" +
+                    "CMP1,2,1581,9.01423481060192,2015-01-30T19:15:09.000Z,2015-01-30 19:15:09,01/30/2015,9138,FALSE,68225213\n" +
+                    "CMP2,8,7067,9.6284336107783,2015-01-31T19:15:09.000Z,2015-01-31 19:15:09,01/31/2015,8197,TRUE,58403960\n" +
+                    "CMP1,8,5313,8.87764661805704,2015-02-01T19:15:09.000Z,2015-02-01 19:15:09,02/01/2015,2733,FALSE,69698373\n" +
+                    ",4,3883,7.96873019309714,2015-02-02T19:15:09.000Z,2015-02-02 19:15:09,02/02/2015,6912,TRUE,91147394\n" +
+                    "CMP1,7,4256,2.46553522534668,2015-02-03T19:15:09.000Z,2015-02-03 19:15:09,02/03/2015,9453,FALSE,50278940\n" +
+                    "CMP2,4,155,5.08547495584935,2015-02-04T19:15:09.000Z,2015-02-04 19:15:09,02/04/2015,8919,TRUE,8671995\n" +
+                    "\"CMP1\",7,4486,,2015-02-05T19:15:09.000Z,2015-02-05 19:15:09,02/05/2015,8670,FALSE,751877\n" +
+                    "CMP2,2,6641,0.0381825352087617,2015-02-06T19:15:09.000Z,2015-02-06 19:15:09,02/06/2015,8331,TRUE,40909232527\n" +
+                    "CMP1,1,3579,0.849663221742958,2015-02-07T19:15:09.000Z,2015-02-07 19:15:09,02/07/2015,9592,FALSE,11490662\n" +
+                    "CMP2,2,4770,2.85092033445835,2015-02-08T19:15:09.000Z,2015-02-08 19:15:09,02/08/2015,253,TRUE,33766814\n" +
+                    "CMP1,5,4938,4.42754498450086,2015-02-09T19:15:09.000Z,2015-02-09 19:15:09,02/09/2015,7817,FALSE,61983099\n";
+
+            compiler.compile("create table test" +
+                    "(a symbol" +
+                    ", b int" +
+                    ", c long" +
+                    ", d float" +
+                    ", e date" +
+                    ", f date" +
+                    ", g date" +
+                    ", h long" +
+                    ", i boolean" +
+                    ", k long" +
+                    ", t timestamp)", null);
+            configureLoaderDefaults(textLoader);
+            playText(
+                    textLoader,
+                    csv,
+                    1024,
+                    expected,
+                    "{\"columnCount\":11,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\"SYMBOL\"},{\"index\":1,\"name\":\"b\",\"type\":\"INT\"},{\"index\":2,\"name\":\"c\",\"type\":\"LONG\"},{\"index\":3,\"name\":\"d\",\"type\":\"FLOAT\"},{\"index\":4,\"name\":\"e\",\"type\":\"DATE\"},{\"index\":5,\"name\":\"f\",\"type\":\"DATE\"},{\"index\":6,\"name\":\"g\",\"type\":\"DATE\"},{\"index\":7,\"name\":\"h\",\"type\":\"LONG\"},{\"index\":8,\"name\":\"i\",\"type\":\"BOOLEAN\"},{\"index\":9,\"name\":\"k\",\"type\":\"LONG\"},{\"index\":10,\"name\":\"t\",\"type\":\"TIMESTAMP\"}],\"timestampIndex\":-1}",
+                    12,
+                    12
+            );
         });
     }
 
     private void assertNoLeak(TestCode code) throws Exception {
+        assertNoLeak(new DefaultTextConfiguration(), code);
+    }
+
+    private void assertNoLeak(TextConfiguration textConfiguration, TestCode code) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (TextLoader loader = new TextLoader(
                     configuration,
-                    new DefaultTextConfiguration(),
+                    textConfiguration,
                     engine,
                     DateLocaleFactory.INSTANCE,
                     new DateFormatFactory()
@@ -1306,14 +1998,24 @@ public class PlainTextImportTest extends AbstractCairoTest {
         }
     }
 
-    private void configureLoaderDefaults(TextLoader textLoader, char columnSeparator) {
+    private void configureLoaderDefaults(TextLoader textLoader) {
+        configureLoaderDefaults(textLoader, (byte) -1, Atomicity.SKIP_ROW);
+    }
+
+    private void configureLoaderDefaults(TextLoader textLoader, byte columnSeparator) {
         configureLoaderDefaults(textLoader, columnSeparator, Atomicity.SKIP_ROW);
     }
 
-    private void configureLoaderDefaults(TextLoader textLoader, char columnSeparator, int atomicity) {
+    private void configureLoaderDefaults(TextLoader textLoader, byte columnSeparator, int atomicity, boolean overwrite) {
         textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
-        textLoader.configureDestination("test", false, false, atomicity);
-        textLoader.configureSeparator(columnSeparator);
+        textLoader.configureDestination("test", overwrite, false, atomicity);
+        if (columnSeparator > 0) {
+            textLoader.configureColumnDelimiter(columnSeparator);
+        }
+    }
+
+    private void configureLoaderDefaults(TextLoader textLoader, byte columnSeparator, int atomicity) {
+        configureLoaderDefaults(textLoader, columnSeparator, atomicity, false);
     }
 
     private void playJson(TextLoader textLoader, String jsonStr) throws JsonException {
@@ -1339,13 +2041,45 @@ public class PlainTextImportTest extends AbstractCairoTest {
         }
     }
 
-    private void playText(TextLoader textLoader, String text, final int firstBufSize, String expected) throws Exception {
-        playText(textLoader, text, firstBufSize, expected, ENTITY_MANIPULATOR);
+    private void playText(
+            TextLoader textLoader,
+            String text,
+            final int firstBufSize,
+            String expected,
+            CharSequence expectedMetadata,
+            long expectedParsedLineCount,
+            long expectedWrittenLineCount
+    ) throws Exception {
+        playText(
+                textLoader,
+                text,
+                firstBufSize,
+                expected,
+                ENTITY_MANIPULATOR,
+                expectedMetadata,
+                expectedParsedLineCount,
+                expectedWrittenLineCount
+        );
     }
 
-    private void playText(TextLoader textLoader, String text, final int firstBufSize, String expected, ByteManipulator manipulator) throws Exception {
+    private void playText(
+            TextLoader textLoader,
+            String text,
+            final int firstBufSize,
+            String expected,
+            ByteManipulator manipulator,
+            CharSequence expectedMetadata,
+            long expectedParsedLineCount,
+            long expectedWrittenLineCount
+    ) throws Exception {
         boolean forceHeader = textLoader.isForceHeaders();
+        byte delimiter = textLoader.getColumnDelimiter();
         playText0(textLoader, text, firstBufSize, manipulator);
+        sink.clear();
+        textLoader.getMetadata().toJson(sink);
+        TestUtils.assertEquals(expectedMetadata, sink);
+        Assert.assertEquals(expectedParsedLineCount, textLoader.getParsedLineCount());
+        Assert.assertEquals(expectedWrittenLineCount, textLoader.getWrittenLineCount());
         assertTable(expected);
         textLoader.clear();
 
@@ -1353,11 +2087,14 @@ public class PlainTextImportTest extends AbstractCairoTest {
             writer.truncate();
         }
 
-        textLoader.clear();
         textLoader.setForceHeaders(forceHeader);
+        if (delimiter > 0) {
+            textLoader.configureColumnDelimiter(delimiter);
+        }
         textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
         playText0(textLoader, text, firstBufSize, manipulator);
         assertTable(expected);
+        textLoader.clear();
     }
 
     private void playText0(TextLoader textLoader, String text, int firstBufSize, ByteManipulator manipulator) throws JsonException {

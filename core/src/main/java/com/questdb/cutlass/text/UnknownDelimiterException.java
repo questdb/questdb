@@ -23,10 +23,6 @@
 
 package com.questdb.cutlass.text;
 
-import com.questdb.std.ObjList;
-import com.questdb.std.str.DirectByteCharSequence;
-
-@FunctionalInterface
-public interface TextLexerListener {
-    void onFields(long line, ObjList<DirectByteCharSequence> fields, int hi);
+public class UnknownDelimiterException extends RuntimeException {
+    public static final UnknownDelimiterException INSTANCE = new UnknownDelimiterException();
 }

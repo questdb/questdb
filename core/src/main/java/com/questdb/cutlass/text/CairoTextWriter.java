@@ -39,16 +39,16 @@ import java.io.Closeable;
 
 import static com.questdb.std.Chars.utf8DecodeMultiByte;
 
-public class CairoTextWriter implements TextLexerListener, Closeable, Mutable {
+public class CairoTextWriter implements TextLexer.Listener, Closeable, Mutable {
     private static final Log LOG = LogFactory.getLog(CairoTextWriter.class);
     private final CairoConfiguration configuration;
     private final CairoEngine engine;
-    private final LongList errors = new LongList();
+    private final LongList columnErrorCounts = new LongList();
     private final DirectCharSink utf8Sink;
     private final AppendMemory appendMemory = new AppendMemory();
     private final Path path;
     private final TableStructureAdapter tableStructureAdapter = new TableStructureAdapter();
-    private String tableName;
+    private CharSequence tableName;
     private ObjList<TextMetadata> textMetadata;
     private TableWriter writer;
     private long _size;
@@ -93,7 +93,7 @@ public class CairoTextWriter implements TextLexerListener, Closeable, Mutable {
     @Override
     public void clear() {
         writer = Misc.free(writer);
-        errors.clear();
+        columnErrorCounts.clear();
         _size = 0;
     }
 
@@ -111,23 +111,22 @@ public class CairoTextWriter implements TextLexerListener, Closeable, Mutable {
             } else {
                 writer.commit();
             }
-            writer = Misc.free(writer);
         }
     }
 
-    public LongList getErrors() {
-        return errors;
+    public LongList getColumnErrorCounts() {
+        return columnErrorCounts;
     }
 
-    public long getImportedRowCount() {
-        return writer.size() - _size;
-    }
-
-    public RecordMetadata getTextMetadata() {
+    public RecordMetadata getMetadata() {
         return writer.getMetadata();
     }
 
-    public CairoTextWriter of(String name, boolean overwrite, boolean durable, int atomicity) {
+    public long getWrittenLineCount() {
+        return writer.size() - _size;
+    }
+
+    public CairoTextWriter of(CharSequence name, boolean overwrite, boolean durable, int atomicity) {
         this.tableName = name;
         this.overwrite = overwrite;
         this.durable = durable;
@@ -182,7 +181,7 @@ public class CairoTextWriter implements TextLexerListener, Closeable, Mutable {
             } catch (NumericException | Utf8Exception ignore) {
                 LogRecord logRecord = LOG.error().$("type syntax [type=").$(ColumnType.nameOf(textMetadata.getQuick(i).type)).$("]\n\t");
                 logRecord.$('[').$(line).$(':').$(i).$("] -> ").$(values.getQuick(i)).$();
-                errors.increment(i);
+                columnErrorCounts.increment(i);
                 switch (atomicity) {
                     case Atomicity.SKIP_ALL:
                         writer.rollback();
@@ -226,9 +225,13 @@ public class CairoTextWriter implements TextLexerListener, Closeable, Mutable {
         // now, compare column count.
         // Cannot continue if different
 
-        if (metadata.getColumnCount() != this.textMetadata.size()) {
+        if (metadata.getColumnCount() < this.textMetadata.size()) {
             writer.close();
-            throw CairoException.instance(0).put("column count mismatch [text=").put(textMetadata.size()).put(", table=").put(metadata.getColumnCount()).put(']');
+            throw CairoException.instance(0)
+                    .put("column count mismatch [textColumnCount=").put(textMetadata.size())
+                    .put(", tableColumnCount=").put(metadata.getColumnCount())
+                    .put(", table=").put(tableName)
+                    .put(']');
         }
 
 
@@ -247,6 +250,10 @@ public class CairoTextWriter implements TextLexerListener, Closeable, Mutable {
     void prepareTable(ObjList<TextMetadata> metadata) {
         assert writer == null;
 
+        if (metadata.size() == 0) {
+            throw CairoException.instance(0).put("cannot determine text structure");
+        }
+
         this.textMetadata = metadata;
         switch (engine.getStatus(path, tableName)) {
             case TableUtils.TABLE_DOES_NOT_EXIST:
@@ -263,10 +270,10 @@ public class CairoTextWriter implements TextLexerListener, Closeable, Mutable {
                 }
                 break;
             default:
-                throw CairoException.instance(0).put("name is reserved");
+                throw CairoException.instance(0).put("name is reserved [table=").put(tableName).put(']');
         }
         _size = writer.size();
-        errors.seed(writer.getMetadata().getColumnCount(), 0);
+        columnErrorCounts.seed(writer.getMetadata().getColumnCount(), 0);
     }
 
     private class TableStructureAdapter implements TableStructure {

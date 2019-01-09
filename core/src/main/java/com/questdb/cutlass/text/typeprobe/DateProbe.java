@@ -30,13 +30,11 @@ import com.questdb.std.time.DateLocale;
 import com.questdb.store.ColumnType;
 
 public class DateProbe implements TypeProbe {
-    private final String pattern;
     private final DateLocale dateLocale;
     private final DateFormat format;
 
-    public DateProbe(DateFormatFactory dateFormatFactory, DateLocale dateLocale, String pattern) {
+    public DateProbe(DateFormatFactory dateFormatFactory, DateLocale dateLocale, CharSequence pattern) {
         this.dateLocale = dateLocale;
-        this.pattern = pattern;
         this.format = dateFormatFactory.get(pattern);
     }
 
@@ -48,11 +46,6 @@ public class DateProbe implements TypeProbe {
     @Override
     public DateLocale getDateLocale() {
         return dateLocale;
-    }
-
-    @Override
-    public String getFormat() {
-        return pattern;
     }
 
     @Override

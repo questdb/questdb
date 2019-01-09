@@ -25,25 +25,9 @@ package com.questdb.cutlass.text.typeprobe;
 
 import com.questdb.std.Numbers;
 import com.questdb.std.NumericException;
-import com.questdb.std.time.DateFormat;
-import com.questdb.std.time.DateLocale;
 import com.questdb.store.ColumnType;
 
 public class IntProbe implements TypeProbe {
-    @Override
-    public DateFormat getDateFormat() {
-        return null;
-    }
-
-    @Override
-    public DateLocale getDateLocale() {
-        return null;
-    }
-
-    @Override
-    public String getFormat() {
-        return null;
-    }
 
     @Override
     public int getType() {

@@ -37,4 +37,8 @@ public interface TextConfiguration {
     long getRollBufferSize();
 
     int getUtf8SinkCapacity();
+
+    double getMaxRequiredDelimiterStdDev();
+
+    int getTextAnalysisMaxLines();
 }

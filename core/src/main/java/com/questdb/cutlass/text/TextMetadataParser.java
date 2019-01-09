@@ -64,6 +64,65 @@ public class TextMetadataParser implements JsonParser, Mutable, Closeable {
     private long buf;
     private long bufCapacity = 0;
     private int bufSize = 0;
+    private CharSequence tableName;
+
+    @Override
+    public void onEvent(int code, CharSequence tag, int position) throws JsonException {
+        switch (code) {
+            case JsonLexer.EVT_ARRAY_START:
+                if (state != S_NEED_ARRAY) {
+                    throw JsonException.with("Unexpected array", position);
+                }
+                state = S_NEED_OBJECT;
+                break;
+            case JsonLexer.EVT_OBJ_START:
+                if (state != S_NEED_OBJECT) {
+                    throw JsonException.with("Unexpected object", position);
+                }
+                state = S_NEED_PROPERTY;
+                break;
+            case JsonLexer.EVT_NAME:
+                this.propertyIndex = propertyNameMap.get(tag);
+                if (this.propertyIndex == -1) {
+                    LOG.info().$("unknown [table=").$(tableName).$(", tag=").$(tag).$(']').$();
+                }
+                break;
+            case JsonLexer.EVT_VALUE:
+                switch (propertyIndex) {
+                    case P_NAME:
+                        name = copy(tag);
+                        break;
+                    case P_TYPE:
+                        type = ColumnType.columnTypeOf(tag);
+                        if (type == -1) {
+                            throw JsonException.with("Invalid type", position);
+                        }
+                        break;
+                    case P_PATTERN:
+                        dateFormat = dateFormatFactory.get(tag);
+                        pattern = copy(tag);
+                        break;
+                    case P_LOCALE:
+                        dateLocale = dateLocaleFactory.getDateLocale(tag);
+                        if (dateLocale == null) {
+                            throw JsonException.with("Invalid date locale", position);
+                        }
+                        break;
+                    default:
+                        LOG.info().$("ignoring [table=").$(tableName).$(", value=").$(tag).$(']').$();
+                        break;
+                }
+                break;
+            case JsonLexer.EVT_OBJ_END:
+                state = S_NEED_OBJECT;
+                createImportedType(position);
+                break;
+            case JsonLexer.EVT_ARRAY_VALUE:
+                throw JsonException.with("Must be an object", position);
+            default:
+                break;
+        }
+    }
 
     public TextMetadataParser(
             TextConfiguration textConfiguration,
@@ -97,62 +156,8 @@ public class TextMetadataParser implements JsonParser, Mutable, Closeable {
         }
     }
 
-    @Override
-    public void onEvent(int code, CharSequence tag, int position) throws JsonException {
-        switch (code) {
-            case JsonLexer.EVT_ARRAY_START:
-                if (state != S_NEED_ARRAY) {
-                    throw JsonException.with("Unexpected array", position);
-                }
-                state = S_NEED_OBJECT;
-                break;
-            case JsonLexer.EVT_OBJ_START:
-                if (state != S_NEED_OBJECT) {
-                    throw JsonException.with("Unexpected object", position);
-                }
-                state = S_NEED_PROPERTY;
-                break;
-            case JsonLexer.EVT_NAME:
-                this.propertyIndex = propertyNameMap.get(tag);
-                if (this.propertyIndex == -1) {
-                    LOG.info().$("unknown [tag=").$(tag).$(']').$();
-                }
-                break;
-            case JsonLexer.EVT_VALUE:
-                switch (propertyIndex) {
-                    case P_NAME:
-                        name = copy(tag);
-                        break;
-                    case P_TYPE:
-                        type = ColumnType.columnTypeOf(tag);
-                        if (type == -1) {
-                            throw JsonException.with("Invalid type", position);
-                        }
-                        break;
-                    case P_PATTERN:
-                        dateFormat = dateFormatFactory.get(tag);
-                        pattern = copy(tag);
-                        break;
-                    case P_LOCALE:
-                        dateLocale = dateLocaleFactory.getDateLocale(tag);
-                        if (dateLocale == null) {
-                            throw JsonException.with("Invalid date locale", position);
-                        }
-                        break;
-                    default:
-                        LOG.info().$("ignoring [value=").$(tag).$(']').$();
-                        break;
-                }
-                break;
-            case JsonLexer.EVT_OBJ_END:
-                state = S_NEED_OBJECT;
-                createImportedType(position);
-                break;
-            case JsonLexer.EVT_ARRAY_VALUE:
-                throw JsonException.with("Must be an object", position);
-            default:
-                break;
-        }
+    void setTableName(CharSequence tableName) {
+        this.tableName = tableName;
     }
 
     private void clearStage() {
@@ -194,7 +199,6 @@ public class TextMetadataParser implements JsonParser, Mutable, Closeable {
         TextMetadata m = textMetadataPool.next();
         m.name = name;
         m.type = type;
-        m.pattern = pattern;
         m.dateFormat = dateFormat;
         m.dateLocale = dateLocale == null && type == ColumnType.DATE ? dateLocaleFactory.getDefaultDateLocale() : dateLocale;
         textMetadata.add(m);

@@ -27,11 +27,13 @@ import com.questdb.std.time.DateFormat;
 import com.questdb.std.time.DateLocale;
 
 public interface TypeProbe {
-    DateFormat getDateFormat();
+    default DateFormat getDateFormat() {
+        return null;
+    }
 
-    DateLocale getDateLocale();
-
-    String getFormat();
+    default DateLocale getDateLocale() {
+        return null;
+    }
 
     int getType();
 

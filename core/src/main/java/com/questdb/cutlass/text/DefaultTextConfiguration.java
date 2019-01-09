@@ -58,4 +58,14 @@ public class DefaultTextConfiguration implements TextConfiguration {
     public int getUtf8SinkCapacity() {
         return 4096;
     }
+
+    @Override
+    public int getTextAnalysisMaxLines() {
+        return 1000;
+    }
+
+    @Override
+    public double getMaxRequiredDelimiterStdDev() {
+        return 0.1222d;
+    }
 }

@@ -31,7 +31,6 @@ import com.questdb.std.time.DateLocale;
 public class TextMetadata implements Mutable {
 
     public int type;
-    public CharSequence pattern;
     public DateFormat dateFormat;
     public DateLocale dateLocale;
     public CharSequence name = "";
@@ -44,9 +43,6 @@ public class TextMetadata implements Mutable {
     public void copyTo(TextMetadata _m) {
         _m.type = this.type;
         if (this.type == ColumnType.DATE) {
-            if (this.pattern != null) {
-                _m.pattern = this.pattern;
-            }
 
             if (this.dateFormat != null) {
                 _m.dateFormat = this.dateFormat;
@@ -57,7 +53,6 @@ public class TextMetadata implements Mutable {
             }
 
         } else {
-            _m.pattern = this.pattern;
             _m.dateFormat = this.dateFormat;
             _m.dateLocale = this.dateLocale;
         }
@@ -67,7 +62,6 @@ public class TextMetadata implements Mutable {
     public String toString() {
         return "TextMetadata{" +
                 "type=" + ColumnType.nameOf(type) +
-                ", pattern=" + pattern +
                 ", dateLocale=" + (dateLocale == null ? null : dateLocale.getId()) +
                 ", name=" + name +
                 '}';

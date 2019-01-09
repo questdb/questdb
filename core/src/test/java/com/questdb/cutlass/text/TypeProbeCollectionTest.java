@@ -54,13 +54,10 @@ public class TypeProbeCollectionTest {
 
             DateLocale defaultLocale = DateLocaleFactory.INSTANCE.getDefaultDateLocale();
 
-            Assert.assertEquals("dd/MM/y", typeProbeCollection.getProbe(4).getFormat());
             Assert.assertEquals(defaultLocale.getId(), typeProbeCollection.getProbe(4).getDateLocale().getId());
 
-            Assert.assertEquals("yyyy-MM-dd HH:mm:ss", typeProbeCollection.getProbe(5).getFormat());
             Assert.assertEquals("es-PA", typeProbeCollection.getProbe(5).getDateLocale().getId());
 
-            Assert.assertEquals("MM/dd/y", typeProbeCollection.getProbe(6).getFormat());
             Assert.assertEquals(defaultLocale.getId(), typeProbeCollection.getProbe(6).getDateLocale().getId());
         }
     }

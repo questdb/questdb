@@ -86,8 +86,8 @@ public class TextMetadataParserTest {
 
         ObjList<TextMetadata> metadata = parseMetadata(in);
         Assert.assertEquals(2, metadata.size());
-        Assert.assertEquals("TextMetadata{type=INT, pattern=xyz, dateLocale=en-US, name=x}", metadata.get(0).toString());
-        Assert.assertEquals("TextMetadata{type=DATE, pattern=xyz, dateLocale=" + defaultLocaleId + ", name=y}", metadata.get(1).toString());
+        Assert.assertEquals("TextMetadata{type=INT, dateLocale=en-US, name=x}", metadata.get(0).toString());
+        Assert.assertEquals("TextMetadata{type=DATE, dateLocale=" + defaultLocaleId + ", name=y}", metadata.get(1).toString());
     }
 
     @Test

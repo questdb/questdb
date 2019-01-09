@@ -38,7 +38,7 @@ import java.io.Closeable;
 
 import static com.questdb.std.Chars.utf8DecodeMultiByte;
 
-public class TextMetadataDetector implements TextLexerListener, Mutable, Closeable {
+public class TextMetadataDetector implements TextLexer.Listener, Mutable, Closeable {
     private static final Log LOG = LogFactory.getLog(TextMetadataDetector.class);
     private final StringSink tempSink = new StringSink();
     private final ObjList<TextMetadata> _metadata = new ObjList<>();
@@ -46,19 +46,18 @@ public class TextMetadataDetector implements TextLexerListener, Mutable, Closeab
     private final IntList _blanks = new IntList();
     private final IntList _histogram = new IntList();
     private final CharSequenceObjHashMap<TextMetadata> schemaColumns = new CharSequenceObjHashMap<>();
-    private final ObjectPool<TextMetadata> mPool;
+    private final ObjectPool<TextMetadata> mPool = new ObjectPool<>(TextMetadata::new, 256);
     private final TypeProbeCollection typeProbeCollection;
     private final DirectCharSink utf8Sink;
     private int fieldCount;
     private boolean header = false;
     private boolean forceHeader = false;
+    private CharSequence tableName;
 
     public TextMetadataDetector(
-            ObjectPool<TextMetadata> mPool,
             TypeProbeCollection typeProbeCollection,
             TextConfiguration textConfiguration
     ) {
-        this.mPool = mPool;
         this.typeProbeCollection = typeProbeCollection;
         this.utf8Sink = new DirectCharSink(textConfiguration.getUtf8SinkCapacity());
     }
@@ -93,6 +92,7 @@ public class TextMetadataDetector implements TextLexerListener, Mutable, Closeab
         _metadata.clear();
         schemaColumns.clear();
         forceHeader = false;
+        mPool.clear();
     }
 
     @Override
@@ -111,7 +111,12 @@ public class TextMetadataDetector implements TextLexerListener, Mutable, Closeab
             }
             header = true;
         } else {
-            LOG.info().$("no header [lineCount=").$(lineCount).$(", errorCount=").$(errorCount).$(", forceHeader=").$(forceHeader).$(']').$();
+            LOG.info()
+                    .$("no header [table=").$(tableName)
+                    .$(", lineCount=").$(lineCount)
+                    .$(", errorCount=").$(errorCount)
+                    .$(", forceHeader=").$(forceHeader)
+                    .$(']').$();
         }
 
         // make up field names if there is no header
@@ -203,7 +208,6 @@ public class TextMetadataDetector implements TextLexerListener, Mutable, Closeab
                     unprobed = false;
                     TypeProbe probe = typeProbeCollection.getProbe(k);
                     m.type = probe.getType();
-                    m.pattern = probe.getFormat();
                     m.dateFormat = probe.getDateFormat();
                     m.dateLocale = probe.getDateLocale();
                     if (allStrings) {
@@ -274,6 +278,10 @@ public class TextMetadataDetector implements TextLexerListener, Mutable, Closeab
         this._headers.setAll(count, "");
     }
 
+    void setTableName(CharSequence tableName) {
+        this.tableName = tableName;
+    }
+
     private void stashPossibleHeader(ObjList<DirectByteCharSequence> values, int hi) {
         for (int i = 0; i < hi; i++) {
             DirectByteCharSequence value = values.getQuick(i);
@@ -281,7 +289,7 @@ public class TextMetadataDetector implements TextLexerListener, Mutable, Closeab
             if (utf8Decode(value.getLo(), value.getHi(), utf8Sink)) {
                 _headers.setQuick(i, normalise(utf8Sink));
             } else {
-                LOG.info().$("utf8 error [line=0, col=").$(i).$(']').$();
+                LOG.info().$("utf8 error [table=").$(tableName).$(", line=0, col=").$(i).$(']').$();
             }
         }
     }

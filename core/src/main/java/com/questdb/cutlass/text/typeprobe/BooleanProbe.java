@@ -41,11 +41,6 @@ public class BooleanProbe implements TypeProbe {
     }
 
     @Override
-    public String getFormat() {
-        return null;
-    }
-
-    @Override
     public int getType() {
         return ColumnType.BOOLEAN;
     }

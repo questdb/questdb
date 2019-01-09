@@ -25,9 +25,13 @@ package com.questdb.cutlass.text;
 
 import com.questdb.cairo.CairoConfiguration;
 import com.questdb.cairo.sql.CairoEngine;
+import com.questdb.cairo.sql.RecordMetadata;
 import com.questdb.cutlass.json.JsonException;
 import com.questdb.cutlass.json.JsonLexer;
 import com.questdb.cutlass.text.typeprobe.TypeProbeCollection;
+import com.questdb.log.Log;
+import com.questdb.log.LogFactory;
+import com.questdb.std.LongList;
 import com.questdb.std.Mutable;
 import com.questdb.std.str.Path;
 import com.questdb.std.time.DateFormatFactory;
@@ -39,14 +43,17 @@ public class TextLoader implements Closeable, Mutable {
     public static final int LOAD_JSON_METADATA = 0;
     public static final int ANALYZE_STRUCTURE = 1;
     public static final int LOAD_DATA = 2;
+    private static final Log LOG = LogFactory.getLog(TextLoader.class);
     private final CairoTextWriter textWriter;
     private final TextMetadataParser textMetadataParser;
     private final TextLexer textLexer;
     private final JsonLexer jsonLexer;
     private final Path path = new Path();
+    private final int textAnalysisMaxLines;
+    private final TextDelimiterScanner textDelimiterScanner;
     private int state;
     private boolean forceHeaders = false;
-    private int statsLineCountLimit = Integer.MAX_VALUE;
+    private byte columnDelimiter = -1;
 
     public TextLoader(
             CairoConfiguration configuration,
@@ -68,6 +75,8 @@ public class TextLoader implements Closeable, Mutable {
         );
         textWriter = new CairoTextWriter(configuration, engine, path, textConfiguration);
         textMetadataParser = new TextMetadataParser(textConfiguration, dateLocaleFactory, dateFormatFactory);
+        textAnalysisMaxLines = textConfiguration.getTextAnalysisMaxLines();
+        textDelimiterScanner = new TextDelimiterScanner(textConfiguration);
     }
 
     @Override
@@ -77,6 +86,7 @@ public class TextLoader implements Closeable, Mutable {
         textMetadataParser.clear();
         jsonLexer.clear();
         forceHeaders = false;
+        columnDelimiter = -1;
     }
 
     @Override
@@ -86,18 +96,46 @@ public class TextLoader implements Closeable, Mutable {
         textMetadataParser.close();
         jsonLexer.close();
         path.close();
+        textDelimiterScanner.close();
+    }
+
+    public void configureColumnDelimiter(byte columnDelimiter) {
+        this.columnDelimiter = columnDelimiter;
+        assert this.columnDelimiter > 0;
     }
 
     public void configureDestination(String tableName, boolean overwrite, boolean durable, int atomicity) {
         textWriter.of(tableName, overwrite, durable, atomicity);
+        textDelimiterScanner.setTableName(tableName);
+        textMetadataParser.setTableName(tableName);
+        textLexer.setTableName(tableName);
+
+        LOG.info()
+                .$("configured [table=").$(tableName)
+                .$(", overwrite=").$(overwrite)
+                .$(", durable=").$(durable)
+                .$(", atomicity=").$(atomicity)
+                .$(']').$();
     }
 
-    public void configureSeparator(char columnSeparator) {
-        textLexer.of(columnSeparator);
+    public byte getColumnDelimiter() {
+        return columnDelimiter;
     }
 
-    public long getLineCount() {
+    public LongList getColumnErrorCounts() {
+        return textWriter.getColumnErrorCounts();
+    }
+
+    public RecordMetadata getMetadata() {
+        return textWriter.getMetadata();
+    }
+
+    public long getParsedLineCount() {
         return textLexer.getLineCount();
+    }
+
+    public long getWrittenLineCount() {
+        return textWriter.getWrittenLineCount();
     }
 
     public boolean isForceHeaders() {
@@ -109,12 +147,18 @@ public class TextLoader implements Closeable, Mutable {
     }
 
     public void parse(long address, int len) throws JsonException {
+
         switch (state) {
             case LOAD_JSON_METADATA:
                 jsonLexer.parse(address, len, textMetadataParser);
                 break;
             case ANALYZE_STRUCTURE:
-                textLexer.analyseStructure(address, len, statsLineCountLimit, forceHeaders, textMetadataParser.getTextMetadata());
+                if (columnDelimiter > 0) {
+                    textLexer.of(columnDelimiter);
+                } else {
+                    textLexer.of(textDelimiterScanner.scan(address, len));
+                }
+                textLexer.analyseStructure(address, len, textAnalysisMaxLines, forceHeaders, textMetadataParser.getTextMetadata());
                 textWriter.prepareTable(textLexer.getDetectedMetadata());
                 textLexer.parse(address, len, Integer.MAX_VALUE, textWriter);
                 break;
@@ -128,10 +172,6 @@ public class TextLoader implements Closeable, Mutable {
 
     public void setState(int state) {
         this.state = state;
-    }
-
-    public void setStatsLineCountLimit(int statsLineCountLimit) {
-        this.statsLineCountLimit = statsLineCountLimit;
     }
 
     public void wrapUp() throws JsonException {
