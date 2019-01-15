@@ -25,37 +25,28 @@ package com.questdb.cutlass.text.typeprobe;
 
 import com.questdb.cairo.TableWriter;
 import com.questdb.std.Numbers;
-import com.questdb.std.NumericException;
 import com.questdb.std.str.DirectByteCharSequence;
 import com.questdb.store.ColumnType;
 
-public class DoubleProbe implements TypeProbe {
-
-    @Override
-    public String toString() {
-        return "DOUBLE";
-    }
+public class ByteProbe implements TypeProbe {
 
     @Override
     public int getType() {
-        return ColumnType.DOUBLE;
+        return ColumnType.BYTE;
     }
 
     @Override
     public boolean probe(CharSequence text) {
-        if (text.length() > 2 && text.charAt(0) == '0' && text.charAt(1) != '.') {
-            return false;
-        }
-        try {
-            Numbers.parseDouble(text);
-            return true;
-        } catch (NumericException e) {
-            return false;
-        }
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void write(TableWriter.Row row, int column, DirectByteCharSequence value) throws Exception {
-        row.putDouble(column, Numbers.parseDouble(value));
+        row.putByte(column, (byte) Numbers.parseInt(value));
+    }
+
+    @Override
+    public String toString() {
+        return "BYTE";
     }
 }

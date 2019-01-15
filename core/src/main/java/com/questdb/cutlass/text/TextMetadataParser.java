@@ -27,11 +27,14 @@ import com.questdb.cairo.ColumnType;
 import com.questdb.cutlass.json.JsonException;
 import com.questdb.cutlass.json.JsonLexer;
 import com.questdb.cutlass.json.JsonParser;
+import com.questdb.cutlass.text.typeprobe.DateProbe;
+import com.questdb.cutlass.text.typeprobe.TypeProbe;
+import com.questdb.cutlass.text.typeprobe.TypeProbeCollection;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.std.*;
 import com.questdb.std.str.AbstractCharSequence;
-import com.questdb.std.time.DateFormat;
+import com.questdb.std.str.DirectCharSink;
 import com.questdb.std.time.DateFormatFactory;
 import com.questdb.std.time.DateLocale;
 import com.questdb.std.time.DateLocaleFactory;
@@ -52,19 +55,64 @@ public class TextMetadataParser implements JsonParser, Mutable, Closeable {
     private final DateLocaleFactory dateLocaleFactory;
     private final ObjectPool<FloatingCharSequence> csPool;
     private final DateFormatFactory dateFormatFactory;
-    private final ObjectPool<TextMetadata> textMetadataPool;
-    private final ObjList<TextMetadata> textMetadata;
+    private final ObjList<CharSequence> columnNames;
+    private final ObjList<TypeProbe> columnTypes;
+    private final DirectCharSink utf8Sink;
     private int state = S_NEED_ARRAY;
     private CharSequence name;
     private int type = -1;
     private CharSequence pattern;
-    private DateFormat dateFormat;
-    private DateLocale dateLocale;
+    private final TypeProbeCollection typeProbeCollection;
+    private CharSequence locale;
     private int propertyIndex;
     private long buf;
     private long bufCapacity = 0;
     private int bufSize = 0;
     private CharSequence tableName;
+    private int localePosition;
+
+    public TextMetadataParser(
+            TextConfiguration textConfiguration,
+            DateLocaleFactory dateLocaleFactory,
+            DateFormatFactory dateFormatFactory,
+            DirectCharSink utf8Sink,
+            TypeProbeCollection typeProbeCollection
+    ) {
+        this.columnNames = new ObjList<>();
+        this.columnTypes = new ObjList<>();
+        this.csPool = new ObjectPool<>(FloatingCharSequence::new, textConfiguration.getMetadataStringPoolSize());
+        this.dateLocaleFactory = dateLocaleFactory;
+        this.dateFormatFactory = dateFormatFactory;
+        this.utf8Sink = utf8Sink;
+        this.typeProbeCollection = typeProbeCollection;
+    }
+
+    @Override
+    public void clear() {
+        bufSize = 0;
+        state = S_NEED_ARRAY;
+        columnNames.clear();
+        columnTypes.clear();
+        csPool.clear();
+        clearStage();
+    }
+
+    @Override
+    public void close() {
+        clear();
+        if (bufCapacity > 0) {
+            Unsafe.free(buf, bufCapacity);
+            bufCapacity = 0;
+        }
+    }
+
+    public ObjList<CharSequence> getColumnNames() {
+        return columnNames;
+    }
+
+    public ObjList<TypeProbe> getColumnTypes() {
+        return columnTypes;
+    }
 
     @Override
     public void onEvent(int code, CharSequence tag, int position) throws JsonException {
@@ -99,14 +147,11 @@ public class TextMetadataParser implements JsonParser, Mutable, Closeable {
                         }
                         break;
                     case P_PATTERN:
-                        dateFormat = dateFormatFactory.get(tag);
                         pattern = copy(tag);
                         break;
                     case P_LOCALE:
-                        dateLocale = dateLocaleFactory.getDateLocale(tag);
-                        if (dateLocale == null) {
-                            throw JsonException.with("Invalid date locale", position);
-                        }
+                        locale = copy(tag);
+                        localePosition = position;
                         break;
                     default:
                         LOG.info().$("ignoring [table=").$(tableName).$(", value=").$(tag).$(']').$();
@@ -124,52 +169,16 @@ public class TextMetadataParser implements JsonParser, Mutable, Closeable {
         }
     }
 
-    public TextMetadataParser(
-            TextConfiguration textConfiguration,
-            DateLocaleFactory dateLocaleFactory,
-            DateFormatFactory dateFormatFactory
-    ) {
-        this.textMetadataPool = new ObjectPool<>(TextMetadata::new, textConfiguration.getMetadataPoolSize());
-        this.textMetadata = new ObjList<>();
-        this.csPool = new ObjectPool<>(FloatingCharSequence::new, textConfiguration.getMetadataStringPoolSize());
-        this.dateLocaleFactory = dateLocaleFactory;
-        this.dateFormatFactory = dateFormatFactory;
-    }
-
-    @Override
-    public void clear() {
-        bufSize = 0;
-        state = S_NEED_ARRAY;
-        textMetadata.clear();
-        csPool.clear();
-        clearStage();
-        textMetadataPool.clear();
-        textMetadata.clear();
-    }
-
-    @Override
-    public void close() {
-        clear();
-        if (bufCapacity > 0) {
-            Unsafe.free(buf, bufCapacity);
-            bufCapacity = 0;
-        }
-    }
-
-    void setTableName(CharSequence tableName) {
-        this.tableName = tableName;
-    }
-
     private void clearStage() {
         name = null;
-        pattern = null;
         type = -1;
-        dateLocale = null;
-        dateFormat = null;
+        pattern = null;
+        locale = null;
+        localePosition = 0;
     }
 
     private CharSequence copy(CharSequence tag) {
-        final int l = tag.length();
+        final int l = tag.length() * 2;
         final long n = bufSize + l;
         if (n > bufCapacity) {
             long ptr = Unsafe.malloc(n * 2);
@@ -181,7 +190,7 @@ public class TextMetadataParser implements JsonParser, Mutable, Closeable {
             bufCapacity = n * 2;
         }
 
-        Chars.strcpy(tag, l, buf + bufSize);
+        Chars.strcpyw(tag, l / 2, buf + bufSize);
         CharSequence cs = csPool.next().of(bufSize, bufSize + l);
         bufSize += l;
         return cs;
@@ -196,19 +205,26 @@ public class TextMetadataParser implements JsonParser, Mutable, Closeable {
             throw JsonException.with("Missing 'type' property", position);
         }
 
-        TextMetadata m = textMetadataPool.next();
-        m.name = name;
-        m.type = type;
-        m.dateFormat = dateFormat;
-        m.dateLocale = dateLocale == null && type == ColumnType.DATE ? dateLocaleFactory.getDefaultDateLocale() : dateLocale;
-        textMetadata.add(m);
+        columnNames.add(name);
 
+        switch (type) {
+            case ColumnType.DATE:
+                DateLocale dateLocale = locale == null ? dateLocaleFactory.getDefaultDateLocale() : dateLocaleFactory.getDateLocale(locale);
+                if (dateLocale == null) {
+                    throw JsonException.with("Invalid date locale", localePosition);
+                }
+                columnTypes.add(((DateProbe) typeProbeCollection.getProbeForType(type)).of(dateFormatFactory.get(pattern), dateLocale));
+                break;
+            default:
+                columnTypes.add(typeProbeCollection.getProbeForType(type));
+                break;
+        }
         // prepare for next iteration
         clearStage();
     }
 
-    ObjList<TextMetadata> getTextMetadata() {
-        return textMetadata;
+    void setTableName(CharSequence tableName) {
+        this.tableName = tableName;
     }
 
     private class FloatingCharSequence extends AbstractCharSequence implements Mutable {
@@ -222,18 +238,26 @@ public class TextMetadataParser implements JsonParser, Mutable, Closeable {
 
         @Override
         public int length() {
-            return hi - lo;
+            return (hi - lo) / 2;
         }
 
         @Override
         public char charAt(int index) {
-            return (char) Unsafe.getUnsafe().getByte(buf + lo + index);
+            return Unsafe.getUnsafe().getChar(buf + lo + index * 2);
         }
 
         CharSequence of(int lo, int hi) {
             this.lo = lo;
             this.hi = hi;
             return this;
+        }
+
+        long getHi() {
+            return buf + hi;
+        }
+
+        long getLo() {
+            return buf + lo;
         }
     }
 

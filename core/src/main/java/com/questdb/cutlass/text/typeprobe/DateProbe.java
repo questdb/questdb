@@ -23,29 +23,31 @@
 
 package com.questdb.cutlass.text.typeprobe;
 
+import com.questdb.cairo.TableWriter;
+import com.questdb.cutlass.text.TextUtil;
+import com.questdb.std.Mutable;
 import com.questdb.std.NumericException;
+import com.questdb.std.str.DirectByteCharSequence;
+import com.questdb.std.str.DirectCharSink;
 import com.questdb.std.time.DateFormat;
-import com.questdb.std.time.DateFormatFactory;
 import com.questdb.std.time.DateLocale;
 import com.questdb.store.ColumnType;
 
-public class DateProbe implements TypeProbe {
-    private final DateLocale dateLocale;
-    private final DateFormat format;
+public class DateProbe implements TypeProbe, Mutable {
+    private final DirectCharSink utf8Sink;
+    private DateLocale locale;
+    private DateFormat format;
 
-    public DateProbe(DateFormatFactory dateFormatFactory, DateLocale dateLocale, CharSequence pattern) {
-        this.dateLocale = dateLocale;
-        this.format = dateFormatFactory.get(pattern);
+    public DateProbe(
+            DirectCharSink utf8Sink
+    ) {
+        this.utf8Sink = utf8Sink;
     }
 
     @Override
-    public DateFormat getDateFormat() {
-        return format;
-    }
-
-    @Override
-    public DateLocale getDateLocale() {
-        return dateLocale;
+    public void clear() {
+        this.format = null;
+        this.locale = null;
     }
 
     @Override
@@ -53,13 +55,31 @@ public class DateProbe implements TypeProbe {
         return ColumnType.DATE;
     }
 
+    public DateProbe of(DateFormat format, DateLocale locale) {
+        this.format = format;
+        this.locale = locale;
+        return this;
+    }
+
     @Override
     public boolean probe(CharSequence text) {
         try {
-            format.parse(text, dateLocale);
+            format.parse(text, locale);
             return true;
         } catch (NumericException e) {
             return false;
         }
+    }
+
+    @Override
+    public void write(TableWriter.Row row, int column, DirectByteCharSequence value) throws Exception {
+        utf8Sink.clear();
+        TextUtil.utf8Decode(value.getLo(), value.getHi(), utf8Sink);
+        row.putDate(column, format.parse(utf8Sink, locale));
+    }
+
+    @Override
+    public String toString() {
+        return "DATE";
     }
 }

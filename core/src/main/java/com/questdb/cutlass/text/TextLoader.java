@@ -33,6 +33,7 @@ import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.std.LongList;
 import com.questdb.std.Mutable;
+import com.questdb.std.str.DirectCharSink;
 import com.questdb.std.str.Path;
 import com.questdb.std.time.DateFormatFactory;
 import com.questdb.std.time.DateLocaleFactory;
@@ -51,9 +52,11 @@ public class TextLoader implements Closeable, Mutable {
     private final Path path = new Path();
     private final int textAnalysisMaxLines;
     private final TextDelimiterScanner textDelimiterScanner;
+    private final DirectCharSink utf8Sink;
     private int state;
     private boolean forceHeaders = false;
     private byte columnDelimiter = -1;
+    private final TypeProbeCollection typeProbeCollection;
 
     public TextLoader(
             CairoConfiguration configuration,
@@ -62,7 +65,8 @@ public class TextLoader implements Closeable, Mutable {
             DateLocaleFactory dateLocaleFactory,
             DateFormatFactory dateFormatFactory
     ) {
-        TypeProbeCollection typeProbeCollection = new TypeProbeCollection();
+        this.utf8Sink = new DirectCharSink(textConfiguration.getUtf8SinkCapacity());
+        this.typeProbeCollection = new TypeProbeCollection(utf8Sink);
         textLexer = new TextLexer(
                 textConfiguration,
                 typeProbeCollection,
@@ -73,8 +77,8 @@ public class TextLoader implements Closeable, Mutable {
                 textConfiguration.getJsonCacheSize(),
                 textConfiguration.getJsonCacheLimit()
         );
-        textWriter = new CairoTextWriter(configuration, engine, path, textConfiguration);
-        textMetadataParser = new TextMetadataParser(textConfiguration, dateLocaleFactory, dateFormatFactory);
+        textWriter = new CairoTextWriter(configuration, engine, path, textConfiguration, typeProbeCollection);
+        textMetadataParser = new TextMetadataParser(textConfiguration, dateLocaleFactory, dateFormatFactory, utf8Sink, typeProbeCollection);
         textAnalysisMaxLines = textConfiguration.getTextAnalysisMaxLines();
         textDelimiterScanner = new TextDelimiterScanner(textConfiguration);
     }
@@ -87,6 +91,7 @@ public class TextLoader implements Closeable, Mutable {
         jsonLexer.clear();
         forceHeaders = false;
         columnDelimiter = -1;
+        typeProbeCollection.clear();
     }
 
     @Override
@@ -97,6 +102,7 @@ public class TextLoader implements Closeable, Mutable {
         jsonLexer.close();
         path.close();
         textDelimiterScanner.close();
+        utf8Sink.close();
     }
 
     public void configureColumnDelimiter(byte columnDelimiter) {
@@ -158,8 +164,15 @@ public class TextLoader implements Closeable, Mutable {
                 } else {
                     textLexer.of(textDelimiterScanner.scan(address, len));
                 }
-                textLexer.analyseStructure(address, len, textAnalysisMaxLines, forceHeaders, textMetadataParser.getTextMetadata());
-                textWriter.prepareTable(textLexer.getDetectedMetadata());
+                textLexer.analyseStructure(
+                        address,
+                        len,
+                        textAnalysisMaxLines,
+                        forceHeaders,
+                        textMetadataParser.getColumnNames(),
+                        textMetadataParser.getColumnTypes()
+                );
+                textWriter.prepareTable(textLexer.getColumnNames(), textLexer.getColumnTypes());
                 textLexer.parse(address, len, Integer.MAX_VALUE, textWriter);
                 break;
             case LOAD_DATA:

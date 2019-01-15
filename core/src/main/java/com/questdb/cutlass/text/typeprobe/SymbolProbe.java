@@ -24,38 +24,38 @@
 package com.questdb.cutlass.text.typeprobe;
 
 import com.questdb.cairo.TableWriter;
-import com.questdb.std.Numbers;
-import com.questdb.std.NumericException;
+import com.questdb.cutlass.text.TextUtil;
 import com.questdb.std.str.DirectByteCharSequence;
+import com.questdb.std.str.DirectCharSink;
 import com.questdb.store.ColumnType;
 
-public class DoubleProbe implements TypeProbe {
+public class SymbolProbe implements TypeProbe {
 
-    @Override
-    public String toString() {
-        return "DOUBLE";
+    private final DirectCharSink utf8Sink;
+
+    public SymbolProbe(DirectCharSink utf8Sink) {
+        this.utf8Sink = utf8Sink;
     }
 
     @Override
     public int getType() {
-        return ColumnType.DOUBLE;
+        return ColumnType.SYMBOL;
     }
 
     @Override
     public boolean probe(CharSequence text) {
-        if (text.length() > 2 && text.charAt(0) == '0' && text.charAt(1) != '.') {
-            return false;
-        }
-        try {
-            Numbers.parseDouble(text);
-            return true;
-        } catch (NumericException e) {
-            return false;
-        }
+        return true;
     }
 
     @Override
     public void write(TableWriter.Row row, int column, DirectByteCharSequence value) throws Exception {
-        row.putDouble(column, Numbers.parseDouble(value));
+        utf8Sink.clear();
+        TextUtil.utf8Decode(value.getLo(), value.getHi(), utf8Sink);
+        row.putSym(column, utf8Sink);
+    }
+
+    @Override
+    public String toString() {
+        return "SYMBOL";
     }
 }

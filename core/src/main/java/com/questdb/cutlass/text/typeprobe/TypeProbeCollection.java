@@ -28,25 +28,43 @@ import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.std.*;
 import com.questdb.std.str.DirectByteCharSequence;
+import com.questdb.std.str.DirectCharSink;
 import com.questdb.std.str.Path;
 import com.questdb.std.time.DateFormatFactory;
 import com.questdb.std.time.DateFormatUtils;
 import com.questdb.std.time.DateLocale;
 import com.questdb.std.time.DateLocaleFactory;
+import com.questdb.store.ColumnType;
 
-public class TypeProbeCollection {
+public class TypeProbeCollection implements Mutable {
     private static final Log LOG = LogFactory.getLog(TypeProbeCollection.class);
 
     private static final ObjList<String> DEFAULT_DATE_FORMATS = new ObjList<>();
     private final ObjList<TypeProbe> probes = new ObjList<>();
     private final int probeCount;
+    private final StringProbe stringProbe;
+    private final DirectCharSink utf8Sink;
+    private final BooleanProbe booleanProbe = new BooleanProbe();
+    private final DoubleProbe doubleProbe = new DoubleProbe();
+    private final IntProbe intProbe = new IntProbe();
+    private final LongProbe longProbe = new LongProbe();
+    private final ShortProbe shortProbe = new ShortProbe();
+    private final ObjectPool<DateProbe> dateProbePool;
+    private final FloatProbe floatProbe = new FloatProbe();
+    private final ByteProbe byteProbe = new ByteProbe();
+    private final BadDateProbe badDateProbe = new BadDateProbe();
+    private final SymbolProbe symbolProbe;
 
-    public TypeProbeCollection() {
+    public TypeProbeCollection(DirectCharSink utf8Sink) {
+        this.utf8Sink = utf8Sink;
+        this.dateProbePool = new ObjectPool<>(() -> new DateProbe(utf8Sink), 16);
+        this.stringProbe = new StringProbe(utf8Sink);
+        this.symbolProbe = new SymbolProbe(utf8Sink);
         addDefaultProbes();
         DateFormatFactory dateFormatFactory = new DateFormatFactory();
         DateLocale dateLocale = DateLocaleFactory.INSTANCE.getDefaultDateLocale();
         for (int i = 0, n = DEFAULT_DATE_FORMATS.size(); i < n; i++) {
-            probes.add(new DateProbe(dateFormatFactory, dateLocale, DEFAULT_DATE_FORMATS.getQuick(i)));
+            probes.add(new DateProbe(utf8Sink).of(dateFormatFactory.get(DEFAULT_DATE_FORMATS.getQuick(i)), dateLocale));
         }
         this.probeCount = probes.size();
     }
@@ -56,11 +74,25 @@ public class TypeProbeCollection {
             @Transient Path path,
             CharSequence file,
             DateFormatFactory dateFormatFactory,
-            DateLocaleFactory dateLocaleFactory
+            DateLocaleFactory dateLocaleFactory,
+            DirectCharSink utf8Sink
     ) {
+        this.utf8Sink = utf8Sink;
+        this.dateProbePool = new ObjectPool<>(() -> new DateProbe(utf8Sink), 16);
+        this.stringProbe = new StringProbe(utf8Sink);
+        this.symbolProbe = new SymbolProbe(utf8Sink);
         addDefaultProbes();
         parseFile(ff, path, file, dateFormatFactory, dateLocaleFactory);
         this.probeCount = probes.size();
+    }
+
+    @Override
+    public void clear() {
+        dateProbePool.clear();
+    }
+
+    public BadDateProbe getBadDateProbe() {
+        return badDateProbe;
     }
 
     public TypeProbe getProbe(int index) {
@@ -71,11 +103,47 @@ public class TypeProbeCollection {
         return probeCount;
     }
 
+    public TypeProbe getProbeForType(int columnType) {
+        switch (columnType) {
+            case ColumnType.BYTE:
+                return byteProbe;
+            case ColumnType.SHORT:
+                return shortProbe;
+            case ColumnType.INT:
+                return intProbe;
+            case ColumnType.LONG:
+                return longProbe;
+            case ColumnType.BOOLEAN:
+                return booleanProbe;
+            case ColumnType.FLOAT:
+                return floatProbe;
+            case ColumnType.DOUBLE:
+                return doubleProbe;
+            case ColumnType.STRING:
+                return stringProbe;
+            case ColumnType.SYMBOL:
+                return symbolProbe;
+            case ColumnType.DATE:
+                return dateProbePool.next();
+            case ColumnType.BINARY:
+                assert false;
+            case ColumnType.TIMESTAMP:
+                assert false;
+            default:
+                assert false;
+        }
+        return null;
+    }
+
+    public StringProbe getStringProbe() {
+        return stringProbe;
+    }
+
     private void addDefaultProbes() {
-        probes.add(new IntProbe());
-        probes.add(new LongProbe());
-        probes.add(new DoubleProbe());
-        probes.add(new BooleanProbe());
+        probes.add(intProbe);
+        probes.add(longProbe);
+        probes.add(doubleProbe);
+        probes.add(booleanProbe);
     }
 
     private void parseFile(
@@ -169,7 +237,7 @@ public class TypeProbeCollection {
                                     comment = true;
                                     continue;
                                 }
-                                probes.add(new DateProbe(dateFormatFactory, locale, pattern));
+                                probes.add(new DateProbe(utf8Sink).of(dateFormatFactory.get(pattern), locale));
                             }
                             break;
                         case '\n':
@@ -179,17 +247,17 @@ public class TypeProbeCollection {
                                     s = dbcs.of(_lo, p - 1).toString();
                                     if (pattern == null) {
                                         // no date locale, use default
-                                        probes.add(new DateProbe(dateFormatFactory, dateLocaleFactory.getDefaultDateLocale(), s));
+                                        probes.add(new DateProbe(utf8Sink).of(dateFormatFactory.get(s), dateLocaleFactory.getDefaultDateLocale()));
                                     } else {
                                         DateLocale locale = dateLocaleFactory.getDateLocale(s);
                                         if (locale == null) {
                                             LOG.error().$("Unknown date locale: ").$(s).$();
                                         } else {
-                                            probes.add(new DateProbe(dateFormatFactory, locale, pattern));
+                                            probes.add(new DateProbe(utf8Sink).of(dateFormatFactory.get(pattern), locale));
                                         }
                                     }
                                 } else if (pattern != null) {
-                                    probes.add(new DateProbe(dateFormatFactory, dateLocaleFactory.getDefaultDateLocale(), pattern));
+                                    probes.add(new DateProbe(utf8Sink).of(dateFormatFactory.get(pattern), dateLocaleFactory.getDefaultDateLocale()));
                                 }
                             }
 

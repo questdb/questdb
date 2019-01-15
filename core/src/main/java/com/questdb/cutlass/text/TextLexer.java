@@ -23,6 +23,7 @@
 
 package com.questdb.cutlass.text;
 
+import com.questdb.cutlass.text.typeprobe.TypeProbe;
 import com.questdb.cutlass.text.typeprobe.TypeProbeCollection;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
@@ -75,12 +76,21 @@ public class TextLexer implements Closeable, Mutable {
             int len,
             int lineCountLimit,
             boolean forceHeader,
-            ObjList<TextMetadata> seedMetadata
+            ObjList<CharSequence> names,
+            ObjList<TypeProbe> types
     ) {
-        metadataDetector.of(seedMetadata, forceHeader);
+        metadataDetector.of(names, types, forceHeader);
         parse(address, len, lineCountLimit, metadataDetector);
         metadataDetector.evaluateResults(lineCount, errorCount);
         restart(isHeaderDetected());
+    }
+
+    ObjList<CharSequence> getColumnNames() {
+        return metadataDetector.getColumnNames();
+    }
+
+    ObjList<TypeProbe> getColumnTypes() {
+        return metadataDetector.getColumnTypes();
     }
 
     @Override
@@ -151,10 +161,6 @@ public class TextLexer implements Closeable, Mutable {
         useLineRollBuf = false;
         lineRollBufCur = lineRollBufPtr;
         this.fieldLo = this.fieldHi = ptr;
-    }
-
-    ObjList<TextMetadata> getDetectedMetadata() {
-        return metadataDetector.getMetadata();
     }
 
     private boolean growRollBuf(long requiredLength) {

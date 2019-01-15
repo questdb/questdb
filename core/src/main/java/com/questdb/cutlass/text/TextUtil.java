@@ -21,41 +21,37 @@
  *
  ******************************************************************************/
 
-package com.questdb.cutlass.text.typeprobe;
+package com.questdb.cutlass.text;
 
-import com.questdb.cairo.TableWriter;
-import com.questdb.std.Numbers;
-import com.questdb.std.NumericException;
-import com.questdb.std.str.DirectByteCharSequence;
-import com.questdb.store.ColumnType;
+import com.questdb.std.Unsafe;
+import com.questdb.std.str.CharSink;
 
-public class DoubleProbe implements TypeProbe {
+import static com.questdb.std.Chars.utf8DecodeMultiByte;
 
-    @Override
-    public String toString() {
-        return "DOUBLE";
-    }
+public class TextUtil {
+    public static void utf8Decode(long lo, long hi, CharSink sink) throws Utf8Exception {
+        long p = lo;
+        int quoteCount = 0;
 
-    @Override
-    public int getType() {
-        return ColumnType.DOUBLE;
-    }
-
-    @Override
-    public boolean probe(CharSequence text) {
-        if (text.length() > 2 && text.charAt(0) == '0' && text.charAt(1) != '.') {
-            return false;
+        while (p < hi) {
+            byte b = Unsafe.getUnsafe().getByte(p);
+            if (b < 0) {
+                int n = utf8DecodeMultiByte(p, hi, b, sink);
+                if (n == -1) {
+                    // UTF8 error
+                    throw Utf8Exception.INSTANCE;
+                }
+                p += n;
+            } else {
+                if (b == '"') {
+                    if (quoteCount++ % 2 == 0) {
+                        sink.put('"');
+                    }
+                } else {
+                    sink.put((char) b);
+                }
+                ++p;
+            }
         }
-        try {
-            Numbers.parseDouble(text);
-            return true;
-        } catch (NumericException e) {
-            return false;
-        }
-    }
-
-    @Override
-    public void write(TableWriter.Row row, int column, DirectByteCharSequence value) throws Exception {
-        row.putDouble(column, Numbers.parseDouble(value));
     }
 }

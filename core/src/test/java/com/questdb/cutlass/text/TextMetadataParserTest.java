@@ -23,58 +23,57 @@
 
 package com.questdb.cutlass.text;
 
-import com.questdb.BootstrapEnv;
 import com.questdb.cutlass.json.JsonException;
 import com.questdb.cutlass.json.JsonLexer;
-import com.questdb.std.ObjList;
+import com.questdb.cutlass.text.typeprobe.TypeProbeCollection;
 import com.questdb.std.Unsafe;
+import com.questdb.std.str.DirectCharSink;
 import com.questdb.std.time.DateFormatFactory;
 import com.questdb.std.time.DateLocaleFactory;
-import com.questdb.std.time.TimeZoneRuleFactory;
 import com.questdb.test.tools.TestUtils;
 import org.junit.*;
 
 public class TextMetadataParserTest {
     private static final JsonLexer LEXER = new JsonLexer(1024, 4096);
     private static TextMetadataParser textMetadataParser;
-    private static String defaultLocaleId;
+    private static TypeProbeCollection typeProbeCollection;
+    private static DirectCharSink utf8Sink;
 
     @BeforeClass
     public static void setUpClass() {
-        BootstrapEnv env = new BootstrapEnv();
-        env.dateFormatFactory = new DateFormatFactory();
-        env.dateLocaleFactory = new DateLocaleFactory(new TimeZoneRuleFactory());
-        defaultLocaleId = env.dateLocaleFactory.getDefaultDateLocale().getId();
+        utf8Sink = new DirectCharSink(1024);
+        typeProbeCollection = new TypeProbeCollection(utf8Sink);
         textMetadataParser = new TextMetadataParser(
                 new DefaultTextConfiguration(),
                 DateLocaleFactory.INSTANCE,
-                new DateFormatFactory()
+                new DateFormatFactory(),
+                utf8Sink,
+                typeProbeCollection
         );
     }
 
     @AfterClass
     public static void tearDown() {
         LEXER.close();
+        utf8Sink.close();
     }
 
     @Before
     public void setUp() {
         LEXER.clear();
         textMetadataParser.clear();
+        typeProbeCollection.clear();
     }
 
     @Test
     public void testArrayProperty() {
-        String in = "[\n" +
-                "{\"name\": \"x\", \"type\": \"DOUBLE\", \"pattern\":\"xyz\", \"locale\": []}\n" +
-                "]";
-        try {
-            parseMetadata(in);
-            Assert.fail();
-        } catch (JsonException e) {
-            Assert.assertEquals("Unexpected array", e.getMessage());
-            Assert.assertEquals(62, e.getPosition());
-        }
+        assertFailure(
+                "[\n" +
+                        "{\"name\": \"x\", \"type\": \"DOUBLE\", \"pattern\":\"xyz\", \"locale\": []}\n" +
+                        "]",
+                62,
+                "Unexpected array"
+        );
     }
 
     @Test
@@ -84,25 +83,35 @@ public class TextMetadataParserTest {
                 "{\"name\": \"y\", \"type\": \"DATE\", \"pattern\":\"xyz\"}\n" +
                 "]";
 
-        ObjList<TextMetadata> metadata = parseMetadata(in);
-        Assert.assertEquals(2, metadata.size());
-        Assert.assertEquals("TextMetadata{type=INT, dateLocale=en-US, name=x}", metadata.get(0).toString());
-        Assert.assertEquals("TextMetadata{type=DATE, dateLocale=" + defaultLocaleId + ", name=y}", metadata.get(1).toString());
+        long buf = TestUtils.toMemory(in);
+        try {
+            LEXER.parse(buf, in.length(), textMetadataParser);
+            Assert.assertEquals(2, textMetadataParser.getColumnTypes().size());
+            Assert.assertEquals(2, textMetadataParser.getColumnNames().size());
+            Assert.assertEquals("[INT,DATE]", textMetadataParser.getColumnTypes().toString());
+            Assert.assertEquals("[x,y]", textMetadataParser.getColumnNames().toString());
+        } finally {
+            Unsafe.free(buf, in.length());
+        }
     }
 
     @Test
     public void testEmptyList() throws Exception {
-        Assert.assertEquals(0, parseMetadata("[]").size());
+        String in = "[]";
+
+        long buf = TestUtils.toMemory(in);
+        try {
+            LEXER.parse(buf, in.length(), textMetadataParser);
+            Assert.assertEquals(0, textMetadataParser.getColumnTypes().size());
+            Assert.assertEquals(0, textMetadataParser.getColumnNames().size());
+        } finally {
+            Unsafe.free(buf, in.length());
+        }
     }
 
     @Test
     public void testEmptyObject() {
-        try {
-            parseMetadata("[{}]");
-            Assert.fail();
-        } catch (JsonException e) {
-            Assert.assertEquals(3, e.getPosition());
-        }
+        assertFailure("[{}]", 3, "Missing 'name' property");
     }
 
     @Test
@@ -112,13 +121,7 @@ public class TextMetadataParserTest {
                 "{\"type\": \"DOUBLE\", \"pattern\":\"xyz\"}\n" +
                 "]";
 
-        try {
-            parseMetadata(in);
-            Assert.fail();
-        } catch (JsonException e) {
-            Assert.assertEquals("Missing 'name' property", e.getMessage());
-            Assert.assertEquals(103, e.getPosition());
-        }
+        assertFailure(in, 103, "Missing 'name' property");
     }
 
     @Test
@@ -127,75 +130,57 @@ public class TextMetadataParserTest {
                 "{\"name\": \"x\", \"pattern\":\"xyz\", \"locale\": \"en-GB\"},\n" +
                 "{\"name\": \"y\", \"type\": \"DOUBLE\", \"pattern\":\"xyz\"}\n" +
                 "]";
-        try {
-            parseMetadata(in);
-            Assert.fail();
-        } catch (JsonException e) {
-            Assert.assertEquals("Missing 'type' property", e.getMessage());
-            Assert.assertEquals(51, e.getPosition());
-        }
+        assertFailure(in, 51, "Missing 'type' property");
     }
 
     @Test
     public void testNonArray() {
-        try {
-            parseMetadata("{}");
-            Assert.fail();
-        } catch (JsonException e) {
-            Assert.assertEquals("Unexpected object", e.getMessage());
-            Assert.assertEquals(1, e.getPosition());
-        }
+        assertFailure("{}", 1, "Unexpected object");
     }
 
     @Test
     public void testNonObjectArrayMember() {
-        String in = "[2,\n" +
-                "{\"name\": \"x\", \"type\": \"DOUBLE\", \"pattern\":\"xyz\"}\n" +
-                "]";
-        try {
-            parseMetadata(in);
-            Assert.fail();
-        } catch (JsonException e) {
-            Assert.assertEquals("Must be an object", e.getMessage());
-            Assert.assertEquals(2, e.getPosition());
-        }
+        assertFailure(
+                "[2,\n" +
+                        "{\"name\": \"x\", \"type\": \"DOUBLE\", \"pattern\":\"xyz\"}\n" +
+                        "]",
+                2,
+                "Must be an object"
+        );
     }
 
     @Test
     public void testWrongDateLocale() {
-        String in = "[\n" +
-                "{\"name\": \"x\", \"type\": \"DOUBLE\", \"pattern\":\"xyz\", \"locale\": \"enk\"}\n" +
-                "]";
-        try {
-            parseMetadata(in);
-            Assert.fail();
-        } catch (JsonException e) {
-            Assert.assertEquals("Invalid date locale", e.getMessage());
-            Assert.assertEquals(63, e.getPosition());
-        }
+        assertFailure(
+                "[\n" +
+                        "{\"name\": \"x\", \"type\": \"DATE\", \"pattern\":\"xyz\", \"locale\": \"enk\"}\n" +
+                        "]",
+                61,
+                "Invalid date locale"
+        );
     }
 
     @Test
     public void testWrongType() {
-        String in = "[\n" +
-                "{\"name\": \"y\", \"type\": \"ABC\", \"pattern\":\"xyz\"}\n" +
-                "]";
-        try {
-            parseMetadata(in);
-            Assert.fail();
-        } catch (JsonException e) {
-            Assert.assertEquals("Invalid type", e.getMessage());
-            Assert.assertEquals(26, e.getPosition());
-        }
+        assertFailure(
+                "[\n" +
+                        "{\"name\": \"y\", \"type\": \"ABC\", \"pattern\":\"xyz\"}\n" +
+                        "]",
+                26,
+                "Invalid type"
+        );
     }
 
-    private ObjList<TextMetadata> parseMetadata(CharSequence in) throws JsonException {
-        long buf = TestUtils.toMemory(in);
+    private void assertFailure(CharSequence schema, int position, CharSequence message) {
+        long buf = TestUtils.toMemory(schema);
         try {
-            LEXER.parse(buf, in.length(), textMetadataParser);
-            return textMetadataParser.getTextMetadata();
+            LEXER.parse(buf, schema.length(), textMetadataParser);
+            Assert.fail();
+        } catch (JsonException e) {
+            Assert.assertEquals(position, e.getPosition());
+            TestUtils.assertContains(e.getMessage(), message);
         } finally {
-            Unsafe.free(buf, in.length());
+            Unsafe.free(buf, schema.length());
         }
     }
 }

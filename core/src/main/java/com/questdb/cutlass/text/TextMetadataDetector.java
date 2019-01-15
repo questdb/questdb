@@ -32,7 +32,6 @@ import com.questdb.std.str.CharSink;
 import com.questdb.std.str.DirectByteCharSequence;
 import com.questdb.std.str.DirectCharSink;
 import com.questdb.std.str.StringSink;
-import com.questdb.store.ColumnType;
 
 import java.io.Closeable;
 
@@ -41,11 +40,11 @@ import static com.questdb.std.Chars.utf8DecodeMultiByte;
 public class TextMetadataDetector implements TextLexer.Listener, Mutable, Closeable {
     private static final Log LOG = LogFactory.getLog(TextMetadataDetector.class);
     private final StringSink tempSink = new StringSink();
-    private final ObjList<TextMetadata> _metadata = new ObjList<>();
-    private final ObjList<String> _headers = new ObjList<>();
+    private final ObjList<TypeProbe> columnTypes = new ObjList<>();
+    private final ObjList<CharSequence> columnNames = new ObjList<>();
     private final IntList _blanks = new IntList();
     private final IntList _histogram = new IntList();
-    private final CharSequenceObjHashMap<TextMetadata> schemaColumns = new CharSequenceObjHashMap<>();
+    private final CharSequenceObjHashMap<TypeProbe> schemaColumns = new CharSequenceObjHashMap<>();
     private final ObjectPool<TextMetadata> mPool = new ObjectPool<>(TextMetadata::new, 256);
     private final TypeProbeCollection typeProbeCollection;
     private final DirectCharSink utf8Sink;
@@ -84,12 +83,12 @@ public class TextMetadataDetector implements TextLexer.Listener, Mutable, Closea
     @Override
     public void clear() {
         tempSink.clear();
-        _headers.clear();
+        columnNames.clear();
         _blanks.clear();
         _histogram.clear();
         fieldCount = 0;
         header = false;
-        _metadata.clear();
+        columnTypes.clear();
         schemaColumns.clear();
         forceHeader = false;
         mPool.clear();
@@ -106,9 +105,6 @@ public class TextMetadataDetector implements TextLexer.Listener, Mutable, Closea
         // if some fields come up as non-string after subtracting row - we have a header
         if ((calcTypes(lineCount - errorCount, true) && !calcTypes(lineCount - errorCount - 1, false)) || forceHeader) {
             // copy headers
-            for (int i = 0; i < fieldCount; i++) {
-                _metadata.getQuick(i).name = _headers.getQuick(i);
-            }
             header = true;
         } else {
             LOG.info()
@@ -121,40 +117,36 @@ public class TextMetadataDetector implements TextLexer.Listener, Mutable, Closea
 
         // make up field names if there is no header
         for (int i = 0; i < fieldCount; i++) {
-            final TextMetadata metadata = _metadata.getQuick(i);
-            if (metadata.name.length() == 0) {
+            if (!header || columnNames.getQuick(i).length() == 0) {
                 tempSink.clear();
                 tempSink.put('f').put(i);
-                metadata.name = tempSink.toString();
+                columnNames.setQuick(i, tempSink.toString());
             }
         }
 
         // override calculated types with user-supplied information
+        //
         if (schemaColumns.size() > 0) {
-            for (int i = 0, k = _metadata.size(); i < k; i++) {
-                TextMetadata _m = _metadata.getQuick(i);
-                TextMetadata m = schemaColumns.get(_m.name);
-                if (m != null) {
-                    m.copyTo(_m);
+            for (int i = 0, k = columnNames.size(); i < k; i++) {
+                TypeProbe type = schemaColumns.get(columnNames.getQuick(i));
+                if (type != null) {
+                    columnTypes.setQuick(i, type);
                 }
             }
         }
-    }
-
-    public ObjList<TextMetadata> getMetadata() {
-        return _metadata;
     }
 
     public boolean isHeader() {
         return header;
     }
 
-    public void of(ObjList<TextMetadata> seedMetadata, boolean forceHeader) {
+    public void of(ObjList<CharSequence> names, ObjList<TypeProbe> types, boolean forceHeader) {
         clear();
-        if (seedMetadata != null) {
-            for (int i = 0, n = seedMetadata.size(); i < n; i++) {
-                TextMetadata m = seedMetadata.getQuick(i);
-                schemaColumns.put(m.name, m);
+        if (names != null && types != null) {
+            final int n = names.size();
+            assert n == types.size();
+            for (int i = 0; i < n; i++) {
+                schemaColumns.put(names.getQuick(i), types.getQuick(i));
             }
         }
         this.forceHeader = forceHeader;
@@ -201,15 +193,11 @@ public class TextMetadataDetector implements TextLexer.Listener, Mutable, Closea
             int offset = i * probeCount;
             int blanks = _blanks.getQuick(i);
             boolean unprobed = true;
-            TextMetadata m = _metadata.getQuick(i);
 
             for (int k = 0; k < probeCount; k++) {
                 if (_histogram.getQuick(k + offset) + blanks == count && blanks < count) {
                     unprobed = false;
-                    TypeProbe probe = typeProbeCollection.getProbe(k);
-                    m.type = probe.getType();
-                    m.dateFormat = probe.getDateFormat();
-                    m.dateLocale = probe.getDateLocale();
+                    columnTypes.setQuick(i, typeProbeCollection.getProbe(k));
                     if (allStrings) {
                         allStrings = false;
                     }
@@ -218,13 +206,24 @@ public class TextMetadataDetector implements TextLexer.Listener, Mutable, Closea
             }
 
             if (setDefault && unprobed) {
-                m.type = ColumnType.STRING;
+                columnTypes.setQuick(i, typeProbeCollection.getStringProbe());
             }
         }
 
         return allStrings;
     }
 
+    ObjList<CharSequence> getColumnNames() {
+        return columnNames;
+    }
+
+    ObjList<TypeProbe> getColumnTypes() {
+        return columnTypes;
+    }
+
+    // metadata detector is essentially part of text lexer
+    // we can potentially keep a cache of char sequences until the whole
+    // system is reset, similar to flyweight char sequence over array of chars
     private String normalise(CharSequence seq) {
         boolean capNext = false;
         tempSink.clear();
@@ -272,10 +271,8 @@ public class TextMetadataDetector implements TextLexer.Listener, Mutable, Closea
     private void seedFields(int count) {
         this._histogram.setAll((fieldCount = count) * typeProbeCollection.getProbeCount(), 0);
         this._blanks.setAll(count, 0);
-        for (int i = 0; i < count; i++) {
-            this._metadata.add(mPool.next());
-        }
-        this._headers.setAll(count, "");
+        this.columnTypes.extendAndSet(count - 1, null);
+        this.columnNames.setAll(count, "");
     }
 
     void setTableName(CharSequence tableName) {
@@ -287,7 +284,7 @@ public class TextMetadataDetector implements TextLexer.Listener, Mutable, Closea
             DirectByteCharSequence value = values.getQuick(i);
             utf8Sink.clear();
             if (utf8Decode(value.getLo(), value.getHi(), utf8Sink)) {
-                _headers.setQuick(i, normalise(utf8Sink));
+                columnNames.setQuick(i, normalise(utf8Sink));
             } else {
                 LOG.info().$("utf8 error [table=").$(tableName).$(", line=0, col=").$(i).$(']').$();
             }

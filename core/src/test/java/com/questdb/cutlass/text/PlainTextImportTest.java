@@ -332,8 +332,8 @@ public class PlainTextImportTest extends AbstractCairoTest {
                         }
                     },
                     "{\"columnCount\":9,\"columns\":[{\"index\":0,\"name\":\"№ПП\",\"type\":\"INT\"},{\"index\":1,\"name\":\"ОбъектыКонтрольногоМероприятия\",\"type\":\"STRING\"},{\"index\":2,\"name\":\"ВидКонтрольногоМероприятия\",\"type\":\"STRING\"},{\"index\":3,\"name\":\"ТемаКонтрольногоМероприятия\",\"type\":\"STRING\"},{\"index\":4,\"name\":\"ПроверяемыйПериод\",\"type\":\"STRING\"},{\"index\":5,\"name\":\"f5\",\"type\":\"STRING\"},{\"index\":6,\"name\":\"ОкончаниеПроверки\",\"type\":\"STRING\"},{\"index\":7,\"name\":\"ВыявленныеНарушенияНедостатки\",\"type\":\"STRING\"},{\"index\":8,\"name\":\"РезультатыПроверки\",\"type\":\"STRING\"}],\"timestampIndex\":-1}",
-                    36,
-                    36
+                    36L,
+                    36L
             );
         });
     }
@@ -576,15 +576,14 @@ public class PlainTextImportTest extends AbstractCairoTest {
 
             textLoader.setForceHeaders(true);
             textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
-            playText(
-                    textLoader,
-                    csv,
-                    1024,
-                    expected,
-                    "{\"columnCount\":2,\"columns\":[{\"index\":0,\"name\":\"name\",\"type\":\"STRING\"},{\"index\":1,\"name\":\"date\",\"type\":\"DATE\"}],\"timestampIndex\":-1}",
-                    3,
-                    3
-            );
+            playText0(textLoader, csv, 1024, ENTITY_MANIPULATOR);
+            sink.clear();
+            textLoader.getMetadata().toJson(sink);
+            TestUtils.assertEquals("{\"columnCount\":2,\"columns\":[{\"index\":0,\"name\":\"name\",\"type\":\"STRING\"},{\"index\":1,\"name\":\"date\",\"type\":\"DATE\"}],\"timestampIndex\":-1}", sink);
+            Assert.assertEquals(3L, textLoader.getParsedLineCount());
+            Assert.assertEquals(3L, textLoader.getWrittenLineCount());
+            assertTable(expected);
+            textLoader.clear();
         });
     }
 
@@ -612,15 +611,14 @@ public class PlainTextImportTest extends AbstractCairoTest {
 
             textLoader.setForceHeaders(true);
             textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
-            playText(
-                    textLoader,
-                    csv,
-                    1024,
-                    expected,
-                    "{\"columnCount\":2,\"columns\":[{\"index\":0,\"name\":\"name\",\"type\":\"STRING\"},{\"index\":1,\"name\":\"date\",\"type\":\"DATE\"}],\"timestampIndex\":-1}",
-                    3,
-                    3
-            );
+            playText0(textLoader, csv, 1024, ENTITY_MANIPULATOR);
+            sink.clear();
+            textLoader.getMetadata().toJson(sink);
+            TestUtils.assertEquals("{\"columnCount\":2,\"columns\":[{\"index\":0,\"name\":\"name\",\"type\":\"STRING\"},{\"index\":1,\"name\":\"date\",\"type\":\"DATE\"}],\"timestampIndex\":-1}", sink);
+            Assert.assertEquals(3L, textLoader.getParsedLineCount());
+            Assert.assertEquals(3L, textLoader.getWrittenLineCount());
+            assertTable(expected);
+            textLoader.clear();
         });
     }
 
@@ -1875,8 +1873,8 @@ public class PlainTextImportTest extends AbstractCairoTest {
             sink.clear();
             textLoader.getMetadata().toJson(sink);
             TestUtils.assertEquals("{\"columnCount\":10,\"columns\":[{\"index\":0,\"name\":\"f0\",\"type\":\"STRING\"},{\"index\":1,\"name\":\"f1\",\"type\":\"INT\"},{\"index\":2,\"name\":\"f2\",\"type\":\"INT\"},{\"index\":3,\"name\":\"f3\",\"type\":\"DOUBLE\"},{\"index\":4,\"name\":\"f4\",\"type\":\"DATE\"},{\"index\":5,\"name\":\"f5\",\"type\":\"DATE\"},{\"index\":6,\"name\":\"f6\",\"type\":\"DATE\"},{\"index\":7,\"name\":\"f7\",\"type\":\"INT\"},{\"index\":8,\"name\":\"f8\",\"type\":\"BOOLEAN\"},{\"index\":9,\"name\":\"f9\",\"type\":\"INT\"}],\"timestampIndex\":-1}", sink);
-            Assert.assertEquals((long) 12, textLoader.getParsedLineCount());
-            Assert.assertEquals((long) 10, textLoader.getWrittenLineCount());
+            Assert.assertEquals(12L, textLoader.getParsedLineCount());
+            Assert.assertEquals(10L, textLoader.getWrittenLineCount());
             Assert.assertEquals("[0,0,1,0,0,0,0,0,0,1]", textLoader.getColumnErrorCounts().toString());
             assertTable(expected);
             textLoader.clear();

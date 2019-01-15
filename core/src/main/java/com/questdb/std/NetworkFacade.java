@@ -21,41 +21,38 @@
  *
  ******************************************************************************/
 
-package com.questdb.cutlass.text.typeprobe;
+package com.questdb.std;
 
-import com.questdb.cairo.TableWriter;
-import com.questdb.std.Numbers;
-import com.questdb.std.NumericException;
-import com.questdb.std.str.DirectByteCharSequence;
-import com.questdb.store.ColumnType;
+public interface NetworkFacade {
+    void abortAccept(long fd);
 
-public class DoubleProbe implements TypeProbe {
+    long accept(long serverFd);
 
-    @Override
-    public String toString() {
-        return "DOUBLE";
-    }
+    boolean bindTcp(long fd, int address, int port);
 
-    @Override
-    public int getType() {
-        return ColumnType.DOUBLE;
-    }
+    void close(long fd);
 
-    @Override
-    public boolean probe(CharSequence text) {
-        if (text.length() > 2 && text.charAt(0) == '0' && text.charAt(1) != '.') {
-            return false;
-        }
-        try {
-            Numbers.parseDouble(text);
-            return true;
-        } catch (NumericException e) {
-            return false;
-        }
-    }
+    void configureNoLinger(long fd);
 
-    @Override
-    public void write(TableWriter.Row row, int column, DirectByteCharSequence value) throws Exception {
-        row.putDouble(column, Numbers.parseDouble(value));
-    }
+    void configureNonBlocking(long fd);
+
+    int connect(long fd, long sockaddr);
+
+    void freeSockAddr(long socketAddress);
+
+    long getPeerIP(long fd);
+
+    void listen(long serverFd, int backlog);
+
+    int recv(long fd, long buffer, int bufferLen);
+
+    int send(long fd, long buffer, int bufferLen);
+
+    void sendTo(long fd, long lo, int len, long socketAddress);
+
+    long sockaddr(int address, int port);
+
+    long socketTcp(boolean blocking);
+
+    long socketUdp();
 }

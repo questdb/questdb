@@ -23,21 +23,16 @@
 
 package com.questdb.cutlass.text.typeprobe;
 
+import com.questdb.cairo.TableWriter;
 import com.questdb.std.Chars;
-import com.questdb.std.time.DateFormat;
-import com.questdb.std.time.DateLocale;
+import com.questdb.std.str.DirectByteCharSequence;
 import com.questdb.store.ColumnType;
 
 public class BooleanProbe implements TypeProbe {
 
     @Override
-    public DateFormat getDateFormat() {
-        return null;
-    }
-
-    @Override
-    public DateLocale getDateLocale() {
-        return null;
+    public String toString() {
+        return "BOOLEAN";
     }
 
     @Override
@@ -48,5 +43,10 @@ public class BooleanProbe implements TypeProbe {
     @Override
     public boolean probe(CharSequence text) {
         return Chars.equalsIgnoreCase(text, "true") || Chars.equalsIgnoreCase(text, "false");
+    }
+
+    @Override
+    public void write(TableWriter.Row row, int column, DirectByteCharSequence value) throws Exception {
+        row.putBool(column, Chars.equalsIgnoreCase(value, "true"));
     }
 }

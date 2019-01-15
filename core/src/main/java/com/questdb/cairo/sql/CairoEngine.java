@@ -31,6 +31,9 @@ import org.jetbrains.annotations.Nullable;
 import java.io.Closeable;
 
 public interface CairoEngine extends Closeable {
+    @Override
+    void close();
+
     TableReader getReader(CharSequence tableName, long version);
 
     int getStatus(Path path, CharSequence tableName, int lo, int hi);
@@ -47,9 +50,9 @@ public interface CairoEngine extends Closeable {
 
     boolean releaseAllWriters();
 
-    void unlock(CharSequence tableName, @Nullable TableWriter writer);
-
     void remove(Path path, CharSequence tableName);
 
     void rename(Path path, CharSequence tableName, Path otherPath, String newName);
+
+    void unlock(CharSequence tableName, @Nullable TableWriter writer);
 }

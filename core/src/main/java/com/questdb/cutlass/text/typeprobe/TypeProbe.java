@@ -23,19 +23,13 @@
 
 package com.questdb.cutlass.text.typeprobe;
 
-import com.questdb.std.time.DateFormat;
-import com.questdb.std.time.DateLocale;
+import com.questdb.cairo.TableWriter;
+import com.questdb.std.str.DirectByteCharSequence;
 
 public interface TypeProbe {
-    default DateFormat getDateFormat() {
-        return null;
-    }
-
-    default DateLocale getDateLocale() {
-        return null;
-    }
-
     int getType();
 
     boolean probe(CharSequence text);
+
+    void write(TableWriter.Row row, int column, DirectByteCharSequence value) throws Exception;
 }
