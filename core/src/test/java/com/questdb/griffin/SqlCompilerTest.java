@@ -156,6 +156,45 @@ public class SqlCompilerTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCloseFactoryWithoutUsingCursor() throws Exception {
+        String query = "select * from y where j > :lim";
+        TestUtils.assertMemoryLeak(() -> {
+            try {
+                compiler.compile(
+                        "create table y as (" +
+                                "select" +
+                                " to_int(x) i," +
+                                " rnd_symbol('msft','ibm', 'googl') sym2," +
+                                " round(rnd_double(0), 3) price," +
+                                " to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp," +
+                                " rnd_boolean() b," +
+                                " rnd_str(1,1,2) c," +
+                                " rnd_double(2) d," +
+                                " rnd_float(2) e," +
+                                " rnd_short(10,1024) f," +
+                                " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                                " rnd_symbol(4,4,4,2) ik," +
+                                " rnd_long() j," +
+                                " timestamp_sequence(to_timestamp(0), 1000000000) k," +
+                                " rnd_byte(2,50) l," +
+                                " rnd_bin(10, 20, 2) m," +
+                                " rnd_str(5,16,2) n" +
+                                " from long_sequence(30)" +
+                                ") timestamp(timestamp)"
+                        , bindVariableService
+                );
+
+                bindVariableService.setLong("lim", 4);
+                final RecordCursorFactory factory = compiler.compile(query, bindVariableService);
+                factory.close();
+            } finally {
+                engine.releaseAllWriters();
+                engine.releaseAllReaders();
+            }
+        });
+    }
+
+    @Test
     public void testCastByteDouble() throws SqlException, IOException {
         assertCastByte("a\n" +
                         "119.000000000000\n" +

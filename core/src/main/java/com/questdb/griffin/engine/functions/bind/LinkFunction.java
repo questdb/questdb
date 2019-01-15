@@ -26,6 +26,7 @@ package com.questdb.griffin.engine.functions.bind;
 import com.questdb.cairo.CairoException;
 import com.questdb.cairo.sql.*;
 import com.questdb.std.BinarySequence;
+import com.questdb.std.Misc;
 import com.questdb.std.str.CharSink;
 
 public class LinkFunction implements Function {
@@ -42,7 +43,7 @@ public class LinkFunction implements Function {
 
     @Override
     public void close() {
-        getBase().close();
+        base = Misc.free(base);
     }
 
     @Override
