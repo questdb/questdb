@@ -27,14 +27,12 @@ import com.questdb.cairo.ColumnType;
 import com.questdb.cutlass.json.JsonException;
 import com.questdb.cutlass.json.JsonLexer;
 import com.questdb.cutlass.json.JsonParser;
-import com.questdb.cutlass.text.typeprobe.DateProbe;
-import com.questdb.cutlass.text.typeprobe.TypeProbe;
-import com.questdb.cutlass.text.typeprobe.TypeProbeCollection;
+import com.questdb.cutlass.text.types.TypeAdapter;
+import com.questdb.cutlass.text.types.TypeManager;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.std.*;
 import com.questdb.std.str.AbstractCharSequence;
-import com.questdb.std.str.DirectCharSink;
 import com.questdb.std.time.DateFormatFactory;
 import com.questdb.std.time.DateLocale;
 import com.questdb.std.time.DateLocaleFactory;
@@ -56,13 +54,12 @@ public class TextMetadataParser implements JsonParser, Mutable, Closeable {
     private final ObjectPool<FloatingCharSequence> csPool;
     private final DateFormatFactory dateFormatFactory;
     private final ObjList<CharSequence> columnNames;
-    private final ObjList<TypeProbe> columnTypes;
-    private final DirectCharSink utf8Sink;
+    private final ObjList<TypeAdapter> columnTypes;
+    private final TypeManager typeManager;
     private int state = S_NEED_ARRAY;
     private CharSequence name;
     private int type = -1;
     private CharSequence pattern;
-    private final TypeProbeCollection typeProbeCollection;
     private CharSequence locale;
     private int propertyIndex;
     private long buf;
@@ -75,16 +72,14 @@ public class TextMetadataParser implements JsonParser, Mutable, Closeable {
             TextConfiguration textConfiguration,
             DateLocaleFactory dateLocaleFactory,
             DateFormatFactory dateFormatFactory,
-            DirectCharSink utf8Sink,
-            TypeProbeCollection typeProbeCollection
+            TypeManager typeManager
     ) {
         this.columnNames = new ObjList<>();
         this.columnTypes = new ObjList<>();
         this.csPool = new ObjectPool<>(FloatingCharSequence::new, textConfiguration.getMetadataStringPoolSize());
         this.dateLocaleFactory = dateLocaleFactory;
         this.dateFormatFactory = dateFormatFactory;
-        this.utf8Sink = utf8Sink;
-        this.typeProbeCollection = typeProbeCollection;
+        this.typeManager = typeManager;
     }
 
     @Override
@@ -110,7 +105,7 @@ public class TextMetadataParser implements JsonParser, Mutable, Closeable {
         return columnNames;
     }
 
-    public ObjList<TypeProbe> getColumnTypes() {
+    public ObjList<TypeAdapter> getColumnTypes() {
         return columnTypes;
     }
 
@@ -119,13 +114,13 @@ public class TextMetadataParser implements JsonParser, Mutable, Closeable {
         switch (code) {
             case JsonLexer.EVT_ARRAY_START:
                 if (state != S_NEED_ARRAY) {
-                    throw JsonException.with("Unexpected array", position);
+                    throw JsonException.$(position, "Unexpected array");
                 }
                 state = S_NEED_OBJECT;
                 break;
             case JsonLexer.EVT_OBJ_START:
                 if (state != S_NEED_OBJECT) {
-                    throw JsonException.with("Unexpected object", position);
+                    throw JsonException.$(position, "Unexpected object");
                 }
                 state = S_NEED_PROPERTY;
                 break;
@@ -143,7 +138,7 @@ public class TextMetadataParser implements JsonParser, Mutable, Closeable {
                     case P_TYPE:
                         type = ColumnType.columnTypeOf(tag);
                         if (type == -1) {
-                            throw JsonException.with("Invalid type", position);
+                            throw JsonException.$(position, "Invalid type");
                         }
                         break;
                     case P_PATTERN:
@@ -163,7 +158,7 @@ public class TextMetadataParser implements JsonParser, Mutable, Closeable {
                 createImportedType(position);
                 break;
             case JsonLexer.EVT_ARRAY_VALUE:
-                throw JsonException.with("Must be an object", position);
+                throw JsonException.$(position, "Must be an object");
             default:
                 break;
         }
@@ -191,18 +186,18 @@ public class TextMetadataParser implements JsonParser, Mutable, Closeable {
         }
 
         Chars.strcpyw(tag, l / 2, buf + bufSize);
-        CharSequence cs = csPool.next().of(bufSize, bufSize + l);
+        CharSequence cs = csPool.next().of(bufSize, l / 2);
         bufSize += l;
         return cs;
     }
 
     private void createImportedType(int position) throws JsonException {
         if (name == null) {
-            throw JsonException.with("Missing 'name' property", position);
+            throw JsonException.$(position, "Missing 'name' property");
         }
 
         if (type == -1) {
-            throw JsonException.with("Missing 'type' property", position);
+            throw JsonException.$(position, "Missing 'type' property");
         }
 
         columnNames.add(name);
@@ -211,12 +206,12 @@ public class TextMetadataParser implements JsonParser, Mutable, Closeable {
             case ColumnType.DATE:
                 DateLocale dateLocale = locale == null ? dateLocaleFactory.getDefaultDateLocale() : dateLocaleFactory.getDateLocale(locale);
                 if (dateLocale == null) {
-                    throw JsonException.with("Invalid date locale", localePosition);
+                    throw JsonException.$(localePosition, "Invalid date locale");
                 }
-                columnTypes.add(((DateProbe) typeProbeCollection.getProbeForType(type)).of(dateFormatFactory.get(pattern), dateLocale));
+                columnTypes.add(typeManager.nextDateAdapter().of(dateFormatFactory.get(pattern), dateLocale));
                 break;
             default:
-                columnTypes.add(typeProbeCollection.getProbeForType(type));
+                columnTypes.add(typeManager.getTypeAdapter(type));
                 break;
         }
         // prepare for next iteration
@@ -229,8 +224,8 @@ public class TextMetadataParser implements JsonParser, Mutable, Closeable {
 
     private class FloatingCharSequence extends AbstractCharSequence implements Mutable {
 
-        int lo;
-        int hi;
+        private int offset;
+        private int len;
 
         @Override
         public void clear() {
@@ -238,26 +233,18 @@ public class TextMetadataParser implements JsonParser, Mutable, Closeable {
 
         @Override
         public int length() {
-            return (hi - lo) / 2;
+            return len;
         }
 
         @Override
         public char charAt(int index) {
-            return Unsafe.getUnsafe().getChar(buf + lo + index * 2);
+            return Unsafe.getUnsafe().getChar(buf + offset + index * 2);
         }
 
-        CharSequence of(int lo, int hi) {
-            this.lo = lo;
-            this.hi = hi;
+        CharSequence of(int lo, int len) {
+            this.offset = lo;
+            this.len = len;
             return this;
-        }
-
-        long getHi() {
-            return buf + hi;
-        }
-
-        long getLo() {
-            return buf + lo;
         }
     }
 

@@ -137,35 +137,32 @@ class ReplaceStrFunction extends AbstractVirtualColumn implements Function {
 
         for (int i = 0; i < n; i++) {
             char c = pattern.charAt(i);
-            switch (c) {
-                case '$':
-                    if (i == dollar + 1) {
-                        throw QueryError.$(pos + i, "missing index");
-                    }
-                    if (i > start) {
-                        concat.add(new FlyweightCharSequence().of(pattern, start, i - start));
-                    }
-                    collectIndex = true;
-                    index = 0;
-                    dollar = i;
-                    dollarCount++;
-                    break;
-                default:
-                    if (collectIndex) {
-                        int k = c - '0';
-                        if (k > -1 && k < 10) {
-                            index = index * 10 + k;
-                        } else {
-                            if (i == dollar + 1) {
-                                throw QueryError.$(pos + i, "missing index");
-                            }
-                            concat.add(new GroupCharSequence(index));
-                            start = i;
-                            collectIndex = false;
-                            index = -1;
+            if (c == '$') {
+                if (i == dollar + 1) {
+                    throw QueryError.$(pos + i, "missing index");
+                }
+                if (i > start) {
+                    concat.add(new FlyweightCharSequence().of(pattern, start, i - start));
+                }
+                collectIndex = true;
+                index = 0;
+                dollar = i;
+                dollarCount++;
+            } else {
+                if (collectIndex) {
+                    int k = c - '0';
+                    if (k > -1 && k < 10) {
+                        index = index * 10 + k;
+                    } else {
+                        if (i == dollar + 1) {
+                            throw QueryError.$(pos + i, "missing index");
                         }
+                        concat.add(new GroupCharSequence(index));
+                        start = i;
+                        collectIndex = false;
+                        index = -1;
                     }
-                    break;
+                }
             }
         }
 

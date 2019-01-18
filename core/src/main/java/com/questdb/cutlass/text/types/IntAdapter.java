@@ -21,7 +21,7 @@
  *
  ******************************************************************************/
 
-package com.questdb.cutlass.text.typeprobe;
+package com.questdb.cutlass.text.types;
 
 import com.questdb.cairo.TableWriter;
 import com.questdb.std.Numbers;
@@ -29,7 +29,12 @@ import com.questdb.std.NumericException;
 import com.questdb.std.str.DirectByteCharSequence;
 import com.questdb.store.ColumnType;
 
-public class IntProbe implements TypeProbe {
+public final class IntAdapter implements TypeAdapter {
+
+    public static final IntAdapter INSTANCE = new IntAdapter();
+
+    private IntAdapter() {
+    }
 
     @Override
     public int getType() {
@@ -50,12 +55,12 @@ public class IntProbe implements TypeProbe {
     }
 
     @Override
-    public String toString() {
-        return "INT";
+    public void write(TableWriter.Row row, int column, DirectByteCharSequence value) throws Exception {
+        row.putInt(column, Numbers.parseInt(value));
     }
 
     @Override
-    public void write(TableWriter.Row row, int column, DirectByteCharSequence value) throws Exception {
-        row.putInt(column, Numbers.parseInt(value));
+    public String toString() {
+        return "INT";
     }
 }

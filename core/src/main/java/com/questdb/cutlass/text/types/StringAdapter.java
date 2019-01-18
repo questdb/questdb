@@ -21,30 +21,41 @@
  *
  ******************************************************************************/
 
-package com.questdb.cutlass.text;
+package com.questdb.cutlass.text.types;
 
-public interface TextConfiguration {
-    String getAdapterSetConfigurationFileName();
+import com.questdb.cairo.TableWriter;
+import com.questdb.cutlass.text.TextUtil;
+import com.questdb.std.str.DirectByteCharSequence;
+import com.questdb.std.str.DirectCharSink;
+import com.questdb.store.ColumnType;
 
-    int getDateAdapterPoolSize();
+public class StringAdapter implements TypeAdapter {
 
-    int getJsonCacheLimit();
+    private final DirectCharSink utf8Sink;
 
-    int getJsonCacheSize();
+    public StringAdapter(DirectCharSink utf8Sink) {
+        this.utf8Sink = utf8Sink;
+    }
 
-    double getMaxRequiredDelimiterStdDev();
+    @Override
+    public int getType() {
+        return ColumnType.STRING;
+    }
 
-    int getMetadataStringPoolSize();
+    @Override
+    public boolean probe(CharSequence text) {
+        return true;
+    }
 
-    long getRollBufferLimit();
+    @Override
+    public void write(TableWriter.Row row, int column, DirectByteCharSequence value) throws Exception {
+        utf8Sink.clear();
+        TextUtil.utf8Decode(value.getLo(), value.getHi(), utf8Sink);
+        row.putStr(column, utf8Sink);
+    }
 
-    long getRollBufferSize();
-
-    int getTextAnalysisMaxLines();
-
-    int getTextLexerStringPoolSize();
-
-    int getTimestampAdapterPoolSize();
-
-    int getUtf8SinkCapacity();
+    @Override
+    public String toString() {
+        return "STRING";
+    }
 }

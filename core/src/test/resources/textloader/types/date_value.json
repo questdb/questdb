@@ -1,0 +1,8 @@
+{
+  "date": "hello",
+  "timestamp": [
+    {
+      "format": "yyyy-MM-ddTHH:mm:ss.SSSz"
+    }
+  ]
+}

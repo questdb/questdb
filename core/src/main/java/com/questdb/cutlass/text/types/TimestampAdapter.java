@@ -21,33 +21,42 @@
  *
  ******************************************************************************/
 
-package com.questdb.cutlass.text.typeprobe;
+package com.questdb.cutlass.text.types;
 
 import com.questdb.cairo.TableWriter;
-import com.questdb.std.Numbers;
+import com.questdb.cutlass.text.TextUtil;
+import com.questdb.std.Mutable;
 import com.questdb.std.NumericException;
+import com.questdb.std.microtime.DateFormat;
+import com.questdb.std.microtime.DateLocale;
 import com.questdb.std.str.DirectByteCharSequence;
+import com.questdb.std.str.DirectCharSink;
 import com.questdb.store.ColumnType;
 
-public class DoubleProbe implements TypeProbe {
+public class TimestampAdapter implements TypeAdapter, Mutable {
+    private final DirectCharSink utf8Sink;
+    private DateLocale locale;
+    private DateFormat format;
+
+    public TimestampAdapter(DirectCharSink utf8Sink) {
+        this.utf8Sink = utf8Sink;
+    }
 
     @Override
-    public String toString() {
-        return "DOUBLE";
+    public void clear() {
+        this.format = null;
+        this.locale = null;
     }
 
     @Override
     public int getType() {
-        return ColumnType.DOUBLE;
+        return ColumnType.TIMESTAMP;
     }
 
     @Override
     public boolean probe(CharSequence text) {
-        if (text.length() > 2 && text.charAt(0) == '0' && text.charAt(1) != '.') {
-            return false;
-        }
         try {
-            Numbers.parseDouble(text);
+            format.parse(text, locale);
             return true;
         } catch (NumericException e) {
             return false;
@@ -56,6 +65,19 @@ public class DoubleProbe implements TypeProbe {
 
     @Override
     public void write(TableWriter.Row row, int column, DirectByteCharSequence value) throws Exception {
-        row.putDouble(column, Numbers.parseDouble(value));
+        utf8Sink.clear();
+        TextUtil.utf8Decode(value.getLo(), value.getHi(), utf8Sink);
+        row.putDate(column, format.parse(utf8Sink, locale));
+    }
+
+    public TimestampAdapter of(DateFormat format, DateLocale locale) {
+        this.format = format;
+        this.locale = locale;
+        return this;
+    }
+
+    @Override
+    public String toString() {
+        return "TIMESTAMP";
     }
 }

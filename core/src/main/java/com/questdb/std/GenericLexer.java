@@ -170,33 +170,27 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
                     }
                     break;
                 case '\'':
-                    switch (c) {
-                        case '\'':
-                            _hi += 2;
-                            return last = flyweightSequence;
-                        default:
-                            _hi++;
-                            break;
+                    if (c == '\'') {
+                        _hi += 2;
+                        return last = flyweightSequence;
+                    } else {
+                        _hi++;
                     }
                     break;
                 case '"':
-                    switch (c) {
-                        case '"':
-                            _hi += 2;
-                            return last = flyweightSequence;
-                        default:
-                            _hi++;
-                            break;
+                    if (c == '"') {
+                        _hi += 2;
+                        return last = flyweightSequence;
+                    } else {
+                        _hi++;
                     }
                     break;
                 case '`':
-                    switch (c) {
-                        case '`':
-                            _hi += 2;
-                            return last = flyweightSequence;
-                        default:
-                            _hi++;
-                            break;
+                    if (c == '`') {
+                        _hi += 2;
+                        return last = flyweightSequence;
+                    } else {
+                        _hi++;
                     }
                     break;
                 default:
@@ -296,7 +290,6 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
         GenericLexer getParent() {
             return GenericLexer.this;
         }
-
 
         @Override
         public char charAt(int index) {

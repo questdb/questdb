@@ -21,32 +21,37 @@
  *
  ******************************************************************************/
 
-package com.questdb.cutlass.text.typeprobe;
+package com.questdb.cutlass.text.types;
 
 import com.questdb.cairo.TableWriter;
-import com.questdb.std.Chars;
+import com.questdb.std.Numbers;
 import com.questdb.std.str.DirectByteCharSequence;
 import com.questdb.store.ColumnType;
 
-public class BooleanProbe implements TypeProbe {
+public final class ByteAdapter implements TypeAdapter {
 
-    @Override
-    public String toString() {
-        return "BOOLEAN";
+    public static final ByteAdapter INSTANCE = new ByteAdapter();
+
+    private ByteAdapter() {
     }
 
     @Override
     public int getType() {
-        return ColumnType.BOOLEAN;
+        return ColumnType.BYTE;
     }
 
     @Override
     public boolean probe(CharSequence text) {
-        return Chars.equalsIgnoreCase(text, "true") || Chars.equalsIgnoreCase(text, "false");
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void write(TableWriter.Row row, int column, DirectByteCharSequence value) throws Exception {
-        row.putBool(column, Chars.equalsIgnoreCase(value, "true"));
+        row.putByte(column, (byte) Numbers.parseInt(value));
+    }
+
+    @Override
+    public String toString() {
+        return "BYTE";
     }
 }

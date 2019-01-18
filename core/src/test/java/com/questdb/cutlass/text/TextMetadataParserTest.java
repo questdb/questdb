@@ -25,7 +25,7 @@ package com.questdb.cutlass.text;
 
 import com.questdb.cutlass.json.JsonException;
 import com.questdb.cutlass.json.JsonLexer;
-import com.questdb.cutlass.text.typeprobe.TypeProbeCollection;
+import com.questdb.cutlass.text.types.TypeManager;
 import com.questdb.std.Unsafe;
 import com.questdb.std.str.DirectCharSink;
 import com.questdb.std.time.DateFormatFactory;
@@ -36,33 +36,36 @@ import org.junit.*;
 public class TextMetadataParserTest {
     private static final JsonLexer LEXER = new JsonLexer(1024, 4096);
     private static TextMetadataParser textMetadataParser;
-    private static TypeProbeCollection typeProbeCollection;
+    private static TypeManager typeManager;
     private static DirectCharSink utf8Sink;
+    private static JsonLexer jsonLexer;
 
     @BeforeClass
-    public static void setUpClass() {
+    public static void setUpClass() throws JsonException {
         utf8Sink = new DirectCharSink(1024);
-        typeProbeCollection = new TypeProbeCollection(utf8Sink);
+        jsonLexer = new JsonLexer(1024, 1024);
+        typeManager = new TypeManager(new DefaultTextConfiguration(), utf8Sink, jsonLexer);
         textMetadataParser = new TextMetadataParser(
                 new DefaultTextConfiguration(),
                 DateLocaleFactory.INSTANCE,
                 new DateFormatFactory(),
-                utf8Sink,
-                typeProbeCollection
+                typeManager
         );
     }
 
     @AfterClass
     public static void tearDown() {
         LEXER.close();
+        jsonLexer.close();
         utf8Sink.close();
+        textMetadataParser.close();
     }
 
     @Before
     public void setUp() {
         LEXER.clear();
         textMetadataParser.clear();
-        typeProbeCollection.clear();
+        typeManager.clear();
     }
 
     @Test

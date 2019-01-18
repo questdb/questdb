@@ -25,6 +25,16 @@ package com.questdb.cutlass.text;
 
 public class DefaultTextConfiguration implements TextConfiguration {
     @Override
+    public String getAdapterSetConfigurationFileName() {
+        return "/text_loader.json";
+    }
+
+    @Override
+    public int getDateAdapterPoolSize() {
+        return 16;
+    }
+
+    @Override
     public int getJsonCacheLimit() {
         return 4096;
     }
@@ -35,8 +45,8 @@ public class DefaultTextConfiguration implements TextConfiguration {
     }
 
     @Override
-    public int getMetadataPoolSize() {
-        return 32;
+    public double getMaxRequiredDelimiterStdDev() {
+        return 0.1222d;
     }
 
     @Override
@@ -55,17 +65,22 @@ public class DefaultTextConfiguration implements TextConfiguration {
     }
 
     @Override
-    public int getUtf8SinkCapacity() {
-        return 4096;
-    }
-
-    @Override
     public int getTextAnalysisMaxLines() {
         return 1000;
     }
 
     @Override
-    public double getMaxRequiredDelimiterStdDev() {
-        return 0.1222d;
+    public int getTextLexerStringPoolSize() {
+        return 32;
+    }
+
+    @Override
+    public int getTimestampAdapterPoolSize() {
+        return 16;
+    }
+
+    @Override
+    public int getUtf8SinkCapacity() {
+        return 4096;
     }
 }

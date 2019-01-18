@@ -26,8 +26,9 @@ package com.questdb.cutlass.text;
 import com.questdb.cairo.*;
 import com.questdb.cairo.sql.CairoEngine;
 import com.questdb.cairo.sql.RecordMetadata;
-import com.questdb.cutlass.text.typeprobe.TypeProbe;
-import com.questdb.cutlass.text.typeprobe.TypeProbeCollection;
+import com.questdb.cutlass.text.types.BadDateAdapter;
+import com.questdb.cutlass.text.types.TypeAdapter;
+import com.questdb.cutlass.text.types.TypeManager;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.log.LogRecord;
@@ -50,27 +51,27 @@ public class CairoTextWriter implements TextLexer.Listener, Closeable, Mutable {
     private final AppendMemory appendMemory = new AppendMemory();
     private final Path path;
     private final TableStructureAdapter tableStructureAdapter = new TableStructureAdapter();
-    private final TypeProbeCollection typeProbeCollection;
+    private final TypeManager typeManager;
     private CharSequence tableName;
     private TableWriter writer;
     private long _size;
     private boolean overwrite;
     private boolean durable;
     private int atomicity;
-    private ObjList<TypeProbe> types;
+    private ObjList<TypeAdapter> types;
 
     public CairoTextWriter(
             CairoConfiguration configuration,
             CairoEngine engine,
             Path path,
             TextConfiguration textConfiguration,
-            TypeProbeCollection typeProbeCollection
+            TypeManager typeManager
     ) {
         this.configuration = configuration;
         this.engine = engine;
         this.path = path;
         this.utf8Sink = new DirectCharSink(textConfiguration.getUtf8SinkCapacity());
-        this.typeProbeCollection = typeProbeCollection;
+        this.typeManager = typeManager;
     }
 
     @Override
@@ -146,7 +147,7 @@ public class CairoTextWriter implements TextLexer.Listener, Closeable, Mutable {
         w.append();
     }
 
-    private void createTable(ObjList<CharSequence> names, ObjList<TypeProbe> detectedTypes) {
+    private void createTable(ObjList<CharSequence> names, ObjList<TypeAdapter> detectedTypes) {
         TableUtils.createTable(
                 configuration.getFilesFacade(),
                 appendMemory,
@@ -158,7 +159,7 @@ public class CairoTextWriter implements TextLexer.Listener, Closeable, Mutable {
         this.types = detectedTypes;
     }
 
-    private TableWriter openWriterAndOverrideImportTypes(ObjList<TypeProbe> detectedTypes) {
+    private TableWriter openWriterAndOverrideImportTypes(ObjList<TypeAdapter> detectedTypes) {
 
         TableWriter writer = engine.getWriter(tableName);
         RecordMetadata metadata = writer.getMetadata();
@@ -191,10 +192,10 @@ public class CairoTextWriter implements TextLexer.Listener, Closeable, Mutable {
                                 .$(", column=").$(i)
                                 .$(", type=").$(ColumnType.nameOf(this.types.getQuick(i).getType()))
                                 .$(']').$();
-                        this.types.setQuick(i, typeProbeCollection.getBadDateProbe());
+                        this.types.setQuick(i, BadDateAdapter.INSTANCE);
                         break;
                     default:
-                        this.types.setQuick(i, typeProbeCollection.getProbeForType(columnType));
+                        this.types.setQuick(i, typeManager.getTypeAdapter(columnType));
                         break;
                 }
             }
@@ -203,7 +204,7 @@ public class CairoTextWriter implements TextLexer.Listener, Closeable, Mutable {
         return writer;
     }
 
-    void prepareTable(ObjList<CharSequence> names, ObjList<TypeProbe> detectedTypes) {
+    void prepareTable(ObjList<CharSequence> names, ObjList<TypeAdapter> detectedTypes) {
         assert writer == null;
 
         if (detectedTypes.size() == 0) {
@@ -233,7 +234,7 @@ public class CairoTextWriter implements TextLexer.Listener, Closeable, Mutable {
 
     private class TableStructureAdapter implements TableStructure {
         private ObjList<CharSequence> names;
-        private ObjList<TypeProbe> types;
+        private ObjList<TypeAdapter> types;
 
         @Override
         public int getColumnCount() {
@@ -287,7 +288,7 @@ public class CairoTextWriter implements TextLexer.Listener, Closeable, Mutable {
             return -1;
         }
 
-        TableStructureAdapter of(ObjList<CharSequence> names, ObjList<TypeProbe> types) {
+        TableStructureAdapter of(ObjList<CharSequence> names, ObjList<TypeAdapter> types) {
             this.names = names;
             this.types = types;
             return this;

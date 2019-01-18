@@ -149,7 +149,7 @@ public class JsonLexer implements Mutable, Closeable {
             switch (c) {
                 case '{':
                     if (state != S_START && state != S_EXPECT_VALUE) {
-                        throw JsonException.with("{ is not expected here", (int) (posAtStart + p - lo));
+                        throw JsonException.$((int) (posAtStart + p - lo), "{ is not expected here");
                     }
                     arrayDepthStack.push(arrayDepth);
                     arrayDepth = 0;
@@ -160,15 +160,15 @@ public class JsonLexer implements Mutable, Closeable {
                     break;
                 case '}':
                     if (arrayDepth > 0) {
-                        throw JsonException.with("} is not expected here. You have non-terminated array", (int) (posAtStart + p - lo));
+                        throw JsonException.$((int) (posAtStart + p - lo), "} is not expected here. You have non-terminated array");
                     }
 
                     if (objDepth > 0) {
                         switch (state) {
                             case S_EXPECT_VALUE:
-                                throw JsonException.with("Attribute value expected", (int) (posAtStart + p - lo - 1));
+                                throw JsonException.$((int) (posAtStart + p - lo - 1), "Attribute value expected");
                             case S_EXPECT_NAME:
-                                throw JsonException.with("Attribute name expected", (int) (posAtStart + p - lo - 1));
+                                throw JsonException.$((int) (posAtStart + p - lo - 1), "Attribute name expected");
                             default:
                                 break;
                         }
@@ -177,12 +177,12 @@ public class JsonLexer implements Mutable, Closeable {
                         arrayDepth = arrayDepthStack.pop();
                         state = S_EXPECT_COMMA;
                     } else {
-                        throw JsonException.with("Dangling }", (int) (posAtStart + p - lo));
+                        throw JsonException.$((int) (posAtStart + p - lo), "Dangling }");
                     }
                     break;
                 case '[':
                     if (state != S_START && state != S_EXPECT_VALUE) {
-                        throw JsonException.with("[ is not expected here", (int) (posAtStart + p - lo));
+                        throw JsonException.$((int) (posAtStart + p - lo), "[ is not expected here");
                     }
 
                     listener.onEvent(EVT_ARRAY_START, null, (int) (posAtStart + p - lo));
@@ -193,11 +193,11 @@ public class JsonLexer implements Mutable, Closeable {
                     break;
                 case ']':
                     if (objDepth > 0) {
-                        throw JsonException.with("] is not expected here. You have non-terminated object", (int) (posAtStart + p - lo));
+                        throw JsonException.$((int) (posAtStart + p - lo), "] is not expected here. You have non-terminated object");
                     }
 
                     if (arrayDepth == 0) {
-                        throw JsonException.with("Dangling ]", (int) (posAtStart + p - lo));
+                        throw JsonException.$((int) (posAtStart + p - lo), "Dangling ]");
                     }
 
                     listener.onEvent(EVT_ARRAY_END, null, (int) (posAtStart + p - lo));
@@ -212,7 +212,7 @@ public class JsonLexer implements Mutable, Closeable {
                     break;
                 case ',':
                     if (state != S_EXPECT_COMMA) {
-                        throw JsonException.with("Unexpected comma", (int) (posAtStart + p - lo));
+                        throw JsonException.$((int) (posAtStart + p - lo), "Unexpected comma");
                     }
                     if (arrayDepth > 0) {
                         state = S_EXPECT_VALUE;
@@ -222,20 +222,20 @@ public class JsonLexer implements Mutable, Closeable {
                     break;
                 case ':':
                     if (state != S_EXPECT_COLON) {
-                        throw JsonException.with("Misplaced ':'", (int) (posAtStart + p - lo));
+                        throw JsonException.$((int) (posAtStart + p - lo), "Misplaced ':'");
                     }
                     state = S_EXPECT_VALUE;
                     break;
                 case '"':
                     if (state != S_EXPECT_NAME && state != S_EXPECT_FIRST_NAME && state != S_EXPECT_VALUE) {
-                        throw JsonException.with("Unexpected quote '\"'", (int) (posAtStart + p - lo));
+                        throw JsonException.$((int) (posAtStart + p - lo), "Unexpected quote '\"'");
                     }
                     valueStart = p;
                     quoted = true;
                     break;
                 default:
                     if (state != S_EXPECT_VALUE) {
-                        throw JsonException.with("Unexpected symbol", (int) (posAtStart + p - lo));
+                        throw JsonException.$((int) (posAtStart + p - lo), "Unexpected symbol");
                     }
                     // this isn't a quote, include this character
                     valueStart = p - 1;
@@ -261,15 +261,15 @@ public class JsonLexer implements Mutable, Closeable {
 
     public void parseLast() throws JsonException {
         if (cacheSize > 0) {
-            throw JsonException.with("Unterminated string", position);
+            throw JsonException.$(position, "Unterminated string");
         }
 
         if (arrayDepth > 0) {
-            throw JsonException.with("Unterminated array", position);
+            throw JsonException.$(position, "Unterminated array");
         }
 
         if (objDepth > 0 || arrayDepthStack.size() > 0 || objDepthStack.size() > 0) {
-            throw JsonException.with("Unterminated object", position);
+            throw JsonException.$(position, "Unterminated object");
         }
     }
 
@@ -278,7 +278,7 @@ public class JsonLexer implements Mutable, Closeable {
     }
 
     private static JsonException unsupportedEncoding(int position) {
-        return JsonException.with("Unsupported encoding", position);
+        return JsonException.$(position, "Unsupported encoding");
     }
 
     private void addToStash(long lo, long hi) throws JsonException {
@@ -296,7 +296,7 @@ public class JsonLexer implements Mutable, Closeable {
 
     private void extendCache(int n) throws JsonException {
         if (n > cacheSizeLimit) {
-            throw JsonException.with("String is too long", position);
+            throw JsonException.$(position, "String is too long");
         }
         long ptr = Unsafe.malloc(n);
         if (cacheCapacity > 0) {

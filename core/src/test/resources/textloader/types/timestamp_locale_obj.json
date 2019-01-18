@@ -1,0 +1,26 @@
+{
+  "date": [
+    {
+      "format": "dd/MM/y"
+    },
+    {
+      "format": "yyyy-MM-dd HH:mm:ss"
+    },
+    {
+      "format": "yyyy-MM-ddTHH:mm:ss.SSSz"
+    },
+    {
+      "format": "MM/dd/y"
+    }
+  ],
+  "timestamp": [
+    {
+      "format": "yyyy-MM-ddTHH:mm:ss.SSSz",
+      "locale": "ru-RU"
+    },
+    {
+      "format": "yyyyMMddTHH:mm:ss.SSSz",
+      "locale": {}
+    }
+  ]
+}

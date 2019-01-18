@@ -21,14 +21,19 @@
  *
  ******************************************************************************/
 
-package com.questdb.cutlass.text.typeprobe;
+package com.questdb.cutlass.text.types;
 
 import com.questdb.cairo.TableWriter;
 import com.questdb.std.Numbers;
 import com.questdb.std.str.DirectByteCharSequence;
 import com.questdb.store.ColumnType;
 
-public class ShortProbe implements TypeProbe {
+public final class ShortAdapter implements TypeAdapter {
+
+    public static final ShortAdapter INSTANCE = new ShortAdapter();
+
+    private ShortAdapter() {
+    }
 
     @Override
     public int getType() {

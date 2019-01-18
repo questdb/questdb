@@ -28,11 +28,9 @@ public class TableReaderIncrementalRecordCursor extends TableReaderRecordCursor 
     private long txn = TableUtils.INITIAL_TXN;
     private long lastRowId = -1;
 
-    // todo: test
-    // when cursor is not fetch to completion and calling code needs
-    // to consider current record processed it has to call bookmark();
     public void bookmark() {
         lastRowId = record.getRowId();
+        this.txn = reader.getTxn();
     }
 
     @Override
@@ -48,7 +46,6 @@ public class TableReaderIncrementalRecordCursor extends TableReaderRecordCursor 
         long txn;
         if (reader.reload()) {
             seekToLast();
-            // todo: there was a bug where last record was read twice without this line
             this.txn = reader.getTxn();
             return true;
         }
@@ -57,8 +54,6 @@ public class TableReaderIncrementalRecordCursor extends TableReaderRecordCursor 
         // TableReader.reload() would return 'false'. This method
         // must return 'true' in those conditions
 
-        // todo: this doesn't seem to have been tested
-        // none of tests fail when these lines are removed
         txn = reader.getTxn();
         if (txn > this.txn) {
             this.txn = txn;

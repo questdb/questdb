@@ -21,50 +21,33 @@
  *
  ******************************************************************************/
 
-package com.questdb.cutlass.text.typeprobe;
+package com.questdb.cutlass.text.types;
 
 import com.questdb.cairo.TableWriter;
-import com.questdb.cutlass.text.TextUtil;
-import com.questdb.std.Mutable;
+import com.questdb.std.Numbers;
 import com.questdb.std.NumericException;
 import com.questdb.std.str.DirectByteCharSequence;
-import com.questdb.std.str.DirectCharSink;
-import com.questdb.std.time.DateFormat;
-import com.questdb.std.time.DateLocale;
 import com.questdb.store.ColumnType;
 
-public class DateProbe implements TypeProbe, Mutable {
-    private final DirectCharSink utf8Sink;
-    private DateLocale locale;
-    private DateFormat format;
+public final class DoubleAdapter implements TypeAdapter {
 
-    public DateProbe(
-            DirectCharSink utf8Sink
-    ) {
-        this.utf8Sink = utf8Sink;
-    }
+    public static final DoubleAdapter INSTANCE = new DoubleAdapter();
 
-    @Override
-    public void clear() {
-        this.format = null;
-        this.locale = null;
+    private DoubleAdapter() {
     }
 
     @Override
     public int getType() {
-        return ColumnType.DATE;
-    }
-
-    public DateProbe of(DateFormat format, DateLocale locale) {
-        this.format = format;
-        this.locale = locale;
-        return this;
+        return ColumnType.DOUBLE;
     }
 
     @Override
     public boolean probe(CharSequence text) {
+        if (text.length() > 2 && text.charAt(0) == '0' && text.charAt(1) != '.') {
+            return false;
+        }
         try {
-            format.parse(text, locale);
+            Numbers.parseDouble(text);
             return true;
         } catch (NumericException e) {
             return false;
@@ -73,13 +56,11 @@ public class DateProbe implements TypeProbe, Mutable {
 
     @Override
     public void write(TableWriter.Row row, int column, DirectByteCharSequence value) throws Exception {
-        utf8Sink.clear();
-        TextUtil.utf8Decode(value.getLo(), value.getHi(), utf8Sink);
-        row.putDate(column, format.parse(utf8Sink, locale));
+        row.putDouble(column, Numbers.parseDouble(value));
     }
 
     @Override
     public String toString() {
-        return "DATE";
+        return "DOUBLE";
     }
 }

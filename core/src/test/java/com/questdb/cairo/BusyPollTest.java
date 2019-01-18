@@ -21,10 +21,10 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin;
+package com.questdb.cairo;
 
-import com.questdb.cairo.*;
 import com.questdb.cairo.sql.Record;
+import com.questdb.griffin.SqlCompiler;
 import com.questdb.griffin.engine.functions.bind.BindVariableService;
 import com.questdb.std.BinarySequence;
 import com.questdb.std.Rnd;
@@ -42,6 +42,60 @@ public class BusyPollTest extends AbstractCairoTest {
     private final static Engine engine = new Engine(configuration);
     private final static SqlCompiler compiler = new SqlCompiler(engine, configuration);
     private final static BindVariableService bindVariableService = new BindVariableService();
+
+    @Test
+    public void testBusyPollFromMidTable() throws Exception {
+        final int blobSize = 1024;
+        final int n = 1000;
+        final long timestampIncrement = 10000;
+        TestUtils.assertMemoryLeak(() -> {
+
+            try {
+                compiler.compile("create table xyz (sequence INT, event BINARY, ts LONG, stamp TIMESTAMP) timestamp(stamp) partition by NONE", null);
+
+                try (TableWriter writer = engine.getWriter("xyz")) {
+                    long ts = 0;
+                    long addr = Unsafe.malloc(blobSize);
+                    try {
+
+                        Rnd rnd = new Rnd();
+                        appendRecords(0, n, timestampIncrement, writer, ts, addr, rnd);
+                        ts = n * timestampIncrement;
+                        try (
+                                TableReader reader = engine.getReader("xyz", TableUtils.ANY_TABLE_VERSION);
+                                TableReaderIncrementalRecordCursor cursor = new TableReaderIncrementalRecordCursor()
+                        ) {
+                            cursor.of(reader);
+                            Assert.assertTrue(cursor.reload());
+                            int count = 0;
+                            Record record = cursor.getRecord();
+                            while (cursor.hasNext()) {
+                                Assert.assertEquals(n - count, record.getLong(2));
+                                count++;
+                            }
+
+                            Assert.assertFalse(cursor.reload());
+                            Assert.assertFalse(cursor.hasNext());
+
+                            appendRecords(n, n, timestampIncrement, writer, ts, addr, rnd);
+                            Assert.assertTrue(cursor.reload());
+
+                            count = 0;
+                            while (cursor.hasNext()) {
+                                Assert.assertEquals(n + n - count, record.getLong(2));
+                                count++;
+                            }
+                        }
+                    } finally {
+                        Unsafe.free(addr, blobSize);
+                    }
+                }
+            } finally {
+                engine.releaseAllReaders();
+                engine.releaseAllWriters();
+            }
+        });
+    }
 
     @Test
     public void testByDay() throws Exception {
@@ -85,6 +139,21 @@ public class BusyPollTest extends AbstractCairoTest {
                 128,
                 "create table xyz (sequence INT, event BINARY, ts LONG, stamp TIMESTAMP) timestamp(stamp) partition by NONE"
         );
+    }
+
+    private void appendRecords(int start, int n, long timestampIncrement, TableWriter writer, long ts, long addr, Rnd rnd) {
+        for (int i = 0; i < n; i++) {
+            TableWriter.Row row = writer.newRow(ts);
+            row.putInt(0, i);
+            for (int k = 0; k < 1024; k++) {
+                Unsafe.getUnsafe().putByte(addr + k, rnd.nextByte());
+            }
+            row.putBin(1, addr, 1024);
+            row.putLong(2, start + n - i);
+            row.append();
+            writer.commit();
+            ts += timestampIncrement;
+        }
     }
 
     private void testBusyPoll(long timestamp, long timestampIncrement, int n, int blobSize, String createStatement) throws Exception {

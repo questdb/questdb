@@ -114,7 +114,7 @@ public class PrevStrAnalyticFunction implements AnalyticFunction, Closeable {
             int l = cs.length();
             if (l > sz) {
                 long b = Unsafe.malloc(l * 2);
-                Chars.putCharsOnly(b, cs);
+                putCharsOnly(b, cs);
                 Unsafe.free(buf, sz * 2);
 
                 if (buf == bufA) {
@@ -133,7 +133,7 @@ public class PrevStrAnalyticFunction implements AnalyticFunction, Closeable {
                     bufLen = bufALen;
                 }
             } else {
-                Chars.putCharsOnly(buf, cs);
+                putCharsOnly(buf, cs);
                 if (buf == bufA) {
                     bufALen = l;
 
@@ -170,5 +170,9 @@ public class PrevStrAnalyticFunction implements AnalyticFunction, Closeable {
         Unsafe.free(bufA, bufASz * 2);
         Unsafe.free(bufB, bufBSz * 2);
         closed = true;
+    }
+
+    private static void putCharsOnly(long address, CharSequence value) {
+        Chars.strcpyw(value, value.length(), address);
     }
 }

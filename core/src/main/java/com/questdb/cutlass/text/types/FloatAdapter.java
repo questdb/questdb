@@ -21,50 +21,37 @@
  *
  ******************************************************************************/
 
-package com.questdb.cutlass.text;
+package com.questdb.cutlass.text.types;
 
-import com.questdb.cairo.ColumnType;
-import com.questdb.std.Mutable;
-import com.questdb.std.time.DateFormat;
-import com.questdb.std.time.DateLocale;
+import com.questdb.cairo.TableWriter;
+import com.questdb.std.Numbers;
+import com.questdb.std.str.DirectByteCharSequence;
+import com.questdb.store.ColumnType;
 
-public class TextMetadata implements Mutable {
+public final class FloatAdapter implements TypeAdapter {
 
-    public int type;
-    public DateFormat dateFormat;
-    public DateLocale dateLocale;
-    public CharSequence name = "";
+    public static final FloatAdapter INSTANCE = new FloatAdapter();
 
-    @Override
-    public void clear() {
-        name = "";
+    private FloatAdapter() {
     }
 
-    public void copyTo(TextMetadata _m) {
-        _m.type = this.type;
-        if (this.type == ColumnType.DATE) {
+    @Override
+    public int getType() {
+        return ColumnType.FLOAT;
+    }
 
-            if (this.dateFormat != null) {
-                _m.dateFormat = this.dateFormat;
-            }
+    @Override
+    public boolean probe(CharSequence text) {
+        throw new UnsupportedOperationException();
+    }
 
-            if (this.dateLocale != null) {
-                _m.dateLocale = this.dateLocale;
-            }
-
-        } else {
-            _m.dateFormat = this.dateFormat;
-            _m.dateLocale = this.dateLocale;
-        }
+    @Override
+    public void write(TableWriter.Row row, int column, DirectByteCharSequence value) throws Exception {
+        row.putFloat(column, Numbers.parseFloat(value));
     }
 
     @Override
     public String toString() {
-        return "TextMetadata{" +
-                "type=" + ColumnType.nameOf(type) +
-                ", dateLocale=" + (dateLocale == null ? null : dateLocale.getId()) +
-                ", name=" + name +
-                '}';
+        return "FLOAT";
     }
 }
-

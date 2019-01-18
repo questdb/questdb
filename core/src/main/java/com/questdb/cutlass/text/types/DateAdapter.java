@@ -21,28 +21,42 @@
  *
  ******************************************************************************/
 
-package com.questdb.cutlass.text.typeprobe;
+package com.questdb.cutlass.text.types;
 
 import com.questdb.cairo.TableWriter;
-import com.questdb.std.Numbers;
+import com.questdb.cutlass.text.TextUtil;
+import com.questdb.std.Mutable;
 import com.questdb.std.NumericException;
 import com.questdb.std.str.DirectByteCharSequence;
+import com.questdb.std.str.DirectCharSink;
+import com.questdb.std.time.DateFormat;
+import com.questdb.std.time.DateLocale;
 import com.questdb.store.ColumnType;
 
-public class LongProbe implements TypeProbe {
+public class DateAdapter implements TypeAdapter, Mutable {
+    private final DirectCharSink utf8Sink;
+    private DateLocale locale;
+    private DateFormat format;
+
+    public DateAdapter(DirectCharSink utf8Sink) {
+        this.utf8Sink = utf8Sink;
+    }
+
+    @Override
+    public void clear() {
+        this.format = null;
+        this.locale = null;
+    }
 
     @Override
     public int getType() {
-        return ColumnType.LONG;
+        return ColumnType.DATE;
     }
 
     @Override
     public boolean probe(CharSequence text) {
-        if (text.length() > 2 && text.charAt(0) == '0' && text.charAt(1) != '.') {
-            return false;
-        }
         try {
-            Numbers.parseLong(text);
+            format.parse(text, locale);
             return true;
         } catch (NumericException e) {
             return false;
@@ -50,12 +64,20 @@ public class LongProbe implements TypeProbe {
     }
 
     @Override
-    public String toString() {
-        return "LONG";
+    public void write(TableWriter.Row row, int column, DirectByteCharSequence value) throws Exception {
+        utf8Sink.clear();
+        TextUtil.utf8Decode(value.getLo(), value.getHi(), utf8Sink);
+        row.putDate(column, format.parse(utf8Sink, locale));
+    }
+
+    public DateAdapter of(DateFormat format, DateLocale locale) {
+        this.format = format;
+        this.locale = locale;
+        return this;
     }
 
     @Override
-    public void write(TableWriter.Row row, int column, DirectByteCharSequence value) throws Exception {
-        row.putLong(column, Numbers.parseLong(value));
+    public String toString() {
+        return "DATE";
     }
 }

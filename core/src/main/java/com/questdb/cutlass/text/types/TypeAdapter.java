@@ -21,32 +21,15 @@
  *
  ******************************************************************************/
 
-package com.questdb.cutlass.text.typeprobe;
+package com.questdb.cutlass.text.types;
 
 import com.questdb.cairo.TableWriter;
-import com.questdb.std.Numbers;
 import com.questdb.std.str.DirectByteCharSequence;
-import com.questdb.store.ColumnType;
 
-public class FloatProbe implements TypeProbe {
+public interface TypeAdapter {
+    int getType();
 
-    @Override
-    public int getType() {
-        return ColumnType.FLOAT;
-    }
+    boolean probe(CharSequence text);
 
-    @Override
-    public boolean probe(CharSequence text) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public void write(TableWriter.Row row, int column, DirectByteCharSequence value) throws Exception {
-        row.putFloat(column, Numbers.parseFloat(value));
-    }
-
-    @Override
-    public String toString() {
-        return "FLOAT";
-    }
+    void write(TableWriter.Row row, int column, DirectByteCharSequence value) throws Exception;
 }

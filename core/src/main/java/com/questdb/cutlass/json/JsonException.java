@@ -23,31 +23,62 @@
 
 package com.questdb.cutlass.json;
 
-public class JsonException extends Exception {
-    private static final JsonException INSTANCE = new JsonException();
+import com.questdb.std.Sinkable;
+import com.questdb.std.ThreadLocal;
+import com.questdb.std.str.CharSink;
+import com.questdb.std.str.StringSink;
 
-    private static final ThreadLocal<ExceptionInfo> tlInfo = ThreadLocal.withInitial(ExceptionInfo::new);
+public class JsonException extends Exception implements Sinkable {
+    private static final ThreadLocal<JsonException> tlException = new ThreadLocal<>(JsonException::new);
+    private final StringSink message = new StringSink();
+    private int position;
 
-    private JsonException() {
+    public static JsonException $(int position, CharSequence message) {
+        return position(position).put(message);
     }
 
-    public static JsonException with(String message, int position) {
-        final ExceptionInfo info = tlInfo.get();
-        info.message = message;
-        info.position = position;
-        return INSTANCE;
+    public static JsonException position(int position) {
+        JsonException ex = tlException.get();
+        ex.message.clear();
+        ex.position = position;
+        return ex;
     }
 
+    public CharSequence getFlyweightMessage() {
+        return message;
+    }
+
+    @Override
     public String getMessage() {
-        return tlInfo.get().message;
+        return "[" + position + "] " + message.toString();
     }
 
     public int getPosition() {
-        return tlInfo.get().position;
+        return position;
     }
 
-    private static class ExceptionInfo {
-        private String message;
-        private int position;
+    public JsonException put(CharSequence cs) {
+        message.put(cs);
+        return this;
+    }
+
+    public JsonException put(char c) {
+        message.put(c);
+        return this;
+    }
+
+    public JsonException put(int value) {
+        message.put(value);
+        return this;
+    }
+
+    public JsonException put(Sinkable sinkable) {
+        message.put(sinkable);
+        return this;
+    }
+
+    @Override
+    public void toSink(CharSink sink) {
+        sink.put('[').put(position).put("]: ").put(message);
     }
 }

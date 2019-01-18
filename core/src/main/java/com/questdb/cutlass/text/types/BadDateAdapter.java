@@ -21,15 +21,37 @@
  *
  ******************************************************************************/
 
-package com.questdb.cutlass.text.typeprobe;
+package com.questdb.cutlass.text.types;
 
 import com.questdb.cairo.TableWriter;
+import com.questdb.std.Numbers;
 import com.questdb.std.str.DirectByteCharSequence;
+import com.questdb.store.ColumnType;
 
-public interface TypeProbe {
-    int getType();
+public final class BadDateAdapter implements TypeAdapter {
 
-    boolean probe(CharSequence text);
+    public static final BadDateAdapter INSTANCE = new BadDateAdapter();
 
-    void write(TableWriter.Row row, int column, DirectByteCharSequence value) throws Exception;
+    private BadDateAdapter() {
+    }
+
+    @Override
+    public int getType() {
+        return ColumnType.DATE;
+    }
+
+    @Override
+    public boolean probe(CharSequence text) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void write(TableWriter.Row row, int column, DirectByteCharSequence value) {
+        row.putDate(column, Numbers.LONG_NaN);
+    }
+
+    @Override
+    public String toString() {
+        return "DATE";
+    }
 }

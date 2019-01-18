@@ -21,41 +21,37 @@
  *
  ******************************************************************************/
 
-package com.questdb.cutlass.text.typeprobe;
+package com.questdb.cutlass.text.types;
 
 import com.questdb.cairo.TableWriter;
-import com.questdb.cutlass.text.TextUtil;
+import com.questdb.std.Chars;
 import com.questdb.std.str.DirectByteCharSequence;
-import com.questdb.std.str.DirectCharSink;
 import com.questdb.store.ColumnType;
 
-public class SymbolProbe implements TypeProbe {
+public final class BooleanAdapter implements TypeAdapter {
 
-    private final DirectCharSink utf8Sink;
+    public static final BooleanAdapter INSTANCE = new BooleanAdapter();
 
-    public SymbolProbe(DirectCharSink utf8Sink) {
-        this.utf8Sink = utf8Sink;
+    private BooleanAdapter() {
     }
 
     @Override
     public int getType() {
-        return ColumnType.SYMBOL;
+        return ColumnType.BOOLEAN;
     }
 
     @Override
     public boolean probe(CharSequence text) {
-        return true;
-    }
-
-    @Override
-    public void write(TableWriter.Row row, int column, DirectByteCharSequence value) throws Exception {
-        utf8Sink.clear();
-        TextUtil.utf8Decode(value.getLo(), value.getHi(), utf8Sink);
-        row.putSym(column, utf8Sink);
+        return Chars.equalsIgnoreCase(text, "true") || Chars.equalsIgnoreCase(text, "false");
     }
 
     @Override
     public String toString() {
-        return "SYMBOL";
+        return "BOOLEAN";
+    }
+
+    @Override
+    public void write(TableWriter.Row row, int column, DirectByteCharSequence value) {
+        row.putBool(column, Chars.equalsIgnoreCase(value, "true"));
     }
 }

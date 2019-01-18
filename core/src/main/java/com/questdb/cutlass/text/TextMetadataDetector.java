@@ -23,8 +23,8 @@
 
 package com.questdb.cutlass.text;
 
-import com.questdb.cutlass.text.typeprobe.TypeProbe;
-import com.questdb.cutlass.text.typeprobe.TypeProbeCollection;
+import com.questdb.cutlass.text.types.TypeAdapter;
+import com.questdb.cutlass.text.types.TypeManager;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.std.*;
@@ -32,6 +32,7 @@ import com.questdb.std.str.CharSink;
 import com.questdb.std.str.DirectByteCharSequence;
 import com.questdb.std.str.DirectCharSink;
 import com.questdb.std.str.StringSink;
+import com.questdb.store.ColumnType;
 
 import java.io.Closeable;
 
@@ -40,13 +41,12 @@ import static com.questdb.std.Chars.utf8DecodeMultiByte;
 public class TextMetadataDetector implements TextLexer.Listener, Mutable, Closeable {
     private static final Log LOG = LogFactory.getLog(TextMetadataDetector.class);
     private final StringSink tempSink = new StringSink();
-    private final ObjList<TypeProbe> columnTypes = new ObjList<>();
+    private final ObjList<TypeAdapter> columnTypes = new ObjList<>();
     private final ObjList<CharSequence> columnNames = new ObjList<>();
     private final IntList _blanks = new IntList();
     private final IntList _histogram = new IntList();
-    private final CharSequenceObjHashMap<TypeProbe> schemaColumns = new CharSequenceObjHashMap<>();
-    private final ObjectPool<TextMetadata> mPool = new ObjectPool<>(TextMetadata::new, 256);
-    private final TypeProbeCollection typeProbeCollection;
+    private final CharSequenceObjHashMap<TypeAdapter> schemaColumns = new CharSequenceObjHashMap<>();
+    private final TypeManager typeManager;
     private final DirectCharSink utf8Sink;
     private int fieldCount;
     private boolean header = false;
@@ -54,10 +54,10 @@ public class TextMetadataDetector implements TextLexer.Listener, Mutable, Closea
     private CharSequence tableName;
 
     public TextMetadataDetector(
-            TypeProbeCollection typeProbeCollection,
+            TypeManager typeManager,
             TextConfiguration textConfiguration
     ) {
-        this.typeProbeCollection = typeProbeCollection;
+        this.typeManager = typeManager;
         this.utf8Sink = new DirectCharSink(textConfiguration.getUtf8SinkCapacity());
     }
 
@@ -91,7 +91,6 @@ public class TextMetadataDetector implements TextLexer.Listener, Mutable, Closea
         columnTypes.clear();
         schemaColumns.clear();
         forceHeader = false;
-        mPool.clear();
     }
 
     @Override
@@ -128,7 +127,7 @@ public class TextMetadataDetector implements TextLexer.Listener, Mutable, Closea
         //
         if (schemaColumns.size() > 0) {
             for (int i = 0, k = columnNames.size(); i < k; i++) {
-                TypeProbe type = schemaColumns.get(columnNames.getQuick(i));
+                TypeAdapter type = schemaColumns.get(columnNames.getQuick(i));
                 if (type != null) {
                     columnTypes.setQuick(i, type);
                 }
@@ -140,7 +139,7 @@ public class TextMetadataDetector implements TextLexer.Listener, Mutable, Closea
         return header;
     }
 
-    public void of(ObjList<CharSequence> names, ObjList<TypeProbe> types, boolean forceHeader) {
+    public void of(ObjList<CharSequence> names, ObjList<TypeAdapter> types, boolean forceHeader) {
         clear();
         if (names != null && types != null) {
             final int n = names.size();
@@ -160,7 +159,7 @@ public class TextMetadataDetector implements TextLexer.Listener, Mutable, Closea
             stashPossibleHeader(values, fieldCount);
         }
 
-        int count = typeProbeCollection.getProbeCount();
+        int count = typeManager.getProbeCount();
         for (int i = 0; i < fieldCount; i++) {
             DirectByteCharSequence cs = values.getQuick(i);
             if (cs.length() == 0) {
@@ -168,7 +167,7 @@ public class TextMetadataDetector implements TextLexer.Listener, Mutable, Closea
             }
             int offset = i * count;
             for (int k = 0; k < count; k++) {
-                final TypeProbe probe = typeProbeCollection.getProbe(k);
+                final TypeAdapter probe = typeManager.getProbe(k);
                 if (probe.probe(cs)) {
                     _histogram.increment(k + offset);
                 }
@@ -188,7 +187,7 @@ public class TextMetadataDetector implements TextLexer.Listener, Mutable, Closea
      */
     private boolean calcTypes(long count, boolean setDefault) {
         boolean allStrings = true;
-        int probeCount = typeProbeCollection.getProbeCount();
+        int probeCount = typeManager.getProbeCount();
         for (int i = 0; i < fieldCount; i++) {
             int offset = i * probeCount;
             int blanks = _blanks.getQuick(i);
@@ -197,7 +196,7 @@ public class TextMetadataDetector implements TextLexer.Listener, Mutable, Closea
             for (int k = 0; k < probeCount; k++) {
                 if (_histogram.getQuick(k + offset) + blanks == count && blanks < count) {
                     unprobed = false;
-                    columnTypes.setQuick(i, typeProbeCollection.getProbe(k));
+                    columnTypes.setQuick(i, typeManager.getProbe(k));
                     if (allStrings) {
                         allStrings = false;
                     }
@@ -206,7 +205,7 @@ public class TextMetadataDetector implements TextLexer.Listener, Mutable, Closea
             }
 
             if (setDefault && unprobed) {
-                columnTypes.setQuick(i, typeProbeCollection.getStringProbe());
+                columnTypes.setQuick(i, typeManager.getTypeAdapter(ColumnType.STRING));
             }
         }
 
@@ -217,7 +216,7 @@ public class TextMetadataDetector implements TextLexer.Listener, Mutable, Closea
         return columnNames;
     }
 
-    ObjList<TypeProbe> getColumnTypes() {
+    ObjList<TypeAdapter> getColumnTypes() {
         return columnTypes;
     }
 
@@ -269,7 +268,7 @@ public class TextMetadataDetector implements TextLexer.Listener, Mutable, Closea
     }
 
     private void seedFields(int count) {
-        this._histogram.setAll((fieldCount = count) * typeProbeCollection.getProbeCount(), 0);
+        this._histogram.setAll((fieldCount = count) * typeManager.getProbeCount(), 0);
         this._blanks.setAll(count, 0);
         this.columnTypes.extendAndSet(count - 1, null);
         this.columnNames.setAll(count, "");

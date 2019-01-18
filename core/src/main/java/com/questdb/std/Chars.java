@@ -299,10 +299,6 @@ public final class Chars {
         return lp != lhi || rp != rhi;
     }
 
-    public static void putCharsOnly(long address, CharSequence value) {
-        strcpyw(value, value.length(), address);
-    }
-
     /**
      * Split character sequence into a list of lpsz strings. This function
      * uses space as a delimiter and it honours spaces in double quotes. Main

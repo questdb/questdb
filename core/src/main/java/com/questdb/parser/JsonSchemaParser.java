@@ -84,13 +84,13 @@ public class JsonSchemaParser implements JsonParser, Mutable {
         switch (code) {
             case JsonLexer.EVT_ARRAY_START:
                 if (state != S_NEED_ARRAY) {
-                    throw JsonException.with("Unexpected array", position);
+                    throw JsonException.$(position, "Unexpected array");
                 }
                 state = S_NEED_OBJECT;
                 break;
             case JsonLexer.EVT_OBJ_START:
                 if (state != S_NEED_OBJECT) {
-                    throw JsonException.with("Unexpected object", position);
+                    throw JsonException.$(position, "Unexpected object");
                 }
                 state = S_NEED_PROPERTY;
                 break;
@@ -105,7 +105,7 @@ public class JsonSchemaParser implements JsonParser, Mutable {
                     case P_TYPE:
                         type = ColumnType.columnTypeOf(tag);
                         if (type == -1) {
-                            throw JsonException.with("Invalid type", position);
+                            throw JsonException.$(position, "Invalid type");
                         }
                         break;
                     case P_PATTERN:
@@ -115,7 +115,7 @@ public class JsonSchemaParser implements JsonParser, Mutable {
                     case P_LOCALE:
                         dateLocale = dateLocaleFactory.getDateLocale(tag);
                         if (dateLocale == null) {
-                            throw JsonException.with("Invalid date locale", position);
+                            throw JsonException.$(position, "Invalid date locale");
                         }
                         break;
                     default:
@@ -127,7 +127,7 @@ public class JsonSchemaParser implements JsonParser, Mutable {
                 createImportedType(position);
                 break;
             case JsonLexer.EVT_ARRAY_VALUE:
-                throw JsonException.with("Must be an object", position);
+                throw JsonException.$(position, "Must be an object");
             default:
                 break;
         }
@@ -160,11 +160,11 @@ public class JsonSchemaParser implements JsonParser, Mutable {
 
     private void createImportedType(int position) throws JsonException {
         if (name == null) {
-            throw JsonException.with("Missing 'name' property", position);
+            throw JsonException.$(position, "Missing 'name' property");
         }
 
         if (type == -1) {
-            throw JsonException.with("Missing 'type' property", position);
+            throw JsonException.$(position, "Missing 'type' property");
         }
 
         ImportedColumnMetadata m = mPool.next();

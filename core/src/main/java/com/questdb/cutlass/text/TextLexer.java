@@ -23,8 +23,8 @@
 
 package com.questdb.cutlass.text;
 
-import com.questdb.cutlass.text.typeprobe.TypeProbe;
-import com.questdb.cutlass.text.typeprobe.TypeProbeCollection;
+import com.questdb.cutlass.text.types.TypeAdapter;
+import com.questdb.cutlass.text.types.TypeManager;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.log.LogRecord;
@@ -39,7 +39,7 @@ import java.io.Closeable;
 public class TextLexer implements Closeable, Mutable {
     private final static Log LOG = LogFactory.getLog(TextLexer.class);
     private final ObjList<DirectByteCharSequence> fields = new ObjList<>();
-    private final ObjectPool<DirectByteCharSequence> csPool = new ObjectPool<>(DirectByteCharSequence.FACTORY, 16);
+    private final ObjectPool<DirectByteCharSequence> csPool;
     private final TextMetadataDetector metadataDetector;
     private final long lineRollBufLimit;
     private boolean ignoreEolOnce;
@@ -64,10 +64,11 @@ public class TextLexer implements Closeable, Mutable {
     private boolean rollBufferUnusable = false;
     private CharSequence tableName;
 
-    public TextLexer(TextConfiguration textConfiguration, TypeProbeCollection typeProbeCollection, long rollBufferSize, long rollBufferLimit) {
-        this.metadataDetector = new TextMetadataDetector(typeProbeCollection, textConfiguration);
-        this.lineRollBufLen = rollBufferSize;
-        this.lineRollBufLimit = rollBufferLimit;
+    public TextLexer(TextConfiguration textConfiguration, TypeManager typeManager) {
+        this.metadataDetector = new TextMetadataDetector(typeManager, textConfiguration);
+        this.csPool = new ObjectPool<>(DirectByteCharSequence.FACTORY, textConfiguration.getTextLexerStringPoolSize());
+        this.lineRollBufLen = textConfiguration.getRollBufferSize();
+        this.lineRollBufLimit = textConfiguration.getRollBufferLimit();
         this.lineRollBufPtr = Unsafe.malloc(lineRollBufLen);
     }
 
@@ -77,20 +78,12 @@ public class TextLexer implements Closeable, Mutable {
             int lineCountLimit,
             boolean forceHeader,
             ObjList<CharSequence> names,
-            ObjList<TypeProbe> types
+            ObjList<TypeAdapter> types
     ) {
         metadataDetector.of(names, types, forceHeader);
         parse(address, len, lineCountLimit, metadataDetector);
         metadataDetector.evaluateResults(lineCount, errorCount);
         restart(isHeaderDetected());
-    }
-
-    ObjList<CharSequence> getColumnNames() {
-        return metadataDetector.getColumnNames();
-    }
-
-    ObjList<TypeProbe> getColumnTypes() {
-        return metadataDetector.getColumnTypes();
     }
 
     @Override
@@ -161,6 +154,14 @@ public class TextLexer implements Closeable, Mutable {
         useLineRollBuf = false;
         lineRollBufCur = lineRollBufPtr;
         this.fieldLo = this.fieldHi = ptr;
+    }
+
+    ObjList<CharSequence> getColumnNames() {
+        return metadataDetector.getColumnNames();
+    }
+
+    ObjList<TypeAdapter> getColumnTypes() {
+        return metadataDetector.getColumnTypes();
     }
 
     private boolean growRollBuf(long requiredLength) {

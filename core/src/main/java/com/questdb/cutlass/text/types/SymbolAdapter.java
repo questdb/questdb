@@ -21,32 +21,41 @@
  *
  ******************************************************************************/
 
-package com.questdb.cutlass.text.typeprobe;
+package com.questdb.cutlass.text.types;
 
 import com.questdb.cairo.TableWriter;
-import com.questdb.std.Numbers;
+import com.questdb.cutlass.text.TextUtil;
 import com.questdb.std.str.DirectByteCharSequence;
+import com.questdb.std.str.DirectCharSink;
 import com.questdb.store.ColumnType;
 
-public class ByteProbe implements TypeProbe {
+public class SymbolAdapter implements TypeAdapter {
+
+    private final DirectCharSink utf8Sink;
+
+    public SymbolAdapter(DirectCharSink utf8Sink) {
+        this.utf8Sink = utf8Sink;
+    }
 
     @Override
     public int getType() {
-        return ColumnType.BYTE;
+        return ColumnType.SYMBOL;
     }
 
     @Override
     public boolean probe(CharSequence text) {
-        throw new UnsupportedOperationException();
+        return true;
     }
 
     @Override
     public void write(TableWriter.Row row, int column, DirectByteCharSequence value) throws Exception {
-        row.putByte(column, (byte) Numbers.parseInt(value));
+        utf8Sink.clear();
+        TextUtil.utf8Decode(value.getLo(), value.getHi(), utf8Sink);
+        row.putSym(column, utf8Sink);
     }
 
     @Override
     public String toString() {
-        return "BYTE";
+        return "SYMBOL";
     }
 }

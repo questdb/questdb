@@ -1,0 +1,23 @@
+{
+  "date": [
+    {
+      "format": "dd/MM/y",
+      "whatsup": "zyx"
+    },
+    {
+      "format": "yyyy-MM-dd HH:mm:ss"
+    },
+    {
+      "format": "yyyy-MM-ddTHH:mm:ss.SSSz",
+      "locale": "en-US"
+    },
+    {
+      "format": "MM/dd/y"
+    }
+  ],
+  "timestamp": [
+    {
+      "format": "yyyy-MM-ddTHH:mm:ss.SSSz"
+    }
+  ]
+}
