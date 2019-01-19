@@ -1811,6 +1811,12 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
     }
 
     private void testReplaceIndexedColWithIndexedWithTruncate(int partitionBy, long increment, int expectedPartitionMin, boolean testRestricted) throws Exception {
+        if (Os.type == Os.WINDOWS) {
+            // TableWriter.truncate() is unable to remove directory on Windows when
+            // TableReader is open.
+            return;
+        }
+
         TestUtils.assertMemoryLeak(() -> {
             final int M = 1000;
             final int N = 100;

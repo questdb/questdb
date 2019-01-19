@@ -27,6 +27,7 @@ import com.questdb.cairo.sql.Record;
 import com.questdb.griffin.SqlCompiler;
 import com.questdb.griffin.engine.functions.bind.BindVariableService;
 import com.questdb.std.BinarySequence;
+import com.questdb.std.Os;
 import com.questdb.std.Rnd;
 import com.questdb.std.Unsafe;
 import com.questdb.test.tools.TestUtils;
@@ -190,6 +191,13 @@ public class BusyPollTest extends AbstractCairoTest {
     }
 
     private void testBusyPollFromMidTable(int partitionBy, long timestampIncrement) throws Exception {
+
+        if (Os.type == Os.WINDOWS) {
+            // TableWriter.truncate() is unable to remove directory on Windows when
+            // TableReader is open.
+            return;
+        }
+
         final int blobSize = 1024;
         final int n = 1000;
         TestUtils.assertMemoryLeak(() -> {

@@ -163,7 +163,7 @@ public class TableWriter implements Closeable {
                     case TableUtils.TODO_RESTORE_META:
                         break;
                     default:
-                        LOG.error().$("ignoring unknown *todo* code: ").$(todo).$();
+                        LOG.error().$("ignoring unknown *todo* [code=").$(todo).$(']').$();
                         break;
                 }
             }

@@ -25,6 +25,7 @@ package com.questdb.cairo;
 
 import com.questdb.cairo.sql.Record;
 import com.questdb.cairo.sql.RecordCursor;
+import com.questdb.std.Os;
 import com.questdb.std.Rnd;
 import com.questdb.std.Unsafe;
 import com.questdb.test.tools.TestUtils;
@@ -92,6 +93,9 @@ public class TableReaderReloadTest extends AbstractCairoTest {
     }
 
     private void testReloadAfterTruncate(int partitionBy, long increment) {
+        if (Os.type == Os.WINDOWS) {
+            return;
+        }
         final Rnd rnd = new Rnd();
         final int bufferSize = 1024;
         long buffer = Unsafe.malloc(bufferSize);
