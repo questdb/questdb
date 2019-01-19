@@ -27,6 +27,7 @@ public class TableReaderIncrementalRecordCursor extends TableReaderRecordCursor 
 
     private long txn = TableUtils.INITIAL_TXN;
     private long lastRowId = -1;
+    private long dataVersion = -1;
 
     public void bookmark() {
         lastRowId = record.getRowId();
@@ -45,7 +46,13 @@ public class TableReaderIncrementalRecordCursor extends TableReaderRecordCursor 
     public boolean reload() {
         long txn;
         if (reader.reload()) {
-            seekToLast();
+            if (reader.getDataVersion() != this.dataVersion) {
+                lastRowId = -1;
+                dataVersion = reader.getDataVersion();
+                toTop();
+            } else {
+                seekToLast();
+            }
             this.txn = reader.getTxn();
             return true;
         }
@@ -67,7 +74,9 @@ public class TableReaderIncrementalRecordCursor extends TableReaderRecordCursor 
         if (lastRowId > -1) {
             startFrom(lastRowId);
         } else {
+            // this is first time this cursor opens
             toTop();
+            this.dataVersion = reader.getDataVersion();
         }
     }
 }

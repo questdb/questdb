@@ -69,10 +69,6 @@ public class BaseRecordMetadata implements RecordMetadata {
         return getColumnQuick(columnIndex).isIndexed();
     }
 
-    public TableColumnMetadata getColumnMetadata(int columnIndex) {
-        return columnMetadata.getQuick(columnIndex);
-    }
-
     public TableColumnMetadata getColumnQuick(int index) {
         return columnMetadata.getQuick(index);
     }

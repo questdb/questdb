@@ -47,10 +47,6 @@ public final class PartitionBy {
     private PartitionBy() {
     }
 
-    public static int count() {
-        return nameToIndexMap.size();
-    }
-
     public static int fromString(CharSequence name) {
         return nameToIndexMap.get(name);
     }

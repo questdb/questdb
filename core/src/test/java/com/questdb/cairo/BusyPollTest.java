@@ -44,14 +44,157 @@ public class BusyPollTest extends AbstractCairoTest {
     private final static BindVariableService bindVariableService = new BindVariableService();
 
     @Test
-    public void testBusyPollFromMidTable() throws Exception {
+    public void testBusyPollByDay() throws Exception {
+        testBusyPollFromMidTable(PartitionBy.DAY, 3000000000L);
+    }
+
+    @Test
+    public void testBusyPollByMonth() throws Exception {
+        testBusyPollFromMidTable(PartitionBy.MONTH, 50000000000L);
+    }
+
+    @Test
+    public void testBusyPollByNone() throws Exception {
+        testBusyPollFromMidTable(PartitionBy.NONE, 10000L);
+    }
+
+    @Test
+    public void testBusyPollByYear() throws Exception {
+        testBusyPollFromMidTable(PartitionBy.YEAR, 365 * 50000000000L);
+    }
+
+    @Test
+    public void testByDay() throws Exception {
+        testBusyPoll(
+                10000000,
+                300_000,
+                "create table xyz (sequence INT, event BINARY, ts LONG, stamp TIMESTAMP) timestamp(stamp) partition by DAY"
+        );
+    }
+
+    @Test
+    public void testByMonth() throws Exception {
+        testBusyPoll(
+                40000000,
+                300_000,
+                "create table xyz (sequence INT, event BINARY, ts LONG, stamp TIMESTAMP) timestamp(stamp) partition by MONTH"
+        );
+    }
+
+    @Test
+    public void testByYear() throws Exception {
+        testBusyPoll(
+                480000000,
+                300_000,
+                "create table xyz (sequence INT, event BINARY, ts LONG, stamp TIMESTAMP) timestamp(stamp) partition by YEAR"
+        );
+    }
+
+    @Test
+    public void testNonPartitioned() throws Exception {
+        testBusyPoll(
+                10000,
+                3_000_000,
+                "create table xyz (sequence INT, event BINARY, ts LONG, stamp TIMESTAMP) timestamp(stamp) partition by NONE"
+        );
+    }
+
+    private void appendRecords(int start, int n, long timestampIncrement, TableWriter writer, long ts, long addr, Rnd rnd) {
+        for (int i = 0; i < n; i++) {
+            TableWriter.Row row = writer.newRow(ts);
+            row.putInt(0, i);
+            for (int k = 0; k < 1024; k++) {
+                Unsafe.getUnsafe().putByte(addr + k, rnd.nextByte());
+            }
+            row.putBin(1, addr, 1024);
+            row.putLong(2, start + n - i);
+            row.append();
+            writer.commit();
+            ts += timestampIncrement;
+        }
+    }
+
+    private void testBusyPoll(long timestampIncrement, int n, String createStatement) throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            compiler.compile(createStatement, bindVariableService);
+            final AtomicInteger errorCount = new AtomicInteger();
+            final CyclicBarrier barrier = new CyclicBarrier(2);
+            final CountDownLatch latch = new CountDownLatch(2);
+            try {
+                new Thread(() -> {
+                    try (TableWriter writer = engine.getWriter("xyz")) {
+                        barrier.await();
+                        long ts = (long) 0;
+                        long addr = Unsafe.malloc(128);
+                        try {
+                            Rnd rnd = new Rnd();
+                            for (int i = 0; i < n; i++) {
+                                TableWriter.Row row = writer.newRow(ts);
+                                row.putInt(0, i);
+                                for (int k = 0; k < 128; k++) {
+                                    Unsafe.getUnsafe().putByte(addr + k, rnd.nextByte());
+                                }
+                                row.putBin(1, addr, 128);
+                                row.putLong(2, rnd.nextLong());
+                                row.append();
+                                writer.commit();
+                                ts += timestampIncrement;
+                            }
+                        } finally {
+                            Unsafe.free(addr, 128);
+                        }
+                    } catch (Throwable e) {
+                        e.printStackTrace();
+                        errorCount.incrementAndGet();
+                    } finally {
+                        latch.countDown();
+                    }
+                }).start();
+
+                new Thread(() -> {
+                    try (TableReader reader = engine.getReader("xyz", TableUtils.ANY_TABLE_VERSION)) {
+                        Rnd rnd = new Rnd();
+                        int count = 0;
+                        final TableReaderIncrementalRecordCursor cursor = new TableReaderIncrementalRecordCursor();
+                        cursor.of(reader);
+                        final Record record = cursor.getRecord();
+                        barrier.await();
+                        while (count < n) {
+                            if (cursor.reload()) {
+                                while (cursor.hasNext()) {
+                                    Assert.assertEquals(count, record.getInt(0));
+                                    BinarySequence binarySequence = record.getBin(1);
+                                    for (int i = 0; i < 128; i++) {
+                                        Assert.assertEquals(rnd.nextByte(), binarySequence.byteAt(i));
+                                    }
+                                    Assert.assertEquals(rnd.nextLong(), record.getLong(2));
+                                    count++;
+                                }
+                            }
+                        }
+                    } catch (Throwable e) {
+                        e.printStackTrace();
+                        errorCount.incrementAndGet();
+                    } finally {
+                        latch.countDown();
+                    }
+                }).start();
+
+                Assert.assertTrue(latch.await(600, TimeUnit.SECONDS));
+                Assert.assertEquals(0, errorCount.get());
+            } finally {
+                engine.releaseAllReaders();
+                engine.releaseAllWriters();
+            }
+        });
+    }
+
+    private void testBusyPollFromMidTable(int partitionBy, long timestampIncrement) throws Exception {
         final int blobSize = 1024;
         final int n = 1000;
-        final long timestampIncrement = 10000;
         TestUtils.assertMemoryLeak(() -> {
-
             try {
-                compiler.compile("create table xyz (sequence INT, event BINARY, ts LONG, stamp TIMESTAMP) timestamp(stamp) partition by NONE", null);
+                compiler.compile("create table xyz (sequence INT, event BINARY, ts LONG, stamp TIMESTAMP) timestamp(stamp) partition by " + PartitionBy.toString(partitionBy), null);
 
                 try (TableWriter writer = engine.getWriter("xyz")) {
                     long ts = 0;
@@ -85,145 +228,26 @@ public class BusyPollTest extends AbstractCairoTest {
                                 Assert.assertEquals(n + n - count, record.getLong(2));
                                 count++;
                             }
+
+                            writer.truncate();
+                            Assert.assertTrue(cursor.reload());
+                            Assert.assertFalse(cursor.hasNext());
+
+                            appendRecords(n * 2, n / 2, timestampIncrement, writer, ts, addr, rnd);
+                            Assert.assertTrue(cursor.reload());
+
+                            count = 0;
+                            while (cursor.hasNext()) {
+                                Assert.assertEquals(n * 2 + n / 2 - count, record.getLong(2));
+                                count++;
+                            }
+
+                            Assert.assertEquals(n / 2, count);
                         }
                     } finally {
                         Unsafe.free(addr, blobSize);
                     }
                 }
-            } finally {
-                engine.releaseAllReaders();
-                engine.releaseAllWriters();
-            }
-        });
-    }
-
-    @Test
-    public void testByDay() throws Exception {
-        testBusyPoll(
-                0L,
-                10000000,
-                300_000,
-                128,
-                "create table xyz (sequence INT, event BINARY, ts LONG, stamp TIMESTAMP) timestamp(stamp) partition by DAY"
-        );
-    }
-
-    @Test
-    public void testByMonth() throws Exception {
-        testBusyPoll(
-                0L,
-                40000000,
-                300_000,
-                128,
-                "create table xyz (sequence INT, event BINARY, ts LONG, stamp TIMESTAMP) timestamp(stamp) partition by MONTH"
-        );
-    }
-
-    @Test
-    public void testByYear() throws Exception {
-        testBusyPoll(
-                0L,
-                480000000,
-                300_000,
-                128,
-                "create table xyz (sequence INT, event BINARY, ts LONG, stamp TIMESTAMP) timestamp(stamp) partition by YEAR"
-        );
-    }
-
-    @Test
-    public void testNonPartitioned() throws Exception {
-        testBusyPoll(
-                0L,
-                10000,
-                3_000_000,
-                128,
-                "create table xyz (sequence INT, event BINARY, ts LONG, stamp TIMESTAMP) timestamp(stamp) partition by NONE"
-        );
-    }
-
-    private void appendRecords(int start, int n, long timestampIncrement, TableWriter writer, long ts, long addr, Rnd rnd) {
-        for (int i = 0; i < n; i++) {
-            TableWriter.Row row = writer.newRow(ts);
-            row.putInt(0, i);
-            for (int k = 0; k < 1024; k++) {
-                Unsafe.getUnsafe().putByte(addr + k, rnd.nextByte());
-            }
-            row.putBin(1, addr, 1024);
-            row.putLong(2, start + n - i);
-            row.append();
-            writer.commit();
-            ts += timestampIncrement;
-        }
-    }
-
-    private void testBusyPoll(long timestamp, long timestampIncrement, int n, int blobSize, String createStatement) throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            compiler.compile(createStatement, bindVariableService);
-            final AtomicInteger errorCount = new AtomicInteger();
-            final CyclicBarrier barrier = new CyclicBarrier(2);
-            final CountDownLatch latch = new CountDownLatch(2);
-            try {
-                new Thread(() -> {
-                    try (TableWriter writer = engine.getWriter("xyz")) {
-                        barrier.await();
-                        long ts = timestamp;
-                        long addr = Unsafe.malloc(blobSize);
-                        try {
-                            Rnd rnd = new Rnd();
-                            for (int i = 0; i < n; i++) {
-                                TableWriter.Row row = writer.newRow(ts);
-                                row.putInt(0, i);
-                                for (int k = 0; k < blobSize; k++) {
-                                    Unsafe.getUnsafe().putByte(addr + k, rnd.nextByte());
-                                }
-                                row.putBin(1, addr, blobSize);
-                                row.putLong(2, rnd.nextLong());
-                                row.append();
-                                writer.commit();
-                                ts += timestampIncrement;
-                            }
-                        } finally {
-                            Unsafe.free(addr, blobSize);
-                        }
-                    } catch (Throwable e) {
-                        e.printStackTrace();
-                        errorCount.incrementAndGet();
-                    } finally {
-                        latch.countDown();
-                    }
-                }).start();
-
-                new Thread(() -> {
-                    try (TableReader reader = engine.getReader("xyz", TableUtils.ANY_TABLE_VERSION)) {
-                        Rnd rnd = new Rnd();
-                        int count = 0;
-                        final TableReaderIncrementalRecordCursor cursor = new TableReaderIncrementalRecordCursor();
-                        cursor.of(reader);
-                        final Record record = cursor.getRecord();
-                        barrier.await();
-                        while (count < n) {
-                            if (cursor.reload()) {
-                                while (cursor.hasNext()) {
-                                    Assert.assertEquals(count, record.getInt(0));
-                                    BinarySequence binarySequence = record.getBin(1);
-                                    for (int i = 0; i < blobSize; i++) {
-                                        Assert.assertEquals(rnd.nextByte(), binarySequence.byteAt(i));
-                                    }
-                                    Assert.assertEquals(rnd.nextLong(), record.getLong(2));
-                                    count++;
-                                }
-                            }
-                        }
-                    } catch (Throwable e) {
-                        e.printStackTrace();
-                        errorCount.incrementAndGet();
-                    } finally {
-                        latch.countDown();
-                    }
-                }).start();
-
-                Assert.assertTrue(latch.await(600, TimeUnit.SECONDS));
-                Assert.assertEquals(0, errorCount.get());
             } finally {
                 engine.releaseAllReaders();
                 engine.releaseAllWriters();

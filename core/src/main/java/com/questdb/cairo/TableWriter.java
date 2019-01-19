@@ -95,6 +95,7 @@ public class TableWriter implements Closeable {
     private long fixedRowCount = 0;
     private long txn;
     private long structVersion;
+    private long dataVersion;
     private RowFunction rowFunction = openPartitionFunction;
     private long prevTimestamp;
     private long txPrevTransientRowCount;
@@ -614,10 +615,10 @@ public class TableWriter implements Closeable {
         txPrevTransientRowCount = 0;
         transientRowCount = 0;
         fixedRowCount = 0;
-        txn = 0;
+        txn++;
         txPartitionCount = 1;
 
-        TableUtils.resetTxn(txMem, metadata.getSymbolMapCount());
+        TableUtils.resetTxn(txMem, metadata.getSymbolMapCount(), txn, ++dataVersion);
         try {
             removeTodoFile();
         } catch (CairoException err) {
@@ -927,6 +928,7 @@ public class TableWriter implements Closeable {
         this.txPrevTransientRowCount = this.transientRowCount;
         this.fixedRowCount = txMem.getLong(TableUtils.TX_OFFSET_FIXED_ROW_COUNT);
         this.maxTimestamp = txMem.getLong(TableUtils.TX_OFFSET_MAX_TIMESTAMP);
+        this.dataVersion = txMem.getLong(TX_OFFSET_DATA_VERSION);
         this.structVersion = txMem.getLong(TableUtils.TX_OFFSET_STRUCT_VERSION);
         this.prevTimestamp = this.maxTimestamp;
         if (this.maxTimestamp > Long.MIN_VALUE || partitionBy == PartitionBy.NONE) {
@@ -1669,7 +1671,11 @@ public class TableWriter implements Closeable {
         if (partitionBy != PartitionBy.NONE) {
             removePartitionDirectories();
         }
-        TableUtils.resetTxn(txMem, metadata.getSymbolMapCount());
+        TableUtils.resetTxn(
+                txMem,
+                metadata.getSymbolMapCount(),
+                txMem.getLong(TX_OFFSET_TXN) + 1,
+                txMem.getLong(TX_OFFSET_DATA_VERSION) + 1);
         removeTodoFile();
     }
 

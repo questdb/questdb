@@ -61,16 +61,13 @@ public class JsonSchemaParserTest {
 
     @Test
     public void testArrayProperty() {
-        String in = "[\n" +
-                "{\"name\": \"x\", \"type\": \"DOUBLE\", \"pattern\":\"xyz\", \"locale\": []}\n" +
-                "]";
-        try {
-            parseMetadata(in);
-            Assert.fail();
-        } catch (JsonException e) {
-            Assert.assertEquals("Unexpected array", e.getMessage());
-            Assert.assertEquals(62, e.getPosition());
-        }
+        assertFailure(
+                "[\n" +
+                        "{\"name\": \"x\", \"type\": \"DOUBLE\", \"pattern\":\"xyz\", \"locale\": []}\n" +
+                        "]",
+                62,
+                "Unexpected array"
+        );
     }
 
     @Test
@@ -103,85 +100,77 @@ public class JsonSchemaParserTest {
 
     @Test
     public void testMissingName() {
-        String in = "[\n" +
-                "{\"name\": \"x\", \"type\": \"INT\", \"pattern\":\"xyz\", \"locale\": \"en-GB\"},\n" +
-                "{\"type\": \"DOUBLE\", \"pattern\":\"xyz\"}\n" +
-                "]";
-
-        try {
-            parseMetadata(in);
-            Assert.fail();
-        } catch (JsonException e) {
-            Assert.assertEquals("Missing 'name' property", e.getMessage());
-            Assert.assertEquals(103, e.getPosition());
-        }
+        assertFailure(
+                "[\n" +
+                        "{\"name\": \"x\", \"type\": \"INT\", \"pattern\":\"xyz\", \"locale\": \"en-GB\"},\n" +
+                        "{\"type\": \"DOUBLE\", \"pattern\":\"xyz\"}\n" +
+                        "]",
+                103,
+                "Missing 'name' property"
+        );
     }
 
     @Test
     public void testMissingType() {
-        String in = "[\n" +
-                "{\"name\": \"x\", \"pattern\":\"xyz\", \"locale\": \"en-GB\"},\n" +
-                "{\"name\": \"y\", \"type\": \"DOUBLE\", \"pattern\":\"xyz\"}\n" +
-                "]";
-        try {
-            parseMetadata(in);
-            Assert.fail();
-        } catch (JsonException e) {
-            Assert.assertEquals("Missing 'type' property", e.getMessage());
-            Assert.assertEquals(51, e.getPosition());
-        }
+        assertFailure(
+                "[\n" +
+                        "{\"name\": \"x\", \"pattern\":\"xyz\", \"locale\": \"en-GB\"},\n" +
+                        "{\"name\": \"y\", \"type\": \"DOUBLE\", \"pattern\":\"xyz\"}\n" +
+                        "]",
+                51,
+                "Missing 'type' property"
+        );
     }
 
     @Test
     public void testNonArray() {
-        try {
-            parseMetadata("{}");
-            Assert.fail();
-        } catch (JsonException e) {
-            Assert.assertEquals("Unexpected object", e.getMessage());
-            Assert.assertEquals(1, e.getPosition());
-        }
+        assertFailure(
+                "{}",
+                1,
+                "Unexpected object"
+        );
     }
 
     @Test
     public void testNonObjectArrayMember() {
-        String in = "[2,\n" +
-                "{\"name\": \"x\", \"type\": \"DOUBLE\", \"pattern\":\"xyz\"}\n" +
-                "]";
-        try {
-            parseMetadata(in);
-            Assert.fail();
-        } catch (JsonException e) {
-            Assert.assertEquals("Must be an object", e.getMessage());
-            Assert.assertEquals(2, e.getPosition());
-        }
+        assertFailure(
+                "[2,\n" +
+                        "{\"name\": \"x\", \"type\": \"DOUBLE\", \"pattern\":\"xyz\"}\n" +
+                        "]",
+                2,
+                "Must be an object"
+        );
     }
 
     @Test
     public void testWrongDateLocale() {
-        String in = "[\n" +
-                "{\"name\": \"x\", \"type\": \"DOUBLE\", \"pattern\":\"xyz\", \"locale\": \"enk\"}\n" +
-                "]";
-        try {
-            parseMetadata(in);
-            Assert.fail();
-        } catch (JsonException e) {
-            Assert.assertEquals("Invalid date locale", e.getMessage());
-            Assert.assertEquals(63, e.getPosition());
-        }
+        assertFailure(
+                "[\n" +
+                        "{\"name\": \"x\", \"type\": \"DOUBLE\", \"pattern\":\"xyz\", \"locale\": \"enk\"}\n" +
+                        "]",
+                63,
+                "Invalid date locale"
+        );
     }
 
     @Test
     public void testWrongType() {
-        String in = "[\n" +
-                "{\"name\": \"y\", \"type\": \"ABC\", \"pattern\":\"xyz\"}\n" +
-                "]";
+        assertFailure(
+                "[\n" +
+                        "{\"name\": \"y\", \"type\": \"ABC\", \"pattern\":\"xyz\"}\n" +
+                        "]",
+                26,
+                "Invalid type"
+        );
+    }
+
+    private void assertFailure(String in, int position, CharSequence text) {
         try {
             parseMetadata(in);
             Assert.fail();
         } catch (JsonException e) {
-            Assert.assertEquals("Invalid type", e.getMessage());
-            Assert.assertEquals(26, e.getPosition());
+            TestUtils.assertEquals(text, e.getFlyweightMessage());
+            Assert.assertEquals(position, e.getPosition());
         }
     }
 

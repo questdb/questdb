@@ -58,9 +58,10 @@ public final class TableUtils {
     static final long TX_OFFSET_FIXED_ROW_COUNT = 16;
     static final long TX_OFFSET_MAX_TIMESTAMP = 24;
     static final long TX_OFFSET_STRUCT_VERSION = 32;
-    static final long TX_OFFSET_PARTITION_TABLE_VERSION = 40;
-    static final long TX_OFFSET_TXN_CHECK = 48;
-    static final long TX_OFFSET_MAP_WRITER_COUNT = 56;
+    static final long TX_OFFSET_DATA_VERSION = 40;
+    static final long TX_OFFSET_PARTITION_TABLE_VERSION = 48;
+    static final long TX_OFFSET_TXN_CHECK = 56;
+    static final long TX_OFFSET_MAP_WRITER_COUNT = 64;
     /**
      * struct {
      * long txn;
@@ -142,7 +143,7 @@ public final class TableUtils {
                 }
             }
             mem.of(ff, path.trimTo(rootLen).concat(TXN_FILE_NAME).$(), ff.getPageSize());
-            TableUtils.resetTxn(mem, symbolMapCount);
+            TableUtils.resetTxn(mem, symbolMapCount, 0L, INITIAL_TXN);
         }
     }
 
@@ -204,9 +205,9 @@ public final class TableUtils {
         path.put(".lock").$();
     }
 
-    public static void resetTxn(VirtualMemory txMem, int symbolMapCount) {
+    public static void resetTxn(VirtualMemory txMem, int symbolMapCount, long txn, long dataVersion) {
         // txn to let readers know table is being reset
-        txMem.putLong(TX_OFFSET_TXN, INITIAL_TXN);
+        txMem.putLong(TX_OFFSET_TXN, txn);
         Unsafe.getUnsafe().storeFence();
 
         // transient row count
@@ -217,6 +218,8 @@ public final class TableUtils {
         txMem.putLong(TX_OFFSET_MAX_TIMESTAMP, Long.MIN_VALUE);
         // structure version
         txMem.putLong(TX_OFFSET_STRUCT_VERSION, 0);
+        // data version
+        txMem.putLong(TX_OFFSET_DATA_VERSION, dataVersion);
 
         txMem.putInt(TX_OFFSET_MAP_WRITER_COUNT, symbolMapCount);
         for (int i = 0; i < symbolMapCount; i++) {
@@ -225,7 +228,7 @@ public final class TableUtils {
 
         Unsafe.getUnsafe().storeFence();
         // txn check
-        txMem.putLong(TX_OFFSET_TXN_CHECK, INITIAL_TXN);
+        txMem.putLong(TX_OFFSET_TXN_CHECK, txn);
 
         // partition update count
         txMem.putInt(getPartitionTableSizeOffset(symbolMapCount), 0);

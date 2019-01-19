@@ -61,7 +61,7 @@ public class JsonLexerTest {
                     lexer.parseLast();
                     Assert.fail();
                 } catch (JsonException e) {
-                    Assert.assertEquals("String is too long", e.getMessage());
+                    TestUtils.assertEquals("String is too long", e.getFlyweightMessage());
                     Assert.assertEquals(41, e.getPosition());
                 }
             } finally {
@@ -134,9 +134,9 @@ public class JsonLexerTest {
 
     @Test
     public void testInvalidUtf8Value() {
-        byte bytesA[] = "{\"x\":\"违法违,控网站漏洞风\", \"y\":\"站漏洞风".getBytes(StandardCharsets.UTF_8);
-        byte bytesB[] = {-116, -76, -55, 55, -34, 0, -11, 15, 13};
-        byte bytesC[] = "\"}".getBytes(StandardCharsets.UTF_8);
+        byte[] bytesA = "{\"x\":\"违法违,控网站漏洞风\", \"y\":\"站漏洞风".getBytes(StandardCharsets.UTF_8);
+        byte[] bytesB = {-116, -76, -55, 55, -34, 0, -11, 15, 13};
+        byte[] bytesC = "\"}".getBytes(StandardCharsets.UTF_8);
 
         byte[] bytes = new byte[bytesA.length + bytesB.length + bytesC.length];
         System.arraycopy(bytesA, 0, bytes, 0, bytesA.length);
@@ -159,7 +159,7 @@ public class JsonLexerTest {
                     LEXER.parseLast();
                     Assert.fail();
                 } catch (JsonException e) {
-                    Assert.assertEquals("Unsupported encoding", e.getMessage());
+                    TestUtils.assertEquals("Unsupported encoding", e.getFlyweightMessage());
                     Assert.assertEquals(43, e.getPosition());
                 }
             }
@@ -679,7 +679,7 @@ public class JsonLexerTest {
                     lexer.parseLast();
                     Assert.fail();
                 } catch (JsonException e) {
-                    Assert.assertEquals(expected, e.getMessage());
+                    TestUtils.assertEquals(expected, e.getFlyweightMessage());
                     Assert.assertEquals(expectedPosition, e.getPosition());
                 }
             }
@@ -693,7 +693,7 @@ public class JsonLexerTest {
     }
 
     private void assertThat(String expected, String input, boolean recordPositions) throws Exception {
-        byte bytes[] = input.getBytes(StandardCharsets.UTF_8);
+        byte[] bytes = input.getBytes(StandardCharsets.UTF_8);
         int len = bytes.length;
         long address = Unsafe.malloc(len);
         for (int i = 0; i < len; i++) {
