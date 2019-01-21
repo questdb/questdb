@@ -56,12 +56,13 @@ public final class TableUtils {
     static final long TX_OFFSET_TXN = 0;
     static final long TX_OFFSET_TRANSIENT_ROW_COUNT = 8;
     static final long TX_OFFSET_FIXED_ROW_COUNT = 16;
-    static final long TX_OFFSET_MAX_TIMESTAMP = 24;
-    static final long TX_OFFSET_STRUCT_VERSION = 32;
-    static final long TX_OFFSET_DATA_VERSION = 40;
-    static final long TX_OFFSET_PARTITION_TABLE_VERSION = 48;
-    static final long TX_OFFSET_TXN_CHECK = 56;
-    static final long TX_OFFSET_MAP_WRITER_COUNT = 64;
+    static final long TX_OFFSET_MIN_TIMESTAMP = 24;
+    static final long TX_OFFSET_MAX_TIMESTAMP = 32;
+    static final long TX_OFFSET_STRUCT_VERSION = 40;
+    static final long TX_OFFSET_DATA_VERSION = 48;
+    static final long TX_OFFSET_PARTITION_TABLE_VERSION = 56;
+    static final long TX_OFFSET_TXN_CHECK = 64;
+    static final long TX_OFFSET_MAP_WRITER_COUNT = 72;
     /**
      * struct {
      * long txn;
@@ -214,7 +215,9 @@ public final class TableUtils {
         txMem.putLong(TX_OFFSET_TRANSIENT_ROW_COUNT, 0);
         // fixed row count
         txMem.putLong(TX_OFFSET_FIXED_ROW_COUNT, 0);
-        // partition low
+        // min timestamp value in table
+        txMem.putLong(TX_OFFSET_MIN_TIMESTAMP, Long.MAX_VALUE);
+        // max timestamp value in table
         txMem.putLong(TX_OFFSET_MAX_TIMESTAMP, Long.MIN_VALUE);
         // structure version
         txMem.putLong(TX_OFFSET_STRUCT_VERSION, 0);

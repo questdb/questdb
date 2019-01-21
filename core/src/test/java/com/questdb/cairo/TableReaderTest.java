@@ -2066,8 +2066,18 @@ public class TableReaderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRemoveFirstPartitionByDayTwo() throws Exception {
+        testRemovePartition(PartitionBy.DAY, "2017-12-11", 0, current -> Dates.addDays(Dates.floorDD(current), 2));
+    }
+
+    @Test
     public void testRemoveFirstPartitionByDayReload() throws Exception {
         testRemovePartitionReload(PartitionBy.DAY, "2017-12-11", 0, current -> Dates.addDays(Dates.floorDD(current), 1));
+    }
+
+    @Test
+    public void testRemoveFirstPartitionByDayReloadTwo() throws Exception {
+        testRemovePartitionReload(PartitionBy.DAY, "2017-12-11", 0, current -> Dates.addDays(Dates.floorDD(current), 2));
     }
 
     @Test
@@ -2076,8 +2086,18 @@ public class TableReaderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRemoveFirstPartitionByMonthTwo() throws Exception {
+        testRemovePartition(PartitionBy.MONTH, "2017-12", 0, current -> Dates.addMonths(Dates.floorMM(current), 2));
+    }
+
+    @Test
     public void testRemoveFirstPartitionByMonthReload() throws Exception {
         testRemovePartitionReload(PartitionBy.MONTH, "2017-12", 0, current -> Dates.addMonths(Dates.floorMM(current), 1));
+    }
+
+    @Test
+    public void testRemoveFirstPartitionByMonthReloadTwo() throws Exception {
+        testRemovePartitionReload(PartitionBy.MONTH, "2017-12", 0, current -> Dates.addMonths(Dates.floorMM(current), 2));
     }
 
     @Test
@@ -2086,8 +2106,18 @@ public class TableReaderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRemoveFirstPartitionByYearTwo() throws Exception {
+        testRemovePartition(PartitionBy.YEAR, "2017", 0, current -> Dates.addYear(Dates.floorYYYY(current), 2));
+    }
+
+    @Test
     public void testRemoveFirstPartitionByYearReload() throws Exception {
         testRemovePartitionReload(PartitionBy.YEAR, "2017", 0, current -> Dates.addYear(Dates.floorYYYY(current), 1));
+    }
+
+    @Test
+    public void testRemoveFirstPartitionByYearReloadTwo() throws Exception {
+        testRemovePartitionReload(PartitionBy.YEAR, "2017", 0, current -> Dates.addYear(Dates.floorYYYY(current), 2));
     }
 
     @Test
@@ -3501,7 +3531,7 @@ public class TableReaderTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             int N = 100;
             int N_PARTITIONS = 5;
-            long timestampUs = DateFormatUtils.parseDateTime("2017-12-11T00:00:00.000Z");
+            long timestampUs = DateFormatUtils.parseDateTime("2017-12-11T10:00:00.000Z");
             long stride = 100;
             int bandStride = 1000;
             int totalCount = 0;

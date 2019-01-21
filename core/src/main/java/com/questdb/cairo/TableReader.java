@@ -27,10 +27,8 @@ import com.questdb.cairo.sql.RecordMetadata;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.std.*;
-import com.questdb.std.microtime.DateFormat;
 import com.questdb.std.microtime.DateLocaleFactory;
 import com.questdb.std.microtime.Dates;
-import com.questdb.std.str.NativeLPSZ;
 import com.questdb.std.str.Path;
 
 import java.io.Closeable;
@@ -44,19 +42,17 @@ public class TableReader implements Closeable {
     private static final PartitionPathGenerator DEFAULT_GEN = (reader, partitionIndex) -> reader.pathGenDefault();
     private static final ReloadMethod NON_PARTITIONED_RELOAD_METHOD = TableReader::reloadNonPartitioned;
     private static final ReloadMethod FIRST_TIME_NON_PARTITIONED_RELOAD_METHOD = TableReader::reloadInitialNonPartitioned;
-    private static final ReloadMethod FIRST_TIME_PARTITIONED_RELOAD_METHOD = TableReader::reloadInitialPartitioned;
     private static final ReloadMethod PARTITIONED_RELOAD_METHOD = TableReader::reloadPartitioned;
+    private static final ReloadMethod FIRST_TIME_PARTITIONED_RELOAD_METHOD = TableReader::reloadInitialPartitioned;
     private final ColumnCopyStruct tempCopyStruct = new ColumnCopyStruct();
     private final FilesFacade ff;
     private final Path path;
     private final int rootLen;
     private final ReadOnlyMemory txMem;
-    private final NativeLPSZ nativeLPSZ = new NativeLPSZ();
     private final TableReaderMetadata metadata;
     private final LongList partitionRowCounts;
     private final PartitionPathGenerator partitionPathGenerator;
     private final TableReaderRecordCursor recordCursor = new TableReaderRecordCursor();
-    private final DateFormat dateFormat;
     private final TimestampFloorMethod timestampFloorMethod;
     private final IntervalLengthMethod intervalLengthMethod;
     private final PartitionTimestampCalculatorMethod partitionTimestampCalculatorMethod;
@@ -108,7 +104,6 @@ public class TableReader implements Closeable {
                     timestampFloorMethod = Dates::floorDD;
                     intervalLengthMethod = Dates::getDaysBetween;
                     partitionTimestampCalculatorMethod = Dates::addDays;
-                    dateFormat = TableUtils.fmtDay;
                     partitionMin = findPartitionMinimum();
                     partitionCount = calculatePartitionCount();
                     break;
@@ -118,7 +113,6 @@ public class TableReader implements Closeable {
                     timestampFloorMethod = Dates::floorMM;
                     intervalLengthMethod = Dates::getMonthsBetween;
                     partitionTimestampCalculatorMethod = Dates::addMonths;
-                    dateFormat = TableUtils.fmtMonth;
                     partitionMin = findPartitionMinimum();
                     partitionCount = calculatePartitionCount();
                     break;
@@ -128,7 +122,6 @@ public class TableReader implements Closeable {
                     timestampFloorMethod = Dates::floorYYYY;
                     intervalLengthMethod = Dates::getYearsBetween;
                     partitionTimestampCalculatorMethod = Dates::addYear;
-                    dateFormat = TableUtils.fmtYear;
                     partitionMin = findPartitionMinimum();
                     partitionCount = calculatePartitionCount();
                     break;
@@ -138,7 +131,6 @@ public class TableReader implements Closeable {
                     timestampFloorMethod = null;
                     intervalLengthMethod = null;
                     partitionTimestampCalculatorMethod = null;
-                    dateFormat = null;
                     countDefaultPartitions();
                     break;
             }
@@ -156,6 +148,56 @@ public class TableReader implements Closeable {
         } catch (CairoException e) {
             close();
             throw e;
+        }
+    }
+
+    private static int getColumnBits(int columnCount) {
+        return Numbers.msb(Numbers.ceilPow2(columnCount) * 2);
+    }
+
+    static int getPrimaryColumnIndex(int base, int index) {
+        return base + index * 2;
+    }
+
+    private static boolean isEntryToBeProcessed(long address, int index) {
+        if (Unsafe.getUnsafe().getByte(address + index) == -1) {
+            return false;
+        }
+        Unsafe.getUnsafe().putByte(address + index, (byte) -1);
+        return true;
+    }
+
+    private static void growColumn(ReadOnlyColumn mem1, ReadOnlyColumn mem2, int type, long rowCount) {
+        long offset;
+        long len;
+        if (rowCount > 0) {
+            // subtract column top
+            switch (type) {
+                case ColumnType.BINARY:
+                    assert mem2 != null;
+                    mem2.grow(rowCount * 8);
+                    offset = mem2.getLong((rowCount - 1) * 8);
+                    // grow data column to value offset + length, so that we can read length
+                    mem1.grow(offset + 8);
+                    len = mem1.getLong(offset);
+                    if (len > 0) {
+                        mem1.grow(offset + len + 8);
+                    }
+                    break;
+                case ColumnType.STRING:
+                    assert mem2 != null;
+                    mem2.grow(rowCount * 8);
+                    offset = mem2.getLong((rowCount - 1) * 8);
+                    mem1.grow(offset + 4);
+                    len = mem1.getInt(offset);
+                    if (len > 0) {
+                        mem1.grow(offset + len * 2 + 4);
+                    }
+                    break;
+                default:
+                    mem1.grow(rowCount << ColumnType.pow2SizeOf(type));
+                    break;
+            }
         }
     }
 
@@ -345,56 +387,6 @@ public class TableReader implements Closeable {
 
     public long size() {
         return rowCount;
-    }
-
-    private static int getColumnBits(int columnCount) {
-        return Numbers.msb(Numbers.ceilPow2(columnCount) * 2);
-    }
-
-    static int getPrimaryColumnIndex(int base, int index) {
-        return base + index * 2;
-    }
-
-    private static boolean isEntryToBeProcessed(long address, int index) {
-        if (Unsafe.getUnsafe().getByte(address + index) == -1) {
-            return false;
-        }
-        Unsafe.getUnsafe().putByte(address + index, (byte) -1);
-        return true;
-    }
-
-    private static void growColumn(ReadOnlyColumn mem1, ReadOnlyColumn mem2, int type, long rowCount) {
-        long offset;
-        long len;
-        if (rowCount > 0) {
-            // subtract column top
-            switch (type) {
-                case ColumnType.BINARY:
-                    assert mem2 != null;
-                    mem2.grow(rowCount * 8);
-                    offset = mem2.getLong((rowCount - 1) * 8);
-                    // grow data column to value offset + length, so that we can read length
-                    mem1.grow(offset + 8);
-                    len = mem1.getLong(offset);
-                    if (len > 0) {
-                        mem1.grow(offset + len + 8);
-                    }
-                    break;
-                case ColumnType.STRING:
-                    assert mem2 != null;
-                    mem2.grow(rowCount * 8);
-                    offset = mem2.getLong((rowCount - 1) * 8);
-                    mem1.grow(offset + 4);
-                    len = mem1.getInt(offset);
-                    if (len > 0) {
-                        mem1.grow(offset + len * 2 + 4);
-                    }
-                    break;
-                default:
-                    mem1.grow(rowCount << ColumnType.pow2SizeOf(type));
-                    break;
-            }
-        }
     }
 
     private void applyTruncate() {
@@ -589,32 +581,8 @@ public class TableReader implements Closeable {
     }
 
     private long findPartitionMinimum() {
-        long partitionMin = Long.MAX_VALUE;
-        try {
-            long p = ff.findFirst(path.$());
-            if (p > 0) {
-                try {
-                    do {
-                        int type = ff.findType(p);
-                        if (type == Files.DT_DIR || type == Files.DT_LNK) {
-                            try {
-                                long time = dateFormat.parse(nativeLPSZ.of(ff.findName(p)), DateLocaleFactory.INSTANCE.getDefaultDateLocale());
-                                if (time < partitionMin && time <= maxTimestamp) {
-                                    partitionMin = time;
-                                }
-                            } catch (NumericException ignore) {
-                            }
-                        }
-                    } while (ff.findNext(p) > 0);
-                } finally {
-                    ff.findClose(p);
-                }
-            }
-        } finally {
-            path.trimTo(rootLen);
-        }
-
-        return partitionMin;
+        long maintainedMin = txMem.getLong(TableUtils.TX_OFFSET_MIN_TIMESTAMP);
+        return maintainedMin == Long.MAX_VALUE ? maintainedMin : timestampFloorMethod.floor(maintainedMin);
     }
 
     private void freeBitmapIndexCache() {
@@ -1183,12 +1151,12 @@ public class TableReader implements Closeable {
     }
 
     @FunctionalInterface
-    private interface PartitionTimestampCalculatorMethod {
+    interface PartitionTimestampCalculatorMethod {
         long calculate(long minTimestamp, int partitionIndex);
     }
 
     @FunctionalInterface
-    private interface TimestampFloorMethod {
+    interface TimestampFloorMethod {
         long floor(long timestamp);
     }
 
