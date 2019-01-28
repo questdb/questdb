@@ -1519,16 +1519,6 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testDayPartitionRmDirError() throws Exception {
-        testTruncate(new CountingFilesFacade() {
-            @Override
-            public boolean rmdir(Path name) {
-                return --count != 0 && super.rmdir(name);
-            }
-        }, true);
-    }
-
-    @Test
     public void testDayPartitionTruncate() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             int N = 10000;

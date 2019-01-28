@@ -198,34 +198,36 @@ public final class Files {
     public static boolean rmdir(Path path) {
         long p = findFirst(path.address());
         int len = path.length();
+        boolean clean = true;
 
         if (p > 0) {
             try {
                 do {
                     long lpszName = findName(p);
                     path.trimTo(len).concat(lpszName).$();
-                    switch (findType(p)) {
-                        case DT_DIR:
-                            if (strcmp(lpszName, "..") || strcmp(lpszName, ".")) {
-                                continue;
-                            }
+                    if (findType(p) == DT_DIR) {
+                        if (strcmp(lpszName, "..") || strcmp(lpszName, ".")) {
+                            continue;
+                        }
 
-                            if (!rmdir(path)) {
-                                return false;
-                            }
-                            break;
-                        default:
-                            if (!remove(path.address())) {
-                                return false;
-                            }
-                            break;
+                        if (rmdir(path)) {
+                            continue;
+                        }
+
+                        clean = false;
+                    } else {
+                        if (remove(path.address())) {
+                            continue;
+                        }
+
+                        clean = false;
 
                     }
                 } while (findNext(p) > 0);
             } finally {
                 findClose(p);
             }
-            return rmdir(path.trimTo(len).$().address());
+            return rmdir(path.trimTo(len).$().address()) && clean;
         }
 
         return false;

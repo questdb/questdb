@@ -807,13 +807,18 @@ public class TableWriter implements Closeable {
 
         if (partitionBy != PartitionBy.NONE) {
             freeColumns(false);
+            if (indexers != null) {
+                for (int i = 0, n = indexers.size(); i < n; i++) {
+                    Misc.free(indexers.getQuick(i));
+                }
+            }
             removePartitionDirectories();
             rowFunction = openPartitionFunction;
         }
 
         prevMaxTimestamp = Long.MIN_VALUE;
         maxTimestamp = Long.MIN_VALUE;
-        prevMinTimestamp = Long.MIN_VALUE;
+        prevMinTimestamp = Long.MAX_VALUE;
         minTimestamp = Long.MAX_VALUE;
         txPrevTransientRowCount = 0;
         transientRowCount = 0;
@@ -827,6 +832,8 @@ public class TableWriter implements Closeable {
         } catch (CairoException err) {
             throwDistressException(err);
         }
+
+        LOG.info().$("truncated [name=").$(name).$(']').$();
     }
 
     /**
@@ -1004,7 +1011,6 @@ public class TableWriter implements Closeable {
             try {
                 long partitionTimestamp = txPendingPartitionSizes.getLong(offset + 8);
                 setStateForTimestamp(partitionTimestamp, false);
-
                 long fd = openAppend(path.concat(TableUtils.ARCHIVE_FILE_NAME).$());
                 try {
                     int len = 8;
@@ -1623,7 +1629,8 @@ public class TableWriter implements Closeable {
                 nativeLPSZ.of(name);
                 if (IGNORED_FILES.excludes(nativeLPSZ)) {
                     if (type == Files.DT_DIR && !ff.rmdir(path)) {
-                        throw CairoException.instance(ff.errno()).put("Cannot remove directory: ").put(path);
+                        LOG.info().$("could not remove [path=").$(path).$(", errno=").$(ff.errno()).$(']').$();
+//                        throw CairoException.instance(ff.errno()).put("Cannot remove directory: ").put(path);
                     }
                 }
             });

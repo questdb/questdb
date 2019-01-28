@@ -188,9 +188,6 @@ public class ObjList<T> implements Mutable, Sinkable {
         }
     }
 
-    /**
-     * {@inheritDoc}
-     */
     public void remove(int index) {
         if (pos < 1 || index >= pos) {
             return;
@@ -200,6 +197,16 @@ public class ObjList<T> implements Mutable, Sinkable {
             System.arraycopy(buffer, index + 1, buffer, index, move);
         }
         Unsafe.arrayPut(buffer, --pos, null);
+    }
+
+    public void remove(int from, int to) {
+        assert from <= to;
+        int move = pos - from - (to - from) - 1;
+        if (move > 0) {
+            System.arraycopy(buffer, to + 1, buffer, from, move);
+        }
+        pos -= (to - from + 1);
+        Arrays.fill(buffer, pos, buffer.length - 1, null);
     }
 
     public int remove(Object o) {

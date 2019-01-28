@@ -34,6 +34,8 @@ import com.questdb.std.str.Path;
 import java.io.Closeable;
 import java.util.concurrent.locks.LockSupport;
 
+import static com.questdb.cairo.TableUtils.TX_OFFSET_MIN_TIMESTAMP;
+
 public class TableReader implements Closeable {
     private static final Log LOG = LogFactory.getLog(TableReader.class);
     private static final PartitionPathGenerator YEAR_GEN = TableReader::pathGenYear;
@@ -76,7 +78,8 @@ public class TableReader implements Closeable {
     private long txn = TableUtils.INITIAL_TXN;
     private long maxTimestamp = Numbers.LONG_NaN;
     private int partitionCount;
-    private long partitionMin = Long.MAX_VALUE;
+    private long minTimestamp = Long.MAX_VALUE;
+    private long prevMinTimestamp = Long.MAX_VALUE;
     private ReloadMethod reloadMethod;
     private long tempMem8b = Unsafe.malloc(8);
 
@@ -104,7 +107,6 @@ public class TableReader implements Closeable {
                     timestampFloorMethod = Dates::floorDD;
                     intervalLengthMethod = Dates::getDaysBetween;
                     partitionTimestampCalculatorMethod = Dates::addDays;
-                    partitionMin = findPartitionMinimum();
                     partitionCount = calculatePartitionCount();
                     break;
                 case PartitionBy.MONTH:
@@ -113,7 +115,6 @@ public class TableReader implements Closeable {
                     timestampFloorMethod = Dates::floorMM;
                     intervalLengthMethod = Dates::getMonthsBetween;
                     partitionTimestampCalculatorMethod = Dates::addMonths;
-                    partitionMin = findPartitionMinimum();
                     partitionCount = calculatePartitionCount();
                     break;
                 case PartitionBy.YEAR:
@@ -122,7 +123,6 @@ public class TableReader implements Closeable {
                     timestampFloorMethod = Dates::floorYYYY;
                     intervalLengthMethod = Dates::getYearsBetween;
                     partitionTimestampCalculatorMethod = Dates::addYear;
-                    partitionMin = findPartitionMinimum();
                     partitionCount = calculatePartitionCount();
                     break;
                 default:
@@ -131,7 +131,7 @@ public class TableReader implements Closeable {
                     timestampFloorMethod = null;
                     intervalLengthMethod = null;
                     partitionTimestampCalculatorMethod = null;
-                    countDefaultPartitions();
+                    checkDefaultPartitionExistsAndUpdatePartitionCount();
                     break;
             }
 
@@ -282,8 +282,8 @@ public class TableReader implements Closeable {
         return (int) intervalLengthMethod.calculate(partitionTimestamp1, partitionTimestamp2);
     }
 
-    public long getPartitionMin() {
-        return partitionMin;
+    public long getMinTimestamp() {
+        return minTimestamp;
     }
 
     public int getPartitionedBy() {
@@ -406,7 +406,6 @@ public class TableReader implements Closeable {
             }
         }
         reloadSymbolMapCounts();
-        partitionMin = findPartitionMinimum();
         partitionCount = calculatePartitionCount();
         if (partitionCount > 0) {
             updateCapacities();
@@ -414,10 +413,13 @@ public class TableReader implements Closeable {
     }
 
     private int calculatePartitionCount() {
-        if (partitionMin == Long.MAX_VALUE) {
+        if (minTimestamp == Long.MAX_VALUE) {
             return 0;
         } else {
-            return maxTimestamp == Numbers.LONG_NaN ? 1 : getPartitionCountBetweenTimestamps(partitionMin, floorToPartitionTimestamp(maxTimestamp)) + 1;
+            return maxTimestamp == Long.MIN_VALUE ? 1 : getPartitionCountBetweenTimestamps(
+                    minTimestamp,
+                    floorToPartitionTimestamp(maxTimestamp)
+            ) + 1;
         }
     }
 
@@ -431,8 +433,9 @@ public class TableReader implements Closeable {
 
     private void closeRemovedPartitions() {
         for (int i = 0, n = removedPartitions.size(); i < n; i++) {
-            long timestamp = removedPartitions.get(i);
-            int partitionIndex = getPartitionCountBetweenTimestamps(partitionMin, timestamp);
+            final long timestamp = removedPartitions.get(i);
+
+            int partitionIndex = getPartitionCountBetweenTimestamps(prevMinTimestamp, timestamp);
             if (partitionIndex > -1) {
                 if (partitionIndex < partitionCount) {
                     if (getPartitionRowCount(partitionIndex) != -1) {
@@ -451,6 +454,15 @@ public class TableReader implements Closeable {
                             .$(", timestamp=").$ts(timestamp)
                             .$(']').$();
                 }
+            }
+
+            // adjust columns list when leading partitions have been removed
+            if (prevMinTimestamp != minTimestamp) {
+                assert prevMinTimestamp < minTimestamp;
+                int delta = getPartitionCountBetweenTimestamps(prevMinTimestamp, minTimestamp);
+                columns.remove(0, getColumnBase(delta) - 1);
+                prevMinTimestamp = minTimestamp;
+                partitionCount -= delta;
             }
         }
     }
@@ -476,7 +488,7 @@ public class TableReader implements Closeable {
         return symbolMapReaders.getAndSetQuick(columnIndex, reader);
     }
 
-    private void countDefaultPartitions() {
+    private void checkDefaultPartitionExistsAndUpdatePartitionCount() {
         if (maxTimestamp == Numbers.LONG_NaN) {
             partitionCount = 0;
         } else {
@@ -580,11 +592,6 @@ public class TableReader implements Closeable {
         tempCopyStruct.forwardReader = indexReaders.getAndSetQuick(index + 1, null);
     }
 
-    private long findPartitionMinimum() {
-        long maintainedMin = txMem.getLong(TableUtils.TX_OFFSET_MIN_TIMESTAMP);
-        return maintainedMin == Long.MAX_VALUE ? maintainedMin : timestampFloorMethod.floor(maintainedMin);
-    }
-
     private void freeBitmapIndexCache() {
         if (bitmapIndexes != null) {
             for (int i = 0, n = bitmapIndexes.size(); i < n; i++) {
@@ -669,7 +676,14 @@ public class TableReader implements Closeable {
     private long openPartition0(int partitionIndex) {
         // is this table is partitioned?
         if (partitionTimestampCalculatorMethod != null
-                && removedPartitions.contains(partitionTimestampCalculatorMethod.calculate(partitionMin, partitionIndex))) {
+                && removedPartitions.contains(partitionTimestampCalculatorMethod.calculate(
+                minTimestamp, partitionIndex
+        ))) {
+            return -1;
+        }
+
+        // todo: this may not be the best place to check if partition is out of range
+        if (maxTimestamp == Long.MIN_VALUE) {
             return -1;
         }
 
@@ -731,7 +745,7 @@ public class TableReader implements Closeable {
 
     private Path pathGenDay(int partitionIndex) {
         TableUtils.fmtDay.format(
-                Dates.addDays(partitionMin, partitionIndex),
+                Dates.addDays(minTimestamp, partitionIndex),
                 DateLocaleFactory.INSTANCE.getDefaultDateLocale(),
                 null,
                 path.put(Files.SEPARATOR)
@@ -745,7 +759,7 @@ public class TableReader implements Closeable {
 
     private Path pathGenMonth(int partitionIndex) {
         TableUtils.fmtMonth.format(
-                Dates.addMonths(partitionMin, partitionIndex),
+                Dates.addMonths(minTimestamp, partitionIndex),
                 DateLocaleFactory.INSTANCE.getDefaultDateLocale(),
                 null,
                 path.put(Files.SEPARATOR)
@@ -755,7 +769,7 @@ public class TableReader implements Closeable {
 
     private Path pathGenYear(int partitionIndex) {
         TableUtils.fmtYear.format(
-                Dates.addYear(partitionMin, partitionIndex),
+                Dates.addYear(minTimestamp, partitionIndex),
                 DateLocaleFactory.INSTANCE.getDefaultDateLocale(),
                 null,
                 path.put(Files.SEPARATOR)
@@ -785,6 +799,7 @@ public class TableReader implements Closeable {
                 Unsafe.getUnsafe().loadFence();
                 final long transientRowCount = txMem.getLong(TableUtils.TX_OFFSET_TRANSIENT_ROW_COUNT);
                 final long fixedRowCount = txMem.getLong(TableUtils.TX_OFFSET_FIXED_ROW_COUNT);
+                final long minTimestamp = txMem.getLong(TX_OFFSET_MIN_TIMESTAMP);
                 final long maxTimestamp = txMem.getLong(TableUtils.TX_OFFSET_MAX_TIMESTAMP);
                 final long structVersion = txMem.getLong(TableUtils.TX_OFFSET_STRUCT_VERSION);
                 final long dataVersion = txMem.getLong(TableUtils.TX_OFFSET_DATA_VERSION);
@@ -817,6 +832,21 @@ public class TableReader implements Closeable {
                     this.txn = txn;
                     this.transientRowCount = transientRowCount;
                     this.rowCount = fixedRowCount + transientRowCount;
+                    this.prevMinTimestamp = this.minTimestamp;
+                    switch (getPartitionedBy()) {
+                        case PartitionBy.DAY:
+                            this.minTimestamp = minTimestamp == Long.MAX_VALUE ? minTimestamp : Dates.floorDD(minTimestamp);
+                            break;
+                        case PartitionBy.MONTH:
+                            this.minTimestamp = minTimestamp == Long.MAX_VALUE ? minTimestamp : Dates.floorMM(minTimestamp);
+                            break;
+                        case PartitionBy.YEAR:
+                            this.minTimestamp = minTimestamp == Long.MAX_VALUE ? minTimestamp : Dates.floorYYYY(minTimestamp);
+                            break;
+                        default:
+                            this.minTimestamp = minTimestamp;
+                            break;
+                    }
                     this.maxTimestamp = maxTimestamp;
                     this.structVersion = structVersion;
                     this.dataVersion = dataVersion;
@@ -936,7 +966,7 @@ public class TableReader implements Closeable {
         if (readTxn()) {
             reloadStruct();
             reloadSymbolMapCounts();
-            countDefaultPartitions();
+            checkDefaultPartitionExistsAndUpdatePartitionCount();
             if (partitionCount > 0) {
                 updateCapacities();
                 reloadMethod = NON_PARTITIONED_RELOAD_METHOD;
@@ -956,11 +986,10 @@ public class TableReader implements Closeable {
 
     private boolean reloadInitialPartitioned0() {
         reloadSymbolMapCounts();
-        partitionMin = findPartitionMinimum();
         partitionCount = calculatePartitionCount();
         if (partitionCount > 0) {
             updateCapacities();
-            if (maxTimestamp != Numbers.LONG_NaN) {
+            if (maxTimestamp != Long.MIN_VALUE) {
                 reloadMethod = PARTITIONED_RELOAD_METHOD;
             }
         }
@@ -1006,12 +1035,17 @@ public class TableReader implements Closeable {
 
     private boolean reloadPartitioned() {
         assert timestampFloorMethod != null;
-        final long currentPartitionTimestamp = maxTimestamp == Numbers.LONG_NaN ? maxTimestamp : floorToPartitionTimestamp(maxTimestamp);
-        boolean b = readTxn();
-        if (b) {
+        final long currentPartitionTimestamp = maxTimestamp == Long.MIN_VALUE ? maxTimestamp : floorToPartitionTimestamp(maxTimestamp);
+        if (readTxn()) {
             reloadStruct();
-            if (maxTimestamp == Numbers.LONG_NaN || currentPartitionTimestamp == Numbers.LONG_NaN) {
+            if (maxTimestamp < currentPartitionTimestamp) {
                 applyTruncate();
+                return true;
+            }
+
+            if (partitionCount == 0) {
+                // old partition count was 0
+                incrementPartitionCountBy(calculatePartitionCount());
                 return true;
             }
 

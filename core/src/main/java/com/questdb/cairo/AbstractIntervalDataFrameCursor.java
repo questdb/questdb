@@ -132,7 +132,7 @@ public abstract class AbstractIntervalDataFrameCursor implements DataFrameCursor
     }
 
     private void cullIntervals() {
-        int intervalsLo = intervals.binarySearch(reader.getPartitionMin());
+        int intervalsLo = intervals.binarySearch(reader.getMinTimestamp());
 
         // not a direct hit
         if (intervalsLo < 0) {
@@ -157,9 +157,9 @@ public abstract class AbstractIntervalDataFrameCursor implements DataFrameCursor
 
     private void cullPartitions() {
         long intervalLo = reader.floorToPartitionTimestamp(intervals.getQuick(initialIntervalsLo * 2));
-        this.initialPartitionLo = reader.getPartitionCountBetweenTimestamps(reader.getPartitionMin(), intervalLo);
+        this.initialPartitionLo = reader.getPartitionCountBetweenTimestamps(reader.getMinTimestamp(), intervalLo);
         long intervalHi = reader.floorToPartitionTimestamp(intervals.getQuick((initialIntervalsHi - 1) * 2 + 1));
-        this.initialPartitionHi = Math.min(reader.getPartitionCount(), reader.getPartitionCountBetweenTimestamps(reader.getPartitionMin(), intervalHi) + 1);
+        this.initialPartitionHi = Math.min(reader.getPartitionCount(), reader.getPartitionCountBetweenTimestamps(reader.getMinTimestamp(), intervalHi) + 1);
     }
 
     protected class IntervalDataFrame implements DataFrame {

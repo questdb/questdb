@@ -1426,6 +1426,44 @@ public class TableReaderTest extends AbstractCairoTest {
         }
     };
 
+    private static long allocBlob() {
+        return Unsafe.malloc(blobLen);
+    }
+
+    private static void freeBlob(long blob) {
+        Unsafe.free(blob, blobLen);
+    }
+
+    private static void assertBin(Record r, Rnd exp, long blob, int index) {
+        if (exp.nextBoolean()) {
+            exp.nextChars(blob, blobLen / 2);
+            Assert.assertEquals(blobLen, r.getBinLen(index));
+            BinarySequence sq = r.getBin(index);
+            for (int l = 0; l < blobLen; l++) {
+                byte b = sq.byteAt(l);
+                boolean result = Unsafe.getUnsafe().getByte(blob + l) != b;
+                if (result) {
+                    Assert.fail("Error at [" + l + "]: expected=" + Unsafe.getUnsafe().getByte(blob + l) + ", actual=" + b);
+                }
+            }
+        } else {
+            Assert.assertEquals(TableUtils.NULL_LEN, r.getBinLen(index));
+        }
+    }
+
+    private static void assertStrColumn(CharSequence expected, Record r, int index) {
+        TestUtils.assertEquals(expected, r.getStr(index));
+        TestUtils.assertEquals(expected, r.getStrB(index));
+        Assert.assertNotSame(r.getStr(index), r.getStrB(index));
+        Assert.assertEquals(expected.length(), r.getStrLen(index));
+    }
+
+    private static void assertNullStr(Record r, int index) {
+        Assert.assertNull(r.getStr(index));
+        Assert.assertNull(r.getStrB(index));
+        Assert.assertEquals(TableUtils.NULL_LEN, r.getStrLen(index));
+    }
+
     @Test
     public void testCloseColumnNonPartitioned1() throws Exception {
         testCloseColumn(PartitionBy.NONE, 2000, 6000L, "bin", BATCH1_ASSERTER_NULL_BIN);
@@ -2896,44 +2934,6 @@ public class TableReaderTest extends AbstractCairoTest {
         });
     }
 
-    private static long allocBlob() {
-        return Unsafe.malloc(blobLen);
-    }
-
-    private static void freeBlob(long blob) {
-        Unsafe.free(blob, blobLen);
-    }
-
-    private static void assertBin(Record r, Rnd exp, long blob, int index) {
-        if (exp.nextBoolean()) {
-            exp.nextChars(blob, blobLen / 2);
-            Assert.assertEquals(blobLen, r.getBinLen(index));
-            BinarySequence sq = r.getBin(index);
-            for (int l = 0; l < blobLen; l++) {
-                byte b = sq.byteAt(l);
-                boolean result = Unsafe.getUnsafe().getByte(blob + l) != b;
-                if (result) {
-                    Assert.fail("Error at [" + l + "]: expected=" + Unsafe.getUnsafe().getByte(blob + l) + ", actual=" + b);
-                }
-            }
-        } else {
-            Assert.assertEquals(TableUtils.NULL_LEN, r.getBinLen(index));
-        }
-    }
-
-    private static void assertStrColumn(CharSequence expected, Record r, int index) {
-        TestUtils.assertEquals(expected, r.getStr(index));
-        TestUtils.assertEquals(expected, r.getStrB(index));
-        Assert.assertNotSame(r.getStr(index), r.getStrB(index));
-        Assert.assertEquals(expected.length(), r.getStrLen(index));
-    }
-
-    private static void assertNullStr(Record r, int index) {
-        Assert.assertNull(r.getStr(index));
-        Assert.assertNull(r.getStrB(index));
-        Assert.assertEquals(TableUtils.NULL_LEN, r.getStrLen(index));
-    }
-
     private void appendTwoSymbols(TableWriter writer, Rnd rnd) {
         for (int i = 0; i < 1000; i++) {
             TableWriter.Row row = writer.newRow(0);
@@ -3627,7 +3627,6 @@ public class TableReaderTest extends AbstractCairoTest {
                 }
 
                 Assert.assertEquals(N * N_PARTITIONS, writer.size());
-
 
                 // now open table reader having partition gap
                 try (TableReader reader = new TableReader(configuration, "w")) {

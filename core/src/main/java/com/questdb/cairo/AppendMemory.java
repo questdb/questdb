@@ -62,6 +62,7 @@ public class AppendMemory extends VirtualMemory {
             throw CairoException.instance(ff.errno()).put("Cannot truncate fd=").put(fd).put(" to ").put(getMapPageSize()).put(" bytes");
         }
         updateLimits(0, pageAddress = mapPage(0));
+        LOG.info().$("truncated [fd=").$(fd).$(']').$();
     }
 
     public final void close(boolean truncate) {
