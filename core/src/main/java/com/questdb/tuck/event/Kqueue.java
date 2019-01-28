@@ -60,6 +60,7 @@ public final class Kqueue implements Closeable {
         if (Net.close(this.kq) < 0) {
             LOG.error().$("Cannot close kqueue ").$(this.kq).$();
         }
+        Unsafe.free(this.eventList, SIZEOF_KEVENT * (long) capacity);
     }
 
     public long getData() {

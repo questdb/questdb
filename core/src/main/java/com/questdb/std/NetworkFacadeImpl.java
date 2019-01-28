@@ -105,4 +105,14 @@ public class NetworkFacadeImpl implements NetworkFacade {
     public long socketUdp() {
         return Net.socketUdp();
     }
+
+    @Override
+    public boolean bindUdp(long fd, CharSequence address, int port) {
+        return Net.bindUdp(fd, address, port);
+    }
+
+    @Override
+    public boolean join(long fd, CharSequence bindIPv4Address, CharSequence groupIPv4Address) {
+        return Net.join(fd, bindIPv4Address, bindIPv4Address);
+    }
 }

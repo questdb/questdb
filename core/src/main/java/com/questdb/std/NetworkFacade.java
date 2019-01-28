@@ -55,4 +55,8 @@ public interface NetworkFacade {
     long socketTcp(boolean blocking);
 
     long socketUdp();
+
+    boolean bindUdp(long fd, CharSequence address, int port);
+
+    boolean join(long fd, CharSequence bindIPv4Address, CharSequence groupIPv4Address);
 }

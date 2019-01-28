@@ -81,7 +81,7 @@ public class ConcurrentTest {
         CyclicBarrier barrier = new CyclicBarrier(3);
         CountDownLatch latch = new CountDownLatch(2);
 
-        BusyConsumer consumers[] = new BusyConsumer[2];
+        BusyConsumer[] consumers = new BusyConsumer[2];
         consumers[0] = new BusyConsumer(size, subSeq, queue, barrier, latch);
         consumers[1] = new BusyConsumer(size, subSeq, queue, barrier, latch);
 
@@ -108,7 +108,7 @@ public class ConcurrentTest {
 
         latch.await();
 
-        int buf[] = new int[size];
+        int[] buf = new int[size];
         System.arraycopy(consumers[0].buf, 0, buf, 0, consumers[0].finalIndex);
         System.arraycopy(consumers[1].buf, 0, buf, consumers[0].finalIndex, consumers[1].finalIndex);
         Arrays.sort(buf);
@@ -130,7 +130,7 @@ public class ConcurrentTest {
         CyclicBarrier barrier = new CyclicBarrier(3);
         CountDownLatch latch = new CountDownLatch(2);
 
-        WaitingConsumer consumers[] = new WaitingConsumer[2];
+        WaitingConsumer[] consumers = new WaitingConsumer[2];
         consumers[0] = new WaitingConsumer(size, subSeq, queue, barrier, latch);
         consumers[1] = new WaitingConsumer(size, subSeq, queue, barrier, latch);
 
@@ -139,21 +139,18 @@ public class ConcurrentTest {
 
         barrier.await();
         int i = 0;
-        while (true) {
+        do {
             long cursor = pubSeq.nextBully();
             queue.get(cursor).value = i++;
             pubSeq.done(cursor);
-            if (i == size) {
-                break;
-            }
-        }
+        } while (i != size);
 
         publishEOE(queue, pubSeq);
         publishEOE(queue, pubSeq);
 
         latch.await();
 
-        int buf[] = new int[size];
+        int[] buf = new int[size];
         System.arraycopy(consumers[0].buf, 0, buf, 0, consumers[0].finalIndex);
         System.arraycopy(consumers[1].buf, 0, buf, consumers[0].finalIndex, consumers[1].finalIndex);
         Arrays.sort(buf);
@@ -196,7 +193,7 @@ public class ConcurrentTest {
 
         latch.await();
 
-        int buf[] = consumer.buf;
+        int[] buf = consumer.buf;
         for (i = 0; i < buf.length; i++) {
             Assert.assertEquals(i, buf[i]);
         }
@@ -220,20 +217,17 @@ public class ConcurrentTest {
 
         barrier.await();
         int i = 0;
-        while (true) {
+        do {
             long cursor = pubSeq.nextBully();
             queue.get(cursor).value = i++;
             pubSeq.done(cursor);
-            if (i == size) {
-                break;
-            }
-        }
+        } while (i != size);
 
         publishEOE(queue, pubSeq);
 
         latch.await();
 
-        int buf[] = consumer.buf;
+        int[] buf = consumer.buf;
         for (i = 0; i < buf.length; i++) {
             Assert.assertEquals(i, buf[i]);
         }
@@ -253,7 +247,7 @@ public class ConcurrentTest {
         CyclicBarrier barrier = new CyclicBarrier(3);
         CountDownLatch latch = new CountDownLatch(2);
 
-        BusyConsumer consumers[] = new BusyConsumer[2];
+        BusyConsumer[] consumers = new BusyConsumer[2];
         consumers[0] = new BusyConsumer(size, sub1, queue, barrier, latch);
         consumers[1] = new BusyConsumer(size, sub2, queue, barrier, latch);
 
@@ -303,7 +297,7 @@ public class ConcurrentTest {
         CyclicBarrier barrier = new CyclicBarrier(4);
         CountDownLatch latch = new CountDownLatch(3);
 
-        BusyConsumer consumers[] = new BusyConsumer[2];
+        BusyConsumer[] consumers = new BusyConsumer[2];
         consumers[0] = new BusyConsumer(size, sub1, queue, barrier, latch);
         consumers[1] = new BusyConsumer(size, sub2, queue, barrier, latch);
 

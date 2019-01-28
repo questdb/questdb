@@ -948,6 +948,44 @@ public class PlainTextImportTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testImportTimestamp() throws Exception {
+        assertNoLeak(new DefaultTextConfiguration() {
+                         @Override
+                         public int getTextAnalysisMaxLines() {
+                             return 3;
+                         }
+                     },
+                textLoader -> {
+                    String expected = "StrSym\tts\n" +
+                            "CMP1\t2015-01-13T19:15:09.000000Z\n" +
+                            "CMP2\t2015-01-13T19:15:09.000234Z\n" +
+                            "CMP1\t2015-01-13T19:15:09.000455Z\n" +
+                            "CMP2\t2015-01-13T19:15:09.000754Z\n" +
+                            "CMP1\t2015-01-13T19:15:09.000903Z\n";
+
+
+                    String csv = "StrSym,ts\n" +
+                            "CMP1,2015-01-13T19:15:09.000000Z\n" +
+                            "CMP2,2015-01-13T19:15:09.000234Z\n" +
+                            "CMP1,2015-01-13T19:15:09.000455Z\n" +
+                            "CMP2,2015-01-13T19:15:09.000754Z\n" +
+                            "CMP1,2015-01-13T19:15:09.000903Z\n";
+
+                    configureLoaderDefaults(textLoader, (byte) ',');
+                    textLoader.setForceHeaders(false);
+                    playText(
+                            textLoader,
+                            csv,
+                            1024,
+                            expected,
+                            "{\"columnCount\":2,\"columns\":[{\"index\":0,\"name\":\"StrSym\",\"type\":\"STRING\"},{\"index\":1,\"name\":\"ts\",\"type\":\"TIMESTAMP\"}],\"timestampIndex\":-1}",
+                            5,
+                            5
+                    );
+                });
+    }
+
+    @Test
     public void testLineRoll() throws Exception {
         assertNoLeak(textLoader -> {
             String expected = "f0\tf1\tf2\tf3\tf4\tf5\tf6\tf7\tf8\tf9\n" +
