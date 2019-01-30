@@ -33,6 +33,7 @@ import com.questdb.store.query.iter.*;
 import com.questdb.test.tools.AbstractTest;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Ignore;
 import org.junit.Test;
 
 import java.util.ArrayList;
@@ -43,6 +44,7 @@ import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
+@Ignore
 public class IteratorTest extends AbstractTest {
 
     private final Comparator<Quote> comparator = (o1, o2) -> {
@@ -298,7 +300,7 @@ public class IteratorTest extends AbstractTest {
 
         MergingIterator<Integer> iterator = new MergingIterator<Integer>().$new(listA.iterator(), listB.iterator(), Integer::compareTo);
 
-        int expected[] = {1, 1, 2, 2, 3, 4, 4, 4, 5, 6, 6, 7, 8, 9, 10, 11, 13, 14, 15, 17};
+        int[] expected = {1, 1, 2, 2, 3, 4, 4, 4, 5, 6, 6, 7, 8, 9, 10, 11, 13, 14, 15, 17};
         int i = 0;
         for (int a : iterator) {
             Assert.assertEquals(expected[i++], a);

@@ -60,7 +60,7 @@ public class BusyPollTest extends AbstractCairoTest {
 
     @Test
     public void testBusyPollByYear() throws Exception {
-        testBusyPollFromMidTable(PartitionBy.YEAR, 365 * 50000000000L);
+        testBusyPollFromMidTable(PartitionBy.YEAR, 365 * 500000000L);
     }
 
     @Test
