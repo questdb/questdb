@@ -74,7 +74,7 @@ public abstract class AbstractLongHashSet implements Mutable {
         return probe(key, index);
     }
 
-    public int remove(int key) {
+    public int remove(long key) {
         int index = keyIndex(key);
         if (index < 0) {
             removeAt(index);

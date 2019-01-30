@@ -123,15 +123,6 @@ public class LongHashSet extends AbstractLongHashSet {
         return list.getLast();
     }
 
-    public int remove(long key) {
-        int keyIndex = keyIndex(key);
-        if (keyIndex < 0) {
-            removeAt(keyIndex);
-            return -keyIndex - 1;
-        }
-        return -1;
-    }
-
     @Override
     public String toString() {
         return list.toString();

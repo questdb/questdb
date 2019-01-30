@@ -38,10 +38,10 @@ final class FastMapRecord implements MapRecord {
     private final int split;
     private final int keyDataOffset;
     private final int keyBlockOffset;
-    private final int valueOffsets[];
-    private final DirectCharSequence csA[];
-    private final DirectCharSequence csB[];
-    private final DirectBinarySequence bs[];
+    private final int[] valueOffsets;
+    private final DirectCharSequence[] csA;
+    private final DirectCharSequence[] csB;
+    private final DirectBinarySequence[] bs;
     private final FastMapValue value;
     private long address0;
     private long address1;
@@ -50,7 +50,7 @@ final class FastMapRecord implements MapRecord {
     private IntList symbolTableIndex;
 
     FastMapRecord(
-            int valueOffsets[],
+            int[] valueOffsets,
             int split,
             int keyDataOffset,
             int keyBlockOffset,
@@ -65,9 +65,9 @@ final class FastMapRecord implements MapRecord {
 
         int n = keyTypes.getColumnCount();
 
-        DirectCharSequence csA[] = null;
-        DirectCharSequence csB[] = null;
-        DirectBinarySequence bs[] = null;
+        DirectCharSequence[] csA = null;
+        DirectCharSequence[] csB = null;
+        DirectBinarySequence[] bs = null;
 
         for (int i = 0; i < n; i++) {
             switch (keyTypes.getColumnType(i)) {
@@ -96,13 +96,13 @@ final class FastMapRecord implements MapRecord {
     }
 
     private FastMapRecord(
-            int valueOffsets[],
+            int[] valueOffsets,
             int split,
             int keyDataOffset,
             int keyBlockOffset,
-            DirectCharSequence csA[],
-            DirectCharSequence csB[],
-            DirectBinarySequence bs[]) {
+            DirectCharSequence[] csA,
+            DirectCharSequence[] csB,
+            DirectBinarySequence[] bs) {
 
         this.valueOffsets = valueOffsets;
         this.split = split;
@@ -230,9 +230,9 @@ final class FastMapRecord implements MapRecord {
     @SuppressWarnings("MethodDoesntCallSuperMethod")
     @Override
     protected MapRecord clone() {
-        final DirectCharSequence csA[];
-        final DirectCharSequence csB[];
-        final DirectBinarySequence bs[];
+        final DirectCharSequence[] csA;
+        final DirectCharSequence[] csB;
+        final DirectBinarySequence[] bs;
 
         // csA and csB are pegged, checking one for null should be enough
         if (this.csA != null) {
