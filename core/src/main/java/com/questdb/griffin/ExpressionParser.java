@@ -149,7 +149,7 @@ class ExpressionParser {
                         break;
                     case 's':
                     case 'S':
-                        if (Chars.equalsIgnoreCase(tok, "select")) {
+                        if (Chars.equals(tok, "select")) {
                             thisBranch = BRANCH_LAMBDA;
                             // It is highly likely this expression parser will be re-entered when
                             // parsing sub-query. To prevent sub-query consuming operation stack we must add a
@@ -235,22 +235,18 @@ class ExpressionParser {
                         int operatorType = op.type;
 
 
-                        switch (thisChar) {
-                            case '-':
-                                switch (prevBranch) {
-                                    case BRANCH_OPERATOR:
-                                    case BRANCH_LEFT_BRACE:
-                                    case BRANCH_COMMA:
-                                    case BRANCH_NONE:
-                                        // we have unary minus
-                                        operatorType = OperatorExpression.UNARY;
-                                        break;
-                                    default:
-                                        break;
-                                }
-                                break;
-                            default:
-                                break;
+                        if (thisChar == '-') {
+                            switch (prevBranch) {
+                                case BRANCH_OPERATOR:
+                                case BRANCH_LEFT_BRACE:
+                                case BRANCH_COMMA:
+                                case BRANCH_NONE:
+                                    // we have unary minus
+                                    operatorType = OperatorExpression.UNARY;
+                                    break;
+                                default:
+                                    break;
+                            }
                         }
 
                         ExpressionNode other;
@@ -272,13 +268,10 @@ class ExpressionParser {
                                 op.precedence,
                                 lexer.lastTokenPosition()
                         );
-                        switch (operatorType) {
-                            case OperatorExpression.UNARY:
-                                node.paramCount = 1;
-                                break;
-                            default:
-                                node.paramCount = 2;
-                                break;
+                        if (operatorType == OperatorExpression.UNARY) {
+                            node.paramCount = 1;
+                        } else {
+                            node.paramCount = 2;
                         }
                         opStack.push(node);
                     } else if (caseCount > 0 || nonLiteralBranches.excludes(thisBranch)) {

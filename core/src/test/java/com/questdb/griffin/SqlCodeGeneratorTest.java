@@ -98,6 +98,22 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testSelectFromAliasedTable() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            Assert.assertNull(compiler.compile("create table my_table (sym int, id long)", bindVariableService));
+
+            try {
+                try (RecordCursorFactory factory = compiler.compile("select sum(a.sym) yo, a.id from my_table a", bindVariableService)) {
+                    Assert.assertNotNull(factory);
+                }
+            } finally {
+                engine.releaseAllWriters();
+                engine.releaseAllReaders();
+            }
+        });
+    }
+
+    @Test
     public void testCreateTableSymbolColumnViaCastNocache() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             Assert.assertNull(compiler.compile("create table x (col string)", bindVariableService));

@@ -619,6 +619,34 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testCreateTableCastDefSymbolCapacityHigh() {
+        assertSyntaxError(
+                "create table x as (tab), cast(a as double), cast(c as symbol capacity 1100000000)",
+                70,
+                "max symbol capacity is",
+                modelOf("tab")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.LONG)
+                        .col("c", ColumnType.STRING)
+
+        );
+    }
+
+    @Test
+    public void testCreateTableCastDefSymbolCapacityLow() {
+        assertSyntaxError(
+                "create table x as (tab), cast(a as double), cast(c as symbol capacity -10)",
+                70,
+                "min symbol capacity is",
+                modelOf("tab")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.LONG)
+                        .col("c", ColumnType.STRING)
+
+        );
+    }
+
+    @Test
     public void testCreateTableCastIndexCapacityHigh() {
         assertSyntaxError(
                 "create table x as (tab), cast(a as double), cast(c as symbol capacity 20 nocache index capacity 100000000)",
@@ -679,34 +707,6 @@ public class SqlParserTest extends AbstractGriffinTest {
                 "create table x as (tab), cast(a as double), cast(c as symbol capacity 20 nocache index capacity -3)",
                 96,
                 "min index block capacity is",
-                modelOf("tab")
-                        .col("a", ColumnType.INT)
-                        .col("b", ColumnType.LONG)
-                        .col("c", ColumnType.STRING)
-
-        );
-    }
-
-    @Test
-    public void testCreateTableCastDefSymbolCapacityHigh() {
-        assertSyntaxError(
-                "create table x as (tab), cast(a as double), cast(c as symbol capacity 1100000000)",
-                70,
-                "max symbol capacity is",
-                modelOf("tab")
-                        .col("a", ColumnType.INT)
-                        .col("b", ColumnType.LONG)
-                        .col("c", ColumnType.STRING)
-
-        );
-    }
-
-    @Test
-    public void testCreateTableCastDefSymbolCapacityLow() {
-        assertSyntaxError(
-                "create table x as (tab), cast(a as double), cast(c as symbol capacity -10)",
-                70,
-                "min symbol capacity is",
                 modelOf("tab")
                         .col("a", ColumnType.INT)
                         .col("b", ColumnType.LONG)
@@ -1336,6 +1336,41 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testCreateTableRoundedSymbolCapacity() throws SqlException {
+        assertCreateTable(
+                "create table x (" +
+                        "a INT," +
+                        " b BYTE," +
+                        " c SHORT," +
+                        " t TIMESTAMP," +
+                        " d LONG," +
+                        " e FLOAT," +
+                        " f DOUBLE," +
+                        " g DATE," +
+                        " h BINARY," +
+                        " x SYMBOL capacity 512 cache," +
+                        " z STRING," +
+                        " y BOOLEAN)" +
+                        " timestamp(t)" +
+                        " partition by MONTH",
+                "create table x (" +
+                        "a INT, " +
+                        "b BYTE, " +
+                        "c SHORT, " +
+                        "t TIMESTAMP, " +
+                        "d LONG, " +
+                        "e FLOAT, " +
+                        "f DOUBLE, " +
+                        "g DATE, " +
+                        "h BINARY, " +
+                        "x SYMBOL capacity 500, " +
+                        "z STRING, " +
+                        "y BOOLEAN) " +
+                        "timestamp(t) " +
+                        "partition by MONTH");
+    }
+
+    @Test
     public void testCreateTableSymbolCapacityHigh() {
         assertSyntaxError(
                 "create table x (" +
@@ -1371,41 +1406,6 @@ public class SqlParserTest extends AbstractGriffinTest {
                 80,
                 "min symbol capacity is"
         );
-    }
-
-    @Test
-    public void testCreateTableRoundedSymbolCapacity() throws SqlException {
-        assertCreateTable(
-                "create table x (" +
-                        "a INT," +
-                        " b BYTE," +
-                        " c SHORT," +
-                        " t TIMESTAMP," +
-                        " d LONG," +
-                        " e FLOAT," +
-                        " f DOUBLE," +
-                        " g DATE," +
-                        " h BINARY," +
-                        " x SYMBOL capacity 512 cache," +
-                        " z STRING," +
-                        " y BOOLEAN)" +
-                        " timestamp(t)" +
-                        " partition by MONTH",
-                "create table x (" +
-                        "a INT, " +
-                        "b BYTE, " +
-                        "c SHORT, " +
-                        "t TIMESTAMP, " +
-                        "d LONG, " +
-                        "e FLOAT, " +
-                        "f DOUBLE, " +
-                        "g DATE, " +
-                        "h BINARY, " +
-                        "x SYMBOL capacity 500, " +
-                        "z STRING, " +
-                        "y BOOLEAN) " +
-                        "timestamp(t) " +
-                        "partition by MONTH");
     }
 
     @Test
@@ -3780,7 +3780,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     @Test
     public void testSelectFromSubQuery() throws SqlException {
         assertQuery(
-                "select-choose a.x x from ((tab where y > 10) a)",
+                "select-choose x from ((tab where y > 10) a)",
                 "select a.x from (tab where y > 10) a",
                 modelOf("tab")
                         .col("x", ColumnType.INT)
@@ -4009,6 +4009,26 @@ public class SqlParserTest extends AbstractGriffinTest {
                 "select-choose x, y from (tab limit 100)",
                 "select x x, y y from tab limit 100",
                 modelOf("tab").col("x", ColumnType.INT).col("y", ColumnType.INT));
+    }
+
+    @Test
+    public void testStackOverflow() {
+        assertSyntaxError(
+                "SELECT sym, sum(amount) from (SELECT a.amount, a.sym\n" +
+                        "FROM 'tab' a\n" +
+                        "LEFT OUTER JOIN 'tab' b\n" +
+                        "ON a.orderID = b.orderID \n" +
+                        "AND a.seq < b.seq\n" +
+                        "WHERE b.orderID IS NULL\n" +
+                        "ORDER BY a.seq desc) AS x group by sym",
+                10,
+                "unexpected token",
+                modelOf("tab")
+                        .col("sym", ColumnType.INT)
+                        .col("amount", ColumnType.LONG)
+                        .col("orderID", ColumnType.LONG)
+                        .col("seq", ColumnType.LONG)
+        );
     }
 
     @Test

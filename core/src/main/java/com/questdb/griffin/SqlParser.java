@@ -99,8 +99,8 @@ public final class SqlParser {
         return SqlUtil.createColumnAlias(characterStore, node.token, Chars.indexOf(node.token, '.'), model.getColumnNameTypeMap());
     }
 
-    private ExpressionNode expectExpr(GenericLexer lexer, QueryModel model) throws SqlException {
-        ExpressionNode n = expr(lexer, model);
+    private ExpressionNode expectExpr(GenericLexer lexer) throws SqlException {
+        ExpressionNode n = expr(lexer, (QueryModel) null);
         if (n == null) {
             throw SqlException.$(lexer.lastTokenPosition(), "Expression expected");
         }
@@ -799,14 +799,14 @@ public final class SqlParser {
         expectTok(lexer, "table");
         RenameTableModel model = renameTableModelPool.next();
         // todo: review and test
-        ExpressionNode e = expectExpr(lexer, null);
+        ExpressionNode e = expectExpr(lexer);
         if (e.type != ExpressionNode.LITERAL && e.type != ExpressionNode.CONSTANT) {
             throw SqlException.$(e.position, "literal or constant expected");
         }
         model.setFrom(e);
         expectTok(lexer, "to");
 
-        e = expectExpr(lexer, null);
+        e = expectExpr(lexer);
         if (e.type != ExpressionNode.LITERAL && e.type != ExpressionNode.CONSTANT) {
             throw SqlException.$(e.position, "literal or constant expected");
         }

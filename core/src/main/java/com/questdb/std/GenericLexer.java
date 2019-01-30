@@ -60,11 +60,9 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
             return that;
         }
 
-        if (value instanceof FloatingSequence || value instanceof String) {
-            return value;
-        }
+        assert (value instanceof FloatingSequence || value instanceof String);
 
-        throw new RuntimeException("!!!");
+        return value;
     }
 
     public static CharSequence unquote(CharSequence value) {
@@ -279,6 +277,11 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
         }
 
         @Override
+        public char charAt(int index) {
+            return content.charAt(_lo + index);
+        }
+
+        @Override
         public CharSequence subSequence(int start, int end) {
             FloatingSequence next = csPool.next();
             next.lo = _lo + start;
@@ -289,11 +292,6 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
 
         GenericLexer getParent() {
             return GenericLexer.this;
-        }
-
-        @Override
-        public char charAt(int index) {
-            return content.charAt(_lo + index);
         }
     }
 

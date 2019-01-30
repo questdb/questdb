@@ -91,9 +91,9 @@ class SqlOptimiser {
     private final ObjectPool<QueryColumn> queryColumnPool;
     private final FunctionParser functionParser;
     private final ColumnPrefixEraser columnPrefixEraser = new ColumnPrefixEraser();
+    private final Path path;
     private int defaultAliasCount = 0;
     private ObjList<JoinContext> emittedJoinClauses;
-    private final Path path;
 
     SqlOptimiser(
             CairoConfiguration configuration,
@@ -137,7 +137,23 @@ class SqlOptimiser {
     private void addColumnToTranslatingModel(QueryColumn column, QueryModel translatingModel, QueryModel validatingModel) throws SqlException {
         if (validatingModel != null) {
             CharSequence refColumn = column.getAst().token;
-            getIndexOfTableForColumn(validatingModel, refColumn, Chars.indexOf(refColumn, '.'), column.getAst().position);
+            final int dot = Chars.indexOf(refColumn, '.');
+            getIndexOfTableForColumn(validatingModel, refColumn, dot, column.getAst().position);
+            // when we have only one model, e.g. this is not a join
+            // and there is table alias to lookup column
+            // we will remove this alias as unneeded
+            if (dot != -1 && validatingModel.getJoinModels().size() == 1) {
+                ExpressionNode base = column.getAst();
+                column.of(
+                        column.getAlias(),
+                        sqlNodePool.next().of(
+                                base.type,
+                                base.token.subSequence(dot + 1, base.token.length()),
+                                base.precedence,
+                                base.position
+                        )
+                );
+            }
         }
         translatingModel.addColumn(column);
     }

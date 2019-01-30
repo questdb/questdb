@@ -929,12 +929,13 @@ public class SqlCodeGenerator {
             timestampIndex = metadata.getColumnIndex(timestamp.token);
         }
         for (int i = 0; i < selectColumnCount; i++) {
-            int index = metadata.getColumnIndexQuiet(model.getColumns().getQuick(i).getAst().token);
-            assert index > -1 : "wtf? " + model.getColumns().getQuick(i).getAst().token;
+            final QueryColumn queryColumn = model.getColumns().getQuick(i);
+            int index = metadata.getColumnIndexQuiet(queryColumn.getAst().token);
+            assert index > -1 : "wtf? " + queryColumn.getAst().token;
             columnCrossIndex.add(index);
 
             selectMetadata.add(new TableColumnMetadata(
-                    Chars.toString(model.getColumns().getQuick(i).getName()),
+                    Chars.toString(queryColumn.getName()),
                     metadata.getColumnType(index),
                     metadata.isColumnIndexed(index),
                     metadata.getIndexValueBlockCapacity(index)
