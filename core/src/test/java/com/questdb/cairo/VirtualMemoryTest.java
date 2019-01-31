@@ -66,6 +66,7 @@ public class VirtualMemoryTest {
         try (VirtualMemory mem = new VirtualMemory(32)) {
             TestRecord.ArrayBinarySequence seq = new TestRecord.ArrayBinarySequence();
             int N = 33;
+            int O = 10;
 
             seq.of(rnd.nextBytes(N));
             mem.putBin(seq);
@@ -74,6 +75,38 @@ public class VirtualMemoryTest {
             Assert.assertNotNull(actual);
 
             TestUtils.assertEquals(seq, actual, N);
+
+            long buffer = Unsafe.malloc(1024);
+            try {
+                // supply length of our buffer
+                // blob content would be shorter
+                Unsafe.getUnsafe().setMemory(buffer, 1024, (byte) 5);
+                actual.copyTo(buffer, 0, 1024);
+
+                for (int i = 0; i < N; i++) {
+                    Assert.assertEquals(seq.byteAt(i), Unsafe.getUnsafe().getByte(buffer + i));
+                }
+
+                // rest of the buffer must not be overwritten
+                for (int i = N; i < 1024; i++) {
+                    Assert.assertEquals(5, Unsafe.getUnsafe().getByte(buffer + i));
+                }
+
+                // copy from middle
+                Unsafe.getUnsafe().setMemory(buffer, 1024, (byte) 5);
+                actual.copyTo(buffer, O, 1024);
+
+                for (int i = 0; i < N - O; i++) {
+                    Assert.assertEquals(seq.byteAt(i + O), Unsafe.getUnsafe().getByte(buffer + i));
+                }
+
+                // rest of the buffer must not be overwritten
+                for (int i = N - O; i < 1024; i++) {
+                    Assert.assertEquals(5, Unsafe.getUnsafe().getByte(buffer + i));
+                }
+            } finally {
+                Unsafe.free(buffer, 1024);
+            }
         }
     }
 

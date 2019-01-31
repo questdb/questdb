@@ -113,4 +113,12 @@ public final class Misc {
 
         return offset;
     }
+
+    public static <T> void freeObjList(ObjList<T> list) {
+        if (list != null) {
+            for (int i = 0, n = list.size(); i < n; i++) {
+                list.setQuick(i, free(list.getQuick(i)));
+            }
+        }
+    }
 }

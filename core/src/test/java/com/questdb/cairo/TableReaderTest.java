@@ -1426,44 +1426,6 @@ public class TableReaderTest extends AbstractCairoTest {
         }
     };
 
-    private static long allocBlob() {
-        return Unsafe.malloc(blobLen);
-    }
-
-    private static void freeBlob(long blob) {
-        Unsafe.free(blob, blobLen);
-    }
-
-    private static void assertBin(Record r, Rnd exp, long blob, int index) {
-        if (exp.nextBoolean()) {
-            exp.nextChars(blob, blobLen / 2);
-            Assert.assertEquals(blobLen, r.getBinLen(index));
-            BinarySequence sq = r.getBin(index);
-            for (int l = 0; l < blobLen; l++) {
-                byte b = sq.byteAt(l);
-                boolean result = Unsafe.getUnsafe().getByte(blob + l) != b;
-                if (result) {
-                    Assert.fail("Error at [" + l + "]: expected=" + Unsafe.getUnsafe().getByte(blob + l) + ", actual=" + b);
-                }
-            }
-        } else {
-            Assert.assertEquals(TableUtils.NULL_LEN, r.getBinLen(index));
-        }
-    }
-
-    private static void assertStrColumn(CharSequence expected, Record r, int index) {
-        TestUtils.assertEquals(expected, r.getStr(index));
-        TestUtils.assertEquals(expected, r.getStrB(index));
-        Assert.assertNotSame(r.getStr(index), r.getStrB(index));
-        Assert.assertEquals(expected.length(), r.getStrLen(index));
-    }
-
-    private static void assertNullStr(Record r, int index) {
-        Assert.assertNull(r.getStr(index));
-        Assert.assertNull(r.getStrB(index));
-        Assert.assertEquals(TableUtils.NULL_LEN, r.getStrLen(index));
-    }
-
     @Test
     public void testCloseColumnNonPartitioned1() throws Exception {
         testCloseColumn(PartitionBy.NONE, 2000, 6000L, "bin", BATCH1_ASSERTER_NULL_BIN);
@@ -1791,17 +1753,17 @@ public class TableReaderTest extends AbstractCairoTest {
             boolean called = false;
 
             @Override
-            public boolean wasCalled() {
-                return called;
-            }
-
-            @Override
             public boolean exists(LPSZ path) {
                 if (!recovered && Chars.endsWith(path, TableUtils.ARCHIVE_FILE_NAME)) {
                     called = true;
                     return false;
                 }
                 return super.exists(path);
+            }
+
+            @Override
+            public boolean wasCalled() {
+                return called;
             }
         };
         testSwitchPartitionFail(ff);
@@ -1814,17 +1776,17 @@ public class TableReaderTest extends AbstractCairoTest {
             boolean called = false;
 
             @Override
-            public boolean wasCalled() {
-                return called;
-            }
-
-            @Override
             public long openRO(LPSZ name) {
                 if (!recovered && Chars.endsWith(name, TableUtils.ARCHIVE_FILE_NAME)) {
                     called = true;
                     return -1L;
                 }
                 return super.openRO(name);
+            }
+
+            @Override
+            public boolean wasCalled() {
+                return called;
             }
         };
         testSwitchPartitionFail(ff);
@@ -1836,11 +1798,6 @@ public class TableReaderTest extends AbstractCairoTest {
 
             boolean called = false;
             long fd = -1L;
-
-            @Override
-            public boolean wasCalled() {
-                return called;
-            }
 
             @Override
             public long openRO(LPSZ name) {
@@ -1858,6 +1815,11 @@ public class TableReaderTest extends AbstractCairoTest {
                     return 0;
                 }
                 return super.read(fd, buf, len, offset);
+            }
+
+            @Override
+            public boolean wasCalled() {
+                return called;
             }
         };
         testSwitchPartitionFail(ff);
@@ -2007,6 +1969,83 @@ public class TableReaderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testReloadWithTrailingNullString() throws NumericException {
+        final String tableName = "reload_test";
+        try (TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY)) {
+            model.col("str", ColumnType.STRING);
+            model.timestamp();
+            CairoTestUtils.create(model);
+        }
+
+        try (TableReader reader = new TableReader(configuration, tableName)) {
+
+            Assert.assertFalse(reader.reload());
+
+            final int N = 100;
+            final int M = 1_000_000;
+            final Rnd rnd = new Rnd();
+
+            try (TableWriter writer = new TableWriter(configuration, tableName)) {
+                long timestamp = DateFormatUtils.parseTimestamp("2019-01-31T10:00:00.000001Z");
+                long timestampStep = 500;
+
+                for (int i = 0; i < N; i++) {
+                    TableWriter.Row row = writer.newRow(timestamp);
+                    row.putStr(0, rnd.nextChars(7));
+                    row.append();
+                    timestamp += timestampStep;
+                }
+
+                writer.commit();
+
+                Assert.assertTrue(reader.reload());
+
+                rnd.reset();
+                RecordCursor cursor = reader.getCursor();
+                final Record record = cursor.getRecord();
+
+                while (cursor.hasNext()) {
+                    TestUtils.assertEquals(rnd.nextChars(7), record.getStr(0));
+                }
+
+                // rnd is aligned to where we left our writer, just continue
+                // from this point to append and grow files
+
+                for (int i = 0; i < M; i++) {
+                    TableWriter.Row row = writer.newRow(timestamp);
+                    row.putStr(0, rnd.nextChars(7));
+                    row.append();
+                    timestamp += timestampStep;
+                }
+
+                // and add the NULL at the end, which could cause reload issue
+                TableWriter.Row row = writer.newRow(timestamp);
+                row.putStr(0, null);
+                row.append();
+
+                writer.commit();
+
+                // this reload must be able to grow its files following file expansion by writer
+                Assert.assertTrue(reader.reload());
+
+                int count = 0;
+                cursor = reader.getCursor();
+                rnd.reset();
+                while (cursor.hasNext()) {
+                    if (count == N + M) {
+                        Assert.assertNull(record.getStr(0));
+                    } else {
+                        TestUtils.assertEquals(rnd.nextChars(7), record.getStr(0));
+                    }
+                    count++;
+                }
+
+                Assert.assertEquals(N + M + 1, count);
+            }
+        }
+    }
+
+    @Test
     public void testReloadWithoutData() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (TableModel model = new TableModel(configuration, "tab", PartitionBy.DAY).col("x", ColumnType.SYMBOL).col("y", ColumnType.LONG)) {
@@ -2104,11 +2143,6 @@ public class TableReaderTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testRemoveFirstPartitionByDayTwo() throws Exception {
-        testRemovePartition(PartitionBy.DAY, "2017-12-11", 0, current -> Dates.addDays(Dates.floorDD(current), 2));
-    }
-
-    @Test
     public void testRemoveFirstPartitionByDayReload() throws Exception {
         testRemovePartitionReload(PartitionBy.DAY, "2017-12-11", 0, current -> Dates.addDays(Dates.floorDD(current), 1));
     }
@@ -2119,13 +2153,13 @@ public class TableReaderTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testRemoveFirstPartitionByMonth() throws Exception {
-        testRemovePartition(PartitionBy.MONTH, "2017-12", 0, current -> Dates.addMonths(Dates.floorMM(current), 1));
+    public void testRemoveFirstPartitionByDayTwo() throws Exception {
+        testRemovePartition(PartitionBy.DAY, "2017-12-11", 0, current -> Dates.addDays(Dates.floorDD(current), 2));
     }
 
     @Test
-    public void testRemoveFirstPartitionByMonthTwo() throws Exception {
-        testRemovePartition(PartitionBy.MONTH, "2017-12", 0, current -> Dates.addMonths(Dates.floorMM(current), 2));
+    public void testRemoveFirstPartitionByMonth() throws Exception {
+        testRemovePartition(PartitionBy.MONTH, "2017-12", 0, current -> Dates.addMonths(Dates.floorMM(current), 1));
     }
 
     @Test
@@ -2139,13 +2173,13 @@ public class TableReaderTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testRemoveFirstPartitionByYear() throws Exception {
-        testRemovePartition(PartitionBy.YEAR, "2017", 0, current -> Dates.addYear(Dates.floorYYYY(current), 1));
+    public void testRemoveFirstPartitionByMonthTwo() throws Exception {
+        testRemovePartition(PartitionBy.MONTH, "2017-12", 0, current -> Dates.addMonths(Dates.floorMM(current), 2));
     }
 
     @Test
-    public void testRemoveFirstPartitionByYearTwo() throws Exception {
-        testRemovePartition(PartitionBy.YEAR, "2017", 0, current -> Dates.addYear(Dates.floorYYYY(current), 2));
+    public void testRemoveFirstPartitionByYear() throws Exception {
+        testRemovePartition(PartitionBy.YEAR, "2017", 0, current -> Dates.addYear(Dates.floorYYYY(current), 1));
     }
 
     @Test
@@ -2156,6 +2190,11 @@ public class TableReaderTest extends AbstractCairoTest {
     @Test
     public void testRemoveFirstPartitionByYearReloadTwo() throws Exception {
         testRemovePartitionReload(PartitionBy.YEAR, "2017", 0, current -> Dates.addYear(Dates.floorYYYY(current), 2));
+    }
+
+    @Test
+    public void testRemoveFirstPartitionByYearTwo() throws Exception {
+        testRemovePartition(PartitionBy.YEAR, "2017", 0, current -> Dates.addYear(Dates.floorYYYY(current), 2));
     }
 
     @Test
@@ -2934,6 +2973,44 @@ public class TableReaderTest extends AbstractCairoTest {
         });
     }
 
+    private static long allocBlob() {
+        return Unsafe.malloc(blobLen);
+    }
+
+    private static void freeBlob(long blob) {
+        Unsafe.free(blob, blobLen);
+    }
+
+    private static void assertBin(Record r, Rnd exp, long blob, int index) {
+        if (exp.nextBoolean()) {
+            exp.nextChars(blob, blobLen / 2);
+            Assert.assertEquals(blobLen, r.getBinLen(index));
+            BinarySequence sq = r.getBin(index);
+            for (int l = 0; l < blobLen; l++) {
+                byte b = sq.byteAt(l);
+                boolean result = Unsafe.getUnsafe().getByte(blob + l) != b;
+                if (result) {
+                    Assert.fail("Error at [" + l + "]: expected=" + Unsafe.getUnsafe().getByte(blob + l) + ", actual=" + b);
+                }
+            }
+        } else {
+            Assert.assertEquals(TableUtils.NULL_LEN, r.getBinLen(index));
+        }
+    }
+
+    private static void assertStrColumn(CharSequence expected, Record r, int index) {
+        TestUtils.assertEquals(expected, r.getStr(index));
+        TestUtils.assertEquals(expected, r.getStrB(index));
+        Assert.assertNotSame(r.getStr(index), r.getStrB(index));
+        Assert.assertEquals(expected.length(), r.getStrLen(index));
+    }
+
+    private static void assertNullStr(Record r, int index) {
+        Assert.assertNull(r.getStr(index));
+        Assert.assertNull(r.getStrB(index));
+        Assert.assertEquals(TableUtils.NULL_LEN, r.getStrLen(index));
+    }
+
     private void appendTwoSymbols(TableWriter writer, Rnd rnd) {
         for (int i = 0; i < 1000; i++) {
             TableWriter.Row row = writer.newRow(0);
@@ -3209,11 +3286,6 @@ public class TableReaderTest extends AbstractCairoTest {
             }
 
             @Override
-            public boolean wasCalled() {
-                return called;
-            }
-
-            @Override
             public long openRO(LPSZ name) {
                 long fd = super.openRO(name);
                 if (Chars.endsWith(name, dcol) || Chars.endsWith(name, icol)) {
@@ -3221,6 +3293,11 @@ public class TableReaderTest extends AbstractCairoTest {
                     called = true;
                 }
                 return fd;
+            }
+
+            @Override
+            public boolean wasCalled() {
+                return called;
             }
 
 

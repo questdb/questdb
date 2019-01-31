@@ -51,7 +51,7 @@ public class Rnd {
     }
 
     public byte[] nextBytes(int len) {
-        byte bytes[] = new byte[len];
+        byte[] bytes = new byte[len];
         for (int i = 0; i < len; i++) {
             bytes[i] = (byte) (nextPositiveInt() % 25 + 66);
         }
@@ -121,7 +121,7 @@ public class Rnd {
     }
 
     public String nextString(int len) {
-        char chars[] = new char[len];
+        char[] chars = new char[len];
         for (int i = 0; i < len; i++) {
             chars[i] = (char) (nextPositiveInt() % 25 + 66);
         }
