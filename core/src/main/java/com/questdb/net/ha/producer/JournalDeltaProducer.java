@@ -5,7 +5,7 @@
  *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
  *   \__\_\\__,_|\___||___/\__|____/|____/
  *
- * Copyright (C) 2014-2018 Appsicle
+ * Copyright (C) 2014-2019 Appsicle
  *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU Affero General Public License, version 3,
@@ -76,7 +76,7 @@ public class JournalDeltaProducer implements ChannelProducer {
                 LOG.info().$("Cannot sync ").$(journal.getName()).$(". Client TXN PIN is incorrect").$(" {txn:").$(txn).$(",pin:").$(txPin).$('}').$();
                 journalServerState.setTxn(-1);
             }
-        } else if (thisTxn > txn) {
+        } else {
             Tx tx = journal.find(txn, txPin);
             if (tx == null) {
                 // unknown txn

@@ -5,7 +5,7 @@
  *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
  *   \__\_\\__,_|\___||___/\__|____/|____/
  *
- * Copyright (C) 2014-2018 Appsicle
+ * Copyright (C) 2014-2019 Appsicle
  *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU Affero General Public License, version 3,
@@ -46,20 +46,18 @@ public class FixedColumn extends AbstractColumn {
         }
 
         long res = bsearchAny(val, type, lo, hi);
-        switch (type) {
-            case NEWER_OR_SAME:
-                while (res > lo) {
-                    if (getLong(--res) < val) {
-                        return res + 1;
-                    }
+        if (type == BSearchType.NEWER_OR_SAME) {
+            while (res > lo) {
+                if (getLong(--res) < val) {
+                    return res + 1;
                 }
-                break;
-            default:
-                while (res < hi) {
-                    if (getLong(++res) > val) {
-                        return res - 1;
-                    }
+            }
+        } else {
+            while (res < hi) {
+                if (getLong(++res) > val) {
+                    return res - 1;
                 }
+            }
         }
         return res;
     }
@@ -161,12 +159,10 @@ public class FixedColumn extends AbstractColumn {
             }
         }
 
-        switch (type) {
-            case NEWER_OR_SAME:
-                return val < getLong(_lo) ? _lo : -2;
-            default:
-                return val > getLong(_hi) ? _hi : -1;
+        if (type == BSearchType.NEWER_OR_SAME) {
+            return val < getLong(_lo) ? _lo : -2;
         }
+        return val > getLong(_hi) ? _hi : -1;
     }
 
     private long getAddress() {

@@ -5,7 +5,7 @@
  *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
  *   \__\_\\__,_|\___||___/\__|____/|____/
  *
- * Copyright (C) 2014-2018 Appsicle
+ * Copyright (C) 2014-2019 Appsicle
  *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU Affero General Public License, version 3,
@@ -331,24 +331,18 @@ public class CopyHelperCompiler {
                     break;
                 case ColumnType.SYMBOL:
                     asm.invokeInterface(rGetSym, 1);
-                    switch (to.getColumnQuick(i).getType()) {
-                        case ColumnType.STRING:
-                            asm.invokeInterface(wPutStr, 2);
-                            break;
-                        default:
-                            asm.invokeInterface(wPutSym, 2);
-                            break;
+                    if (to.getColumnQuick(i).getType() == ColumnType.STRING) {
+                        asm.invokeInterface(wPutStr, 2);
+                    } else {
+                        asm.invokeInterface(wPutSym, 2);
                     }
                     break;
                 case ColumnType.STRING:
                     asm.invokeInterface(rGetStr, 1);
-                    switch (to.getColumnQuick(i).getType()) {
-                        case ColumnType.SYMBOL:
-                            asm.invokeInterface(wPutSym, 2);
-                            break;
-                        default:
-                            asm.invokeInterface(wPutStr, 2);
-                            break;
+                    if (to.getColumnQuick(i).getType() == ColumnType.SYMBOL) {
+                        asm.invokeInterface(wPutSym, 2);
+                    } else {
+                        asm.invokeInterface(wPutStr, 2);
                     }
                     break;
                 case ColumnType.BINARY:

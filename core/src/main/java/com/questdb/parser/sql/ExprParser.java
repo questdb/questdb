@@ -5,7 +5,7 @@
  *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
  *   \__\_\\__,_|\___||___/\__|____/|____/
  *
- * Copyright (C) 2014-2018 Appsicle
+ * Copyright (C) 2014-2019 Appsicle
  *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU Affero General Public License, version 3,
@@ -195,22 +195,18 @@ public class ExprParser {
                         int operatorType = op.type;
 
 
-                        switch (thisChar) {
-                            case '-':
-                                switch (prevBranch) {
-                                    case BRANCH_OPERATOR:
-                                    case BRANCH_LEFT_BRACE:
-                                    case BRANCH_COMMA:
-                                    case BRANCH_NONE:
-                                        // we have unary minus
-                                        operatorType = ExprOperator.UNARY;
-                                        break;
-                                    default:
-                                        break;
-                                }
-                                break;
-                            default:
-                                break;
+                        if (thisChar == '-') {
+                            switch (prevBranch) {
+                                case BRANCH_OPERATOR:
+                                case BRANCH_LEFT_BRACE:
+                                case BRANCH_COMMA:
+                                case BRANCH_NONE:
+                                    // we have unary minus
+                                    operatorType = ExprOperator.UNARY;
+                                    break;
+                                default:
+                                    break;
+                            }
                         }
 
                         ExprNode other;
@@ -232,13 +228,10 @@ public class ExprParser {
                                 op.precedence,
                                 lexer.position()
                         );
-                        switch (operatorType) {
-                            case ExprOperator.UNARY:
-                                node.paramCount = 1;
-                                break;
-                            default:
-                                node.paramCount = 2;
-                                break;
+                        if (operatorType == ExprOperator.UNARY) {
+                            node.paramCount = 1;
+                        } else {
+                            node.paramCount = 2;
                         }
                         opStack.push(node);
                     } else if (!nonLiteralBranches.contains(thisBranch)) {

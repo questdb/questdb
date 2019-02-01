@@ -5,7 +5,7 @@
  *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
  *   \__\_\\__,_|\___||___/\__|____/|____/
  *
- * Copyright (C) 2014-2018 Appsicle
+ * Copyright (C) 2014-2019 Appsicle
  *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU Affero General Public License, version 3,
@@ -461,19 +461,16 @@ public class ImportHandler extends AbstractMultipartHandler {
         h.json = Chars.equalsNc("json", context.request.getUrlParam("fmt"));
         ChunkedResponse r = context.chunkedResponse();
 
-        switch (h.state) {
-            case ImportHandlerContext.STATE_OK:
-                if (h.json) {
-                    r.status(200, CONTENT_TYPE_JSON);
-                } else {
-                    r.status(200, CONTENT_TYPE_TEXT);
-                }
-                r.sendHeader();
-                resume(context);
-                break;
-            default:
-                sendError(context, h.stateMessage);
-                break;
+        if (h.state == ImportHandlerContext.STATE_OK) {
+            if (h.json) {
+                r.status(200, CONTENT_TYPE_JSON);
+            } else {
+                r.status(200, CONTENT_TYPE_TEXT);
+            }
+            r.sendHeader();
+            resume(context);
+        } else {
+            sendError(context, h.stateMessage);
         }
     }
 

@@ -5,7 +5,7 @@
  *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
  *   \__\_\\__,_|\___||___/\__|____/|____/
  *
- * Copyright (C) 2014-2018 Appsicle
+ * Copyright (C) 2014-2019 Appsicle
  *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU Affero General Public License, version 3,
@@ -251,22 +251,18 @@ public class MemoryFile implements Closeable {
 
         try {
             MappedByteBuffer buf;
-            switch (journalMode) {
-                case JournalMode.READ:
-                    // make sure size does not extend beyond actual file size, otherwise
-                    // java would assume we want to write and throw an exception
-                    long sz;
-                    if (actualOffset + ((long) size) > channel.size()) {
-                        sz = channel.size() - actualOffset;
-                    } else {
-                        sz = size;
-                    }
-                    assert sz > 0;
-                    buf = channel.map(FileChannel.MapMode.READ_ONLY, actualOffset, sz);
-                    break;
-                default:
-                    buf = channel.map(FileChannel.MapMode.READ_WRITE, actualOffset, size);
-                    break;
+            if (journalMode == JournalMode.READ) {// make sure size does not extend beyond actual file size, otherwise
+                // java would assume we want to write and throw an exception
+                long sz;
+                if (actualOffset + ((long) size) > channel.size()) {
+                    sz = channel.size() - actualOffset;
+                } else {
+                    sz = size;
+                }
+                assert sz > 0;
+                buf = channel.map(FileChannel.MapMode.READ_ONLY, actualOffset, sz);
+            } else {
+                buf = channel.map(FileChannel.MapMode.READ_WRITE, actualOffset, size);
             }
             buf.order(ByteOrder.LITTLE_ENDIAN);
             return buf;

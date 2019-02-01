@@ -5,7 +5,7 @@
  *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
  *   \__\_\\__,_|\___||___/\__|____/|____/
  *
- * Copyright (C) 2014-2018 Appsicle
+ * Copyright (C) 2014-2019 Appsicle
  *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU Affero General Public License, version 3,
@@ -638,16 +638,13 @@ final class QueryFilterAnalyser {
 
         while (!stack.isEmpty() || node != null) {
             if (node != null) {
-                switch (node.token) {
-                    case "and":
-                        if (!removeAndIntrinsics(translator, model, node.rhs, m)) {
-                            stack.push(node.rhs);
-                        }
-                        node = removeAndIntrinsics(translator, model, node.lhs, m) ? null : node.lhs;
-                        break;
-                    default:
-                        node = stack.poll();
-                        break;
+                if ("and".equals(node.token)) {
+                    if (!removeAndIntrinsics(translator, model, node.rhs, m)) {
+                        stack.push(node.rhs);
+                    }
+                    node = removeAndIntrinsics(translator, model, node.lhs, m) ? null : node.lhs;
+                } else {
+                    node = stack.poll();
                 }
             } else {
                 node = stack.poll();

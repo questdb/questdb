@@ -5,7 +5,7 @@
  *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
  *   \__\_\\__,_|\___||___/\__|____/|____/
  *
- * Copyright (C) 2014-2018 Appsicle
+ * Copyright (C) 2014-2019 Appsicle
  *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU Affero General Public License, version 3,
@@ -141,7 +141,6 @@ public final class ByteBuffers {
         }
     }
 
-    @SuppressWarnings("TryWithIdenticalCatches")
     public static void copyNonBlocking(ByteBuffer from, WritableByteChannel channel, final int retryCount)
             throws DisconnectedChannelException, SlowWritableChannelException {
         int target = from.remaining();
@@ -161,19 +160,16 @@ public final class ByteBuffers {
                 continue;
             }
 
-            switch (result) {
-                case Net.ERETRY:
-                    if (--retriesRemaining < 0) {
-                        throw SlowWritableChannelException.INSTANCE;
-                    }
-                    break;
-                default:
-                    throw DisconnectedChannelException.INSTANCE;
+            if (result == Net.ERETRY) {
+                if (--retriesRemaining < 0) {
+                    throw SlowWritableChannelException.INSTANCE;
+                }
+            } else {
+                throw DisconnectedChannelException.INSTANCE;
             }
         }
     }
 
-    @SuppressWarnings("TryWithIdenticalCatches")
     public static void copyNonBlocking(NetworkChannel channel, ByteBuffer to, final int retryCount)
             throws DisconnectedChannelException, SlowReadableChannelException, EndOfChannelException {
         int r = to.remaining();

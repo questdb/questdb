@@ -5,7 +5,7 @@
  *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
  *   \__\_\\__,_|\___||___/\__|____/|____/
  *
- * Copyright (C) 2014-2018 Appsicle
+ * Copyright (C) 2014-2019 Appsicle
  *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU Affero General Public License, version 3,
@@ -448,17 +448,14 @@ public class QueryModel implements Mutable, ParsedModel, AliasTranslator {
         exprNodeStack.clear();
         while (!exprNodeStack.isEmpty() || n != null) {
             if (n != null) {
-                switch (n.token) {
-                    case "and":
-                        if (n.rhs != null) {
-                            exprNodeStack.push(n.rhs);
-                        }
-                        n = n.lhs;
-                        break;
-                    default:
-                        addParsedWhereNode(n);
-                        n = null;
-                        break;
+                if ("and".equals(n.token)) {
+                    if (n.rhs != null) {
+                        exprNodeStack.push(n.rhs);
+                    }
+                    n = n.lhs;
+                } else {
+                    addParsedWhereNode(n);
+                    n = null;
                 }
             } else {
                 n = exprNodeStack.poll();
@@ -512,12 +509,8 @@ public class QueryModel implements Mutable, ParsedModel, AliasTranslator {
         if (n > 0) {
             for (int i = 0; i < n; i++) {
                 QueryColumn qc = model.getColumns().getQuick(i);
-                switch (qc.getAst().type) {
-                    case ExprNode.LITERAL:
-                        histogram.increment(qc.getName());
-                        break;
-                    default:
-                        break;
+                if (qc.getAst().type == ExprNode.LITERAL) {
+                    histogram.increment(qc.getName());
                 }
             }
         } else if (jmSize > 0) {

@@ -5,7 +5,7 @@
  *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
  *   \__\_\\__,_|\___||___/\__|____/|____/
  *
- * Copyright (C) 2014-2018 Appsicle
+ * Copyright (C) 2014-2019 Appsicle
  *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU Affero General Public License, version 3,
@@ -219,18 +219,16 @@ public abstract class AbstractQueryContext implements Mutable, Closeable {
     private RecordSource executeQuery(ChunkedResponse r, Factory factory) throws ParserException, DisconnectedChannelException, SlowWritableChannelException {
         QueryCompiler compiler = COMPILER.get();
         ParsedModel model = compiler.parse(query);
-        switch (model.getModelType()) {
-            case ParsedModel.QUERY:
-                return compiler.compile(factory, model);
-            default:
-                try {
-                    compiler.execute(factory, model);
-                } catch (JournalException e) {
-                    error().$("Server error executing statement ").$(query).$(e).$();
-                    sendException(r, 0, e.getMessage(), 500);
-                }
-                return null;
+        if (model.getModelType() == ParsedModel.QUERY) {
+            return compiler.compile(factory, model);
         }
+        try {
+            compiler.execute(factory, model);
+        } catch (JournalException e) {
+            error().$("Server error executing statement ").$(query).$(e).$();
+            sendException(r, 0, e.getMessage(), 500);
+        }
+        return null;
     }
 
     protected abstract void header(ChunkedResponse r, int code) throws DisconnectedChannelException, SlowWritableChannelException;

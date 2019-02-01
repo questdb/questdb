@@ -5,7 +5,7 @@
  *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
  *   \__\_\\__,_|\___||___/\__|____/|____/
  *
- * Copyright (C) 2014-2018 Appsicle
+ * Copyright (C) 2014-2019 Appsicle
  *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU Affero General Public License, version 3,
@@ -115,14 +115,12 @@ public final class ImportManager {
             File file = new File(fileName);
             String location = file.getName();
 
-            switch (factory.getConfiguration().exists(location)) {
-                case JournalConfiguration.EXISTS_FOREIGN:
-                    throw new JournalRuntimeException("A foreign file/directory already exists: " + (new File(factory.getConfiguration().getJournalBase(), location)));
-                default:
-                    try (PlainTextStoringParser l = new PlainTextStoringParser(env).of(location, false, false, PlainTextStoringParser.ATOMICITY_RELAXED)) {
-                        analyzeAndParse(file, parser, l, schema, sampleSize, forceHeader);
-                    }
-                    break;
+            if (factory.getConfiguration().exists(location) == JournalConfiguration.EXISTS_FOREIGN) {
+                throw new JournalRuntimeException("A foreign file/directory already exists: " + (new File(factory.getConfiguration().getJournalBase(), location)));
+            } else {
+                try (PlainTextStoringParser l = new PlainTextStoringParser(env).of(location, false, false, PlainTextStoringParser.ATOMICITY_RELAXED)) {
+                    analyzeAndParse(file, parser, l, schema, sampleSize, forceHeader);
+                }
             }
         }
     }

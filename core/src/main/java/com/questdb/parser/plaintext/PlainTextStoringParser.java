@@ -5,7 +5,7 @@
  *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
  *   \__\_\\__,_|\___||___/\__|____/|____/
  *
- * Copyright (C) 2014-2018 Appsicle
+ * Copyright (C) 2014-2019 Appsicle
  *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU Affero General Public License, version 3,
@@ -188,14 +188,13 @@ public class PlainTextStoringParser implements MetadataAwareTextParser, Closeabl
                             break;
                     }
                 } catch (Exception e) {
-                    switch (atomicity) {
-                        case ATOMICITY_STRICT:
-                            LOG.info().$("Error at (").$(line).$(',').$(i).$(')').$();
-                            throw new JournalRuntimeException("Error on line: " + line + ", col: " + i);
-                        default:
-                            errors.increment(i);
-                            LOG.debug().$("Error at (").$(line).$(',').$(i).$(") as ").$(metadata.getQuick(i).importedColumnType).$(": ").$(e.getMessage()).$();
-                            append = false;
+                    if (atomicity == ATOMICITY_STRICT) {
+                        LOG.info().$("Error at (").$(line).$(',').$(i).$(')').$();
+                        throw new JournalRuntimeException("Error on line: " + line + ", col: " + i);
+                    } else {
+                        errors.increment(i);
+                        LOG.debug().$("Error at (").$(line).$(',').$(i).$(") as ").$(metadata.getQuick(i).importedColumnType).$(": ").$(e.getMessage()).$();
+                        append = false;
                     }
                     break;
                 }
@@ -254,13 +253,10 @@ public class PlainTextStoringParser implements MetadataAwareTextParser, Closeabl
             cm.name = im.name.toString();
             cm.type = im.importedColumnType;
 
-            switch (cm.type) {
-                case ColumnType.STRING:
-                    cm.size = cm.avgSize + 4;
-                    break;
-                default:
-                    cm.size = ColumnType.sizeOf(cm.type);
-                    break;
+            if (cm.type == ColumnType.STRING) {
+                cm.size = cm.avgSize + 4;
+            } else {
+                cm.size = ColumnType.sizeOf(cm.type);
             }
             m.add(cm);
         }

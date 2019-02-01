@@ -5,7 +5,7 @@
  *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
  *   \__\_\\__,_|\___||___/\__|____/|____/
  *
- * Copyright (C) 2014-2018 Appsicle
+ * Copyright (C) 2014-2019 Appsicle
  *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU Affero General Public License, version 3,
@@ -73,15 +73,11 @@ public class PluckStrFunction extends AbstractBinaryOperator {
 
     @Override
     public void setArg(int pos, VirtualColumn arg) throws ParserException {
-        switch (pos) {
-            case 0:
-                assertConstant(arg);
-                if (arg.getFlyweightStr(null) == null) {
-                    throw QueryError.$(arg.getPosition(), "null pattern?");
-                }
-                break;
-            default:
-                break;
+        if (pos == 0) {
+            assertConstant(arg);
+            if (arg.getFlyweightStr(null) == null) {
+                throw QueryError.$(arg.getPosition(), "null pattern?");
+            }
         }
         super.setArg(pos, arg);
     }

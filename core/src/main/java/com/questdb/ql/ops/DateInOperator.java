@@ -5,7 +5,7 @@
  *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
  *   \__\_\\__,_|\___||___/\__|____/|____/
  *
- * Copyright (C) 2014-2018 Appsicle
+ * Copyright (C) 2014-2019 Appsicle
  *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU Affero General Public License, version 3,
@@ -71,28 +71,24 @@ public class DateInOperator extends AbstractVirtualColumn implements Function {
 
             assertConstant(arg);
 
-            switch (arg.getType()) {
-                case ColumnType.STRING:
-                    try {
-                        CharSequence cs = arg.getFlyweightStr(null);
+            if (arg.getType() == ColumnType.STRING) {
+                try {
+                    CharSequence cs = arg.getFlyweightStr(null);
 
-                        if (cs == null) {
-                            throw QueryError.$(arg.getPosition(), "Cannot be null");
-                        }
-
-                        if (pos == 1) {
-                            lo = DateFormatUtils.parseDateTime(cs) - 1;
-                        } else {
-                            hi = DateFormatUtils.parseDateTime(cs) + 1;
-                        }
-                    } catch (NumericException e) {
-                        throw QueryError.$(arg.getPosition(), "Not a date");
+                    if (cs == null) {
+                        throw QueryError.$(arg.getPosition(), "Cannot be null");
                     }
 
-                    break;
-                default:
-                    typeError(arg.getPosition(), ColumnType.STRING);
-                    break;
+                    if (pos == 1) {
+                        lo = DateFormatUtils.parseDateTime(cs) - 1;
+                    } else {
+                        hi = DateFormatUtils.parseDateTime(cs) + 1;
+                    }
+                } catch (NumericException e) {
+                    throw QueryError.$(arg.getPosition(), "Not a date");
+                }
+            } else {
+                typeError(arg.getPosition(), ColumnType.STRING);
             }
         }
     }
