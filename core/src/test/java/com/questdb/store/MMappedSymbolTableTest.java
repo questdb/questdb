@@ -45,7 +45,7 @@ public class MMappedSymbolTableTest extends AbstractTest {
 
     @Test
     public void testCachePreLoad() throws Exception {
-        String data[] = createData();
+        String[] data = createData();
         createTestTable(data);
         // check that values match keys after cache heat up
         try (MMappedSymbolTable tab = getReader().preLoad()) {
@@ -58,7 +58,7 @@ public class MMappedSymbolTableTest extends AbstractTest {
     @Test
     public void testKeyValueMatch() throws Exception {
 
-        String data[] = createData();
+        String[] data = createData();
         createTestTable(data);
 
         // check that keys match values
@@ -81,7 +81,7 @@ public class MMappedSymbolTableTest extends AbstractTest {
 
     @Test
     public void testNullValues() throws Exception {
-        String data[] = {null, null};
+        String[] data = {null, null};
         createTestTable(data);
 
         MMappedSymbolTable tab = getReader();
@@ -101,7 +101,7 @@ public class MMappedSymbolTableTest extends AbstractTest {
 
     @Test
     public void testReload() throws Exception {
-        String data[] = createData();
+        String[] data = createData();
         createTestTable(data);
 
         // check that keys match values
@@ -114,7 +114,7 @@ public class MMappedSymbolTableTest extends AbstractTest {
             }
 
             int LEN2 = 50;
-            String data2[] = new String[LEN2];
+            String[] data2 = new String[LEN2];
             for (int i = 0; i < data2.length; i++) {
                 data2[i] = "ABC" + i;
             }
@@ -137,8 +137,8 @@ public class MMappedSymbolTableTest extends AbstractTest {
 
     @Test
     public void testRepeatedValues() throws Exception {
-        String data[] = {"VAL1", null, "VAL2", "", "VAL2", "", null, "VAL1", "VAL3"};
-        int expectedKeys[] = {0, -1, 1, 2, 1, 2, -1, 0, 3};
+        String[] data = {"VAL1", null, "VAL2", "", "VAL2", "", null, "VAL1", "VAL3"};
+        int[] expectedKeys = {0, -1, 1, 2, 1, 2, -1, 0, 3};
 
         createTestTable(data);
 
@@ -151,7 +151,7 @@ public class MMappedSymbolTableTest extends AbstractTest {
 
     @Test
     public void testTruncate() throws Exception {
-        String data[] = createData();
+        String[] data = createData();
         createTestTable(data);
 
         try (MMappedSymbolTable tab = getWriter()) {
@@ -165,7 +165,7 @@ public class MMappedSymbolTableTest extends AbstractTest {
 
     @Test
     public void testValueIterator() throws Exception {
-        String data[] = createData();
+        String[] data = createData();
         createTestTable(data);
 
         try (MMappedSymbolTable tab = getReader()) {
@@ -177,7 +177,7 @@ public class MMappedSymbolTableTest extends AbstractTest {
 
     @Test
     public void testValueKeyMatch() throws Exception {
-        String data[] = createData();
+        String[] data = createData();
         createTestTable(data);
 
         // check that values match keys
@@ -189,7 +189,7 @@ public class MMappedSymbolTableTest extends AbstractTest {
     }
 
     private String[] createData() {
-        String data[] = new String[DATA_SIZE];
+        String[] data = new String[DATA_SIZE];
         {
             for (int i = 0; i < data.length; i++) {
                 data[i] = "TEST" + i;
@@ -198,7 +198,7 @@ public class MMappedSymbolTableTest extends AbstractTest {
         return data;
     }
 
-    private void createTestTable(String data[]) throws JournalException {
+    private void createTestTable(String[] data) throws JournalException {
         if (tab == null) {
             tab = new MMappedSymbolTable(DATA_SIZE, 256, 1, getFactory().getConfiguration().getJournalBase(), "test", JournalMode.APPEND, 0, 0, false, false);
         }

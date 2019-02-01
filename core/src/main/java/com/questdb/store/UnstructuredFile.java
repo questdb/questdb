@@ -100,7 +100,7 @@ public class UnstructuredFile extends MemoryFile {
             return null;
         } else {
             long address = nextAddress(len * 2);
-            char c[] = new char[len];
+            char[] c = new char[len];
             for (int i = 0; i < len; i++) {
                 c[i] = Unsafe.getUnsafe().getChar(address);
                 address += 2;

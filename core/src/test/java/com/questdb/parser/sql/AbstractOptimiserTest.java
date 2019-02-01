@@ -151,7 +151,7 @@ public abstract class AbstractOptimiserTest {
                         CharSequence csB = r.getFlyweightStrB(columnIndex);
                         TestUtils.assertEquals(s, csB);
                         Assert.assertEquals(len, s.length());
-                        Assert.assertFalse(s == csB);
+                        Assert.assertNotSame(s, csB);
                     } else {
                         Assert.assertEquals(-1, len);
                         Assert.assertNull(r.getFlyweightStr(columnIndex));

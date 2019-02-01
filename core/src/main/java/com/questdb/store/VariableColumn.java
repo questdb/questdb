@@ -44,7 +44,7 @@ public class VariableColumn extends AbstractColumn {
     private final BinaryInputStream binIn = new BinaryInputStream();
     private final DirectCharSequence csA = new DirectCharSequence();
     private final DirectCharSequence csB = new DirectCharSequence();
-    private char buffer[] = new char[32];
+    private char[] buffer = new char[32];
     private byte[] streamBuf;
 
     public VariableColumn(MemoryFile dataFile, MemoryFile indexFile) {

@@ -99,7 +99,7 @@ public class IntPriorityQueue {
     }
 
     private void resize() {
-        int tmp[] = new int[buffer.length * 2];
+        int[] tmp = new int[buffer.length * 2];
         System.arraycopy(buffer, 0, tmp, 0, buffer.length);
         buffer = tmp;
     }

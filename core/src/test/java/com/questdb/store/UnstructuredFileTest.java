@@ -39,7 +39,7 @@ public class UnstructuredFileTest {
         Rnd rnd = new Rnd();
         UnstructuredFile hb = new UnstructuredFile(temp.newFile(), 16, JournalMode.APPEND);
 
-        int vals[] = new int[100];
+        int[] vals = new int[100];
 
         long pos = hb.getPos();
 
@@ -67,7 +67,7 @@ public class UnstructuredFileTest {
         Rnd rnd = new Rnd();
         UnstructuredFile hb = new UnstructuredFile(temp.newFile(), 16, JournalMode.APPEND);
 
-        long vals[] = new long[100];
+        long[] vals = new long[100];
 
         long pos = hb.getPos();
 

@@ -34,7 +34,7 @@ import java.util.Arrays;
 
 class SelectedColumnsMetadata extends AbstractRecordMetadata {
     private final RecordMetadata delegate;
-    private final RecordColumnMetadata columnMetadata[];
+    private final RecordColumnMetadata[] columnMetadata;
     private final CharSequenceIntHashMap nameIndex;
     private int timestampIndex = -1;
 

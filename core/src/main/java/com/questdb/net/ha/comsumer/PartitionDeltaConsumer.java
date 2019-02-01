@@ -42,7 +42,7 @@ public class PartitionDeltaConsumer extends ChannelConsumerGroup {
     }
 
     private static ChannelConsumer[] getColumnConsumers(Partition partition) {
-        ChannelConsumer consumers[] = new ChannelConsumer[partition.getJournal().getMetadata().getColumnCount()];
+        ChannelConsumer[] consumers = new ChannelConsumer[partition.getJournal().getMetadata().getColumnCount()];
         for (int i = 0; i < consumers.length; i++) {
             AbstractColumn column = partition.getAbstractColumn(i);
             if (column instanceof VariableColumn) {

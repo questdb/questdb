@@ -26,7 +26,7 @@ package com.questdb.ql.map;
 import com.questdb.std.Unsafe;
 
 public final class DirectMapValues {
-    private final int valueOffsets[];
+    private final int[] valueOffsets;
     private long address;
     private boolean _new;
 

@@ -33,7 +33,7 @@ import com.questdb.store.RecordMetadata;
 import java.io.OutputStream;
 
 public class SelectedColumnsRecord implements Record {
-    private final int reindex[];
+    private final int[] reindex;
     private Record base;
 
     protected SelectedColumnsRecord(int[] reindex) {

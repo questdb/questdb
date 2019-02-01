@@ -87,7 +87,7 @@ public class Files {
     public static String readStringFromFile(File file) throws JournalException {
         try {
             try (FileInputStream fis = new FileInputStream(file)) {
-                byte buffer[]
+                byte[] buffer
                         = new byte[(int) fis.getChannel().size()];
                 int totalRead = 0;
                 int read;

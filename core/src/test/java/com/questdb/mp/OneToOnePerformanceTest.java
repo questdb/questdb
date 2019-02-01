@@ -51,7 +51,7 @@ public class OneToOnePerformanceTest {
         CountDownLatch latch = new CountDownLatch(workerCount);
 
         // create consumers that are threads at the same time
-        BusyConsumer consumers[] = new BusyConsumer[workerCount];
+        BusyConsumer[] consumers = new BusyConsumer[workerCount];
         for (int i = 0; i < workerCount; i++) {
             consumers[i] = new BusyConsumer(subSeq, queue, barrier, latch);
         }

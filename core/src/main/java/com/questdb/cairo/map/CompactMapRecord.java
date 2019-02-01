@@ -33,13 +33,13 @@ import com.questdb.std.Unsafe;
 class CompactMapRecord implements MapRecord {
 
     private final VirtualMemory entries;
-    private final long columnOffsets[];
+    private final long[] columnOffsets;
     private final CompactMapValue value;
     private long offset;
     private RecordCursor symbolTableResolver;
     private IntList symbolTableIndex;
 
-    public CompactMapRecord(VirtualMemory entries, long columnOffsets[], CompactMapValue value) {
+    public CompactMapRecord(VirtualMemory entries, long[] columnOffsets, CompactMapValue value) {
         this.entries = entries;
         this.columnOffsets = columnOffsets;
         this.value = value;

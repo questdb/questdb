@@ -66,11 +66,10 @@ public class QueryHeadBuilderImpl<T> implements QueryHeadBuilder<T> {
         zone2Keys.clear(symbolKeys.size());
         zone1Keys.addAll(symbolKeys);
 
-        //noinspection ConstantConditions
         return journal.iteratePartitionsDesc(
                 new UnorderedResultSetBuilder<T>(interval) {
-                    private final KVIndex filterKVIndexes[] = new KVIndex[filterSymbolKeys.size()];
-                    private final LongList filterSymbolRows[] = new LongList[filterSymbolKeys.size()];
+                    private final KVIndex[] filterKVIndexes = new KVIndex[filterSymbolKeys.size()];
+                    private final LongList[] filterSymbolRows = new LongList[filterSymbolKeys.size()];
                     private IntList keys = zone1Keys;
                     private IntList remainingKeys = zone2Keys;
 

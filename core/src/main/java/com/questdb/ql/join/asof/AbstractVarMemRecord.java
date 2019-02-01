@@ -31,13 +31,13 @@ import com.questdb.store.RecordMetadata;
 
 abstract class AbstractVarMemRecord extends AbstractMemRecord {
 
-    private final DirectCharSequence csA[];
-    private final DirectCharSequence csB[];
+    private final DirectCharSequence[] csA;
+    private final DirectCharSequence[] csB;
 
     public AbstractVarMemRecord(RecordMetadata metadata) {
         int n = metadata.getColumnCount();
-        DirectCharSequence csA[] = null;
-        DirectCharSequence csB[] = null;
+        DirectCharSequence[] csA = null;
+        DirectCharSequence[] csB = null;
 
 
         for (int i = 0; i < n; i++) {

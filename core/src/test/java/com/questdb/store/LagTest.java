@@ -129,7 +129,7 @@ public class LagTest extends AbstractTest {
             data11.add(new Quote().setSym("before-S6").setTimestamp(Dates.toMillis(2013, 2, 10, 9, 45)));
             rw.mergeAppend(data11);
 
-            String expected[] = {"S1", "S2", "S3", "S4", "after-S4", "S5", "near-S5", "before-S6", "S6", "after-S6", "S7"
+            String[] expected = {"S1", "S2", "S3", "S4", "after-S4", "S5", "near-S5", "before-S6", "S6", "after-S6", "S7"
                     , "S8", "after-S8", "S9", "after-S9", "before-S10", "S10", "near-S10", "after-S10"};
             int i = 0;
 

@@ -26,7 +26,7 @@ package com.questdb.cairo.map;
 import com.questdb.std.Unsafe;
 
 final class FastMapValue implements MapValue {
-    private final int valueOffsets[];
+    private final int[] valueOffsets;
     private long address;
     private boolean _new;
     private FastMapRecord record; // double-linked

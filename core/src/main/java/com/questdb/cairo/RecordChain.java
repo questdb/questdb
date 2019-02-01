@@ -34,7 +34,7 @@ import java.io.Closeable;
 
 public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSinkSPI {
 
-    private final long columnOffsets[];
+    private final long[] columnOffsets;
     private final VirtualMemory mem;
     private final RecordChainRecord record = new RecordChainRecord();
     private final long varOffset;

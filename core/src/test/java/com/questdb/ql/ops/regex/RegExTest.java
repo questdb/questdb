@@ -628,7 +628,7 @@ public class RegExTest {
         if (!matcher.find())
             failCount++;
         String s = "for";
-        String result[] = s.split("[^fr]");
+        String[] result = s.split("[^fr]");
         if (!result[0].equals("f"))
             failCount++;
         if (!result[1].equals("r"))
@@ -3274,7 +3274,7 @@ public class RegExTest {
 
         int break1 = patternString.lastIndexOf("'");
         String flagString = patternString.substring(
-                break1 + 1, patternString.length());
+                break1 + 1);
         patternString = patternString.substring(1, break1);
 
         if (flagString.equals("i"))

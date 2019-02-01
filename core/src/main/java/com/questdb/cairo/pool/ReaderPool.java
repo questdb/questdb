@@ -60,21 +60,10 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
     @Override
     public TableReader get(CharSequence name) {
 
-        checkClosed();
-
-        Entry e = entries.get(name);
-
-        long thread = Thread.currentThread().getId();
-
-        if (e == null) {
-            e = new Entry(0, clock.getTicks());
-            Entry other = entries.putIfAbsent(name, e);
-            if (other != null) {
-                e = other;
-            }
-        }
+        Entry e = getEntry(name);
 
         long lockOwner = e.lockOwner;
+        long thread = Thread.currentThread().getId();
 
         if (lockOwner != UNLOCKED) {
             LOG.info().$('\'').$(name).$("' is locked [owner=").$(lockOwner).$(']').$();
@@ -153,16 +142,7 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
 
     public boolean lock(CharSequence name) {
 
-        checkClosed();
-
-        Entry e = entries.get(name);
-        if (e == null) {
-            e = new Entry(0, clock.getTicks());
-            Entry other = entries.putIfAbsent(name, e);
-            if (other != null) {
-                e = other;
-            }
-        }
+        Entry e = getEntry(name);
 
         long thread = Thread.currentThread().getId();
 
@@ -289,6 +269,20 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
             notifyListener(thread, r.getTableName(), ev, entry.index, index);
             Unsafe.arrayPut(entry.readers, index, null);
         }
+    }
+
+    private Entry getEntry(CharSequence name) {
+        checkClosed();
+
+        Entry e = entries.get(name);
+        if (e == null) {
+            e = new Entry(0, clock.getTicks());
+            Entry other = entries.putIfAbsent(name, e);
+            if (other != null) {
+                e = other;
+            }
+        }
+        return e;
     }
 
     private void notifyListener(long thread, CharSequence name, short event, int segment, int position) {

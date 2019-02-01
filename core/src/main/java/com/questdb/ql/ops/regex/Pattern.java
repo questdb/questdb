@@ -2759,7 +2759,7 @@ public final class Pattern
 
         String[] temp = new String[length];
 
-        int combClass[] = new int[nCodePoints];
+        int[] combClass = new int[nCodePoints];
         for (int x = 0, i = 0; x < nCodePoints; x++) {
             int c = Character.codePointAt(input, i);
             combClass[x] = getClass(c);

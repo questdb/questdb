@@ -30,8 +30,8 @@ import com.questdb.printer.JournalPrinter;
 import com.questdb.printer.appender.AssertingAppender;
 import com.questdb.printer.converter.DateConverter;
 import com.questdb.ql.RecordSource;
-import com.questdb.std.*;
 import com.questdb.std.Files;
+import com.questdb.std.*;
 import com.questdb.std.ex.JournalException;
 import com.questdb.std.time.DateFormatUtils;
 import com.questdb.std.time.Dates;
@@ -313,18 +313,14 @@ public final class TestUtils {
                 Record r = cursor.next();
 
                 for (int i = 0; i < len; i++) {
-                    switch (metadata.getColumnQuick(i).getType()) {
-                        case ColumnType.STRING:
-                            CharSequence s = r.getFlyweightStr(i);
-                            assertEquals(s, r.getFlyweightStrB(i));
-                            if (s != null) {
-                                Assert.assertEquals(s.length(), r.getStrLen(i));
-                            } else {
-                                Assert.assertEquals(-1, r.getStrLen(i));
-                            }
-                            break;
-                        default:
-                            break;
+                    if (metadata.getColumnQuick(i).getType() == ColumnType.STRING) {
+                        CharSequence s = r.getFlyweightStr(i);
+                        assertEquals(s, r.getFlyweightStrB(i));
+                        if (s != null) {
+                            Assert.assertEquals(s.length(), r.getStrLen(i));
+                        } else {
+                            Assert.assertEquals(-1, r.getStrLen(i));
+                        }
                     }
                 }
             } while (cursor.hasNext());
@@ -346,8 +342,8 @@ public final class TestUtils {
     }
 
     public static void generateQuoteData(JournalWriter<Quote> w, int count) throws JournalException, NumericException {
-        String symbols[] = {"AGK.L", "BP.L", "TLW.L", "ABF.L", "LLOY.L", "BT-A.L", "WTB.L", "RRS.L", "ADM.L", "GKN.L", "HSBA.L"};
-        long timestamps[] = {DateFormatUtils.parseDateTime("2013-09-04T10:00:00.000Z"), DateFormatUtils.parseDateTime("2013-10-04T10:00:00.000Z"), DateFormatUtils.parseDateTime("2013-11-04T10:00:00.000Z")};
+        String[] symbols = {"AGK.L", "BP.L", "TLW.L", "ABF.L", "LLOY.L", "BT-A.L", "WTB.L", "RRS.L", "ADM.L", "GKN.L", "HSBA.L"};
+        long[] timestamps = {DateFormatUtils.parseDateTime("2013-09-04T10:00:00.000Z"), DateFormatUtils.parseDateTime("2013-10-04T10:00:00.000Z"), DateFormatUtils.parseDateTime("2013-11-04T10:00:00.000Z")};
         Quote q = new Quote();
         Rnd r = new Rnd();
         for (int i = 0; i < count; i++) {
@@ -370,7 +366,7 @@ public final class TestUtils {
     }
 
     public static void generateQuoteData(JournalWriter<Quote> w, int count, long timestamp, long increment) throws JournalException {
-        String symbols[] = {"AGK.L", "BP.L", "TLW.L", "ABF.L", "LLOY.L", "BT-A.L", "WTB.L", "RRS.L", "ADM.L", "GKN.L", "HSBA.L"};
+        String[] symbols = {"AGK.L", "BP.L", "TLW.L", "ABF.L", "LLOY.L", "BT-A.L", "WTB.L", "RRS.L", "ADM.L", "GKN.L", "HSBA.L"};
         Quote q = new Quote();
         Rnd r = new Rnd();
 
@@ -401,7 +397,7 @@ public final class TestUtils {
 
         Rnd r = new Rnd();
         for (int i = 0; i < count; i++) {
-            String symbols[] = {"AGK.L", "BP.L", "TLW.L", "ABF.L", "LLOY.L", "BT-A.L", "WTB.L", "RRS.L", "ADM.L", "GKN.L", "HSBA.L"};
+            String[] symbols = {"AGK.L", "BP.L", "TLW.L", "ABF.L", "LLOY.L", "BT-A.L", "WTB.L", "RRS.L", "ADM.L", "GKN.L", "HSBA.L"};
             Quote q = new Quote();
 
             q.clear();
@@ -422,7 +418,7 @@ public final class TestUtils {
     }
 
     public static void generateQuoteData2(JournalWriter<Quote> w, int count, long timestamp, long increment) throws JournalException {
-        String symbols[] = {"AGK.L", "BP.L", "TLW.L", "ABF.L", "LLOY.L", "BT-A.L", "WTB.L", "RRS.L", "ADM.L", "GKN.L", "HSBA.L"};
+        String[] symbols = {"AGK.L", "BP.L", "TLW.L", "ABF.L", "LLOY.L", "BT-A.L", "WTB.L", "RRS.L", "ADM.L", "GKN.L", "HSBA.L"};
         Rnd r = new Rnd();
         int n = symbols.length - 1;
         for (int i = 0; i < count; i++) {
@@ -441,7 +437,7 @@ public final class TestUtils {
     }
 
     public static void generateQuoteDataGeneric(JournalWriter w, int count, long timestamp, long increment) throws JournalException {
-        String symbols[] = {"AGK.L", "BP.L", "TLW.L", "ABF.L", "LLOY.L", "BT-A.L", "WTB.L", "RRS.L", "ADM.L", "GKN.L", "HSBA.L"};
+        String[] symbols = {"AGK.L", "BP.L", "TLW.L", "ABF.L", "LLOY.L", "BT-A.L", "WTB.L", "RRS.L", "ADM.L", "GKN.L", "HSBA.L"};
         Rnd r = new Rnd();
 
         for (int i = 0; i < count; i++) {
@@ -459,7 +455,7 @@ public final class TestUtils {
     }
 
     public static void generateTestEntityData(JournalWriter<TestEntity> w, int count, long timetamp, int increment) throws JournalException {
-        String symbols[] = {"AGK.L", "BP.L", "TLW.L", "ABF.L", "LLOY.L", "BT-A.L", "WTB.L", "RRS.L", "ADM.L", "GKN.L", "HSBA.L", null};
+        String[] symbols = {"AGK.L", "BP.L", "TLW.L", "ABF.L", "LLOY.L", "BT-A.L", "WTB.L", "RRS.L", "ADM.L", "GKN.L", "HSBA.L", null};
         Rnd r = new Rnd();
         for (int i = 0; i < count; i++) {
             TestEntity e = new TestEntity();

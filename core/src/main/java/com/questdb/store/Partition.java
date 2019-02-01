@@ -47,7 +47,7 @@ public class Partition<T> implements Closeable {
     private final Interval interval;
     private final int columnCount;
     private final ColumnMetadata[] columnMetadata;
-    SymbolIndexProxy<T> sparseIndexProxies[];
+    SymbolIndexProxy<T>[] sparseIndexProxies;
     AbstractColumn[] columns;
     private int partitionIndex;
     private File partitionDir;
@@ -412,16 +412,14 @@ public class Partition<T> implements Closeable {
     }
 
     Partition<T> access() {
-        switch (journal.getMetadata().getPartitionBy()) {
-            case PartitionBy.NONE:
-                return this;
-            default:
-                long t = System.currentTimeMillis();
-                if (lastAccessed < t) {
-                    lastAccessed = t;
-                }
-                return this;
+        if (journal.getMetadata().getPartitionBy() == PartitionBy.NONE) {
+            return this;
         }
+        long t = System.currentTimeMillis();
+        if (lastAccessed < t) {
+            lastAccessed = t;
+        }
+        return this;
     }
 
     void append(Iterator<T> it) throws JournalException {

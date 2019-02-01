@@ -53,7 +53,7 @@ public class IntLongPriorityQueueTest extends AbstractTest {
         int totalLen = 0;
         try (KVIndex index = new KVIndex(indexFile, totalKeys, totalValues, 1, JournalMode.APPEND, 0, false)) {
             for (int i = 0; i < nStreams; i++) {
-                long values[] = new long[rnd.nextPositiveInt() % 1000];
+                long[] values = new long[rnd.nextPositiveInt() % 1000];
                 totalLen += values.length;
 
                 for (int j = 0; j < values.length; j++) {
@@ -69,7 +69,7 @@ public class IntLongPriorityQueueTest extends AbstractTest {
             }
 
 
-            long expected[] = new long[totalLen];
+            long[] expected = new long[totalLen];
             int p = 0;
 
             for (int i = 0; i < nStreams; i++) {
@@ -82,7 +82,7 @@ public class IntLongPriorityQueueTest extends AbstractTest {
             Arrays.sort(expected);
 
             IntLongPriorityQueue heap = new IntLongPriorityQueue();
-            IndexCursor cursors[] = new IndexCursor[nStreams];
+            IndexCursor[] cursors = new IndexCursor[nStreams];
 
             for (int i = 0; i < nStreams; i++) {
                 cursors[i] = index.newFwdCursor(i);

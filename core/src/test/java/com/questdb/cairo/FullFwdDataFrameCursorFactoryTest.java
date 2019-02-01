@@ -47,7 +47,7 @@ public class FullFwdDataFrameCursorFactoryTest extends AbstractCairoTest {
             }
 
             final Rnd rnd = new Rnd();
-            final String symbols[] = new String[N];
+            final String[] symbols = new String[N];
             final int M = 1000;
             final long increment = 1000000 * 60L * 10;
 

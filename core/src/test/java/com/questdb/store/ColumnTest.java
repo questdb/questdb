@@ -180,7 +180,7 @@ public class ColumnTest {
             ByteBuffer bb = ByteBuffer.allocate(col.getBinLen(0));
             col.getBin(0, bb);
             bb.flip();
-            char chars[] = new char[bb.remaining() / 2];
+            char[] chars = new char[bb.remaining() / 2];
             for (int i = 0; i < chars.length; i++) {
                 chars[i] = bb.getChar();
             }

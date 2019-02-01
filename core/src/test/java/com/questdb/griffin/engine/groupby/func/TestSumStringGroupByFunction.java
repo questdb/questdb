@@ -41,7 +41,7 @@ public class TestSumStringGroupByFunction extends StrFunction implements GroupBy
     private final Function value;
     private int valueIndex;
     // allocate just to test that close() is correctly invoked
-    private long mem = Unsafe.malloc(1024);
+    private final long mem = Unsafe.malloc(1024);
 
     public TestSumStringGroupByFunction(int position, @NotNull Function value) {
         super(position);

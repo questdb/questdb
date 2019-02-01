@@ -164,7 +164,7 @@ public class JournalStructure implements MetadataBuilder<Object> {
             txCountHint = (int) (recordCountHint * 0.1);
         }
 
-        ColumnMetadata m[] = new ColumnMetadata[metadata.size()];
+        ColumnMetadata[] m = new ColumnMetadata[metadata.size()];
 
         for (int i = 0, sz = metadata.size(); i < sz; i++) {
             ColumnMetadata meta = metadata.getQuick(i);

@@ -169,60 +169,58 @@ public class ResultSet<T> implements Iterable<T> {
             String leftStr;
             String rightStr;
 
-            switch (meta.type) {
-                case ColumnType.STRING:
-                    leftStr = leftPart.getStr(leftLocalRowID, column);
-                    rightStr = rightPart.getStr(rightLocalRowID, column);
+            if (meta.type == ColumnType.STRING) {
+                leftStr = leftPart.getStr(leftLocalRowID, column);
+                rightStr = rightPart.getStr(rightLocalRowID, column);
 
-                    if (leftStr == null && rightStr == null) {
-                        result = 0;
-                    } else if (leftStr == null) {
-                        result = 1;
-                    } else if (rightStr == null) {
-                        result = -1;
-                    } else {
-                        result = rightStr.compareTo(leftStr);
-                    }
-                    break;
-                default:
-                    switch (meta.type) {
-                        case ColumnType.INT:
-                            result = compare(rightPart.getInt(rightLocalRowID, column), leftPart.getInt(leftLocalRowID, column));
-                            break;
-                        case ColumnType.LONG:
-                        case ColumnType.DATE:
-                            result = compare(rightPart.getLong(rightLocalRowID, column), leftPart.getLong(leftLocalRowID, column));
-                            break;
-                        case ColumnType.DOUBLE:
-                            result = compare(rightPart.getDouble(rightLocalRowID, column), leftPart.getDouble(leftLocalRowID, column));
-                            break;
-                        case ColumnType.FLOAT:
-                            result = compare(rightPart.getFloat(rightLocalRowID, column), leftPart.getFloat(leftLocalRowID, column));
-                            break;
-                        case ColumnType.SYMBOL:
-                            int leftSymIndex = leftPart.getInt(leftLocalRowID, column);
-                            int rightSymIndex = rightPart.getInt(rightLocalRowID, column);
+                if (leftStr == null && rightStr == null) {
+                    result = 0;
+                } else if (leftStr == null) {
+                    result = 1;
+                } else if (rightStr == null) {
+                    result = -1;
+                } else {
+                    result = rightStr.compareTo(leftStr);
+                }
+            } else {
+                switch (meta.type) {
+                    case ColumnType.INT:
+                        result = compare(rightPart.getInt(rightLocalRowID, column), leftPart.getInt(leftLocalRowID, column));
+                        break;
+                    case ColumnType.LONG:
+                    case ColumnType.DATE:
+                        result = compare(rightPart.getLong(rightLocalRowID, column), leftPart.getLong(leftLocalRowID, column));
+                        break;
+                    case ColumnType.DOUBLE:
+                        result = compare(rightPart.getDouble(rightLocalRowID, column), leftPart.getDouble(leftLocalRowID, column));
+                        break;
+                    case ColumnType.FLOAT:
+                        result = compare(rightPart.getFloat(rightLocalRowID, column), leftPart.getFloat(leftLocalRowID, column));
+                        break;
+                    case ColumnType.SYMBOL:
+                        int leftSymIndex = leftPart.getInt(leftLocalRowID, column);
+                        int rightSymIndex = rightPart.getInt(rightLocalRowID, column);
 
-                            if (leftSymIndex == SymbolTable.VALUE_IS_NULL && rightSymIndex == SymbolTable.VALUE_IS_NULL) {
-                                result = 0;
-                            } else if (leftSymIndex == SymbolTable.VALUE_IS_NULL) {
-                                result = 1;
-                            } else if (rightSymIndex == SymbolTable.VALUE_IS_NULL) {
-                                result = -1;
-                            } else {
-                                leftStr = meta.symbolTable.value(leftSymIndex);
-                                rightStr = meta.symbolTable.value(rightSymIndex);
+                        if (leftSymIndex == SymbolTable.VALUE_IS_NULL && rightSymIndex == SymbolTable.VALUE_IS_NULL) {
+                            result = 0;
+                        } else if (leftSymIndex == SymbolTable.VALUE_IS_NULL) {
+                            result = 1;
+                        } else if (rightSymIndex == SymbolTable.VALUE_IS_NULL) {
+                            result = -1;
+                        } else {
+                            leftStr = meta.symbolTable.value(leftSymIndex);
+                            rightStr = meta.symbolTable.value(rightSymIndex);
 
-                                if (leftStr == null || rightStr == null) {
-                                    throw new JournalException("Corrupt column [%s] !", meta);
-                                }
-
-                                result = rightStr.compareTo(leftStr);
+                            if (leftStr == null || rightStr == null) {
+                                throw new JournalException("Corrupt column [%s] !", meta);
                             }
-                            break;
-                        default:
-                            throw new JournalException("Unsupported type: " + meta.type);
-                    }
+
+                            result = rightStr.compareTo(leftStr);
+                        }
+                        break;
+                    default:
+                        throw new JournalException("Unsupported type: " + meta.type);
+                }
             }
 
 
@@ -250,7 +248,7 @@ public class ResultSet<T> implements Iterable<T> {
     }
 
     private int[] getColumnIndexes(String... columnNames) {
-        int columnIndices[] = new int[columnNames.length];
+        int[] columnIndices = new int[columnNames.length];
         for (int i = 0, columnNamesLength = columnNames.length; i < columnNamesLength; i++) {
             columnIndices[i] = journal.getMetadata().getColumnIndex(columnNames[i]);
         }

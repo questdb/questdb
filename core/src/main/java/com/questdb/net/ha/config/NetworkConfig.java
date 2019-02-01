@@ -203,7 +203,7 @@ public class NetworkConfig {
 
     void parseNodes(String nodes) {
         clearNodes();
-        String parts[] = nodes.split(",");
+        String[] parts = nodes.split(",");
         for (int i = 0; i < parts.length; i++) {
             addNode(new ServerNode(i, parts[i]));
         }

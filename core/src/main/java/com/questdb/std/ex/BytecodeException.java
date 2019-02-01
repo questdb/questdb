@@ -24,9 +24,9 @@
 package com.questdb.std.ex;
 
 public class BytecodeException extends RuntimeException {
-    public static final BytecodeException INSTANCE = new BytecodeException("Error in bytecode");
+    public static final BytecodeException INSTANCE = new BytecodeException();
 
-    private BytecodeException(String message) {
-        super(message);
+    private BytecodeException() {
+        super("Error in bytecode");
     }
 }

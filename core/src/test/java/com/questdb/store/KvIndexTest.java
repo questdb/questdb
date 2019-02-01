@@ -63,7 +63,7 @@ public class KvIndexTest extends AbstractTest {
 
     @Test
     public void testGetValueQuick() throws Exception {
-        long expected[][] = {
+        long[][] expected = {
                 {0, 3, 5, 6, 8, 10, 12, 14, 16, 22},
                 {1, 2, 3, 4, 6, 8, 9, 11, 16, 21, 33}
         };
@@ -81,7 +81,7 @@ public class KvIndexTest extends AbstractTest {
 
     @Test
     public void testGetValuesMultiBlock() throws Exception {
-        long expected[][] = {
+        long[][] expected = {
                 {0, 3, 5, 6, 8, 10, 12, 14, 16, 22},
                 {1, 2, 3, 4, 6, 8, 9, 11, 16, 21, 33}
         };
@@ -93,7 +93,7 @@ public class KvIndexTest extends AbstractTest {
 
     @Test
     public void testGetValuesPartialBlock() throws Exception {
-        long expected[][] = {
+        long[][] expected = {
                 {0, 3, 5, 6, 8, 10, 12, 14, 16, 22},
                 {1, 2, 3, 4, 6, 8, 9, 11, 16, 21, 33}
         };
@@ -129,7 +129,7 @@ public class KvIndexTest extends AbstractTest {
 
     @Test
     public void testIndexTx() throws Exception {
-        long expected[][] = {
+        long[][] expected = {
                 {0, 3, 5, 6, 8, 10, 12, 14, 16, 22},
                 {1, 2, 3, 4, 6, 8, 9, 11, 16, 21, 33}
         };
@@ -326,7 +326,7 @@ public class KvIndexTest extends AbstractTest {
         }
     }
 
-    private void assertValues(long values[][], KVIndex index) {
+    private void assertValues(long[][] values, KVIndex index) {
         for (int i = 0; i < values.length; i++) {
             LongList array = index.getValues(i);
             Assert.assertEquals(values[i].length, array.size());
@@ -349,7 +349,7 @@ public class KvIndexTest extends AbstractTest {
         }
     }
 
-    private void putValues(long values[][], KVIndex index) {
+    private void putValues(long[][] values, KVIndex index) {
         for (int i = 0; i < values.length; i++) {
             for (int k = 0; k < values[i].length; k++) {
                 index.add(i, values[i][k]);

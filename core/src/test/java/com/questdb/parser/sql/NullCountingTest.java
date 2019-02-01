@@ -56,7 +56,7 @@ public class NullCountingTest extends AbstractOptimiserTest {
 
             Rnd rnd = new Rnd();
 
-            String employees[] = new String[employeeCount];
+            String[] employees = new String[employeeCount];
             for (int i = 0; i < employees.length; i++) {
                 if (rnd.nextPositiveInt() % 10 == 0) {
                     employees[i] = null;

@@ -29,7 +29,7 @@ import com.questdb.std.Unsafe;
 import java.util.Arrays;
 
 abstract class AbstractMSequence extends AbstractSSequence {
-    private final int flags[];
+    private final int[] flags;
     private final int mask;
     private final int shift;
 

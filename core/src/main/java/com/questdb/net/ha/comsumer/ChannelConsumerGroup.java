@@ -31,7 +31,7 @@ import java.nio.channels.ReadableByteChannel;
 
 public class ChannelConsumerGroup extends AbstractChannelConsumer {
 
-    private final ChannelConsumer consumers[];
+    private final ChannelConsumer[] consumers;
 
     ChannelConsumerGroup(ChannelConsumer... consumers) {
         this.consumers = consumers;

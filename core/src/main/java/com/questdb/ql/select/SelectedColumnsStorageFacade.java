@@ -31,7 +31,7 @@ import com.questdb.store.SymbolTable;
 
 public class SelectedColumnsStorageFacade implements StorageFacade {
 
-    private final int reindex[];
+    private final int[] reindex;
     private StorageFacade delegate;
 
     public SelectedColumnsStorageFacade(RecordMetadata parentMetadata, @Transient ObjList<CharSequence> names) {

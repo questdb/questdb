@@ -37,12 +37,12 @@ import java.util.Arrays;
 
 public class JournalEntryWriterImpl implements JournalEntryWriter {
     private final JournalWriter journal;
-    private final ColumnMetadata meta[];
+    private final ColumnMetadata[] meta;
     private final int timestampIndex;
     private final boolean[] skipped;
     private final long[] koTuple;
-    private AbstractColumn columns[];
-    private SymbolIndexProxy indexProxies[];
+    private AbstractColumn[] columns;
+    private SymbolIndexProxy[] indexProxies;
     private Partition partition;
     private long timestamp;
 

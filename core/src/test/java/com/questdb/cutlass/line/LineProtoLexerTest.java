@@ -30,7 +30,6 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
-import java.io.UnsupportedEncodingException;
 import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.Map;
@@ -47,7 +46,7 @@ public class LineProtoLexerTest {
     }
 
     @Test
-    public void testCommaInTagName() throws Exception {
+    public void testCommaInTagName() {
         assertThat(
                 "measurement,t,ag=value,tag2=value field=10000i,field2=\"str\" 100000\n",
                 "measurement,t\\,ag=value,tag2=value field=10000i,field2=\"str\" 100000\n"
@@ -55,17 +54,17 @@ public class LineProtoLexerTest {
     }
 
     @Test
-    public void testCommaInTagValue() throws Exception {
+    public void testCommaInTagValue() {
         assertThat("measurement,tag=value,tag2=va,lue field=10000i,field2=\"str\" 100000\n", "measurement,tag=value,tag2=va\\,lue field=10000i,field2=\"str\" 100000\n");
     }
 
     @Test
-    public void testCorruptUtf8Sequence() throws Exception {
-        byte bytesA[] = "违法违,控网站漏洞风=不一定代,网站可能存在=комитета 的风险=10000i,вышел=\"险\" 100000\n".getBytes(StandardCharsets.UTF_8);
-        byte bytesB[] = {-116, -76, -55, 55, -34, 0, -11, 15, 13};
-        byte bytesC[] = "меморандум,tag=value,tag2=value field=10000i,field2=\"str\" 100000\n".getBytes(StandardCharsets.UTF_8);
+    public void testCorruptUtf8Sequence() {
+        byte[] bytesA = "违法违,控网站漏洞风=不一定代,网站可能存在=комитета 的风险=10000i,вышел=\"险\" 100000\n".getBytes(StandardCharsets.UTF_8);
+        byte[] bytesB = {-116, -76, -55, 55, -34, 0, -11, 15, 13};
+        byte[] bytesC = "меморандум,tag=value,tag2=value field=10000i,field2=\"str\" 100000\n".getBytes(StandardCharsets.UTF_8);
 
-        byte bytes[] = new byte[bytesA.length + bytesB.length + bytesC.length];
+        byte[] bytes = new byte[bytesA.length + bytesB.length + bytesC.length];
         System.arraycopy(bytesA, 0, bytes, 0, bytesA.length);
         System.arraycopy(bytesB, 0, bytes, bytesA.length, bytesB.length);
         System.arraycopy(bytesC, 0, bytes, bytesA.length + bytesB.length, bytesC.length);
@@ -76,12 +75,12 @@ public class LineProtoLexerTest {
     }
 
     @Test
-    public void testDanglingCommaOnTag() throws Exception {
+    public void testDanglingCommaOnTag() {
         assertError("measurement,tag=value, field=x 10000\n", LineProtoParser.EVT_TAG_NAME, LineProtoParser.ERROR_EXPECTED, 22);
     }
 
     @Test
-    public void testEmptyLine() throws Exception {
+    public void testEmptyLine() {
         assertThat("measurement,tag=value,tag2=value field=10000i,field2=\"str\" 100000\n" +
                         "measurement,tag=value3,tag2=value2 field=100i,field2=\"ok\"\n",
                 "measurement,tag=value,tag2=value field=10000i,field2=\"str\" 100000\n" +
@@ -90,32 +89,32 @@ public class LineProtoLexerTest {
     }
 
     @Test
-    public void testMissingFields() throws Exception {
+    public void testMissingFields() {
         assertThat("measurement,field=10000i,field2=str\n", "measurement,field=10000i,field2=str");
     }
 
     @Test
-    public void testMissingFields2() throws Exception {
+    public void testMissingFields2() {
         assertThat("measurement,field=10000i,field2=str\n", "measurement,field=10000i,field2=str\n");
     }
 
     @Test
-    public void testMissingLineEnd() throws Exception {
+    public void testMissingLineEnd() {
         assertThat("measurement,tag=value,tag2=value field=10000i,field2=\"str\" 100000\n", "measurement,tag=value,tag2=value field=10000i,field2=\"str\" 100000");
     }
 
     @Test
-    public void testMissingTags() throws Exception {
+    public void testMissingTags() {
         assertThat("measurement field=10000i,field2=\"str\"\n", "measurement field=10000i,field2=\"str\"");
     }
 
     @Test
-    public void testMissingTimestamp() throws Exception {
+    public void testMissingTimestamp() {
         assertThat("measurement,tag=value,tag2=value field=10000i,field2=\"str\"\n", "measurement,tag=value,tag2=value field=10000i,field2=\"str\"");
     }
 
     @Test
-    public void testMultiLines() throws Exception {
+    public void testMultiLines() {
         assertThat("measurement,tag=value,tag2=value field=10000i,field2=\"str\" 100000\n" +
                         "measurement,tag=value3,tag2=value2 field=100i,field2=\"ok\"\n",
                 "measurement,tag=value,tag2=value field=10000i,field2=\"str\" 100000\n" +
@@ -123,122 +122,122 @@ public class LineProtoLexerTest {
     }
 
     @Test
-    public void testNoFieldName1() throws Exception {
+    public void testNoFieldName1() {
         assertError("measurement,tag=x f=10i,f2 10000", LineProtoParser.EVT_FIELD_NAME, LineProtoParser.ERROR_EXPECTED, 26);
     }
 
     @Test
-    public void testNoFieldName2() throws Exception {
+    public void testNoFieldName2() {
         assertError("measurement,tag=x f=10i,=f2 10000", LineProtoParser.EVT_FIELD_NAME, LineProtoParser.ERROR_EMPTY, 24);
     }
 
     @Test
-    public void testNoFieldName3() throws Exception {
+    public void testNoFieldName3() {
         assertError("measurement,tag=x =10i,=f2 10000", LineProtoParser.EVT_FIELD_NAME, LineProtoParser.ERROR_EMPTY, 18);
     }
 
     @Test
-    public void testNoFieldValue1() throws Exception {
+    public void testNoFieldValue1() {
         assertError("measurement,tag=x f 10000", LineProtoParser.EVT_FIELD_NAME, LineProtoParser.ERROR_EXPECTED, 19);
     }
 
     @Test
-    public void testNoFieldValue2() throws Exception {
+    public void testNoFieldValue2() {
         assertError("measurement,tag=x f= 10000", LineProtoParser.EVT_FIELD_VALUE, LineProtoParser.ERROR_EMPTY, 20);
     }
 
     @Test
-    public void testNoFieldValue3() throws Exception {
+    public void testNoFieldValue3() {
         assertError("measurement,tag=x f=, 10000", LineProtoParser.EVT_FIELD_VALUE, LineProtoParser.ERROR_EMPTY, 20);
     }
 
     @Test
-    public void testNoFields1() throws Exception {
+    public void testNoFields1() {
         assertError("measurement  \n", LineProtoParser.EVT_FIELD_NAME, LineProtoParser.ERROR_EXPECTED, 12);
     }
 
     @Test
-    public void testNoFields2() throws Exception {
+    public void testNoFields2() {
         assertError("measurement  ", LineProtoParser.EVT_FIELD_NAME, LineProtoParser.ERROR_EXPECTED, 12);
     }
 
     @Test
-    public void testNoFields3() throws Exception {
+    public void testNoFields3() {
         assertError("measurement  10000", LineProtoParser.EVT_FIELD_NAME, LineProtoParser.ERROR_EXPECTED, 12);
     }
 
     @Test
-    public void testNoFields4() throws Exception {
+    public void testNoFields4() {
         assertError("measurement,tag=x 10000", LineProtoParser.EVT_FIELD_NAME, LineProtoParser.ERROR_EXPECTED, 23);
     }
 
     @Test
-    public void testNoMeasure1() throws Exception {
+    public void testNoMeasure1() {
         assertError("tag=value field=x 10000\n", LineProtoParser.EVT_MEASUREMENT, LineProtoParser.ERROR_EXPECTED, 3);
     }
 
     @Test
-    public void testNoMeasure2() throws Exception {
+    public void testNoMeasure2() {
         assertError("tag=value field=x 10000\n", LineProtoParser.EVT_MEASUREMENT, LineProtoParser.ERROR_EXPECTED, 3);
     }
 
     @Test
-    public void testNoTag4() throws Exception {
+    public void testNoTag4() {
         assertError("measurement, \n", LineProtoParser.EVT_TAG_NAME, LineProtoParser.ERROR_EXPECTED, 12);
     }
 
     @Test
-    public void testNoTagEquals1() throws Exception {
+    public void testNoTagEquals1() {
         assertError("measurement,tag field=x 10000\n", LineProtoParser.EVT_TAG_NAME, LineProtoParser.ERROR_EXPECTED, 15);
     }
 
     @Test
-    public void testNoTagEquals2() throws Exception {
+    public void testNoTagEquals2() {
         assertError("measurement,tag, field=x 10000\n", LineProtoParser.EVT_TAG_NAME, LineProtoParser.ERROR_EXPECTED, 15);
     }
 
     @Test
-    public void testNoTagValue1() throws Exception {
+    public void testNoTagValue1() {
         assertError("measurement,tag= field=x 10000\n", LineProtoParser.EVT_TAG_VALUE, LineProtoParser.ERROR_EMPTY, 16);
     }
 
     @Test
-    public void testNoTagValue2() throws Exception {
+    public void testNoTagValue2() {
         assertError("measurement,tag=, field=x 10000\n", LineProtoParser.EVT_TAG_VALUE, LineProtoParser.ERROR_EMPTY, 16);
     }
 
     @Test
-    public void testNoTagValue3() throws Exception {
+    public void testNoTagValue3() {
         assertError("measurement,tag=", LineProtoParser.EVT_TAG_VALUE, LineProtoParser.ERROR_EMPTY, 16);
     }
 
     @Test
-    public void testNoTagValue4() throws Exception {
+    public void testNoTagValue4() {
         assertError("measurement,tag=\n", LineProtoParser.EVT_TAG_VALUE, LineProtoParser.ERROR_EMPTY, 16);
     }
 
     @Test
-    public void testNoTags1() throws Exception {
+    public void testNoTags1() {
         assertError("measurement,", LineProtoParser.EVT_TAG_NAME, LineProtoParser.ERROR_EXPECTED, 12);
     }
 
     @Test
-    public void testNoTags2() throws Exception {
+    public void testNoTags2() {
         assertError("measurement,\n", LineProtoParser.EVT_TAG_NAME, LineProtoParser.ERROR_EXPECTED, 12);
     }
 
     @Test
-    public void testNoTags3() throws Exception {
+    public void testNoTags3() {
         assertError("measurement, 100000\n", LineProtoParser.EVT_TAG_NAME, LineProtoParser.ERROR_EXPECTED, 12);
     }
 
     @Test
-    public void testSimpleParse() throws Exception {
+    public void testSimpleParse() {
         assertThat("measurement,tag=value,tag2=value field=10000i,field2=\"str\" 100000\n", "measurement,tag=value,tag2=value field=10000i,field2=\"str\" 100000\n");
     }
 
     @Test
-    public void testSkipLine() throws Exception {
+    public void testSkipLine() {
         assertThat("measurement,tag=value,tag2=value field=10000i,field2=\"str\" 100000\n" +
                         "measurement,tag=value3,tag2=value2 field=-- error --\n" +
                         "measurement,tag=value4,tag2=value4 field=200i,field2=\"super\"\n",
@@ -248,37 +247,37 @@ public class LineProtoLexerTest {
     }
 
     @Test
-    public void testSpaceTagName() throws Exception {
+    public void testSpaceTagName() {
         assertThat("measurement,t ag=value,tag2=value field=10000i,field2=\"str\" 100000\n", "measurement,t\\ ag=value,tag2=value field=10000i,field2=\"str\" 100000\n");
     }
 
     @Test
-    public void testSpaceTagValue() throws Exception {
+    public void testSpaceTagValue() {
         assertThat("measurement,tag=value,tag2=valu e field=10000i,field2=\"str\" 100000\n", "measurement,tag=value,tag2=valu\\ e field=10000i,field2=\"str\" 100000\n");
     }
 
     @Test
-    public void testTrailingSpace() throws Exception {
+    public void testTrailingSpace() {
         assertError("measurement,tag=value,tag2=value field=10000i,field2=\"str\" \n" +
                 "measurement,tag=value3,tag2=value2 field=100i,field2=\"ok\"\n", LineProtoParser.EVT_TIMESTAMP, LineProtoParser.ERROR_EMPTY, 59);
     }
 
     @Test
-    public void testUtf8() throws Exception {
+    public void testUtf8() {
         assertThat("меморандум,кроме=никто,этом=комитета находился=10000i,вышел=\"Александр\" 100000\n", "меморандум,кроме=никто,этом=комитета находился=10000i,вышел=\"Александр\" 100000\n");
     }
 
     @Test
-    public void testUtf8Measurement() throws Exception {
+    public void testUtf8Measurement() {
         assertThat("меморандум,tag=value,tag2=value field=10000i,field2=\"str\" 100000\n", "меморандум,tag=value,tag2=value field=10000i,field2=\"str\" 100000\n");
     }
 
     @Test
-    public void testUtf8ThreeBytes() throws Exception {
+    public void testUtf8ThreeBytes() {
         assertThat("违法违,控网站漏洞风=不一定代,网站可能存在=комитета 的风险=10000i,вышел=\"险\" 100000\n", "违法违,控网站漏洞风=不一定代,网站可能存在=комитета 的风险=10000i,вышел=\"险\" 100000\n");
     }
 
-    private void assertError(CharSequence line, int state, int code, int position) throws LineProtoException, UnsupportedEncodingException {
+    private void assertError(CharSequence line, int state, int code, int position) throws LineProtoException {
         byte[] bytes = line.toString().getBytes(StandardCharsets.UTF_8);
         long mem = Unsafe.malloc(bytes.length);
         try {
@@ -302,7 +301,7 @@ public class LineProtoLexerTest {
         }
     }
 
-    private void assertThat(CharSequence expected, CharSequence line) throws LineProtoException, UnsupportedEncodingException {
+    private void assertThat(CharSequence expected, CharSequence line) throws LineProtoException {
         assertThat(expected, line.toString().getBytes(StandardCharsets.UTF_8));
     }
 

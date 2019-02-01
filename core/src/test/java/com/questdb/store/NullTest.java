@@ -39,7 +39,7 @@ public class NullTest extends AbstractTest {
         final int TEST_DATA_SIZE = (int) 1E3;
         try (JournalWriter<Quote> w = getFactory().writer(Quote.class, "quote", 1000)) {
             long timestamp = DateFormatUtils.parseDateTime("2013-10-05T10:00:00.000Z");
-            String symbols[] = {"AGK.L", "BP.L", "TLW.L", "ABF.L", "LLOY.L", "BT-A.L", "WTB.L", "RRS.L", "ADM.L", "GKN.L", "HSBA.L"};
+            String[] symbols = {"AGK.L", "BP.L", "TLW.L", "ABF.L", "LLOY.L", "BT-A.L", "WTB.L", "RRS.L", "ADM.L", "GKN.L", "HSBA.L"};
             Quote q = new Quote();
             int increment = 6000;
 

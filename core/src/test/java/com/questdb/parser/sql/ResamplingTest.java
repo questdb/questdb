@@ -55,7 +55,7 @@ public class ResamplingTest extends AbstractOptimiserTest {
 
             Rnd rnd = new Rnd();
 
-            String employees[] = new String[employeeCount];
+            String[] employees = new String[employeeCount];
             for (int i = 0; i < employees.length; i++) {
                 employees[i] = rnd.nextString(9);
             }
@@ -96,7 +96,7 @@ public class ResamplingTest extends AbstractOptimiserTest {
 
             Rnd rnd = new Rnd();
 
-            String employees[] = new String[employeeCount];
+            String[] employees = new String[employeeCount];
             for (int i = 0; i < employees.length; i++) {
                 employees[i] = rnd.nextString(9);
             }
@@ -139,7 +139,7 @@ public class ResamplingTest extends AbstractOptimiserTest {
 
             Rnd rnd = new Rnd();
 
-            String employees[] = new String[employeeCount];
+            String[] employees = new String[employeeCount];
             for (int i = 0; i < employees.length; i++) {
                 employees[i] = rnd.nextString(9);
             }

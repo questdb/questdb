@@ -34,16 +34,16 @@ public final class DirectMapEntry {
     private final int split;
     private final int keyDataOffset;
     private final int keyBlockOffset;
-    private final int valueOffsets[];
-    private final DirectCharSequence csA[];
-    private final DirectCharSequence csB[];
+    private final int[] valueOffsets;
+    private final DirectCharSequence[] csA;
+    private final DirectCharSequence[] csB;
     private final DirectMapValues values;
     private long address0;
     private long address1;
     private long address2;
     private char[] strBuf = null;
 
-    DirectMapEntry(int valueOffsets[], int keyDataOffset, int keyBlockOffset, DirectMapValues values, @Transient ColumnTypeResolver keyResolver) {
+    DirectMapEntry(int[] valueOffsets, int keyDataOffset, int keyBlockOffset, DirectMapValues values, @Transient ColumnTypeResolver keyResolver) {
         this.split = valueOffsets.length;
         this.valueOffsets = valueOffsets;
         this.keyBlockOffset = keyBlockOffset;
@@ -52,8 +52,8 @@ public final class DirectMapEntry {
 
         int n = keyResolver.count();
 
-        DirectCharSequence csA[] = null;
-        DirectCharSequence csB[] = null;
+        DirectCharSequence[] csA = null;
+        DirectCharSequence[] csB = null;
 
         for (int i = 0; i < n; i++) {
             if (keyResolver.getColumnType(i) == ColumnType.STRING) {

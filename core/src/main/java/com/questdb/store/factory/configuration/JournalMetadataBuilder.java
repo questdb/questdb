@@ -119,7 +119,7 @@ public class JournalMetadataBuilder<T> implements MetadataBuilder<T> {
         }
 
 
-        ColumnMetadata metadata[] = new ColumnMetadata[nameToIndexMap.size()];
+        ColumnMetadata[] metadata = new ColumnMetadata[nameToIndexMap.size()];
 
         for (ObjObjHashMap.Entry<String, ColumnMetadata> e : columnMetadata.immutableIterator()) {
             int index = nameToIndexMap.get(e.key);

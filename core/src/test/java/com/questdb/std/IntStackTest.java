@@ -30,7 +30,7 @@ public class IntStackTest {
     @Test
     public void testStack() {
 
-        int expected[] = new int[29];
+        int[] expected = new int[29];
         int l = expected.length - 1;
 
         IntStack stack = new IntStack();

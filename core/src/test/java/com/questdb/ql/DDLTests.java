@@ -658,7 +658,7 @@ public class DDLTests extends AbstractTest {
                 while (cursor.hasNext()) {
                     Record rec = cursor.next();
                     Assert.assertEquals(count, rec.getInt(0));
-                    Assert.assertTrue((byte) rnd.nextInt() == rec.getByte(1));
+                    Assert.assertEquals((byte) rnd.nextInt(), rec.getByte(1));
                     Assert.assertEquals((short) rnd.nextInt(), rec.getShort(2));
                     Assert.assertEquals(rnd.nextLong(), rec.getLong(3));
                     Assert.assertEquals(rnd.nextFloat(), rec.getFloat(4), 0.00001f);

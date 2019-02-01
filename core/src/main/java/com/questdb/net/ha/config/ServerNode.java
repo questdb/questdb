@@ -50,7 +50,7 @@ public class ServerNode {
                     this.port = NetworkConfig.DEFAULT_DATA_PORT;
                 }
             } else {
-                String parts[] = address.split(":");
+                String[] parts = address.split(":");
                 switch (parts.length) {
                     case 1:
                         this.hostname = address;

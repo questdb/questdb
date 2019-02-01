@@ -30,7 +30,7 @@ import java.nio.ByteBuffer;
 
 public class JournalServerStateConsumer extends AbstractMutableObjectConsumer<JournalServerState> {
 
-    private char lagPartitionNameChars[];
+    private char[] lagPartitionNameChars;
 
     @Override
     protected JournalServerState newInstance() {

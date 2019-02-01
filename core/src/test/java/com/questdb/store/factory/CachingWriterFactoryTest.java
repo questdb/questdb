@@ -123,7 +123,7 @@ public class CachingWriterFactoryTest extends AbstractTest {
             Assert.assertEquals(0, wf.countFreeWriters());
             Assert.assertNotNull(x);
             Assert.assertTrue(x.isOpen());
-            Assert.assertTrue(x == wf.writer(m));
+            Assert.assertSame(x, wf.writer(m));
             wf.close();
         } finally {
             x.close();
@@ -255,7 +255,7 @@ public class CachingWriterFactoryTest extends AbstractTest {
             Assert.assertEquals(0, wf.countFreeWriters());
             Assert.assertNotNull(x);
             Assert.assertTrue(x.isOpen());
-            Assert.assertTrue(x == wf.writer(m));
+            Assert.assertSame(x, wf.writer(m));
         } finally {
             x.close();
         }
@@ -266,7 +266,7 @@ public class CachingWriterFactoryTest extends AbstractTest {
         try {
             Assert.assertNotNull(y);
             Assert.assertTrue(y.isOpen());
-            Assert.assertTrue(y == x);
+            Assert.assertSame(y, x);
         } finally {
             y.close();
         }

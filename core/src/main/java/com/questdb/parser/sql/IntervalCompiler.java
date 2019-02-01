@@ -108,7 +108,7 @@ public class IntervalCompiler {
     }
 
     public static void parseIntervalEx(CharSequence seq, int lo, int lim, int position, LongList out) throws ParserException {
-        int pos[] = new int[3];
+        int[] pos = new int[3];
         int p = -1;
         for (int i = lo; i < lim; i++) {
             if (seq.charAt(i) == ';') {

@@ -36,9 +36,9 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 public class TestMatchFunctionFactory implements FunctionFactory {
 
-    private static AtomicInteger openCounter = new AtomicInteger();
-    private static AtomicInteger topCounter = new AtomicInteger();
-    private static AtomicInteger closeCount = new AtomicInteger();
+    private static final AtomicInteger openCounter = new AtomicInteger();
+    private static final AtomicInteger topCounter = new AtomicInteger();
+    private static final AtomicInteger closeCount = new AtomicInteger();
 
     public static void clear() {
         openCounter.set(0);

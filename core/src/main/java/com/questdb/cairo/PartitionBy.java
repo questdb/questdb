@@ -38,10 +38,6 @@ public final class PartitionBy {
      * all data is stored in a single directory
      */
     public static final int NONE = 3;
-    /**
-     * Setting partition type to DEFAULT will use whatever partition type is specified in journal configuration.
-     */
-    public static final int DEFAULT = 4;
     private final static CharSequenceIntHashMap nameToIndexMap = new CharSequenceIntHashMap();
 
     private PartitionBy() {
@@ -61,8 +57,6 @@ public final class PartitionBy {
                 return "YEAR";
             case NONE:
                 return "NONE";
-            case DEFAULT:
-                return "DEFAULT";
             default:
                 return "UNKNOWN";
         }
@@ -73,6 +67,5 @@ public final class PartitionBy {
         nameToIndexMap.put("MONTH", MONTH);
         nameToIndexMap.put("YEAR", YEAR);
         nameToIndexMap.put("NONE", NONE);
-        nameToIndexMap.put("DEFAULT", DEFAULT);
     }
 }

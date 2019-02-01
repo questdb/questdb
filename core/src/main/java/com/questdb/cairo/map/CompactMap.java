@@ -123,7 +123,7 @@ public class CompactMap implements Map {
     private final long entryFixedSize;
     private final HashFunction hashFunction;
     private final CompactMapCursor cursor;
-    private final long columnOffsets[];
+    private final long[] columnOffsets;
     private final long entryKeyOffset;
     private final int valueColumnCount;
     private final CompactMapRecord record;

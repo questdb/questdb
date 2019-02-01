@@ -62,10 +62,6 @@ public final class ColumnType {
         return nameTypeMap.get(b);
     }
 
-    public static int count() {
-        return typeNameMap.size();
-    }
-
     public static String nameOf(int columnType) {
         final int index = typeNameMap.keyIndex(columnType);
         if (index > -1) {

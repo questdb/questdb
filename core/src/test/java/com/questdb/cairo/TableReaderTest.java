@@ -34,6 +34,7 @@ import com.questdb.std.str.LPSZ;
 import com.questdb.std.str.Path;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Ignore;
 import org.junit.Test;
 
 import java.util.concurrent.CountDownLatch;
@@ -2082,6 +2083,42 @@ public class TableReaderTest extends AbstractCairoTest {
     @Test
     public void testRemoveActivePartitionByYear() throws Exception {
         testRemoveActivePartition(PartitionBy.YEAR, current -> Dates.addYear(Dates.floorYYYY(current), 1), "2021");
+    }
+
+    @Test
+    @Ignore
+    public void testRecoverFromManualPartitionRemove() throws NumericException {
+        // model table
+        try (TableModel model = new TableModel(configuration, "w", PartitionBy.DAY).col("l", ColumnType.LONG).timestamp()) {
+            CairoTestUtils.create(model);
+        }
+
+        try (TableWriter writer = new TableWriter(configuration, "w")) {
+            TableWriter.Row row;
+
+            row = writer.newRow(DateFormatUtils.parseTimestamp("2019-01-31T10:00:00.000000Z"));
+            row.putLong(0, 1);
+            row.append();
+
+            row = writer.newRow(DateFormatUtils.parseTimestamp("2019-02-01T10:00:00.000000Z"));
+            row.putLong(0, 2);
+            row.append();
+
+            row = writer.newRow(DateFormatUtils.parseTimestamp("2019-02-02T10:00:00.000000Z"));
+            row.putLong(0, 3);
+            row.append();
+
+            writer.commit();
+
+            // remove partition without using writer
+
+            try (Path path = new Path()) {
+                path.of(configuration.getRoot()).concat("w").concat("2019-01-31").put(Files.SEPARATOR).$();
+                Assert.assertTrue(Files.rmdir(path));
+            }
+
+            Assert.assertTrue(writer.removePartition(DateFormatUtils.parseTimestamp("2019-01-31T00:00:00.000000Z")));
+        }
     }
 
     @Test

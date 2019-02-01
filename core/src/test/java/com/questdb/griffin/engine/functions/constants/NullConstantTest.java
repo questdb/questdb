@@ -23,7 +23,6 @@
 
 package com.questdb.griffin.engine.functions.constants;
 
-import com.questdb.std.str.CharSink;
 import com.questdb.std.str.StringSink;
 import org.junit.Assert;
 import org.junit.Test;
@@ -37,8 +36,8 @@ public class NullConstantTest {
         Assert.assertNull(constant.getStrB(null));
         Assert.assertEquals(-1, constant.getStrLen(null));
 
-        CharSink sink = new StringSink();
+        StringSink sink = new StringSink();
         constant.getStr(null, sink);
-        Assert.assertEquals(0, ((StringSink) sink).length());
+        Assert.assertEquals(0, sink.length());
     }
 }

@@ -103,6 +103,8 @@ public class TableReaderRecordCursorFactoryTest extends AbstractCairoTest {
                     }
                     Assert.assertEquals(0, engine.getBusyReaderCount());
                     Assert.assertEquals(M, count);
+
+                    Assert.assertTrue(factory.isRandomAccessCursor());
                 }
             }
         });

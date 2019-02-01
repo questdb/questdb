@@ -730,7 +730,7 @@ public class QueryCompiler {
                         new KvIndexIntLookupRowSource(im.keyColumn, toInt(im.keyValues.get(1), im.keyValuePositions.getQuick(1)), true)
                 );
             default:
-                RowSource sources[] = new RowSource[nSrc];
+                RowSource[] sources = new RowSource[nSrc];
                 for (int i = 0; i < nSrc; i++) {
                     Unsafe.arrayPut(sources, i, new KvIndexIntLookupRowSource(im.keyColumn, toInt(im.keyValues.get(i), im.keyValuePositions.getQuick(i)), true));
                 }
@@ -749,7 +749,7 @@ public class QueryCompiler {
                         new KvIndexLongLookupRowSource(im.keyColumn, toLong(im.keyValues.get(1), im.keyValuePositions.getQuick(1)), true)
                 );
             default:
-                RowSource sources[] = new RowSource[nSrc];
+                RowSource[] sources = new RowSource[nSrc];
                 for (int i = 0; i < nSrc; i++) {
                     Unsafe.arrayPut(sources, i, new KvIndexLongLookupRowSource(im.keyColumn, toLong(im.keyValues.get(i), im.keyValuePositions.getQuick(i)), true));
                 }
@@ -768,7 +768,7 @@ public class QueryCompiler {
                         new KvIndexStrLookupRowSource(im.keyColumn, Chars.toString(im.keyValues.get(1)), true)
                 );
             default:
-                RowSource sources[] = new RowSource[nSrc];
+                RowSource[] sources = new RowSource[nSrc];
                 for (int i = 0; i < nSrc; i++) {
                     Unsafe.arrayPut(sources, i, new KvIndexStrLookupRowSource(im.keyColumn, Chars.toString(im.keyValues.get(i)), true));
                 }
@@ -787,7 +787,7 @@ public class QueryCompiler {
                         new KvIndexSymLookupRowSource(im.keyColumn, Chars.toString(im.keyValues.get(1)), true)
                 );
             default:
-                RowSource sources[] = new RowSource[nSrc];
+                RowSource[] sources = new RowSource[nSrc];
                 for (int i = 0; i < nSrc; i++) {
                     Unsafe.arrayPut(sources, i, new KvIndexSymLookupRowSource(im.keyColumn, Chars.toString(im.keyValues.get(i)), true));
                 }
@@ -1233,13 +1233,11 @@ public class QueryCompiler {
                 }
             }
         } else if (latestByCol != null) {
-            switch (latestByMetadata.getType()) {
-                case ColumnType.SYMBOL:
-                    rs = new KvIndexSymAllHeadRowSource(latestByCol, null);
-                    break;
-                default:
-                    Misc.free(rs);
-                    throw QueryError.$(latestByNode.position, "Only SYM columns can be used here without filter");
+            if (latestByMetadata.getType() == ColumnType.SYMBOL) {
+                rs = new KvIndexSymAllHeadRowSource(latestByCol, null);
+            } else {
+                Misc.free(rs);
+                throw QueryError.$(latestByNode.position, "Only SYM columns can be used here without filter");
             }
         }
 
@@ -1528,13 +1526,10 @@ public class QueryCompiler {
                 cm.type = srcType;
             }
 
-            switch (cm.type) {
-                case ColumnType.STRING:
-                    cm.size = cm.avgSize + 4;
-                    break;
-                default:
-                    cm.size = ColumnType.sizeOf(cm.type);
-                    break;
+            if (cm.type == ColumnType.STRING) {
+                cm.size = cm.avgSize + 4;
+            } else {
+                cm.size = ColumnType.sizeOf(cm.type);
             }
             m.add(cm);
         }
@@ -2302,7 +2297,7 @@ public class QueryCompiler {
      * the system that prefers child table with lowest index will attribute c.x = b.x clause to
      * journal "c" leaving "b" without clauses.
      */
-    @SuppressWarnings({"StatementWithEmptyBody", "ConstantConditions"})
+    @SuppressWarnings({"StatementWithEmptyBody"})
     private void reorderJournals(QueryModel parent) throws ParserException {
         ObjList<QueryModel> joinModels = parent.getJoinModels();
         int n = joinModels.size();
@@ -2377,14 +2372,10 @@ public class QueryCompiler {
 
             QueryModel m = joinModels.getQuick(index);
 
-            switch (m.getJoinType()) {
-                case QueryModel.JOIN_CROSS:
-                    // todo: not hit by test
-                    cost += 10;
-                    break;
-                default:
-                    cost += 5;
-                    break;
+            if (m.getJoinType() == QueryModel.JOIN_CROSS) {// todo: not hit by test
+                cost += 10;
+            } else {
+                cost += 5;
             }
 
             IntHashSet dependencies = m.getDependencies();

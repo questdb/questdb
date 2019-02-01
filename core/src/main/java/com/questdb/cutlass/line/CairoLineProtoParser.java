@@ -75,7 +75,7 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
     private final FieldValueParser MY_FIELD_VALUE = this::parseFieldValue;
     private final FieldValueParser MY_NEW_FIELD_VALUE = this::parseFieldValueNewTable;
     private final FieldValueParser MY_TAG_VALUE = this::parseTagValue;
-    private TableStructureAdapter tableStructureAdapter = new TableStructureAdapter();
+    private final TableStructureAdapter tableStructureAdapter = new TableStructureAdapter();
     private final LineEndParser MY_NEW_LINE_END = this::createTableAndAppendRow;
 
     public CairoLineProtoParser(CairoConfiguration configuration, ResourcePool<TableWriter> pool) {

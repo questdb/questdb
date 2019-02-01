@@ -29,7 +29,7 @@ import com.questdb.std.Unsafe;
 class CompactMapValue implements MapValue {
 
     private final VirtualMemory entries;
-    private final long columnOffsets[];
+    private final long[] columnOffsets;
     private long currentValueOffset;
     private boolean _new;
     private CompactMapRecord record;

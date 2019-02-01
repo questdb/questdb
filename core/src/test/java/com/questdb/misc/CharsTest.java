@@ -32,6 +32,8 @@ import org.junit.Assert;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
+import java.nio.charset.StandardCharsets;
+
 public class CharsTest {
     private static final FileNameExtractorCharSequence extractor = new FileNameExtractorCharSequence();
     private static char separator;
@@ -113,7 +115,7 @@ public class CharsTest {
     }
 
     @Test
-    public void testUtf8Support() throws Exception {
+    public void testUtf8Support() {
 
         StringBuilder expected = new StringBuilder();
         for (int i = 0; i < 0xD800; i++) {
@@ -123,7 +125,7 @@ public class CharsTest {
         String in = expected.toString();
         long p = Unsafe.malloc(8 * 0xffff);
         try {
-            byte[] bytes = in.getBytes("UTF8");
+            byte[] bytes = in.getBytes(StandardCharsets.UTF_8);
             for (int i = 0, n = bytes.length; i < n; i++) {
                 Unsafe.getUnsafe().putByte(p + i, bytes[i]);
             }

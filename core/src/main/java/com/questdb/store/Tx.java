@@ -39,10 +39,10 @@ public class Tx {
     public long lastPartitionTimestamp;
     public long lagSize;
     public String lagName;
-    public int symbolTableSizes[];
-    public long symbolTableIndexPointers[];
-    public long indexPointers[];
-    public long lagIndexPointers[];
+    public int[] symbolTableSizes;
+    public long[] symbolTableIndexPointers;
+    public long[] indexPointers;
+    public long[] lagIndexPointers;
 
     @Override
     public String toString() {

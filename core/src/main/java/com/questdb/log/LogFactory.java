@@ -389,7 +389,7 @@ public class LogFactory implements Closeable {
     }
 
     private static class ScopeConfiguration {
-        private final int channels[];
+        private final int[] channels;
         private final ObjList<LogWriterConfig> writerConfigs = new ObjList<>();
         private final IntObjHashMap<Holder> holderMap = new IntObjHashMap<>();
         private int ci = 0;

@@ -508,7 +508,7 @@ public class CairoLineProtoParserTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             try (WriterPool pool = new WriterPool(configuration, null)) {
                 try (CairoLineProtoParser parser = new CairoLineProtoParser(configuration, pool)) {
-                    byte bytes[] = lines.getBytes(StandardCharsets.UTF_8);
+                    byte[] bytes = lines.getBytes(StandardCharsets.UTF_8);
                     int len = bytes.length;
                     long mem = Unsafe.malloc(len);
                     try {

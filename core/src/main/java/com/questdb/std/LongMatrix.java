@@ -26,8 +26,8 @@ package com.questdb.std;
 public class LongMatrix<T> {
     private final int bits;
     private int pos;
-    private long data[];
-    private T payload[];
+    private long[] data;
+    private T[] payload;
     private int rows;
 
     @SuppressWarnings("unchecked")
@@ -120,8 +120,8 @@ public class LongMatrix<T> {
 
     @SuppressWarnings("unchecked")
     private int resize() {
-        long _data[] = new long[rows << (bits + 1)];
-        T _payload[] = (T[]) new Object[rows << 1];
+        long[] _data = new long[rows << (bits + 1)];
+        T[] _payload = (T[]) new Object[rows << 1];
         System.arraycopy(data, 0, _data, 0, rows << bits);
         System.arraycopy(payload, 0, _payload, 0, rows);
         this.data = _data;

@@ -31,7 +31,7 @@ public class ByteArrayResponseConsumer extends AbstractImmutableObjectConsumer<b
 
     @Override
     protected byte[] read(ByteBuffer buffer) {
-        byte bytes[] = new byte[buffer.remaining()];
+        byte[] bytes = new byte[buffer.remaining()];
         buffer.get(bytes);
         return bytes;
     }
