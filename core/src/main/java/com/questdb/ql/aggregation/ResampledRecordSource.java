@@ -29,13 +29,14 @@ import com.questdb.ql.CancellationHandler;
 import com.questdb.ql.RecordSource;
 import com.questdb.ql.map.*;
 import com.questdb.ql.ops.AbstractCombinedRecordSource;
+import com.questdb.std.ThreadLocal;
 import com.questdb.std.*;
 import com.questdb.std.str.CharSink;
 import com.questdb.store.*;
 import com.questdb.store.factory.ReaderFactory;
 
 public class ResampledRecordSource extends AbstractCombinedRecordSource {
-    private final static com.questdb.std.ThreadLocal<VirtualColumnTypeResolver> tlAggregationTypeResolver = new VirtualColumnTypeResolver.ResolverThreadLocal();
+    private final static ThreadLocal<VirtualColumnTypeResolver> tlAggregationTypeResolver = new VirtualColumnTypeResolver.ResolverThreadLocal();
     private final static MetadataNameTypeResolver.MetadataNameTypeResolverThreadLocal tlMetadataTypeResolver = new MetadataNameTypeResolver.MetadataNameTypeResolverThreadLocal();
     private final DirectMap map;
     private final RecordSource recordSource;

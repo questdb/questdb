@@ -5,7 +5,7 @@
  *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
  *   \__\_\\__,_|\___||___/\__|____/|____/
  *
- * Copyright (C) 2014-2018 Appsicle
+ * Copyright (C) 2014-2019 Appsicle
  *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU Affero General Public License, version 3,
@@ -25,13 +25,11 @@ package com.questdb.cairo;
 
 import com.questdb.std.*;
 import com.questdb.test.tools.TestUtils;
-import org.junit.Assert;
 import org.junit.Test;
 
 import java.nio.ByteBuffer;
 
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertNull;
+import static org.junit.Assert.*;
 
 public class VirtualMemoryTest {
 
@@ -72,7 +70,7 @@ public class VirtualMemoryTest {
             mem.putBin(seq);
 
             BinarySequence actual = mem.getBin(0);
-            Assert.assertNotNull(actual);
+            assertNotNull(actual);
 
             TestUtils.assertEquals(seq, actual, N);
 
@@ -84,12 +82,12 @@ public class VirtualMemoryTest {
                 actual.copyTo(buffer, 0, 1024);
 
                 for (int i = 0; i < N; i++) {
-                    Assert.assertEquals(seq.byteAt(i), Unsafe.getUnsafe().getByte(buffer + i));
+                    assertEquals(seq.byteAt(i), Unsafe.getUnsafe().getByte(buffer + i));
                 }
 
                 // rest of the buffer must not be overwritten
                 for (int i = N; i < 1024; i++) {
-                    Assert.assertEquals(5, Unsafe.getUnsafe().getByte(buffer + i));
+                    assertEquals(5, Unsafe.getUnsafe().getByte(buffer + i));
                 }
 
                 // copy from middle
@@ -97,12 +95,12 @@ public class VirtualMemoryTest {
                 actual.copyTo(buffer, O, 1024);
 
                 for (int i = 0; i < N - O; i++) {
-                    Assert.assertEquals(seq.byteAt(i + O), Unsafe.getUnsafe().getByte(buffer + i));
+                    assertEquals(seq.byteAt(i + O), Unsafe.getUnsafe().getByte(buffer + i));
                 }
 
                 // rest of the buffer must not be overwritten
                 for (int i = N - O; i < 1024; i++) {
-                    Assert.assertEquals(5, Unsafe.getUnsafe().getByte(buffer + i));
+                    assertEquals(5, Unsafe.getUnsafe().getByte(buffer + i));
                 }
             } finally {
                 Unsafe.free(buffer, 1024);
@@ -196,9 +194,9 @@ public class VirtualMemoryTest {
             mem.putByte(offset1 + 1, (byte) 4);
             mem.jumpTo(offset1 + 2);
             mem.putByte((byte) 5);
-            Assert.assertEquals(3, mem.getByte(offset1));
-            Assert.assertEquals(4, mem.getByte(offset1 + 1));
-            Assert.assertEquals(5, mem.getByte(offset1 + 2));
+            assertEquals(3, mem.getByte(offset1));
+            assertEquals(4, mem.getByte(offset1 + 1));
+            assertEquals(5, mem.getByte(offset1 + 2));
         }
     }
 
@@ -625,12 +623,12 @@ public class VirtualMemoryTest {
             mem.putBin(buf);
             long o1 = mem.putNullBin();
 
-            Assert.assertNull(mem.getBin(0));
-            Assert.assertNull(mem.getBin(8));
+            assertNull(mem.getBin(0));
+            assertNull(mem.getBin(8));
             BinarySequence bsview = mem.getBin(16);
-            Assert.assertNotNull(bsview);
+            assertNotNull(bsview);
             assertEquals(0, bsview.length());
-            Assert.assertNull(mem.getBin(o1));
+            assertNull(mem.getBin(o1));
         }
     }
 
@@ -792,7 +790,7 @@ public class VirtualMemoryTest {
             for (int i = 0; i < n; i++) {
                 long sz = rnd.nextPositiveInt() % buf.capacity();
                 BinarySequence bsview = mem.getBin(o);
-                Assert.assertNotNull(bsview);
+                assertNotNull(bsview);
                 assertEquals(sz, bsview.length());
 
                 o += sz + 8;
@@ -822,7 +820,7 @@ public class VirtualMemoryTest {
         }
 
         TestUtils.assertEquals("123", mem.getStr(o1));
-        Assert.assertEquals(3, mem.getStrLen(o1));
+        assertEquals(3, mem.getStrLen(o1));
         TestUtils.assertEquals("123", mem.getStr2(o1));
 
         String expected = "0987654321abcd";
@@ -834,7 +832,7 @@ public class VirtualMemoryTest {
             int page = mem.pageIndex(offset);
             long pageOffset = mem.offsetInPage(offset);
             final long pageSize = mem.getPageSize(page);
-            Assert.assertEquals(expected.charAt(i), mem.getCharBytes(page, pageOffset, pageSize));
+            assertEquals(expected.charAt(i), mem.getCharBytes(page, pageOffset, pageSize));
         }
 
         assertNull(mem.getStr(o3));
@@ -843,14 +841,14 @@ public class VirtualMemoryTest {
         TestUtils.assertEquals("xyz123", mem.getStr2(o4));
         assertNull(mem.getStr(o5));
         assertNull(mem.getStr2(o5));
-        Assert.assertEquals(-1, mem.getStrLen(o5));
+        assertEquals(-1, mem.getStrLen(o5));
 
         TestUtils.assertEquals("ohh", mem.getStr(o6));
-        Assert.assertNull(mem.getStr(o7));
+        assertNull(mem.getStr(o7));
 
         CharSequence s1 = mem.getStr(o1);
         CharSequence s2 = mem.getStr2(o2);
-        Assert.assertFalse(Chars.equals(s1, s2));
+        assertFalse(Chars.equals(s1, s2));
     }
 
     private void testBinSequence0(long mem1Size, long mem2Size) {
@@ -898,15 +896,15 @@ public class VirtualMemoryTest {
                     BinarySequence sequence2 = mem2.getBin(o);
 
                     if (sequence1 == null) {
-                        Assert.assertNull(sequence2);
-                        Assert.assertEquals(TableUtils.NULL_LEN, mem2.getBinLen(o));
+                        assertNull(sequence2);
+                        assertEquals(TableUtils.NULL_LEN, mem2.getBinLen(o));
                         o += 8;
                     } else {
-                        Assert.assertNotNull(sequence2);
-                        Assert.assertEquals(mem.getBinLen(o), mem2.getBinLen(o));
+                        assertNotNull(sequence2);
+                        assertEquals(mem.getBinLen(o), mem2.getBinLen(o));
                         assertEquals(sequence1.length(), sequence2.length());
                         for (long l = 0, len = sequence1.length(); l < len; l++) {
-                            Assert.assertEquals(sequence1.byteAt(l), sequence2.byteAt(l));
+                            assertEquals(sequence1.byteAt(l), sequence2.byteAt(l));
                         }
 
                         o += sequence1.length() + 8;

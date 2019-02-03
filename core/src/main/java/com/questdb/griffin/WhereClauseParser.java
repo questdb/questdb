@@ -731,8 +731,4 @@ final class WhereClauseParser {
         intrinsicOps.put("!=", INTRINCIC_OP_NOT_EQ);
         intrinsicOps.put("not", INTRINCIC_OP_NOT);
     }
-
-    static {
-
-    }
 }

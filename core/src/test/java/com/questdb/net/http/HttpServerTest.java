@@ -5,7 +5,7 @@
  *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
  *   \__\_\\__,_|\___||___/\__|____/|____/
  *
- * Copyright (C) 2014-2018 Appsicle
+ * Copyright (C) 2014-2019 Appsicle
  *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU Affero General Public License, version 3,
@@ -779,10 +779,9 @@ public class HttpServerTest extends AbstractJournalTest {
         env.matcher = new SimpleUrlMatcher() {{
             setDefaultHandler(new StaticContentHandler(env));
         }};
-        final MimeTypes mimeTypes = new MimeTypes(env.configuration.getMimeTypes());
         HttpServer server = new HttpServer(env);
         server.start();
-        assertConcurrentDownload(mimeTypes, server, "http");
+        assertConcurrentDownload(server, "http");
     }
 
     @Test
@@ -835,10 +834,9 @@ public class HttpServerTest extends AbstractJournalTest {
             setDefaultHandler(new StaticContentHandler(env));
         }};
 
-        final MimeTypes mimeTypes = new MimeTypes(env.configuration.getMimeTypes());
         HttpServer server = new HttpServer(env);
         server.start();
-        assertConcurrentDownload(mimeTypes, server, "https");
+        assertConcurrentDownload(server, "https");
     }
 
     @Test
@@ -916,7 +914,7 @@ public class HttpServerTest extends AbstractJournalTest {
         }
     }
 
-    private void assertConcurrentDownload(MimeTypes mimeTypes, HttpServer server, final String proto) throws InterruptedException, IOException {
+    private void assertConcurrentDownload(HttpServer server, final String proto) throws InterruptedException, IOException {
         try {
 
             // ssl

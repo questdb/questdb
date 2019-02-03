@@ -58,11 +58,9 @@ class LatestByValuesRecordCursor extends AbstractTreeSetRecordCursor {
                 record.setRecordIndex(row);
                 int key = TableUtils.toIndexKey(record.getInt(columnIndex));
                 int index = map.keyIndex(key);
-                if (index < 0) {
-                    if (map.valueAt(index) == 0) {
-                        treeSet.put(Rows.toRowID(partitionIndex, row));
-                        map.putAt(index, key, 1);
-                    }
+                if (index < 0 && map.valueAt(index) == 0) {
+                    treeSet.put(Rows.toRowID(partitionIndex, row));
+                    map.putAt(index, key, 1);
                 }
             }
         }

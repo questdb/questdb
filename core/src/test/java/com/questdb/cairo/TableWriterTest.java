@@ -5,7 +5,7 @@
  *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
  *   \__\_\\__,_|\___||___/\__|____/|____/
  *
- * Copyright (C) 2014-2018 Appsicle
+ * Copyright (C) 2014-2019 Appsicle
  *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU Affero General Public License, version 3,
@@ -388,13 +388,13 @@ public class TableWriterTest extends AbstractCairoTest {
             int count = 1;
 
             @Override
-            public boolean rename(LPSZ from, LPSZ to) {
-                return !Chars.endsWith(from, TableUtils.META_SWAP_FILE_NAME) && super.rename(from, to);
+            public boolean remove(LPSZ name) {
+                return !(Chars.endsWith(name, TableUtils.TODO_FILE_NAME) && --count == 0) && super.remove(name);
             }
 
             @Override
-            public boolean remove(LPSZ name) {
-                return !(Chars.endsWith(name, TableUtils.TODO_FILE_NAME) && --count == 0) && super.remove(name);
+            public boolean rename(LPSZ from, LPSZ to) {
+                return !Chars.endsWith(from, TableUtils.META_SWAP_FILE_NAME) && super.rename(from, to);
             }
         });
     }
@@ -533,20 +533,20 @@ public class TableWriterTest extends AbstractCairoTest {
             long fd = -1;
 
             @Override
-            public long openRW(LPSZ name) {
-                if (Chars.endsWith(name, TableUtils.META_SWAP_FILE_NAME)) {
-                    return fd = super.openRW(name);
-                }
-                return super.openRW(name);
-            }
-
-            @Override
             public long mmap(long fd, long len, long offset, int mode) {
                 if (fd == this.fd) {
                     this.fd = -1;
                     return -1;
                 }
                 return super.mmap(fd, len, offset, mode);
+            }
+
+            @Override
+            public long openRW(LPSZ name) {
+                if (Chars.endsWith(name, TableUtils.META_SWAP_FILE_NAME)) {
+                    return fd = super.openRW(name);
+                }
+                return super.openRW(name);
             }
         });
     }
@@ -1007,13 +1007,13 @@ public class TableWriterTest extends AbstractCairoTest {
                 boolean fail = false;
 
                 @Override
-                public boolean rmdir(Path name) {
-                    return !fail && super.rmdir(name);
+                public long read(long fd, long buf, long len, long offset) {
+                    return fail ? -1 : super.read(fd, buf, len, offset);
                 }
 
                 @Override
-                public long read(long fd, long buf, long len, long offset) {
-                    return fail ? -1 : super.read(fd, buf, len, offset);
+                public boolean rmdir(Path name) {
+                    return !fail && super.rmdir(name);
                 }
             }
 
@@ -1161,17 +1161,17 @@ public class TableWriterTest extends AbstractCairoTest {
                 boolean ran = false;
 
                 @Override
-                public boolean wasCalled() {
-                    return ran;
-                }
-
-                @Override
                 public long openRW(LPSZ name) {
                     if (Chars.endsWith(name, PRODUCT + ".lock")) {
                         ran = true;
                         return -1;
                     }
                     return super.openRW(name);
+                }
+
+                @Override
+                public boolean wasCalled() {
+                    return ran;
                 }
 
 
@@ -1198,20 +1198,20 @@ public class TableWriterTest extends AbstractCairoTest {
             long fd = -1;
 
             @Override
-            public long openRW(LPSZ name) {
-                if (Chars.endsWith(name, TableUtils.TXN_FILE_NAME) && --count == 0) {
-                    return fd = super.openRW(name);
-                }
-                return super.openRW(name);
-            }
-
-            @Override
             public long mmap(long fd, long len, long offset, int mode) {
                 if (fd == this.fd) {
                     this.fd = -1;
                     return -1;
                 }
                 return super.mmap(fd, len, offset, mode);
+            }
+
+            @Override
+            public long openRW(LPSZ name) {
+                if (Chars.endsWith(name, TableUtils.TXN_FILE_NAME) && --count == 0) {
+                    return fd = super.openRW(name);
+                }
+                return super.openRW(name);
             }
         });
     }
@@ -1277,19 +1277,19 @@ public class TableWriterTest extends AbstractCairoTest {
             long fd;
 
             @Override
-            public long openRW(LPSZ name) {
-                if (Chars.endsWith(name, "supplier.d")) {
-                    return fd = super.openRW(name);
-                }
-                return super.openRW(name);
-            }
-
-            @Override
             public long mmap(long fd, long len, long offset, int mode) {
                 if (fd == this.fd) {
                     return -1;
                 }
                 return super.mmap(fd, len, offset, mode);
+            }
+
+            @Override
+            public long openRW(LPSZ name) {
+                if (Chars.endsWith(name, "supplier.d")) {
+                    return fd = super.openRW(name);
+                }
+                return super.openRW(name);
             }
         }, false);
     }
@@ -1360,8 +1360,8 @@ public class TableWriterTest extends AbstractCairoTest {
             boolean ran = false;
 
             @Override
-            public boolean wasCalled() {
-                return fd != -1 && ran;
+            public boolean isRestrictedFileSystem() {
+                return false;
             }
 
             @Override
@@ -1373,17 +1373,17 @@ public class TableWriterTest extends AbstractCairoTest {
             }
 
             @Override
-            public boolean isRestrictedFileSystem() {
-                return false;
-            }
-
-            @Override
             public boolean truncate(long fd, long size) {
                 if (this.fd == fd && count-- == 0) {
                     ran = true;
                     return false;
                 }
                 return super.truncate(fd, size);
+            }
+
+            @Override
+            public boolean wasCalled() {
+                return fd != -1 && ran;
             }
         }, N);
     }
@@ -1401,16 +1401,16 @@ public class TableWriterTest extends AbstractCairoTest {
             boolean ran = false;
 
             @Override
+            public boolean isRestrictedFileSystem() {
+                return true;
+            }
+
+            @Override
             public long openRW(LPSZ name) {
                 if (Chars.endsWith(name, "price.d")) {
                     return fd = super.openRW(name);
                 }
                 return super.openRW(name);
-            }
-
-            @Override
-            public boolean isRestrictedFileSystem() {
-                return true;
             }
 
             @Override
@@ -1441,16 +1441,16 @@ public class TableWriterTest extends AbstractCairoTest {
             boolean ran = false;
 
             @Override
+            public boolean isRestrictedFileSystem() {
+                return true;
+            }
+
+            @Override
             public long openRW(LPSZ name) {
                 if (Chars.endsWith(name, "price.d")) {
                     return fd = super.openRW(name);
                 }
                 return super.openRW(name);
-            }
-
-            @Override
-            public boolean isRestrictedFileSystem() {
-                return true;
             }
 
             @Override
@@ -1798,8 +1798,13 @@ public class TableWriterTest extends AbstractCairoTest {
             boolean hit = false;
 
             @Override
-            public boolean wasCalled() {
-                return hit;
+            public long mmap(long fd, long len, long offset, int mode) {
+                if (fd == this.fd) {
+                    this.fd = -1;
+                    this.hit = true;
+                    return -1;
+                }
+                return super.mmap(fd, len, offset, mode);
             }
 
             @Override
@@ -1811,13 +1816,8 @@ public class TableWriterTest extends AbstractCairoTest {
             }
 
             @Override
-            public long mmap(long fd, long len, long offset, int mode) {
-                if (fd == this.fd) {
-                    this.fd = -1;
-                    this.hit = true;
-                    return -1;
-                }
-                return super.mmap(fd, len, offset, mode);
+            public boolean wasCalled() {
+                return hit;
             }
         }
         testRemoveColumnRecoverableFailure(new X());
@@ -1830,17 +1830,17 @@ public class TableWriterTest extends AbstractCairoTest {
             boolean hit = false;
 
             @Override
-            public boolean wasCalled() {
-                return hit;
-            }
-
-            @Override
             public long openRW(LPSZ name) {
                 if (Chars.contains(name, TableUtils.META_SWAP_FILE_NAME)) {
                     hit = true;
                     return -1;
                 }
                 return super.openRW(name);
+            }
+
+            @Override
+            public boolean wasCalled() {
+                return hit;
             }
         }
         testRemoveColumnRecoverableFailure(new X());
@@ -1856,11 +1856,6 @@ public class TableWriterTest extends AbstractCairoTest {
         testRemoveColumnRecoverableFailure(new TestFilesFacade() {
             int exists = 0;
             int removes = 0;
-
-            @Override
-            public boolean wasCalled() {
-                return exists > 0 && removes > 0;
-            }
 
             @Override
             public boolean exists(LPSZ path) {
@@ -1879,6 +1874,11 @@ public class TableWriterTest extends AbstractCairoTest {
                 }
                 return super.remove(name);
             }
+
+            @Override
+            public boolean wasCalled() {
+                return exists > 0 && removes > 0;
+            }
         });
     }
 
@@ -1888,17 +1888,17 @@ public class TableWriterTest extends AbstractCairoTest {
             int count = 0;
 
             @Override
-            public boolean wasCalled() {
-                return count > 0;
-            }
-
-            @Override
             public boolean remove(LPSZ name) {
                 if (Chars.endsWith(name, "supplier.d")) {
                     count++;
                     return false;
                 }
                 return super.remove(name);
+            }
+
+            @Override
+            public boolean wasCalled() {
+                return count > 0;
             }
         });
     }
@@ -1909,17 +1909,17 @@ public class TableWriterTest extends AbstractCairoTest {
             int count = 0;
 
             @Override
-            public boolean wasCalled() {
-                return count > 0;
-            }
-
-            @Override
             public boolean remove(LPSZ name) {
                 if (Chars.endsWith(name, "supplier.k")) {
                     count++;
                     return false;
                 }
                 return super.remove(name);
+            }
+
+            @Override
+            public boolean wasCalled() {
+                return count > 0;
             }
         });
     }
@@ -1930,16 +1930,9 @@ public class TableWriterTest extends AbstractCairoTest {
             int count = 5;
 
             @Override
-            public boolean wasCalled() {
-                return count <= 0;
-            }
-
-            @Override
             public boolean exists(LPSZ path) {
-                if (Chars.contains(path, TableUtils.META_PREV_FILE_NAME)) {
-                    if (--count > 0) {
-                        return true;
-                    }
+                if (Chars.contains(path, TableUtils.META_PREV_FILE_NAME) && --count > 0) {
+                    return true;
                 }
                 return super.exists(path);
             }
@@ -1948,6 +1941,11 @@ public class TableWriterTest extends AbstractCairoTest {
             public boolean remove(LPSZ name) {
                 return !Chars.contains(name, TableUtils.META_PREV_FILE_NAME) && super.remove(name);
             }
+
+            @Override
+            public boolean wasCalled() {
+                return count <= 0;
+            }
         });
     }
 
@@ -1955,11 +1953,6 @@ public class TableWriterTest extends AbstractCairoTest {
     public void testRemoveColumnCannotRemoveSwap() throws Exception {
         class X extends TestFilesFacade {
             boolean hit = false;
-
-            @Override
-            public boolean wasCalled() {
-                return hit;
-            }
 
             @Override
             public boolean exists(LPSZ path) {
@@ -1973,6 +1966,11 @@ public class TableWriterTest extends AbstractCairoTest {
                     return false;
                 }
                 return super.remove(name);
+            }
+
+            @Override
+            public boolean wasCalled() {
+                return hit;
             }
         }
         testRemoveColumnRecoverableFailure(new X());
@@ -2008,10 +2006,8 @@ public class TableWriterTest extends AbstractCairoTest {
 
             @Override
             public boolean rename(LPSZ from, LPSZ to) {
-                if (Chars.endsWith(to, TableUtils.META_FILE_NAME)) {
-                    if (count-- > 0) {
-                        return false;
-                    }
+                if (Chars.endsWith(to, TableUtils.META_FILE_NAME) && count-- > 0) {
+                    return false;
                 }
                 return super.rename(from, to);
             }
@@ -3226,11 +3222,6 @@ public class TableWriterTest extends AbstractCairoTest {
         boolean hit = false;
 
         @Override
-        public boolean wasCalled() {
-            return hit;
-        }
-
-        @Override
         public boolean rename(LPSZ from, LPSZ to) {
             if (Chars.endsWith(from, TableUtils.META_SWAP_FILE_NAME)) {
                 hit = true;
@@ -3238,15 +3229,15 @@ public class TableWriterTest extends AbstractCairoTest {
             }
             return super.rename(from, to);
         }
-    }
-
-    private static class MetaRenameDenyingFacade extends TestFilesFacade {
-        boolean hit = false;
 
         @Override
         public boolean wasCalled() {
             return hit;
         }
+    }
+
+    private static class MetaRenameDenyingFacade extends TestFilesFacade {
+        boolean hit = false;
 
         @Override
         public boolean rename(LPSZ from, LPSZ to) {
@@ -3256,16 +3247,16 @@ public class TableWriterTest extends AbstractCairoTest {
             }
             return super.rename(from, to);
         }
-    }
-
-    private static class TodoOpenDenyingFacade extends TestFilesFacade {
-
-        boolean hit = false;
 
         @Override
         public boolean wasCalled() {
             return hit;
         }
+    }
+
+    private static class TodoOpenDenyingFacade extends TestFilesFacade {
+
+        boolean hit = false;
 
         @Override
         public long openAppend(LPSZ name) {
@@ -3274,6 +3265,11 @@ public class TableWriterTest extends AbstractCairoTest {
                 return -1;
             }
             return super.openAppend(name);
+        }
+
+        @Override
+        public boolean wasCalled() {
+            return hit;
         }
     }
 
@@ -3292,17 +3288,16 @@ public class TableWriterTest extends AbstractCairoTest {
         }
 
         @Override
-        public boolean wasCalled() {
-            return hit;
-        }
-
-
-        @Override
         public long openAppend(LPSZ name) {
             if (Chars.endsWith(name, TableUtils.TODO_FILE_NAME)) {
                 return fd = super.openAppend(name);
             }
             return super.openAppend(name);
+        }
+
+        @Override
+        public boolean wasCalled() {
+            return hit;
         }
 
 

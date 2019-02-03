@@ -5,7 +5,7 @@
  *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
  *   \__\_\\__,_|\___||___/\__|____/|____/
  *
- * Copyright (C) 2014-2018 Appsicle
+ * Copyright (C) 2014-2019 Appsicle
  *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU Affero General Public License, version 3,
@@ -103,7 +103,7 @@ public class IntObjHashMapTest {
         // assert that keys we didn't remove are still there and
         // keys we removed are not
         for (int i = 0; i < N; i++) {
-            CharSequence cs = rnd.nextChars(15);
+            rnd.nextChars(15);
             int value = rnd.nextInt();
             if (rnd2.nextPositiveInt() % 16 == 0) {
                 Assert.assertTrue(map.excludes(value));

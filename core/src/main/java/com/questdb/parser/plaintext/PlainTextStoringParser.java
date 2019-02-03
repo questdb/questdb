@@ -250,7 +250,7 @@ public class PlainTextStoringParser implements MetadataAwareTextParser, Closeabl
         for (int i = 0, n = metadata.size(); i < n; i++) {
             ColumnMetadata cm = new ColumnMetadata();
             ImportedColumnMetadata im = metadata.getQuick(i);
-            cm.name = im.name.toString();
+            cm.name = Chars.stringOf(im.name);
             cm.type = im.importedColumnType;
 
             if (cm.type == ColumnType.STRING) {

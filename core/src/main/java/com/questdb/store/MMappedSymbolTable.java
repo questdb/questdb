@@ -270,7 +270,7 @@ public class MMappedSymbolTable implements Closeable, SymbolTable {
         public CharSequence value;
     }
 
-    private class Iter implements com.questdb.std.ImmutableIterator<Entry> {
+    private class Iter implements ImmutableIterator<Entry> {
         private final Entry e = new Entry();
         private int pos;
         private int size;

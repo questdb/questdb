@@ -519,7 +519,7 @@ public class JournalTest extends AbstractTest {
                 Assert.assertEquals(SymbolTable.VALUE_NOT_FOUND, w.getSymbolTable("sym").getQuick("LLOY.L"));
                 Assert.assertNull(w.getLastPartition());
                 Partition<Quote> p = w.getPartition(w.getPartitionCount() - 1, false);
-                Assert.assertNotNull(p);
+                assertNotNull(p);
                 Assert.assertEquals(0, p.getIndexForColumn("sym").size());
             }
         }
