@@ -55,7 +55,7 @@ public class TimeoutBlockingWaitStrategy extends AbstractWaitStrategy {
                 throw TimeoutException.INSTANCE;
             }
         } catch (InterruptedException e) {
-            throw new RuntimeException(e);
+            throw TimeoutException.INSTANCE;
         } finally {
             lock.unlock();
         }

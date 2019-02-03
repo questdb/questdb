@@ -59,7 +59,7 @@ public class IntObjHashMapTest {
         // remove some keys and assert that the size() complies
         int removed = 0;
         for (int i = 0; i < N; i++) {
-            CharSequence cs = rnd.nextChars(15);
+            rnd.nextChars(15);
             int value = rnd.nextInt();
             if (rnd2.nextPositiveInt() % 16 == 0) {
                 Assert.assertTrue(map.remove(value) > -1);

@@ -792,9 +792,7 @@ public class HttpServerTest extends AbstractJournalTest {
         env.matcher = new SimpleUrlMatcher() {{
             setDefaultHandler(new StaticContentHandler(env));
         }};
-
-        HttpServer server = new HttpServer(env);
-        assertNotModified(env.configuration, server);
+        assertNotModified(new HttpServer(env));
     }
 
     @Test
@@ -977,7 +975,7 @@ public class HttpServerTest extends AbstractJournalTest {
         }
     }
 
-    private void assertNotModified(ServerConfiguration configuration, HttpServer server) throws IOException {
+    private void assertNotModified(HttpServer server) throws IOException {
         server.start();
         try {
             File out = new File(temp.getRoot(), "get.html");

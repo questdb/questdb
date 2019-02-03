@@ -5,33 +5,26 @@
  *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
  *   \__\_\\__,_|\___||___/\__|____/|____/
  *
- * The MIT License (MIT)
+ * Copyright (C) 2014-2019 Appsicle
  *
- * Copyright (C) 2016 Appsicle
+ * This program is free software: you can redistribute it and/or  modify
+ * it under the terms of the GNU Affero General Public License, version 3,
+ * as published by the Free Software Foundation.
  *
- * Permission is hereby granted, free of charge, to any person obtaining a
- * copy of this software and associated documentation files (the "Software"),
- * to deal in the Software without restriction, including without limitation
- * the rights to use, copy, modify, merge, publish, distribute, sublicense,
- * and/or sell copies of the Software, and to permit persons to whom the
- * Software is furnished to do so, subject to the following conditions:
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Affero General Public License for more details.
  *
- * The above copyright notice and this permission notice shall be included in
- * all copies or substantial portions of the Software.
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
- * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
- * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
- * IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR
- * ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF
- * CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
- * WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  ******************************************************************************/
 
 ace.define(
     "ace/mode/sql_highlight_rules",
     ["require", "exports", "module", "ace/lib/oop", "ace/mode/text_highlight_rules"],
-    function (e, t, n) {
+    function (e, t) {
         "use strict";
         var r = e("../lib/oop"), i = e("./text_highlight_rules").TextHighlightRules, s = function () {
             var e = "select|insert|update|delete|from|where|and|or|by|order|limit|as|case|when|else|end|type|left|right|join|on|outer|desc|asc|union|create|table|primary|key|if|foreign|not|references|default|null|inner|cross|natural|database|drop|grant|over|sample|partition|latest|NaN|with|rename";
@@ -60,21 +53,21 @@ ace.define(
                     regex: "\\s+"
                 }]
             };
-            this.normalizeRules()
+            this.normalizeRules();
         };
         r.inherits(s, i);
-        t.SqlHighlightRules = s
+        t.SqlHighlightRules = s;
     });
 
 
-ace.define("ace/mode/questdb", ["require", "exports", "module", "ace/lib/oop", "ace/mode/text", "ace/mode/sql_highlight_rules", "ace/range"], function (e, t, n) {
+ace.define("ace/mode/questdb", ["require", "exports", "module", "ace/lib/oop", "ace/mode/text", "ace/mode/sql_highlight_rules", "ace/range"], function (e, t) {
     "use strict";
     var r = e("../lib/oop"), i = e("./text").Mode, s = e("./sql_highlight_rules").SqlHighlightRules, o = e("../range").Range, u = function () {
-        this.HighlightRules = s
+        this.HighlightRules = s;
     };
     r.inherits(u, i), function () {
         this.lineCommentStart = "--";
-        this.$id = "ace/mode/questdb"
+        this.$id = "ace/mode/questdb";
     }.call(u.prototype);
-    t.Mode = u
+    t.Mode = u;
 });
