@@ -46,7 +46,7 @@ public class BitmapIndexWriter implements Closeable {
     private int keyCount = -1;
     private long seekValueCount;
     private long seekValueBlockOffset;
-    private final BitmapIndexUtils.ValueBlockSeeker SEEKER = this::seek;
+    private final ValueBlockSeeker SEEKER = this::seek;
 
     public BitmapIndexWriter(CairoConfiguration configuration, Path path, CharSequence name) {
         of(configuration, path, name);
@@ -60,7 +60,7 @@ public class BitmapIndexWriter implements Closeable {
         // block value count must be power of 2
         assert blockValueCount == Numbers.ceilPow2(blockValueCount);
 
-        keyMem.putByte(BitmapIndexUtils.SIGNATURE);
+        keyMem.putByte(SIGNATURE);
         keyMem.putLong(1); // SEQUENCE
         Unsafe.getUnsafe().storeFence();
         keyMem.putLong(0); // VALUE MEM SIZE
@@ -68,7 +68,7 @@ public class BitmapIndexWriter implements Closeable {
         keyMem.putLong(0); // KEY COUNT
         Unsafe.getUnsafe().storeFence();
         keyMem.putLong(1); // SEQUENCE CHECK
-        keyMem.skip(BitmapIndexUtils.KEY_FILE_RESERVED - keyMem.getAppendOffset());
+        keyMem.skip(KEY_FILE_RESERVED - keyMem.getAppendOffset());
     }
 
     /**
@@ -83,7 +83,7 @@ public class BitmapIndexWriter implements Closeable {
      */
     public void add(int key, long value) {
         assert key > -1 : "key must be positive integer: " + key;
-        final long offset = BitmapIndexUtils.getKeyEntryOffset(key);
+        final long offset = getKeyEntryOffset(key);
         if (key < keyCount) {
             // when key exists we have possible outcomes with regards to values
             // 1. last value block has space if value cell index is not the last in block
@@ -92,7 +92,7 @@ public class BitmapIndexWriter implements Closeable {
             // second option is supposed to be less likely because we attempt to
             // configure block capacity to accommodate as many values as possible
             long valueBlockOffset = keyMem.getLong(offset + KEY_ENTRY_OFFSET_LAST_VALUE_BLOCK_OFFSET);
-            long valueCount = keyMem.getLong(offset + BitmapIndexUtils.KEY_ENTRY_OFFSET_VALUE_COUNT);
+            long valueCount = keyMem.getLong(offset + KEY_ENTRY_OFFSET_VALUE_COUNT);
             int valueCellIndex = (int) (valueCount & blockValueCountMod);
             if (valueCellIndex > 0) {
                 // this is scenario #1: key exists and there is space in last block to add value
@@ -146,7 +146,7 @@ public class BitmapIndexWriter implements Closeable {
         int plen = path.length();
 
         try {
-            boolean exists = configuration.getFilesFacade().exists(BitmapIndexUtils.keyFileName(path, name));
+            boolean exists = configuration.getFilesFacade().exists(keyFileName(path, name));
             this.keyMem.of(configuration.getFilesFacade(), path, pageSize);
             if (!exists) {
                 LOG.error().$(path).$(" not found").$();
@@ -155,32 +155,32 @@ public class BitmapIndexWriter implements Closeable {
 
             long keyMemSize = this.keyMem.getAppendOffset();
             // check if key file header is present
-            if (keyMemSize < BitmapIndexUtils.KEY_FILE_RESERVED) {
+            if (keyMemSize < KEY_FILE_RESERVED) {
                 LOG.error().$("file too short [corrupt] ").$(path).$();
                 throw CairoException.instance(0).put("Index file too short (w): ").put(path);
             }
 
             // verify header signature
-            if (this.keyMem.getByte(BitmapIndexUtils.KEY_RESERVED_OFFSET_SIGNATURE) != BitmapIndexUtils.SIGNATURE) {
+            if (this.keyMem.getByte(KEY_RESERVED_OFFSET_SIGNATURE) != SIGNATURE) {
                 LOG.error().$("unknown format [corrupt] ").$(path).$();
                 throw CairoException.instance(0).put("Unknown format: ").put(path);
             }
 
             // verify key count
-            this.keyCount = this.keyMem.getInt(BitmapIndexUtils.KEY_RESERVED_OFFSET_KEY_COUNT);
+            this.keyCount = this.keyMem.getInt(KEY_RESERVED_OFFSET_KEY_COUNT);
             if (keyMemSize < keyMemSize()) {
                 LOG.error().$("key count does not match file length [corrupt] of ").$(path).$(" [keyCount=").$(this.keyCount).$(']').$();
                 throw CairoException.instance(0).put("Key count does not match file length of ").put(path);
             }
 
             // check if sequence is intact
-            if (this.keyMem.getLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE_CHECK) != this.keyMem.getLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE)) {
+            if (this.keyMem.getLong(KEY_RESERVED_OFFSET_SEQUENCE_CHECK) != this.keyMem.getLong(KEY_RESERVED_OFFSET_SEQUENCE)) {
                 LOG.error().$("sequence mismatch [corrupt] at ").$(path).$();
                 throw CairoException.instance(0).put("Sequence mismatch on ").put(path);
             }
 
-            this.valueMem.of(configuration.getFilesFacade(), BitmapIndexUtils.valueFileName(path.trimTo(plen), name), pageSize);
-            this.valueMemSize = this.keyMem.getLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_VALUE_MEM_SIZE);
+            this.valueMem.of(configuration.getFilesFacade(), valueFileName(path.trimTo(plen), name), pageSize);
+            this.valueMemSize = this.keyMem.getLong(KEY_RESERVED_OFFSET_VALUE_MEM_SIZE);
 
             if (this.valueMem.getAppendOffset() < this.valueMemSize) {
                 LOG.error().$("incorrect file size [corrupt] of ").$(path).$(" [expected=").$(this.valueMemSize).$(']').$();
@@ -189,9 +189,9 @@ public class BitmapIndexWriter implements Closeable {
 
             // block value count is always a power of two
             // to calculate remainder we use faster 'x & (count-1)', which is equivalent to (x % count)
-            this.blockValueCountMod = this.keyMem.getInt(BitmapIndexUtils.KEY_RESERVED_OFFSET_BLOCK_VALUE_COUNT) - 1;
+            this.blockValueCountMod = this.keyMem.getInt(KEY_RESERVED_OFFSET_BLOCK_VALUE_COUNT) - 1;
             assert blockValueCountMod > 0;
-            this.blockCapacity = (this.blockValueCountMod + 1) * 8 + BitmapIndexUtils.VALUE_BLOCK_FILE_RESERVED;
+            this.blockCapacity = (this.blockValueCountMod + 1) * 8 + VALUE_BLOCK_FILE_RESERVED;
         } catch (CairoException e) {
             this.close();
             throw e;
@@ -210,21 +210,21 @@ public class BitmapIndexWriter implements Closeable {
 
         long maxValueBlockOffset = 0;
         for (int k = 0; k < keyCount; k++) {
-            long offset = BitmapIndexUtils.getKeyEntryOffset(k);
-            long valueCount = keyMem.getLong(offset + BitmapIndexUtils.KEY_ENTRY_OFFSET_VALUE_COUNT);
+            long offset = getKeyEntryOffset(k);
+            long valueCount = keyMem.getLong(offset + KEY_ENTRY_OFFSET_VALUE_COUNT);
 
             // do we have anything for the key?
             if (valueCount > 0) {
                 long blockOffset = keyMem.getLong(offset + KEY_ENTRY_OFFSET_LAST_VALUE_BLOCK_OFFSET);
-                BitmapIndexUtils.seekValueBlockRTL(valueCount, blockOffset, valueMem, maxValue, blockValueCountMod, SEEKER);
+                seekValueBlockRTL(valueCount, blockOffset, valueMem, maxValue, blockValueCountMod, SEEKER);
 
                 if (valueCount != seekValueCount || blockOffset != seekValueBlockOffset) {
                     // set new value count
-                    keyMem.putLong(offset + BitmapIndexUtils.KEY_ENTRY_OFFSET_VALUE_COUNT, seekValueCount);
+                    keyMem.putLong(offset + KEY_ENTRY_OFFSET_VALUE_COUNT, seekValueCount);
 
                     if (blockOffset != seekValueBlockOffset) {
                         Unsafe.getUnsafe().storeFence();
-                        keyMem.putLong(offset + BitmapIndexUtils.KEY_ENTRY_OFFSET_VALUE_COUNT + 16, seekValueBlockOffset);
+                        keyMem.putLong(offset + KEY_ENTRY_OFFSET_VALUE_COUNT + 16, seekValueBlockOffset);
                         Unsafe.getUnsafe().storeFence();
                     }
                     keyMem.putLong(offset + KEY_ENTRY_OFFSET_COUNT_CHECK, seekValueCount);
@@ -247,10 +247,10 @@ public class BitmapIndexWriter implements Closeable {
 
         // we subtract 8 because we just written long value
         // update this block reference to previous block
-        valueMem.putLong(valueMemSize - BitmapIndexUtils.VALUE_BLOCK_FILE_RESERVED, valueBlockOffset);
+        valueMem.putLong(valueMemSize - VALUE_BLOCK_FILE_RESERVED, valueBlockOffset);
 
         // update previous block' "next" block reference to this block
-        valueMem.putLong(valueBlockOffset + blockCapacity - BitmapIndexUtils.VALUE_BLOCK_FILE_RESERVED + 8, newValueBlockOffset);
+        valueMem.putLong(valueBlockOffset + blockCapacity - VALUE_BLOCK_FILE_RESERVED + 8, newValueBlockOffset);
 
         // update count and last value block offset for the key
         // in atomic fashion
@@ -326,7 +326,7 @@ public class BitmapIndexWriter implements Closeable {
     }
 
     private long keyMemSize() {
-        return this.keyCount * BitmapIndexUtils.KEY_ENTRY_SIZE + BitmapIndexUtils.KEY_FILE_RESERVED;
+        return this.keyCount * KEY_ENTRY_SIZE + KEY_FILE_RESERVED;
     }
 
     private void seek(long count, long offset) {
@@ -338,21 +338,21 @@ public class BitmapIndexWriter implements Closeable {
         keyCount = key + 1;
 
         // also write key count to header of key memory
-        long seq = keyMem.getLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE) + 1;
-        keyMem.putLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE, seq);
+        long seq = keyMem.getLong(KEY_RESERVED_OFFSET_SEQUENCE) + 1;
+        keyMem.putLong(KEY_RESERVED_OFFSET_SEQUENCE, seq);
         Unsafe.getUnsafe().storeFence();
-        keyMem.putInt(BitmapIndexUtils.KEY_RESERVED_OFFSET_KEY_COUNT, keyCount);
+        keyMem.putInt(KEY_RESERVED_OFFSET_KEY_COUNT, keyCount);
         Unsafe.getUnsafe().storeFence();
-        keyMem.putLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE_CHECK, seq);
+        keyMem.putLong(KEY_RESERVED_OFFSET_SEQUENCE_CHECK, seq);
     }
 
     private void updateValueMemSize() {
-        long seq = keyMem.getLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE) + 1;
-        keyMem.putLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE, seq);
+        long seq = keyMem.getLong(KEY_RESERVED_OFFSET_SEQUENCE) + 1;
+        keyMem.putLong(KEY_RESERVED_OFFSET_SEQUENCE, seq);
         Unsafe.getUnsafe().storeFence();
-        keyMem.putLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_VALUE_MEM_SIZE, valueMemSize);
+        keyMem.putLong(KEY_RESERVED_OFFSET_VALUE_MEM_SIZE, valueMemSize);
         Unsafe.getUnsafe().storeFence();
-        keyMem.putLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE_CHECK, seq);
+        keyMem.putLong(KEY_RESERVED_OFFSET_SEQUENCE_CHECK, seq);
     }
 
     private class Cursor implements RowCursor {
@@ -376,7 +376,7 @@ public class BitmapIndexWriter implements Closeable {
         }
 
         private long getPreviousBlock(long currentValueBlockOffset) {
-            return valueMem.getLong(currentValueBlockOffset + blockCapacity - BitmapIndexUtils.VALUE_BLOCK_FILE_RESERVED);
+            return valueMem.getLong(currentValueBlockOffset + blockCapacity - VALUE_BLOCK_FILE_RESERVED);
         }
 
         private long getValueCellIndex(long absoluteValueIndex) {
@@ -389,8 +389,8 @@ public class BitmapIndexWriter implements Closeable {
 
         void of(int key) {
             assert key > -1 : "key must be positive integer: " + key;
-            long offset = BitmapIndexUtils.getKeyEntryOffset(key);
-            this.valueCount = keyMem.getLong(offset + BitmapIndexUtils.KEY_ENTRY_OFFSET_VALUE_COUNT);
+            long offset = getKeyEntryOffset(key);
+            this.valueCount = keyMem.getLong(offset + KEY_ENTRY_OFFSET_VALUE_COUNT);
             assert valueCount > -1;
             this.valueBlockOffset = keyMem.getLong(offset + KEY_ENTRY_OFFSET_LAST_VALUE_BLOCK_OFFSET);
         }

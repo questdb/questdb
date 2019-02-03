@@ -37,9 +37,6 @@ public class SlidingWindowMemory extends VirtualMemory {
     private int pageIndex;
     private AppendMemory parent;
 
-    public SlidingWindowMemory() {
-    }
-
     @Override
     public void close() {
         super.close();

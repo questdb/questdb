@@ -42,8 +42,8 @@ public class NetworkFacadeImpl implements NetworkFacade {
     }
 
     @Override
-    public void close(long fd) {
-        Net.close(fd);
+    public int close(long fd) {
+        return Net.close(fd);
     }
 
     @Override
@@ -87,13 +87,18 @@ public class NetworkFacadeImpl implements NetworkFacade {
     }
 
     @Override
-    public void sendTo(long fd, long ptr, int len, long socketAddress) {
-        Net.sendTo(fd, ptr, len, socketAddress);
+    public int errno() {
+        return Os.errno();
     }
 
     @Override
     public long sockaddr(int address, int port) {
         return Net.sockaddr(address, port);
+    }
+
+    @Override
+    public int sendTo(long fd, long ptr, int len, long socketAddress) {
+        return Net.sendTo(fd, ptr, len, socketAddress);
     }
 
     @Override
@@ -114,5 +119,10 @@ public class NetworkFacadeImpl implements NetworkFacade {
     @Override
     public boolean join(long fd, CharSequence bindIPv4Address, CharSequence groupIPv4Address) {
         return Net.join(fd, bindIPv4Address, bindIPv4Address);
+    }
+
+    @Override
+    public long sockaddr(CharSequence address, int port) {
+        return Net.sockaddr(address, port);
     }
 }

@@ -143,7 +143,7 @@ public final class BitmapIndexUtils {
                 } else {
                     cellCount = valueCount;
                 }
-                long hi = valueMem.getLong(valueBlockOffset + (cellCount - 1) * 8);
+                final long hi = valueMem.getLong(valueBlockOffset + (cellCount - 1) * 8);
 
                 // can we skip this block ?
                 if (hi < minValue) {

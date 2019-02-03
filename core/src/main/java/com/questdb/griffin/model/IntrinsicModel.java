@@ -45,9 +45,6 @@ public class IntrinsicModel implements Mutable {
     public int intrinsicValue = UNDEFINED;
     public QueryModel keySubQuery;
 
-    public IntrinsicModel() {
-    }
-
     public static long getIntervalHi(LongList intervals, int pos) {
         return intervals.getQuick((pos << 1) + 1);
     }

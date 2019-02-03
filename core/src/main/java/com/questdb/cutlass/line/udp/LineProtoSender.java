@@ -23,10 +23,11 @@
 
 package com.questdb.cutlass.line.udp;
 
+import com.questdb.cairo.CairoException;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.std.Chars;
-import com.questdb.std.Net;
+import com.questdb.std.NetworkFacade;
 import com.questdb.std.Os;
 import com.questdb.std.Unsafe;
 import com.questdb.std.str.AbstractCharSink;
@@ -42,6 +43,7 @@ public class LineProtoSender extends AbstractCharSink implements Closeable {
     private final long bufB;
     private final long sockaddr;
     private final long fd;
+    private final NetworkFacade nf;
 
     private long lo;
     private long hi;
@@ -50,10 +52,15 @@ public class LineProtoSender extends AbstractCharSink implements Closeable {
     private boolean hasMetric = false;
     private boolean noFields = true;
 
-    public LineProtoSender(CharSequence ipv4Address, int port, int capacity) {
+    public LineProtoSender(NetworkFacade nf, CharSequence ipv4Address, int port, int capacity) {
+        this.nf = nf;
         this.capacity = capacity;
-        sockaddr = Net.sockaddr(ipv4Address, port);
-        fd = Net.socketUdp();
+        fd = nf.socketUdp();
+        if (fd == -1) {
+            throw CairoException.instance(nf.errno()).put("could not create UDP socket");
+        }
+
+        sockaddr = nf.sockaddr(ipv4Address, port);
         bufA = Unsafe.malloc(capacity);
         bufB = Unsafe.malloc(capacity);
 
@@ -77,10 +84,10 @@ public class LineProtoSender extends AbstractCharSink implements Closeable {
 
     @Override
     public void close() {
-        if (Net.close(fd) != 0) {
+        if (nf.close(fd) != 0) {
             LOG.error().$("failed to close UDP socket [fd=").$(fd).$(", errno=").$(Os.errno()).$(']').$();
         }
-        Net.freeSockAddr(sockaddr);
+        nf.freeSockAddr(sockaddr);
         Unsafe.free(bufA, capacity);
         Unsafe.free(bufB, capacity);
     }
@@ -106,21 +113,12 @@ public class LineProtoSender extends AbstractCharSink implements Closeable {
         ptr = lineStart = lo;
     }
 
-    @Override
-    public LineProtoSender put(CharSequence cs) {
-        int l = cs.length();
-        if (ptr + l < hi) {
-            Chars.strcpy(cs, l, ptr);
-        } else {
-            send00();
-            if (ptr + l < hi) {
-                Chars.strcpy(cs, l, ptr);
-            } else {
-                throw new RuntimeException("too much!");
-            }
+    public LineProtoSender metric(CharSequence metric) {
+        if (hasMetric) {
+            throw CairoException.instance(0).put("duplicate metric");
         }
-        ptr += l;
-        return this;
+        hasMetric = true;
+        return put(metric);
     }
 
     @Override
@@ -132,12 +130,21 @@ public class LineProtoSender extends AbstractCharSink implements Closeable {
         return this;
     }
 
-    public LineProtoSender metric(CharSequence metric) {
-        if (hasMetric) {
-            throw new RuntimeException();
+    @Override
+    public LineProtoSender put(CharSequence cs) {
+        int l = cs.length();
+        if (ptr + l < hi) {
+            Chars.strcpy(cs, l, ptr);
+        } else {
+            send00();
+            if (ptr + l < hi) {
+                Chars.strcpy(cs, l, ptr);
+            } else {
+                throw CairoException.instance(0).put("value too long");
+            }
         }
-        hasMetric = true;
-        return put(metric);
+        ptr += l;
+        return this;
     }
 
     public LineProtoSender tag(CharSequence tag, CharSequence value) {
@@ -145,22 +152,21 @@ public class LineProtoSender extends AbstractCharSink implements Closeable {
             put(',').putNameEscaped(tag).put('=').encodeUtf8(value);
             return this;
         }
-        throw new RuntimeException();
+        throw CairoException.instance(0).put("metric expected");
     }
 
     private CharSink field(CharSequence name) {
-        if (!hasMetric) {
-            throw new RuntimeException();
-        }
+        if (hasMetric) {
+            if (noFields) {
+                put(' ');
+                noFields = false;
+            } else {
+                put(',');
+            }
 
-        if (noFields) {
-            put(' ');
-            noFields = false;
-        } else {
-            put(',');
+            return putNameEscaped(name).put('=');
         }
-
-        return putNameEscaped(name).put('=');
+        throw CairoException.instance(0).put("metric expected");
     }
 
     private LineProtoSender putNameEscaped(CharSequence name) {
@@ -181,7 +187,10 @@ public class LineProtoSender extends AbstractCharSink implements Closeable {
 
     private void send() {
         if (lo < lineStart) {
-            Net.sendTo(fd, lo, (int) (lineStart - lo), sockaddr);
+            int len = (int) (lineStart - lo);
+            if (nf.sendTo(fd, lo, len, sockaddr) != len) {
+                throw CairoException.instance(nf.errno()).put("send error");
+            }
         }
     }
 
@@ -198,7 +207,7 @@ public class LineProtoSender extends AbstractCharSink implements Closeable {
             ptr = target + len;
             hi = lo + capacity;
         } else {
-            throw new RuntimeException("too big!");
+            throw CairoException.instance(0).put("line too long");
         }
     }
 }

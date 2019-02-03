@@ -5,7 +5,7 @@
  *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
  *   \__\_\\__,_|\___||___/\__|____/|____/
  *
- * Copyright (C) 2014-2018 Appsicle
+ * Copyright (C) 2014-2019 Appsicle
  *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU Affero General Public License, version 3,
@@ -262,7 +262,7 @@ public class LinuxLineProtoReceiverTest extends AbstractCairoTest {
                     Worker worker = new Worker(jobs, workerHaltLatch);
                     worker.start();
 
-                    try (LineProtoSender sender = new LineProtoSender(receiverCfg.getBindIPv4Address(), receiverCfg.getPort(), 1400)) {
+                    try (LineProtoSender sender = new LineProtoSender(NetworkFacadeImpl.INSTANCE, receiverCfg.getBindIPv4Address(), receiverCfg.getPort(), 1400)) {
                         for (int i = 0; i < 10; i++) {
                             sender.metric("tab").tag("colour", "blue").tag("shape", "square").field("size", 3.4, 4).$(100000000);
                         }

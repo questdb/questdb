@@ -1619,10 +1619,8 @@ public class TableWriter implements Closeable {
                 path.trimTo(rootLen);
                 path.concat(name).$();
                 nativeLPSZ.of(name);
-                if (IGNORED_FILES.excludes(nativeLPSZ)) {
-                    if (type == Files.DT_DIR && !ff.rmdir(path)) {
-                        LOG.info().$("could not remove [path=").$(path).$(", errno=").$(ff.errno()).$(']').$();
-                    }
+                if (IGNORED_FILES.excludes(nativeLPSZ) && type == Files.DT_DIR && !ff.rmdir(path)) {
+                    LOG.info().$("could not remove [path=").$(path).$(", errno=").$(ff.errno()).$(']').$();
                 }
             });
         } finally {
@@ -1637,22 +1635,20 @@ public class TableWriter implements Closeable {
                 path.trimTo(rootLen);
                 path.concat(pName).$();
                 nativeLPSZ.of(pName);
-                if (IGNORED_FILES.excludes(nativeLPSZ)) {
-                    if (type == Files.DT_DIR) {
-                        try {
-                            long dirTimestamp = partitionDirFmt.parse(nativeLPSZ, DateLocaleFactory.INSTANCE.getDefaultDateLocale());
-                            if (dirTimestamp <= timestamp) {
-                                return;
-                            }
-                        } catch (NumericException ignore) {
-                            // not a date?
-                            // ignore exception and remove directory
+                if (IGNORED_FILES.excludes(nativeLPSZ) && type == Files.DT_DIR) {
+                    try {
+                        long dirTimestamp = partitionDirFmt.parse(nativeLPSZ, DateLocaleFactory.INSTANCE.getDefaultDateLocale());
+                        if (dirTimestamp <= timestamp) {
+                            return;
                         }
-                        if (ff.rmdir(path)) {
-                            LOG.info().$("removing partition dir: ").$(path).$();
-                        } else {
-                            LOG.error().$("cannot remove: ").$(path).$(" [errno=").$(ff.errno()).$(']').$();
-                        }
+                    } catch (NumericException ignore) {
+                        // not a date?
+                        // ignore exception and remove directory
+                    }
+                    if (ff.rmdir(path)) {
+                        LOG.info().$("removing partition dir: ").$(path).$();
+                    } else {
+                        LOG.error().$("cannot remove: ").$(path).$(" [errno=").$(ff.errno()).$(']').$();
                     }
                 }
             });

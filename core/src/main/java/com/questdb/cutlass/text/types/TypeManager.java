@@ -41,6 +41,16 @@ import java.io.InputStream;
 
 public class TypeManager implements Mutable {
     private static final Log LOG = LogFactory.getLog(TypeManager.class);
+    private static final int STATE_EXPECT_TOP = 0;
+    private static final int STATE_EXPECT_FIRST_LEVEL_NAME = 1;
+    private static final int STATE_EXPECT_DATE_FORMAT_ARRAY = 2;
+    private static final int STATE_EXPECT_TIMESTAMP_FORMAT_ARRAY = 3;
+    private static final int STATE_EXPECT_DATE_FORMAT_VALUE = 4;
+    private static final int STATE_EXPECT_DATE_LOCALE_VALUE = 5;
+    private static final int STATE_EXPECT_TIMESTAMP_FORMAT_VALUE = 6;
+    private static final int STATE_EXPECT_TIMESTAMP_LOCALE_VALUE = 7;
+    private static final int STATE_EXPECT_DATE_FORMAT_ENTRY = 8;
+    private static final int STATE_EXPECT_TIMESTAMP_FORMAT_ENTRY = 9;
     private final ObjList<TypeAdapter> probes = new ObjList<>();
     private final int probeCount;
     private final StringAdapter stringAdapter;
@@ -53,7 +63,7 @@ public class TypeManager implements Mutable {
     private final DateLocaleFactory dateLocaleFactory;
     private final com.questdb.std.microtime.DateFormatFactory timestampFormatFactory;
     private final com.questdb.std.microtime.DateLocaleFactory timestampLocaleFactory;
-    private int jsonState = 0; // expect start of object
+    private int jsonState = STATE_EXPECT_TOP; // expect start of object
     private DateFormat jsonDateFormat;
     private DateLocale jsonDateLocale;
     private com.questdb.std.microtime.DateFormat jsonTimestampFormat;
@@ -115,8 +125,10 @@ public class TypeManager implements Mutable {
                 assert false;
             case ColumnType.TIMESTAMP:
                 assert false;
+                break;
             default:
                 assert false;
+                break;
         }
         return null;
     }
@@ -144,22 +156,22 @@ public class TypeManager implements Mutable {
         switch (code) {
             case JsonLexer.EVT_OBJ_START:
                 switch (jsonState) {
-                    case 0:
+                    case STATE_EXPECT_TOP:
                         // this is top level object
                         // lets dive in
-                        jsonState = 1;
+                        jsonState = STATE_EXPECT_FIRST_LEVEL_NAME;
                         break;
-                    case 4:
-                    case 6:
+                    case STATE_EXPECT_DATE_FORMAT_VALUE:
+                    case STATE_EXPECT_TIMESTAMP_FORMAT_VALUE:
                         throw JsonException.$(position, "format value expected (obj)");
-                    case 5:
-                    case 7:
+                    case STATE_EXPECT_DATE_LOCALE_VALUE:
+                    case STATE_EXPECT_TIMESTAMP_LOCALE_VALUE:
                         throw JsonException.$(position, "locale value expected (obj)");
-                    case 8:
+                    case STATE_EXPECT_DATE_FORMAT_ENTRY:
                         jsonDateFormat = null;
                         jsonDateLocale = null;
                         break;
-                    case 9:
+                    case STATE_EXPECT_TIMESTAMP_FORMAT_ENTRY:
                         jsonTimestampFormat = null;
                         jsonTimestampLocale = null;
                         break;
@@ -169,7 +181,7 @@ public class TypeManager implements Mutable {
                 break;
             case JsonLexer.EVT_OBJ_END:
                 switch (jsonState) {
-                    case 8: // we just closed a date object
+                    case STATE_EXPECT_DATE_FORMAT_ENTRY: // we just closed a date object
                         if (jsonDateFormat == null) {
                             throw JsonException.$(position, "date format is missing");
                         }
@@ -181,7 +193,7 @@ public class TypeManager implements Mutable {
                                         )
                         );
                         break;
-                    case 9:
+                    case STATE_EXPECT_TIMESTAMP_FORMAT_ENTRY:
                         if (jsonTimestampFormat == null) {
                             throw JsonException.$(position, "timestamp format is missing");
                         }
@@ -203,77 +215,62 @@ public class TypeManager implements Mutable {
                 }
                 break;
             case JsonLexer.EVT_ARRAY_END:
-                jsonState = 1;
+                jsonState = STATE_EXPECT_FIRST_LEVEL_NAME;
                 break;
             case JsonLexer.EVT_NAME:
                 switch (jsonState) {
-                    case 1:
+                    case STATE_EXPECT_FIRST_LEVEL_NAME:
                         if (Chars.equals(tag, "date")) {
-                            jsonState = 2; // expect array with date formats
+                            jsonState = STATE_EXPECT_DATE_FORMAT_ARRAY; // expect array with date formats
                         } else if (Chars.equals(tag, "timestamp")) {
-                            jsonState = 3; // expect array with timestamp formats
+                            jsonState = STATE_EXPECT_TIMESTAMP_FORMAT_ARRAY; // expect array with timestamp formats
                         } else {
                             // unknown tag name?
                             throw JsonException.$(position, "'date' and/or 'timestamp' expected");
                         }
                         break;
-                    case 8:
-                        if (Chars.equals(tag, "format")) {
-                            jsonState = 4; // expect date format
-                        } else if (Chars.equals(tag, "locale")) {
-                            jsonState = 5; // expect array with timestamp formats
-                        } else {
-                            // unknown tag name?
-                            throw JsonException.$(position, "unknown [tag=").put(tag).put(']');
-                        }
+                    case STATE_EXPECT_DATE_FORMAT_ENTRY:
+                        processEntry(tag, position, STATE_EXPECT_DATE_FORMAT_VALUE, STATE_EXPECT_DATE_LOCALE_VALUE);
                         break;
                     default:
-//                    case 9:
-                        if (Chars.equals(tag, "format")) {
-                            jsonState = 6; // expect timestamp format
-                        } else if (Chars.equals(tag, "locale")) {
-                            jsonState = 7; // expect timestamp locale
-                        } else {
-                            // unknown tag name?
-                            throw JsonException.$(position, "unknown [tag=").put(tag).put(']');
-                        }
+                        processEntry(tag, position, STATE_EXPECT_TIMESTAMP_FORMAT_VALUE, STATE_EXPECT_TIMESTAMP_LOCALE_VALUE);
                         break;
                 }
                 break;
             case JsonLexer.EVT_VALUE:
                 switch (jsonState) {
-                    case 4:
+                    case STATE_EXPECT_DATE_FORMAT_VALUE:
                         // date format
                         assert jsonDateFormat == null;
                         if (Chars.equals("null", tag)) {
                             throw JsonException.$(position, "null format");
                         }
                         jsonDateFormat = dateFormatFactory.get(tag);
-                        jsonState = 8;
+                        jsonState = STATE_EXPECT_DATE_FORMAT_ENTRY;
                         break;
-                    case 5: // date locale
+                    case STATE_EXPECT_DATE_LOCALE_VALUE: // date locale
                         assert jsonDateLocale == null;
                         jsonDateLocale = dateLocaleFactory.getDateLocale(tag);
                         if (jsonDateLocale == null) {
                             throw JsonException.$(position, "invalid [locale=").put(tag).put(']');
                         }
-                        jsonState = 8;
+                        jsonState = STATE_EXPECT_DATE_FORMAT_ENTRY;
                         break;
-                    case 6: // timestamp format
+                    case STATE_EXPECT_TIMESTAMP_FORMAT_VALUE: // timestamp format
                         assert jsonTimestampFormat == null;
                         if (Chars.equals("null", tag)) {
                             throw JsonException.$(position, "null format");
                         }
                         jsonTimestampFormat = timestampFormatFactory.get(tag);
-                        jsonState = 9;
+                        jsonState = STATE_EXPECT_TIMESTAMP_FORMAT_ENTRY;
                         break;
-                    case 7:
+                    case STATE_EXPECT_TIMESTAMP_LOCALE_VALUE:
                         assert jsonTimestampLocale == null;
                         jsonTimestampLocale = timestampLocaleFactory.getDateLocale(tag);
                         if (jsonTimestampLocale == null) {
                             throw JsonException.$(position, "invalid [locale=").put(tag).put(']');
                         }
-                        jsonState = 9;
+                        jsonState = STATE_EXPECT_TIMESTAMP_FORMAT_ENTRY;
                         break;
                     default:
                         // we are picking up values from attributes we don't expect
@@ -282,20 +279,20 @@ public class TypeManager implements Mutable {
                 break;
             case JsonLexer.EVT_ARRAY_START:
                 switch (jsonState) {
-                    case 2: // we are working on dates
-                        jsonState = 8;
+                    case STATE_EXPECT_DATE_FORMAT_ARRAY: // we are working on dates
+                        jsonState = STATE_EXPECT_DATE_FORMAT_ENTRY;
                         break;
-                    case 3: // we are working on timestamps
-                        jsonState = 9;
+                    case STATE_EXPECT_TIMESTAMP_FORMAT_ARRAY: // we are working on timestamps
+                        jsonState = STATE_EXPECT_TIMESTAMP_FORMAT_ENTRY;
                         break;
-                    case 4:
-                    case 6:
+                    case STATE_EXPECT_DATE_FORMAT_VALUE:
+                    case STATE_EXPECT_TIMESTAMP_FORMAT_VALUE:
                         throw JsonException.$(position, "format value expected (array)");
                     default:
-//                    case 5:
-//                    case 7:
                         throw JsonException.$(position, "locale value expected (array)");
                 }
+                break;
+            default:
                 break;
         }
     }
@@ -325,6 +322,17 @@ public class TypeManager implements Mutable {
             }
         } catch (IOException e) {
             throw JsonException.$(0, "could not read [resource=").put(adapterSetConfigurationFileName).put(']');
+        }
+    }
+
+    private void processEntry(CharSequence tag, int position, int stateExpectFormatValue, int stateExpectLocaleValue) throws JsonException {
+        if (Chars.equals(tag, "format")) {
+            jsonState = stateExpectFormatValue; // expect date format
+        } else if (Chars.equals(tag, "locale")) {
+            jsonState = stateExpectLocaleValue;
+        } else {
+            // unknown tag name?
+            throw JsonException.$(position, "unknown [tag=").put(tag).put(']');
         }
     }
 }

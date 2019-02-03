@@ -642,6 +642,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                             break;
                         default:
                             sink.put(" join ");
+                            break;
                     }
 
                     if (model.getWhereClause() != null) {

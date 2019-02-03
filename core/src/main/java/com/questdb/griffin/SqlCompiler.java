@@ -1150,7 +1150,7 @@ public class SqlCompiler implements Closeable {
         tableWriters.clear();
         try {
             try {
-                while (true) {
+                do {
                     tok = SqlUtil.fetchNext(lexer);
 
                     if (tok == null || Chars.equals(tok, ',')) {
@@ -1167,11 +1167,7 @@ public class SqlCompiler implements Closeable {
                     }
                     tok = SqlUtil.fetchNext(lexer);
 
-                    if (tok != null && Chars.equals(tok, ',')) {
-                        continue;
-                    }
-                    break;
-                }
+                } while (tok != null && Chars.equals(tok, ','));
             } catch (SqlException e) {
                 for (int i = 0, n = tableWriters.size(); i < n; i++) {
                     tableWriters.getQuick(i).close();

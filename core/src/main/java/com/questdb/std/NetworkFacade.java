@@ -30,7 +30,7 @@ public interface NetworkFacade {
 
     boolean bindTcp(long fd, int address, int port);
 
-    void close(long fd);
+    int close(long fd);
 
     void configureNoLinger(long fd);
 
@@ -48,9 +48,11 @@ public interface NetworkFacade {
 
     int send(long fd, long buffer, int bufferLen);
 
-    void sendTo(long fd, long lo, int len, long socketAddress);
+    int errno();
 
     long sockaddr(int address, int port);
+
+    int sendTo(long fd, long lo, int len, long socketAddress);
 
     long socketTcp(boolean blocking);
 
@@ -59,4 +61,6 @@ public interface NetworkFacade {
     boolean bindUdp(long fd, CharSequence address, int port);
 
     boolean join(long fd, CharSequence bindIPv4Address, CharSequence groupIPv4Address);
+
+    long sockaddr(CharSequence address, int port);
 }

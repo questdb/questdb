@@ -353,6 +353,8 @@ class ExpressionParser {
                                         continue;
                                     }
                                     break;
+                                default:
+                                    break;
                             }
                         }
 
