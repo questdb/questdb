@@ -5,7 +5,7 @@
  *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
  *   \__\_\\__,_|\___||___/\__|____/|____/
  *
- * Copyright (C) 2014-2018 Appsicle
+ * Copyright (C) 2014-2019 Appsicle
  *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU Affero General Public License, version 3,
@@ -118,7 +118,7 @@ public class JournalTest extends AbstractTest {
         getFactory().expire();
 
         assertTrue(dir.exists());
-        assertTrue(com.questdb.store.Files.delete(dir));
+        assertTrue(Files.delete(dir));
     }
 
     @Test
@@ -185,7 +185,7 @@ public class JournalTest extends AbstractTest {
 
         getFactory().lock(name);
         try {
-            com.questdb.store.Files.deleteOrException(location);
+            Files.deleteOrException(location);
         } finally {
             getFactory().unlock(name);
         }
@@ -255,7 +255,7 @@ public class JournalTest extends AbstractTest {
 
         getFactory().lock(Quote.class.getName());
         try {
-            com.questdb.store.Files.deleteOrException(new File(path, "2013-02/sym.r"));
+            Files.deleteOrException(new File(path, "2013-02/sym.r"));
             Files.deleteOrException(new File(path, "2013-02/sym.k"));
         } finally {
             getFactory().unlock(Quote.class.getName());

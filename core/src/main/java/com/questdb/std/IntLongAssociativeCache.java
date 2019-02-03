@@ -23,8 +23,6 @@
 
 package com.questdb.std;
 
-import java.util.Arrays;
-
 public class IntLongAssociativeCache {
 
     public static final long NO_VALUE = -1L;
@@ -81,10 +79,6 @@ public class IntLongAssociativeCache {
         Unsafe.arrayPut(keys, lo, key);
         Unsafe.arrayPut(values, lo, value);
         return ok;
-    }
-
-    private void clear() {
-        Arrays.fill(keys, UNUSED_KEY);
     }
 
     private int getIndex(int key) {

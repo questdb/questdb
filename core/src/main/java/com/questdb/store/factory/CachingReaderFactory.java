@@ -213,15 +213,17 @@ public class CachingReaderFactory extends AbstractFactory implements JournalClos
 
             do {
                 for (int i = 0; i < ENTRY_SIZE; i++) {
-                    if (deadline > Unsafe.arrayGetVolatile(e.releaseTimes, i) && Unsafe.arrayGet(e.readers, i) != null) {
-                        if (Unsafe.cas(e.allocations, i, PoolConstants.UNALLOCATED, thread)) {
-                            // check if deadline violation still holds
-                            if (deadline > Unsafe.arrayGet(e.releaseTimes, i)) {
-                                removed = true;
-                                closeReader(thread, e, i, FactoryEventListener.EV_EXPIRE, FactoryEventListener.EV_EXPIRE_EX, closeReason);
-                            }
-                            Unsafe.arrayPutOrdered(e.allocations, i, PoolConstants.UNALLOCATED);
+                    if (
+                            deadline > Unsafe.arrayGetVolatile(e.releaseTimes, i)
+                                    && Unsafe.arrayGet(e.readers, i) != null
+                                    && Unsafe.cas(e.allocations, i, PoolConstants.UNALLOCATED, thread)
+                    ) {
+                        // check if deadline violation still holds
+                        if (deadline > Unsafe.arrayGet(e.releaseTimes, i)) {
+                            removed = true;
+                            closeReader(thread, e, i, FactoryEventListener.EV_EXPIRE, FactoryEventListener.EV_EXPIRE_EX, closeReason);
                         }
+                        Unsafe.arrayPutOrdered(e.allocations, i, PoolConstants.UNALLOCATED);
                     }
                 }
                 e = e.next;

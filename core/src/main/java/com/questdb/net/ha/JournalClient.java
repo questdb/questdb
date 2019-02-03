@@ -381,7 +381,7 @@ public class JournalClient {
                     throw new JournalNetworkException(e);
                 }
             } finally {
-                com.questdb.store.Files.delete(file);
+                Files.delete(file);
             }
 
             boolean validate = true;

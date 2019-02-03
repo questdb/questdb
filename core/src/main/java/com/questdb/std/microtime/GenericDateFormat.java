@@ -62,7 +62,7 @@ public class GenericDateFormat extends AbstractDateFormat {
                     if (hour == -1) {
                         hour = Dates.getHourOfDay(micros);
                     }
-                    DateFormatUtils.appendAmPm(sink, hour, locale);
+                    appendAmPm(sink, hour, locale);
                     break;
 
                 // MICROS
@@ -605,7 +605,7 @@ public class GenericDateFormat extends AbstractDateFormat {
                     }
                     break;
                 case DateFormatCompiler.OP_YEAR_GREEDY:
-                    l = DateFormatUtils.parseYearGreedy(in, pos, hi);
+                    l = parseYearGreedy(in, pos, hi);
                     year = Numbers.decodeLowInt(l);
                     pos += Numbers.decodeHighInt(l);
                     break;
@@ -641,9 +641,9 @@ public class GenericDateFormat extends AbstractDateFormat {
                     String delimiter = delimiters.getQuick(-op - 1);
                     len = delimiter.length();
                     if (len == 1) {
-                        DateFormatUtils.assertChar(delimiter.charAt(0), in, pos++, hi);
+                        assertChar(delimiter.charAt(0), in, pos++, hi);
                     } else {
-                        pos = DateFormatUtils.assertString(delimiter, len, in, pos, hi);
+                        pos = assertString(delimiter, len, in, pos, hi);
                     }
                     break;
             }

@@ -121,8 +121,10 @@ public class TypeManager implements Mutable {
                 return symbolAdapter;
             case ColumnType.DATE:
                 assert false;
+                break;
             case ColumnType.BINARY:
                 assert false;
+                break;
             case ColumnType.TIMESTAMP:
                 assert false;
                 break;

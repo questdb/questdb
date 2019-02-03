@@ -5,7 +5,7 @@
  *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
  *   \__\_\\__,_|\___||___/\__|____/|____/
  *
- * Copyright (C) 2014-2018 Appsicle
+ * Copyright (C) 2014-2019 Appsicle
  *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU Affero General Public License, version 3,
@@ -95,7 +95,7 @@ public class QueryHandlerTest extends AbstractOptimiserTest {
         File f = temp.newFile();
         String url = "http://localhost:9000/csv?query=" + URLEncoder.encode("create table y(a INT)", "UTF-8");
         HttpTestUtils.download(HttpTestUtils.clientBuilder(false), url, f);
-        String response = com.questdb.store.Files.readStringFromFile(f);
+        String response = Files.readStringFromFile(f);
         Assert.assertTrue(response.contains("\"ddl\":\"OK\"}"));
     }
 
@@ -116,7 +116,7 @@ public class QueryHandlerTest extends AbstractOptimiserTest {
         File f = temp.newFile();
         String url = "http://localhost:9000/chk?j=tab2";
         HttpTestUtils.download(HttpTestUtils.clientBuilder(false), url, f);
-        TestUtils.assertEquals("Does not exist\r\n", com.questdb.store.Files.readStringFromFile(f));
+        TestUtils.assertEquals("Does not exist\r\n", Files.readStringFromFile(f));
     }
 
     @Test
@@ -124,7 +124,7 @@ public class QueryHandlerTest extends AbstractOptimiserTest {
         File f = temp.newFile();
         String url = "http://localhost:9000/chk?j=tab";
         HttpTestUtils.download(HttpTestUtils.clientBuilder(false), url, f);
-        TestUtils.assertEquals("Exists\r\n", com.questdb.store.Files.readStringFromFile(f));
+        TestUtils.assertEquals("Exists\r\n", Files.readStringFromFile(f));
     }
 
     @Test
@@ -132,7 +132,7 @@ public class QueryHandlerTest extends AbstractOptimiserTest {
         File f = temp.newFile();
         String url = "http://localhost:9000/chk?j=tab&f=json";
         HttpTestUtils.download(HttpTestUtils.clientBuilder(false), url, f);
-        TestUtils.assertEquals("{\"status\":\"Exists\"}", com.questdb.store.Files.readStringFromFile(f));
+        TestUtils.assertEquals("{\"status\":\"Exists\"}", Files.readStringFromFile(f));
     }
 
     @Test

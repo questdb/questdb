@@ -5,7 +5,7 @@
  *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
  *   \__\_\\__,_|\___||___/\__|____/|____/
  *
- * Copyright (C) 2014-2018 Appsicle
+ * Copyright (C) 2014-2019 Appsicle
  *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU Affero General Public License, version 3,
@@ -353,10 +353,8 @@ public class CairoMemoryTest {
             @Override
             public long openRW(LPSZ name) {
                 int n = name.length();
-                if (n > 5) {
-                    if (Chars.equals(".fail", name, n - 5, n)) {
-                        return -1;
-                    }
+                if (n > 5 && Chars.equals(".fail", name, n - 5, n)) {
+                    return -1;
                 }
                 return super.openRW(name);
             }

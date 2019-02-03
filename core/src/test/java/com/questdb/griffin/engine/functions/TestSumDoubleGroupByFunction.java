@@ -5,7 +5,7 @@
  *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
  *   \__\_\\__,_|\___||___/\__|____/|____/
  *
- * Copyright (C) 2014-2018 Appsicle
+ * Copyright (C) 2014-2019 Appsicle
  *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU Affero General Public License, version 3,
@@ -32,7 +32,6 @@ import org.jetbrains.annotations.NotNull;
 
 public class TestSumDoubleGroupByFunction extends DoubleFunction implements GroupByFunction {
     private final Function value1;
-    private final Function value2;
     private int valueIndex;
 
     public TestSumDoubleGroupByFunction(
@@ -42,9 +41,8 @@ public class TestSumDoubleGroupByFunction extends DoubleFunction implements Grou
     ) {
         super(position);
         // this is just random attempt to create a problem within a function
-        double x = value2.getDouble(null);
+        value2.getDouble(null);
         this.value1 = value1;
-        this.value2 = value2;
     }
 
     @Override

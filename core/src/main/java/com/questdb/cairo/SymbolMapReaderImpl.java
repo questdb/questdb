@@ -71,7 +71,7 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
         while (cursor.hasNext()) {
             long offsetOffset = cursor.next();
             if (Chars.equals(symbol, charMem.getStr(offsetMem.getLong(offsetOffset)))) {
-                return SymbolMapWriter.offsetToKey(offsetOffset);
+                return offsetToKey(offsetOffset);
             }
         }
         return SymbolTable.VALUE_NOT_FOUND;
@@ -108,20 +108,10 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
         return offsetMem.isDeleted();
     }
 
-    @Override
-    public void updateSymbolCount(int symbolCount) {
-        if (symbolCount > this.symbolCount) {
-            this.symbolCount = symbolCount;
-            this.maxOffset = SymbolMapWriter.keyToOffset(symbolCount - 1);
-            this.offsetMem.grow(maxOffset);
-            growCharMemToSymbolCount(symbolCount);
-        }
-    }
-
     public void of(CairoConfiguration configuration, Path path, CharSequence name, int symbolCount) {
         FilesFacade ff = configuration.getFilesFacade();
         this.symbolCount = symbolCount;
-        this.maxOffset = SymbolMapWriter.keyToOffset(symbolCount - 1);
+        this.maxOffset = keyToOffset(symbolCount - 1);
         final int plen = path.length();
         try {
             final long mapPageSize = configuration.getFilesFacade().getMapPageSize();
@@ -136,7 +126,7 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
 
             // is there enough length in "offset" file for "header"?
             long len = ff.length(path);
-            if (len < SymbolMapWriter.HEADER_SIZE) {
+            if (len < HEADER_SIZE) {
                 LOG.error().$(path).$(" is too short [len=").$(len).$(']').$();
                 throw CairoException.instance(0).put("SymbolMap is too short: ").put(path);
             }
@@ -174,6 +164,16 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
         }
     }
 
+    @Override
+    public void updateSymbolCount(int symbolCount) {
+        if (symbolCount > this.symbolCount) {
+            this.symbolCount = symbolCount;
+            this.maxOffset = keyToOffset(symbolCount - 1);
+            this.offsetMem.grow(maxOffset);
+            growCharMemToSymbolCount(symbolCount);
+        }
+    }
+
     private CharSequence cachedValue(int key) {
         String symbol = cache.getQuiet(key);
         return symbol != null ? symbol : fetchAndCache(key);
@@ -181,7 +181,7 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
 
     private CharSequence fetchAndCache(int key) {
         String symbol;
-        CharSequence cs = charMem.getStr(offsetMem.getLong(SymbolMapWriter.keyToOffset(key)));
+        CharSequence cs = charMem.getStr(offsetMem.getLong(keyToOffset(key)));
         assert cs != null;
         cache.extendAndSet(key, symbol = cs.toString());
         return symbol;
@@ -189,7 +189,7 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
 
     private void growCharMemToSymbolCount(int symbolCount) {
         if (symbolCount > 0) {
-            long lastSymbolOffset = this.offsetMem.getLong(SymbolMapWriter.keyToOffset(symbolCount - 1));
+            long lastSymbolOffset = this.offsetMem.getLong(keyToOffset(symbolCount - 1));
             this.charMem.grow(lastSymbolOffset + 4);
             this.charMem.grow(lastSymbolOffset + this.charMem.getStrLen(lastSymbolOffset) * 2 + 4);
         } else {
@@ -198,6 +198,6 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
     }
 
     private CharSequence uncachedValue(int key) {
-        return charMem.getStr(offsetMem.getLong(SymbolMapWriter.keyToOffset(key)));
+        return charMem.getStr(offsetMem.getLong(keyToOffset(key)));
     }
 }
