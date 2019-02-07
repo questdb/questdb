@@ -5,7 +5,7 @@
  *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
  *   \__\_\\__,_|\___||___/\__|____/|____/
  *
- * Copyright (C) 2014-2018 Appsicle
+ * Copyright (C) 2014-2019 Appsicle
  *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU Affero General Public License, version 3,
@@ -26,6 +26,7 @@ package com.questdb.std;
 import com.questdb.std.str.StringSink;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Ignore;
 import org.junit.Test;
 
 import java.util.concurrent.BrokenBarrierException;
@@ -112,5 +113,14 @@ public class NetTest {
         Net.close(fd);
 
         TestUtils.assertEquals("127.0.0.1", sink);
+    }
+
+    @Test
+    @Ignore
+    public void testMulticast() {
+        long socket = Net.socketUdp();
+        System.out.println(socket);
+        System.out.println(Net.setMulticastInterface(socket, Net.parseIPv4("192.168.1.156")));
+        System.out.println(Net.setMulticastLoop(socket, true));
     }
 }

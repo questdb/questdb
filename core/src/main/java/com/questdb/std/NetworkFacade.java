@@ -63,4 +63,8 @@ public interface NetworkFacade {
     boolean join(long fd, CharSequence bindIPv4Address, CharSequence groupIPv4Address);
 
     long sockaddr(CharSequence address, int port);
+
+    int setMulticastInterface(long fd, CharSequence address);
+
+    int setMulticastLoop(long fd, boolean loop);
 }

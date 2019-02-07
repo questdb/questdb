@@ -64,17 +64,17 @@ public final class Net {
                 .put(ip & 0xff);
     }
 
-    public native static boolean bindTcp(long fd, int address, int port);
+    public native static boolean bindTcp(long fd, int ipv4address, int port);
 
-    public static boolean bindTcp(long fd, CharSequence address, int port) {
-        return bindTcp(fd, parseIPv4(address), port);
+    public static boolean bindTcp(long fd, CharSequence ipv4address, int port) {
+        return bindTcp(fd, parseIPv4(ipv4address), port);
     }
 
-    public static boolean bindUdp(long fd, CharSequence address, int port) {
-        return bindUdp(fd, parseIPv4(address), port);
+    public static boolean bindUdp(long fd, CharSequence ipv4address, int port) {
+        return bindUdp(fd, parseIPv4(ipv4address), port);
     }
 
-    public native static boolean bindUdp(long fd, int address, int port);
+    public native static boolean bindUdp(long fd, int ipv4address, int port);
 
     public static int close(long fd) {
         return Files.close(fd);
@@ -157,11 +157,15 @@ public final class Net {
 
     public native static int setTcpNoDelay(long fd, boolean noDelay);
 
-    public static long sockaddr(CharSequence address, int port) {
-        return sockaddr(parseIPv4(address), port);
+    public native static int setMulticastInterface(long fd, int ipv4address);
+
+    public native static int setMulticastLoop(long fd, boolean loop);
+
+    public static long sockaddr(CharSequence ipv4address, int port) {
+        return sockaddr(parseIPv4(ipv4address), port);
     }
 
-    public native static long sockaddr(int address, int port);
+    public native static long sockaddr(int ipv4address, int port);
 
     public native static long socketTcp(boolean blocking);
 

@@ -125,4 +125,14 @@ public class NetworkFacadeImpl implements NetworkFacade {
     public long sockaddr(CharSequence address, int port) {
         return Net.sockaddr(address, port);
     }
+
+    @Override
+    public int setMulticastInterface(long fd, CharSequence address) {
+        return Net.setMulticastInterface(fd, Net.parseIPv4(address));
+    }
+
+    @Override
+    public int setMulticastLoop(long fd, boolean loop) {
+        return Net.setMulticastLoop(fd, loop);
+    }
 }

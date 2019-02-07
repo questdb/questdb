@@ -212,6 +212,18 @@ JNIEXPORT jint JNICALL Java_com_questdb_std_Net_getRcvBuf
     return get_int_sockopt((int) fd, SOL_SOCKET, SO_RCVBUF);
 }
 
+JNIEXPORT jint JNICALL Java_com_questdb_std_Net_setMulticastInterface
+        (JNIEnv *e, jclass cl, jlong fd, jint ipv4address) {
+    struct in_addr address;
+    address.s_addr = (in_addr_t) htonl(ipv4address);
+    return setsockopt((int) fd, IPPROTO_IP, IP_MULTICAST_IF, &address, sizeof(address));
+}
+
+JNIEXPORT jint JNICALL Java_com_questdb_std_Net_setMulticastLoop
+        (JNIEnv *e, jclass cl, jlong fd, jboolean loop) {
+    return setsockopt((int) fd, IPPROTO_IP, IP_MULTICAST_LOOP, &loop, sizeof(loop));
+}
+
 JNIEXPORT jint JNICALL Java_com_questdb_std_Net_setTcpNoDelay
         (JNIEnv *e, jclass cl, jlong fd, jboolean noDelay) {
 #ifdef __APPLE__

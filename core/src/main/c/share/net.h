@@ -183,11 +183,11 @@ JNIEXPORT jint JNICALL Java_com_questdb_std_Net_setRcvBuf
 
 /*
  * Class:     com_questdb_std_Net
- * Method:    setTcpNoDelay
- * Signature: (JZ)I
+ * Method:    getSndBuf
+ * Signature: (J)I
  */
-JNIEXPORT jint JNICALL Java_com_questdb_std_Net_setTcpNoDelay
-        (JNIEnv *, jclass, jlong, jboolean);
+JNIEXPORT jint JNICALL Java_com_questdb_std_Net_getSndBuf
+        (JNIEnv *, jclass, jlong);
 
 /*
  * Class:     com_questdb_std_Net
@@ -207,11 +207,27 @@ JNIEXPORT jint JNICALL Java_com_questdb_std_Net_setSndBuf
 
 /*
  * Class:     com_questdb_std_Net
- * Method:    getSndBuf
- * Signature: (J)I
+ * Method:    setTcpNoDelay
+ * Signature: (JZ)I
  */
-JNIEXPORT jint JNICALL Java_com_questdb_std_Net_getSndBuf
-        (JNIEnv *, jclass, jlong);
+JNIEXPORT jint JNICALL Java_com_questdb_std_Net_setTcpNoDelay
+        (JNIEnv *, jclass, jlong, jboolean);
+
+/*
+ * Class:     com_questdb_std_Net
+ * Method:    setMulticastInterface
+ * Signature: (JI)I
+ */
+JNIEXPORT jint JNICALL Java_com_questdb_std_Net_setMulticastInterface
+        (JNIEnv *, jclass, jlong, jint);
+
+/*
+ * Class:     com_questdb_std_Net
+ * Method:    setMulticastLoop
+ * Signature: (JZ)I
+ */
+JNIEXPORT jint JNICALL Java_com_questdb_std_Net_setMulticastLoop
+        (JNIEnv *, jclass, jlong, jboolean);
 
 /*
  * Class:     com_questdb_std_Net
