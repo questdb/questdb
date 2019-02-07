@@ -254,6 +254,18 @@ JNIEXPORT jint JNICALL Java_com_questdb_std_Net_setTcpNoDelay
     return set_int_sockopt((SOCKET) fd, IPPROTO_TCP, TCP_NODELAY, noDelay);
 }
 
+JNIEXPORT jint JNICALL Java_com_questdb_std_Net_setMulticastInterface
+        (JNIEnv *e, jclass cl, jlong fd, jint ipv4address) {
+    struct in_addr address;
+    address.s_addr = htonl((u_long) ipv4address);
+    return setsockopt((SOCKET) fd, IPPROTO_IP, IP_MULTICAST_IF, (const char *) &address, sizeof(address));
+}
+
+JNIEXPORT jint JNICALL Java_com_questdb_std_Net_setMulticastLoop
+        (JNIEnv *e, jclass cl, jlong fd, jboolean loop) {
+    return setsockopt((SOCKET) fd, IPPROTO_IP, IP_MULTICAST_LOOP, (const char *) &loop, sizeof(loop));
+}
+
 JNIEXPORT jint JNICALL Java_com_questdb_std_Net_getTcpNoDelay
         (JNIEnv *e, jclass cl, jlong fd) {
     return get_int_sockopt((SOCKET) fd, IPPROTO_TCP, TCP_NODELAY);
