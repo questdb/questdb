@@ -2017,6 +2017,56 @@ public class TextLoaderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testWriteIntToBlob() throws Exception {
+        assertNoLeak(textLoader -> {
+            String csv = "abcd,10\n" +
+                    "efg,45\n" +
+                    "werop,90\n";
+
+            String expected = "a\tb\td\n" +
+                    "abcd\t10\t\n" +
+                    "efg\t45\t\n" +
+                    "werop\t90\t\n";
+
+            compiler.compile("create table test(a string, d binary)", null);
+            configureLoaderDefaults(textLoader);
+            try {
+                playText(textLoader, csv, 1024,
+                        expected,
+                        "{\"columnCount\":3,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\"STRING\"},{\"index\":1,\"name\":\"b\",\"type\":\"INT\"},{\"index\":2,\"name\":\"d\",\"type\":\"BINARY\"}],\"timestampIndex\":-1}",
+                        3,
+                        3);
+                Assert.fail();
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getMessage(), "cannot import text into BINARY column");
+            }
+        });
+    }
+
+    @Test
+    public void testWriteToTableWithBlob() throws Exception {
+        assertNoLeak(textLoader -> {
+            String csv = "abcd,10\n" +
+                    "efg,45\n" +
+                    "werop,90\n";
+
+            String expected = "a\tb\td\n" +
+                    "abcd\t10\t\n" +
+                    "efg\t45\t\n" +
+                    "werop\t90\t\n";
+
+            compiler.compile("create table test(a string, b int, d binary)", null);
+            configureLoaderDefaults(textLoader);
+            playText(textLoader, csv, 1024,
+                    expected,
+                    "{\"columnCount\":3,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\"STRING\"},{\"index\":1,\"name\":\"b\",\"type\":\"INT\"},{\"index\":2,\"name\":\"d\",\"type\":\"BINARY\"}],\"timestampIndex\":-1}",
+                    3,
+                    3);
+        });
+    }
+
+
+    @Test
     public void testWriteToExistingCannotConvertTimestamp() throws Exception {
         assertNoLeak(textLoader -> {
             String csv = "abcd,10\n" +

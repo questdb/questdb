@@ -44,7 +44,8 @@ public class StringAdapter extends AbstractTypeAdapter {
 
     @Override
     public boolean probe(CharSequence text) {
-        return true;
+        // anything can be string, we do not to call this method to assert this
+        throw new UnsupportedOperationException();
     }
 
     @Override

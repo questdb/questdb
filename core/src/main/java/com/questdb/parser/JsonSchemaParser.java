@@ -27,6 +27,7 @@ import com.questdb.BootstrapEnv;
 import com.questdb.cutlass.json.JsonException;
 import com.questdb.cutlass.json.JsonLexer;
 import com.questdb.cutlass.json.JsonParser;
+import com.questdb.cutlass.text.TextMetadataParser;
 import com.questdb.std.*;
 import com.questdb.std.str.AbstractCharSequence;
 import com.questdb.std.time.DateFormat;
@@ -159,13 +160,7 @@ public class JsonSchemaParser implements JsonParser, Mutable {
     }
 
     private void createImportedType(int position) throws JsonException {
-        if (name == null) {
-            throw JsonException.$(position, "Missing 'name' property");
-        }
-
-        if (type == -1) {
-            throw JsonException.$(position, "Missing 'type' property");
-        }
+        TextMetadataParser.checkInputs(position, name, type);
 
         ImportedColumnMetadata m = mPool.next();
         m.name = name;

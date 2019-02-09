@@ -5,7 +5,7 @@
  *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
  *   \__\_\\__,_|\___||___/\__|____/|____/
  *
- * Copyright (C) 2014-2018 Appsicle
+ * Copyright (C) 2014-2019 Appsicle
  *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU Affero General Public License, version 3,
@@ -23,6 +23,8 @@
 
 package com.questdb.cutlass.text.types;
 
+import com.questdb.cairo.CairoException;
+import com.questdb.cairo.ColumnType;
 import com.questdb.cutlass.json.JsonException;
 import com.questdb.cutlass.json.JsonLexer;
 import com.questdb.cutlass.text.DefaultTextConfiguration;
@@ -166,6 +168,31 @@ public class TypeManagerTest {
     @Test
     public void testUnknownTopLevelProp() {
         assertFailure("/textloader/types/unknown_top_level_prop.json", 309, "'date' and/or 'timestamp' expected");
+    }
+
+    @Test
+    public void testIllegalMethodParameterBinary() throws JsonException {
+        testIllegalParameterForGetTypeAdapter(ColumnType.BINARY);
+    }
+
+    @Test
+    public void testIllegalMethodParameterDate() throws JsonException {
+        testIllegalParameterForGetTypeAdapter(ColumnType.DATE);
+    }
+
+    @Test
+    public void testIllegalMethodParameterTimestamp() throws JsonException {
+        testIllegalParameterForGetTypeAdapter(ColumnType.TIMESTAMP);
+    }
+
+    private void testIllegalParameterForGetTypeAdapter(int columnType) throws JsonException {
+        TypeManager typeManager = new TypeManager(new DefaultTextConfiguration(), utf8Sink, jsonLexer);
+        try {
+            typeManager.getTypeAdapter(columnType);
+            Assert.fail();
+        } catch (CairoException e) {
+            TestUtils.assertContains(e.getMessage(), "no adapter for type");
+        }
     }
 
     private void assertFailure(String resourceName, int position, CharSequence text) {

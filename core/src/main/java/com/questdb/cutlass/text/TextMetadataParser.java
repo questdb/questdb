@@ -197,7 +197,7 @@ public class TextMetadataParser implements JsonParser, Mutable, Closeable {
         return cs;
     }
 
-    private void createImportedType(int position) throws JsonException {
+    public static void checkInputs(int position, CharSequence name, int type) throws JsonException {
         if (name == null) {
             throw JsonException.$(position, "Missing 'name' property");
         }
@@ -205,6 +205,10 @@ public class TextMetadataParser implements JsonParser, Mutable, Closeable {
         if (type == -1) {
             throw JsonException.$(position, "Missing 'type' property");
         }
+    }
+
+    private void createImportedType(int position) throws JsonException {
+        checkInputs(position, name, type);
 
         columnNames.add(name);
 

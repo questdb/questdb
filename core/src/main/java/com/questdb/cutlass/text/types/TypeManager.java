@@ -23,6 +23,7 @@
 
 package com.questdb.cutlass.text.types;
 
+import com.questdb.cairo.CairoException;
 import com.questdb.cairo.ColumnType;
 import com.questdb.cutlass.json.JsonException;
 import com.questdb.cutlass.json.JsonLexer;
@@ -120,10 +121,8 @@ public class TypeManager implements Mutable {
             case ColumnType.SYMBOL:
                 return symbolAdapter;
             default:
-                assert false;
-                break;
+                throw CairoException.instance(0).put("no adapter for type [id=").put(columnType).put(", name=").put(ColumnType.nameOf(columnType)).put(']');
         }
-        return null;
     }
 
     public DateAdapter nextDateAdapter() {

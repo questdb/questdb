@@ -203,6 +203,9 @@ public class CairoTextWriter implements TextLexer.Listener, Closeable, Mutable {
                         logTypeError(i);
                         this.types.setQuick(i, BadTimestampAdapter.INSTANCE);
                         break;
+                    case ColumnType.BINARY:
+                        writer.close();
+                        throw CairoException.instance(0).put("cannot import text into BINARY column [index=").put(i).put(']');
                     default:
                         this.types.setQuick(i, typeManager.getTypeAdapter(columnType));
                         break;
