@@ -23,13 +23,13 @@
 
 package com.questdb.cutlass.text.types;
 
+import com.questdb.cairo.ColumnType;
 import com.questdb.cairo.TableWriter;
 import com.questdb.std.Numbers;
 import com.questdb.std.NumericException;
 import com.questdb.std.str.DirectByteCharSequence;
-import com.questdb.store.ColumnType;
 
-public final class LongAdapter implements TypeAdapter {
+public final class LongAdapter extends AbstractTypeAdapter {
 
     public static final LongAdapter INSTANCE = new LongAdapter();
 
@@ -57,10 +57,5 @@ public final class LongAdapter implements TypeAdapter {
     @Override
     public void write(TableWriter.Row row, int column, DirectByteCharSequence value) throws Exception {
         row.putLong(column, Numbers.parseLong(value));
-    }
-
-    @Override
-    public String toString() {
-        return "LONG";
     }
 }

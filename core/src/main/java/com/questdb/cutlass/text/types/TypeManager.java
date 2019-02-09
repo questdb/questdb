@@ -23,6 +23,7 @@
 
 package com.questdb.cutlass.text.types;
 
+import com.questdb.cairo.ColumnType;
 import com.questdb.cutlass.json.JsonException;
 import com.questdb.cutlass.json.JsonLexer;
 import com.questdb.cutlass.text.TextConfiguration;
@@ -34,7 +35,6 @@ import com.questdb.std.time.DateFormat;
 import com.questdb.std.time.DateFormatFactory;
 import com.questdb.std.time.DateLocale;
 import com.questdb.std.time.DateLocaleFactory;
-import com.questdb.store.ColumnType;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -119,15 +119,6 @@ public class TypeManager implements Mutable {
                 return stringAdapter;
             case ColumnType.SYMBOL:
                 return symbolAdapter;
-            case ColumnType.DATE:
-                assert false;
-                break;
-            case ColumnType.BINARY:
-                assert false;
-                break;
-            case ColumnType.TIMESTAMP:
-                assert false;
-                break;
             default:
                 assert false;
                 break;

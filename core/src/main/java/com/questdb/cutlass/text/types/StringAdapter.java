@@ -23,13 +23,13 @@
 
 package com.questdb.cutlass.text.types;
 
+import com.questdb.cairo.ColumnType;
 import com.questdb.cairo.TableWriter;
 import com.questdb.cutlass.text.TextUtil;
 import com.questdb.std.str.DirectByteCharSequence;
 import com.questdb.std.str.DirectCharSink;
-import com.questdb.store.ColumnType;
 
-public class StringAdapter implements TypeAdapter {
+public class StringAdapter extends AbstractTypeAdapter {
 
     private final DirectCharSink utf8Sink;
 
@@ -52,10 +52,5 @@ public class StringAdapter implements TypeAdapter {
         utf8Sink.clear();
         TextUtil.utf8Decode(value.getLo(), value.getHi(), utf8Sink);
         row.putStr(column, utf8Sink);
-    }
-
-    @Override
-    public String toString() {
-        return "STRING";
     }
 }

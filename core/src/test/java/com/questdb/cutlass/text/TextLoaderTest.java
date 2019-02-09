@@ -5,7 +5,7 @@
  *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
  *   \__\_\\__,_|\___||___/\__|____/|____/
  *
- * Copyright (C) 2014-2018 Appsicle
+ * Copyright (C) 2014-2019 Appsicle
  *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU Affero General Public License, version 3,
@@ -47,7 +47,7 @@ import org.junit.Test;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 
-public class PlainTextImportTest extends AbstractCairoTest {
+public class TextLoaderTest extends AbstractCairoTest {
 
     private static final Engine engine = new Engine(configuration);
     private static final SqlCompiler compiler = new SqlCompiler(engine, configuration);
@@ -588,6 +588,68 @@ public class PlainTextImportTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testIgnoreLongLine() throws Exception {
+        assertNoLeak(textLoader -> {
+            String expected = "f0\tf1\tf2\tf3\tf4\tf5\tf6\tf7\tf8\tf9\n" +
+                    "CMP2\t8\t8000\t2.276363521814\t2015-01-29T19:15:09.000Z\t2015-01-29T19:15:09.000Z\t2015-01-29T00:00:00.000Z\t323\ttrue\t14925407\n" +
+                    "CMP1\t2\t1581\t9.014234810602\t2015-01-30T19:15:09.000Z\t2015-01-30T19:15:09.000Z\t2015-01-30T00:00:00.000Z\t9138\tfalse\t68225213\n" +
+                    "CMP2\t8\t7067\t9.628433610778\t2015-01-31T19:15:09.000Z\t2015-01-31T19:15:09.000Z\t2015-01-31T00:00:00.000Z\t8197\ttrue\t58403960\n" +
+                    "CMP1\t8\t5313\t8.877646618057\t2015-02-01T19:15:09.000Z\t2015-02-01T19:15:09.000Z\t2015-02-01T00:00:00.000Z\t2733\tfalse\t69698373\n" +
+                    "\t4\t3883\t7.968730193097\t2015-02-02T19:15:09.000Z\t2015-02-02T19:15:09.000Z\t2015-02-02T00:00:00.000Z\t6912\ttrue\t91147394\n" +
+                    "CMP1\t7\t4256\t2.465535225347\t2015-02-03T19:15:09.000Z\t2015-02-03T19:15:09.000Z\t2015-02-03T00:00:00.000Z\t9453\tfalse\t50278940\n" +
+                    "CMP1\t7\t4486\tNaN\t2015-02-05T19:15:09.000Z\t2015-02-05T19:15:09.000Z\t2015-02-05T00:00:00.000Z\t8670\tfalse\t751877\n" +
+                    "CMP2\t2\t6641\t0.038182535209\t2015-02-06T19:15:09.000Z\t2015-02-06T19:15:09.000Z\t2015-02-06T00:00:00.000Z\t8331\ttrue\t409092527\n" +
+                    "CMP1\t1\t3579\t0.849663221743\t2015-02-07T19:15:09.000Z\t2015-02-07T19:15:09.000Z\t2015-02-07T00:00:00.000Z\t9592\tfalse\t11490662\n" +
+                    "CMP2\t2\t4770\t2.850920334458\t2015-02-08T19:15:09.000Z\t2015-02-08T19:15:09.000Z\t2015-02-08T00:00:00.000Z\t253\ttrue\t33766814\n" +
+                    "CMP1\t5\t4938\t4.427544984501\t2015-02-09T19:15:09.000Z\t2015-02-09T19:15:09.000Z\t2015-02-09T00:00:00.000Z\t7817\tfalse\t61983099\n";
+
+            String csv = "CMP2,8,8000,2.27636352181435,2015-01-29T19:15:09.000Z,2015-01-29 19:15:09,01/29/2015,323,TRUE,14925407\n" +
+                    "CMP1,2,1581,9.01423481060192,2015-01-30T19:15:09.000Z,2015-01-30 19:15:09,01/30/2015,9138,FALSE,68225213\n" +
+                    "CMP2,8,7067,9.6284336107783,2015-01-31T19:15:09.000Z,2015-01-31 19:15:09,01/31/2015,8197,TRUE,58403960\n" +
+                    "CMP1,8,5313,8.87764661805704,2015-02-01T19:15:09.000Z,2015-02-01 19:15:09,02/01/2015,2733,FALSE,69698373\n" +
+                    ",4,3883,7.96873019309714,2015-02-02T19:15:09.000Z,2015-02-02 19:15:09,02/02/2015,6912,TRUE,91147394\n" +
+                    "CMP1,7,4256,2.46553522534668,2015-02-03T19:15:09.000Z,2015-02-03 19:15:09,02/03/2015,9453,FALSE,50278940\n" +
+                    "CMP2dwkjqwelkrkqjwrasdsdfhaksjhfkahsfasdfasfasfas,4,155,5.08547495584935,2015-02-04T19:15:09.000Z,2015-02-04 19:15:09,02/04/2015,8919,TRUE,867198908\n" +
+                    "CMP1,7,4486,,2015-02-05T19:15:09.000Z,2015-02-05 19:15:09,02/05/2015,8670,FALSE,751877\n" +
+                    "CMP2,2,6641,0.0381825352087617,2015-02-06T19:15:09.000Z,2015-02-06 19:15:09,02/06/2015,8331,TRUE,409092527\n" +
+                    "CMP1,1,3579,0.849663221742958,2015-02-07T19:15:09.000Z,2015-02-07 19:15:09,02/07/2015,9592,FALSE,11490662\n" +
+                    "CMP2,2,4770,2.85092033445835,2015-02-08T19:15:09.000Z,2015-02-08 19:15:09,02/08/2015,253,TRUE,33766814\n" +
+                    "CMP1,5,4938,4.42754498450086,2015-02-09T19:15:09.000Z,2015-02-09 19:15:09,02/09/2015,7817,FALSE,61983099\n";
+
+            try (TextLoader loader = new TextLoader(
+                    configuration,
+                    new DefaultTextConfiguration() {
+                        @Override
+                        public long getRollBufferLimit() {
+                            return 128;
+                        }
+
+                        @Override
+                        public long getRollBufferSize() {
+                            return 32;
+                        }
+                    },
+                    engine,
+                    DateLocaleFactory.INSTANCE,
+                    new DateFormatFactory(),
+                    com.questdb.std.microtime.DateLocaleFactory.INSTANCE,
+                    new com.questdb.std.microtime.DateFormatFactory()
+            )) {
+                configureLoaderDefaults(loader, (byte) ',');
+                playText(
+                        loader,
+                        csv,
+                        240,
+                        expected,
+                        "{\"columnCount\":10,\"columns\":[{\"index\":0,\"name\":\"f0\",\"type\":\"STRING\"},{\"index\":1,\"name\":\"f1\",\"type\":\"INT\"},{\"index\":2,\"name\":\"f2\",\"type\":\"INT\"},{\"index\":3,\"name\":\"f3\",\"type\":\"DOUBLE\"},{\"index\":4,\"name\":\"f4\",\"type\":\"DATE\"},{\"index\":5,\"name\":\"f5\",\"type\":\"DATE\"},{\"index\":6,\"name\":\"f6\",\"type\":\"DATE\"},{\"index\":7,\"name\":\"f7\",\"type\":\"INT\"},{\"index\":8,\"name\":\"f8\",\"type\":\"BOOLEAN\"},{\"index\":9,\"name\":\"f9\",\"type\":\"INT\"}],\"timestampIndex\":-1}",
+                        12,
+                        11
+                );
+            }
+        });
+    }
+
+    @Test
     public void testDateFormatNoLocale() throws Exception {
         DateLocale locale = DateLocaleFactory.INSTANCE.getDefaultDateLocale();
         assertNoLeak(textLoader -> {
@@ -790,30 +852,31 @@ public class PlainTextImportTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testIgnoreLongLine() throws Exception {
+    public void testLineRoll() throws Exception {
         assertNoLeak(textLoader -> {
             String expected = "f0\tf1\tf2\tf3\tf4\tf5\tf6\tf7\tf8\tf9\n" +
-                    "CMP2\t8\t8000\t2.276363521814\t2015-01-29T19:15:09.000Z\t2015-01-29T19:15:09.000Z\t2015-01-29T00:00:00.000Z\t323\ttrue\t14925407\n" +
+                    "\"CMP2\t8\t8000\t2.276363521814\t2015-01-29T19:15:09.000Z\t2015-01-29T19:15:09.000Z\t2015-01-29T00:00:00.000Z\t323\ttrue\t14925407\n" +
                     "CMP1\t2\t1581\t9.014234810602\t2015-01-30T19:15:09.000Z\t2015-01-30T19:15:09.000Z\t2015-01-30T00:00:00.000Z\t9138\tfalse\t68225213\n" +
                     "CMP2\t8\t7067\t9.628433610778\t2015-01-31T19:15:09.000Z\t2015-01-31T19:15:09.000Z\t2015-01-31T00:00:00.000Z\t8197\ttrue\t58403960\n" +
                     "CMP1\t8\t5313\t8.877646618057\t2015-02-01T19:15:09.000Z\t2015-02-01T19:15:09.000Z\t2015-02-01T00:00:00.000Z\t2733\tfalse\t69698373\n" +
                     "\t4\t3883\t7.968730193097\t2015-02-02T19:15:09.000Z\t2015-02-02T19:15:09.000Z\t2015-02-02T00:00:00.000Z\t6912\ttrue\t91147394\n" +
                     "CMP1\t7\t4256\t2.465535225347\t2015-02-03T19:15:09.000Z\t2015-02-03T19:15:09.000Z\t2015-02-03T00:00:00.000Z\t9453\tfalse\t50278940\n" +
+                    "CMP2\t4\t155\t5.085474955849\t2015-02-04T19:15:09.000Z\t2015-02-04T19:15:09.000Z\t2015-02-04T00:00:00.000Z\t8919\ttrue\t8671995\n" +
                     "CMP1\t7\t4486\tNaN\t2015-02-05T19:15:09.000Z\t2015-02-05T19:15:09.000Z\t2015-02-05T00:00:00.000Z\t8670\tfalse\t751877\n" +
-                    "CMP2\t2\t6641\t0.038182535209\t2015-02-06T19:15:09.000Z\t2015-02-06T19:15:09.000Z\t2015-02-06T00:00:00.000Z\t8331\ttrue\t409092527\n" +
+                    "CMP2\t2\t6641\t0.038182535209\t2015-02-06T19:15:09.000Z\t2015-02-06T19:15:09.000Z\t2015-02-06T00:00:00.000Z\t8331\ttrue\t40909232527\n" +
                     "CMP1\t1\t3579\t0.849663221743\t2015-02-07T19:15:09.000Z\t2015-02-07T19:15:09.000Z\t2015-02-07T00:00:00.000Z\t9592\tfalse\t11490662\n" +
                     "CMP2\t2\t4770\t2.850920334458\t2015-02-08T19:15:09.000Z\t2015-02-08T19:15:09.000Z\t2015-02-08T00:00:00.000Z\t253\ttrue\t33766814\n" +
                     "CMP1\t5\t4938\t4.427544984501\t2015-02-09T19:15:09.000Z\t2015-02-09T19:15:09.000Z\t2015-02-09T00:00:00.000Z\t7817\tfalse\t61983099\n";
 
-            String csv = "CMP2,8,8000,2.27636352181435,2015-01-29T19:15:09.000Z,2015-01-29 19:15:09,01/29/2015,323,TRUE,14925407\n" +
+            String csv = "\"\"\"CMP2\",8,8000,2.27636352181435,2015-01-29T19:15:09.000Z,2015-01-29 19:15:09,01/29/2015,323,TRUE,14925407\n" +
                     "CMP1,2,1581,9.01423481060192,2015-01-30T19:15:09.000Z,2015-01-30 19:15:09,01/30/2015,9138,FALSE,68225213\n" +
                     "CMP2,8,7067,9.6284336107783,2015-01-31T19:15:09.000Z,2015-01-31 19:15:09,01/31/2015,8197,TRUE,58403960\n" +
                     "CMP1,8,5313,8.87764661805704,2015-02-01T19:15:09.000Z,2015-02-01 19:15:09,02/01/2015,2733,FALSE,69698373\n" +
                     ",4,3883,7.96873019309714,2015-02-02T19:15:09.000Z,2015-02-02 19:15:09,02/02/2015,6912,TRUE,91147394\n" +
                     "CMP1,7,4256,2.46553522534668,2015-02-03T19:15:09.000Z,2015-02-03 19:15:09,02/03/2015,9453,FALSE,50278940\n" +
-                    "CMP2dwkjqwelkrkqjwrasdsdfhaksjhfkahsfasdfasfasfas,4,155,5.08547495584935,2015-02-04T19:15:09.000Z,2015-02-04 19:15:09,02/04/2015,8919,TRUE,867198908\n" +
-                    "CMP1,7,4486,,2015-02-05T19:15:09.000Z,2015-02-05 19:15:09,02/05/2015,8670,FALSE,751877\n" +
-                    "CMP2,2,6641,0.0381825352087617,2015-02-06T19:15:09.000Z,2015-02-06 19:15:09,02/06/2015,8331,TRUE,409092527\n" +
+                    "CMP2,4,155,5.08547495584935,2015-02-04T19:15:09.000Z,2015-02-04 19:15:09,02/04/2015,8919,TRUE,8671995\n" +
+                    "\"CMP1\",7,4486,,2015-02-05T19:15:09.000Z,2015-02-05 19:15:09,02/05/2015,8670,FALSE,751877\n" +
+                    "CMP2,2,6641,0.0381825352087617,2015-02-06T19:15:09.000Z,2015-02-06 19:15:09,02/06/2015,8331,TRUE,40909232527\n" +
                     "CMP1,1,3579,0.849663221742958,2015-02-07T19:15:09.000Z,2015-02-07 19:15:09,02/07/2015,9592,FALSE,11490662\n" +
                     "CMP2,2,4770,2.85092033445835,2015-02-08T19:15:09.000Z,2015-02-08 19:15:09,02/08/2015,253,TRUE,33766814\n" +
                     "CMP1,5,4938,4.42754498450086,2015-02-09T19:15:09.000Z,2015-02-09 19:15:09,02/09/2015,7817,FALSE,61983099\n";
@@ -833,17 +896,19 @@ public class PlainTextImportTest extends AbstractCairoTest {
                     },
                     engine,
                     DateLocaleFactory.INSTANCE,
-                    new DateFormatFactory()
+                    new DateFormatFactory(),
+                    com.questdb.std.microtime.DateLocaleFactory.INSTANCE,
+                    new com.questdb.std.microtime.DateFormatFactory()
             )) {
                 configureLoaderDefaults(loader, (byte) ',');
                 playText(
                         loader,
                         csv,
-                        240,
+                        1024,
                         expected,
-                        "{\"columnCount\":10,\"columns\":[{\"index\":0,\"name\":\"f0\",\"type\":\"STRING\"},{\"index\":1,\"name\":\"f1\",\"type\":\"INT\"},{\"index\":2,\"name\":\"f2\",\"type\":\"INT\"},{\"index\":3,\"name\":\"f3\",\"type\":\"DOUBLE\"},{\"index\":4,\"name\":\"f4\",\"type\":\"DATE\"},{\"index\":5,\"name\":\"f5\",\"type\":\"DATE\"},{\"index\":6,\"name\":\"f6\",\"type\":\"DATE\"},{\"index\":7,\"name\":\"f7\",\"type\":\"INT\"},{\"index\":8,\"name\":\"f8\",\"type\":\"BOOLEAN\"},{\"index\":9,\"name\":\"f9\",\"type\":\"INT\"}],\"timestampIndex\":-1}",
+                        "{\"columnCount\":10,\"columns\":[{\"index\":0,\"name\":\"f0\",\"type\":\"STRING\"},{\"index\":1,\"name\":\"f1\",\"type\":\"INT\"},{\"index\":2,\"name\":\"f2\",\"type\":\"INT\"},{\"index\":3,\"name\":\"f3\",\"type\":\"DOUBLE\"},{\"index\":4,\"name\":\"f4\",\"type\":\"DATE\"},{\"index\":5,\"name\":\"f5\",\"type\":\"DATE\"},{\"index\":6,\"name\":\"f6\",\"type\":\"DATE\"},{\"index\":7,\"name\":\"f7\",\"type\":\"INT\"},{\"index\":8,\"name\":\"f8\",\"type\":\"BOOLEAN\"},{\"index\":9,\"name\":\"f9\",\"type\":\"LONG\"}],\"timestampIndex\":-1}",
                         12,
-                        11
+                        12
                 );
             }
         });
@@ -986,63 +1051,37 @@ public class PlainTextImportTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testLineRoll() throws Exception {
+    public void testTimestampFormat() throws Exception {
         assertNoLeak(textLoader -> {
-            String expected = "f0\tf1\tf2\tf3\tf4\tf5\tf6\tf7\tf8\tf9\n" +
-                    "\"CMP2\t8\t8000\t2.276363521814\t2015-01-29T19:15:09.000Z\t2015-01-29T19:15:09.000Z\t2015-01-29T00:00:00.000Z\t323\ttrue\t14925407\n" +
-                    "CMP1\t2\t1581\t9.014234810602\t2015-01-30T19:15:09.000Z\t2015-01-30T19:15:09.000Z\t2015-01-30T00:00:00.000Z\t9138\tfalse\t68225213\n" +
-                    "CMP2\t8\t7067\t9.628433610778\t2015-01-31T19:15:09.000Z\t2015-01-31T19:15:09.000Z\t2015-01-31T00:00:00.000Z\t8197\ttrue\t58403960\n" +
-                    "CMP1\t8\t5313\t8.877646618057\t2015-02-01T19:15:09.000Z\t2015-02-01T19:15:09.000Z\t2015-02-01T00:00:00.000Z\t2733\tfalse\t69698373\n" +
-                    "\t4\t3883\t7.968730193097\t2015-02-02T19:15:09.000Z\t2015-02-02T19:15:09.000Z\t2015-02-02T00:00:00.000Z\t6912\ttrue\t91147394\n" +
-                    "CMP1\t7\t4256\t2.465535225347\t2015-02-03T19:15:09.000Z\t2015-02-03T19:15:09.000Z\t2015-02-03T00:00:00.000Z\t9453\tfalse\t50278940\n" +
-                    "CMP2\t4\t155\t5.085474955849\t2015-02-04T19:15:09.000Z\t2015-02-04T19:15:09.000Z\t2015-02-04T00:00:00.000Z\t8919\ttrue\t8671995\n" +
-                    "CMP1\t7\t4486\tNaN\t2015-02-05T19:15:09.000Z\t2015-02-05T19:15:09.000Z\t2015-02-05T00:00:00.000Z\t8670\tfalse\t751877\n" +
-                    "CMP2\t2\t6641\t0.038182535209\t2015-02-06T19:15:09.000Z\t2015-02-06T19:15:09.000Z\t2015-02-06T00:00:00.000Z\t8331\ttrue\t40909232527\n" +
-                    "CMP1\t1\t3579\t0.849663221743\t2015-02-07T19:15:09.000Z\t2015-02-07T19:15:09.000Z\t2015-02-07T00:00:00.000Z\t9592\tfalse\t11490662\n" +
-                    "CMP2\t2\t4770\t2.850920334458\t2015-02-08T19:15:09.000Z\t2015-02-08T19:15:09.000Z\t2015-02-08T00:00:00.000Z\t253\ttrue\t33766814\n" +
-                    "CMP1\t5\t4938\t4.427544984501\t2015-02-09T19:15:09.000Z\t2015-02-09T19:15:09.000Z\t2015-02-09T00:00:00.000Z\t7817\tfalse\t61983099\n";
+            String csv = "\"name\",\"date\"\n" +
+                    "\"Всероссийские спортивные соревнования школьников «ПРЕЗИДЕНТСКИЕ СОСТЯЗАНИЯ»\",\"3 июля 2017 г.\"\n" +
+                    "\"Всероссийские спортивные игры школьников «ПРЕЗИДЕНТСКИЕ СПОРТИВНЫЕ ИГРЫ»\",\"10 марта 2018 г.\"\n" +
+                    "\"Всероссийский летний ФЕСТИВАЛЬ ГТО\",\"28 февраля 2016 г.\"\n";
+            String expected = "name\tdate\n" +
+                    "Всероссийские спортивные соревнования школьников «ПРЕЗИДЕНТСКИЕ СОСТЯЗАНИЯ»\t2017-07-03T00:00:00.000000Z\n" +
+                    "Всероссийские спортивные игры школьников «ПРЕЗИДЕНТСКИЕ СПОРТИВНЫЕ ИГРЫ»\t2018-03-10T00:00:00.000000Z\n" +
+                    "Всероссийский летний ФЕСТИВАЛЬ ГТО\t2016-02-28T00:00:00.000000Z\n";
+            configureLoaderDefaults(textLoader);
 
-            String csv = "\"\"\"CMP2\",8,8000,2.27636352181435,2015-01-29T19:15:09.000Z,2015-01-29 19:15:09,01/29/2015,323,TRUE,14925407\n" +
-                    "CMP1,2,1581,9.01423481060192,2015-01-30T19:15:09.000Z,2015-01-30 19:15:09,01/30/2015,9138,FALSE,68225213\n" +
-                    "CMP2,8,7067,9.6284336107783,2015-01-31T19:15:09.000Z,2015-01-31 19:15:09,01/31/2015,8197,TRUE,58403960\n" +
-                    "CMP1,8,5313,8.87764661805704,2015-02-01T19:15:09.000Z,2015-02-01 19:15:09,02/01/2015,2733,FALSE,69698373\n" +
-                    ",4,3883,7.96873019309714,2015-02-02T19:15:09.000Z,2015-02-02 19:15:09,02/02/2015,6912,TRUE,91147394\n" +
-                    "CMP1,7,4256,2.46553522534668,2015-02-03T19:15:09.000Z,2015-02-03 19:15:09,02/03/2015,9453,FALSE,50278940\n" +
-                    "CMP2,4,155,5.08547495584935,2015-02-04T19:15:09.000Z,2015-02-04 19:15:09,02/04/2015,8919,TRUE,8671995\n" +
-                    "\"CMP1\",7,4486,,2015-02-05T19:15:09.000Z,2015-02-05 19:15:09,02/05/2015,8670,FALSE,751877\n" +
-                    "CMP2,2,6641,0.0381825352087617,2015-02-06T19:15:09.000Z,2015-02-06 19:15:09,02/06/2015,8331,TRUE,40909232527\n" +
-                    "CMP1,1,3579,0.849663221742958,2015-02-07T19:15:09.000Z,2015-02-07 19:15:09,02/07/2015,9592,FALSE,11490662\n" +
-                    "CMP2,2,4770,2.85092033445835,2015-02-08T19:15:09.000Z,2015-02-08 19:15:09,02/08/2015,253,TRUE,33766814\n" +
-                    "CMP1,5,4938,4.42754498450086,2015-02-09T19:15:09.000Z,2015-02-09 19:15:09,02/09/2015,7817,FALSE,61983099\n";
+            playJson(textLoader, ("[\n" +
+                    "  {\n" +
+                    "    \"name\": \"date\",\n" +
+                    "    \"type\": \"TIMESTAMP\",\n" +
+                    "    \"pattern\": \"d MMMM y г.\",\n" +
+                    "    \"locale\": \"ru-RU\"\n" +
+                    "  }\n" +
+                    "]"));
 
-            try (TextLoader loader = new TextLoader(
-                    configuration,
-                    new DefaultTextConfiguration() {
-                        @Override
-                        public long getRollBufferLimit() {
-                            return 128;
-                        }
-
-                        @Override
-                        public long getRollBufferSize() {
-                            return 32;
-                        }
-                    },
-                    engine,
-                    DateLocaleFactory.INSTANCE,
-                    new DateFormatFactory()
-            )) {
-                configureLoaderDefaults(loader, (byte) ',');
-                playText(
-                        loader,
-                        csv,
-                        1024,
-                        expected,
-                        "{\"columnCount\":10,\"columns\":[{\"index\":0,\"name\":\"f0\",\"type\":\"STRING\"},{\"index\":1,\"name\":\"f1\",\"type\":\"INT\"},{\"index\":2,\"name\":\"f2\",\"type\":\"INT\"},{\"index\":3,\"name\":\"f3\",\"type\":\"DOUBLE\"},{\"index\":4,\"name\":\"f4\",\"type\":\"DATE\"},{\"index\":5,\"name\":\"f5\",\"type\":\"DATE\"},{\"index\":6,\"name\":\"f6\",\"type\":\"DATE\"},{\"index\":7,\"name\":\"f7\",\"type\":\"INT\"},{\"index\":8,\"name\":\"f8\",\"type\":\"BOOLEAN\"},{\"index\":9,\"name\":\"f9\",\"type\":\"LONG\"}],\"timestampIndex\":-1}",
-                        12,
-                        12
-                );
-            }
+            textLoader.setForceHeaders(true);
+            textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
+            playText0(textLoader, csv, 1024, ENTITY_MANIPULATOR);
+            sink.clear();
+            textLoader.getMetadata().toJson(sink);
+            TestUtils.assertEquals("{\"columnCount\":2,\"columns\":[{\"index\":0,\"name\":\"name\",\"type\":\"STRING\"},{\"index\":1,\"name\":\"date\",\"type\":\"TIMESTAMP\"}],\"timestampIndex\":-1}", sink);
+            Assert.assertEquals(3L, textLoader.getParsedLineCount());
+            Assert.assertEquals(3L, textLoader.getWrittenLineCount());
+            assertTable(expected);
+            textLoader.clear();
         });
     }
 
@@ -1683,6 +1722,41 @@ public class PlainTextImportTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTimestampFormatNoLocale() throws Exception {
+        DateLocale locale = DateLocaleFactory.INSTANCE.getDefaultDateLocale();
+        assertNoLeak(textLoader -> {
+            String csv = "\"name\",\"date\"\n" +
+                    "\"Всероссийские спортивные соревнования школьников «ПРЕЗИДЕНТСКИЕ СОСТЯЗАНИЯ»\",\"3 " + locale.getMonth(6) + " 2017 г.\"\n" +
+                    "\"Всероссийские спортивные игры школьников «ПРЕЗИДЕНТСКИЕ СПОРТИВНЫЕ ИГРЫ»\",\"10 " + locale.getMonth(2) + " 2018 г.\"\n" +
+                    "\"Всероссийский летний ФЕСТИВАЛЬ ГТО\",\"28 " + locale.getMonth(1) + " 2016 г.\"\n";
+            String expected = "name\tdate\n" +
+                    "Всероссийские спортивные соревнования школьников «ПРЕЗИДЕНТСКИЕ СОСТЯЗАНИЯ»\t2017-07-03T00:00:00.000000Z\n" +
+                    "Всероссийские спортивные игры школьников «ПРЕЗИДЕНТСКИЕ СПОРТИВНЫЕ ИГРЫ»\t2018-03-10T00:00:00.000000Z\n" +
+                    "Всероссийский летний ФЕСТИВАЛЬ ГТО\t2016-02-28T00:00:00.000000Z\n";
+            configureLoaderDefaults(textLoader, (byte) ',', Atomicity.SKIP_COL);
+
+            playJson(textLoader, ("[\n" +
+                    "  {\n" +
+                    "    \"name\": \"date\",\n" +
+                    "    \"type\": \"TIMESTAMP\",\n" +
+                    "    \"pattern\": \"d MMMM y г.\"\n" +
+                    "  }\n" +
+                    "]"));
+
+            textLoader.setForceHeaders(true);
+            textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
+            playText0(textLoader, csv, 1024, ENTITY_MANIPULATOR);
+            sink.clear();
+            textLoader.getMetadata().toJson(sink);
+            TestUtils.assertEquals("{\"columnCount\":2,\"columns\":[{\"index\":0,\"name\":\"name\",\"type\":\"STRING\"},{\"index\":1,\"name\":\"date\",\"type\":\"TIMESTAMP\"}],\"timestampIndex\":-1}", sink);
+            Assert.assertEquals(3L, textLoader.getParsedLineCount());
+            Assert.assertEquals(3L, textLoader.getWrittenLineCount());
+            assertTable(expected);
+            textLoader.clear();
+        });
+    }
+
+    @Test
     public void testUtf8() throws Exception {
         assertNoLeak(textLoader -> {
             String csv = "\"№ п/п\",\"Объекты контрольного мероприятия\",\"Вид контрольного мероприятия\",\"Тема контрольного мероприятия\",\"Проверяемый период\",\"Начало проверки\",\"Окончание проверки\",\"Выявленные нарушения, недостатки\",\"Результаты проверки\"\n" +
@@ -1920,6 +1994,52 @@ public class PlainTextImportTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testWriteToExistingCannotConvertDate() throws Exception {
+        assertNoLeak(textLoader -> {
+            String csv = "abcd,10\n" +
+                    "efg,45\n" +
+                    "werop,90\n";
+
+            // we would mis-detect type and have no date parser to try loading data with
+            String expected = "a\tb\n" +
+                    "abcd\t\n" +
+                    "efg\t\n" +
+                    "werop\t\n";
+
+            compiler.compile("create table test(a string, b date)", null);
+            configureLoaderDefaults(textLoader);
+            playText(textLoader, csv, 1024,
+                    expected,
+                    "{\"columnCount\":2,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\"STRING\"},{\"index\":1,\"name\":\"b\",\"type\":\"DATE\"}],\"timestampIndex\":-1}",
+                    3,
+                    3);
+        });
+    }
+
+    @Test
+    public void testWriteToExistingCannotConvertTimestamp() throws Exception {
+        assertNoLeak(textLoader -> {
+            String csv = "abcd,10\n" +
+                    "efg,45\n" +
+                    "werop,90\n";
+
+            // we would mis-detect type and have no date parser to try loading data with
+            String expected = "a\tb\n" +
+                    "abcd\t\n" +
+                    "efg\t\n" +
+                    "werop\t\n";
+
+            compiler.compile("create table test(a string, b timestamp)", null);
+            configureLoaderDefaults(textLoader);
+            playText(textLoader, csv, 1024,
+                    expected,
+                    "{\"columnCount\":2,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\"STRING\"},{\"index\":1,\"name\":\"b\",\"type\":\"TIMESTAMP\"}],\"timestampIndex\":-1}",
+                    3,
+                    3);
+        });
+    }
+
+    @Test
     public void testWriteToExistingTableTooFewColumns() throws Exception {
         assertNoLeak(textLoader -> {
             String csv = "\"\"\"CMP2\",8,8000,2.27636352181435,2015-01-29T19:15:09.000Z,2015-01-29 19:15:09,01/29/2015,323,TRUE,14925407\n" +
@@ -2012,7 +2132,9 @@ public class PlainTextImportTest extends AbstractCairoTest {
                     textConfiguration,
                     engine,
                     DateLocaleFactory.INSTANCE,
-                    new DateFormatFactory()
+                    new DateFormatFactory(),
+                    com.questdb.std.microtime.DateLocaleFactory.INSTANCE,
+                    new com.questdb.std.microtime.DateFormatFactory()
             )) {
                 code.run(loader);
             }

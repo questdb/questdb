@@ -23,12 +23,12 @@
 
 package com.questdb.cutlass.text.types;
 
+import com.questdb.cairo.ColumnType;
 import com.questdb.cairo.TableWriter;
 import com.questdb.std.Numbers;
 import com.questdb.std.str.DirectByteCharSequence;
-import com.questdb.store.ColumnType;
 
-public final class ByteAdapter implements TypeAdapter {
+public final class ByteAdapter extends AbstractTypeAdapter {
 
     public static final ByteAdapter INSTANCE = new ByteAdapter();
 
@@ -48,10 +48,5 @@ public final class ByteAdapter implements TypeAdapter {
     @Override
     public void write(TableWriter.Row row, int column, DirectByteCharSequence value) throws Exception {
         row.putByte(column, (byte) Numbers.parseInt(value));
-    }
-
-    @Override
-    public String toString() {
-        return "BYTE";
     }
 }

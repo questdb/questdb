@@ -51,8 +51,10 @@ public class TextMetadataParser implements JsonParser, Mutable, Closeable {
     private static final int P_LOCALE = 4;
     private static final CharSequenceIntHashMap propertyNameMap = new CharSequenceIntHashMap();
     private final DateLocaleFactory dateLocaleFactory;
+    private final com.questdb.std.microtime.DateLocaleFactory timestampLocaleFactory;
     private final ObjectPool<FloatingCharSequence> csPool;
     private final DateFormatFactory dateFormatFactory;
+    private final com.questdb.std.microtime.DateFormatFactory timestampFormatFactory;
     private final ObjList<CharSequence> columnNames;
     private final ObjList<TypeAdapter> columnTypes;
     private final TypeManager typeManager;
@@ -72,6 +74,8 @@ public class TextMetadataParser implements JsonParser, Mutable, Closeable {
             TextConfiguration textConfiguration,
             DateLocaleFactory dateLocaleFactory,
             DateFormatFactory dateFormatFactory,
+            com.questdb.std.microtime.DateLocaleFactory timestampLocaleFactory,
+            com.questdb.std.microtime.DateFormatFactory timestampFormatFactory,
             TypeManager typeManager
     ) {
         this.columnNames = new ObjList<>();
@@ -79,6 +83,8 @@ public class TextMetadataParser implements JsonParser, Mutable, Closeable {
         this.csPool = new ObjectPool<>(FloatingCharSequence::new, textConfiguration.getMetadataStringPoolSize());
         this.dateLocaleFactory = dateLocaleFactory;
         this.dateFormatFactory = dateFormatFactory;
+        this.timestampLocaleFactory = timestampLocaleFactory;
+        this.timestampFormatFactory = timestampFormatFactory;
         this.typeManager = typeManager;
     }
 
@@ -202,14 +208,30 @@ public class TextMetadataParser implements JsonParser, Mutable, Closeable {
 
         columnNames.add(name);
 
-        if (type == ColumnType.DATE) {
-            DateLocale dateLocale = locale == null ? dateLocaleFactory.getDefaultDateLocale() : dateLocaleFactory.getDateLocale(locale);
-            if (dateLocale == null) {
-                throw JsonException.$(localePosition, "Invalid date locale");
-            }
-            columnTypes.add(typeManager.nextDateAdapter().of(dateFormatFactory.get(pattern), dateLocale));
-        } else {
-            columnTypes.add(typeManager.getTypeAdapter(type));
+        switch (type) {
+            case ColumnType.DATE:
+                DateLocale dateLocale = locale == null ?
+                        dateLocaleFactory.getDefaultDateLocale()
+                        : dateLocaleFactory.getDateLocale(locale);
+
+                if (dateLocale == null) {
+                    throw JsonException.$(localePosition, "Invalid date locale");
+                }
+                columnTypes.add(typeManager.nextDateAdapter().of(dateFormatFactory.get(pattern), dateLocale));
+                break;
+            case ColumnType.TIMESTAMP:
+                com.questdb.std.microtime.DateLocale timestampLocale =
+                        locale == null ?
+                                timestampLocaleFactory.getDefaultDateLocale()
+                                : timestampLocaleFactory.getDateLocale(locale);
+                if (timestampLocale == null) {
+                    throw JsonException.$(localePosition, "Invalid timestamp locale");
+                }
+                columnTypes.add(typeManager.nextTimestampAdapter().of(timestampFormatFactory.get(pattern), timestampLocale));
+                break;
+            default:
+                columnTypes.add(typeManager.getTypeAdapter(type));
+                break;
         }
         // prepare for next iteration
         clearStage();

@@ -23,12 +23,12 @@
 
 package com.questdb.cutlass.text.types;
 
+import com.questdb.cairo.ColumnType;
 import com.questdb.cairo.TableWriter;
 import com.questdb.std.Numbers;
 import com.questdb.std.str.DirectByteCharSequence;
-import com.questdb.store.ColumnType;
 
-public final class FloatAdapter implements TypeAdapter {
+public final class FloatAdapter extends AbstractTypeAdapter {
 
     public static final FloatAdapter INSTANCE = new FloatAdapter();
 
@@ -48,10 +48,5 @@ public final class FloatAdapter implements TypeAdapter {
     @Override
     public void write(TableWriter.Row row, int column, DirectByteCharSequence value) throws Exception {
         row.putFloat(column, Numbers.parseFloat(value));
-    }
-
-    @Override
-    public String toString() {
-        return "FLOAT";
     }
 }

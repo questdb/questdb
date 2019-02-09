@@ -67,16 +67,6 @@ public class JsonException extends Exception implements Sinkable {
         return this;
     }
 
-    public JsonException put(int value) {
-        message.put(value);
-        return this;
-    }
-
-    public JsonException put(Sinkable sinkable) {
-        message.put(sinkable);
-        return this;
-    }
-
     @Override
     public void toSink(CharSink sink) {
         sink.put('[').put(position).put("]: ").put(message);

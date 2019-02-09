@@ -1629,7 +1629,11 @@ public class TableWriter implements Closeable {
     }
 
     private void removePartitionDirsNewerThan(long timestamp) {
-        LOG.info().$("looking to remove partitions newer than '").$ts(timestamp).$("' from ").$(path.$()).$();
+        if (timestamp > Long.MIN_VALUE) {
+            LOG.info().$("purging [newerThen=").$ts(timestamp).$(", path=").$(path.$()).$(']').$();
+        } else {
+            LOG.info().$("cleaning [path=").$(path.$()).$(']').$();
+        }
         try {
             ff.iterateDir(path.$(), (pName, type) -> {
                 path.trimTo(rootLen);

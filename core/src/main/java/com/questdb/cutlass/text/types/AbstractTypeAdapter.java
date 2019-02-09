@@ -24,29 +24,10 @@
 package com.questdb.cutlass.text.types;
 
 import com.questdb.cairo.ColumnType;
-import com.questdb.cairo.TableWriter;
-import com.questdb.std.Numbers;
-import com.questdb.std.str.DirectByteCharSequence;
 
-public final class BadDateAdapter extends AbstractTypeAdapter {
-
-    public static final BadDateAdapter INSTANCE = new BadDateAdapter();
-
-    private BadDateAdapter() {
-    }
-
+abstract class AbstractTypeAdapter implements TypeAdapter {
     @Override
-    public int getType() {
-        return ColumnType.DATE;
-    }
-
-    @Override
-    public boolean probe(CharSequence text) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public void write(TableWriter.Row row, int column, DirectByteCharSequence value) {
-        row.putDate(column, Numbers.LONG_NaN);
+    public String toString() {
+        return ColumnType.nameOf(getType());
     }
 }

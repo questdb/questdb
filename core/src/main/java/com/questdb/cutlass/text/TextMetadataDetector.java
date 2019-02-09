@@ -23,6 +23,7 @@
 
 package com.questdb.cutlass.text;
 
+import com.questdb.cairo.ColumnType;
 import com.questdb.cutlass.text.types.TypeAdapter;
 import com.questdb.cutlass.text.types.TypeManager;
 import com.questdb.log.Log;
@@ -32,7 +33,6 @@ import com.questdb.std.str.CharSink;
 import com.questdb.std.str.DirectByteCharSequence;
 import com.questdb.std.str.DirectCharSink;
 import com.questdb.std.str.StringSink;
-import com.questdb.store.ColumnType;
 
 import java.io.Closeable;
 

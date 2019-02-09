@@ -23,9 +23,30 @@
 
 package com.questdb.cutlass.text.types;
 
-public final class TypeManagerException extends RuntimeException {
-    public static final TypeManagerException INSTANCE = new TypeManagerException();
+import com.questdb.cairo.ColumnType;
+import com.questdb.cairo.TableWriter;
+import com.questdb.std.Numbers;
+import com.questdb.std.str.DirectByteCharSequence;
 
-    private TypeManagerException() {
+public final class BadTimestampAdapter extends AbstractTypeAdapter {
+
+    public static final BadTimestampAdapter INSTANCE = new BadTimestampAdapter();
+
+    private BadTimestampAdapter() {
+    }
+
+    @Override
+    public int getType() {
+        return ColumnType.TIMESTAMP;
+    }
+
+    @Override
+    public boolean probe(CharSequence text) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void write(TableWriter.Row row, int column, DirectByteCharSequence value) {
+        row.putTimestamp(column, Numbers.LONG_NaN);
     }
 }

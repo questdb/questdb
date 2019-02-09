@@ -23,12 +23,12 @@
 
 package com.questdb.cutlass.text.types;
 
+import com.questdb.cairo.ColumnType;
 import com.questdb.cairo.TableWriter;
 import com.questdb.std.Chars;
 import com.questdb.std.str.DirectByteCharSequence;
-import com.questdb.store.ColumnType;
 
-public final class BooleanAdapter implements TypeAdapter {
+public final class BooleanAdapter extends AbstractTypeAdapter {
 
     public static final BooleanAdapter INSTANCE = new BooleanAdapter();
 
@@ -43,11 +43,6 @@ public final class BooleanAdapter implements TypeAdapter {
     @Override
     public boolean probe(CharSequence text) {
         return Chars.equalsIgnoreCase(text, "true") || Chars.equalsIgnoreCase(text, "false");
-    }
-
-    @Override
-    public String toString() {
-        return "BOOLEAN";
     }
 
     @Override

@@ -27,6 +27,7 @@ import com.questdb.cairo.*;
 import com.questdb.cairo.sql.CairoEngine;
 import com.questdb.cairo.sql.RecordMetadata;
 import com.questdb.cutlass.text.types.BadDateAdapter;
+import com.questdb.cutlass.text.types.BadTimestampAdapter;
 import com.questdb.cutlass.text.types.TypeAdapter;
 import com.questdb.cutlass.text.types.TypeManager;
 import com.questdb.log.Log;
@@ -159,6 +160,14 @@ public class CairoTextWriter implements TextLexer.Listener, Closeable, Mutable {
         this.types = detectedTypes;
     }
 
+    private void logTypeError(int i) {
+        LOG.info()
+                .$("mis-detected [table=").$(tableName)
+                .$(", column=").$(i)
+                .$(", type=").$(ColumnType.nameOf(this.types.getQuick(i).getType()))
+                .$(']').$();
+    }
+
     private TableWriter openWriterAndOverrideImportTypes(ObjList<TypeAdapter> detectedTypes) {
 
         TableWriter writer = engine.getWriter(tableName);
@@ -185,15 +194,18 @@ public class CairoTextWriter implements TextLexer.Listener, Closeable, Mutable {
                 // when DATE type is mis-detected as STRING we
                 // wouldn't have neither date format nor locale to
                 // use when populating this field
-                if (columnType == ColumnType.DATE) {
-                    LOG.info()
-                            .$("mis-detected [table=").$(tableName)
-                            .$(", column=").$(i)
-                            .$(", type=").$(ColumnType.nameOf(this.types.getQuick(i).getType()))
-                            .$(']').$();
-                    this.types.setQuick(i, BadDateAdapter.INSTANCE);
-                } else {
-                    this.types.setQuick(i, typeManager.getTypeAdapter(columnType));
+                switch (columnType) {
+                    case ColumnType.DATE:
+                        logTypeError(i);
+                        this.types.setQuick(i, BadDateAdapter.INSTANCE);
+                        break;
+                    case ColumnType.TIMESTAMP:
+                        logTypeError(i);
+                        this.types.setQuick(i, BadTimestampAdapter.INSTANCE);
+                        break;
+                    default:
+                        this.types.setQuick(i, typeManager.getTypeAdapter(columnType));
+                        break;
                 }
             }
         }

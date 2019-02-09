@@ -23,6 +23,7 @@
 
 package com.questdb.cutlass.text.types;
 
+import com.questdb.cairo.ColumnType;
 import com.questdb.cairo.TableWriter;
 import com.questdb.cutlass.text.TextUtil;
 import com.questdb.std.Mutable;
@@ -31,9 +32,8 @@ import com.questdb.std.str.DirectByteCharSequence;
 import com.questdb.std.str.DirectCharSink;
 import com.questdb.std.time.DateFormat;
 import com.questdb.std.time.DateLocale;
-import com.questdb.store.ColumnType;
 
-public class DateAdapter implements TypeAdapter, Mutable {
+public class DateAdapter extends AbstractTypeAdapter implements Mutable {
     private final DirectCharSink utf8Sink;
     private DateLocale locale;
     private DateFormat format;
@@ -74,10 +74,5 @@ public class DateAdapter implements TypeAdapter, Mutable {
         this.format = format;
         this.locale = locale;
         return this;
-    }
-
-    @Override
-    public String toString() {
-        return "DATE";
     }
 }

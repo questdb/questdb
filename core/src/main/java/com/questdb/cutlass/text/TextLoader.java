@@ -64,7 +64,10 @@ public class TextLoader implements Closeable, Mutable {
             TextConfiguration textConfiguration,
             CairoEngine engine,
             DateLocaleFactory dateLocaleFactory,
-            DateFormatFactory dateFormatFactory
+            DateFormatFactory dateFormatFactory,
+            com.questdb.std.microtime.DateLocaleFactory timestampLocaleFactory,
+            com.questdb.std.microtime.DateFormatFactory timestampFormatFactory
+
     ) throws JsonException {
         this.utf8Sink = new DirectCharSink(textConfiguration.getUtf8SinkCapacity());
         jsonLexer = new JsonLexer(
@@ -74,7 +77,14 @@ public class TextLoader implements Closeable, Mutable {
         this.typeManager = new TypeManager(textConfiguration, utf8Sink, jsonLexer);
         textLexer = new TextLexer(textConfiguration, typeManager);
         textWriter = new CairoTextWriter(configuration, engine, path, textConfiguration, typeManager);
-        textMetadataParser = new TextMetadataParser(textConfiguration, dateLocaleFactory, dateFormatFactory, typeManager);
+        textMetadataParser = new TextMetadataParser(
+                textConfiguration,
+                dateLocaleFactory,
+                dateFormatFactory,
+                timestampLocaleFactory,
+                timestampFormatFactory,
+                typeManager
+        );
         textAnalysisMaxLines = textConfiguration.getTextAnalysisMaxLines();
         textDelimiterScanner = new TextDelimiterScanner(textConfiguration);
     }
