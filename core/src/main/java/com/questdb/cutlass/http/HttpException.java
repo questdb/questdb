@@ -21,30 +21,46 @@
  *
  ******************************************************************************/
 
-package com.questdb.tuck.http;
+package com.questdb.cutlass.http;
 
-import com.questdb.std.CharSequenceObjHashMap;
+import com.questdb.std.Sinkable;
+import com.questdb.std.ThreadLocal;
+import com.questdb.std.str.CharSink;
+import com.questdb.std.str.StringSink;
 
-public class SimpleUrlMatcher extends CharSequenceObjHashMap<ContextHandler> implements UrlMatcher {
-    private ContextHandler defaultHandler;
+public class HttpException extends RuntimeException implements Sinkable {
+    private static final ThreadLocal<HttpException> tlException = new ThreadLocal<>(HttpException::new);
+    private final StringSink message = new StringSink();
 
-    @Override
-    public ContextHandler get(CharSequence key) {
-        ContextHandler res = super.get(key);
-        return res == null ? defaultHandler : res;
+    public static HttpException instance(CharSequence message) {
+        HttpException ex = tlException.get();
+        ex.message.clear();
+        ex.message.put(message);
+        return ex;
     }
 
-    public void setDefaultHandler(ContextHandler defaultHandler) {
-        this.defaultHandler = defaultHandler;
+    @Override
+    public String getMessage() {
+        return message.toString();
+    }
+
+    public HttpException put(long value) {
+        message.put(value);
+        return this;
+    }
+
+    public HttpException put(CharSequence cs) {
+        message.put(cs);
+        return this;
+    }
+
+    public HttpException put(char c) {
+        message.put(c);
+        return this;
     }
 
     @Override
-    public void setupHandlers() {
-        for (int i = 0, n = size(); i < n; i++) {
-            valueQuick(i).setupThread();
-        }
-        if (defaultHandler != null) {
-            defaultHandler.setupThread();
-        }
+    public void toSink(CharSink sink) {
+        sink.put(message);
     }
 }

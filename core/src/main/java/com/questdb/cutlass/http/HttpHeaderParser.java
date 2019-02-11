@@ -21,41 +21,38 @@
  *
  ******************************************************************************/
 
-package com.questdb.tuck.http;
+package com.questdb.cutlass.http;
 
-import com.questdb.ex.HeadersTooLargeException;
-import com.questdb.ex.MalformedHeaderException;
-import com.questdb.log.Log;
-import com.questdb.log.LogFactory;
 import com.questdb.std.*;
 import com.questdb.std.str.DirectByteCharSequence;
 
 import java.io.Closeable;
 
-public class RequestHeaderBuffer implements Mutable, Closeable {
-    private static final Log LOG = LogFactory.getLog(RequestHeaderBuffer.class);
+public class HttpHeaderParser implements Mutable, Closeable {
     private final ObjectPool<DirectByteCharSequence> pool;
-    private final CharSequenceObjHashMap<CharSequence> headers = new CharSequenceObjHashMap<>();
-    private final CharSequenceObjHashMap<CharSequence> urlParams = new CharSequenceObjHashMap<>();
+    private final CharSequenceObjHashMap<DirectByteCharSequence> headers = new CharSequenceObjHashMap<>();
+    private final CharSequenceObjHashMap<DirectByteCharSequence> urlParams = new CharSequenceObjHashMap<>();
     private final long hi;
+    private final DirectByteCharSequence temp = new DirectByteCharSequence();
     private long _wptr;
     private long headerPtr;
-    private CharSequence method;
-    private CharSequence url;
-    private CharSequence methodLine;
+    private DirectByteCharSequence method;
+    private DirectByteCharSequence url;
+    private DirectByteCharSequence methodLine;
     private boolean needMethod;
     private long _lo;
-    private CharSequence n;
+    private DirectByteCharSequence headerName;
     private boolean incomplete;
-    private CharSequence contentType;
-    private CharSequence boundary;
+    private DirectByteCharSequence contentType;
+    private DirectByteCharSequence boundary;
     private CharSequence contentDispositionName;
     private CharSequence contentDispositionFilename;
     private boolean m = true;
     private boolean u = true;
     private boolean q = false;
+    private DirectByteCharSequence charset;
 
-    public RequestHeaderBuffer(int size, ObjectPool<DirectByteCharSequence> pool) {
+    public HttpHeaderParser(int size, ObjectPool<DirectByteCharSequence> pool) {
         int sz = Numbers.ceilPow2(size);
         this.headerPtr = Unsafe.malloc(sz);
         this._wptr = headerPtr;
@@ -72,7 +69,7 @@ public class RequestHeaderBuffer implements Mutable, Closeable {
         this.headers.clear();
         this.method = null;
         this.url = null;
-        this.n = null;
+        this.headerName = null;
         this.contentType = null;
         this.boundary = null;
         this.contentDispositionName = null;
@@ -81,6 +78,7 @@ public class RequestHeaderBuffer implements Mutable, Closeable {
         this.m = true;
         this.u = true;
         this.q = false;
+        this.pool.clear();
     }
 
     @Override
@@ -91,12 +89,12 @@ public class RequestHeaderBuffer implements Mutable, Closeable {
         }
     }
 
-    public CharSequence get(CharSequence name) {
-        return headers.get(name);
-    }
-
     public CharSequence getBoundary() {
         return boundary;
+    }
+
+    public DirectByteCharSequence getCharset() {
+        return charset;
     }
 
     public CharSequence getContentDispositionFilename() {
@@ -109,6 +107,10 @@ public class RequestHeaderBuffer implements Mutable, Closeable {
 
     public CharSequence getContentType() {
         return contentType;
+    }
+
+    public DirectByteCharSequence getHeader(CharSequence name) {
+        return headers.get(name);
     }
 
     public CharSequence getMethod() {
@@ -131,11 +133,7 @@ public class RequestHeaderBuffer implements Mutable, Closeable {
         return incomplete;
     }
 
-    public int size() {
-        return headers.size();
-    }
-
-    public long write(long ptr, int len, boolean _method) throws HeadersTooLargeException, MalformedHeaderException {
+    public long parse(long ptr, int len, boolean _method) {
         if (_method && needMethod) {
             int l = parseMethod(ptr, len);
             len -= l;
@@ -149,7 +147,7 @@ public class RequestHeaderBuffer implements Mutable, Closeable {
 
         while (p < hi) {
             if (_wptr == this.hi) {
-                throw HeadersTooLargeException.INSTANCE;
+                throw HttpException.instance("header is too large");
             }
 
             char b = (char) Unsafe.getUnsafe().getByte(p++);
@@ -162,21 +160,21 @@ public class RequestHeaderBuffer implements Mutable, Closeable {
 
             switch (b) {
                 case ':':
-                    if (n == null) {
-                        n = pool.next().of(_lo, _wptr - 1);
+                    if (headerName == null) {
+                        headerName = pool.next().of(_lo, _wptr - 1);
                         _lo = _wptr + 1;
                     }
                     break;
                 case '\n':
-                    if (n == null) {
+                    if (headerName == null) {
                         incomplete = false;
                         parseKnownHeaders();
                         return p;
                     }
                     v = pool.next().of(_lo, _wptr - 1);
                     _lo = _wptr;
-                    headers.put(n, v);
-                    n = null;
+                    headers.put(headerName, v);
+                    headerName = null;
                     break;
                 default:
                     break;
@@ -186,36 +184,36 @@ public class RequestHeaderBuffer implements Mutable, Closeable {
         return p;
     }
 
-    private static DirectByteCharSequence unquote(DirectByteCharSequence that) throws MalformedHeaderException {
+    public int size() {
+        return headers.size();
+    }
+
+    private static DirectByteCharSequence unquote(CharSequence key, DirectByteCharSequence that) {
         int len = that.length();
         if (len == 0) {
-            LOG.error().$("Zero-length mandatory field").$();
-            // zero length mandatory field
-            throw MalformedHeaderException.INSTANCE;
+            throw HttpException.instance("missing value [key=").put(key).put(']');
         }
 
         if (that.charAt(0) == '"') {
             if (that.charAt(len - 1) == '"') {
                 return that.of(that.getLo() + 1, that.getHi() - 1);
             } else {
-                LOG.error().$("Unclosed quote").$();
-                // unclosed quote
-                throw MalformedHeaderException.INSTANCE;
+                throw HttpException.instance("unclosed quote [key=").put(key).put(']');
             }
         } else {
             return that;
         }
     }
 
-    private void parseContentDisposition() throws MalformedHeaderException {
-        CharSequence contentDisposition = get("Content-Disposition");
+    private void parseContentDisposition() {
+        DirectByteCharSequence contentDisposition = getHeader("Content-Disposition");
         if (contentDisposition == null) {
             return;
         }
 
-        long p = ((DirectByteCharSequence) contentDisposition).getLo();
+        long p = contentDisposition.getLo();
         long _lo = p;
-        long hi = ((DirectByteCharSequence) contentDisposition).getHi();
+        long hi = contentDisposition.getHi();
 
         boolean expectFormData = true;
         boolean swallowSpace = true;
@@ -238,19 +236,18 @@ public class RequestHeaderBuffer implements Mutable, Closeable {
                 }
 
                 if (name == null) {
-                    LOG.error().$("Malformed content-disposition header").$();
-                    throw MalformedHeaderException.INSTANCE;
+                    throw HttpException.instance("Malformed content-disposition header");
                 }
 
                 if (Chars.equals("name", name)) {
-                    this.contentDispositionName = unquote(pool.next().of(_lo, p - 1));
+                    this.contentDispositionName = unquote("name", pool.next().of(_lo, p - 1));
                     swallowSpace = true;
                     _lo = p;
                     continue;
                 }
 
                 if (Chars.equals("filename", name)) {
-                    this.contentDispositionFilename = unquote(pool.next().of(_lo, p - 1));
+                    this.contentDispositionFilename = unquote("filename", pool.next().of(_lo, p - 1));
                     _lo = p;
                     continue;
                 }
@@ -266,15 +263,15 @@ public class RequestHeaderBuffer implements Mutable, Closeable {
         }
     }
 
-    private void parseContentType() throws MalformedHeaderException {
-        CharSequence seq = get("Content-Type");
+    private void parseContentType() {
+        DirectByteCharSequence seq = getHeader("Content-Type");
         if (seq == null) {
             return;
         }
 
-        long p = ((DirectByteCharSequence) seq).getLo();
+        long p = seq.getLo();
         long _lo = p;
-        long hi = ((DirectByteCharSequence) seq).getHi();
+        long hi = seq.getHi();
 
         DirectByteCharSequence name = null;
         boolean contentType = true;
@@ -297,13 +294,12 @@ public class RequestHeaderBuffer implements Mutable, Closeable {
                 }
 
                 if (name == null) {
-                    LOG.error().$("Malformed content-type header").$();
-                    throw MalformedHeaderException.INSTANCE;
+                    throw HttpException.instance("Malformed content-type header");
                 }
 
-                if (Chars.equals("encoding", name)) {
-                    // would be encoding, but we don't use it yet
-//                    this.encoding = pool.next().of(_lo, p - 1);
+                if (Chars.equals("charset", name)) {
+                    this.charset = pool.next().of(_lo, p - 1);
+                    name = null;
                     _lo = p;
                     continue;
                 }
@@ -311,6 +307,7 @@ public class RequestHeaderBuffer implements Mutable, Closeable {
                 if (Chars.equals("boundary", name)) {
                     this.boundary = pool.next().of(_lo, p - 1);
                     _lo = p;
+                    name = null;
                     continue;
                 }
 
@@ -325,17 +322,17 @@ public class RequestHeaderBuffer implements Mutable, Closeable {
         }
     }
 
-    private void parseKnownHeaders() throws MalformedHeaderException {
+    private void parseKnownHeaders() {
         parseContentType();
         parseContentDisposition();
     }
 
-    private int parseMethod(long lo, int len) throws HeadersTooLargeException {
+    private int parseMethod(long lo, int len) {
         long p = lo;
         long hi = lo + len;
         while (p < hi) {
             if (_wptr == this.hi) {
-                throw HeadersTooLargeException.INSTANCE;
+                throw HttpException.instance("header is too large");
             }
 
             char b = (char) Unsafe.getUnsafe().getByte(p++);
@@ -343,7 +340,6 @@ public class RequestHeaderBuffer implements Mutable, Closeable {
             if (b == '\r') {
                 continue;
             }
-
 
             switch (b) {
                 case ' ':
@@ -356,7 +352,7 @@ public class RequestHeaderBuffer implements Mutable, Closeable {
                         u = false;
                         _lo = _wptr + 1;
                     } else if (q) {
-                        int o = Misc.urlDecode(_lo, _wptr, urlParams, pool);
+                        int o = urlDecode(_lo, _wptr, urlParams);
                         q = false;
                         _lo = _wptr;
                         _wptr -= o;
@@ -369,7 +365,7 @@ public class RequestHeaderBuffer implements Mutable, Closeable {
                     _lo = _wptr + 1;
                     break;
                 case '\n':
-                    methodLine = pool.next().of(((DirectByteCharSequence) method).getLo(), _wptr);
+                    methodLine = pool.next().of(method.getLo(), _wptr);
                     needMethod = false;
                     this._lo = _wptr;
                     return (int) (p - lo);
@@ -379,5 +375,63 @@ public class RequestHeaderBuffer implements Mutable, Closeable {
             Unsafe.getUnsafe().putByte(_wptr++, (byte) b);
         }
         return (int) (p - lo);
+    }
+
+    private int urlDecode(long lo, long hi, CharSequenceObjHashMap<DirectByteCharSequence> map) {
+        long _lo = lo;
+        long rp = lo;
+        long wp = lo;
+        int offset = 0;
+
+        CharSequence name = null;
+
+        while (rp < hi) {
+            char b = (char) Unsafe.getUnsafe().getByte(rp++);
+
+            switch (b) {
+                case '=':
+                    if (_lo < wp) {
+                        name = pool.next().of(_lo, wp);
+                    }
+                    _lo = rp - offset;
+                    break;
+                case '&':
+                    if (name != null) {
+                        map.put(name, pool.next().of(_lo, wp));
+                        name = null;
+                    } else if (_lo < wp) {
+                        map.put(pool.next().of(_lo, wp), null);
+                    }
+                    _lo = rp - offset;
+                    break;
+                case '+':
+                    Unsafe.getUnsafe().putByte(wp++, (byte) ' ');
+                    continue;
+                case '%':
+                    try {
+                        if (rp + 1 < hi) {
+                            Unsafe.getUnsafe().putByte(wp++, (byte) Numbers.parseHexInt(temp.of(rp, rp += 2)));
+                            offset += 2;
+                            continue;
+                        }
+                    } catch (NumericException ignore) {
+                    }
+                    name = null;
+                    break;
+                default:
+                    break;
+            }
+            Unsafe.getUnsafe().putByte(wp++, (byte) b);
+        }
+
+        if (_lo < wp) {
+            if (name != null) {
+                map.put(name, pool.next().of(_lo, wp));
+            } else {
+                map.put(pool.next().of(_lo, wp), null);
+            }
+        }
+
+        return offset;
     }
 }
