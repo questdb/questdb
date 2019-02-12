@@ -33,11 +33,17 @@ int get_int_sockopt(SOCKET fd, int level, int opt) {
     if (result == 0) {
         return value;
     }
+    SaveLastError();
     return -1;
 }
 
 int set_int_sockopt(SOCKET fd, int level, int opt, char value) {
-    return setsockopt(fd, level, opt, &value, sizeof(value));
+    int result = setsockopt(fd, level, opt, &value, sizeof(value));
+    if (result == 0) {
+        return result;
+    }
+    SaveLastError();
+    return -1;
 }
 
 JNIEXPORT jlong JNICALL Java_com_questdb_std_Net_socketTcp
@@ -258,12 +264,33 @@ JNIEXPORT jint JNICALL Java_com_questdb_std_Net_setMulticastInterface
         (JNIEnv *e, jclass cl, jlong fd, jint ipv4address) {
     struct in_addr address;
     address.s_addr = htonl((u_long) ipv4address);
-    return setsockopt((SOCKET) fd, IPPROTO_IP, IP_MULTICAST_IF, (const char *) &address, sizeof(address));
+    int result = setsockopt((SOCKET) fd, IPPROTO_IP, IP_MULTICAST_IF, (const char *) &address, sizeof(address));
+    if (result == 0) {
+        return result;
+    }
+    SaveLastError();
+    return -1;
+}
+
+JNIEXPORT jint JNICALL Java_com_questdb_std_Net_setReuseAddress
+        (JNIEnv *e, jclass cl, jlong fd) {
+    return set_int_sockopt((SOCKET) fd, SOL_SOCKET, SO_REUSEADDR, 1);
+}
+
+JNIEXPORT jint JNICALL Java_com_questdb_std_Net_setReusePort
+        (JNIEnv *e, jclass cl, jlong fd) {
+    // windows does not support SO_REUSEPORT
+    return set_int_sockopt((SOCKET) fd, SOL_SOCKET, SO_REUSEADDR, 1);
 }
 
 JNIEXPORT jint JNICALL Java_com_questdb_std_Net_setMulticastLoop
         (JNIEnv *e, jclass cl, jlong fd, jboolean loop) {
-    return setsockopt((SOCKET) fd, IPPROTO_IP, IP_MULTICAST_LOOP, (const char *) &loop, sizeof(loop));
+    int result = setsockopt((SOCKET) fd, IPPROTO_IP, IP_MULTICAST_LOOP, (const char *) &loop, sizeof(loop));
+    if (result == 0) {
+        return result;
+    }
+    SaveLastError();
+    return -1;
 }
 
 JNIEXPORT jint JNICALL Java_com_questdb_std_Net_getTcpNoDelay
@@ -283,6 +310,7 @@ JNIEXPORT jint JNICALL Java_com_questdb_std_Net_getPeerIP
         }
         return -2;
     }
+    SaveLastError();
     return -1;
 }
 
@@ -299,5 +327,6 @@ JNIEXPORT jint JNICALL Java_com_questdb_std_Net_getPeerPort
             return -2;
         }
     }
+    SaveLastError();
     return -1;
 }
