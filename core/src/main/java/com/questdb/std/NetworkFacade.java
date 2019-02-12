@@ -66,5 +66,7 @@ public interface NetworkFacade {
 
     int setMulticastInterface(long fd, CharSequence address);
 
+    int setMulticastInterface(long fd, int ipv4Address);
+
     int setMulticastLoop(long fd, boolean loop);
 }

@@ -161,6 +161,10 @@ public final class Net {
 
     public native static int setMulticastLoop(long fd, boolean loop);
 
+    public native static int setReuseAddress(long fd);
+
+    public native static int setReusePort(long fd);
+
     public static long sockaddr(CharSequence ipv4address, int port) {
         return sockaddr(parseIPv4(ipv4address), port);
     }

@@ -231,6 +231,22 @@ JNIEXPORT jint JNICALL Java_com_questdb_std_Net_setMulticastLoop
 
 /*
  * Class:     com_questdb_std_Net
+ * Method:    setReuseAddress
+ * Signature: (J)I
+ */
+JNIEXPORT jint JNICALL Java_com_questdb_std_Net_setReuseAddress
+        (JNIEnv *, jclass, jlong);
+
+/*
+ * Class:     com_questdb_std_Net
+ * Method:    setReusePort
+ * Signature: (J)I
+ */
+JNIEXPORT jint JNICALL Java_com_questdb_std_Net_setReusePort
+        (JNIEnv *, jclass, jlong);
+
+/*
+ * Class:     com_questdb_std_Net
  * Method:    sockaddr
  * Signature: (II)J
  */

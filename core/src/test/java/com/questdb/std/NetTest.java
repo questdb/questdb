@@ -123,4 +123,18 @@ public class NetTest {
         System.out.println(Net.setMulticastInterface(socket, Net.parseIPv4("192.168.1.156")));
         System.out.println(Net.setMulticastLoop(socket, true));
     }
+
+    @Test
+    @Ignore
+    public void testReusePort() {
+        bindSocket(Net.socketUdp());
+        bindSocket(Net.socketUdp());
+    }
+
+    private void bindSocket(long fd) {
+        Assert.assertTrue(fd > 0);
+        Assert.assertEquals(0, Net.setReuseAddress(fd));
+        Assert.assertTrue(Net.bindUdp(fd, "0.0.0.0", 18215));
+        Assert.assertTrue(Net.join(fd, "0.0.0.0", "224.0.0.125"));
+    }
 }

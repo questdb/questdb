@@ -132,6 +132,11 @@ public class NetworkFacadeImpl implements NetworkFacade {
     }
 
     @Override
+    public int setMulticastInterface(long fd, int ipv4Address) {
+        return Net.setMulticastInterface(fd, ipv4Address);
+    }
+
+    @Override
     public int setMulticastLoop(long fd, boolean loop) {
         return Net.setMulticastLoop(fd, loop);
     }
