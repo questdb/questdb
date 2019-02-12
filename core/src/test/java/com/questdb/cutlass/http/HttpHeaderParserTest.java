@@ -28,7 +28,6 @@ import com.questdb.std.Unsafe;
 import com.questdb.std.str.DirectByteCharSequence;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
-import org.junit.Ignore;
 import org.junit.Test;
 
 public class HttpHeaderParserTest {
@@ -56,6 +55,105 @@ public class HttpHeaderParserTest {
                 hp.parse(p, v.length(), false);
                 TestUtils.assertEquals("text/html", hp.getContentType());
                 TestUtils.assertEquals("utf-8", hp.getCharset());
+            } finally {
+                Unsafe.free(p, v.length());
+            }
+        });
+    }
+
+    @Test
+    public void testContentDisposition() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            String v = "Content-Disposition: form-data; name=\"hello\"\r\n" +
+                    "\r\n";
+            long p = TestUtils.toMemory(v);
+            try (HttpHeaderParser hp = new HttpHeaderParser(1024, pool)) {
+                hp.parse(p, v.length(), false);
+                TestUtils.assertEquals("hello", hp.getContentDispositionName());
+                Assert.assertNull(hp.getContentDispositionFilename());
+            } finally {
+                Unsafe.free(p, v.length());
+            }
+        });
+    }
+
+    @Test
+    public void testContentDispositionAndFileName() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            String v = "Content-Disposition: form-data; name=\"hello\"; filename=\"xyz.dat\"\r\n" +
+                    "\r\n";
+            long p = TestUtils.toMemory(v);
+            try (HttpHeaderParser hp = new HttpHeaderParser(1024, pool)) {
+                hp.parse(p, v.length(), false);
+                TestUtils.assertEquals("hello", hp.getContentDispositionName());
+                TestUtils.assertEquals("xyz.dat", hp.getContentDispositionFilename());
+            } finally {
+                Unsafe.free(p, v.length());
+            }
+        });
+    }
+
+    @Test
+    public void testContentDispositionMissingKeyName() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            String v = "Content-Disposition: form-data; name=\"hello\";\r\n" +
+                    "\r\n";
+            long p = TestUtils.toMemory(v);
+            try (HttpHeaderParser hp = new HttpHeaderParser(1024, pool)) {
+                hp.parse(p, v.length(), false);
+                Assert.fail();
+            } catch (HttpException e) {
+                TestUtils.assertContains(e.getMessage(), "missing value [key=name]");
+            } finally {
+                Unsafe.free(p, v.length());
+            }
+        });
+    }
+
+    @Test
+    public void testContentDispositionUnclosedQuote() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            String v = "Content-Disposition: form-data; name=\"hello\r\n" +
+                    "\r\n";
+            long p = TestUtils.toMemory(v);
+            try (HttpHeaderParser hp = new HttpHeaderParser(1024, pool)) {
+                hp.parse(p, v.length(), false);
+                Assert.fail();
+            } catch (HttpException e) {
+                TestUtils.assertContains(e.getMessage(), "unclosed quote");
+            } finally {
+                Unsafe.free(p, v.length());
+            }
+        });
+    }
+
+    @Test
+    public void testContentDispositionUnknown() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            String v = "Content-Disposition: form-data; name=\"hello\r\n" +
+                    "\r\n";
+            long p = TestUtils.toMemory(v);
+            try (HttpHeaderParser hp = new HttpHeaderParser(1024, pool)) {
+                hp.parse(p, v.length(), false);
+                Assert.fail();
+            } catch (HttpException e) {
+                TestUtils.assertContains(e.getMessage(), "unclosed quote");
+            } finally {
+                Unsafe.free(p, v.length());
+            }
+        });
+    }
+
+    @Test
+    public void testContentDispositionUnquoted() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            String v = "Content-Disposition: form-data; name=hello\r\n" +
+                    "\r\n";
+            long p = TestUtils.toMemory(v);
+            try (HttpHeaderParser hp = new HttpHeaderParser(1024, pool)) {
+                hp.parse(p, v.length(), false);
+                TestUtils.assertEquals("hello", hp.getContentDispositionName());
+                Assert.assertNull(hp.getContentDispositionFilename());
             } finally {
                 Unsafe.free(p, v.length());
             }
@@ -137,7 +235,6 @@ public class HttpHeaderParserTest {
     }
 
     @Test
-    @Ignore
     public void testQueryInvalidEncoding() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             String v = "GET /status?x=1&a=%i6b&c&d=x HTTP/1.1\r\n" +
@@ -145,9 +242,9 @@ public class HttpHeaderParserTest {
             long p = TestUtils.toMemory(v);
             try (HttpHeaderParser hp = new HttpHeaderParser(1024, pool)) {
                 hp.parse(p, v.length(), true);
-                Assert.assertNull(hp.getUrlParam("a"));
-                TestUtils.assertEquals("1", hp.getUrlParam("x"));
-                TestUtils.assertEquals("x", hp.getUrlParam("d"));
+                Assert.fail();
+            } catch (HttpException e) {
+                TestUtils.assertContains(e.getMessage(), "invalid query encoding");
             } finally {
                 Unsafe.free(p, v.length());
             }

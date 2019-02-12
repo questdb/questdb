@@ -415,6 +415,7 @@ public class HttpHeaderParser implements Mutable, Closeable {
                             continue;
                         }
                     } catch (NumericException ignore) {
+                        throw HttpException.instance("invalid query encoding");
                     }
                     name = null;
                     break;
