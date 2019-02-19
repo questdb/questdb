@@ -29,6 +29,8 @@ import com.questdb.std.str.DirectByteCharSequence;
 import java.io.Closeable;
 
 public class HttpHeaderParser implements Mutable, Closeable {
+    private static final String CONTENT_DISPOSITION_HEADER = "Content-Disposition";
+    private static final String CONTENT_TYPE_HEADER = "Content-Type";
     private final ObjectPool<DirectByteCharSequence> pool;
     private final CharSequenceObjHashMap<DirectByteCharSequence> headers = new CharSequenceObjHashMap<>();
     private final CharSequenceObjHashMap<DirectByteCharSequence> urlParams = new CharSequenceObjHashMap<>();
@@ -46,6 +48,7 @@ public class HttpHeaderParser implements Mutable, Closeable {
     private DirectByteCharSequence contentType;
     private DirectByteCharSequence boundary;
     private CharSequence contentDispositionName;
+    private CharSequence contentDisposition;
     private CharSequence contentDispositionFilename;
     private boolean m = true;
     private boolean u = true;
@@ -72,6 +75,7 @@ public class HttpHeaderParser implements Mutable, Closeable {
         this.headerName = null;
         this.contentType = null;
         this.boundary = null;
+        this.contentDisposition = null;
         this.contentDispositionName = null;
         this.contentDispositionFilename = null;
         this.urlParams.clear();
@@ -95,6 +99,10 @@ public class HttpHeaderParser implements Mutable, Closeable {
 
     public DirectByteCharSequence getCharset() {
         return charset;
+    }
+
+    public CharSequence getContentDisposition() {
+        return contentDisposition;
     }
 
     public CharSequence getContentDispositionFilename() {
@@ -133,9 +141,10 @@ public class HttpHeaderParser implements Mutable, Closeable {
         return incomplete;
     }
 
+    // todo: consider using lo, hi instead of ptr and len
     public long parse(long ptr, int len, boolean _method) {
         if (_method && needMethod) {
-            int l = parseMethod(ptr, len);
+            int l = parseMethod(ptr, ptr + len);
             len -= l;
             ptr += l;
         }
@@ -206,7 +215,7 @@ public class HttpHeaderParser implements Mutable, Closeable {
     }
 
     private void parseContentDisposition() {
-        DirectByteCharSequence contentDisposition = getHeader("Content-Disposition");
+        DirectByteCharSequence contentDisposition = getHeader(CONTENT_DISPOSITION_HEADER);
         if (contentDisposition == null) {
             return;
         }
@@ -230,25 +239,28 @@ public class HttpHeaderParser implements Mutable, Closeable {
 
             if (p > hi || b == ';') {
                 if (expectFormData) {
+                    this.contentDisposition = pool.next().of(_lo, p - 1);
                     _lo = p;
                     expectFormData = false;
                     continue;
                 }
 
                 if (name == null) {
-                    throw HttpException.instance("Malformed content-disposition header");
+                    throw HttpException.instance("Malformed ").put(CONTENT_DISPOSITION_HEADER).put(" header");
                 }
 
                 if (Chars.equals("name", name)) {
                     this.contentDispositionName = unquote("name", pool.next().of(_lo, p - 1));
                     swallowSpace = true;
                     _lo = p;
+                    name = null;
                     continue;
                 }
 
                 if (Chars.equals("filename", name)) {
                     this.contentDispositionFilename = unquote("filename", pool.next().of(_lo, p - 1));
                     _lo = p;
+                    name = null;
                     continue;
                 }
 
@@ -264,7 +276,7 @@ public class HttpHeaderParser implements Mutable, Closeable {
     }
 
     private void parseContentType() {
-        DirectByteCharSequence seq = getHeader("Content-Type");
+        DirectByteCharSequence seq = getHeader(CONTENT_TYPE_HEADER);
         if (seq == null) {
             return;
         }
@@ -294,7 +306,7 @@ public class HttpHeaderParser implements Mutable, Closeable {
                 }
 
                 if (name == null) {
-                    throw HttpException.instance("Malformed content-type header");
+                    throw HttpException.instance("Malformed ").put(CONTENT_TYPE_HEADER).put(" header");
                 }
 
                 if (Chars.equals("charset", name)) {
@@ -327,12 +339,11 @@ public class HttpHeaderParser implements Mutable, Closeable {
         parseContentDisposition();
     }
 
-    private int parseMethod(long lo, int len) {
+    private int parseMethod(long lo, long hi) {
         long p = lo;
-        long hi = lo + len;
         while (p < hi) {
             if (_wptr == this.hi) {
-                throw HttpException.instance("header is too large");
+                throw HttpException.instance("url is too long");
             }
 
             char b = (char) Unsafe.getUnsafe().getByte(p++);
@@ -415,10 +426,8 @@ public class HttpHeaderParser implements Mutable, Closeable {
                             continue;
                         }
                     } catch (NumericException ignore) {
-                        throw HttpException.instance("invalid query encoding");
                     }
-                    name = null;
-                    break;
+                    throw HttpException.instance("invalid query encoding");
                 default:
                     break;
             }

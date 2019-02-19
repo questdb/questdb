@@ -21,14 +21,12 @@
  *
  ******************************************************************************/
 
-package com.questdb.net.http;
+package com.questdb.cutlass.http;
 
-import com.questdb.mp.Job;
+public interface HttpMultipartContentListener {
+    void onChunk(HttpHeaderParser partHeader, long lo, long hi);
 
-import java.io.Closeable;
+    void onPartBegin(HttpHeaderParser partHeader);
 
-interface IODispatcher extends Closeable, Job {
-    int getConnectionCount();
-
-    void registerChannel(IOContext context, int channelStatus);
+    void onPartEnd(HttpHeaderParser partHeader);
 }
