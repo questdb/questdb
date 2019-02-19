@@ -60,10 +60,10 @@ public class HttpMultipartContentParserTest {
                             sink.clear();
                             multipartContentParser.clear();
                             multipartContentParser.of(boundaryCs);
-                            multipartContentParser.parse(p, i, LISTENER);
-                            multipartContentParser.parse(p + i, 1, LISTENER);
+                            multipartContentParser.parse(p, p + i, LISTENER);
+                            multipartContentParser.parse(p + i, p + i + 1, LISTENER);
                             if (len > i + 1) {
-                                multipartContentParser.parse(p + i + 1, len - i - 1, LISTENER);
+                                multipartContentParser.parse(p + i + 1, p + len, LISTENER);
                             }
                             TestUtils.assertEquals(expected, sink);
                         }
@@ -90,7 +90,7 @@ public class HttpMultipartContentParserTest {
                     DirectByteCharSequence boundaryCs = new DirectByteCharSequence().of(pBoundary, pBoundary + boundary.length());
                     try {
                         multipartContentParser.of(boundaryCs);
-                        multipartContentParser.parse(p, len, LISTENER);
+                        multipartContentParser.parse(p, p + len, LISTENER);
                         Assert.fail();
                     } catch (HttpException e) {
                         TestUtils.assertContains(e.getMessage(), "Malformed start boundary");
@@ -158,10 +158,10 @@ public class HttpMultipartContentParserTest {
                             sink.clear();
                             multipartContentParser.clear();
                             multipartContentParser.of(boundaryCs);
-                            multipartContentParser.parse(p, i, LISTENER);
-                            multipartContentParser.parse(p + i, 1, LISTENER);
+                            multipartContentParser.parse(p, p + i, LISTENER);
+                            multipartContentParser.parse(p + i, p + i + 1, LISTENER);
                             if (len > i + 1) {
-                                multipartContentParser.parse(p + i + 1, len - i - 1, LISTENER);
+                                multipartContentParser.parse(p + i + 1, p + len, LISTENER);
                             }
                             TestUtils.assertEquals(expected, sink);
                         }
@@ -188,7 +188,7 @@ public class HttpMultipartContentParserTest {
                     DirectByteCharSequence boundaryCs = new DirectByteCharSequence().of(pBoundary, pBoundary + boundary.length());
                     try {
                         multipartContentParser.of(boundaryCs);
-                        multipartContentParser.parse(p, len, LISTENER);
+                        multipartContentParser.parse(p, p + len, LISTENER);
                         Assert.fail();
                     } catch (HttpException e) {
                         TestUtils.assertContains(e.getMessage(), "Malformed start boundary");

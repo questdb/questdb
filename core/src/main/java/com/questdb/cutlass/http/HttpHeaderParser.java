@@ -141,16 +141,14 @@ public class HttpHeaderParser implements Mutable, Closeable {
         return incomplete;
     }
 
-    // todo: consider using lo, hi instead of ptr and len
-    public long parse(long ptr, int len, boolean _method) {
+    public long parse(long ptr, long hi, boolean _method) {
+        long p;
         if (_method && needMethod) {
-            int l = parseMethod(ptr, ptr + len);
-            len -= l;
-            ptr += l;
+            int l = parseMethod(ptr, hi);
+            p = ptr + l;
+        } else {
+            p = ptr;
         }
-
-        long p = ptr;
-        long hi = p + len;
 
         DirectByteCharSequence v;
 
