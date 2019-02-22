@@ -121,6 +121,7 @@ public class AbstractSampleByRecordCursorFactory implements RecordCursorFactory 
             recordFunctions.getQuick(i).close();
         }
         map.close();
+        base.close();
     }
 
     @Override

@@ -177,6 +177,7 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
         recordKeyMap.close();
         dataMap.close();
         freeYData();
+        base.close();
     }
 
     @Override

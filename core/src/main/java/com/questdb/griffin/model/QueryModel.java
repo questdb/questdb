@@ -221,6 +221,9 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
             final CharSequence name = columnNames.getQuick(i);
             this.aliasToColumnMap.put(name, name);
         }
+        if (this.timestamp == null && other.timestamp != null) {
+            this.timestamp = other.timestamp;
+        }
     }
 
     public ExpressionNode getAlias() {

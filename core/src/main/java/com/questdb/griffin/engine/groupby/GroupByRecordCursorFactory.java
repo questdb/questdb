@@ -103,6 +103,7 @@ public class GroupByRecordCursorFactory implements RecordCursorFactory {
             recordFunctions.getQuick(i).close();
         }
         dataMap.close();
+        base.close();
     }
 
     @Override
