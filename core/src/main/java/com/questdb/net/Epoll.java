@@ -44,7 +44,7 @@ public final class Epoll implements Closeable {
     private static final int EPOLLONESHOT;
     private static final int EPOLLET;
     private final long events;
-    private final long epfd;
+    private final long epollFd;
     private final int capacity;
     private boolean closed = false;
     private long _rPtr;
@@ -52,7 +52,8 @@ public final class Epoll implements Closeable {
     public Epoll(int capacity) {
         this.capacity = capacity;
         this.events = _rPtr = Unsafe.malloc(SIZEOF_EVENT * (long) capacity);
-        this.epfd = epollCreate();
+        // todo: this can be unsuccessful
+        this.epollFd = epollCreate();
     }
 
     @Override
@@ -60,8 +61,8 @@ public final class Epoll implements Closeable {
         if (closed) {
             return;
         }
-        if (Net.close(epfd) != 0) {
-            LOG.error().$("failed to close epoll [fd=").$(epfd).$(", errno=").$(Os.errno()).$(']').$();
+        if (Net.close(epollFd) != 0) {
+            LOG.error().$("failed to close epoll [fd=").$(epollFd).$(", errno=").$(Os.errno()).$(']').$();
         }
         Unsafe.free(events, SIZEOF_EVENT * (long) capacity);
         closed = true;
@@ -70,7 +71,7 @@ public final class Epoll implements Closeable {
     public int control(long fd, long id, int cmd, int event) {
         Unsafe.getUnsafe().putInt(events + EVENTS_OFFSET, event | EPOLLET | EPOLLONESHOT);
         Unsafe.getUnsafe().putLong(events + DATA_OFFSET, id);
-        return epollCtl(epfd, cmd, fd, events);
+        return epollCtl(epollFd, cmd, fd, events);
     }
 
     public long getData() {
@@ -81,23 +82,17 @@ public final class Epoll implements Closeable {
         return Unsafe.getUnsafe().getInt(_rPtr + EVENTS_OFFSET);
     }
 
-// --Commented out by Inspection START (15/05/2016, 01:07):
-//    public long getFd() {
-//        return Unsafe.getUnsafe().getInt(_rPtr + DATA_OFFSET);
-//    }
-// --Commented out by Inspection STOP (15/05/2016, 01:07)
-
     public void listen(long sfd) {
         Unsafe.getUnsafe().putInt(events + EVENTS_OFFSET, EPOLLIN | EPOLLET);
         Unsafe.getUnsafe().putLong(events + DATA_OFFSET, 0);
 
-        if (epollCtl(epfd, EPOLL_CTL_ADD, sfd, events) < 0) {
+        if (epollCtl(epollFd, EPOLL_CTL_ADD, sfd, events) < 0) {
             throw new NetworkError("Error in epoll_ctl: " + Os.errno());
         }
     }
 
     public int poll() {
-        return epollWait(epfd, events, capacity, 0);
+        return epollWait(epollFd, events, capacity, 0);
     }
 
     public void setOffset(int offset) {

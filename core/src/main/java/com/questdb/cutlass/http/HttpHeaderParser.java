@@ -55,8 +55,8 @@ public class HttpHeaderParser implements Mutable, Closeable {
     private boolean q = false;
     private DirectByteCharSequence charset;
 
-    public HttpHeaderParser(int size, ObjectPool<DirectByteCharSequence> pool) {
-        int sz = Numbers.ceilPow2(size);
+    public HttpHeaderParser(int bufferLen, ObjectPool<DirectByteCharSequence> pool) {
+        final int sz = Numbers.ceilPow2(bufferLen);
         this.headerPtr = Unsafe.malloc(sz);
         this._wptr = headerPtr;
         this.hi = this.headerPtr + sz;

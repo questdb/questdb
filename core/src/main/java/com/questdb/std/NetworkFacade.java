@@ -30,11 +30,13 @@ public interface NetworkFacade {
 
     boolean bindTcp(long fd, int address, int port);
 
+    boolean bindTcp(long fd, CharSequence ipv4Address, int port);
+
     int close(long fd);
 
     void configureNoLinger(long fd);
 
-    void configureNonBlocking(long fd);
+    int configureNonBlocking(long fd);
 
     int connect(long fd, long sockaddr);
 

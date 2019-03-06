@@ -15,18 +15,18 @@
     "tests"
   ],
   "dependencies": {
-    "bootstrap-sass": "~3.3.5",
-    "jquery": "^2.2.2",
-    "fontawesome": "~4.5.0",
-    "metisMenu": "^2.4.3",
-    "PACE": "pace#^1.0.2",
-    "ace-builds": "^1.2.3",
-    "bootstrap": "^3.3.6",
-    "animate.css": "^3.5.1",
-    "clipboard": "^1.5.10",
-    "echarts": "^3.4.0",
-    "selectize": "^0.12.4",
-    "jquery-minicolors": "minicolors#^2.2.4"
+    "bootstrap-sass": "3.3.5",
+    "jquery": "2.2.2",
+    "fontawesome": "4.5.0",
+    "metisMenu": "2.4.3",
+    "PACE": "pace#1.0.2",
+    "ace-builds": "1.2.3",
+    "bootstrap": "3.3.6",
+    "animate.css": "3.5.1",
+    "clipboard": "1.5.10",
+    "echarts": "3.4.0",
+    "selectize": "0.12.4",
+    "jquery-minicolors": "minicolors#2.2.4"
   },
   "overrides": {
     "bootstrap-sass": {
@@ -44,7 +44,7 @@
     }
   },
   "devDependencies": {
-    "chai": "^3.5.0",
-    "mocha": "^2.4.5"
+    "chai": "3.5.0",
+    "mocha": "2.4.5"
   }
 }

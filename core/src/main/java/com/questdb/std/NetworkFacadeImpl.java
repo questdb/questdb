@@ -42,6 +42,11 @@ public class NetworkFacadeImpl implements NetworkFacade {
     }
 
     @Override
+    public boolean bindTcp(long fd, CharSequence ipv4Address, int port) {
+        return Net.bindTcp(fd, ipv4Address, port);
+    }
+
+    @Override
     public int close(long fd) {
         return Net.close(fd);
     }
@@ -52,8 +57,8 @@ public class NetworkFacadeImpl implements NetworkFacade {
     }
 
     @Override
-    public void configureNonBlocking(long fd) {
-        Net.configureNonBlocking(fd);
+    public int configureNonBlocking(long fd) {
+        return Net.configureNonBlocking(fd);
     }
 
     @Override

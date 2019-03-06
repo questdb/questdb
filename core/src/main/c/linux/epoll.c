@@ -44,12 +44,12 @@ JNIEXPORT jint JNICALL Java_com_questdb_net_Epoll_epollWait
 
 JNIEXPORT jshort JNICALL Java_com_questdb_net_Epoll_getDataOffset
         (JNIEnv *e, jclass cl) {
-    return offsetof(struct epoll_event, data);
+    return (jshort) offsetof(struct epoll_event, data);
 }
 
 JNIEXPORT jshort JNICALL Java_com_questdb_net_Epoll_getEventsOffset
         (JNIEnv *e, jclass cl) {
-    return offsetof(struct epoll_event, events);
+    return (jshort) offsetof(struct epoll_event, events);
 }
 
 JNIEXPORT jshort JNICALL Java_com_questdb_net_Epoll_getEventSize
