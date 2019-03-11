@@ -114,26 +114,26 @@ public final class Net {
 
     public static native long msgHeaders(int blockSize, int count);
 
-    public static int parseIPv4(CharSequence address) {
+    public static int parseIPv4(CharSequence ipv4Address) {
         int ip = 0;
         int count = 0;
         int lo = 0;
         int hi;
         try {
-            while ((hi = Chars.indexOf(address, lo, '.')) > -1) {
-                int n = Numbers.parseInt(address, lo, hi);
+            while ((hi = Chars.indexOf(ipv4Address, lo, '.')) > -1) {
+                int n = Numbers.parseInt(ipv4Address, lo, hi);
                 ip = (ip << 8) | n;
                 count++;
                 lo = hi + 1;
             }
 
             if (count != 3) {
-                throw new NetworkError("Invalid ip address: " + address);
+                throw new NetworkError("Invalid ip address: " + ipv4Address);
             }
 
-            return (ip << 8) | Numbers.parseInt(address, lo, address.length());
+            return (ip << 8) | Numbers.parseInt(ipv4Address, lo, ipv4Address.length());
         } catch (NumericException e) {
-            throw new NetworkError("Invalid ip address: " + address);
+            throw new NetworkError("Invalid ip address: " + ipv4Address);
         }
     }
 

@@ -117,13 +117,18 @@ public class NetworkFacadeImpl implements NetworkFacade {
     }
 
     @Override
-    public boolean bindUdp(long fd, CharSequence address, int port) {
-        return Net.bindUdp(fd, address, port);
+    public boolean bindUdp(long fd, int port) {
+        return Net.bindUdp(fd, 0, port);
     }
 
     @Override
     public boolean join(long fd, CharSequence bindIPv4Address, CharSequence groupIPv4Address) {
         return Net.join(fd, bindIPv4Address, bindIPv4Address);
+    }
+
+    @Override
+    public boolean join(long fd, int bindIPv4, int groupIPv4) {
+        return Net.join(fd, bindIPv4, bindIPv4);
     }
 
     @Override
@@ -144,5 +149,20 @@ public class NetworkFacadeImpl implements NetworkFacade {
     @Override
     public int setMulticastLoop(long fd, boolean loop) {
         return Net.setMulticastLoop(fd, loop);
+    }
+
+    @Override
+    public int parseIPv4(CharSequence ipv4Address) {
+        return Net.parseIPv4(ipv4Address);
+    }
+
+    @Override
+    public int setReusePort(long fd) {
+        return Net.setReusePort(fd);
+    }
+
+    @Override
+    public int setTcpNoDelay(long fd, boolean noDelay) {
+        return Net.setTcpNoDelay(fd, noDelay);
     }
 }

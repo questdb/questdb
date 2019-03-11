@@ -60,9 +60,11 @@ public interface NetworkFacade {
 
     long socketUdp();
 
-    boolean bindUdp(long fd, CharSequence address, int port);
+    boolean bindUdp(long fd, int port);
 
     boolean join(long fd, CharSequence bindIPv4Address, CharSequence groupIPv4Address);
+
+    boolean join(long fd, int bindIPv4, int groupIPv4);
 
     long sockaddr(CharSequence address, int port);
 
@@ -71,4 +73,10 @@ public interface NetworkFacade {
     int setMulticastInterface(long fd, int ipv4Address);
 
     int setMulticastLoop(long fd, boolean loop);
+
+    int parseIPv4(CharSequence ipv4Address);
+
+    int setReusePort(long fd);
+
+    int setTcpNoDelay(long fd, boolean noDelay);
 }

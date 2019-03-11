@@ -23,14 +23,24 @@
 
 package com.questdb.cutlass.http.io;
 
-import com.questdb.mp.Job;
+import com.questdb.std.Os;
 
-import java.io.Closeable;
+public class IODispatchers {
 
-public interface IODispatcher<C extends IOContext> extends Closeable, Job {
-    int getConnectionCount();
+    private IODispatchers() {
+    }
 
-    void registerChannel(C context, int operation);
-
-    void processIOQueue(IORequestProcessor<C> processor);
+    public static <C extends IOContext> IODispatcher<C> create(
+            IODispatcherConfiguration configuration,
+            IOContextFactory<C> ioContextFactory
+    ) {
+        switch (Os.type) {
+            case Os.LINUX:
+                return new IODispatcherLinux<>(configuration, ioContextFactory);
+            case Os.OSX:
+                return new IODispatcherOsx<>(configuration, ioContextFactory);
+            default:
+                throw new RuntimeException();
+        }
+    }
 }

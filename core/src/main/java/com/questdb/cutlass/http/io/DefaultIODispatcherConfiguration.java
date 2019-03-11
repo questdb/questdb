@@ -24,26 +24,59 @@
 package com.questdb.cutlass.http.io;
 
 import com.questdb.std.NetworkFacade;
+import com.questdb.std.NetworkFacadeImpl;
 import com.questdb.std.time.MillisecondClock;
+import com.questdb.std.time.MillisecondClockImpl;
 
-public interface IODispatcherConfiguration {
-    int getActiveConnectionLimit();
+public class DefaultIODispatcherConfiguration implements IODispatcherConfiguration {
 
-    CharSequence getBindIPv4Address();
+    @Override
+    public int getActiveConnectionLimit() {
+        return 10;
+    }
 
-    int getBindPort();
+    @Override
+    public CharSequence getBindIPv4Address() {
+        return "0.0.0.0";
+    }
 
-    MillisecondClock getClock();
+    @Override
+    public int getBindPort() {
+        return 9001;
+    }
 
-    int getEventCapacity();
+    @Override
+    public MillisecondClock getClock() {
+        return MillisecondClockImpl.INSTANCE;
+    }
 
-    int getIOQueueCapacity();
+    @Override
+    public int getEventCapacity() {
+        return 1024;
+    }
 
-    long getIdleConnectionTimeout();
+    @Override
+    public int getIOQueueCapacity() {
+        return 1024;
+    }
 
-    int getInterestQueueCapacity();
+    @Override
+    public long getIdleConnectionTimeout() {
+        return 10000000000000000L;
+    }
 
-    int getListenBacklog();
+    @Override
+    public int getInterestQueueCapacity() {
+        return 1024;
+    }
 
-    NetworkFacade getNetworkFacade();
+    @Override
+    public int getListenBacklog() {
+        return 128;
+    }
+
+    @Override
+    public NetworkFacade getNetworkFacade() {
+        return NetworkFacadeImpl.INSTANCE;
+    }
 }

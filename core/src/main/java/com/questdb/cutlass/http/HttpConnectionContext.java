@@ -42,9 +42,8 @@ public class HttpConnectionContext implements IOContext {
     private final long sendBuffer;
     private final HttpServerConfiguration configuration;
     private final long fd;
-    private final long ipv4;
 
-    public HttpConnectionContext(HttpServerConfiguration configuration, long fd, long ipv4) {
+    public HttpConnectionContext(HttpServerConfiguration configuration, long fd) {
         this.configuration = configuration;
         this.csPool = new ObjectPool<>(DirectByteCharSequence.FACTORY, configuration.getConnectionWrapperObjPoolSize());
         this.headerParser = new HttpHeaderParser(configuration.getConnectionHeaderBufferSize(), csPool);
@@ -54,7 +53,6 @@ public class HttpConnectionContext implements IOContext {
         this.recvBuffer = Unsafe.malloc(recvBufferSize);
         this.sendBuffer = Unsafe.malloc(configuration.getConnectionSendBufferSize());
         this.fd = fd;
-        this.ipv4 = ipv4;
     }
 
     @Override
@@ -70,11 +68,6 @@ public class HttpConnectionContext implements IOContext {
     @Override
     public long getFd() {
         return fd;
-    }
-
-    @Override
-    public long getIp() {
-        return ipv4;
     }
 
     public void handleClientOperation(int operation, NetworkFacade nf, IODispatcher<HttpConnectionContext> dispatcher, HttpRequestProcessorSelector selector) {

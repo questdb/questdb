@@ -31,38 +31,46 @@ import com.questdb.std.*;
 import com.questdb.std.ex.NetworkError;
 import com.questdb.std.time.MillisecondClock;
 
-public class EPollIODispatcher<C extends IOContext> extends SynchronizedJob implements IODispatcher<C> {
+public class IODispatcherLinux<C extends IOContext> extends SynchronizedJob implements IODispatcher<C> {
     private static final int M_TIMESTAMP = 1;
     private static final int M_FD = 2;
     private static final int M_ID = 0;
-    private static final Log LOG = LogFactory.getLog(EPollIODispatcher.class);
+    private static final Log LOG = LogFactory.getLog(IODispatcherLinux.class);
     private final long serverFd;
     private final RingQueue<IOEvent<C>> ioEventQueue;
     private final Sequence ioEventPubSeq;
+    private final Sequence ioEventSubSeq;
     private final RingQueue<IOEvent<C>> interestQueue;
-    private final MPSequence interestPubSequence;
-    private final SCSequence interestSubSequence = new SCSequence();
+    private final MPSequence interestPubSeq;
+    private final SCSequence interestSubSeq = new SCSequence();
     private final MillisecondClock clock;
     private final Epoll epoll;
     private final long timeout;
     private final LongMatrix<C> pending = new LongMatrix<>(4);
-    private final int connectionLimit;
-    private final IOContextFactory<C> contextFactory;
+    private final int activeConnectionLimit;
+    private final IOContextFactory<C> ioContextFactory;
     private final NetworkFacade nf;
     private int connectionCount = 0;
     private long fdid = 1;
 
-    public EPollIODispatcher(IODispatcherConfiguration<C> configuration, RingQueue<IOEvent<C>> ioEventQueue, Sequence ioEventPubSeq) {
-        this.ioEventQueue = ioEventQueue;
-        this.ioEventPubSeq = ioEventPubSeq;
+    public IODispatcherLinux(
+            IODispatcherConfiguration configuration,
+            IOContextFactory<C> ioContextFactory
+    ) {
         this.nf = configuration.getNetworkFacade();
-        this.interestQueue = new RingQueue<>(configuration.getIOEventFactory(), ioEventQueue.getCapacity());
-        this.interestPubSequence = new MPSequence(interestQueue.getCapacity());
-        this.interestPubSequence.then(this.interestSubSequence).then(this.interestPubSequence);
+
+        this.ioEventQueue = new RingQueue<>(IOEvent::new, configuration.getIOQueueCapacity());
+        this.ioEventPubSeq = new SPSequence(configuration.getIOQueueCapacity());
+        this.ioEventSubSeq = new MCSequence(configuration.getIOQueueCapacity());
+        this.ioEventPubSeq.then(this.ioEventSubSeq).then(this.ioEventPubSeq);
+
+        this.interestQueue = new RingQueue<>(IOEvent::new, configuration.getInterestQueueCapacity());
+        this.interestPubSeq = new MPSequence(interestQueue.getCapacity());
+        this.interestPubSeq.then(this.interestSubSeq).then(this.interestPubSeq);
         this.clock = configuration.getClock();
-        this.connectionLimit = configuration.getActiveConnectionLimit();
+        this.activeConnectionLimit = configuration.getActiveConnectionLimit();
         this.timeout = configuration.getIdleConnectionTimeout();
-        this.contextFactory = configuration.getIOContextFactory();
+        this.ioContextFactory = ioContextFactory;
         this.epoll = new Epoll(configuration.getEventCapacity());
         this.serverFd = nf.socketTcp(false);
         if (nf.bindTcp(this.serverFd, configuration.getBindIPv4Address(), configuration.getBindPort())) {
@@ -88,12 +96,12 @@ public class EPollIODispatcher<C extends IOContext> extends SynchronizedJob impl
             Misc.free(pending.get(i));
         }
 
-        long cursor = interestSubSequence.next();
+        long cursor = interestSubSeq.next();
         if (cursor > -1) {
-            long available = interestSubSequence.available();
+            long available = interestSubSeq.available();
             while (cursor < available) {
                 final IOEvent<C> evt = interestQueue.get(cursor);
-                disconnect((int) evt.context.getFd(), evt.context, DisconnectReason.SILLY);
+                disconnect(evt.context, DisconnectReason.SILLY);
                 cursor++;
             }
         }
@@ -106,12 +114,24 @@ public class EPollIODispatcher<C extends IOContext> extends SynchronizedJob impl
 
     @Override
     public void registerChannel(C context, int operation) {
-        long cursor = interestPubSequence.nextBully();
+        long cursor = interestPubSeq.nextBully();
         IOEvent<C> evt = interestQueue.get(cursor);
         evt.context = context;
         evt.operation = operation;
         LOG.debug().$("Re-queuing ").$(context.getFd()).$();
-        interestPubSequence.done(cursor);
+        interestPubSeq.done(cursor);
+    }
+
+    @Override
+    public void processIOQueue(IORequestProcessor<C> processor) {
+        long cursor = ioEventSubSeq.next();
+        if (cursor > -1) {
+            IOEvent<C> event = ioEventQueue.get(cursor);
+            C connectionContext = event.context;
+            final int operation = event.operation;
+            ioEventSubSeq.done(cursor);
+            processor.onRequest(operation, connectionContext, this);
+        }
     }
 
     private void accept() {
@@ -122,7 +142,7 @@ public class EPollIODispatcher<C extends IOContext> extends SynchronizedJob impl
                 if (nf.errno() != Net.EWOULDBLOCK) {
                     LOG.error().$("could not accept [errno=").$(nf.errno()).$(']').$();
                 }
-                break;
+                return;
             }
 
             if (nf.configureNonBlocking(fd) < 0) {
@@ -131,8 +151,7 @@ public class EPollIODispatcher<C extends IOContext> extends SynchronizedJob impl
                 return;
             }
 
-
-            if (connectionCount > connectionLimit) {
+            if (connectionCount > activeConnectionLimit) {
                 LOG.info().$("connection limit exceeded [fd=").$(fd).$(']').$();
                 closeFd(fd);
                 return;
@@ -140,7 +159,7 @@ public class EPollIODispatcher<C extends IOContext> extends SynchronizedJob impl
 
             LOG.info().$("connected [ip=").$ip(nf.getPeerIP(fd)).$(", fd=").$(fd).$(']').$();
             connectionCount++;
-            publishOperation(IOOperation.CONNECT, contextFactory.newInstance(fd));
+            publishOperation(IOOperation.CONNECT, ioContextFactory.newInstance(fd));
         }
     }
 
@@ -150,7 +169,8 @@ public class EPollIODispatcher<C extends IOContext> extends SynchronizedJob impl
         }
     }
 
-    private void disconnect(long fd, C context, int disconnectReason) {
+    private void disconnect(C context, int disconnectReason) {
+        final long fd = context.getFd();
         LOG.info()
                 .$("disconnected [ip=").$ip(nf.getPeerIP(fd))
                 .$(", fd=").$(fd)
@@ -175,11 +195,7 @@ public class EPollIODispatcher<C extends IOContext> extends SynchronizedJob impl
     private void processIdleConnections(long deadline) {
         int count = 0;
         for (int i = 0, n = pending.size(); i < n && pending.get(i, M_TIMESTAMP) < deadline; i++, count++) {
-            disconnect(
-                    pending.get(i, M_FD),
-                    pending.get(i),
-                    DisconnectReason.IDLE
-            );
+            disconnect(pending.get(i), DisconnectReason.IDLE);
         }
         pending.zapTop(count);
     }
@@ -188,12 +204,12 @@ public class EPollIODispatcher<C extends IOContext> extends SynchronizedJob impl
         long cursor;
         boolean useful = false;
         int offset = 0;
-        while ((cursor = interestSubSequence.next()) > -1) {
+        while ((cursor = interestSubSeq.next()) > -1) {
             useful = true;
             IOEvent<C> evt = interestQueue.get(cursor);
             C context = evt.context;
             int channelStatus = evt.operation;
-            interestSubSequence.done(cursor);
+            interestSubSeq.done(cursor);
 
             int fd = (int) context.getFd();
             final long id = fdid++;
@@ -208,10 +224,10 @@ public class EPollIODispatcher<C extends IOContext> extends SynchronizedJob impl
                     epoll.control(fd, id, Epoll.EPOLL_CTL_MOD, Epoll.EPOLLOUT);
                     break;
                 case IOOperation.DISCONNECT:
-                    disconnect(fd, context, DisconnectReason.SILLY);
+                    disconnect(context, DisconnectReason.SILLY);
                     continue;
                 case IOOperation.CLEANUP:
-                    disconnect(fd, context, DisconnectReason.PEER);
+                    disconnect(context, DisconnectReason.PEER);
                     continue;
                 default:
                     break;

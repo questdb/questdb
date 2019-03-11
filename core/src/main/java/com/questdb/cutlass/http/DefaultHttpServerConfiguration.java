@@ -21,16 +21,31 @@
  *
  ******************************************************************************/
 
-package com.questdb.cutlass.http.io;
+package com.questdb.cutlass.http;
 
-import com.questdb.mp.Job;
+class DefaultHttpServerConfiguration implements HttpServerConfiguration {
+    @Override
+    public int getConnectionHeaderBufferSize() {
+        return 1024;
+    }
 
-import java.io.Closeable;
+    @Override
+    public int getConnectionMultipartHeaderBufferSize() {
+        return 512;
+    }
 
-public interface IODispatcher<C extends IOContext> extends Closeable, Job {
-    int getConnectionCount();
+    @Override
+    public int getConnectionRecvBufferSize() {
+        return 1024 * 1024;
+    }
 
-    void registerChannel(C context, int operation);
+    @Override
+    public int getConnectionSendBufferSize() {
+        return 1024 * 1024;
+    }
 
-    void processIOQueue(IORequestProcessor<C> processor);
+    @Override
+    public int getConnectionWrapperObjPoolSize() {
+        return 16;
+    }
 }

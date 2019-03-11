@@ -30,6 +30,4 @@ public interface IOContext extends Closeable {
     void close();
 
     long getFd();
-
-    long getIp();
 }
