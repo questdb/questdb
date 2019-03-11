@@ -374,6 +374,9 @@ public class HttpHeaderParser implements Mutable, Closeable {
                     _lo = _wptr + 1;
                     break;
                 case '\n':
+                    if (method == null) {
+                        throw HttpException.instance("bad method");
+                    }
                     methodLine = pool.next().of(method.getLo(), _wptr);
                     needMethod = false;
                     this._lo = _wptr;

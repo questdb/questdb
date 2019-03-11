@@ -77,7 +77,7 @@ public final class Net {
     public native static boolean bindUdp(long fd, int ipv4address, int port);
 
     public static int close(long fd) {
-        return Files.close(fd);
+        return Files.close0(fd);
     }
 
     public native static int configureNoLinger(long fd);

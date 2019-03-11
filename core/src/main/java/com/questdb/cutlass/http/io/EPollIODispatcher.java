@@ -87,6 +87,16 @@ public class EPollIODispatcher<C extends IOContext> extends SynchronizedJob impl
         for (int i = 0; i < n; i++) {
             Misc.free(pending.get(i));
         }
+
+        long cursor = interestSubSequence.next();
+        if (cursor > -1) {
+            long available = interestSubSequence.available();
+            while (cursor < available) {
+                final IOEvent<C> evt = interestQueue.get(cursor);
+                disconnect((int) evt.context.getFd(), evt.context, DisconnectReason.SILLY);
+                cursor++;
+            }
+        }
     }
 
     @Override
@@ -104,7 +114,7 @@ public class EPollIODispatcher<C extends IOContext> extends SynchronizedJob impl
         interestPubSequence.done(cursor);
     }
 
-    private void accept(long timestamp) {
+    private void accept() {
         while (true) {
             long fd = nf.accept(serverFd);
 
@@ -130,19 +140,8 @@ public class EPollIODispatcher<C extends IOContext> extends SynchronizedJob impl
 
             LOG.info().$("connected [ip=").$ip(nf.getPeerIP(fd)).$(", fd=").$(fd).$(']').$();
             connectionCount++;
-            addPending(fd, timestamp);
+            publishOperation(IOOperation.CONNECT, contextFactory.newInstance(fd));
         }
-    }
-
-    private void addPending(long fd, long timestamp) {
-        // append to pending
-        // all rows below watermark will be registered with kqueue
-        int r = pending.addRow();
-        LOG.debug().$(" Matrix row ").$(r).$(" for ").$(fd).$();
-        pending.set(r, M_TIMESTAMP, timestamp);
-        pending.set(r, M_FD, fd);
-        pending.set(r, M_ID, fdid++);
-        pending.set(r, contextFactory.newInstance(fd));
     }
 
     private void closeFd(long fd) {
@@ -228,12 +227,20 @@ public class EPollIODispatcher<C extends IOContext> extends SynchronizedJob impl
         return useful;
     }
 
+    private void publishOperation(int operation, C context) {
+        long cursor = ioEventPubSeq.nextBully();
+        IOEvent<C> evt = ioEventQueue.get(cursor);
+        evt.context = context;
+        evt.operation = operation;
+        ioEventPubSeq.done(cursor);
+        LOG.debug().$("fired [fd=").$(context.getFd()).$(", op=").$(evt.operation).$(']').$();
+    }
+
     @Override
     protected boolean runSerially() {
         boolean useful = false;
         final int n = epoll.poll();
         int watermark = pending.size();
-        final long timestamp = clock.getTicks();
         int offset = 0;
         if (n > 0) {
             // check all activated FDs
@@ -243,7 +250,7 @@ public class EPollIODispatcher<C extends IOContext> extends SynchronizedJob impl
                 long id = epoll.getData();
                 // this is server socket, accept if there aren't too many already
                 if (id == 0) {
-                    accept(timestamp);
+                    accept();
                 } else {
                     // find row in pending for two reasons:
                     // 1. find payload
@@ -254,13 +261,10 @@ public class EPollIODispatcher<C extends IOContext> extends SynchronizedJob impl
                         continue;
                     }
 
-                    final C context = pending.get(row);
-                    long cursor = ioEventPubSeq.nextBully();
-                    IOEvent<C> evt = ioEventQueue.get(cursor);
-                    evt.context = context;
-                    evt.operation = (epoll.getEvent() & Epoll.EPOLLIN) > 0 ? IOOperation.READ : IOOperation.WRITE;
-                    ioEventPubSeq.done(cursor);
-                    LOG.debug().$("Queuing ").$(id).$(" on ").$(context.getFd()).$(", status: ").$(evt.operation).$();
+                    publishOperation(
+                            (epoll.getEvent() & Epoll.EPOLLIN) > 0 ? IOOperation.READ : IOOperation.WRITE,
+                            pending.get(row)
+                    );
                     pending.deleteRow(row);
                     watermark--;
                 }
@@ -274,7 +278,8 @@ public class EPollIODispatcher<C extends IOContext> extends SynchronizedJob impl
         }
 
         // process timed out connections
-        long deadline = timestamp - timeout;
+        final long timestamp = clock.getTicks();
+        final long deadline = timestamp - timeout;
         if (pending.size() > 0 && pending.get(0, M_TIMESTAMP) < deadline) {
             processIdleConnections(deadline);
             useful = true;
@@ -282,5 +287,4 @@ public class EPollIODispatcher<C extends IOContext> extends SynchronizedJob impl
 
         return processRegistrations(timestamp) || useful;
     }
-
 }

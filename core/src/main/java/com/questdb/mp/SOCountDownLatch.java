@@ -35,6 +35,13 @@ public class SOCountDownLatch {
     private volatile int count = 0;
     private volatile Thread waiter = null;
 
+    public SOCountDownLatch(int count) {
+        this.count = count;
+    }
+
+    public SOCountDownLatch() {
+    }
+
     public void await() {
         this.waiter = Thread.currentThread();
         while (getCount() > 0) {

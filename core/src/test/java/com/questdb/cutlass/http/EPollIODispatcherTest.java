@@ -24,204 +24,176 @@
 package com.questdb.cutlass.http;
 
 import com.questdb.cutlass.http.io.*;
+import com.questdb.log.Log;
+import com.questdb.log.LogFactory;
 import com.questdb.mp.RingQueue;
 import com.questdb.mp.SCSequence;
+import com.questdb.mp.SOCountDownLatch;
 import com.questdb.mp.SPSequence;
+import com.questdb.std.Net;
 import com.questdb.std.NetworkFacade;
 import com.questdb.std.NetworkFacadeImpl;
 import com.questdb.std.ObjectFactory;
 import com.questdb.std.time.MillisecondClock;
 import com.questdb.std.time.MillisecondClockImpl;
+import com.questdb.test.tools.TestUtils;
+import org.junit.Assert;
 import org.junit.Ignore;
 import org.junit.Test;
 
+import java.util.concurrent.atomic.AtomicBoolean;
+
 public class EPollIODispatcherTest {
+
+    private static Log LOG = LogFactory.getLog(EPollIODispatcherTest.class);
+
     @Test
     @Ignore
-    public void testSimple() {
+    public void testSimple() throws Exception {
 
-        HttpServerConfiguration httpServerConfiguration = new HttpServerConfiguration() {
-            @Override
-            public int getConnectionHeaderBufferSize() {
-                return 1024;
-            }
+        LOG.info().$("started").$();
 
-            @Override
-            public int getConnectionMultipartHeaderBufferSize() {
-                return 512;
-            }
+        TestUtils.assertMemoryLeak(() -> {
+            HttpServerConfiguration httpServerConfiguration = new HttpServerConfiguration() {
+                @Override
+                public int getConnectionHeaderBufferSize() {
+                    return 1024;
+                }
 
-            @Override
-            public int getConnectionRecvBufferSize() {
-                return 1024 * 1024;
-            }
+                @Override
+                public int getConnectionMultipartHeaderBufferSize() {
+                    return 512;
+                }
 
-            @Override
-            public int getConnectionSendBufferSize() {
-                return 1024 * 1024;
-            }
+                @Override
+                public int getConnectionRecvBufferSize() {
+                    return 1024 * 1024;
+                }
 
-            @Override
-            public int getConnectionWrapperObjPoolSize() {
-                return 16;
-            }
-        };
+                @Override
+                public int getConnectionSendBufferSize() {
+                    return 1024 * 1024;
+                }
 
-        RingQueue<IOEvent<HttpConnectionContext>> ioEventQueue = new RingQueue<>(IOEvent::new, 1024);
-        SPSequence ioEventPubSeq = new SPSequence(ioEventQueue.getCapacity());
-        SCSequence ioEventSubSeq = new SCSequence();
-        ioEventPubSeq.then(ioEventSubSeq).then(ioEventPubSeq);
+                @Override
+                public int getConnectionWrapperObjPoolSize() {
+                    return 16;
+                }
+            };
 
-        NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
+            RingQueue<IOEvent<HttpConnectionContext>> ioEventQueue = new RingQueue<>(IOEvent::new, 1024);
+            SPSequence ioEventPubSeq = new SPSequence(ioEventQueue.getCapacity());
+            SCSequence ioEventSubSeq = new SCSequence();
+            ioEventPubSeq.then(ioEventSubSeq).then(ioEventPubSeq);
 
-        EPollIODispatcher<HttpConnectionContext> dispatcher = new EPollIODispatcher<>(
-                new IODispatcherConfiguration<HttpConnectionContext>() {
-                    @Override
-                    public int getActiveConnectionLimit() {
-                        return 10;
-                    }
+            NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
 
-                    @Override
-                    public CharSequence getBindIPv4Address() {
-                        return "0.0.0.0";
-                    }
+            try (EPollIODispatcher<HttpConnectionContext> dispatcher = new EPollIODispatcher<>(
+                    new IODispatcherConfiguration<HttpConnectionContext>() {
+                        @Override
+                        public int getActiveConnectionLimit() {
+                            return 10;
+                        }
 
-                    @Override
-                    public int getBindPort() {
-                        return 9001;
-                    }
+                        @Override
+                        public CharSequence getBindIPv4Address() {
+                            return "0.0.0.0";
+                        }
 
-                    @Override
-                    public MillisecondClock getClock() {
-                        return MillisecondClockImpl.INSTANCE;
-                    }
+                        @Override
+                        public int getBindPort() {
+                            return 9001;
+                        }
 
-                    @Override
-                    public int getEventCapacity() {
-                        return 1024;
-                    }
+                        @Override
+                        public MillisecondClock getClock() {
+                            return MillisecondClockImpl.INSTANCE;
+                        }
 
-                    @Override
-                    public IOContextFactory<HttpConnectionContext> getIOContextFactory() {
-                        return fd -> new HttpConnectionContext(httpServerConfiguration, fd, getNetworkFacade().getPeerIP(fd));
-                    }
+                        @Override
+                        public int getEventCapacity() {
+                            return 1024;
+                        }
 
-                    @Override
-                    public ObjectFactory<IOEvent<HttpConnectionContext>> getIOEventFactory() {
-                        return IOEvent::new;
-                    }
+                        @Override
+                        public IOContextFactory<HttpConnectionContext> getIOContextFactory() {
+                            return fd -> new HttpConnectionContext(httpServerConfiguration, fd, getNetworkFacade().getPeerIP(fd));
+                        }
 
-                    @Override
-                    public long getIdleConnectionTimeout() {
-                        return 10000000000000000L;
-                    }
+                        @Override
+                        public ObjectFactory<IOEvent<HttpConnectionContext>> getIOEventFactory() {
+                            return IOEvent::new;
+                        }
 
-                    @Override
-                    public int getListenBacklog() {
-                        return 128;
-                    }
+                        @Override
+                        public long getIdleConnectionTimeout() {
+                            return 10000000000000000L;
+                        }
 
-                    @Override
-                    public NetworkFacade getNetworkFacade() {
-                        return NetworkFacadeImpl.INSTANCE;
-                    }
-                },
-                ioEventQueue,
-                ioEventPubSeq
-        );
+                        @Override
+                        public int getListenBacklog() {
+                            return 128;
+                        }
 
-        HttpRequestProcessorSelector selector = new HttpRequestProcessorSelector() {
-            @Override
-            public HttpRequestProcessor select(CharSequence url) {
-                return new HttpRequestProcessor() {
-                    @Override
-                    public void onHeadersReady(HttpConnectionContext connectionContext) {
+                        @Override
+                        public NetworkFacade getNetworkFacade() {
+                            return NetworkFacadeImpl.INSTANCE;
+                        }
+                    },
+                    ioEventQueue,
+                    ioEventPubSeq
+            )) {
 
-                    }
+                HttpRequestProcessorSelector selector = url -> connectionContext -> {
                 };
-            }
-        };
 
-        while (true) {
-            dispatcher.run();
+                AtomicBoolean serverRunning = new AtomicBoolean(true);
+                SOCountDownLatch serverHaltLatch = new SOCountDownLatch(1);
+                SOCountDownLatch connectLatch = new SOCountDownLatch(1);
 
-            long cursor = ioEventSubSeq.next();
-            if (cursor > -1) {
-                IOEvent<HttpConnectionContext> event = ioEventQueue.get(cursor);
-                HttpConnectionContext connectionContext = event.context;
-                int op = event.operation;
-                ioEventSubSeq.done(cursor);
+                new Thread(() -> {
 
-                if (op != IOOperation.READ) {
-                    dispatcher.registerChannel(connectionContext, IOOperation.DISCONNECT);
-                } else {
+                    while (serverRunning.get()) {
+                        dispatcher.run();
+                        long cursor = ioEventSubSeq.next();
+                        if (cursor > -1) {
+                            IOEvent<HttpConnectionContext> event = ioEventQueue.get(cursor);
+                            HttpConnectionContext connectionContext = event.context;
+                            final int operation = event.operation;
+                            ioEventSubSeq.done(cursor);
 
-                    long fd = connectionContext.getFd();
-                    // this is address of where header ended in our receive buffer
-                    // we need to being processing request content starting from this address
-                    final long hi = connectionContext.recvBuffer + connectionContext.recvBufferSize;
-                    long headerEnd = hi;
-                    while (fd > -1 && connectionContext.headerParser.isIncomplete()) {
-                        // read headers
-                        int read = nf.recv(fd, connectionContext.recvBuffer, connectionContext.recvBufferSize);
-                        if (read < 0) {
-                            // peer disconnect
-                            dispatcher.registerChannel(connectionContext, IOOperation.CLEANUP);
-                            fd = -1;
-                            break;
-                        }
-
-                        if (read == 0) {
-                            // client is not sending anything
-                            dispatcher.registerChannel(connectionContext, IOOperation.READ);
-                            fd = -1;
-                            break;
-                        }
-
-                        headerEnd = connectionContext.headerParser.parse(connectionContext.recvBuffer, connectionContext.recvBuffer + read, true);
-                    }
-
-                    if (fd > -1) {
-
-                        assert !connectionContext.headerParser.isIncomplete();
-
-                        HttpRequestProcessor processor = selector.select(connectionContext.headerParser.getUrl());
-                        processor.onHeadersReady(connectionContext);
-
-                        if (processor instanceof HttpMultipartContentListener) {
-
-                            if (headerEnd < hi
-                                    && connectionContext.multipartContentParser.parse(headerEnd, hi, (HttpMultipartContentListener) processor)) {
-                                fd = -1;
+                            if (operation == IOOperation.CONNECT) {
+                                connectLatch.countDown();
                             }
 
-                            while (fd > -1) {
-                                // todo: receive remainder of request
-                                int read = nf.recv(fd, connectionContext.recvBuffer, connectionContext.recvBufferSize);
-
-                                if (read < 0) {
-                                    dispatcher.registerChannel(connectionContext, IOOperation.CLEANUP);
-                                    break;
-                                }
-
-                                if (read == 0) {
-                                    // client is not sending anything
-                                    dispatcher.registerChannel(connectionContext, IOOperation.READ);
-                                    break;
-                                }
-
-                                if (connectionContext.multipartContentParser.parse(
-                                        connectionContext.recvBuffer,
-                                        connectionContext.recvBuffer + read,
-                                        (HttpMultipartContentListener) processor)) {
-                                    break;
-                                }
-                            }
+                            connectionContext.handleClientOperation(operation, nf, dispatcher, selector);
                         }
-
                     }
+
+                    serverHaltLatch.countDown();
+                }).start();
+
+
+                long fd = Net.socketTcp(true);
+                try {
+                    long sockAddr = Net.sockaddr("127.0.0.1", 9001);
+                    try {
+                        Assert.assertTrue(fd > -1);
+                        Assert.assertEquals(0, Net.connect(fd, sockAddr));
+
+                        connectLatch.await();
+
+                        serverRunning.set(false);
+                        serverHaltLatch.await();
+
+                        System.out.println(dispatcher.getConnectionCount());
+                    } finally {
+                        Net.freeSockAddr(sockAddr);
+                    }
+                } finally {
+                    Net.close(fd);
                 }
             }
-        }
+        });
     }
 }
