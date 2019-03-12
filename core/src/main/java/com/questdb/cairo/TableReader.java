@@ -249,10 +249,6 @@ public class TableReader implements Closeable {
         return tableName;
     }
 
-    public long getTxn() {
-        return txn;
-    }
-
     public long getVersion() {
         return this.structVersion;
     }
@@ -638,6 +634,14 @@ public class TableReader implements Closeable {
     long getPartitionRowCount(int partitionIndex) {
         assert partitionRowCounts.size() > 0;
         return partitionRowCounts.getQuick(partitionIndex);
+    }
+
+    long getTransientRowCount() {
+        return transientRowCount;
+    }
+
+    long getTxn() {
+        return txn;
     }
 
     private void incrementPartitionCountBy(int delta) {

@@ -23,7 +23,9 @@
 
 package com.questdb.cairo;
 
-public class TableReaderIncrementalRecordCursor extends TableReaderRecordCursor {
+import com.questdb.std.Rows;
+
+public class TableReaderTailRecordCursor extends TableReaderRecordCursor {
 
     private long txn = TableUtils.INITIAL_TXN;
     private long lastRowId = -1;
@@ -51,7 +53,7 @@ public class TableReaderIncrementalRecordCursor extends TableReaderRecordCursor 
                 dataVersion = reader.getDataVersion();
                 toTop();
             } else {
-                seekToLast();
+                seekToLastSeenRow();
             }
             this.txn = reader.getTxn();
             return true;
@@ -62,15 +64,23 @@ public class TableReaderIncrementalRecordCursor extends TableReaderRecordCursor 
         // must return 'true' in those conditions
 
         txn = reader.getTxn();
+
         if (txn > this.txn) {
             this.txn = txn;
-            seekToLast();
+            seekToLastSeenRow();
             return true;
         }
         return false;
     }
 
-    private void seekToLast() {
+    public void toBottom() {
+        lastRowId = Rows.toRowID(reader.getPartitionCount() - 1, reader.getTransientRowCount() - 1);
+        startFrom(lastRowId);
+        this.txn = reader.getTxn();
+        this.dataVersion = reader.getDataVersion();
+    }
+
+    private void seekToLastSeenRow() {
         if (lastRowId > -1) {
             startFrom(lastRowId);
         } else {

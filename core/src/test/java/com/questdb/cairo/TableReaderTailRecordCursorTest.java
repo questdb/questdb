@@ -5,7 +5,7 @@
  *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
  *   \__\_\\__,_|\___||___/\__|____/|____/
  *
- * Copyright (C) 2014-2018 Appsicle
+ * Copyright (C) 2014-2019 Appsicle
  *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU Affero General Public License, version 3,
@@ -38,7 +38,7 @@ import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
-public class BusyPollTest extends AbstractCairoTest {
+public class TableReaderTailRecordCursorTest extends AbstractCairoTest {
     private final static Engine engine = new Engine(configuration);
     private final static SqlCompiler compiler = new SqlCompiler(engine, configuration);
     private final static BindVariableService bindVariableService = new BindVariableService();
@@ -49,8 +49,18 @@ public class BusyPollTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testBusyPollFromBottomByDay() throws Exception {
+        testBusyPollFromBottomOfTable(PartitionBy.DAY, 3000000000L);
+    }
+
+    @Test
     public void testBusyPollByMonth() throws Exception {
         testBusyPollFromMidTable(PartitionBy.MONTH, 50000000000L);
+    }
+
+    @Test
+    public void testBusyPollFromBottomByMonth() throws Exception {
+        testBusyPollFromBottomOfTable(PartitionBy.MONTH, 50000000000L);
     }
 
     @Test
@@ -59,8 +69,18 @@ public class BusyPollTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testBusyPollFromBottomByNone() throws Exception {
+        testBusyPollFromBottomOfTable(PartitionBy.NONE, 10000L);
+    }
+
+    @Test
     public void testBusyPollByYear() throws Exception {
         testBusyPollFromMidTable(PartitionBy.YEAR, 365 * 500000000L);
+    }
+
+    @Test
+    public void testBusyPollFromBottomByYear() throws Exception {
+        testBusyPollFromBottomOfTable(PartitionBy.YEAR, 365 * 500000000L);
     }
 
     @Test
@@ -155,7 +175,7 @@ public class BusyPollTest extends AbstractCairoTest {
                     try (TableReader reader = engine.getReader("xyz", TableUtils.ANY_TABLE_VERSION)) {
                         Rnd rnd = new Rnd();
                         int count = 0;
-                        final TableReaderIncrementalRecordCursor cursor = new TableReaderIncrementalRecordCursor();
+                        final TableReaderTailRecordCursor cursor = new TableReaderTailRecordCursor();
                         cursor.of(reader);
                         final Record record = cursor.getRecord();
                         barrier.await();
@@ -189,6 +209,67 @@ public class BusyPollTest extends AbstractCairoTest {
         });
     }
 
+    private void testBusyPollFromBottomOfTable(int partitionBy, long timestampIncrement) throws Exception {
+        final int blobSize = 1024;
+        final int n = 1000;
+        TestUtils.assertMemoryLeak(() -> {
+            try {
+                compiler.compile("create table xyz (sequence INT, event BINARY, ts LONG, stamp TIMESTAMP) timestamp(stamp) partition by " + PartitionBy.toString(partitionBy), null);
+
+                try (TableWriter writer = engine.getWriter("xyz")) {
+                    long ts = 0;
+                    long addr = Unsafe.malloc(blobSize);
+                    try {
+
+                        Rnd rnd = new Rnd();
+                        appendRecords(0, n, timestampIncrement, writer, ts, addr, rnd);
+                        ts = n * timestampIncrement;
+                        try (
+                                TableReader reader = engine.getReader("xyz", TableUtils.ANY_TABLE_VERSION);
+                                TableReaderTailRecordCursor cursor = new TableReaderTailRecordCursor()
+                        ) {
+                            cursor.of(reader);
+                            cursor.toBottom();
+
+                            Assert.assertFalse(cursor.reload());
+                            Assert.assertFalse(cursor.hasNext());
+
+                            appendRecords(n, n, timestampIncrement, writer, ts, addr, rnd);
+                            Assert.assertTrue(cursor.reload());
+
+                            int count = 0;
+                            final Record record = cursor.getRecord();
+                            while (cursor.hasNext()) {
+                                Assert.assertEquals(n + n - count, record.getLong(2));
+                                count++;
+                            }
+
+                            writer.truncate();
+                            Assert.assertTrue(cursor.reload());
+                            Assert.assertFalse(cursor.hasNext());
+
+                            appendRecords(n * 2, n / 2, timestampIncrement, writer, ts, addr, rnd);
+                            Assert.assertTrue(cursor.reload());
+
+                            count = 0;
+                            while (cursor.hasNext()) {
+                                Assert.assertEquals(n * 2 + n / 2 - count, record.getLong(2));
+                                count++;
+                            }
+
+                            Assert.assertEquals(n / 2, count);
+                        }
+                    } finally {
+                        Unsafe.free(addr, blobSize);
+                    }
+                }
+            } finally {
+                engine.releaseAllReaders();
+                engine.releaseAllWriters();
+            }
+        });
+    }
+
     private void testBusyPollFromMidTable(int partitionBy, long timestampIncrement) throws Exception {
         final int blobSize = 1024;
         final int n = 1000;
@@ -206,7 +287,7 @@ public class BusyPollTest extends AbstractCairoTest {
                         ts = n * timestampIncrement;
                         try (
                                 TableReader reader = engine.getReader("xyz", TableUtils.ANY_TABLE_VERSION);
-                                TableReaderIncrementalRecordCursor cursor = new TableReaderIncrementalRecordCursor()
+                                TableReaderTailRecordCursor cursor = new TableReaderTailRecordCursor()
                         ) {
                             cursor.of(reader);
                             Assert.assertTrue(cursor.reload());
