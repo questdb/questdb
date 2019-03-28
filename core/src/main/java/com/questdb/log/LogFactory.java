@@ -93,6 +93,8 @@ public class LogFactory implements Closeable {
             return;
         }
 
+        configured = true;
+
         for (int i = 0, n = scopeConfigs.size(); i < n; i++) {
             ScopeConfiguration conf = scopeConfigs.get(i);
             conf.bind(jobs, queueDepth, recordLength);
@@ -101,11 +103,8 @@ public class LogFactory implements Closeable {
         scopeConfigMap.sortKeys(LDC);
 
         for (int i = 0, n = jobs.size(); i < n; i++) {
-            LogWriter w = jobs.get(i);
-            w.bindProperties();
+            jobs.get(i).bindProperties();
         }
-
-        configured = true;
     }
 
     @Override
@@ -113,6 +112,9 @@ public class LogFactory implements Closeable {
         haltThread();
         for (int i = 0, n = jobs.size(); i < n; i++) {
             Misc.free(jobs.get(i));
+        }
+        for (int i = 0, n = scopeConfigs.size(); i < n; i++) {
+            Misc.free(scopeConfigs.getQuick(i));
         }
     }
 
@@ -388,10 +390,11 @@ public class LogFactory implements Closeable {
         return scopeConfigMap.get(k);
     }
 
-    private static class ScopeConfiguration {
+    private static class ScopeConfiguration implements Closeable {
         private final int[] channels;
         private final ObjList<LogWriterConfig> writerConfigs = new ObjList<>();
         private final IntObjHashMap<Holder> holderMap = new IntObjHashMap<>();
+        private final ObjList<Holder> holderList = new ObjList<>();
         private int ci = 0;
 
         public ScopeConfiguration(int levels) {
@@ -399,8 +402,6 @@ public class LogFactory implements Closeable {
         }
 
         public void bind(ObjHashSet<LogWriter> jobs, int queueDepth, int recordLength) {
-            ObjList<Holder> holderList = new ObjList<>();
-
             // create queues for processed channels
             for (int i = 0, n = channels.length; i < n; i++) {
                 int index = Unsafe.arrayGet(channels, i);
@@ -445,6 +446,13 @@ public class LogFactory implements Closeable {
                 } else {
                     h.lSeq.then(h.wSeq).then(h.lSeq);
                 }
+            }
+        }
+
+        @Override
+        public void close() {
+            for (int i = 0, n = holderList.size(); i < n; i++) {
+                Misc.free(holderList.getQuick(i));
             }
         }
 
@@ -534,7 +542,7 @@ public class LogFactory implements Closeable {
         }
     }
 
-    private static class Holder {
+    private static class Holder implements Closeable {
         private final RingQueue<LogRecordSink> ring;
         private final Sequence lSeq;
         private Sequence wSeq;
@@ -543,6 +551,13 @@ public class LogFactory implements Closeable {
         public Holder(int queueDepth, final int recordLength) {
             this.ring = new RingQueue<>(() -> new LogRecordSink(recordLength), queueDepth);
             this.lSeq = new MPSequence(queueDepth);
+        }
+
+        @Override
+        public void close() {
+            for (int i = 0, n = ring.getCapacity(); i < n; i++) {
+                Misc.free(ring.get(i));
+            }
         }
     }
 

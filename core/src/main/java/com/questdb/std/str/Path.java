@@ -139,6 +139,18 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
     }
 
     @Override
+    public CharSink put(CharSequence cs, int start, int end) {
+        int l = end - start;
+        if (l + len >= capacity) {
+            extend(l + len);
+        }
+        Chars.strcpy(cs, start, end, wptr);
+        wptr += l;
+        len += l;
+        return this;
+    }
+
+    @Override
     public Path put(char c) {
         if (1 + len >= capacity) {
             extend(16 + len);

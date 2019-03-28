@@ -29,7 +29,9 @@ import com.questdb.std.Unsafe;
 import com.questdb.std.str.AbstractCharSink;
 import com.questdb.std.str.CharSink;
 
-public class LogRecordSink extends AbstractCharSink {
+import java.io.Closeable;
+
+public class LogRecordSink extends AbstractCharSink implements Closeable {
     private final long address;
     private final long lim;
     private long _wptr;
@@ -43,6 +45,11 @@ public class LogRecordSink extends AbstractCharSink {
 
     public void clear(int len) {
         _wptr = address + len;
+    }
+
+    @Override
+    public void close() {
+        Unsafe.free(address, lim - address);
     }
 
     public long getAddress() {

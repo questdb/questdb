@@ -5,7 +5,7 @@
  *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
  *   \__\_\\__,_|\___||___/\__|____/|____/
  *
- * Copyright (C) 2014-2018 Appsicle
+ * Copyright (C) 2014-2019 Appsicle
  *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU Affero General Public License, version 3,
@@ -27,10 +27,12 @@ import com.questdb.net.ha.bridge.JournalEventBridge;
 import com.questdb.net.ha.bridge.JournalEventHandler;
 import com.questdb.net.ha.bridge.JournalEventProcessor;
 import org.junit.Assert;
+import org.junit.Ignore;
 import org.junit.Test;
 
 import java.util.concurrent.*;
 
+@Ignore
 public class JournalEventBridgeTest {
     @Test
     public void testStartStop() {

@@ -362,6 +362,21 @@ public final class Chars {
         return true;
     }
 
+    public static boolean startsWith(CharSequence _this, int thisLo, int thisHi, CharSequence that) {
+        int len = that.length();
+        int thisLen = thisHi - thisLo;
+        if (thisLen < len) {
+            return false;
+        }
+
+        for (int i = 0; i < len; i++) {
+            if (_this.charAt(thisLo + i) != that.charAt(i)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     public static boolean startsWith(CharSequence _this, char c) {
         return _this.length() > 0 && _this.charAt(0) == c;
     }
@@ -369,6 +384,12 @@ public final class Chars {
     public static void strcpy(final CharSequence value, final int len, final long address) {
         for (int i = 0; i < len; i++) {
             Unsafe.getUnsafe().putByte(address + i, (byte) value.charAt(i));
+        }
+    }
+
+    public static void strcpy(final CharSequence value, final int lo, final int hi, final long address) {
+        for (int i = lo; i < hi; i++) {
+            Unsafe.getUnsafe().putByte(address + i - lo, (byte) value.charAt(i));
         }
     }
 

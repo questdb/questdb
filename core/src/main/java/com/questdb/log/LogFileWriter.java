@@ -43,6 +43,7 @@ public class LogFileWriter extends SynchronizedJob implements Closeable, LogWrit
     private long _wptr;
     private String location;
     // can be set via reflection
+    @SuppressWarnings("unused")
     private String truncate;
     private String bufferSize;
     private int bufSize;
@@ -126,6 +127,7 @@ public class LogFileWriter extends SynchronizedJob implements Closeable, LogWrit
         return true;
     }
 
+    @SuppressWarnings("unused")
     public void setBufferSize(String bufferSize) {
         this.bufferSize = bufferSize;
     }

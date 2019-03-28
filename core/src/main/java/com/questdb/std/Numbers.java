@@ -833,6 +833,7 @@ public final class Numbers {
         }
 
         int val = 0;
+        int r;
         EX:
         for (; i < lim; i++) {
             int c = sequence.charAt(i);
@@ -841,11 +842,19 @@ public final class Numbers {
                     switch (c) {
                         case 'K':
                         case 'k':
-                            val = val * 1024;
+                            r = val * 1024;
+                            if (r > val) {
+                                throw NumericException.INSTANCE;
+                            }
+                            val = r;
                             break EX;
                         case 'M':
                         case 'm':
-                            val = val * 1024 * 1024;
+                            r = val * 1024 * 1024;
+                            if (r > val) {
+                                throw NumericException.INSTANCE;
+                            }
+                            val = r;
                             break EX;
                         default:
                             break;
@@ -854,7 +863,7 @@ public final class Numbers {
                 throw NumericException.INSTANCE;
             }
             // val * 10 + (c - '0')
-            int r = (val << 3) + (val << 1) - (c - '0');
+            r = (val << 3) + (val << 1) - (c - '0');
             if (r > val) {
                 throw NumericException.INSTANCE;
             }
@@ -862,6 +871,75 @@ public final class Numbers {
         }
 
         if (val == Integer.MIN_VALUE && !negative) {
+            throw NumericException.INSTANCE;
+        }
+        return negative ? val : -val;
+    }
+
+    public static long parseLongSize(CharSequence sequence) throws NumericException {
+        int lim = sequence.length();
+
+        if (lim == 0) {
+            throw NumericException.INSTANCE;
+        }
+
+        boolean negative = sequence.charAt(0) == '-';
+        int i = 0;
+        if (negative) {
+            i++;
+        }
+
+        if (i >= lim) {
+            throw NumericException.INSTANCE;
+        }
+
+        long val = 0;
+        long r;
+        EX:
+        for (; i < lim; i++) {
+            int c = sequence.charAt(i);
+            if (c < '0' || c > '9') {
+                if (i == lim - 1) {
+                    switch (c) {
+                        case 'K':
+                        case 'k':
+                            r = val * 1024L;
+                            if (r > val) {
+                                throw NumericException.INSTANCE;
+                            }
+                            val = r;
+                            break EX;
+                        case 'M':
+                        case 'm':
+                            r = val * 1024L * 1024L;
+                            if (r > val) {
+                                throw NumericException.INSTANCE;
+                            }
+                            val = r;
+                            break EX;
+                        case 'G':
+                        case 'g':
+                            r = val * 1024L * 1024L * 1024L;
+                            if (r > val) {
+                                throw NumericException.INSTANCE;
+                            }
+                            val = r;
+                            break EX;
+                        default:
+                            break;
+                    }
+                }
+                throw NumericException.INSTANCE;
+            }
+            // val * 10 + (c - '0')
+            r = (val << 3) + (val << 1) - (c - '0');
+            if (r > val) {
+                throw NumericException.INSTANCE;
+            }
+            val = r;
+        }
+
+        if (val == Long.MIN_VALUE && !negative) {
             throw NumericException.INSTANCE;
         }
         return negative ? val : -val;

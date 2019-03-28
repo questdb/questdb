@@ -5,7 +5,7 @@
  *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
  *   \__\_\\__,_|\___||___/\__|____/|____/
  *
- * Copyright (C) 2014-2018 Appsicle
+ * Copyright (C) 2014-2019 Appsicle
  *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU Affero General Public License, version 3,
@@ -21,11 +21,8 @@
  *
  ******************************************************************************/
 
-package com.questdb.misc;
+package com.questdb.std;
 
-import com.questdb.std.Numbers;
-import com.questdb.std.NumericException;
-import com.questdb.std.Rnd;
 import com.questdb.std.str.StringSink;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -432,20 +429,78 @@ public class NumbersTest {
     }
 
     @Test(expected = NumericException.class)
-    public void testParseSizeFail() throws Exception {
+    public void testParseIntSizeFail() throws Exception {
         Numbers.parseIntSize("5Kb");
     }
 
     @Test
-    public void testParseSizeKb() throws Exception {
+    public void testParseIntSizeKb() throws Exception {
         Assert.assertEquals(5 * 1024, Numbers.parseIntSize("5K"));
         Assert.assertEquals(5 * 1024, Numbers.parseIntSize("5k"));
     }
 
     @Test
-    public void testParseSizeMb() throws Exception {
+    public void testParseIntSizeMb() throws Exception {
         Assert.assertEquals(5 * 1024 * 1024, Numbers.parseIntSize("5M"));
         Assert.assertEquals(5 * 1024 * 1024, Numbers.parseIntSize("5m"));
+    }
+
+    @Test(expected = NumericException.class)
+    public void testParseIntSizeOverflowAtK() throws Exception {
+        Numbers.parseIntSize("4194304K");
+    }
+
+    @Test(expected = NumericException.class)
+    public void testParseIntSizeOverflowAtM() throws Exception {
+        Numbers.parseIntSize("10240M");
+    }
+
+    @Test(expected = NumericException.class)
+    public void testParseIntSizeOverflowNoQualifier() throws Exception {
+        Numbers.parseIntSize("10737418240");
+    }
+
+    @Test(expected = NumericException.class)
+    public void testParseLongSizeFail() throws Exception {
+        Numbers.parseLongSize("5Kb");
+    }
+
+    @Test
+    public void testParseLongSizeGb() throws Exception {
+        Assert.assertEquals(7 * 1024 * 1024L * 1024L, Numbers.parseLongSize("7G"));
+        Assert.assertEquals(7 * 1024 * 1024L * 1024L, Numbers.parseLongSize("7g"));
+    }
+
+    @Test
+    public void testParseLongSizeKb() throws Exception {
+        Assert.assertEquals(5 * 1024L, Numbers.parseLongSize("5K"));
+        Assert.assertEquals(5 * 1024L, Numbers.parseLongSize("5k"));
+    }
+
+    @Test
+    public void testParseLongSizeMb() throws Exception {
+        Assert.assertEquals(5 * 1024 * 1024L, Numbers.parseLongSize("5M"));
+        Assert.assertEquals(5 * 1024 * 1024L, Numbers.parseLongSize("5m"));
+    }
+
+    @Test(expected = NumericException.class)
+    public void testParseLongSizeOverflowAtG() throws Exception {
+        Numbers.parseLongSize("4503599627370496G");
+    }
+
+    @Test(expected = NumericException.class)
+    public void testParseLongSizeOverflowAtK() throws Exception {
+        Numbers.parseLongSize("45035996273704960000K");
+    }
+
+    @Test(expected = NumericException.class)
+    public void testParseLongSizeOverflowAtM() throws Exception {
+        Numbers.parseLongSize("450359962737049600M");
+    }
+
+    @Test(expected = NumericException.class)
+    public void testParseLongSizeOverflowNoQualifier() throws Exception {
+        Numbers.parseLongSize("45035996273704960000000");
     }
 
     @Test(expected = NumericException.class)
