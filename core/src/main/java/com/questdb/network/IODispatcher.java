@@ -21,9 +21,16 @@
  *
  ******************************************************************************/
 
-package com.questdb.cutlass.http.io;
+package com.questdb.network;
 
-public class IOEvent<C extends IOContext> {
-    public int operation;
-    public C context;
+import com.questdb.mp.Job;
+
+import java.io.Closeable;
+
+public interface IODispatcher<C extends IOContext> extends Closeable, Job {
+    int getConnectionCount();
+
+    void registerChannel(C context, int operation);
+
+    void processIOQueue(IORequestProcessor<C> processor);
 }

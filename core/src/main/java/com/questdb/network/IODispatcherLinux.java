@@ -21,14 +21,12 @@
  *
  ******************************************************************************/
 
-package com.questdb.cutlass.http.io;
+package com.questdb.network;
 
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.mp.*;
-import com.questdb.net.Epoll;
-import com.questdb.std.*;
-import com.questdb.std.ex.NetworkError;
+import com.questdb.std.LongMatrix;
 import com.questdb.std.time.MillisecondClock;
 
 public class IODispatcherLinux<C extends IOContext> extends SynchronizedJob implements IODispatcher<C> {
@@ -42,7 +40,7 @@ public class IODispatcherLinux<C extends IOContext> extends SynchronizedJob impl
     private final Sequence ioEventSubSeq;
     private final RingQueue<IOEvent<C>> interestQueue;
     private final MPSequence interestPubSeq;
-    private final SCSequence interestSubSeq = new SCSequence();
+    private final SCSequence interestSubSeq;
     private final MillisecondClock clock;
     private final Epoll epoll;
     private final long timeout;
@@ -50,6 +48,7 @@ public class IODispatcherLinux<C extends IOContext> extends SynchronizedJob impl
     private final int activeConnectionLimit;
     private final IOContextFactory<C> ioContextFactory;
     private final NetworkFacade nf;
+    private final int initialBias;
     private int connectionCount = 0;
     private long fdid = 1;
 
@@ -58,20 +57,20 @@ public class IODispatcherLinux<C extends IOContext> extends SynchronizedJob impl
             IOContextFactory<C> ioContextFactory
     ) {
         this.nf = configuration.getNetworkFacade();
-
         this.ioEventQueue = new RingQueue<>(IOEvent::new, configuration.getIOQueueCapacity());
         this.ioEventPubSeq = new SPSequence(configuration.getIOQueueCapacity());
         this.ioEventSubSeq = new MCSequence(configuration.getIOQueueCapacity());
         this.ioEventPubSeq.then(this.ioEventSubSeq).then(this.ioEventPubSeq);
-
         this.interestQueue = new RingQueue<>(IOEvent::new, configuration.getInterestQueueCapacity());
         this.interestPubSeq = new MPSequence(interestQueue.getCapacity());
+        this.interestSubSeq = new SCSequence();
         this.interestPubSeq.then(this.interestSubSeq).then(this.interestPubSeq);
         this.clock = configuration.getClock();
         this.activeConnectionLimit = configuration.getActiveConnectionLimit();
         this.timeout = configuration.getIdleConnectionTimeout();
         this.ioContextFactory = ioContextFactory;
-        this.epoll = new Epoll(configuration.getEventCapacity());
+        this.initialBias = configuration.getInitialBias();
+        this.epoll = new Epoll(configuration.getEpollFacade(), configuration.getEventCapacity());
         this.serverFd = nf.socketTcp(false);
         if (nf.bindTcp(this.serverFd, configuration.getBindIPv4Address(), configuration.getBindPort())) {
             nf.listen(this.serverFd, configuration.getListenBacklog());
@@ -81,30 +80,29 @@ public class IODispatcherLinux<C extends IOContext> extends SynchronizedJob impl
                     .$(configuration.getBindIPv4Address()).$(':').$(configuration.getBindPort())
                     .$(" [fd=").$(serverFd).$(']').$();
         } else {
-            throw new NetworkError("Failed to bind socket");
+            throw NetworkError.instance(nf.errno()).couldNotBindSocket();
         }
     }
 
     @Override
     public void close() {
         this.epoll.close();
-        if (nf.close(serverFd) != 0) {
-            LOG.error().$("failed to close socket [fd=").$(serverFd).$(", errno=").$(Os.errno()).$(']').$();
-        }
+        nf.close(serverFd, LOG);
         int n = pending.size();
         for (int i = 0; i < n; i++) {
-            Misc.free(pending.get(i));
+            disconnect(pending.get(i), DisconnectReason.SILLY);
         }
 
-        long cursor = interestSubSeq.next();
-        if (cursor > -1) {
-            long available = interestSubSeq.available();
-            while (cursor < available) {
-                final IOEvent<C> evt = interestQueue.get(cursor);
-                disconnect(evt.context, DisconnectReason.SILLY);
-                cursor++;
+        drainQueueAndDisconnect();
+        long cursor;
+        do {
+            cursor = ioEventSubSeq.next();
+            if (cursor > -1) {
+                disconnect(ioEventQueue.get(cursor).context, DisconnectReason.SILLY);
+                ioEventSubSeq.done(cursor);
             }
-        }
+        } while (cursor != -1);
+        LOG.info().$("closed").$();
     }
 
     @Override
@@ -118,7 +116,7 @@ public class IODispatcherLinux<C extends IOContext> extends SynchronizedJob impl
         IOEvent<C> evt = interestQueue.get(cursor);
         evt.context = context;
         evt.operation = operation;
-        LOG.debug().$("Re-queuing ").$(context.getFd()).$();
+        LOG.debug().$("queuing [fd=").$(context.getFd()).$(", op=").$(operation).$(']').$();
         interestPubSeq.done(cursor);
     }
 
@@ -146,27 +144,34 @@ public class IODispatcherLinux<C extends IOContext> extends SynchronizedJob impl
             }
 
             if (nf.configureNonBlocking(fd) < 0) {
-                LOG.error().$("could not configure non-blocking [fd=").$(fd).$(", errno=").$(Os.errno()).$(']').$();
-                closeFd(fd);
+                LOG.error().$("could not configure non-blocking [fd=").$(fd).$(", errno=").$(nf.errno()).$(']').$();
+                nf.close(fd, LOG);
                 return;
             }
 
-            if (connectionCount > activeConnectionLimit) {
-                LOG.info().$("connection limit exceeded [fd=").$(fd).$(']').$();
-                closeFd(fd);
+            if (connectionCount == activeConnectionLimit) {
+                LOG.info().$("connection limit exceeded [fd=").$(fd)
+                        .$(", connectionCount=").$(connectionCount)
+                        .$(", activeConnectionLimit=").$(activeConnectionLimit)
+                        .$(']').$();
+                nf.close(fd, LOG);
                 return;
             }
 
             LOG.info().$("connected [ip=").$ip(nf.getPeerIP(fd)).$(", fd=").$(fd).$(']').$();
             connectionCount++;
-            publishOperation(IOOperation.CONNECT, ioContextFactory.newInstance(fd));
+            addPending(fd, clock.getTicks());
         }
     }
 
-    private void closeFd(long fd) {
-        if (nf.close(fd) != 0) {
-            LOG.error().$("could not close [fd=").$(fd).$(", errno=").$(nf.errno()).$(']').$();
-        }
+    private void addPending(long fd, long timestamp) {
+        // append to pending
+        int r = pending.addRow();
+        LOG.debug().$("pending [row=").$(r).$(", fd=").$(fd).$(']').$();
+        pending.set(r, M_TIMESTAMP, timestamp);
+        pending.set(r, M_FD, fd);
+        pending.set(r, M_ID, fdid++);
+        pending.set(r, ioContextFactory.newInstance(fd));
     }
 
     private void disconnect(C context, int disconnectReason) {
@@ -176,18 +181,36 @@ public class IODispatcherLinux<C extends IOContext> extends SynchronizedJob impl
                 .$(", fd=").$(fd)
                 .$(", reason=").$(DisconnectReason.nameOf(disconnectReason))
                 .$(']').$();
-        closeFd(fd);
+        nf.close(fd, LOG);
         context.close();
         connectionCount--;
     }
 
+    private void drainQueueAndDisconnect() {
+        long cursor;
+        do {
+            cursor = interestSubSeq.next();
+            if (cursor > -1) {
+                final long available = interestSubSeq.available();
+                while (cursor < available) {
+                    disconnect(interestQueue.get(cursor++).context, DisconnectReason.SILLY);
+                }
+                interestSubSeq.done(available - 1);
+            }
+        } while (cursor != -1);
+    }
+
     private void enqueuePending(int watermark) {
-        for (int i = watermark, sz = pending.size(), offset = 0; i < sz; i++, offset += Epoll.SIZEOF_EVENT) {
+        for (int i = watermark, sz = pending.size(), offset = 0; i < sz; i++, offset += EpollAccessor.SIZEOF_EVENT) {
             epoll.setOffset(offset);
-            if (epoll.control((int) pending.get(i, M_FD), pending.get(i, M_ID), Epoll.EPOLL_CTL_ADD, Epoll.EPOLLIN) < 0) {
-                LOG.debug().$("epoll_ctl failure ").$(Os.errno()).$();
-            } else {
-                LOG.debug().$("epoll_ctl ").$(pending.get(i, M_FD)).$(" as ").$(pending.get(i, M_ID)).$();
+            if (
+                    epoll.control(
+                            (int) pending.get(i, M_FD),
+                            pending.get(i, M_ID),
+                            EpollAccessor.EPOLL_CTL_ADD,
+                            initialBias == IODispatcherConfiguration.BIAS_READ ? EpollAccessor.EPOLLIN : EpollAccessor.EPOLLOUT
+                    ) < 0) {
+                LOG.debug().$("epoll_ctl failure ").$(nf.errno()).$();
             }
         }
     }
@@ -208,25 +231,35 @@ public class IODispatcherLinux<C extends IOContext> extends SynchronizedJob impl
             useful = true;
             IOEvent<C> evt = interestQueue.get(cursor);
             C context = evt.context;
-            int channelStatus = evt.operation;
+            int operation = evt.operation;
             interestSubSeq.done(cursor);
 
             int fd = (int) context.getFd();
             final long id = fdid++;
-            LOG.debug().$("Registering ").$(fd).$(" status ").$(channelStatus).$(" as ").$(id).$();
+            // we re-arm epoll globally, in that even when we disconnect
+            // because we have to remove FD from epoll
+            LOG.debug().$("registered [fd=").$(fd).$(", op=").$(operation).$(", id=").$(id).$(']').$();
             epoll.setOffset(offset);
-            offset += Epoll.SIZEOF_EVENT;
-            switch (channelStatus) {
+            offset += EpollAccessor.SIZEOF_EVENT;
+            switch (operation) {
                 case IOOperation.READ:
-                    epoll.control(fd, id, Epoll.EPOLL_CTL_MOD, Epoll.EPOLLIN);
+                    if (epoll.control(fd, id, EpollAccessor.EPOLL_CTL_MOD, EpollAccessor.EPOLLIN) < 0) {
+                        System.out.println("oops2: " + nf.errno());
+                    }
                     break;
                 case IOOperation.WRITE:
-                    epoll.control(fd, id, Epoll.EPOLL_CTL_MOD, Epoll.EPOLLOUT);
+                    epoll.control(fd, id, EpollAccessor.EPOLL_CTL_MOD, EpollAccessor.EPOLLOUT);
                     break;
                 case IOOperation.DISCONNECT:
+                    if (epoll.control(fd, id, EpollAccessor.EPOLL_CTL_DEL, 0) < 0) {
+                        System.out.println("oops3: " + nf.errno());
+                    }
                     disconnect(context, DisconnectReason.SILLY);
                     continue;
                 case IOOperation.CLEANUP:
+                    if (epoll.control(fd, id, 2, 0) < 0) {
+                        System.out.println("oops3: " + nf.errno());
+                    }
                     disconnect(context, DisconnectReason.PEER);
                     continue;
                 default:
@@ -249,7 +282,7 @@ public class IODispatcherLinux<C extends IOContext> extends SynchronizedJob impl
         evt.context = context;
         evt.operation = operation;
         ioEventPubSeq.done(cursor);
-        LOG.debug().$("fired [fd=").$(context.getFd()).$(", op=").$(evt.operation).$(']').$();
+        LOG.debug().$("fired [fd=").$(context.getFd()).$(", op=").$(evt.operation).$(", pos=").$(cursor).$(']').$();
     }
 
     @Override
@@ -262,8 +295,8 @@ public class IODispatcherLinux<C extends IOContext> extends SynchronizedJob impl
             // check all activated FDs
             for (int i = 0; i < n; i++) {
                 epoll.setOffset(offset);
-                offset += Epoll.SIZEOF_EVENT;
-                long id = epoll.getData();
+                offset += EpollAccessor.SIZEOF_EVENT;
+                final long id = epoll.getData();
                 // this is server socket, accept if there aren't too many already
                 if (id == 0) {
                     accept();
@@ -273,12 +306,12 @@ public class IODispatcherLinux<C extends IOContext> extends SynchronizedJob impl
                     // 2. remove row from pending, remaining rows will be timed out
                     int row = pending.binarySearch(id);
                     if (row < 0) {
-                        LOG.error().$("Internal error: unknown ID: ").$(id).$();
+                        LOG.error().$("internal error: epoll returned unexpected id [id=").$(id).$(']').$();
                         continue;
                     }
 
                     publishOperation(
-                            (epoll.getEvent() & Epoll.EPOLLIN) > 0 ? IOOperation.READ : IOOperation.WRITE,
+                            (epoll.getEvent() & EpollAccessor.EPOLLIN) > 0 ? IOOperation.READ : IOOperation.WRITE,
                             pending.get(row)
                     );
                     pending.deleteRow(row);

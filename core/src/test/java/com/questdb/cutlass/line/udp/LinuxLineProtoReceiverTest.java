@@ -27,6 +27,7 @@ import com.questdb.cairo.*;
 import com.questdb.cairo.pool.WriterPool;
 import com.questdb.mp.Job;
 import com.questdb.mp.Worker;
+import com.questdb.network.NetworkFacadeImpl;
 import com.questdb.std.*;
 import com.questdb.std.str.StringSink;
 import com.questdb.test.tools.TestUtils;
@@ -124,7 +125,7 @@ public class LinuxLineProtoReceiverTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             NetFacade nf = new NetFacadeImpl() {
                 @Override
-                public boolean bindUdp(long fd, CharSequence IPv4Address, int port) {
+                public boolean bindUdp(long fd, int port) {
                     return false;
                 }
             };

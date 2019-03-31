@@ -21,26 +21,9 @@
  *
  ******************************************************************************/
 
-package com.questdb.cutlass.http.io;
+package com.questdb.network;
 
-import com.questdb.std.Os;
-
-public class IODispatchers {
-
-    private IODispatchers() {
-    }
-
-    public static <C extends IOContext> IODispatcher<C> create(
-            IODispatcherConfiguration configuration,
-            IOContextFactory<C> ioContextFactory
-    ) {
-        switch (Os.type) {
-            case Os.LINUX:
-                return new IODispatcherLinux<>(configuration, ioContextFactory);
-            case Os.OSX:
-                return new IODispatcherOsx<>(configuration, ioContextFactory);
-            default:
-                throw new RuntimeException();
-        }
-    }
+@FunctionalInterface
+public interface IOContextFactory<C extends IOContext> {
+    C newInstance(long fd);
 }

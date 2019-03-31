@@ -26,8 +26,9 @@ package com.questdb.net;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.mp.*;
+import com.questdb.network.Net;
+import com.questdb.network.NetworkError;
 import com.questdb.std.*;
-import com.questdb.std.ex.NetworkError;
 import com.questdb.std.time.MillisecondClock;
 
 public class Win32SelectDispatcher<C extends Context> extends SynchronizedJob implements Dispatcher<C> {
@@ -92,7 +93,7 @@ public class Win32SelectDispatcher<C extends Context> extends SynchronizedJob im
             readFdSet.setCount(1);
             writeFdSet.setCount(0);
         } else {
-            throw new NetworkError("Failed to bind socket. System error " + Os.errno());
+            throw NetworkError.instance(Os.errno()).couldNotBindSocket();
         }
     }
 

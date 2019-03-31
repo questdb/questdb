@@ -21,7 +21,7 @@
  *
  ******************************************************************************/
 
-package com.questdb.std;
+package com.questdb.network;
 
 import com.questdb.std.str.StringSink;
 import com.questdb.test.tools.TestUtils;
@@ -135,7 +135,7 @@ public class NetTest {
         Assert.assertTrue(fd > 0);
         Assert.assertEquals(0, Net.setReuseAddress(fd));
         Assert.assertEquals(0, Net.setReusePort(fd));
-        Assert.assertTrue(Net.bindUdp(fd, "0.0.0.0", 18215));
+        Assert.assertTrue(Net.bindUdp(fd, 18215));
         Assert.assertTrue(Net.join(fd, "0.0.0.0", "224.0.0.125"));
     }
 }

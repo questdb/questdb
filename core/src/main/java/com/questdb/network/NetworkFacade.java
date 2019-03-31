@@ -21,9 +21,12 @@
  *
  ******************************************************************************/
 
-package com.questdb.std;
+package com.questdb.network;
+
+import com.questdb.log.Log;
 
 public interface NetworkFacade {
+
     void abortAccept(long fd);
 
     long accept(long serverFd);
@@ -33,6 +36,8 @@ public interface NetworkFacade {
     boolean bindTcp(long fd, CharSequence ipv4Address, int port);
 
     int close(long fd);
+
+    void close(long fd, Log logger);
 
     void configureNoLinger(long fd);
 

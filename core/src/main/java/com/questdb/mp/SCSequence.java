@@ -41,6 +41,10 @@ public class SCSequence extends AbstractSSequence {
         this.value = index;
     }
 
+    public long available() {
+        return cache + 1;
+    }
+
     @Override
     public long availableIndex(long lo) {
         return this.value;

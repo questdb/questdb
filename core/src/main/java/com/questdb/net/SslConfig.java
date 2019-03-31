@@ -23,7 +23,7 @@
 
 package com.questdb.net;
 
-import com.questdb.std.ex.NetworkError;
+import com.questdb.network.NetworkError;
 
 import javax.net.ssl.KeyManagerFactory;
 import javax.net.ssl.SSLContext;
@@ -106,7 +106,7 @@ public class SslConfig {
                     , trustManagerFactory != null ? trustManagerFactory.getTrustManagers() : (trustAll ? allowAllTrustManagers : null), sr);
             return sslContext;
         } catch (Exception e) {
-            throw new NetworkError(e);
+            throw NetworkError.instance(0, "could not create SSL context [ex=").put(e).put(']');
         }
     }
 

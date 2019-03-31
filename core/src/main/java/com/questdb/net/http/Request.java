@@ -28,6 +28,7 @@ import com.questdb.ex.HeadersTooLargeException;
 import com.questdb.ex.MalformedHeaderException;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
+import com.questdb.network.Net;
 import com.questdb.std.*;
 import com.questdb.std.str.DirectByteCharSequence;
 

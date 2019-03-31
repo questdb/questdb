@@ -23,7 +23,7 @@
 
 package com.questdb.cutlass.line.udp;
 
-import com.questdb.std.NetworkFacadeImpl;
+import com.questdb.network.NetworkFacadeImpl;
 import org.junit.Test;
 
 public class LineProtoSenderTest {

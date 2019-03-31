@@ -21,13 +21,23 @@
  *
  ******************************************************************************/
 
-package com.questdb.cutlass.http.io;
+package com.questdb.network;
 
-import java.io.Closeable;
+public final class DisconnectReason {
+    public static final int PEER = 1;
+    public static final int IDLE = 2;
+    public static final int SILLY = 3;
 
-public interface IOContext extends Closeable {
-    @Override
-    void close();
-
-    long getFd();
+    public static CharSequence nameOf(int disconnectReason) {
+        switch (disconnectReason) {
+            case PEER:
+                return "PEER";
+            case IDLE:
+                return "IDLE";
+            case SILLY:
+                return "SILLY";
+            default:
+                return "UNKNOWN";
+        }
+    }
 }

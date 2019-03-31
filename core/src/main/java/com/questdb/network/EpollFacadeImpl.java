@@ -21,9 +21,28 @@
  *
  ******************************************************************************/
 
-package com.questdb.cutlass.http.io;
+package com.questdb.network;
 
-@FunctionalInterface
-public interface IORequestProcessor<C extends IOContext> {
-    void onRequest(int operation, C context, IODispatcher<C> dispatcher);
+public class EpollFacadeImpl implements EpollFacade {
+    public static final EpollFacadeImpl INSTANCE = new EpollFacadeImpl();
+
+    @Override
+    public long epollCreate() {
+        return EpollAccessor.epollCreate();
+    }
+
+    @Override
+    public int epollCtl(long epFd, int op, long fd, long eventPtr) {
+        return EpollAccessor.epollCtl(epFd, op, fd, eventPtr);
+    }
+
+    @Override
+    public int epollWait(long epfd, long eventPtr, int eventCount, int timeout) {
+        return EpollAccessor.epollWait(epfd, eventPtr, eventCount, timeout);
+    }
+
+    @Override
+    public NetworkFacade getNetworkFacade() {
+        return NetworkFacadeImpl.INSTANCE;
+    }
 }

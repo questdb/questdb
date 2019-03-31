@@ -26,8 +26,12 @@ package com.questdb.net;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.mp.*;
-import com.questdb.std.*;
-import com.questdb.std.ex.NetworkError;
+import com.questdb.network.Net;
+import com.questdb.network.NetworkError;
+import com.questdb.std.LongMatrix;
+import com.questdb.std.Misc;
+import com.questdb.std.ObjectFactory;
+import com.questdb.std.Os;
 import com.questdb.std.time.MillisecondClock;
 
 public class KQueueDispatcher<C extends Context> extends SynchronizedJob implements Dispatcher<C> {
@@ -79,7 +83,7 @@ public class KQueueDispatcher<C extends Context> extends SynchronizedJob impleme
             this.kqueue.listen(socketFd);
             LOG.debug().$("Listening socket: ").$(socketFd).$();
         } else {
-            throw new NetworkError("Failed to bind socket");
+            throw NetworkError.instance(Os.errno()).couldNotBindSocket();
         }
     }
 

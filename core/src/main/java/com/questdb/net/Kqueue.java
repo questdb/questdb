@@ -25,7 +25,7 @@ package com.questdb.net;
 
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
-import com.questdb.std.Net;
+import com.questdb.network.Net;
 import com.questdb.std.Unsafe;
 
 import java.io.Closeable;

@@ -23,11 +23,11 @@
 
 package com.questdb.cutlass.http;
 
-import com.questdb.cutlass.http.io.IOContext;
-import com.questdb.cutlass.http.io.IODispatcher;
-import com.questdb.cutlass.http.io.IOOperation;
+import com.questdb.network.IOContext;
+import com.questdb.network.IODispatcher;
+import com.questdb.network.IOOperation;
+import com.questdb.network.NetworkFacade;
 import com.questdb.std.Chars;
-import com.questdb.std.NetworkFacade;
 import com.questdb.std.ObjectPool;
 import com.questdb.std.Unsafe;
 import com.questdb.std.str.DirectByteCharSequence;
@@ -70,9 +70,12 @@ public class HttpConnectionContext implements IOContext {
         return fd;
     }
 
+    public HttpHeaders getHeaders() {
+        return headerParser;
+    }
+
     public void handleClientOperation(int operation, NetworkFacade nf, IODispatcher<HttpConnectionContext> dispatcher, HttpRequestProcessorSelector selector) {
         switch (operation) {
-            case IOOperation.CONNECT:
             case IOOperation.READ:
                 handleClientRecv(nf, dispatcher, selector);
                 break;
@@ -117,13 +120,14 @@ public class HttpConnectionContext implements IOContext {
 
             if (multipartRequest && !multipartProcessor) {
                 // bad request - multipart request for processor that doesn't expect multipart
+                headerParser.clear();
                 dispatcher.registerChannel(this, IOOperation.READ);
             } else if (!multipartRequest && multipartProcessor) {
                 // bad request - regular request for processor that expects multipart
                 dispatcher.registerChannel(this, IOOperation.READ);
             } else if (multipartProcessor) {
 
-                processor.onHeadersReady(this);
+                processor.onHeadersReady(this, dispatcher);
                 HttpMultipartContentListener multipartListener = (HttpMultipartContentListener) processor;
 
                 long bufferEnd = recvBuffer + read;
@@ -145,7 +149,9 @@ public class HttpConnectionContext implements IOContext {
                     } while (!multipartContentParser.parse(recvBuffer, recvBuffer + read, multipartListener));
                 }
             } else {
-                processor.onHeadersReady(this);
+                processor.onHeadersReady(this, dispatcher);
+                // todo: processor will decide what to do next
+                headerParser.clear();
             }
         } catch (HttpException e) {
             e.printStackTrace();

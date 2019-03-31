@@ -181,7 +181,7 @@ public final class Files {
         return fd;
     }
 
-    static void bumpFileCount() {
+    public static void bumpFileCount() {
         OPEN_FILE_COUNT.incrementAndGet();
     }
 

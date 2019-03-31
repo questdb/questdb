@@ -21,14 +21,13 @@
  *
  ******************************************************************************/
 
-package com.questdb.std.ex;
+package com.questdb.network;
 
-public class NetworkError extends Error {
-    public NetworkError(String message) {
-        super(message);
-    }
+import java.io.Closeable;
 
-    public NetworkError(Throwable cause) {
-        super(cause);
-    }
+public interface IOContext extends Closeable {
+    @Override
+    void close();
+
+    long getFd();
 }

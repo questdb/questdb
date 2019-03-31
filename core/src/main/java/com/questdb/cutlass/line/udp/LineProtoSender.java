@@ -26,9 +26,8 @@ package com.questdb.cutlass.line.udp;
 import com.questdb.cairo.CairoException;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
+import com.questdb.network.NetworkFacade;
 import com.questdb.std.Chars;
-import com.questdb.std.NetworkFacade;
-import com.questdb.std.Os;
 import com.questdb.std.Unsafe;
 import com.questdb.std.str.AbstractCharSink;
 import com.questdb.std.str.CharSink;
@@ -85,7 +84,7 @@ public class LineProtoSender extends AbstractCharSink implements Closeable {
     @Override
     public void close() {
         if (nf.close(fd) != 0) {
-            LOG.error().$("failed to close UDP socket [fd=").$(fd).$(", errno=").$(Os.errno()).$(']').$();
+            LOG.error().$("failed to close UDP socket [fd=").$(fd).$(", errno=").$(nf.errno()).$(']').$();
         }
         nf.freeSockAddr(sockaddr);
         Unsafe.free(bufA, capacity);

@@ -46,6 +46,6 @@ class DefaultHttpServerConfiguration implements HttpServerConfiguration {
 
     @Override
     public int getConnectionWrapperObjPoolSize() {
-        return 16;
+        return 128;
     }
 }

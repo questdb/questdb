@@ -26,8 +26,14 @@ package com.questdb.net;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.mp.*;
-import com.questdb.std.*;
-import com.questdb.std.ex.NetworkError;
+import com.questdb.network.Epoll;
+import com.questdb.network.EpollAccessor;
+import com.questdb.network.Net;
+import com.questdb.network.NetworkError;
+import com.questdb.std.LongMatrix;
+import com.questdb.std.Misc;
+import com.questdb.std.ObjectFactory;
+import com.questdb.std.Os;
 import com.questdb.std.time.MillisecondClock;
 
 public class EpollDispatcher<C extends Context> extends SynchronizedJob implements Dispatcher<C> {
@@ -80,7 +86,7 @@ public class EpollDispatcher<C extends Context> extends SynchronizedJob implemen
             this.epoll.listen(socketFd);
             LOG.debug().$("Listening socket: ").$(socketFd).$();
         } else {
-            throw new NetworkError("Failed to find socket");
+            throw NetworkError.instance(Os.errno()).couldNotBindSocket();
         }
     }
 
@@ -165,9 +171,9 @@ public class EpollDispatcher<C extends Context> extends SynchronizedJob implemen
     }
 
     private void enqueuePending(int watermark) {
-        for (int i = watermark, sz = pending.size(), offset = 0; i < sz; i++, offset += Epoll.SIZEOF_EVENT) {
+        for (int i = watermark, sz = pending.size(), offset = 0; i < sz; i++, offset += EpollAccessor.SIZEOF_EVENT) {
             epoll.setOffset(offset);
-            if (epoll.control((int) pending.get(i, M_FD), pending.get(i, M_ID), Epoll.EPOLL_CTL_ADD, Epoll.EPOLLIN) < 0) {
+            if (epoll.control((int) pending.get(i, M_FD), pending.get(i, M_ID), EpollAccessor.EPOLL_CTL_ADD, EpollAccessor.EPOLLIN) < 0) {
                 LOG.debug().$("epoll_ctl failure ").$(Os.errno()).$();
             } else {
                 LOG.debug().$("epoll_ctl ").$(pending.get(i, M_FD)).$(" as ").$(pending.get(i, M_ID)).$();
@@ -198,13 +204,13 @@ public class EpollDispatcher<C extends Context> extends SynchronizedJob implemen
             final long id = fdid++;
             LOG.debug().$("Registering ").$(fd).$(" status ").$(channelStatus).$(" as ").$(id).$();
             epoll.setOffset(offset);
-            offset += Epoll.SIZEOF_EVENT;
+            offset += EpollAccessor.SIZEOF_EVENT;
             switch (channelStatus) {
                 case ChannelStatus.READ:
-                    epoll.control(fd, id, Epoll.EPOLL_CTL_MOD, Epoll.EPOLLIN);
+                    epoll.control(fd, id, EpollAccessor.EPOLL_CTL_MOD, EpollAccessor.EPOLLIN);
                     break;
                 case ChannelStatus.WRITE:
-                    epoll.control(fd, id, Epoll.EPOLL_CTL_MOD, Epoll.EPOLLOUT);
+                    epoll.control(fd, id, EpollAccessor.EPOLL_CTL_MOD, EpollAccessor.EPOLLOUT);
                     break;
                 case ChannelStatus.DISCONNECTED:
                     disconnect(context, DisconnectReason.SILLY);
@@ -237,7 +243,7 @@ public class EpollDispatcher<C extends Context> extends SynchronizedJob implemen
             // check all activated FDs
             for (int i = 0; i < n; i++) {
                 epoll.setOffset(offset);
-                offset += Epoll.SIZEOF_EVENT;
+                offset += EpollAccessor.SIZEOF_EVENT;
                 long id = epoll.getData();
                 // this is server socket, accept if there aren't too many already
                 if (id == 0) {
@@ -256,7 +262,7 @@ public class EpollDispatcher<C extends Context> extends SynchronizedJob implemen
                     long cursor = ioSequence.nextBully();
                     Event<C> evt = ioQueue.get(cursor);
                     evt.context = context;
-                    evt.channelStatus = (epoll.getEvent() & Epoll.EPOLLIN) > 0 ? ChannelStatus.READ : ChannelStatus.WRITE;
+                    evt.channelStatus = (epoll.getEvent() & EpollAccessor.EPOLLIN) > 0 ? ChannelStatus.READ : ChannelStatus.WRITE;
                     ioSequence.done(cursor);
                     LOG.debug().$("Queuing ").$(id).$(" on ").$(context.getFd()).$(", status: ").$(evt.channelStatus).$();
                     pending.deleteRow(row);

@@ -23,6 +23,7 @@
 
 package com.questdb.std;
 
+import com.questdb.network.Net;
 import com.questdb.std.ex.*;
 import sun.nio.ch.DirectBuffer;
 

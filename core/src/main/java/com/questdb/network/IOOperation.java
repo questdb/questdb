@@ -21,10 +21,9 @@
  *
  ******************************************************************************/
 
-package com.questdb.cutlass.http.io;
+package com.questdb.network;
 
 public final class IOOperation {
-    public static final int CONNECT = 0;
     public static final int READ = 1;
     public static final int DISCONNECT = 3;
     public static final int WRITE = 4;

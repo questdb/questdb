@@ -23,17 +23,14 @@
 
 package com.questdb.std;
 
+import com.questdb.network.Net;
+
 public class NetFacadeImpl implements NetFacade {
     public static final NetFacadeImpl INSTANCE = new NetFacadeImpl();
 
     @Override
     public boolean bindTcp(long fd, CharSequence IPv4Address, int port) {
         return Net.bindTcp(fd, IPv4Address, port);
-    }
-
-    @Override
-    public boolean bindUdp(long fd, CharSequence IPv4Address, int port) {
-        return Net.bindUdp(fd, IPv4Address, port);
     }
 
     @Override
@@ -84,5 +81,10 @@ public class NetFacadeImpl implements NetFacade {
     @Override
     public long socketUdp() {
         return Net.socketUdp();
+    }
+
+    @Override
+    public boolean bindUdp(long fd, int port) {
+        return Net.bindUdp(fd, port);
     }
 }

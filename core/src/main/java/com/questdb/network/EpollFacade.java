@@ -21,23 +21,14 @@
  *
  ******************************************************************************/
 
-package com.questdb.cutlass.http.io;
+package com.questdb.network;
 
-public final class DisconnectReason {
-    public static final int PEER = 1;
-    public static final int IDLE = 2;
-    public static final int SILLY = 3;
+public interface EpollFacade {
+    long epollCreate();
 
-    public static CharSequence nameOf(int disconnectReason) {
-        switch (disconnectReason) {
-            case PEER:
-                return "PEER";
-            case IDLE:
-                return "IDLE";
-            case SILLY:
-                return "SILLY";
-            default:
-                return "UNKNOWN";
-        }
-    }
+    int epollCtl(long epfd, int op, long fd, long eventPtr);
+
+    int epollWait(long epfd, long eventPtr, int eventCount, int timeout);
+
+    NetworkFacade getNetworkFacade();
 }

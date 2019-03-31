@@ -25,8 +25,8 @@ package com.questdb.log;
 
 import com.questdb.mp.RingQueue;
 import com.questdb.mp.Sequence;
+import com.questdb.network.Net;
 import com.questdb.std.Misc;
-import com.questdb.std.Net;
 import com.questdb.std.Sinkable;
 import com.questdb.std.microtime.MicrosecondClock;
 import com.questdb.std.str.CharSink;

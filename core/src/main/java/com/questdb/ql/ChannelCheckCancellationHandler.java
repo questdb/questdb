@@ -26,7 +26,7 @@ package com.questdb.ql;
 import com.questdb.ex.DisconnectedChannelRuntimeException;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
-import com.questdb.std.Net;
+import com.questdb.network.Net;
 import com.questdb.std.Numbers;
 
 public class ChannelCheckCancellationHandler implements CancellationHandler {

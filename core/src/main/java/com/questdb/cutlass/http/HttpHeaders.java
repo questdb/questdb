@@ -21,9 +21,33 @@
  *
  ******************************************************************************/
 
-package com.questdb.cutlass.http.io;
+package com.questdb.cutlass.http;
 
-@FunctionalInterface
-public interface IOContextFactory<C extends IOContext> {
-    C newInstance(long fd);
+import com.questdb.std.ObjList;
+import com.questdb.std.str.DirectByteCharSequence;
+
+public interface HttpHeaders {
+    CharSequence getBoundary();
+
+    DirectByteCharSequence getCharset();
+
+    CharSequence getContentDisposition();
+
+    CharSequence getContentDispositionFilename();
+
+    CharSequence getContentDispositionName();
+
+    CharSequence getContentType();
+
+    DirectByteCharSequence getHeader(CharSequence name);
+
+    ObjList<CharSequence> getHeaderNames();
+
+    CharSequence getMethod();
+
+    CharSequence getMethodLine();
+
+    CharSequence getUrl();
+
+    CharSequence getUrlParam(CharSequence name);
 }

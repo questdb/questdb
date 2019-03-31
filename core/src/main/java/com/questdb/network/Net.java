@@ -21,9 +21,9 @@
  *
  ******************************************************************************/
 
-package com.questdb.std;
+package com.questdb.network;
 
-import com.questdb.std.ex.NetworkError;
+import com.questdb.std.*;
 import com.questdb.std.str.CharSink;
 
 public final class Net {
@@ -55,7 +55,13 @@ public final class Net {
      */
     public static native int abortAccept(long fd);
 
-    public native static long accept(long fd);
+    public static long accept(long fd) {
+        long acceptedFd = accept0(fd);
+        if (acceptedFd != -1L) {
+            Files.bumpFileCount();
+        }
+        return acceptedFd;
+    }
 
     public static void appendIP4(CharSink sink, long ip) {
         sink.put((ip >> 24) & 0xff).put('.')
@@ -70,14 +76,10 @@ public final class Net {
         return bindTcp(fd, parseIPv4(ipv4address), port);
     }
 
-    public static boolean bindUdp(long fd, CharSequence ipv4address, int port) {
-        return bindUdp(fd, parseIPv4(ipv4address), port);
-    }
-
-    public native static boolean bindUdp(long fd, int ipv4address, int port);
+    public native static boolean bindUdp(long fd, int port);
 
     public static int close(long fd) {
-        return Files.close0(fd);
+        return Files.close(fd);
     }
 
     public native static int configureNoLinger(long fd);
@@ -101,6 +103,12 @@ public final class Net {
     public native static int getPeerIP(long fd);
 
     public native static int getPeerPort(long fd);
+
+    public native static int getRcvBuf(long fd);
+
+    public native static int getSndBuf(long fd);
+
+    public native static int getTcpNoDelay(long fd);
 
     public static native boolean isDead(long fd);
 
@@ -128,12 +136,12 @@ public final class Net {
             }
 
             if (count != 3) {
-                throw new NetworkError("Invalid ip address: " + ipv4Address);
+                throw NetworkError.instance(0, "invalid address [").put(ipv4Address);
             }
 
             return (ip << 8) | Numbers.parseInt(ipv4Address, lo, ipv4Address.length());
         } catch (NumericException e) {
-            throw new NetworkError("Invalid ip address: " + ipv4Address);
+            throw NetworkError.instance(0, "invalid address [").put(ipv4Address);
         }
     }
 
@@ -145,25 +153,19 @@ public final class Net {
 
     public native static int sendTo(long fd, long ptr, int len, long sockaddr);
 
-    public native static int getRcvBuf(long fd);
-
-    public native static int setRcvBuf(long fd, int size);
-
-    public native static int getSndBuf(long fd);
-
-    public native static int getTcpNoDelay(long fd);
-
-    public native static int setSndBuf(long fd, int size);
-
-    public native static int setTcpNoDelay(long fd, boolean noDelay);
-
     public native static int setMulticastInterface(long fd, int ipv4address);
 
     public native static int setMulticastLoop(long fd, boolean loop);
 
+    public native static int setRcvBuf(long fd, int size);
+
     public native static int setReuseAddress(long fd);
 
     public native static int setReusePort(long fd);
+
+    public native static int setSndBuf(long fd, int size);
+
+    public native static int setTcpNoDelay(long fd, boolean noDelay);
 
     public static long sockaddr(CharSequence ipv4address, int port) {
         return sockaddr(parseIPv4(ipv4address), port);
@@ -171,7 +173,13 @@ public final class Net {
 
     public native static long sockaddr(int ipv4address, int port);
 
-    public native static long socketTcp(boolean blocking);
+    public static long socketTcp(boolean blocking) {
+        final long fd = socketTcp0(blocking);
+        if (fd != -1L) {
+            Files.bumpFileCount();
+        }
+        return fd;
+    }
 
     public static long socketUdp() {
         long fd = socketUdp0();
@@ -180,6 +188,10 @@ public final class Net {
         }
         return fd;
     }
+
+    private native static long accept0(long fd);
+
+    private native static long socketTcp0(boolean blocking);
 
     private native static long socketUdp0();
 

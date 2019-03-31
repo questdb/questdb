@@ -21,10 +21,8 @@
  *
  ******************************************************************************/
 
-package com.questdb.cutlass.http.io;
+package com.questdb.network;
 
-import com.questdb.std.NetworkFacade;
-import com.questdb.std.NetworkFacadeImpl;
 import com.questdb.std.time.MillisecondClock;
 import com.questdb.std.time.MillisecondClockImpl;
 
@@ -78,5 +76,15 @@ public class DefaultIODispatcherConfiguration implements IODispatcherConfigurati
     @Override
     public NetworkFacade getNetworkFacade() {
         return NetworkFacadeImpl.INSTANCE;
+    }
+
+    @Override
+    public EpollFacade getEpollFacade() {
+        return EpollFacadeImpl.INSTANCE;
+    }
+
+    @Override
+    public int getInitialBias() {
+        return IODispatcherConfiguration.BIAS_READ;
     }
 }

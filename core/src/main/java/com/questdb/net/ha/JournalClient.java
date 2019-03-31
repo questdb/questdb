@@ -92,7 +92,7 @@ public class JournalClient {
     private final CredentialProvider credentialProvider;
     private final RingQueue<SubscriptionHolder> subscriptionQueue = new RingQueue<>(SubscriptionHolder.FACTORY, 64);
     private final Sequence subscriptionPubSequence = new MPSequence(subscriptionQueue.getCapacity());
-    private final Sequence subscriptionSubSequence = new SCSequence();
+    private final SCSequence subscriptionSubSequence = new SCSequence();
     private final CountDownLatch haltLatch = new CountDownLatch(1);
     private final Callback callback;
     private ByteChannel channel;

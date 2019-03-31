@@ -21,7 +21,7 @@
  *
  ******************************************************************************/
 
-package com.questdb.cutlass.http.io;
+package com.questdb.network;
 
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
@@ -29,8 +29,9 @@ import com.questdb.mp.*;
 import com.questdb.net.ChannelStatus;
 import com.questdb.net.DisconnectReason;
 import com.questdb.net.Kqueue;
-import com.questdb.std.*;
-import com.questdb.std.ex.NetworkError;
+import com.questdb.std.LongMatrix;
+import com.questdb.std.Misc;
+import com.questdb.std.Os;
 import com.questdb.std.time.MillisecondClock;
 
 public class IODispatcherOsx<C extends IOContext> extends SynchronizedJob implements IODispatcher<C> {
@@ -87,7 +88,7 @@ public class IODispatcherOsx<C extends IOContext> extends SynchronizedJob implem
                     .$(configuration.getBindIPv4Address()).$(':').$(configuration.getBindPort())
                     .$(" [fd=").$(serverFd).$(']').$();
         } else {
-            throw new NetworkError("Failed to bind socket");
+            throw NetworkError.instance(nf.errno()).couldNotBindSocket();
         }
     }
 
@@ -124,7 +125,7 @@ public class IODispatcherOsx<C extends IOContext> extends SynchronizedJob implem
         IOEvent<C> evt = interestQueue.get(cursor);
         evt.context = context;
         evt.operation = operation;
-        LOG.debug().$("Re-queuing ").$(context.getFd()).$();
+        LOG.debug().$("queuing [fd=").$(context.getFd()).$(", op=").$(operation).$(']').$();
         interestPubSeq.done(cursor);
     }
 
@@ -165,9 +166,20 @@ public class IODispatcherOsx<C extends IOContext> extends SynchronizedJob implem
 
             LOG.info().$("connected [ip=").$ip(nf.getPeerIP(fd)).$(", fd=").$(fd).$(']').$();
             connectionCount++;
-            publishOperation(IOOperation.CONNECT, ioContextFactory.newInstance(fd));
+            addPending(fd, clock.getTicks());
         }
     }
+
+    private void addPending(long _fd, long timestamp) {
+        // append to pending
+        // all rows below watermark will be registered with kqueue
+        int r = pending.addRow();
+        LOG.debug().$(" Matrix row ").$(r).$(" for ").$(_fd).$();
+        pending.set(r, 0, timestamp);
+        pending.set(r, 1, _fd);
+        pending.set(r, ioContextFactory.newInstance(_fd));
+    }
+
 
     private void closeFd(long fd) {
         if (nf.close(fd) != 0) {

@@ -21,31 +21,35 @@
  *
  ******************************************************************************/
 
-package com.questdb.std;
+package com.questdb.network;
 
-public interface NetFacade {
-    boolean bindTcp(long fd, CharSequence IPv4Address, int port);
+import com.questdb.std.time.MillisecondClock;
 
-    boolean bindUdp(long fd, int port);
+public interface IODispatcherConfiguration {
+    int BIAS_READ = 1;
+    int BIAS_WRITE = 2;
 
-    int close(long fd);
+    int getActiveConnectionLimit();
 
-    void freeMsgHeaders(long msgVec);
+    CharSequence getBindIPv4Address();
 
-    long getMMsgBuf(long msg);
+    int getBindPort();
 
-    long getMMsgBufLen(long msg);
+    MillisecondClock getClock();
 
-    boolean join(long fd, CharSequence bindIPv4Address, CharSequence groupIPv4Address);
+    int getEventCapacity();
 
-    long msgHeaders(int msgBufferSize, int msgCount);
+    int getIOQueueCapacity();
 
-    int recv(long fd, long buf, int bufLen);
+    long getIdleConnectionTimeout();
 
-    @SuppressWarnings("SpellCheckingInspection")
-    int recvmmsg(long fd, long msgVec, int msgCount);
+    int getInterestQueueCapacity();
 
-    int setRcvBuf(long fd, int size);
+    int getListenBacklog();
 
-    long socketUdp();
+    NetworkFacade getNetworkFacade();
+
+    EpollFacade getEpollFacade();
+
+    int getInitialBias();
 }

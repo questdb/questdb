@@ -21,29 +21,26 @@
  *
  ******************************************************************************/
 
-package com.questdb.cutlass.http.io;
+package com.questdb.network;
 
-import com.questdb.std.NetworkFacade;
-import com.questdb.std.time.MillisecondClock;
+import com.questdb.std.Os;
 
-public interface IODispatcherConfiguration {
-    int getActiveConnectionLimit();
+public class IODispatchers {
 
-    CharSequence getBindIPv4Address();
+    private IODispatchers() {
+    }
 
-    int getBindPort();
-
-    MillisecondClock getClock();
-
-    int getEventCapacity();
-
-    int getIOQueueCapacity();
-
-    long getIdleConnectionTimeout();
-
-    int getInterestQueueCapacity();
-
-    int getListenBacklog();
-
-    NetworkFacade getNetworkFacade();
+    public static <C extends IOContext> IODispatcher<C> create(
+            IODispatcherConfiguration configuration,
+            IOContextFactory<C> ioContextFactory
+    ) {
+        switch (Os.type) {
+            case Os.LINUX:
+                return new IODispatcherLinux<>(configuration, ioContextFactory);
+            case Os.OSX:
+                return new IODispatcherOsx<>(configuration, ioContextFactory);
+            default:
+                throw new RuntimeException();
+        }
+    }
 }

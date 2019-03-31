@@ -32,8 +32,8 @@ import com.questdb.cutlass.line.LineProtoLexer;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.mp.Job;
+import com.questdb.network.Net;
 import com.questdb.std.Misc;
-import com.questdb.std.Net;
 import com.questdb.std.NetFacade;
 import com.questdb.std.Os;
 
@@ -63,7 +63,7 @@ public class LinuxLineProtoReceiver implements Closeable, Job {
         }
 
         try {
-            if (!nf.bindUdp(fd, receiverCfg.getBindIPv4Address(), receiverCfg.getPort())) {
+            if (!nf.bindUdp(fd, receiverCfg.getPort())) {
                 int errno = Os.errno();
                 LOG.error().$("cannot bind socket [errno=").$(errno).$(", fd=").$(fd).$(", bind=").$(receiverCfg.getBindIPv4Address()).$(", port=").$(receiverCfg.getPort()).$(']').$();
                 throw CairoException.instance(Os.errno()).put("Cannot bind to ").put(receiverCfg.getBindIPv4Address()).put(':').put(receiverCfg.getPort());

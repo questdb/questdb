@@ -28,7 +28,7 @@ import com.questdb.std.str.DirectByteCharSequence;
 
 import java.io.Closeable;
 
-public class HttpHeaderParser implements Mutable, Closeable {
+public class HttpHeaderParser implements Mutable, Closeable, HttpHeaders {
     private static final String CONTENT_DISPOSITION_HEADER = "Content-Disposition";
     private static final String CONTENT_TYPE_HEADER = "Content-Type";
     private final ObjectPool<DirectByteCharSequence> pool;
@@ -93,46 +93,62 @@ public class HttpHeaderParser implements Mutable, Closeable {
         }
     }
 
+    @Override
     public CharSequence getBoundary() {
         return boundary;
     }
 
+    @Override
     public DirectByteCharSequence getCharset() {
         return charset;
     }
 
+    @Override
     public CharSequence getContentDisposition() {
         return contentDisposition;
     }
 
+    @Override
     public CharSequence getContentDispositionFilename() {
         return contentDispositionFilename;
     }
 
+    @Override
     public CharSequence getContentDispositionName() {
         return contentDispositionName;
     }
 
+    @Override
     public CharSequence getContentType() {
         return contentType;
     }
 
+    @Override
     public DirectByteCharSequence getHeader(CharSequence name) {
         return headers.get(name);
     }
 
+    @Override
+    public ObjList<CharSequence> getHeaderNames() {
+        return headers.keys();
+    }
+
+    @Override
     public CharSequence getMethod() {
         return method;
     }
 
+    @Override
     public CharSequence getMethodLine() {
         return methodLine;
     }
 
+    @Override
     public CharSequence getUrl() {
         return url;
     }
 
+    @Override
     public CharSequence getUrlParam(CharSequence name) {
         return urlParams.get(name);
     }

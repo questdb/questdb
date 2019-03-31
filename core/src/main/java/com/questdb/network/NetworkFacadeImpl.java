@@ -21,7 +21,10 @@
  *
  ******************************************************************************/
 
-package com.questdb.std;
+package com.questdb.network;
+
+import com.questdb.log.Log;
+import com.questdb.std.Os;
 
 public class NetworkFacadeImpl implements NetworkFacade {
     public static final NetworkFacade INSTANCE = new NetworkFacadeImpl();
@@ -29,6 +32,13 @@ public class NetworkFacadeImpl implements NetworkFacade {
     @Override
     public void abortAccept(long fd) {
         Net.abortAccept(fd);
+    }
+
+    @Override
+    public void close(long fd, Log logger) {
+        if (close(fd) != 0) {
+            logger.error().$("could not close [fd=").$(fd).$(", errno=").$(errno()).$(']').$();
+        }
     }
 
     @Override
@@ -118,7 +128,7 @@ public class NetworkFacadeImpl implements NetworkFacade {
 
     @Override
     public boolean bindUdp(long fd, int port) {
-        return Net.bindUdp(fd, 0, port);
+        return Net.bindUdp(fd, port);
     }
 
     @Override
