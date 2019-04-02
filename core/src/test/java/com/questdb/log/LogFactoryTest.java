@@ -287,7 +287,7 @@ public class LogFactoryTest {
                 }
 
                 // logger is async, we need to let it finish writing
-                Thread.sleep(2000);
+                Thread.sleep(4000);
 
             } finally {
                 factory.haltThread();
@@ -295,8 +295,6 @@ public class LogFactoryTest {
         }
         assertFileLength(expectedLogFile);
         assertFileLength(expectedLogFile + ".1");
-        assertFileLength(expectedLogFile + ".2");
-        assertFileLength(expectedLogFile + ".3");
     }
 
     @Test
