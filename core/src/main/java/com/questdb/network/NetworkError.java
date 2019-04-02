@@ -62,6 +62,11 @@ public class NetworkError extends Error implements Sinkable {
         return message.toString();
     }
 
+    public NetworkError ip(int ipv4) {
+        Net.appendIP4(message, ipv4);
+        return this;
+    }
+
     public NetworkError put(char c) {
         message.put(c);
         return this;

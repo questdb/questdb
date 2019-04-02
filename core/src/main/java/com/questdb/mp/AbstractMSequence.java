@@ -60,13 +60,6 @@ abstract class AbstractMSequence extends AbstractSSequence {
         barrier.getWaitStrategy().signal();
     }
 
-    @Override
-    public void reset() {
-        value = -1;
-        Arrays.fill(flags, -1);
-        setCacheFenced(-1);
-    }
-
     private boolean available0(long lo) {
         return Unsafe.getUnsafe().getIntVolatile(flags, (((int) (lo & mask)) << Unsafe.INT_SCALE) + Unsafe.INT_OFFSET) == (int) (lo >>> shift);
     }

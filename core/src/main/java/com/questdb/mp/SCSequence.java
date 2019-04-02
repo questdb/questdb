@@ -63,18 +63,12 @@ public class SCSequence extends AbstractSSequence {
 
     @Override
     public long next() {
-        long next = getValue() + 1;
-        if (next <= cache) {
-            return next;
+        long next = getValue();
+        if (next < cache) {
+            return next + 1;
         }
 
-        return next0(next);
-    }
-
-    @Override
-    public void reset() {
-        this.value = -1;
-        cache = -1;
+        return next0(next + 1);
     }
 
     private long next0(long next) {

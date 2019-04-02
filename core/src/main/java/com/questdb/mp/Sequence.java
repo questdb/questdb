@@ -33,7 +33,5 @@ public interface Sequence extends Barrier {
 
     long nextBully();
 
-    void reset();
-
     long waitForNext();
 }

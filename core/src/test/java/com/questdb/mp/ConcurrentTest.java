@@ -5,7 +5,7 @@
  *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
  *   \__\_\\__,_|\___||___/\__|____/|____/
  *
- * Copyright (C) 2014-2018 Appsicle
+ * Copyright (C) 2014-2019 Appsicle
  *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU Affero General Public License, version 3,
@@ -25,10 +25,12 @@ package com.questdb.mp;
 
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
+import com.questdb.std.Rnd;
 import org.junit.Assert;
 import org.junit.Test;
 
 import java.util.Arrays;
+import java.util.concurrent.BrokenBarrierException;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.locks.LockSupport;
@@ -156,6 +158,54 @@ public class ConcurrentTest {
         Arrays.sort(buf);
         for (i = 0; i < buf.length; i++) {
             Assert.assertEquals(i, buf[i]);
+        }
+    }
+
+    @Test
+    public void testOneToOneBatched() throws BrokenBarrierException, InterruptedException {
+        final int cycle = 1024;
+        final int size = 1024 * cycle;
+        final RingQueue<Event> queue = new RingQueue<>(Event.FACTORY, cycle);
+        final SPSequence pubSeq = new SPSequence(cycle);
+        final SCSequence subSeq = new SCSequence();
+        pubSeq.then(subSeq).then(pubSeq);
+
+        CyclicBarrier barrier = new CyclicBarrier(2);
+
+        new Thread(() -> {
+            try {
+                barrier.await();
+                Rnd rnd = new Rnd();
+                for (int i = 0; i < size; ) {
+                    long cursor = pubSeq.next();
+                    if (cursor > -1) {
+                        long available = pubSeq.available();
+                        while (cursor < available && i < size) {
+                            Event event = queue.get(cursor++);
+                            event.value = rnd.nextInt();
+                            i++;
+                        }
+                        pubSeq.done(cursor - 1);
+                    }
+                }
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+        }).start();
+
+        barrier.await();
+        int consumed = 0;
+        final Rnd rnd2 = new Rnd();
+        while (consumed < size) {
+            long cursor = subSeq.next();
+            if (cursor > -1) {
+                long available = subSeq.available();
+                while (cursor < available) {
+                    Assert.assertEquals(rnd2.nextInt(), queue.get(cursor++).value);
+                    consumed++;
+                }
+                subSeq.done(available - 1);
+            }
         }
     }
 

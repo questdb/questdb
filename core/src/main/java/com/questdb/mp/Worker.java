@@ -23,7 +23,10 @@
 
 package com.questdb.mp;
 
+import com.questdb.log.Log;
+import com.questdb.log.LogFactory;
 import com.questdb.std.ObjHashSet;
+import com.questdb.std.Os;
 import com.questdb.std.Unsafe;
 
 import java.util.concurrent.CountDownLatch;
@@ -31,21 +34,28 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.LockSupport;
 
 public class Worker extends Thread {
+    private static final Log LOG = LogFactory.getLog(Worker.class);
+
     private final static long RUNNING_OFFSET = Unsafe.getFieldOffset(Worker.class, "running");
     private static final long YIELD_THRESHOLD = 100000L;
     private static final long SLEEP_THRESHOLD = 10000000L;
     private final static AtomicInteger COUNTER = new AtomicInteger();
     private final ObjHashSet<? extends Job> jobs;
     private final CountDownLatch haltLatch;
+    private final int affinity;
     @SuppressWarnings("FieldCanBeLocal")
     private volatile int running = 0;
-
     private volatile int fence;
 
     public Worker(ObjHashSet<? extends Job> jobs, CountDownLatch haltLatch) {
+        this(jobs, haltLatch, -1);
+    }
+
+    public Worker(ObjHashSet<? extends Job> jobs, CountDownLatch haltLatch, int affinity) {
         this.jobs = jobs;
         this.haltLatch = haltLatch;
         this.setName("questdb-worker-" + COUNTER.incrementAndGet());
+        this.affinity = affinity;
     }
 
     public void halt() {
@@ -56,6 +66,15 @@ public class Worker extends Thread {
     public void run() {
         if (Unsafe.getUnsafe().compareAndSwapInt(this, RUNNING_OFFSET, 0, 1)) {
             setupJobs();
+            if (affinity > -1) {
+                if (Os.setCurrentThreadAffinity(this.affinity) == 0) {
+                    LOG.info().$("affinity set [cpu=").$(affinity).$(", name=").$(getName()).$(']').$();
+                } else {
+                    LOG.error().$("could not set affinity [cpu=").$(affinity).$(", name=").$(getName()).$(']').$();
+                }
+            } else {
+                LOG.info().$("os scheduled [name=").$(getName()).$(']').$();
+            }
             int n = jobs.size();
             long uselessCounter = 0;
             while (running == 1) {

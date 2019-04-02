@@ -35,6 +35,10 @@ public class SPSequence extends AbstractSSequence {
         this(cycle, NullWaitStrategy.INSTANCE);
     }
 
+    public long available() {
+        return cache + cycle + 1;
+    }
+
     @Override
     public long availableIndex(long lo) {
         return value;
@@ -56,10 +60,5 @@ public class SPSequence extends AbstractSSequence {
         long next = getValue() + 1;
         long lo = next - cycle;
         return lo > cache && lo > (cache = barrier.availableIndex(lo)) ? -1 : next;
-    }
-
-    @Override
-    public void reset() {
-
     }
 }

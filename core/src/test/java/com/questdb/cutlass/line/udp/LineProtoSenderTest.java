@@ -23,6 +23,7 @@
 
 package com.questdb.cutlass.line.udp;
 
+import com.questdb.network.Net;
 import com.questdb.network.NetworkFacadeImpl;
 import org.junit.Test;
 
@@ -30,7 +31,7 @@ public class LineProtoSenderTest {
 
     @Test
     public void testSimple() {
-        try (LineProtoSender sender = new LineProtoSender(NetworkFacadeImpl.INSTANCE, "234.5.6.7", 4567, 110)) {
+        try (LineProtoSender sender = new LineProtoSender(NetworkFacadeImpl.INSTANCE, 0, Net.parseIPv4("234.5.6.7"), 4567, 110)) {
             sender.metric("weather").tag("location", "london").tag("by", "quest").field("temp", 3400).$(System.currentTimeMillis());
             sender.metric("weather2").tag("location", "london").tag("by", "quest").field("temp", 3400).$(System.currentTimeMillis());
             sender.metric("weather3").tag("location", "london").tag("by", "quest").field("temp", 3400).$(System.currentTimeMillis());

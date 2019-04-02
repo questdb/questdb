@@ -27,6 +27,7 @@ import com.questdb.cairo.*;
 import com.questdb.cairo.pool.WriterPool;
 import com.questdb.mp.Job;
 import com.questdb.mp.Worker;
+import com.questdb.network.Net;
 import com.questdb.network.NetworkFacadeImpl;
 import com.questdb.std.*;
 import com.questdb.std.str.StringSink;
@@ -187,13 +188,13 @@ public class LinuxLineProtoReceiverTest extends AbstractCairoTest {
 
         ReceiverConfiguration configuration = new TestReceiverConfiguration() {
             @Override
-            public NetFacade getNetFacade() {
-                return nf;
+            public int getReceiveBufferSize() {
+                return 2048;
             }
 
             @Override
-            public int getReceiveBufferSize() {
-                return 2048;
+            public NetFacade getNetFacade() {
+                return nf;
             }
         };
         assertReceive(configuration, factory);
@@ -263,7 +264,7 @@ public class LinuxLineProtoReceiverTest extends AbstractCairoTest {
                     Worker worker = new Worker(jobs, workerHaltLatch);
                     worker.start();
 
-                    try (LineProtoSender sender = new LineProtoSender(NetworkFacadeImpl.INSTANCE, receiverCfg.getBindIPv4Address(), receiverCfg.getPort(), 1400)) {
+                    try (LineProtoSender sender = new LineProtoSender(NetworkFacadeImpl.INSTANCE, 0, Net.parseIPv4(receiverCfg.getBindIPv4Address()), receiverCfg.getPort(), 1400)) {
                         for (int i = 0; i < 10; i++) {
                             sender.metric("tab").tag("colour", "blue").tag("shape", "square").field("size", 3.4, 4).$(100000000);
                         }
@@ -300,13 +301,13 @@ public class LinuxLineProtoReceiverTest extends AbstractCairoTest {
     private static class TestReceiverConfiguration implements ReceiverConfiguration {
 
         @Override
-        public int getCommitRate() {
-            return 1024 * 1024;
+        public CharSequence getBindIPv4Address() {
+            return "127.0.0.1";
         }
 
         @Override
-        public CharSequence getBindIPv4Address() {
-            return "127.0.0.1";
+        public int getCommitRate() {
+            return 1024 * 1024;
         }
 
         @Override
@@ -325,6 +326,11 @@ public class LinuxLineProtoReceiverTest extends AbstractCairoTest {
         }
 
         @Override
+        public NetFacade getNetFacade() {
+            return NetFacadeImpl.INSTANCE;
+        }
+
+        @Override
         public int getPort() {
             return 4567;
         }
@@ -332,11 +338,6 @@ public class LinuxLineProtoReceiverTest extends AbstractCairoTest {
         @Override
         public int getReceiveBufferSize() {
             return -1;
-        }
-
-        @Override
-        public NetFacade getNetFacade() {
-            return NetFacadeImpl.INSTANCE;
         }
     }
 }
