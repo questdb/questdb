@@ -28,9 +28,7 @@ import com.questdb.log.LogFactory;
 import com.questdb.mp.*;
 import com.questdb.net.ChannelStatus;
 import com.questdb.net.DisconnectReason;
-import com.questdb.net.Kqueue;
 import com.questdb.std.LongMatrix;
-import com.questdb.std.Misc;
 import com.questdb.std.Os;
 import com.questdb.std.time.MillisecondClock;
 
@@ -55,6 +53,7 @@ public class IODispatcherOsx<C extends IOContext> extends SynchronizedJob implem
     private final int capacity;
     private final IOContextFactory<C> ioContextFactory;
     private final NetworkFacade nf;
+    private final int initialBias;
     private int connectionCount = 0;
 
     public IODispatcherOsx(
@@ -76,13 +75,18 @@ public class IODispatcherOsx<C extends IOContext> extends SynchronizedJob implem
         this.timeout = configuration.getIdleConnectionTimeout();
         this.capacity = configuration.getEventCapacity();
         this.ioContextFactory = ioContextFactory;
+        this.initialBias = configuration.getInitialBias();
 
         // bind socket
         this.kqueue = new Kqueue(capacity);
         this.serverFd = nf.socketTcp(false);
         if (nf.bindTcp(this.serverFd, configuration.getBindIPv4Address(), configuration.getBindPort())) {
             nf.listen(this.serverFd, configuration.getListenBacklog());
-            this.kqueue.listen(serverFd);
+
+            if (this.kqueue.listen(serverFd) != 0) {
+                throw NetworkError.instance(nf.errno(), "could not kqueue.listen()");
+            }
+
             LOG.info()
                     .$("listening on ")
                     .$(configuration.getBindIPv4Address()).$(':').$(configuration.getBindPort())
@@ -95,23 +99,24 @@ public class IODispatcherOsx<C extends IOContext> extends SynchronizedJob implem
     @Override
     public void close() {
         this.kqueue.close();
-        if (nf.close(serverFd) != 0) {
-            LOG.error().$("failed to close socket [fd=").$(serverFd).$(", errno=").$(Os.errno()).$(']').$();
-        }
+        nf.close(serverFd, LOG);
+
         int n = pending.size();
         for (int i = 0; i < n; i++) {
-            Misc.free(pending.get(i));
+            disconnect(pending.get(i), DisconnectReason.SILLY);
         }
 
-        long cursor = interestSubSeq.next();
-        if (cursor > -1) {
-            long available = interestSubSeq.available();
-            while (cursor < available) {
-                final IOEvent<C> evt = interestQueue.get(cursor);
-                disconnect(evt.context, DisconnectReason.SILLY);
-                cursor++;
+        drainQueueAndDisconnect();
+
+        long cursor;
+        do {
+            cursor = ioEventSubSeq.next();
+            if (cursor > -1) {
+                disconnect(ioEventQueue.get(cursor).context, DisconnectReason.SILLY);
+                ioEventSubSeq.done(cursor);
             }
-        }
+        } while (cursor != -1);
+        LOG.info().$("closed").$();
     }
 
     @Override
@@ -153,14 +158,17 @@ public class IODispatcherOsx<C extends IOContext> extends SynchronizedJob implem
             }
 
             if (nf.configureNonBlocking(fd) < 0) {
-                LOG.error().$("could not configure non-blocking [fd=").$(fd).$(", errno=").$(Os.errno()).$(']').$();
-                closeFd(fd);
+                LOG.error().$("could not configure non-blocking [fd=").$(fd).$(", errno=").$(nf.errno()).$(']').$();
+                nf.close(fd, LOG);
                 return;
             }
 
-            if (connectionCount > activeConnectionLimit) {
-                LOG.info().$("connection limit exceeded [fd=").$(fd).$(']').$();
-                closeFd(fd);
+            if (connectionCount == activeConnectionLimit) {
+                LOG.info().$("connection limit exceeded [fd=").$(fd)
+                        .$(", connectionCount=").$(connectionCount)
+                        .$(", activeConnectionLimit=").$(activeConnectionLimit)
+                        .$(']').$();
+                nf.close(fd, LOG);
                 return;
             }
 
@@ -170,21 +178,14 @@ public class IODispatcherOsx<C extends IOContext> extends SynchronizedJob implem
         }
     }
 
-    private void addPending(long _fd, long timestamp) {
+    private void addPending(long fd, long timestamp) {
         // append to pending
         // all rows below watermark will be registered with kqueue
         int r = pending.addRow();
-        LOG.debug().$(" Matrix row ").$(r).$(" for ").$(_fd).$();
-        pending.set(r, 0, timestamp);
-        pending.set(r, 1, _fd);
-        pending.set(r, ioContextFactory.newInstance(_fd));
-    }
-
-
-    private void closeFd(long fd) {
-        if (nf.close(fd) != 0) {
-            LOG.error().$("could not close [fd=").$(fd).$(", errno=").$(nf.errno()).$(']').$();
-        }
+        LOG.debug().$("pending [row=").$(r).$(", fd=").$(fd).$(']').$();
+        pending.set(r, M_TIMESTAMP, timestamp);
+        pending.set(r, M_FD, fd);
+        pending.set(r, ioContextFactory.newInstance(fd));
     }
 
     private void disconnect(C context, int disconnectReason) {
@@ -194,26 +195,97 @@ public class IODispatcherOsx<C extends IOContext> extends SynchronizedJob implem
                 .$(", fd=").$(fd)
                 .$(", reason=").$(DisconnectReason.nameOf(disconnectReason))
                 .$(']').$();
-        closeFd(fd);
+        nf.close(fd, LOG);
         context.close();
         connectionCount--;
     }
 
+    private void drainQueueAndDisconnect() {
+        long cursor;
+        do {
+            cursor = interestSubSeq.next();
+            if (cursor > -1) {
+                final long available = interestSubSeq.available();
+                while (cursor < available) {
+                    disconnect(interestQueue.get(cursor++).context, DisconnectReason.SILLY);
+                }
+                interestSubSeq.done(available - 1);
+            }
+        } while (cursor != -1);
+    }
+
     private void enqueuePending(int watermark) {
         int index = 0;
-        for (int i = watermark, sz = pending.size(), offset = 0; i < sz; i++, offset += Kqueue.SIZEOF_KEVENT) {
+        for (int i = watermark, sz = pending.size(), offset = 0; i < sz; i++, offset += KqueueAccessor.SIZEOF_KEVENT) {
             kqueue.setOffset(offset);
-            kqueue.readFD((int) pending.get(i, M_FD), pending.get(i, M_TIMESTAMP));
-            LOG.debug().$("kqueued ").$(pending.get(i, M_FD)).$(" as ").$(index - 1).$();
+            if (initialBias == IODispatcherConfiguration.BIAS_READ) {
+                kqueue.readFD((int) pending.get(i, M_FD), pending.get(i, M_TIMESTAMP));
+            } else {
+                kqueue.writeFD((int) pending.get(i, M_FD), pending.get(i, M_TIMESTAMP));
+            }
             if (++index > capacity - 1) {
-                kqueue.register(index);
+                registerWithKQueue(index);
                 index = 0;
             }
         }
         if (index > 0) {
-            kqueue.register(index);
-            LOG.debug().$("Registered ").$(index).$();
+            registerWithKQueue(index);
         }
+    }
+
+    private boolean processRegistrations(long timestamp) {
+        long cursor;
+        boolean useful = false;
+        int count = 0;
+        int offset = 0;
+        while ((cursor = interestSubSeq.next()) > -1) {
+            useful = true;
+            IOEvent<C> evt = interestQueue.get(cursor);
+            C context = evt.context;
+            int operation = evt.operation;
+            interestSubSeq.done(cursor);
+
+            int fd = (int) context.getFd();
+            LOG.debug().$("Registering ").$(fd).$(" status ").$(operation).$();
+            kqueue.setOffset(offset);
+            switch (operation) {
+                case IOOperation.READ:
+                    offset += KqueueAccessor.SIZEOF_KEVENT;
+                    count++;
+                    kqueue.readFD(fd, timestamp);
+                    break;
+                case IOOperation.WRITE:
+                    offset += KqueueAccessor.SIZEOF_KEVENT;
+                    count++;
+                    kqueue.writeFD(fd, timestamp);
+                    break;
+                case IOOperation.DISCONNECT:
+                    disconnect(context, DisconnectReason.SILLY);
+                    continue;
+                case IOOperation.CLEANUP:
+                    disconnect(context, DisconnectReason.PEER);
+                    continue;
+                default:
+                    break;
+            }
+
+            int r = pending.addRow();
+            pending.set(r, M_TIMESTAMP, timestamp);
+            pending.set(r, M_FD, fd);
+            pending.set(r, context);
+
+
+            if (count > capacity - 1) {
+                registerWithKQueue(count);
+                count = 0;
+            }
+        }
+
+        if (count > 0) {
+            registerWithKQueue(count);
+        }
+
+        return useful;
     }
 
     private int findPending(int fd, long ts) {
@@ -237,66 +309,19 @@ public class IODispatcherOsx<C extends IOContext> extends SynchronizedJob implem
         pending.zapTop(count);
     }
 
-    private boolean processRegistrations(long timestamp) {
-        long cursor;
-        boolean useful = false;
-        int count = 0;
-        int offset = 0;
-        while ((cursor = interestSubSeq.next()) > -1) {
-            useful = true;
-            IOEvent<C> evt = interestQueue.get(cursor);
-            C context = evt.context;
-            int operation = evt.operation;
-            interestSubSeq.done(cursor);
-
-            int fd = (int) context.getFd();
-            LOG.debug().$("Registering ").$(fd).$(" status ").$(operation).$();
-            kqueue.setOffset(offset);
-            offset += Kqueue.SIZEOF_KEVENT;
-            count++;
-            switch (operation) {
-                case IOOperation.READ:
-                    kqueue.readFD(fd, timestamp);
-                    break;
-                case IOOperation.WRITE:
-                    kqueue.writeFD(fd, timestamp);
-                    break;
-                case IOOperation.DISCONNECT:
-                    disconnect(context, DisconnectReason.SILLY);
-                    continue;
-                case IOOperation.CLEANUP:
-                    disconnect(context, DisconnectReason.PEER);
-                    continue;
-                default:
-                    break;
-            }
-
-            int r = pending.addRow();
-            pending.set(r, M_TIMESTAMP, timestamp);
-            pending.set(r, M_FD, fd);
-            pending.set(r, context);
-
-
-            if (count > capacity - 1) {
-                kqueue.register(count);
-                count = 0;
-            }
-        }
-
-        if (count > 0) {
-            kqueue.register(count);
-        }
-
-        return useful;
-    }
-
     private void publishOperation(int operation, C context) {
         long cursor = ioEventPubSeq.nextBully();
         IOEvent<C> evt = ioEventQueue.get(cursor);
         evt.context = context;
         evt.operation = operation;
         ioEventPubSeq.done(cursor);
-        LOG.debug().$("fired [fd=").$(context.getFd()).$(", op=").$(evt.operation).$(']').$();
+        LOG.debug().$("fired [fd=").$(context.getFd()).$(", op=").$(evt.operation).$(", pos=").$(cursor).$(']').$();
+    }
+
+    private void registerWithKQueue(int eventCount) {
+        if (kqueue.register(eventCount) != 0) {
+            throw NetworkError.instance(Os.errno()).put("could not register [eventCount=").put(eventCount).put(']');
+        }
     }
 
     @Override
@@ -309,7 +334,7 @@ public class IODispatcherOsx<C extends IOContext> extends SynchronizedJob implem
             // check all activated FDs
             for (int i = 0; i < n; i++) {
                 kqueue.setOffset(offset);
-                offset += Kqueue.SIZEOF_KEVENT;
+                offset += KqueueAccessor.SIZEOF_KEVENT;
                 int fd = kqueue.getFd();
                 // this is server socket, accept if there aren't too many already
                 if (fd == serverFd) {
@@ -324,12 +349,8 @@ public class IODispatcherOsx<C extends IOContext> extends SynchronizedJob implem
                         continue;
                     }
 
-                    if (kqueue.getFlags() == Kqueue.EV_EOF) {
-                        disconnect(pending.get(row), DisconnectReason.PEER);
-                    } else {
-                        publishOperation(kqueue.getFilter() == Kqueue.EVFILT_READ ? ChannelStatus.READ : ChannelStatus.WRITE, pending.get(row));
-                        LOG.debug().$("Queuing ").$(kqueue.getFilter()).$(" on ").$(fd).$();
-                    }
+                    publishOperation(kqueue.getFilter() == KqueueAccessor.EVFILT_READ ? ChannelStatus.READ : ChannelStatus.WRITE, pending.get(row));
+                    LOG.debug().$("Queuing ").$(kqueue.getFilter()).$(" on ").$(fd).$();
                     pending.deleteRow(row);
                     watermark--;
                 }

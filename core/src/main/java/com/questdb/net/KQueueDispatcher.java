@@ -26,6 +26,8 @@ package com.questdb.net;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.mp.*;
+import com.questdb.network.Kqueue;
+import com.questdb.network.KqueueAccessor;
 import com.questdb.network.Net;
 import com.questdb.network.NetworkError;
 import com.questdb.std.LongMatrix;
@@ -165,7 +167,7 @@ public class KQueueDispatcher<C extends Context> extends SynchronizedJob impleme
 
     private void enqueuePending(int watermark) {
         int index = 0;
-        for (int i = watermark, sz = pending.size(), offset = 0; i < sz; i++, offset += Kqueue.SIZEOF_KEVENT) {
+        for (int i = watermark, sz = pending.size(), offset = 0; i < sz; i++, offset += KqueueAccessor.SIZEOF_KEVENT) {
             kqueue.setOffset(offset);
             kqueue.readFD((int) pending.get(i, 1), pending.get(i, 0));
             LOG.debug().$("kqueued ").$(pending.get(i, 1)).$(" as ").$(index - 1).$();
@@ -216,7 +218,7 @@ public class KQueueDispatcher<C extends Context> extends SynchronizedJob impleme
             int fd = (int) context.getFd();
             LOG.debug().$("Registering ").$(fd).$(" status ").$(channelStatus).$();
             kqueue.setOffset(offset);
-            offset += Kqueue.SIZEOF_KEVENT;
+            offset += KqueueAccessor.SIZEOF_KEVENT;
             count++;
             switch (channelStatus) {
                 case ChannelStatus.READ:
@@ -265,7 +267,7 @@ public class KQueueDispatcher<C extends Context> extends SynchronizedJob impleme
             // check all activated FDs
             for (int i = 0; i < n; i++) {
                 kqueue.setOffset(offset);
-                offset += Kqueue.SIZEOF_KEVENT;
+                offset += KqueueAccessor.SIZEOF_KEVENT;
                 int fd = kqueue.getFd();
                 // this is server socket, accept if there aren't too many already
                 if (fd == socketFd) {
@@ -284,13 +286,13 @@ public class KQueueDispatcher<C extends Context> extends SynchronizedJob impleme
                         continue;
                     }
 
-                    if (kqueue.getFlags() == Kqueue.EV_EOF) {
+                    if (kqueue.getFlags() == KqueueAccessor.EV_EOF) {
                         disconnect(pending.get(row), DisconnectReason.PEER);
                     } else {
                         long cursor = ioSequence.nextBully();
                         Event<C> evt = ioQueue.get(cursor);
                         evt.context = pending.get(row);
-                        evt.channelStatus = kqueue.getFilter() == Kqueue.EVFILT_READ ? ChannelStatus.READ : ChannelStatus.WRITE;
+                        evt.channelStatus = kqueue.getFilter() == KqueueAccessor.EVFILT_READ ? ChannelStatus.READ : ChannelStatus.WRITE;
                         ioSequence.done(cursor);
                         LOG.debug().$("Queuing ").$(kqueue.getFilter()).$(" on ").$(fd).$();
                     }

@@ -88,12 +88,14 @@ public class IODispatcherLinux<C extends IOContext> extends SynchronizedJob impl
     public void close() {
         this.epoll.close();
         nf.close(serverFd, LOG);
+
         int n = pending.size();
         for (int i = 0; i < n; i++) {
             disconnect(pending.get(i), DisconnectReason.SILLY);
         }
 
         drainQueueAndDisconnect();
+
         long cursor;
         do {
             cursor = ioEventSubSeq.next();

@@ -149,7 +149,7 @@ JNIEXPORT jint JNICALL Java_com_questdb_network_Net_recv
 JNIEXPORT jboolean JNICALL Java_com_questdb_network_Net_isDead
         (JNIEnv *e, jclass cl, jlong fd) {
     int c;
-    return (jboolean) (recv((int) fd, &c, 1, 0) == 0);
+    return (jboolean) (recv((int) fd, &c, 1, 0) < 1);
 }
 
 JNIEXPORT jint JNICALL Java_com_questdb_network_Net_configureNonBlocking
@@ -159,7 +159,6 @@ JNIEXPORT jint JNICALL Java_com_questdb_network_Net_configureNonBlocking
     if ((flags = fcntl((int) fd, F_GETFL, 0)) < 0) {
         return flags;
     }
-
 
     if ((flags = fcntl((int) fd, F_SETFL, flags | O_NONBLOCK)) < 0) {
         return flags;

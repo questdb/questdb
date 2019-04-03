@@ -25,6 +25,9 @@ package com.questdb.cutlass.http;
 
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
+import com.questdb.mp.MPSequence;
+import com.questdb.mp.RingQueue;
+import com.questdb.mp.SCSequence;
 import com.questdb.mp.SOCountDownLatch;
 import com.questdb.network.*;
 import com.questdb.std.ObjList;
@@ -32,8 +35,10 @@ import com.questdb.std.Unsafe;
 import com.questdb.std.str.StringSink;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Ignore;
 import org.junit.Test;
 
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -44,7 +49,6 @@ public class IODispatcherTest {
     public void testBiasWrite() throws Exception {
 
         LOG.info().$("started testBiasWrite").$();
-
 
         TestUtils.assertMemoryLeak(() -> {
 
@@ -267,7 +271,6 @@ public class IODispatcherTest {
                     }
                 }
 
-//                Thread.sleep(3000);
                 Assert.assertFalse(configuration.getActiveConnectionLimit() < dispatcher.getConnectionCount());
                 serverRunning.set(false);
                 serverHaltLatch.await();
@@ -521,8 +524,6 @@ public class IODispatcherTest {
 
                         // do not close client side before server does theirs
                         Assert.assertTrue(Net.isDead(fd));
-                        Assert.assertEquals(0, Net.close(fd));
-                        LOG.info().$("closed [fd=").$(fd).$(']').$();
 
                         TestUtils.assertEquals("", sink);
                     } finally {
@@ -530,10 +531,169 @@ public class IODispatcherTest {
                     }
                 } finally {
                     Net.close(fd);
+                    LOG.info().$("closed [fd=").$(fd).$(']').$();
                 }
 
                 Assert.assertEquals(1, closeCount.get());
             }
+        });
+    }
+
+    @Test
+    @Ignore
+    // this test is ignore for the time being because it is unstable on OSX and I
+    // have not figured out the reason yet. I would like to see if this test
+    // runs any different on Linux, just to narrow the problem down to either
+    // dispatcher or Http parser.
+    public void testTwoThreadsSendTwoThreadsRead() throws Exception {
+
+        LOG.info().$("started testSendHttpGet").$();
+
+        final String request = "GET /status?x=1&a=%26b&c&d=x HTTP/1.1\r\n" +
+                "Host: localhost:9000\r\n" +
+                "Connection: keep-alive\r\n" +
+                "Cache-Control: max-age=0\r\n" +
+                "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8\r\n" +
+                "User-Agent: Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/31.0.1650.48 Safari/537.36\r\n" +
+                "Accept-Encoding: gzip,deflate,sdch\r\n" +
+                "Accept-Language: en-US,en;q=0.8\r\n" +
+                "Cookie: textwrapon=false; textautoformat=false; wysiwyg=textarea\r\n" +
+                "\r\n";
+
+        // the difference between request and expected is url encoding (and ':' padding, which can easily be fixed)
+        final String expected = "GET /status?x=1&a=&b&c&d=x HTTP/1.1\r\n" +
+                "Host:localhost:9000\r\n" +
+                "Connection:keep-alive\r\n" +
+                "Cache-Control:max-age=0\r\n" +
+                "Accept:text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8\r\n" +
+                "User-Agent:Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/31.0.1650.48 Safari/537.36\r\n" +
+                "Accept-Encoding:gzip,deflate,sdch\r\n" +
+                "Accept-Language:en-US,en;q=0.8\r\n" +
+                "Cookie:textwrapon=false; textautoformat=false; wysiwyg=textarea\r\n" +
+                "\r\n";
+
+        int N = 1000;
+
+        TestUtils.assertMemoryLeak(() -> {
+            HttpServerConfiguration httpServerConfiguration = new DefaultHttpServerConfiguration();
+
+            final NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
+            final AtomicInteger requestsReceived = new AtomicInteger();
+
+            try (IODispatcher<HttpConnectionContext> dispatcher = IODispatchers.create(
+                    new DefaultIODispatcherConfiguration(),
+                    fd -> new HttpConnectionContext(httpServerConfiguration, fd)
+            )) {
+
+                // server will publish status of each request to this queue
+                final RingQueue<Status> queue = new RingQueue<>(Status::new, 1024);
+                final MPSequence pubSeq = new MPSequence(queue.getCapacity());
+                SCSequence subSeq = new SCSequence();
+                pubSeq.then(subSeq).then(pubSeq);
+
+                AtomicBoolean serverRunning = new AtomicBoolean(true);
+                int serverThreadCount = 1;
+                CountDownLatch serverHaltLatch = new CountDownLatch(serverThreadCount);
+                for (int j = 0; j < serverThreadCount; j++) {
+                    new Thread(() -> {
+                        final StringSink sink = new StringSink();
+                        final long responseBuf = Unsafe.malloc(32);
+                        Unsafe.getUnsafe().putByte(responseBuf, (byte) 'A');
+
+                        HttpRequestProcessorSelector selector = url -> (context, dispatcher1) -> {
+                            HttpHeaders headers = context.getHeaders();
+                            sink.clear();
+                            sink.put(headers.getMethodLine());
+                            sink.put("\r\n");
+                            ObjList<CharSequence> headerNames = headers.getHeaderNames();
+                            for (int i = 0, n = headerNames.size(); i < n; i++) {
+                                sink.put(headerNames.getQuick(i)).put(':');
+                                sink.put(headers.getHeader(headerNames.getQuick(i)));
+                                sink.put("\r\n");
+                            }
+                            sink.put("\r\n");
+
+                            boolean result;
+                            try {
+                                TestUtils.assertEquals(expected, sink);
+                                result = true;
+                            } catch (Exception e) {
+                                result = false;
+                            }
+
+                            while (true) {
+                                long cursor = pubSeq.next();
+                                if (cursor < 0) {
+                                    continue;
+                                }
+                                queue.get(cursor).valid = result;
+                                pubSeq.done(cursor);
+                                break;
+                            }
+
+                            requestsReceived.incrementAndGet();
+
+                            nf.send(context.getFd(), responseBuf, 1);
+
+                            dispatcher1.registerChannel(context, IOOperation.READ);
+                        };
+
+                        while (serverRunning.get()) {
+                            dispatcher.run();
+                            dispatcher.processIOQueue(
+                                    (operation, context, disp) -> context.handleClientOperation(operation, nf, disp, selector)
+                            );
+                        }
+
+                        Unsafe.free(responseBuf, 32);
+                        serverHaltLatch.countDown();
+                    }).start();
+                }
+
+                new Thread(() -> {
+                    for (int i = 0; i < N; i++) {
+                        long fd = Net.socketTcp(true);
+                        try {
+                            long sockAddr = Net.sockaddr("127.0.0.1", 9001);
+                            try {
+                                Assert.assertTrue(fd > -1);
+                                Assert.assertEquals(0, Net.connect(fd, sockAddr));
+
+                                int len = request.length();
+                                long buffer = TestUtils.toMemory(request);
+                                try {
+                                    Assert.assertEquals(len, Net.send(fd, buffer, len));
+                                    Assert.assertEquals("fd=" + fd + ", i=" + i, 1, Net.recv(fd, buffer, 1));
+                                    Assert.assertEquals('A', Unsafe.getUnsafe().getByte(buffer));
+                                } finally {
+                                    Unsafe.free(buffer, len);
+                                }
+                            } finally {
+                                Net.freeSockAddr(sockAddr);
+                            }
+                        } finally {
+                            Net.close(fd);
+                        }
+                    }
+                }).start();
+
+
+                int receiveCount = 0;
+                while (receiveCount < N) {
+                    long cursor = subSeq.next();
+                    if (cursor < 0) {
+                        continue;
+                    }
+                    boolean valid = queue.get(cursor).valid;
+                    subSeq.done(cursor);
+                    Assert.assertTrue(valid);
+                    receiveCount++;
+                }
+
+                serverRunning.set(false);
+                serverHaltLatch.await();
+            }
+            Assert.assertEquals(N, requestsReceived.get());
         });
     }
 
@@ -557,5 +717,9 @@ public class IODispatcherTest {
         public long getFd() {
             return fd;
         }
+    }
+
+    class Status {
+        boolean valid;
     }
 }

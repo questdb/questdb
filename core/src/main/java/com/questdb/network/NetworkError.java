@@ -72,6 +72,11 @@ public class NetworkError extends Error implements Sinkable {
         return this;
     }
 
+    public NetworkError put(int value) {
+        message.put(value);
+        return this;
+    }
+
     public NetworkError put(Throwable err) {
         message.put(err);
         return this;
@@ -84,6 +89,6 @@ public class NetworkError extends Error implements Sinkable {
 
     @Override
     public void toSink(CharSink sink) {
-        sink.put(message);
+        sink.put("[errno=").put(errno).put("] ").put(message);
     }
 }

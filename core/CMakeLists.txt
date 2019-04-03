@@ -26,7 +26,6 @@ if (APPLE)
     set(OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/src/main/resources/binaries/osx)
     set(
             SOURCE_FILES ${SOURCE_FILES}
-            src/main/c/osx/kqueue.h
             src/main/c/osx/kqueue.c
             src/main/c/share/net.c
             src/main/c/osx/affinity.c
