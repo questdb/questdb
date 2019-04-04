@@ -227,10 +227,8 @@ public class IODispatcherLinux<C extends IOContext> extends SynchronizedJob impl
 
     private boolean processRegistrations(long timestamp) {
         long cursor;
-        boolean useful = false;
         int offset = 0;
         while ((cursor = interestSubSeq.next()) > -1) {
-            useful = true;
             IOEvent<C> evt = interestQueue.get(cursor);
             C context = evt.context;
             int operation = evt.operation;
@@ -275,7 +273,10 @@ public class IODispatcherLinux<C extends IOContext> extends SynchronizedJob impl
             pending.set(r, context);
         }
 
-        return useful;
+        if (offset > 0) {
+            LOG.debug().$("reg").$();
+        }
+        return offset > 0;
     }
 
     private void publishOperation(int operation, C context) {
@@ -295,6 +296,7 @@ public class IODispatcherLinux<C extends IOContext> extends SynchronizedJob impl
         int offset = 0;
         if (n > 0) {
             // check all activated FDs
+            LOG.debug().$("epoll [n=").$(n).$(']').$();
             for (int i = 0; i < n; i++) {
                 epoll.setOffset(offset);
                 offset += EpollAccessor.SIZEOF_EVENT;

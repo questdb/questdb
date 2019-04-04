@@ -23,6 +23,8 @@
 
 package com.questdb.cutlass.http;
 
+import com.questdb.log.Log;
+import com.questdb.log.LogFactory;
 import com.questdb.network.IOContext;
 import com.questdb.network.IODispatcher;
 import com.questdb.network.IOOperation;
@@ -33,6 +35,8 @@ import com.questdb.std.Unsafe;
 import com.questdb.std.str.DirectByteCharSequence;
 
 public class HttpConnectionContext implements IOContext {
+    private static final Log LOG = LogFactory.getLog(HttpConnectionContext.class);
+
     private final HttpHeaderParser headerParser;
     private final long recvBuffer;
     private final int recvBufferSize;
@@ -74,6 +78,13 @@ public class HttpConnectionContext implements IOContext {
         return headerParser;
     }
 
+    public void clear() {
+        this.headerParser.clear();
+        this.multipartContentParser.clear();
+        this.multipartContentParser.clear();
+        this.csPool.clear();
+    }
+
     public void handleClientOperation(int operation, NetworkFacade nf, IODispatcher<HttpConnectionContext> dispatcher, HttpRequestProcessorSelector selector) {
         switch (operation) {
             case IOOperation.READ:
@@ -82,6 +93,16 @@ public class HttpConnectionContext implements IOContext {
             default:
                 dispatcher.registerChannel(this, IOOperation.DISCONNECT);
                 break;
+        }
+    }
+
+    private void checkRemainingInputAndCompleteRequest(NetworkFacade nf, IODispatcher<HttpConnectionContext> dispatcher, long fd, HttpRequestProcessor processor) {
+        int read;// consume and throw away the remainder of TCP input
+        read = nf.recv(fd, recvBuffer, 1);
+        if (read != 0) {
+            dispatcher.registerChannel(this, IOOperation.DISCONNECT);
+        } else {
+            processor.onRequestComplete(this, dispatcher);
         }
     }
 
@@ -99,7 +120,9 @@ public class HttpConnectionContext implements IOContext {
             while (headerParser.isIncomplete()) {
                 // read headers
                 read = nf.recv(fd, recvBuffer, recvBufferSize);
+                LOG.debug().$("recv [count=").$(read).$(']').$();
                 if (read < 0) {
+                    LOG.debug().$("done").$();
                     // peer disconnect
                     dispatcher.registerChannel(this, IOOperation.CLEANUP);
                     return;
@@ -127,7 +150,8 @@ public class HttpConnectionContext implements IOContext {
                 dispatcher.registerChannel(this, IOOperation.READ);
             } else if (multipartProcessor) {
 
-                processor.onHeadersReady(this, dispatcher);
+                processor.onHeadersReady(this);
+
                 HttpMultipartContentListener multipartListener = (HttpMultipartContentListener) processor;
 
                 long bufferEnd = recvBuffer + read;
@@ -148,10 +172,10 @@ public class HttpConnectionContext implements IOContext {
                         }
                     } while (!multipartContentParser.parse(recvBuffer, recvBuffer + read, multipartListener));
                 }
+                checkRemainingInputAndCompleteRequest(nf, dispatcher, fd, processor);
             } else {
-                processor.onHeadersReady(this, dispatcher);
-                // todo: processor will decide what to do next
-                headerParser.clear();
+                processor.onHeadersReady(this);
+                checkRemainingInputAndCompleteRequest(nf, dispatcher, fd, processor);
             }
         } catch (HttpException e) {
             e.printStackTrace();

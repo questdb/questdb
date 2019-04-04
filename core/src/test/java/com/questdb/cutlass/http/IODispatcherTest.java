@@ -35,7 +35,6 @@ import com.questdb.std.Unsafe;
 import com.questdb.std.str.StringSink;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
-import org.junit.Ignore;
 import org.junit.Test;
 
 import java.util.concurrent.CountDownLatch;
@@ -156,7 +155,14 @@ public class IODispatcherTest {
                         }
                     }
             )) {
-                HttpRequestProcessorSelector selector = url -> (connectionContext, dispatcher1) -> {
+                HttpRequestProcessorSelector selector = url -> new HttpRequestProcessor() {
+                    @Override
+                    public void onHeadersReady(HttpConnectionContext connectionContext) {
+                    }
+
+                    @Override
+                    public void onRequestComplete(HttpConnectionContext connectionContext, IODispatcher<HttpConnectionContext> dispatcher1) {
+                    }
                 };
 
                 AtomicBoolean serverRunning = new AtomicBoolean(true);
@@ -241,7 +247,14 @@ public class IODispatcherTest {
                         }
                     }
             )) {
-                HttpRequestProcessorSelector selector = url -> (connectionContext, dispatcher1) -> {
+                HttpRequestProcessorSelector selector = url -> new HttpRequestProcessor() {
+                    @Override
+                    public void onHeadersReady(HttpConnectionContext connectionContext) {
+                    }
+
+                    @Override
+                    public void onRequestComplete(HttpConnectionContext connectionContext, IODispatcher<HttpConnectionContext> dispatcher) {
+                    }
                 };
 
                 AtomicBoolean serverRunning = new AtomicBoolean(true);
@@ -339,20 +352,25 @@ public class IODispatcherTest {
             )) {
                 StringSink sink = new StringSink();
 
-                HttpRequestProcessorSelector selector = url -> (context, dispatcher1) -> {
-                    HttpHeaders headers = context.getHeaders();
-                    sink.put(headers.getMethodLine());
-                    sink.put("\r\n");
-                    ObjList<CharSequence> headerNames = headers.getHeaderNames();
-                    for (int i = 0, n = headerNames.size(); i < n; i++) {
-                        sink.put(headerNames.getQuick(i)).put(':');
-                        sink.put(headers.getHeader(headerNames.getQuick(i)));
+                final HttpRequestProcessorSelector selector = url -> new HttpRequestProcessor() {
+                    @Override
+                    public void onHeadersReady(HttpConnectionContext context) {
+                        HttpHeaders headers = context.getHeaders();
+                        sink.put(headers.getMethodLine());
+                        sink.put("\r\n");
+                        ObjList<CharSequence> headerNames = headers.getHeaderNames();
+                        for (int i = 0, n = headerNames.size(); i < n; i++) {
+                            sink.put(headerNames.getQuick(i)).put(':');
+                            sink.put(headers.getHeader(headerNames.getQuick(i)));
+                            sink.put("\r\n");
+                        }
                         sink.put("\r\n");
                     }
-                    sink.put("\r\n");
 
-
-                    dispatcher1.registerChannel(context, IOOperation.READ);
+                    @Override
+                    public void onRequestComplete(HttpConnectionContext context, IODispatcher<HttpConnectionContext> dispatcher1) {
+                        dispatcher1.registerChannel(context, IOOperation.READ);
+                    }
                 };
 
                 AtomicBoolean serverRunning = new AtomicBoolean(true);
@@ -462,20 +480,25 @@ public class IODispatcherTest {
             )) {
                 StringSink sink = new StringSink();
 
-                HttpRequestProcessorSelector selector = url -> (context, dispatcher1) -> {
-                    HttpHeaders headers = context.getHeaders();
-                    sink.put(headers.getMethodLine());
-                    sink.put("\r\n");
-                    ObjList<CharSequence> headerNames = headers.getHeaderNames();
-                    for (int i = 0, n = headerNames.size(); i < n; i++) {
-                        sink.put(headerNames.getQuick(i)).put(':');
-                        sink.put(headers.getHeader(headerNames.getQuick(i)));
+                HttpRequestProcessorSelector selector = url -> new HttpRequestProcessor() {
+                    @Override
+                    public void onHeadersReady(HttpConnectionContext connectionContext) {
+                        HttpHeaders headers = connectionContext.getHeaders();
+                        sink.put(headers.getMethodLine());
+                        sink.put("\r\n");
+                        ObjList<CharSequence> headerNames = headers.getHeaderNames();
+                        for (int i = 0, n = headerNames.size(); i < n; i++) {
+                            sink.put(headerNames.getQuick(i)).put(':');
+                            sink.put(headers.getHeader(headerNames.getQuick(i)));
+                            sink.put("\r\n");
+                        }
                         sink.put("\r\n");
                     }
-                    sink.put("\r\n");
 
-
-                    dispatcher1.registerChannel(context, IOOperation.READ);
+                    @Override
+                    public void onRequestComplete(HttpConnectionContext connectionContext, IODispatcher<HttpConnectionContext> dispatcher1) {
+                        dispatcher1.registerChannel(connectionContext, IOOperation.READ);
+                    }
                 };
 
                 AtomicBoolean serverRunning = new AtomicBoolean(true);
@@ -540,7 +563,6 @@ public class IODispatcherTest {
     }
 
     @Test
-    @Ignore
     // this test is ignore for the time being because it is unstable on OSX and I
     // have not figured out the reason yet. I would like to see if this test
     // runs any different on Linux, just to narrow the problem down to either
@@ -572,7 +594,10 @@ public class IODispatcherTest {
                 "Cookie:textwrapon=false; textautoformat=false; wysiwyg=textarea\r\n" +
                 "\r\n";
 
-        int N = 1000;
+        final int N = 1000;
+        final int serverThreadCount = 2;
+        final int senderCount = 2;
+
 
         TestUtils.assertMemoryLeak(() -> {
             HttpServerConfiguration httpServerConfiguration = new DefaultHttpServerConfiguration();
@@ -592,7 +617,7 @@ public class IODispatcherTest {
                 pubSeq.then(subSeq).then(pubSeq);
 
                 AtomicBoolean serverRunning = new AtomicBoolean(true);
-                int serverThreadCount = 1;
+
                 CountDownLatch serverHaltLatch = new CountDownLatch(serverThreadCount);
                 for (int j = 0; j < serverThreadCount; j++) {
                     new Thread(() -> {
@@ -600,43 +625,55 @@ public class IODispatcherTest {
                         final long responseBuf = Unsafe.malloc(32);
                         Unsafe.getUnsafe().putByte(responseBuf, (byte) 'A');
 
-                        HttpRequestProcessorSelector selector = url -> (context, dispatcher1) -> {
-                            HttpHeaders headers = context.getHeaders();
-                            sink.clear();
-                            sink.put(headers.getMethodLine());
-                            sink.put("\r\n");
-                            ObjList<CharSequence> headerNames = headers.getHeaderNames();
-                            for (int i = 0, n = headerNames.size(); i < n; i++) {
-                                sink.put(headerNames.getQuick(i)).put(':');
-                                sink.put(headers.getHeader(headerNames.getQuick(i)));
+                        final HttpRequestProcessor processor = new HttpRequestProcessor() {
+                            @Override
+                            public void onHeadersReady(HttpConnectionContext context) {
+                                HttpHeaders headers = context.getHeaders();
+                                sink.clear();
+                                sink.put(headers.getMethodLine());
                                 sink.put("\r\n");
-                            }
-                            sink.put("\r\n");
-
-                            boolean result;
-                            try {
-                                TestUtils.assertEquals(expected, sink);
-                                result = true;
-                            } catch (Exception e) {
-                                result = false;
-                            }
-
-                            while (true) {
-                                long cursor = pubSeq.next();
-                                if (cursor < 0) {
-                                    continue;
+                                ObjList<CharSequence> headerNames = headers.getHeaderNames();
+                                for (int i = 0, n = headerNames.size(); i < n; i++) {
+                                    sink.put(headerNames.getQuick(i)).put(':');
+                                    sink.put(headers.getHeader(headerNames.getQuick(i)));
+                                    sink.put("\r\n");
                                 }
-                                queue.get(cursor).valid = result;
-                                pubSeq.done(cursor);
-                                break;
+                                sink.put("\r\n");
+
+                                boolean result;
+                                try {
+                                    TestUtils.assertEquals(expected, sink);
+                                    result = true;
+                                } catch (Exception e) {
+                                    result = false;
+                                }
+
+                                while (true) {
+                                    long cursor = pubSeq.next();
+                                    if (cursor < 0) {
+                                        continue;
+                                    }
+                                    queue.get(cursor).valid = result;
+                                    pubSeq.done(cursor);
+                                    break;
+                                }
+
+                                requestsReceived.incrementAndGet();
+
+                                nf.send(context.getFd(), responseBuf, 1);
                             }
 
-                            requestsReceived.incrementAndGet();
+                            @Override
+                            public void onRequestComplete(HttpConnectionContext connectionContext, IODispatcher<HttpConnectionContext> dispatcher) {
+                                connectionContext.clear();
 
-                            nf.send(context.getFd(), responseBuf, 1);
-
-                            dispatcher1.registerChannel(context, IOOperation.READ);
+                                // there is interesting situation here, its possible that header is fully
+                                // read and there are either more bytes or disconnect lingering
+                                dispatcher.registerChannel(connectionContext, IOOperation.READ);
+                            }
                         };
+
+                        HttpRequestProcessorSelector selector = url -> processor;
 
                         while (serverRunning.get()) {
                             dispatcher.run();
@@ -650,36 +687,38 @@ public class IODispatcherTest {
                     }).start();
                 }
 
-                new Thread(() -> {
-                    for (int i = 0; i < N; i++) {
-                        long fd = Net.socketTcp(true);
+                for (int j = 0; j < senderCount; j++) {
+                    new Thread(() -> {
+                        long sockAddr = Net.sockaddr("127.0.0.1", 9001);
                         try {
-                            long sockAddr = Net.sockaddr("127.0.0.1", 9001);
-                            try {
-                                Assert.assertTrue(fd > -1);
-                                Assert.assertEquals(0, Net.connect(fd, sockAddr));
-
-                                int len = request.length();
-                                long buffer = TestUtils.toMemory(request);
+                            for (int i = 0; i < N; i++) {
+                                LOG.info().$("i=").$(i).$();
+                                long fd = Net.socketTcp(true);
                                 try {
-                                    Assert.assertEquals(len, Net.send(fd, buffer, len));
-                                    Assert.assertEquals("fd=" + fd + ", i=" + i, 1, Net.recv(fd, buffer, 1));
-                                    Assert.assertEquals('A', Unsafe.getUnsafe().getByte(buffer));
+                                    Assert.assertTrue(fd > -1);
+                                    Assert.assertEquals(0, Net.connect(fd, sockAddr));
+
+                                    int len = request.length();
+                                    long buffer = TestUtils.toMemory(request);
+                                    try {
+                                        Assert.assertEquals(len, Net.send(fd, buffer, len));
+                                        Assert.assertEquals("fd=" + fd + ", i=" + i, 1, Net.recv(fd, buffer, 1));
+                                        Assert.assertEquals('A', Unsafe.getUnsafe().getByte(buffer));
+                                    } finally {
+                                        Unsafe.free(buffer, len);
+                                    }
                                 } finally {
-                                    Unsafe.free(buffer, len);
+                                    Net.close(fd);
                                 }
-                            } finally {
-                                Net.freeSockAddr(sockAddr);
                             }
                         } finally {
-                            Net.close(fd);
+                            Net.freeSockAddr(sockAddr);
                         }
-                    }
-                }).start();
-
+                    }).start();
+                }
 
                 int receiveCount = 0;
-                while (receiveCount < N) {
+                while (receiveCount < N * senderCount) {
                     long cursor = subSeq.next();
                     if (cursor < 0) {
                         continue;
@@ -693,7 +732,7 @@ public class IODispatcherTest {
                 serverRunning.set(false);
                 serverHaltLatch.await();
             }
-            Assert.assertEquals(N, requestsReceived.get());
+            Assert.assertEquals(N * senderCount, requestsReceived.get());
         });
     }
 

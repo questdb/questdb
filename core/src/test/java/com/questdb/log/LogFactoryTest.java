@@ -23,6 +23,10 @@
 
 package com.questdb.log;
 
+import com.questdb.mp.RingQueue;
+import com.questdb.mp.SCSequence;
+import com.questdb.mp.SOCountDownLatch;
+import com.questdb.mp.SPSequence;
 import com.questdb.std.*;
 import com.questdb.std.microtime.DateFormatUtils;
 import com.questdb.std.microtime.MicrosecondClock;
@@ -36,6 +40,8 @@ import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
 
 import java.io.File;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.locks.LockSupport;
 
 public class LogFactoryTest {
 
@@ -258,40 +264,73 @@ public class LogFactoryTest {
         String logFile = base + "mylog-${date:yyyy-MM-dd}.log";
         String expectedLogFile = base + "mylog-2015-05-03.log";
 
-        try (LogFactory factory = new LogFactory()) {
-            final MicrosecondClock clock = new TestMicrosecondClock(DateFormatUtils.parseDateTime("2015-05-03T10:35:00.000Z"), 1);
+        final MicrosecondClock clock = new TestMicrosecondClock(DateFormatUtils.parseDateTime("2015-05-03T10:35:00.000Z"), 1);
 
-            try (Path path = new Path()) {
-                // create rogue file that would be in a way of logger rolling existing files
-                path.of(base);
-                Assert.assertTrue(com.questdb.std.Files.touch(path.concat("mylog-2015-05-03.log.2").$()));
-            }
+        try (Path path = new Path()) {
+            // create rogue file that would be in a way of logger rolling existing files
+            path.of(base);
+            Assert.assertTrue(com.questdb.std.Files.touch(path.concat("mylog-2015-05-03.log.2").$()));
+        }
 
-            factory.add(new LogWriterConfig(LogLevel.LOG_LEVEL_INFO, (ring, seq, level) -> {
-                LogRollingFileWriter w = new LogRollingFileWriter(FilesFacadeImpl.INSTANCE, clock, ring, seq, level);
-                w.setLocation(logFile);
-                // 1Mb log file limit, we will create 4 of them
-                w.setRollSize("1m");
-                w.setBufferSize("1k");
-                w.setRollEvery("day");
-                return w;
-            }));
+        RingQueue<LogRecordSink> queue = new RingQueue<>(() -> new LogRecordSink(1024), 1024);
 
-            factory.bind();
-            factory.startThread();
+        SPSequence pubSeq = new SPSequence(queue.getCapacity());
+        SCSequence subSeq = new SCSequence();
+        pubSeq.then(subSeq).then(pubSeq);
 
-            try {
-                Log logger = factory.create("x");
-                for (int i = 0; i < 1000000; i++) {
-                    logger.xinfo().$("test ").$(' ').$(i).$();
+        try (final LogRollingFileWriter writer = new LogRollingFileWriter(
+                FilesFacadeImpl.INSTANCE,
+                clock,
+                queue,
+                subSeq,
+                LogLevel.LOG_LEVEL_INFO
+        )) {
+
+            writer.setLocation(logFile);
+            writer.setRollSize("1m");
+            writer.setBufferSize("64k");
+            writer.bindProperties();
+
+            AtomicBoolean running = new AtomicBoolean(true);
+            SOCountDownLatch halted = new SOCountDownLatch();
+            halted.setCount(1);
+
+            new Thread(() -> {
+                while (running.get()) {
+                    writer.runSerially();
                 }
 
-                // logger is async, we need to let it finish writing
-                Thread.sleep(4000);
+                while (writer.runSerially()) ;
 
-            } finally {
-                factory.haltThread();
+                halted.countDown();
+            }).start();
+
+
+            // now publish
+            int published = 0;
+            int toPublish = 1_000_000;
+            while (published < toPublish) {
+                long cursor = pubSeq.next();
+
+                if (cursor < 0) {
+                    LockSupport.parkNanos(1);
+                    continue;
+                }
+
+                final long available = pubSeq.available();
+
+                while (cursor < available && published < toPublish) {
+                    LogRecordSink sink = queue.get(cursor++);
+                    sink.setLevel(LogLevel.LOG_LEVEL_INFO);
+                    sink.put("test");
+                    published++;
+                }
+
+                pubSeq.done(cursor - 1);
             }
+
+            running.set(false);
+            halted.await();
         }
         assertFileLength(expectedLogFile);
         assertFileLength(expectedLogFile + ".1");
