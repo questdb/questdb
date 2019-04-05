@@ -64,9 +64,8 @@ public final class Zip {
 
     static {
         Os.init();
-        gzipHeader = Unsafe.malloc(Numbers.ceilPow2(gzipHeaderLen));
+        gzipHeader = Unsafe.calloc(Numbers.ceilPow2(gzipHeaderLen));
         long p = gzipHeader;
-        Unsafe.getUnsafe().setMemory(gzipHeader, gzipHeaderLen, (byte) 0);
         Unsafe.getUnsafe().putByte(p++, (byte) GZIP_MAGIC);
         Unsafe.getUnsafe().putByte(p++, (byte) (GZIP_MAGIC >> 8));
         Unsafe.getUnsafe().putByte(p, (byte) 8); // compression method

@@ -207,8 +207,7 @@ class TableReaderMetadata extends BaseRecordMetadata implements Closeable {
             final long pTransitionIndex;
             final int size = n * 16;
 
-            long index = pTransitionIndex = Unsafe.malloc(size);
-            Unsafe.getUnsafe().setMemory(pTransitionIndex, size, (byte) 0);
+            long index = pTransitionIndex = Unsafe.calloc(size);
             Unsafe.getUnsafe().putInt(index, size);
             Unsafe.getUnsafe().putInt(index + 4, columnCount);
             index += 8;

@@ -168,7 +168,7 @@ public class KQueueDispatcher<C extends Context> extends SynchronizedJob impleme
     private void enqueuePending(int watermark) {
         int index = 0;
         for (int i = watermark, sz = pending.size(), offset = 0; i < sz; i++, offset += KqueueAccessor.SIZEOF_KEVENT) {
-            kqueue.setOffset(offset);
+            kqueue.setWriteOffset(offset);
             kqueue.readFD((int) pending.get(i, 1), pending.get(i, 0));
             LOG.debug().$("kqueued ").$(pending.get(i, 1)).$(" as ").$(index - 1).$();
             if (++index > capacity - 1) {
@@ -217,7 +217,7 @@ public class KQueueDispatcher<C extends Context> extends SynchronizedJob impleme
 
             int fd = (int) context.getFd();
             LOG.debug().$("Registering ").$(fd).$(" status ").$(channelStatus).$();
-            kqueue.setOffset(offset);
+            kqueue.setWriteOffset(offset);
             offset += KqueueAccessor.SIZEOF_KEVENT;
             count++;
             switch (channelStatus) {
@@ -266,7 +266,7 @@ public class KQueueDispatcher<C extends Context> extends SynchronizedJob impleme
         if (n > 0) {
             // check all activated FDs
             for (int i = 0; i < n; i++) {
-                kqueue.setOffset(offset);
+                kqueue.setReadOffset(offset);
                 offset += KqueueAccessor.SIZEOF_KEVENT;
                 int fd = kqueue.getFd();
                 // this is server socket, accept if there aren't too many already

@@ -171,6 +171,12 @@ public final class Unsafe {
         return ptr;
     }
 
+    public static long calloc(long size) {
+        long ptr = malloc(size);
+        getUnsafe().setMemory(ptr, size, (byte) 0);
+        return ptr;
+    }
+
     private static int msb(int value) {
         return 31 - Integer.numberOfLeadingZeros(value);
     }

@@ -594,7 +594,7 @@ public class IODispatcherTest {
                 "Cookie:textwrapon=false; textautoformat=false; wysiwyg=textarea\r\n" +
                 "\r\n";
 
-        final int N = 50000;
+        final int N = 1000;
         final int serverThreadCount = 2;
         final int senderCount = 2;
 
@@ -688,11 +688,11 @@ public class IODispatcherTest {
                 }
 
                 for (int j = 0; j < senderCount; j++) {
+                    int k = j;
                     new Thread(() -> {
                         long sockAddr = Net.sockaddr("127.0.0.1", 9001);
                         try {
                             for (int i = 0; i < N; i++) {
-                                LOG.info().$("i=").$(i).$();
                                 long fd = Net.socketTcp(true);
                                 try {
                                     Assert.assertTrue(fd > -1);
@@ -703,6 +703,7 @@ public class IODispatcherTest {
                                     try {
                                         Assert.assertEquals(len, Net.send(fd, buffer, len));
                                         Assert.assertEquals("fd=" + fd + ", i=" + i, 1, Net.recv(fd, buffer, 1));
+                                        LOG.info().$("i=").$(i).$(", j=").$(k).$();
                                         Assert.assertEquals('A', Unsafe.getUnsafe().getByte(buffer));
                                     } finally {
                                         Unsafe.free(buffer, len);

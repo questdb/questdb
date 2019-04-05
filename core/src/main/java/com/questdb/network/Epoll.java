@@ -43,7 +43,7 @@ public final class Epoll implements Closeable {
     public Epoll(EpollFacade epf, int capacity) {
         this.epf = epf;
         this.capacity = capacity;
-        this.events = _rPtr = Unsafe.malloc(EpollAccessor.SIZEOF_EVENT * (long) capacity);
+        this.events = _rPtr = Unsafe.calloc(EpollAccessor.SIZEOF_EVENT * (long) capacity);
         // todo: this can be unsuccessful
         this.epollFd = epf.epollCreate();
         if (this.epollFd != -1) {

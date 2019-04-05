@@ -97,8 +97,10 @@ public class HttpConnectionContext implements IOContext {
         int read;// consume and throw away the remainder of TCP input
         read = nf.recv(fd, recvBuffer, 1);
         if (read != 0) {
+            LOG.debug().$("disconnect after request [fd=").$(fd).$(']').$();
             dispatcher.disconnect(this, DisconnectReason.PEER);
         } else {
+            LOG.debug().$("good [fd=").$(fd).$(']').$();
             processor.onRequestComplete(this, dispatcher);
         }
     }
@@ -117,9 +119,9 @@ public class HttpConnectionContext implements IOContext {
             while (headerParser.isIncomplete()) {
                 // read headers
                 read = nf.recv(fd, recvBuffer, recvBufferSize);
-                LOG.debug().$("recv [count=").$(read).$(']').$();
+                LOG.debug().$("recv [fd=").$(fd).$(", count=").$(read).$(']').$();
                 if (read < 0) {
-                    LOG.debug().$("done").$();
+                    LOG.debug().$("done [fd=").$(fd).$(']').$();
                     // peer disconnect
                     dispatcher.disconnect(this, DisconnectReason.PEER);
                     return;
