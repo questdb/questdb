@@ -29,6 +29,8 @@ import com.questdb.mp.*;
 import com.questdb.std.LongMatrix;
 import com.questdb.std.time.MillisecondClock;
 
+import java.util.concurrent.atomic.AtomicInteger;
+
 public class IODispatcherLinux<C extends IOContext> extends SynchronizedJob implements IODispatcher<C> {
     private static final int M_TIMESTAMP = 1;
     private static final int M_FD = 2;
@@ -49,7 +51,7 @@ public class IODispatcherLinux<C extends IOContext> extends SynchronizedJob impl
     private final IOContextFactory<C> ioContextFactory;
     private final NetworkFacade nf;
     private final int initialBias;
-    private int connectionCount = 0;
+    private final AtomicInteger connectionCount = new AtomicInteger();
     private long fdid = 1;
 
     public IODispatcherLinux(
@@ -109,7 +111,7 @@ public class IODispatcherLinux<C extends IOContext> extends SynchronizedJob impl
 
     @Override
     public int getConnectionCount() {
-        return connectionCount;
+        return connectionCount.get();
     }
 
     @Override
@@ -134,6 +136,19 @@ public class IODispatcherLinux<C extends IOContext> extends SynchronizedJob impl
         }
     }
 
+    @Override
+    public void disconnect(C context, int disconnectReason) {
+        final long fd = context.getFd();
+        LOG.info()
+                .$("disconnected [ip=").$ip(nf.getPeerIP(fd))
+                .$(", fd=").$(fd)
+                .$(", reason=").$(DisconnectReason.nameOf(disconnectReason))
+                .$(']').$();
+        nf.close(fd, LOG);
+        context.close();
+        connectionCount.decrementAndGet();
+    }
+
     private void accept() {
         while (true) {
             long fd = nf.accept(serverFd);
@@ -151,7 +166,7 @@ public class IODispatcherLinux<C extends IOContext> extends SynchronizedJob impl
                 return;
             }
 
-            if (connectionCount == activeConnectionLimit) {
+            if (connectionCount.get() == activeConnectionLimit) {
                 LOG.info().$("connection limit exceeded [fd=").$(fd)
                         .$(", connectionCount=").$(connectionCount)
                         .$(", activeConnectionLimit=").$(activeConnectionLimit)
@@ -161,7 +176,7 @@ public class IODispatcherLinux<C extends IOContext> extends SynchronizedJob impl
             }
 
             LOG.info().$("connected [ip=").$ip(nf.getPeerIP(fd)).$(", fd=").$(fd).$(']').$();
-            connectionCount++;
+            connectionCount.incrementAndGet();
             addPending(fd, clock.getTicks());
         }
     }
@@ -174,18 +189,6 @@ public class IODispatcherLinux<C extends IOContext> extends SynchronizedJob impl
         pending.set(r, M_FD, fd);
         pending.set(r, M_ID, fdid++);
         pending.set(r, ioContextFactory.newInstance(fd));
-    }
-
-    private void disconnect(C context, int disconnectReason) {
-        final long fd = context.getFd();
-        LOG.info()
-                .$("disconnected [ip=").$ip(nf.getPeerIP(fd))
-                .$(", fd=").$(fd)
-                .$(", reason=").$(DisconnectReason.nameOf(disconnectReason))
-                .$(']').$();
-        nf.close(fd, LOG);
-        context.close();
-        connectionCount--;
     }
 
     private void drainQueueAndDisconnect() {
@@ -240,31 +243,10 @@ public class IODispatcherLinux<C extends IOContext> extends SynchronizedJob impl
             // because we have to remove FD from epoll
             LOG.debug().$("registered [fd=").$(fd).$(", op=").$(operation).$(", id=").$(id).$(']').$();
             epoll.setOffset(offset);
-            offset += EpollAccessor.SIZEOF_EVENT;
-            switch (operation) {
-                case IOOperation.READ:
-                    if (epoll.control(fd, id, EpollAccessor.EPOLL_CTL_MOD, EpollAccessor.EPOLLIN) < 0) {
-                        System.out.println("oops2: " + nf.errno());
-                    }
-                    break;
-                case IOOperation.WRITE:
-                    epoll.control(fd, id, EpollAccessor.EPOLL_CTL_MOD, EpollAccessor.EPOLLOUT);
-                    break;
-                case IOOperation.DISCONNECT:
-                    if (epoll.control(fd, id, EpollAccessor.EPOLL_CTL_DEL, 0) < 0) {
-                        System.out.println("oops3: " + nf.errno());
-                    }
-                    disconnect(context, DisconnectReason.SILLY);
-                    continue;
-                case IOOperation.CLEANUP:
-                    if (epoll.control(fd, id, 2, 0) < 0) {
-                        System.out.println("oops3: " + nf.errno());
-                    }
-                    disconnect(context, DisconnectReason.PEER);
-                    continue;
-                default:
-                    break;
+            if (epoll.control(fd, id, EpollAccessor.EPOLL_CTL_MOD, operation == IOOperation.READ ? EpollAccessor.EPOLLIN : EpollAccessor.EPOLLOUT) < 0) {
+                System.out.println("oops2: " + nf.errno());
             }
+            offset += EpollAccessor.SIZEOF_EVENT;
 
             int r = pending.addRow();
             pending.set(r, M_TIMESTAMP, timestamp);

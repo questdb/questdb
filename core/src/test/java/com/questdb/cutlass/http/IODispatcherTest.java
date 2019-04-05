@@ -76,7 +76,7 @@ public class IODispatcherTest {
                                 (operation, context, disp) -> {
                                     if (operation == IOOperation.WRITE) {
                                         Assert.assertEquals(1024, Net.send(context.getFd(), context.buffer, 1024));
-                                        disp.registerChannel(context, IOOperation.DISCONNECT);
+                                        disp.disconnect(context, DisconnectReason.SILLY);
                                     }
                                 }
                         );
@@ -594,7 +594,7 @@ public class IODispatcherTest {
                 "Cookie:textwrapon=false; textautoformat=false; wysiwyg=textarea\r\n" +
                 "\r\n";
 
-        final int N = 1000;
+        final int N = 50000;
         final int serverThreadCount = 2;
         final int senderCount = 2;
 
@@ -669,7 +669,7 @@ public class IODispatcherTest {
 
                                 // there is interesting situation here, its possible that header is fully
                                 // read and there are either more bytes or disconnect lingering
-                                dispatcher.registerChannel(connectionContext, IOOperation.READ);
+                                dispatcher.disconnect(connectionContext, DisconnectReason.SILLY);
                             }
                         };
 

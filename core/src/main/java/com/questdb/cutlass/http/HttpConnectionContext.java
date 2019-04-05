@@ -25,10 +25,7 @@ package com.questdb.cutlass.http;
 
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
-import com.questdb.network.IOContext;
-import com.questdb.network.IODispatcher;
-import com.questdb.network.IOOperation;
-import com.questdb.network.NetworkFacade;
+import com.questdb.network.*;
 import com.questdb.std.Chars;
 import com.questdb.std.ObjectPool;
 import com.questdb.std.Unsafe;
@@ -91,7 +88,7 @@ public class HttpConnectionContext implements IOContext {
                 handleClientRecv(nf, dispatcher, selector);
                 break;
             default:
-                dispatcher.registerChannel(this, IOOperation.DISCONNECT);
+                dispatcher.disconnect(this, DisconnectReason.SILLY);
                 break;
         }
     }
@@ -100,7 +97,7 @@ public class HttpConnectionContext implements IOContext {
         int read;// consume and throw away the remainder of TCP input
         read = nf.recv(fd, recvBuffer, 1);
         if (read != 0) {
-            dispatcher.registerChannel(this, IOOperation.DISCONNECT);
+            dispatcher.disconnect(this, DisconnectReason.PEER);
         } else {
             processor.onRequestComplete(this, dispatcher);
         }
@@ -124,7 +121,7 @@ public class HttpConnectionContext implements IOContext {
                 if (read < 0) {
                     LOG.debug().$("done").$();
                     // peer disconnect
-                    dispatcher.registerChannel(this, IOOperation.CLEANUP);
+                    dispatcher.disconnect(this, DisconnectReason.PEER);
                     return;
                 }
 
@@ -161,7 +158,7 @@ public class HttpConnectionContext implements IOContext {
                         read = nf.recv(fd, recvBuffer, recvBufferSize);
 
                         if (read < 0) {
-                            dispatcher.registerChannel(this, IOOperation.CLEANUP);
+                            dispatcher.disconnect(this, DisconnectReason.PEER);
                             break;
                         }
 

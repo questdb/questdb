@@ -146,6 +146,19 @@ public class IODispatcherOsx<C extends IOContext> extends SynchronizedJob implem
         }
     }
 
+    @Override
+    public void disconnect(C context, int disconnectReason) {
+        final long fd = context.getFd();
+        LOG.info()
+                .$("disconnected [ip=").$ip(nf.getPeerIP(fd))
+                .$(", fd=").$(fd)
+                .$(", reason=").$(DisconnectReason.nameOf(disconnectReason))
+                .$(']').$();
+        nf.close(fd, LOG);
+        context.close();
+        connectionCount--;
+    }
+
     private void accept() {
         while (true) {
             long fd = nf.accept(serverFd);
@@ -188,18 +201,6 @@ public class IODispatcherOsx<C extends IOContext> extends SynchronizedJob implem
         pending.set(r, ioContextFactory.newInstance(fd));
     }
 
-    private void disconnect(C context, int disconnectReason) {
-        final long fd = context.getFd();
-        LOG.info()
-                .$("disconnected [ip=").$ip(nf.getPeerIP(fd))
-                .$(", fd=").$(fd)
-                .$(", reason=").$(DisconnectReason.nameOf(disconnectReason))
-                .$(']').$();
-        nf.close(fd, LOG);
-        context.close();
-        connectionCount--;
-    }
-
     private void drainQueueAndDisconnect() {
         long cursor;
         do {
@@ -231,6 +232,27 @@ public class IODispatcherOsx<C extends IOContext> extends SynchronizedJob implem
         if (index > 0) {
             registerWithKQueue(index);
         }
+    }
+
+    private int findPending(int fd, long ts) {
+        int r = pending.binarySearch(ts);
+        if (r < 0) {
+            return r;
+        }
+
+        if (pending.get(r, M_FD) == fd) {
+            return r;
+        } else {
+            return scanRow(r + 1, fd, ts);
+        }
+    }
+
+    private void processIdleConnections(long deadline) {
+        int count = 0;
+        for (int i = 0, n = pending.size(); i < n && pending.get(i, M_TIMESTAMP) < deadline; i++, count++) {
+            disconnect(pending.get(i), DisconnectReason.IDLE);
+        }
+        pending.zapTop(count);
     }
 
     private boolean processRegistrations(long timestamp) {
@@ -286,27 +308,6 @@ public class IODispatcherOsx<C extends IOContext> extends SynchronizedJob implem
         }
 
         return useful;
-    }
-
-    private int findPending(int fd, long ts) {
-        int r = pending.binarySearch(ts);
-        if (r < 0) {
-            return r;
-        }
-
-        if (pending.get(r, M_FD) == fd) {
-            return r;
-        } else {
-            return scanRow(r + 1, fd, ts);
-        }
-    }
-
-    private void processIdleConnections(long deadline) {
-        int count = 0;
-        for (int i = 0, n = pending.size(); i < n && pending.get(i, M_TIMESTAMP) < deadline; i++, count++) {
-            disconnect(pending.get(i), DisconnectReason.IDLE);
-        }
-        pending.zapTop(count);
     }
 
     private void publishOperation(int operation, C context) {
