@@ -21,28 +21,13 @@
  *
  ******************************************************************************/
 
-#include <winsock2.h>
-#include <stddef.h>
-#include "select.h"
-#include "errno.h"
+package com.questdb.network;
 
-JNIEXPORT jint JNICALL Java_com_questdb_network_SelectAccessor_select
-        (JNIEnv *e, jclass cl, jlong readfds, jlong writefds, jlong exceptfds) {
-    struct timeval tv = {0, 0};
-    int n = select(0, (fd_set *) readfds, (fd_set *) writefds, (fd_set *) exceptfds, &tv);
-    if (n != 0) {
-        SaveLastError();
+public class SelectFacadeImpl implements SelectFacade {
+    public static final SelectFacade INSTANCE = new SelectFacadeImpl();
+
+    @Override
+    public int select(long readfds, long writefds, long exceptfds) {
+        return SelectAccessor.select(readfds, writefds, exceptfds);
     }
-    return n;
 }
-
-JNIEXPORT jint JNICALL Java_com_questdb_network_SelectAccessor_arrayOffset
-        (JNIEnv *e, jclass cl) {
-    return offsetof(struct fd_set, fd_array[0]);
-}
-
-JNIEXPORT jint JNICALL Java_com_questdb_network_SelectAccessor_countOffset
-        (JNIEnv *e, jclass cl) {
-    return offsetof(struct fd_set, fd_count);
-}
-

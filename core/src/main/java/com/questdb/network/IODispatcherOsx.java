@@ -49,7 +49,7 @@ public class IODispatcherOsx<C extends IOContext> extends SynchronizedJob implem
     private final SCSequence interestSubSeq = new SCSequence();
     private final MillisecondClock clock;
     private final Kqueue kqueue;
-    private final long timeout;
+    private final long idleConnectionTimeout;
     private final LongMatrix<C> pending = new LongMatrix<>(2);
     private final int activeConnectionLimit;
     private final int capacity;
@@ -74,7 +74,7 @@ public class IODispatcherOsx<C extends IOContext> extends SynchronizedJob implem
         this.interestPubSeq.then(this.interestSubSeq).then(this.interestPubSeq);
         this.clock = configuration.getClock();
         this.activeConnectionLimit = configuration.getActiveConnectionLimit();
-        this.timeout = configuration.getIdleConnectionTimeout();
+        this.idleConnectionTimeout = configuration.getIdleConnectionTimeout();
         this.capacity = configuration.getEventCapacity();
         this.ioContextFactory = ioContextFactory;
         this.initialBias = configuration.getInitialBias();
@@ -363,7 +363,7 @@ public class IODispatcherOsx<C extends IOContext> extends SynchronizedJob implem
 
         // process timed out connections
         final long timestamp = clock.getTicks();
-        final long deadline = timestamp - timeout;
+        final long deadline = timestamp - idleConnectionTimeout;
         if (pending.size() > 0 && pending.get(0, M_TIMESTAMP) < deadline) {
             processIdleConnections(deadline);
             useful = true;

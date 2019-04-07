@@ -70,7 +70,7 @@ public class DefaultIODispatcherConfiguration implements IODispatcherConfigurati
 
     @Override
     public int getListenBacklog() {
-        return 128;
+        return 50000;
     }
 
     @Override
@@ -81,6 +81,11 @@ public class DefaultIODispatcherConfiguration implements IODispatcherConfigurati
     @Override
     public EpollFacade getEpollFacade() {
         return EpollFacadeImpl.INSTANCE;
+    }
+
+    @Override
+    public SelectFacade getSelectFacade() {
+        return SelectFacadeImpl.INSTANCE;
     }
 
     @Override

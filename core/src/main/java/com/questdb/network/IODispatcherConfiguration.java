@@ -51,5 +51,7 @@ public interface IODispatcherConfiguration {
 
     EpollFacade getEpollFacade();
 
+    SelectFacade getSelectFacade();
+
     int getInitialBias();
 }

@@ -39,6 +39,8 @@ public class IODispatchers {
                 return new IODispatcherLinux<>(configuration, ioContextFactory);
             case Os.OSX:
                 return new IODispatcherOsx<>(configuration, ioContextFactory);
+            case Os.WINDOWS:
+                return new IODispatcherWindows<>(configuration, ioContextFactory);
             default:
                 throw new RuntimeException();
         }

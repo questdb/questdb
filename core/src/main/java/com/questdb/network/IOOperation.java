@@ -25,9 +25,7 @@ package com.questdb.network;
 
 public final class IOOperation {
     public static final int READ = 1;
-    public static final int DISCONNECT = 3;
     public static final int WRITE = 4;
-    public static final int CLEANUP = 5;
 
     private IOOperation() {
     }

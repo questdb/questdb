@@ -27,7 +27,7 @@
 #include "../share/net.h"
 #include "errno.h"
 
-JNIEXPORT jint JNICALL Java_com_questdb_std_Net_abortAccept
+JNIEXPORT jint JNICALL Java_com_questdb_network_Net_abortAccept
         (JNIEnv *e, jclass cl, jlong fd) {
     jint r = CloseHandle((HANDLE) fd);
     if (!r) {

@@ -28,8 +28,12 @@ import com.questdb.log.LogFactory;
 import com.questdb.mp.*;
 import com.questdb.network.Net;
 import com.questdb.network.NetworkError;
+import com.questdb.network.SelectAccessor;
 import com.questdb.std.*;
 import com.questdb.std.time.MillisecondClock;
+
+import static com.questdb.network.SelectAccessor.ARRAY_OFFSET;
+import static com.questdb.network.SelectAccessor.COUNT_OFFSET;
 
 public class Win32SelectDispatcher<C extends Context> extends SynchronizedJob implements Dispatcher<C> {
 
@@ -37,8 +41,6 @@ public class Win32SelectDispatcher<C extends Context> extends SynchronizedJob im
     private static final int M_FD = 1;
     private static final int M_OPERATION = 2;
     private static final Log LOG = LogFactory.getLog(Win32SelectDispatcher.class);
-    private static final int COUNT_OFFSET;
-    private static final int ARRAY_OFFSET;
     private static final int FD_READ = 1;
     private static final int FD_WRITE = 2;
     private final FDSet readFdSet;
@@ -127,12 +129,6 @@ public class Win32SelectDispatcher<C extends Context> extends SynchronizedJob im
         LOG.debug().$("Re-queuing ").$(channelStatus).$(" on ").$(context.getFd()).$();
         interestPubSequence.done(cursor);
     }
-
-    private static native int select(long readfds, long writefds, long exceptfds);
-
-    private static native int countOffset();
-
-    private static native int arrayOffset();
 
     private void accept(long timestamp) {
         while (true) {
@@ -241,7 +237,7 @@ public class Win32SelectDispatcher<C extends Context> extends SynchronizedJob im
 
     @Override
     protected boolean runSerially() {
-        int count = select(readFdSet.address, writeFdSet.address, 0);
+        int count = SelectAccessor.select(readFdSet.address, writeFdSet.address, 0);
         if (count < 0) {
             LOG.error().$("Error in select(): ").$(Os.errno()).$();
             return false;
@@ -389,11 +385,6 @@ public class Win32SelectDispatcher<C extends Context> extends SynchronizedJob im
             _wptr = _addr + (_wptr - address);
             address = _addr;
         }
-    }
-
-    static {
-        ARRAY_OFFSET = arrayOffset();
-        COUNT_OFFSET = countOffset();
     }
 }
 

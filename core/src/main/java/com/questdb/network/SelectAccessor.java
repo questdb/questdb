@@ -21,28 +21,22 @@
  *
  ******************************************************************************/
 
-#include <winsock2.h>
-#include <stddef.h>
-#include "select.h"
-#include "errno.h"
+package com.questdb.network;
 
-JNIEXPORT jint JNICALL Java_com_questdb_network_SelectAccessor_select
-        (JNIEnv *e, jclass cl, jlong readfds, jlong writefds, jlong exceptfds) {
-    struct timeval tv = {0, 0};
-    int n = select(0, (fd_set *) readfds, (fd_set *) writefds, (fd_set *) exceptfds, &tv);
-    if (n != 0) {
-        SaveLastError();
+public class SelectAccessor {
+    public static final int COUNT_OFFSET;
+    public static final int ARRAY_OFFSET;
+    static final int FD_READ = 1;
+    static final int FD_WRITE = 2;
+
+    static {
+        ARRAY_OFFSET = SelectAccessor.arrayOffset();
+        COUNT_OFFSET = SelectAccessor.countOffset();
     }
-    return n;
-}
 
-JNIEXPORT jint JNICALL Java_com_questdb_network_SelectAccessor_arrayOffset
-        (JNIEnv *e, jclass cl) {
-    return offsetof(struct fd_set, fd_array[0]);
-}
+    public static native int select(long readfds, long writefds, long exceptfds);
 
-JNIEXPORT jint JNICALL Java_com_questdb_network_SelectAccessor_countOffset
-        (JNIEnv *e, jclass cl) {
-    return offsetof(struct fd_set, fd_count);
-}
+    private static native int countOffset();
 
+    private static native int arrayOffset();
+}
