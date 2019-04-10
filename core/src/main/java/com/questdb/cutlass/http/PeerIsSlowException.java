@@ -23,8 +23,6 @@
 
 package com.questdb.cutlass.http;
 
-public interface HttpRequestProcessorSelector {
-    HttpRequestProcessor select(CharSequence url);
-
-    HttpRequestProcessor getDefaultProcessor();
+public class PeerIsSlowException extends HttpException {
+    public static final PeerIsSlowException INSTANCE = new PeerIsSlowException();
 }

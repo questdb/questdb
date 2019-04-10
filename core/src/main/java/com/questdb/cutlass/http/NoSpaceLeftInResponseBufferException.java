@@ -23,8 +23,6 @@
 
 package com.questdb.cutlass.http;
 
-public interface HttpRequestProcessorSelector {
-    HttpRequestProcessor select(CharSequence url);
-
-    HttpRequestProcessor getDefaultProcessor();
+public class NoSpaceLeftInResponseBufferException extends HttpException {
+    public final static NoSpaceLeftInResponseBufferException INSTANCE = new NoSpaceLeftInResponseBufferException();
 }

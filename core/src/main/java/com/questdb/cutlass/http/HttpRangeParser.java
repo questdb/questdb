@@ -23,8 +23,44 @@
 
 package com.questdb.cutlass.http;
 
-public interface HttpRequestProcessorSelector {
-    HttpRequestProcessor select(CharSequence url);
+import com.questdb.std.Chars;
+import com.questdb.std.Numbers;
+import com.questdb.std.NumericException;
 
-    HttpRequestProcessor getDefaultProcessor();
+public class HttpRangeParser {
+    private static final String BYTES = "bytes=";
+    private long lo;
+    private long hi;
+
+    public long getHi() {
+        return hi;
+    }
+
+    public long getLo() {
+        return lo;
+    }
+
+    public boolean of(CharSequence range) {
+        if (!Chars.startsWith(range, BYTES)) {
+            return false;
+        }
+
+        int n = Chars.indexOf(range, BYTES.length(), '-');
+
+        if (n == -1) {
+            return false;
+        }
+
+        try {
+            this.lo = Numbers.parseLong(range, BYTES.length(), n);
+            if (n == range.length() - 1) {
+                this.hi = Long.MAX_VALUE;
+            } else {
+                this.hi = Numbers.parseLong(range, n + 1, range.length());
+            }
+            return true;
+        } catch (NumericException e) {
+            return false;
+        }
+    }
 }

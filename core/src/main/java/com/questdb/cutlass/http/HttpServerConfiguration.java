@@ -23,7 +23,13 @@
 
 package com.questdb.cutlass.http;
 
+import com.questdb.cutlass.http.processors.StaticContentProcessorConfiguration;
+import com.questdb.network.IODispatcherConfiguration;
+import com.questdb.std.time.MillisecondClock;
+
 public interface HttpServerConfiguration {
+    String DEFAULT_PROCESSOR_URL = "*";
+
     int getConnectionHeaderBufferSize();
 
     int getConnectionMultipartHeaderBufferSize();
@@ -33,4 +39,12 @@ public interface HttpServerConfiguration {
     int getConnectionSendBufferSize();
 
     int getConnectionWrapperObjPoolSize();
+
+    MillisecondClock getClock();
+
+    IODispatcherConfiguration getDispatcherConfiguration();
+
+    StaticContentProcessorConfiguration getStaticContentProcessorConfiguration();
+
+    int getWorkerCount();
 }

@@ -23,8 +23,6 @@
 
 package com.questdb.cutlass.http;
 
-public interface HttpRequestProcessorSelector {
-    HttpRequestProcessor select(CharSequence url);
-
-    HttpRequestProcessor getDefaultProcessor();
+public class PeerDisconnectedException extends HttpException {
+    public static final PeerDisconnectedException INSTANCE = new PeerDisconnectedException();
 }

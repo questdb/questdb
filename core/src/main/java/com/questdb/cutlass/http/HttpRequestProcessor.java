@@ -26,7 +26,10 @@ package com.questdb.cutlass.http;
 import com.questdb.network.IODispatcher;
 
 public interface HttpRequestProcessor {
-    void onHeadersReady(HttpConnectionContext connectionContext);
+    void onHeadersReady(HttpConnectionContext context);
 
-    void onRequestComplete(HttpConnectionContext connectionContext, IODispatcher<HttpConnectionContext> dispatcher);
+    void onRequestComplete(HttpConnectionContext context, IODispatcher<HttpConnectionContext> dispatcher);
+
+    default void resume(HttpConnectionContext context) {
+    }
 }

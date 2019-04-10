@@ -23,6 +23,8 @@
 
 package com.questdb.std.str;
 
+import com.questdb.std.Numbers;
+
 public final class PrefixedPath extends Path {
 
     private final int prefixLen;
@@ -35,7 +37,7 @@ public final class PrefixedPath extends Path {
     }
 
     public PrefixedPath(CharSequence prefix) {
-        this(prefix, 128);
+        this(prefix, Numbers.ceilPow2(prefix.length() + 32));
     }
 
     public PrefixedPath rewind() {

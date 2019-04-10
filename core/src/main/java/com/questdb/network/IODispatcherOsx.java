@@ -137,15 +137,22 @@ public class IODispatcherOsx<C extends IOContext> extends SynchronizedJob implem
     }
 
     @Override
-    public void processIOQueue(IORequestProcessor<C> processor) {
+    public boolean processIOQueue(IORequestProcessor<C> processor) {
         long cursor = ioEventSubSeq.next();
+        while (cursor == -2) {
+            cursor = ioEventSubSeq.next();
+        }
+
         if (cursor > -1) {
             IOEvent<C> event = ioEventQueue.get(cursor);
             C connectionContext = event.context;
             final int operation = event.operation;
             ioEventSubSeq.done(cursor);
             processor.onRequest(operation, connectionContext, this);
+            return true;
         }
+
+        return false;
     }
 
     @Override

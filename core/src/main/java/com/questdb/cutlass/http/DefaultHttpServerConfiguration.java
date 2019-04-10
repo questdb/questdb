@@ -23,7 +23,46 @@
 
 package com.questdb.cutlass.http;
 
+import com.questdb.cutlass.http.processors.StaticContentProcessorConfiguration;
+import com.questdb.network.DefaultIODispatcherConfiguration;
+import com.questdb.network.IODispatcherConfiguration;
+import com.questdb.std.FilesFacade;
+import com.questdb.std.FilesFacadeImpl;
+import com.questdb.std.str.Path;
+import com.questdb.std.time.MillisecondClock;
+import com.questdb.std.time.MillisecondClockImpl;
+
 class DefaultHttpServerConfiguration implements HttpServerConfiguration {
+    protected final MimeTypesCache mimeTypesCache;
+    private final IODispatcherConfiguration dispatcherConfiguration = new DefaultIODispatcherConfiguration();
+    private final StaticContentProcessorConfiguration staticContentProcessorConfiguration = new StaticContentProcessorConfiguration() {
+        @Override
+        public FilesFacade getFilesFacade() {
+            return FilesFacadeImpl.INSTANCE;
+        }
+
+        @Override
+        public CharSequence getIndexFileName() {
+            return "index.html";
+        }
+
+        @Override
+        public MimeTypesCache getMimeTypesCache() {
+            return mimeTypesCache;
+        }
+
+        @Override
+        public CharSequence getPublicDirectory() {
+            return ".";
+        }
+    };
+
+    public DefaultHttpServerConfiguration() {
+        try (Path path = new Path().of(this.getClass().getResource("/site/conf/mime.types").getFile()).$()) {
+            this.mimeTypesCache = new MimeTypesCache(FilesFacadeImpl.INSTANCE, path);
+        }
+    }
+
     @Override
     public int getConnectionHeaderBufferSize() {
         return 1024;
@@ -47,5 +86,25 @@ class DefaultHttpServerConfiguration implements HttpServerConfiguration {
     @Override
     public int getConnectionWrapperObjPoolSize() {
         return 128;
+    }
+
+    @Override
+    public MillisecondClock getClock() {
+        return MillisecondClockImpl.INSTANCE;
+    }
+
+    @Override
+    public IODispatcherConfiguration getDispatcherConfiguration() {
+        return dispatcherConfiguration;
+    }
+
+    @Override
+    public StaticContentProcessorConfiguration getStaticContentProcessorConfiguration() {
+        return staticContentProcessorConfiguration;
+    }
+
+    @Override
+    public int getWorkerCount() {
+        return 2;
     }
 }

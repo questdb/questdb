@@ -21,12 +21,17 @@
  *
  ******************************************************************************/
 
-package com.questdb.ex;
+package com.questdb.cutlass.http.processors;
 
-@SuppressWarnings("ThrowableInstanceNeverThrown")
-public final class ZLibException extends RuntimeException {
-    public final static ZLibException INSTANCE = new ZLibException();
+import com.questdb.cutlass.http.MimeTypesCache;
+import com.questdb.std.FilesFacade;
 
-    private ZLibException() {
-    }
+public interface StaticContentProcessorConfiguration {
+    FilesFacade getFilesFacade();
+
+    CharSequence getIndexFileName();
+
+    MimeTypesCache getMimeTypesCache();
+
+    CharSequence getPublicDirectory();
 }

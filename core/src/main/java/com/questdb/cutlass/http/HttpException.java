@@ -54,6 +54,16 @@ public class HttpException extends RuntimeException implements Sinkable {
         return this;
     }
 
+    public HttpException put(int value) {
+        message.put(value);
+        return this;
+    }
+
+    public HttpException put(long value) {
+        message.put(value);
+        return this;
+    }
+
     @Override
     public void toSink(CharSink sink) {
         sink.put(message);

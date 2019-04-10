@@ -92,6 +92,11 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
+    public long getLastModified(LPSZ path) {
+        return Files.getLastModified(path);
+    }
+
+    @Override
     public long getMapPageSize() {
         if (mapPageSize == 0) {
             mapPageSize = computeMapPageSize();

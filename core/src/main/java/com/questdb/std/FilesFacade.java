@@ -47,6 +47,8 @@ public interface FilesFacade {
 
     int findType(long findPtr);
 
+    long getLastModified(LPSZ path);
+
     long getMapPageSize();
 
     long getOpenFileCount();

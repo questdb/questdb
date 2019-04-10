@@ -23,8 +23,8 @@
 
 package com.questdb.cutlass.http;
 
-public interface HttpRequestProcessorSelector {
-    HttpRequestProcessor select(CharSequence url);
+import com.questdb.std.ObjectFactory;
 
-    HttpRequestProcessor getDefaultProcessor();
+public interface HttpRequestProcessorFactory extends ObjectFactory<HttpRequestProcessor> {
+    String getUrl();
 }

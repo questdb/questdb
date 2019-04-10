@@ -21,10 +21,11 @@
  *
  ******************************************************************************/
 
-package com.questdb.cutlass.http;
+package com.questdb.std.ex;
 
-public interface HttpRequestProcessorSelector {
-    HttpRequestProcessor select(CharSequence url);
+public final class ZLibException extends RuntimeException {
+    public final static ZLibException INSTANCE = new ZLibException();
 
-    HttpRequestProcessor getDefaultProcessor();
+    private ZLibException() {
+    }
 }
