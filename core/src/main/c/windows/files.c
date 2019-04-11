@@ -132,6 +132,24 @@ JNIEXPORT jboolean JNICALL Java_com_questdb_std_Files_setLastModified
         SaveLastError();
         return 0;
     }
+
+    LONG bias;
+    TIME_ZONE_INFORMATION tz;
+    switch (GetTimeZoneInformation(&tz)) {
+        case TIME_ZONE_ID_STANDARD:
+            bias = tz.StandardBias;
+            break;
+        case TIME_ZONE_ID_DAYLIGHT:
+            bias = tz.DaylightBias;
+            break;
+        default:
+            bias = 0;
+    }
+    if (bias != 0) {
+        bias *= 60000L;
+    }
+
+    millis += bias;
     millis += 11644477200000;
     millis *= 10000;
     FILETIME t;
