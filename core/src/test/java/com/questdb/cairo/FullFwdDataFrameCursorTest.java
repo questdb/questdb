@@ -34,7 +34,7 @@ import org.junit.Assert;
 import org.junit.Ignore;
 import org.junit.Test;
 
-import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
 
@@ -2229,13 +2229,13 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
 
     final static class MyWorkScheduler implements CairoWorkScheduler {
         private final int nWorkers = 2;
-        private final CountDownLatch workerHaltLatch = new CountDownLatch(nWorkers);
+        private final SOCountDownLatch workerHaltLatch = new SOCountDownLatch(nWorkers);
         private final Worker[] workers = new Worker[nWorkers];
         private final RingQueue<ColumnIndexerEntry> queue = new RingQueue<>(ColumnIndexerEntry::new, 1024);
         private final Sequence pubSeq;
         private final Sequence subSeq;
         private final ObjHashSet<Job> jobs = new ObjHashSet<>();
-        private boolean active = false;
+        private final AtomicBoolean active = new AtomicBoolean(false);
 
         public MyWorkScheduler(Sequence pubSequence, Sequence subSequence) {
             this.pubSeq = pubSequence;
@@ -2266,8 +2266,8 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
             return subSeq;
         }
 
-        void halt() throws InterruptedException {
-            if (active) {
+        void halt() {
+            if (active.compareAndSet(true, false)) {
                 for (int i = 0; i < nWorkers; i++) {
                     workers[i].halt();
                 }
@@ -2276,12 +2276,13 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
         }
 
         void start() {
-            pubSeq.then(subSeq).then(pubSeq);
-            for (int i = 0; i < nWorkers; i++) {
-                workers[i] = new Worker(jobs, workerHaltLatch);
-                workers[i].start();
+            if (active.compareAndSet(false, true)) {
+                pubSeq.then(subSeq).then(pubSeq);
+                for (int i = 0; i < nWorkers; i++) {
+                    workers[i] = new Worker(jobs, workerHaltLatch);
+                    workers[i].start();
+                }
             }
-            active = true;
         }
     }
 }

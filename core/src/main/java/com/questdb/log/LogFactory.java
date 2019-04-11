@@ -33,7 +33,6 @@ import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.util.Comparator;
 import java.util.Properties;
-import java.util.concurrent.CountDownLatch;
 
 public class LogFactory implements Closeable {
 
@@ -50,7 +49,7 @@ public class LogFactory implements Closeable {
     private final CharSequenceObjHashMap<ScopeConfiguration> scopeConfigMap = new CharSequenceObjHashMap<>();
     private final ObjList<ScopeConfiguration> scopeConfigs = new ObjList<>();
     private final ObjHashSet<LogWriter> jobs = new ObjHashSet<>();
-    private final CountDownLatch workerHaltLatch = new CountDownLatch(1);
+    private final SOCountDownLatch workerHaltLatch = new SOCountDownLatch(1);
     private final MicrosecondClock clock;
     private Worker worker = null;
     private boolean configured = false;
@@ -165,10 +164,7 @@ public class LogFactory implements Closeable {
     public void haltThread() {
         if (worker != null) {
             worker.halt();
-            try {
                 workerHaltLatch.await();
-            } catch (InterruptedException ignore) {
-            }
             worker = null;
         }
     }

@@ -26,6 +26,7 @@ package com.questdb.cutlass.http;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.mp.Job;
+import com.questdb.mp.SOCountDownLatch;
 import com.questdb.mp.Worker;
 import com.questdb.network.IOContextFactory;
 import com.questdb.network.IODispatcher;
@@ -37,7 +38,6 @@ import com.questdb.std.ObjHashSet;
 import com.questdb.std.ObjList;
 
 import java.io.Closeable;
-import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class HttpServer implements Closeable {
@@ -45,8 +45,8 @@ public class HttpServer implements Closeable {
     private final HttpServerConfiguration configuration;
     private final HttpContextFactory httpContextFactory;
     private final ObjList<HttpRequestProcessorSelectorImpl> selectors;
-    private final CountDownLatch workerHaltLatch;
-    private final CountDownLatch started = new CountDownLatch(1);
+    private final SOCountDownLatch workerHaltLatch;
+    private final SOCountDownLatch started = new SOCountDownLatch(1);
     private final int workerCount;
     private final AtomicBoolean running = new AtomicBoolean();
     private final ObjList<Worker> workers;
@@ -71,7 +71,7 @@ public class HttpServer implements Closeable {
         // halt latch that each worker will count down to let main
         // thread know that server is done and allow server shutdown
         // gracefully
-        this.workerHaltLatch = new CountDownLatch(workerCount);
+        this.workerHaltLatch = new SOCountDownLatch(workerCount);
     }
 
     public void bind(HttpRequestProcessorFactory factory) {
@@ -89,20 +89,23 @@ public class HttpServer implements Closeable {
 
     @Override
     public void close() {
+        halt();
         Misc.free(dispatcher);
     }
 
-    public CountDownLatch getStartedLatch() {
+    public SOCountDownLatch getStartedLatch() {
         return started;
     }
 
-    public void halt() throws InterruptedException {
+    public void halt() {
         if (running.compareAndSet(true, false)) {
+            LOG.info().$("stopping").$();
             started.await();
             for (int i = 0; i < workerCount; i++) {
                 workers.getQuick(i).halt();
             }
             workerHaltLatch.await();
+            LOG.info().$("stopped").$();
         }
     }
 
@@ -126,7 +129,7 @@ public class HttpServer implements Closeable {
                     public boolean run() {
                         return dispatcher.processIOQueue(
                                 (operation, context, dispatcher1)
-                                        -> context.handleClientOperation(operation, nf, dispatcher1, selector)
+                                        -> context.handleClientOperation(operation, dispatcher1, selector)
                         );
                     }
                 });

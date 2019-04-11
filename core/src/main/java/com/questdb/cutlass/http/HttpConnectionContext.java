@@ -44,9 +44,11 @@ public class HttpConnectionContext implements IOContext, Locality {
     private final long fd;
     private final LocalValueMap localValueMap = new LocalValueMap();
     private HttpRequestProcessor resumeProcessor = null;
+    private final NetworkFacade nf;
 
     public HttpConnectionContext(HttpServerConfiguration configuration, long fd) {
         this.configuration = configuration;
+        this.nf = configuration.getDispatcherConfiguration().getNetworkFacade();
         this.csPool = new ObjectPool<>(DirectByteCharSequence.FACTORY, configuration.getConnectionWrapperObjPoolSize());
         this.headerParser = new HttpHeaderParser(configuration.getConnectionHeaderBufferSize(), csPool);
         this.multipartContentHeaderParser = new HttpHeaderParser(configuration.getConnectionMultipartHeaderBufferSize(), csPool);
@@ -98,18 +100,21 @@ public class HttpConnectionContext implements IOContext, Locality {
         return localValueMap;
     }
 
-    public void handleClientOperation(int operation, NetworkFacade nf, IODispatcher<HttpConnectionContext> dispatcher, HttpRequestProcessorSelector selector) {
+    public void handleClientOperation(int operation, IODispatcher<HttpConnectionContext> dispatcher, HttpRequestProcessorSelector selector) {
         switch (operation) {
             case IOOperation.READ:
-                handleClientRecv(nf, dispatcher, selector);
+                handleClientRecv(dispatcher, selector);
                 break;
             case IOOperation.WRITE:
                 if (resumeProcessor != null) {
                     try {
                         responseSink.resume();
                         resumeProcessor.resume(this);
+                        resumeProcessor = null;
                     } catch (PeerIsSlowException ignore) {
                         dispatcher.registerChannel(this, IOOperation.WRITE);
+                    } catch (PeerDisconnectedException ignore) {
+                        dispatcher.disconnect(this, DisconnectReason.PEER);
                     }
                 } else {
                     assert false;
@@ -125,7 +130,7 @@ public class HttpConnectionContext implements IOContext, Locality {
         return responseSink.getSimple();
     }
 
-    private void checkRemainingInputAndCompleteRequest(NetworkFacade nf, IODispatcher<HttpConnectionContext> dispatcher, long fd, HttpRequestProcessor processor) {
+    private void checkRemainingInputAndCompleteRequest(IODispatcher<HttpConnectionContext> dispatcher, long fd, HttpRequestProcessor processor) {
         int read;// consume and throw away the remainder of TCP input
         read = nf.recv(fd, recvBuffer, 1);
         if (read != 0) {
@@ -142,7 +147,6 @@ public class HttpConnectionContext implements IOContext, Locality {
     }
 
     private void handleClientRecv(
-            NetworkFacade nf,
             IODispatcher<HttpConnectionContext> dispatcher,
             HttpRequestProcessorSelector selector
     ) {
@@ -212,7 +216,7 @@ public class HttpConnectionContext implements IOContext, Locality {
                         }
                     } while (!multipartContentParser.parse(recvBuffer, recvBuffer + read, multipartListener));
                 }
-                checkRemainingInputAndCompleteRequest(nf, dispatcher, fd, processor);
+                checkRemainingInputAndCompleteRequest(dispatcher, fd, processor);
             } else {
 
                 // Do not expect any more bytes to be sent to us before

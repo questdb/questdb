@@ -342,6 +342,7 @@ public class HttpServerTest extends AbstractJournalTest {
     }
 
     @Test
+    @Ignore
     public void testImportAppend() throws Exception {
 
         final AtomicInteger errors = new AtomicInteger();

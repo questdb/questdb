@@ -26,6 +26,7 @@ package com.questdb.cutlass.line.udp;
 import com.questdb.cairo.*;
 import com.questdb.cairo.pool.WriterPool;
 import com.questdb.mp.Job;
+import com.questdb.mp.SOCountDownLatch;
 import com.questdb.mp.Worker;
 import com.questdb.network.Net;
 import com.questdb.network.NetworkFacadeImpl;
@@ -35,8 +36,6 @@ import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.LockSupport;
 
 public class LinuxLineProtoReceiverTest extends AbstractCairoTest {
@@ -242,7 +241,7 @@ public class LinuxLineProtoReceiverTest extends AbstractCairoTest {
 
                 try {
 
-                    CountDownLatch workerHaltLatch = new CountDownLatch(1);
+                    SOCountDownLatch workerHaltLatch = new SOCountDownLatch(1);
 
                     // create table
 
@@ -284,7 +283,7 @@ public class LinuxLineProtoReceiverTest extends AbstractCairoTest {
 
                         Assert.assertTrue(count > 0);
                         worker.halt();
-                        Assert.assertTrue(workerHaltLatch.await(3, TimeUnit.SECONDS));
+                        workerHaltLatch.await();
 
                         StringSink sink = new StringSink();
                         RecordCursorPrinter printer = new RecordCursorPrinter(sink);

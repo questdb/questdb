@@ -44,7 +44,7 @@ public class HttpServer {
     private static final ObjectFactory<Event<IOContext>> EVENT_FACTORY = Event::new;
     private final InetSocketAddress address;
     private final ObjList<Worker> workers;
-    private final CountDownLatch haltLatch;
+    private final SOCountDownLatch haltLatch;
     private final int workerCount;
     private final CountDownLatch startComplete = new CountDownLatch(1);
     private final UrlMatcher urlMatcher;
@@ -61,7 +61,7 @@ public class HttpServer {
         this.address = new InetSocketAddress(configuration.getHttpIP(), configuration.getHttpPort());
         this.urlMatcher = env.matcher;
         this.workerCount = configuration.getHttpThreads();
-        this.haltLatch = new CountDownLatch(workerCount);
+        this.haltLatch = new SOCountDownLatch(workerCount);
         this.workers = new ObjList<>(workerCount);
         this.contextFactory = (fd, clock) -> new IOContext(new NetworkChannelImpl(fd), configuration, clock);
     }

@@ -28,7 +28,6 @@ import com.questdb.std.ObjHashSet;
 import com.questdb.std.Os;
 import com.questdb.std.Unsafe;
 
-import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.LockSupport;
 
@@ -38,18 +37,18 @@ public class Worker extends Thread {
     private static final long SLEEP_THRESHOLD = 10000000L;
     private final static AtomicInteger COUNTER = new AtomicInteger();
     private final ObjHashSet<? extends Job> jobs;
-    private final CountDownLatch haltLatch;
+    private final SOCountDownLatch haltLatch;
     private final int affinity;
     private final Log log;
     @SuppressWarnings("FieldCanBeLocal")
     private volatile int running = 0;
     private volatile int fence;
 
-    public Worker(ObjHashSet<? extends Job> jobs, CountDownLatch haltLatch) {
+    public Worker(ObjHashSet<? extends Job> jobs, SOCountDownLatch haltLatch) {
         this(jobs, haltLatch, -1, null);
     }
 
-    public Worker(ObjHashSet<? extends Job> jobs, CountDownLatch haltLatch, int affinity, Log log) {
+    public Worker(ObjHashSet<? extends Job> jobs, SOCountDownLatch haltLatch, int affinity, Log log) {
         this.log = log;
         this.jobs = jobs;
         this.haltLatch = haltLatch;

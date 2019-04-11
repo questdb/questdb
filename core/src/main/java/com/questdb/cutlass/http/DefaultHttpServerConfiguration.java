@@ -28,6 +28,7 @@ import com.questdb.network.DefaultIODispatcherConfiguration;
 import com.questdb.network.IODispatcherConfiguration;
 import com.questdb.std.FilesFacade;
 import com.questdb.std.FilesFacadeImpl;
+import com.questdb.std.Os;
 import com.questdb.std.str.Path;
 import com.questdb.std.time.MillisecondClock;
 import com.questdb.std.time.MillisecondClockImpl;
@@ -58,7 +59,13 @@ class DefaultHttpServerConfiguration implements HttpServerConfiguration {
     };
 
     public DefaultHttpServerConfiguration() {
-        try (Path path = new Path().of(this.getClass().getResource("/site/conf/mime.types").getFile()).$()) {
+        String defaultFilePath = this.getClass().getResource("/site/conf/mime.types").getFile();
+        if (Os.type == Os.WINDOWS) {
+            // on Windows Java returns "/C:/dir/file". This leading slash is Java specific and doesn't bode well
+            // with OS file open methods.
+            defaultFilePath = defaultFilePath.substring(1);
+        }
+        try (Path path = new Path().of(defaultFilePath).$()) {
             this.mimeTypesCache = new MimeTypesCache(FilesFacadeImpl.INSTANCE, path);
         }
     }

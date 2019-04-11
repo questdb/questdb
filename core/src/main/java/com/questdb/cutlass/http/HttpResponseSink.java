@@ -23,7 +23,9 @@
 
 package com.questdb.cutlass.http;
 
-import com.questdb.network.Net;
+import com.questdb.log.Log;
+import com.questdb.log.LogFactory;
+import com.questdb.network.NetworkFacade;
 import com.questdb.std.*;
 import com.questdb.std.ex.ZLibException;
 import com.questdb.std.str.AbstractCharSink;
@@ -34,6 +36,8 @@ import java.io.Closeable;
 import java.nio.ByteBuffer;
 
 public class HttpResponseSink implements Closeable, Mutable {
+    private final static Log LOG = LogFactory.getLog(HttpResponseSink.class);
+
     private static final int CHUNK_HEAD = 1;
     private static final int CHUNK_DATA = 2;
     private static final int FIN = 3;
@@ -56,6 +60,7 @@ public class HttpResponseSink implements Closeable, Mutable {
     private final FixedSizeResponseImpl fixedSize = new FixedSizeResponseImpl();
     private final ChunkedResponseImpl chunkedResponse = new ChunkedResponseImpl();
     private final DirectBufferResponse directBufferResponse = new DirectBufferResponse();
+    private final NetworkFacade nf;
     private final int responseBufferSize;
     private final long fd;
     private final HeaderOnlyResponse headerOnlyResponse = new HeaderOnlyResponse();
@@ -73,6 +78,7 @@ public class HttpResponseSink implements Closeable, Mutable {
 
     public HttpResponseSink(HttpServerConfiguration configuration, long fd) {
         this.responseBufferSize = Numbers.ceilPow2(configuration.getConnectionSendBufferSize());
+        this.nf = configuration.getDispatcherConfiguration().getNetworkFacade();
         this.out = Unsafe.calloc(responseBufferSize);
         this.headerSink = new HttpResponseHeaderSink(1024, configuration.getClock());
         // size is 32bit int, as hex string max 8 bytes
@@ -187,9 +193,10 @@ public class HttpResponseSink implements Closeable, Mutable {
     private void flush() {
         int sent = 0;
         while (sent < flushBufSize) {
-            int n = Net.send(fd, flushBuf + sent, flushBufSize - sent);
+            int n = nf.send(fd, flushBuf + sent, flushBufSize - sent);
             if (n < 0) {
                 // disconnected
+                LOG.info().$("disconnected [errno=").$(Os.errno()).$(']').$();
                 throw PeerDisconnectedException.INSTANCE;
             }
             if (n == 0) {

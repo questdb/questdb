@@ -132,7 +132,6 @@ public class IODispatcherTest {
         TestUtils.assertMemoryLeak(() -> {
             HttpServerConfiguration httpServerConfiguration = new DefaultHttpServerConfiguration();
 
-            NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
             SOCountDownLatch connectLatch = new SOCountDownLatch(1);
             SOCountDownLatch contextClosedLatch = new SOCountDownLatch(1);
             AtomicInteger closeCount = new AtomicInteger(0);
@@ -187,7 +186,7 @@ public class IODispatcherTest {
                     while (serverRunning.get()) {
                         dispatcher.run();
                         dispatcher.processIOQueue(
-                                (operation, context, disp) -> context.handleClientOperation(operation, nf, disp, selector)
+                                (operation, context, disp) -> context.handleClientOperation(operation, disp, selector)
                         );
                     }
                     serverHaltLatch.countDown();
@@ -234,7 +233,6 @@ public class IODispatcherTest {
 
             int N = 200;
 
-            NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
             AtomicInteger openCount = new AtomicInteger(0);
             AtomicInteger closeCount = new AtomicInteger(0);
 
@@ -289,7 +287,7 @@ public class IODispatcherTest {
                     do {
                         dispatcher.run();
                         dispatcher.processIOQueue(
-                                (operation, context, disp) -> context.handleClientOperation(operation, nf, disp, selector)
+                                (operation, context, disp) -> context.handleClientOperation(operation, disp, selector)
                         );
                     } while (serverRunning.get());
                     serverHaltLatch.countDown();
@@ -349,7 +347,6 @@ public class IODispatcherTest {
         TestUtils.assertMemoryLeak(() -> {
             HttpServerConfiguration httpServerConfiguration = new DefaultHttpServerConfiguration();
 
-            NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
             SOCountDownLatch connectLatch = new SOCountDownLatch(1);
             SOCountDownLatch contextClosedLatch = new SOCountDownLatch(1);
             SOCountDownLatch requestReceivedLatch = new SOCountDownLatch(1);
@@ -419,7 +416,7 @@ public class IODispatcherTest {
                     while (serverRunning.get()) {
                         dispatcher.run();
                         dispatcher.processIOQueue(
-                                (operation, context, disp) -> context.handleClientOperation(operation, nf, disp, selector)
+                                (operation, context, disp) -> context.handleClientOperation(operation, disp, selector)
                         );
                     }
                     serverHaltLatch.countDown();
@@ -516,7 +513,6 @@ public class IODispatcherTest {
                 }
             };
 
-            NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
             SOCountDownLatch connectLatch = new SOCountDownLatch(1);
             SOCountDownLatch contextClosedLatch = new SOCountDownLatch(1);
             AtomicInteger closeCount = new AtomicInteger(0);
@@ -586,7 +582,7 @@ public class IODispatcherTest {
                     while (serverRunning.get()) {
                         dispatcher.run();
                         dispatcher.processIOQueue(
-                                (operation, context, disp) -> context.handleClientOperation(operation, nf, disp, selector)
+                                (operation, context, disp) -> context.handleClientOperation(operation, disp, selector)
                         );
                     }
                     serverHaltLatch.countDown();
@@ -668,7 +664,6 @@ public class IODispatcherTest {
         TestUtils.assertMemoryLeak(() -> {
             HttpServerConfiguration httpServerConfiguration = new DefaultHttpServerConfiguration();
 
-            NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
             SOCountDownLatch connectLatch = new SOCountDownLatch(1);
             SOCountDownLatch contextClosedLatch = new SOCountDownLatch(1);
             AtomicInteger closeCount = new AtomicInteger(0);
@@ -740,7 +735,7 @@ public class IODispatcherTest {
                     while (serverRunning.get()) {
                         dispatcher.run();
                         dispatcher.processIOQueue(
-                                (operation, context, disp) -> context.handleClientOperation(operation, nf, disp, selector)
+                                (operation, context, disp) -> context.handleClientOperation(operation, disp, selector)
                         );
                     }
                     serverHaltLatch.countDown();
@@ -795,7 +790,7 @@ public class IODispatcherTest {
     }
 
     @Test
-    public void testStaticContentHandlerSimple() throws InterruptedException {
+    public void testStaticContentHandlerSimple() {
         String baseDir = System.getProperty("java.io.tmpdir");
         final DefaultHttpServerConfiguration httpConfiguration = new DefaultHttpServerConfiguration() {
 
@@ -825,7 +820,13 @@ public class IODispatcherTest {
             public StaticContentProcessorConfiguration getStaticContentProcessorConfiguration() {
                 return staticContentProcessorConfiguration;
             }
+
+            @Override
+            public MillisecondClock getClock() {
+                return () -> 0;
+            }
         };
+
         try (HttpServer httpServer = new HttpServer(httpConfiguration)) {
             httpServer.bind(new HttpRequestProcessorFactory() {
                 @Override
@@ -843,76 +844,115 @@ public class IODispatcherTest {
 
             // create 100Mb file in /tmp directory
             try (Path path = new Path().of(baseDir).concat("questdb-temp.txt").$()) {
-                long fd = Files.openAppend(path);
-                Files.truncate(fd, 0);
-
-                final int bufLen = 1024 * 1024;
-                long buf = Unsafe.malloc(bufLen); // 1Mb buffer
-                Rnd rnd = new Rnd();
-                for (int i = 0; i < bufLen / 8; i++) {
-                    Unsafe.getUnsafe().putLong(buf + i * 8, rnd.nextLong());
-                }
-
-                for (int i = 0; i < 20; i++) {
-                    Assert.assertEquals(bufLen, Files.append(fd, buf, bufLen));
-                }
-
-                Files.close(fd);
-                Unsafe.free(buf, bufLen);
-            }
-
-            httpServer.getStartedLatch().await();
-
-            // send request to server to download file we just created
-            final String request = "GET /questdb-temp.txt HTTP/1.1\r\n" +
-                    "Host: localhost:9000\r\n" +
-                    "Connection: keep-alive\r\n" +
-                    "Cache-Control: max-age=0\r\n" +
-                    "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8\r\n" +
-                    "User-Agent: Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/31.0.1650.48 Safari/537.36\r\n" +
-                    "Accept-Encoding: gzip,deflate,sdch\r\n" +
-                    "Accept-Language: en-US,en;q=0.8\r\n" +
-                    "Cookie: textwrapon=false; textautoformat=false; wysiwyg=textarea\r\n" +
-                    "\r\n";
-
-
-            long fd = Net.socketTcp(true);
-            try {
-                long sockAddr = Net.sockaddr("127.0.0.1", 9001);
                 try {
-                    Assert.assertTrue(fd > -1);
-                    Assert.assertEquals(0, Net.connect(fd, sockAddr));
+                    if (Files.exists(path)) {
+                        Assert.assertTrue(Files.remove(path));
+                    }
+                    long fd = Files.openAppend(path);
 
-                    int len = request.length();
-                    long buffer = TestUtils.toMemory(request);
-                    try {
-                        int part1 = len / 2;
-                        Assert.assertEquals(part1, Net.send(fd, buffer, part1));
-                        Assert.assertEquals(len - part1, Net.send(fd, buffer + part1, len - part1));
-
-                        // download
-                        long downloadedSoFar = 0;
-                        while (downloadedSoFar < 20971672) {
-                            int n = Net.recv(fd, buffer, len);
-                            if (n > 0) {
-                                downloadedSoFar += n;
-                            }
-                        }
-
-                    } finally {
-                        Unsafe.free(buffer, len);
+                    final int bufLen = 1024 * 1024;
+                    long buf = Unsafe.malloc(bufLen); // 1Mb buffer
+                    Rnd rnd = new Rnd();
+                    for (int i = 0; i < bufLen; i++) {
+                        Unsafe.getUnsafe().putLong(buf + i, rnd.nextByte());
                     }
 
+                    for (int i = 0; i < 20; i++) {
+                        Assert.assertEquals(bufLen, Files.append(fd, buf, bufLen));
+                    }
 
+                    Files.close(fd);
+                    Files.setLastModified(path, 122222212222L);
+                    Unsafe.free(buf, bufLen);
+
+
+                    httpServer.getStartedLatch().await();
+
+                    // send request to server to download file we just created
+                    final String request = "GET /questdb-temp.txt HTTP/1.1\r\n" +
+                            "Host: localhost:9000\r\n" +
+                            "Connection: keep-alive\r\n" +
+                            "Cache-Control: max-age=0\r\n" +
+                            "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8\r\n" +
+                            "User-Agent: Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/31.0.1650.48 Safari/537.36\r\n" +
+                            "Accept-Encoding: gzip,deflate,sdch\r\n" +
+                            "Accept-Language: en-US,en;q=0.8\r\n" +
+                            "Cookie: textwrapon=false; textautoformat=false; wysiwyg=textarea\r\n" +
+                            "\r\n";
+
+                    String expectedResponseHeader = "HTTP/1.1 200 OK\r\n" +
+                            "Server: questDB/1.0\r\n" +
+                            "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                            "Content-Length: 20971520\r\n" +
+                            "Content-Type: text/plain\r\n" +
+                            "ETag: \"122225812000\"\r\n" + // this is last modified timestamp on the file, we set this value when we created file
+                            "\r\n";
+
+                    int headerLen = expectedResponseHeader.length();
+                    int headerCheckRemaining = expectedResponseHeader.length();
+
+                    // prepare random generator to validate the downloaded content
+                    rnd.reset();
+
+                    fd = Net.socketTcp(true);
+                    try {
+                        long sockAddr = Net.sockaddr("127.0.0.1", 9001);
+                        try {
+                            Assert.assertTrue(fd > -1);
+                            Assert.assertEquals(0, Net.connect(fd, sockAddr));
+
+                            int len = request.length();
+                            long buffer = TestUtils.toMemory(request);
+                            try {
+                                int part1 = len / 2;
+                                Assert.assertEquals(part1, Net.send(fd, buffer, part1));
+                                Assert.assertEquals(len - part1, Net.send(fd, buffer + part1, len - part1));
+
+                                // download
+                                long downloadedSoFar = 0;
+                                int contentRemaining = 0;
+                                while (downloadedSoFar < 20971670) {
+                                    long contentOffset = 0;
+                                    int n = Net.recv(fd, buffer, len);
+                                    if (n > 0) {
+                                        if (headerCheckRemaining > 0) {
+                                            for (int i = 0; i < n; i++) {
+                                                if (expectedResponseHeader.charAt(headerLen - headerCheckRemaining) != (char) Unsafe.getUnsafe().getByte(buffer + i)) {
+                                                    Assert.fail("at " + (headerLen - headerCheckRemaining));
+                                                }
+                                                headerCheckRemaining--;
+                                                contentOffset++;
+                                            }
+                                        } else {
+                                            for (int i = 0; i < n; i++) {
+                                                if (contentRemaining == 0) {
+                                                    contentRemaining = bufLen;
+                                                    rnd.reset();
+                                                }
+                                                Assert.assertEquals(rnd.nextByte(), Unsafe.getUnsafe().getByte(buffer + contentOffset + i));
+                                                contentRemaining--;
+                                            }
+                                        }
+                                        downloadedSoFar += n;
+                                    }
+                                }
+
+                            } finally {
+                                Unsafe.free(buffer, len);
+                            }
+                        } finally {
+                            Net.freeSockAddr(sockAddr);
+                        }
+                    } finally {
+                        Net.close(fd);
+                        LOG.info().$("closed [fd=").$(fd).$(']').$();
+                    }
+
+                    httpServer.halt();
                 } finally {
-                    Net.freeSockAddr(sockAddr);
+                    Files.remove(path);
                 }
-            } finally {
-                Net.close(fd);
-                LOG.info().$("closed [fd=").$(fd).$(']').$();
             }
-
-            httpServer.halt();
         }
     }
 
@@ -1042,7 +1082,7 @@ public class IODispatcherTest {
                         while (serverRunning.get()) {
                             dispatcher.run();
                             dispatcher.processIOQueue(
-                                    (operation, context, disp) -> context.handleClientOperation(operation, nf, disp, selector)
+                                    (operation, context, disp) -> context.handleClientOperation(operation, disp, selector)
                             );
                         }
 
