@@ -915,8 +915,7 @@ public class IODispatcherTest {
                                     int n = Net.recv(fd, buffer, len);
                                     if (n > 0) {
                                         if (headerCheckRemaining > 0) {
-                                            for (int i = 0; i < n; i++) {
-//                                                System.out.print((char)Unsafe.getUnsafe().getByte(buffer + i));
+                                            for (int i = 0; i < n && headerCheckRemaining > 0; i++) {
                                                 if (expectedResponseHeader.charAt(headerLen - headerCheckRemaining) != (char) Unsafe.getUnsafe().getByte(buffer + i)) {
                                                     Assert.fail("at " + (headerLen - headerCheckRemaining));
                                                 }
