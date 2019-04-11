@@ -548,6 +548,7 @@ public class HttpServerTest extends AbstractJournalTest {
     }
 
     @Test
+    @Ignore
     public void testImportOverwrite() throws Exception {
         final ServerConfiguration configuration = new ServerConfiguration();
         BootstrapEnv env = new BootstrapEnv();

@@ -40,6 +40,7 @@
 #include <stdlib.h>
 #include <dirent.h>
 #include <sys/errno.h>
+#include <sys/time.h>
 #include "files.h"
 
 JNIEXPORT jlong JNICALL Java_com_questdb_std_Files_write
@@ -155,6 +156,7 @@ JNIEXPORT jboolean JNICALL Java_com_questdb_std_Files_exists
 JNIEXPORT jboolean JNICALL Java_com_questdb_std_Files_setLastModified
         (JNIEnv *e, jclass cl, jlong lpszName, jlong millis) {
     struct timeval t[2];
+    gettimeofday(t, NULL);
     t[1].tv_sec = millis / 1000;
     t[1].tv_usec = (__darwin_suseconds_t) ((millis % 1000) * 1000);
     return (jboolean) (utimes((const char *) lpszName, t) == 0);
@@ -164,9 +166,11 @@ JNIEXPORT jboolean JNICALL Java_com_questdb_std_Files_setLastModified
 
 JNIEXPORT jboolean JNICALL Java_com_questdb_std_Files_setLastModified
         (JNIEnv *e, jclass cl, jlong lpszName, jlong millis) {
-    struct utimbuf t;
-    t.modtime = millis / 1000;
-    return (jboolean) (utime((const char *) lpszName, &t) == 0);
+    struct timeval t[2];
+    gettimeofday(t, NULL);
+    t[1].tv_sec = millis / 1000;
+    t[1].tv_usec = ((millis % 1000) * 1000);
+    return (jboolean) (utimes((const char *) lpszName, t) == 0);
 }
 
 #endif

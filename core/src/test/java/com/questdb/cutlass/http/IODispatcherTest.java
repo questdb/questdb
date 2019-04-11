@@ -865,7 +865,6 @@ public class IODispatcherTest {
                     Files.setLastModified(path, 122222212222L);
                     Unsafe.free(buf, bufLen);
 
-
                     httpServer.getStartedLatch().await();
 
                     // send request to server to download file we just created
@@ -885,7 +884,7 @@ public class IODispatcherTest {
                             "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
                             "Content-Length: 20971520\r\n" +
                             "Content-Type: text/plain\r\n" +
-                            "ETag: \"122225812000\"\r\n" + // this is last modified timestamp on the file, we set this value when we created file
+                            "ETag: \"122222212000\"\r\n" + // this is last modified timestamp on the file, we set this value when we created file
                             "\r\n";
 
                     int headerLen = expectedResponseHeader.length();
@@ -917,6 +916,7 @@ public class IODispatcherTest {
                                     if (n > 0) {
                                         if (headerCheckRemaining > 0) {
                                             for (int i = 0; i < n; i++) {
+//                                                System.out.print((char)Unsafe.getUnsafe().getByte(buffer + i));
                                                 if (expectedResponseHeader.charAt(headerLen - headerCheckRemaining) != (char) Unsafe.getUnsafe().getByte(buffer + i)) {
                                                     Assert.fail("at " + (headerLen - headerCheckRemaining));
                                                 }
