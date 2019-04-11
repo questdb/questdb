@@ -854,7 +854,7 @@ public class IODispatcherTest {
                     long buf = Unsafe.malloc(bufLen); // 1Mb buffer
                     Rnd rnd = new Rnd();
                     for (int i = 0; i < bufLen; i++) {
-                        Unsafe.getUnsafe().putLong(buf + i, rnd.nextByte());
+                        Unsafe.getUnsafe().putByte(buf + i, rnd.nextByte());
                     }
 
                     for (int i = 0; i < 20; i++) {
