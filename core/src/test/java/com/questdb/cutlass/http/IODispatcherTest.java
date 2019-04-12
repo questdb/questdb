@@ -911,7 +911,7 @@ public class IODispatcherTest {
                                 long downloadedSoFar = 0;
                                 int contentRemaining = 0;
                                 while (downloadedSoFar < 20971670) {
-                                    long contentOffset = 0;
+                                    int contentOffset = 0;
                                     int n = Net.recv(fd, buffer, len);
                                     if (n > 0) {
                                         if (headerCheckRemaining > 0) {
@@ -922,16 +922,20 @@ public class IODispatcherTest {
                                                 headerCheckRemaining--;
                                                 contentOffset++;
                                             }
-                                        } else {
-                                            for (int i = 0; i < n; i++) {
+                                        }
+
+                                        if (headerCheckRemaining == 0) {
+                                            for (int i = contentOffset; i < n; i++) {
                                                 if (contentRemaining == 0) {
                                                     contentRemaining = bufLen;
                                                     rnd.reset();
                                                 }
-                                                Assert.assertEquals(rnd.nextByte(), Unsafe.getUnsafe().getByte(buffer + contentOffset + i));
+                                                Assert.assertEquals(rnd.nextByte(), Unsafe.getUnsafe().getByte(buffer + i));
                                                 contentRemaining--;
                                             }
+
                                         }
+
                                         downloadedSoFar += n;
                                     }
                                 }
