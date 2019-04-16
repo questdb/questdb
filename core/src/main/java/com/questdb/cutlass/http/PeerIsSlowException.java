@@ -23,6 +23,6 @@
 
 package com.questdb.cutlass.http;
 
-public class PeerIsSlowException extends HttpException {
+public class PeerIsSlowException extends HttpFlowControlException {
     public static final PeerIsSlowException INSTANCE = new PeerIsSlowException();
 }

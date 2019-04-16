@@ -28,7 +28,7 @@ import com.questdb.std.str.DirectByteCharSequence;
 
 import java.io.Closeable;
 
-public class HttpHeaderParser implements Mutable, Closeable, HttpHeaders {
+public class HttpHeaderParser implements Mutable, Closeable, HttpRequestHeader {
     private static final String CONTENT_DISPOSITION_HEADER = "Content-Disposition";
     private static final String CONTENT_TYPE_HEADER = "Content-Type";
     private final ObjectPool<DirectByteCharSequence> pool;

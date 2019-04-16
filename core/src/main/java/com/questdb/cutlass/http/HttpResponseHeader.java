@@ -23,13 +23,10 @@
 
 package com.questdb.cutlass.http;
 
-import com.questdb.network.IODispatcher;
+import com.questdb.std.str.CharSink;
 
-public interface HttpRequestProcessor {
-    void onHeadersReady(HttpConnectionContext context);
+public interface HttpResponseHeader extends CharSink {
+    void send() throws PeerDisconnectedException, PeerIsSlowException;
 
-    void onRequestComplete(HttpConnectionContext context, IODispatcher<HttpConnectionContext> dispatcher) throws PeerDisconnectedException, PeerIsSlowException;
-
-    default void resumeSend(HttpConnectionContext context, IODispatcher<HttpConnectionContext> dispatcher) throws PeerDisconnectedException, PeerIsSlowException {
-    }
+    String status(int code, CharSequence contentType, long contentLength);
 }

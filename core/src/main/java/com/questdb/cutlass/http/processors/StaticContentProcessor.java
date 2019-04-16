@@ -27,6 +27,7 @@ import com.questdb.cutlass.http.*;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.network.IODispatcher;
+import com.questdb.network.IOOperation;
 import com.questdb.std.*;
 import com.questdb.std.str.FileNameExtractorCharSequence;
 import com.questdb.std.str.LPSZ;
@@ -34,7 +35,7 @@ import com.questdb.std.str.PrefixedPath;
 
 import java.io.Closeable;
 
-public class StaticContentProcessor implements HttpRequestProcessor {
+public class StaticContentProcessor implements HttpRequestProcessor, Closeable {
 
     private static final Log LOG = LogFactory.getLog(StaticContentProcessor.class);
 
@@ -53,6 +54,11 @@ public class StaticContentProcessor implements HttpRequestProcessor {
     }
 
     @Override
+    public void close() {
+        Misc.free(prefixedPath);
+    }
+
+    @Override
     public void onHeadersReady(HttpConnectionContext context) {
     }
 
@@ -60,13 +66,13 @@ public class StaticContentProcessor implements HttpRequestProcessor {
     public void onRequestComplete(
             HttpConnectionContext context,
             IODispatcher<HttpConnectionContext> dispatcher
-    ) {
-        HttpHeaders headers = context.getHeaders();
+    ) throws PeerDisconnectedException, PeerIsSlowException {
+        HttpRequestHeader headers = context.getRequestHeader();
         CharSequence url = headers.getUrl();
-        LOG.info().$("handling static: ").$(url).$();
+        LOG.info().$("incoming [url=").$(url).$(']').$();
         if (Chars.contains(url, "..")) {
             LOG.info().$("URL abuse: ").$(url).$();
-            context.simpleResponse().send(404);
+            sendStatusWithDefaultMessage(context, dispatcher, 404);
         } else {
             PrefixedPath path = prefixedPath.rewind();
 
@@ -79,52 +85,58 @@ public class StaticContentProcessor implements HttpRequestProcessor {
             path.$();
 
             if (ff.exists(path)) {
-                send(context, path, headers.getUrlParam("attachment") != null);
+                send(context, dispatcher, path, headers.getUrlParam("attachment") != null);
             } else {
                 LOG.info().$("not found [path=").$(path).$(']').$();
-                context.simpleResponse().send(404);
+                sendStatusWithDefaultMessage(context, dispatcher, 404);
             }
         }
     }
 
     @Override
-    public void resume(HttpConnectionContext context) {
+    public void resumeSend(HttpConnectionContext context, IODispatcher<HttpConnectionContext> dispatcher) throws PeerDisconnectedException, PeerIsSlowException {
+        LOG.debug().$("resumeSend").$();
         StaticContentProcessorState state = stateAccessor.get(context);
 
         if (state == null || state.fd == -1) {
             return;
         }
 
-        HttpResponseSink.DirectBufferResponse r = context.getDirectBufferResponse();
-        long wptr = r.getBuffer();
-        int sz = r.getBufferSize();
+        final HttpRawSocket socket = context.getRawResponseSocket();
+        long address = socket.getBufferAddress();
+        int size = socket.getBufferSize();
 
         long l;
         // todo: check what happens when this code cannot read file
-        while (state.bytesSent < state.sendMax && (l = ff.read(state.fd, wptr, sz, state.bytesSent)) > 0) {
+        while (state.bytesSent < state.sendMax && (l = ff.read(state.fd, address, size, state.bytesSent)) > 0) {
             if (l + state.bytesSent > state.sendMax) {
                 l = state.sendMax - state.bytesSent;
             }
             state.bytesSent += l;
-            r.send((int) l);
+            socket.send((int) l);
         }
         // reached the end naturally?
-        state.clear();
+        readyForNextRequest(context, dispatcher);
     }
 
-    private void send(HttpConnectionContext context, LPSZ path, boolean asAttachment) {
+    private void readyForNextRequest(HttpConnectionContext context, IODispatcher<HttpConnectionContext> dispatcher) {
+        context.clear();
+        dispatcher.registerChannel(context, IOOperation.READ);
+    }
+
+    private void send(HttpConnectionContext context, IODispatcher<HttpConnectionContext> dispatcher, LPSZ path, boolean asAttachment) throws PeerDisconnectedException, PeerIsSlowException {
         int n = Chars.lastIndexOf(path, '.');
         if (n == -1) {
             LOG.info().$("Missing extension: ").$(path).$();
-            context.simpleResponse().send(404);
+            sendStatusWithDefaultMessage(context, dispatcher, 404);
             return;
         }
 
-        HttpHeaders headers = context.getHeaders();
+        HttpRequestHeader headers = context.getRequestHeader();
         CharSequence contentType = mimeTypes.valueAt(mimeTypes.keyIndex(path, n + 1, path.length()));
         CharSequence val;
         if ((val = headers.getHeader("Range")) != null) {
-            sendRange(context, val, path, contentType, asAttachment);
+            sendRange(context, dispatcher, val, path, contentType, asAttachment);
             return;
         }
 
@@ -138,25 +150,27 @@ public class StaticContentProcessor implements HttpRequestProcessor {
             try {
                 long that = Numbers.parseLong(val, 1, l - 1);
                 if (that == ff.getLastModified(path)) {
-                    context.simpleResponse().sendEmptyBody(304);
+                    context.simpleResponse().sendStatus(304);
+                    readyForNextRequest(context, dispatcher);
                     return;
                 }
             } catch (NumericException e) {
-                LOG.info().$("Received wrong tag [").$(val).$("] for ").$(path).$();
-                context.simpleResponse().send(400);
+                LOG.info().$("bad 'If-None-Match' [value=").$(val).$(']').$();
+                sendStatusWithDefaultMessage(context, dispatcher, 400);
                 return;
             }
         }
 
-        sendVanilla(context, path, contentType, asAttachment);
+        sendVanilla(context, dispatcher, path, contentType, asAttachment);
     }
 
     private void sendRange(
             HttpConnectionContext context,
+            IODispatcher<HttpConnectionContext> dispatcher,
             CharSequence range,
             LPSZ path,
             CharSequence contentType,
-            boolean asAttachment) {
+            boolean asAttachment) throws PeerDisconnectedException, PeerIsSlowException {
         if (rangeParser.of(range)) {
 
             StaticContentProcessorState state = stateAccessor.get(context);
@@ -167,7 +181,7 @@ public class StaticContentProcessor implements HttpRequestProcessor {
             state.fd = ff.openRO(path);
             if (state.fd == -1) {
                 LOG.info().$("Cannot open file: ").$(path).$();
-                context.simpleResponse().send(404);
+                sendStatusWithDefaultMessage(context, dispatcher, 404);
                 return;
             }
 
@@ -177,33 +191,42 @@ public class StaticContentProcessor implements HttpRequestProcessor {
             final long lo = rangeParser.getLo();
             final long hi = rangeParser.getHi();
             if (lo > length || (hi != Long.MAX_VALUE && hi > length) || lo > hi) {
-                context.simpleResponse().send(416);
+                sendStatusWithDefaultMessage(context, dispatcher, 416);
             } else {
                 state.bytesSent = lo;
                 state.sendMax = hi == Long.MAX_VALUE ? length : hi;
 
-                final HttpResponseSink.HeaderOnlyResponse r = context.getHeaderOnlyResponse();
-                final HttpResponseHeaderSink headers = r.getHeaderSink();
-                headers.status(206, contentType, state.sendMax - lo);
+                final HttpResponseHeader header = context.getResponseHeader();
+                header.status(206, contentType, state.sendMax - lo);
                 if (asAttachment) {
-                    headers.put("Content-Disposition: attachment; filename=\"").put(FileNameExtractorCharSequence.get(path)).put('\"').put(Misc.EOL);
+                    header.put("Content-Disposition: attachment; filename=\"").put(FileNameExtractorCharSequence.get(path)).put('\"').put(Misc.EOL);
                 }
-                headers.put("Accept-Ranges: bytes").put(Misc.EOL);
-                headers.put("Content-Range: bytes ").put(lo).put('-').put(state.sendMax).put('/').put(length).put(Misc.EOL);
-                headers.put("ETag: ").put(ff.getLastModified(path)).put(Misc.EOL);
-                r.send();
-                resume(context);
+                header.put("Accept-Ranges: bytes").put(Misc.EOL);
+                header.put("Content-Range: bytes ").put(lo).put('-').put(state.sendMax).put('/').put(length).put(Misc.EOL);
+                header.put("ETag: ").put(ff.getLastModified(path)).put(Misc.EOL);
+                header.send();
+                resumeSend(context, dispatcher);
             }
         } else {
-            context.simpleResponse().send(416);
+            sendStatusWithDefaultMessage(context, dispatcher, 416);
         }
     }
 
-    private void sendVanilla(HttpConnectionContext context, LPSZ path, CharSequence contentType, boolean asAttachment) {
+    private void sendStatusWithDefaultMessage(HttpConnectionContext context, IODispatcher<HttpConnectionContext> dispatcher, int code) throws PeerDisconnectedException, PeerIsSlowException {
+        context.simpleResponse().sendStatusWithDefaultMessage(code);
+        readyForNextRequest(context, dispatcher);
+    }
+
+    private void sendVanilla(
+            HttpConnectionContext context,
+            IODispatcher<HttpConnectionContext> dispatcher,
+            LPSZ path, CharSequence contentType,
+            boolean asAttachment
+    ) throws PeerDisconnectedException, PeerIsSlowException {
         long fd = ff.openRO(path);
         if (fd == -1) {
-            LOG.info().$("Cannot open file: ").$(path).$('(').$(Os.errno()).$(')').$();
-            context.simpleResponse().send(404);
+            LOG.info().$("Cannot open file: ").$(path).$('(').$(ff.errno()).$(')').$();
+            sendStatusWithDefaultMessage(context, dispatcher, 404);
         } else {
             StaticContentProcessorState h = stateAccessor.get(context);
             if (h == null) {
@@ -214,15 +237,14 @@ public class StaticContentProcessor implements HttpRequestProcessor {
             final long length = ff.length(path);
             h.sendMax = length;
 
-            final HttpResponseSink.HeaderOnlyResponse r = context.getHeaderOnlyResponse();
-            final HttpResponseHeaderSink headers = r.getHeaderSink();
-            headers.status(200, contentType, length);
+            final HttpResponseHeader header = context.getResponseHeader();
+            header.status(200, contentType, length);
             if (asAttachment) {
-                headers.put("Content-Disposition: attachment; filename=\"").put(FileNameExtractorCharSequence.get(path)).put("\"").put(Misc.EOL);
+                header.put("Content-Disposition: attachment; filename=\"").put(FileNameExtractorCharSequence.get(path)).put("\"").put(Misc.EOL);
             }
-            headers.put("ETag: ").put('"').put(ff.getLastModified(path)).put('"').put(Misc.EOL);
-            r.send();
-            resume(context);
+            header.put("ETag: ").put('"').put(ff.getLastModified(path)).put('"').put(Misc.EOL);
+            header.send();
+            resumeSend(context, dispatcher);
         }
     }
 

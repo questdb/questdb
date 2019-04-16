@@ -23,6 +23,6 @@
 
 package com.questdb.cutlass.http;
 
-public class PeerDisconnectedException extends HttpException {
+public class PeerDisconnectedException extends HttpFlowControlException {
     public static final PeerDisconnectedException INSTANCE = new PeerDisconnectedException();
 }

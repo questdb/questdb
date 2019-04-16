@@ -23,13 +23,5 @@
 
 package com.questdb.cutlass.http;
 
-import com.questdb.network.IODispatcher;
-
-public interface HttpRequestProcessor {
-    void onHeadersReady(HttpConnectionContext context);
-
-    void onRequestComplete(HttpConnectionContext context, IODispatcher<HttpConnectionContext> dispatcher) throws PeerDisconnectedException, PeerIsSlowException;
-
-    default void resumeSend(HttpConnectionContext context, IODispatcher<HttpConnectionContext> dispatcher) throws PeerDisconnectedException, PeerIsSlowException {
-    }
+public class HttpFlowControlException extends Exception {
 }

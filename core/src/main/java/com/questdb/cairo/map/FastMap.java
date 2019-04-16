@@ -301,10 +301,7 @@ public class FastMap implements Map {
         if (kCapacity < target) {
             kCapacity = Numbers.ceilPow2(target);
         }
-        long kAddress = Unsafe.malloc(kCapacity);
-
-        Unsafe.getUnsafe().copyMemory(this.kStart, kAddress, (kLimit - this.kStart));
-        Unsafe.free(this.kStart, this.capacity);
+        long kAddress = Unsafe.realloc(this.kStart, this.capacity, kCapacity);
 
         this.capacity = kCapacity;
         long d = kAddress - this.kStart;

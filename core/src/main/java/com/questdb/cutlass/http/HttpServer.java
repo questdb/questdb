@@ -91,6 +91,14 @@ public class HttpServer implements Closeable {
     public void close() {
         halt();
         Misc.free(dispatcher);
+        for (int i = 0; i < workerCount; i++) {
+            HttpRequestProcessorSelectorImpl selector = selectors.getQuick(i);
+            Misc.free(selector.defaultRequestProcessor);
+            final ObjList<CharSequence> urls = selector.processorMap.keys();
+            for (int j = 0, m = urls.size(); j < m; j++) {
+                Misc.free(selector.processorMap.get(urls.getQuick(j)));
+            }
+        }
     }
 
     public SOCountDownLatch getStartedLatch() {

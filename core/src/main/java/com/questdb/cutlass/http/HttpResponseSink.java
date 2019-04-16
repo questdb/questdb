@@ -31,6 +31,8 @@ import com.questdb.std.ex.ZLibException;
 import com.questdb.std.str.AbstractCharSink;
 import com.questdb.std.str.CharSink;
 import com.questdb.std.str.DirectUnboundedByteSink;
+import com.questdb.std.time.DateFormatUtils;
+import com.questdb.std.time.MillisecondClock;
 
 import java.io.Closeable;
 import java.nio.ByteBuffer;
@@ -49,21 +51,20 @@ public class HttpResponseSink implements Closeable, Mutable {
     private static final int FLUSH = 9;
     private static final int SEND_DEFLATED_CONT = 10;
     private static final int SEND_DEFLATED_END = 11;
+    private static final IntObjHashMap<String> httpStatusMap = new IntObjHashMap<>();
     private final long out;
     private final long outPtr;
     private final long limit;
     private final long chunkHeaderBuf;
     private final DirectUnboundedByteSink chunkSink;
-    private final HttpResponseHeaderSink headerSink;
+    private final HttpResponseHeaderImpl headerImpl;
     private final SimpleResponseImpl simple = new SimpleResponseImpl();
     private final ResponseSinkImpl sink = new ResponseSinkImpl();
-    private final FixedSizeResponseImpl fixedSize = new FixedSizeResponseImpl();
     private final ChunkedResponseImpl chunkedResponse = new ChunkedResponseImpl();
-    private final DirectBufferResponse directBufferResponse = new DirectBufferResponse();
+    private final HttpRawSocketImpl rawSocket = new HttpRawSocketImpl();
     private final NetworkFacade nf;
     private final int responseBufferSize;
     private final long fd;
-    private final HeaderOnlyResponse headerOnlyResponse = new HeaderOnlyResponse();
     private long _wPtr;
     private ByteBuffer zout;
     private long flushBuf;
@@ -80,7 +81,7 @@ public class HttpResponseSink implements Closeable, Mutable {
         this.responseBufferSize = Numbers.ceilPow2(configuration.getConnectionSendBufferSize());
         this.nf = configuration.getDispatcherConfiguration().getNetworkFacade();
         this.out = Unsafe.calloc(responseBufferSize);
-        this.headerSink = new HttpResponseHeaderSink(1024, configuration.getClock());
+        this.headerImpl = new HttpResponseHeaderImpl(1024, configuration.getClock());
         // size is 32bit int, as hex string max 8 bytes
         this.chunkHeaderBuf = Unsafe.calloc(8 + 2 * Misc.EOL.length());
         this.chunkSink = new DirectUnboundedByteSink(chunkHeaderBuf);
@@ -93,7 +94,7 @@ public class HttpResponseSink implements Closeable, Mutable {
     @Override
     public void clear() {
         Unsafe.getUnsafe().setMemory(out, responseBufferSize, (byte) 0);
-        headerSink.clear();
+        headerImpl.clear();
         this._wPtr = outPtr;
         if (zout != null) {
             zout.clear();
@@ -105,7 +106,7 @@ public class HttpResponseSink implements Closeable, Mutable {
     public void close() {
         Unsafe.free(out, responseBufferSize);
         Unsafe.free(chunkHeaderBuf, 8 + 2 * Misc.EOL.length());
-        headerSink.close();
+        headerImpl.close();
         ByteBuffers.release(zout);
         if (z_streamp != 0) {
             Zip.deflateEnd(z_streamp);
@@ -114,23 +115,73 @@ public class HttpResponseSink implements Closeable, Mutable {
     }
 
     public int getCode() {
-        return headerSink.getCode();
-    }
-
-    public DirectBufferResponse getDirectBufferResponse() {
-        return directBufferResponse;
-    }
-
-    public HeaderOnlyResponse getHeaderOnlyResponse() {
-        return headerOnlyResponse;
+        return headerImpl.getCode();
     }
 
     public SimpleResponseImpl getSimple() {
         return simple;
     }
 
-    public void resume() {
-        machine0();
+    public void resumeSend() throws PeerDisconnectedException, PeerIsSlowException {
+        while (true) {
+
+            if (flushBufSize > 0) {
+                send();
+            }
+
+            switch (state) {
+                case MULTI_CHUNK:
+                    if (compressed) {
+                        prepareCompressedBody();
+                        state = DEFLATE;
+                    } else {
+                        prepareBody();
+                        state = DONE;
+                    }
+                    break;
+                case DEFLATE:
+                    state = deflate(false);
+                    break;
+                case SEND_DEFLATED_END:
+                    flushBuf = ByteBuffers.getAddress(zout) + zout.position();
+                    flushBufSize = zout.limit() - zout.position();
+                    state = END_CHUNK;
+                    break;
+                case SEND_DEFLATED_CONT:
+                    flushBuf = ByteBuffers.getAddress(zout) + zout.position();
+                    flushBufSize = zout.limit() - zout.position();
+                    state = DONE;
+                    break;
+                case MULTI_BUF_CHUNK:
+                    flushBuf = out;
+                    state = DONE;
+                    break;
+                case CHUNK_HEAD:
+                    prepareChunk((int) (_wPtr - outPtr));
+                    state = CHUNK_DATA;
+                    break;
+                case CHUNK_DATA:
+                    prepareBody();
+                    state = END_CHUNK;
+                    break;
+                case END_CHUNK:
+                    prepareChunk(0);
+                    state = FIN;
+                    break;
+                case FIN:
+                    sink.put(Misc.EOL);
+                    prepareBody();
+                    state = DONE;
+                    break;
+                case FLUSH:
+                    state = deflate(true);
+                    break;
+                case DONE:
+                    return;
+                default:
+                    break;
+            }
+        }
     }
 
     private int deflate(boolean flush) {
@@ -190,96 +241,26 @@ public class HttpResponseSink implements Closeable, Mutable {
         return flush && ret == 1 ? SEND_DEFLATED_END : SEND_DEFLATED_CONT;
     }
 
-    private void flush() {
-        int sent = 0;
-        while (sent < flushBufSize) {
-            int n = nf.send(fd, flushBuf + sent, flushBufSize - sent);
-            if (n < 0) {
-                // disconnected
-                LOG.info().$("disconnected [errno=").$(Os.errno()).$(']').$();
-                throw PeerDisconnectedException.INSTANCE;
-            }
-            if (n == 0) {
-                // test how many times we tried to send before parking up
-                flushBuf += sent;
-                flushBufSize -= sent;
-                throw PeerIsSlowException.INSTANCE;
-            } else {
-                sent += n;
-            }
-        }
-    }
-
-    private void flushSingle() {
+    private void flushSingle() throws PeerDisconnectedException, PeerIsSlowException {
         state = DONE;
-        flush();
+        send();
     }
 
-    private void machine(int nextState) {
+    HttpResponseHeader getHeader() {
+        return headerImpl;
+    }
+
+    HttpRawSocket getRawSocket() {
+        return rawSocket;
+    }
+
+    private void prepareHeaderSink() {
+        headerImpl.prepareToSend();
+    }
+
+    private void resumeSend(int nextState) throws PeerDisconnectedException, PeerIsSlowException {
         state = nextState;
-        machine0();
-    }
-
-    private void machine0() {
-        while (true) {
-
-            if (flushBufSize > 0) {
-                flush();
-            }
-
-            switch (state) {
-                case MULTI_CHUNK:
-                    if (compressed) {
-                        prepareCompressedBody();
-                        state = DEFLATE;
-                    } else {
-                        prepareBody();
-                        state = DONE;
-                    }
-                    break;
-                case DEFLATE:
-                    state = deflate(false);
-                    break;
-                case SEND_DEFLATED_END:
-                    flushBuf = ByteBuffers.getAddress(zout) + zout.position();
-                    flushBufSize = zout.limit() - zout.position();
-                    state = END_CHUNK;
-                    break;
-                case SEND_DEFLATED_CONT:
-                    flushBuf = ByteBuffers.getAddress(zout) + zout.position();
-                    flushBufSize = zout.limit() - zout.position();
-                    state = DONE;
-                    break;
-                case MULTI_BUF_CHUNK:
-                    flushBuf = out;
-                    state = DONE;
-                    break;
-                case CHUNK_HEAD:
-                    prepareChunk((int) (_wPtr - outPtr));
-                    state = CHUNK_DATA;
-                    break;
-                case CHUNK_DATA:
-                    prepareBody();
-                    state = END_CHUNK;
-                    break;
-                case END_CHUNK:
-                    prepareChunk(0);
-                    state = FIN;
-                    break;
-                case FIN:
-                    sink.put(Misc.EOL);
-                    prepareBody();
-                    state = DONE;
-                    break;
-                case FLUSH:
-                    state = deflate(true);
-                    break;
-                case DONE:
-                    return;
-                default:
-                    break;
-            }
-        }
+        resumeSend();
     }
 
     private void prepareBody() {
@@ -309,10 +290,24 @@ public class HttpResponseSink implements Closeable, Mutable {
         _wPtr = outPtr;
     }
 
-    private void prepareHeaderSink() {
-        ByteBuffer that = headerSink.prepareBuffer();
-        flushBuf = ByteBuffers.getAddress(that);
-        flushBufSize = that.limit();
+    private void send() throws PeerDisconnectedException, PeerIsSlowException {
+        int sent = 0;
+        while (sent < flushBufSize) {
+            int n = nf.send(fd, flushBuf + sent, flushBufSize - sent);
+            if (n < 0) {
+                // disconnected
+                LOG.info().$("disconnected [errno=").$(Os.errno()).$(']').$();
+                throw PeerDisconnectedException.INSTANCE;
+            }
+            if (n == 0) {
+                // test how many times we tried to send before parking up
+                flushBuf += sent;
+                flushBufSize -= sent;
+                throw PeerIsSlowException.INSTANCE;
+            } else {
+                sent += n;
+            }
+        }
     }
 
     private void resetZip() {
@@ -323,33 +318,123 @@ public class HttpResponseSink implements Closeable, Mutable {
         this.total = 0;
     }
 
+    public class HttpResponseHeaderImpl extends AbstractCharSink implements Closeable, Mutable, HttpResponseHeader {
+        private final long headerPtr;
+        private final long limit;
+        private final MillisecondClock clock;
+        private long _wptr;
+        private boolean chunky;
+        private int code;
+
+        public HttpResponseHeaderImpl(int bufferSize, MillisecondClock clock) {
+            this.clock = clock;
+            int sz = Numbers.ceilPow2(bufferSize);
+            this.headerPtr = _wptr = Unsafe.calloc(sz);
+            this.limit = headerPtr + sz;
+        }
+
+        @Override
+        public void clear() {
+            Unsafe.getUnsafe().setMemory(headerPtr, limit - headerPtr, (byte) 0);
+            _wptr = headerPtr;
+            chunky = false;
+        }
+
+        @Override
+        public void close() {
+            Unsafe.free(headerPtr, limit - headerPtr);
+        }
+
+        // this is used for HTTP access logging
+        public int getCode() {
+            return code;
+        }
+
+        @Override
+        public CharSink put(CharSequence cs) {
+            int len = cs.length();
+            long p = _wptr;
+            if (p + len < limit) {
+                Chars.strcpy(cs, len, p);
+                _wptr += len;
+            } else {
+                throw NoSpaceLeftInResponseBufferException.INSTANCE;
+            }
+            return this;
+        }
+
+        @Override
+        public CharSink put(char c) {
+            if (_wptr < limit) {
+                Unsafe.getUnsafe().putByte(_wptr++, (byte) c);
+                return this;
+            }
+            throw NoSpaceLeftInResponseBufferException.INSTANCE;
+        }
+
+        @Override
+        public void send() throws PeerDisconnectedException, PeerIsSlowException {
+            headerImpl.prepareToSend();
+            flushSingle();
+        }
+
+        @Override
+        public String status(int code, CharSequence contentType, long contentLength) {
+            this.code = code;
+            String status = httpStatusMap.get(code);
+            if (status == null) {
+                throw new IllegalArgumentException("Illegal status code: " + code);
+            }
+            put("HTTP/1.1 ").put(code).put(' ').put(status).put(Misc.EOL);
+            put("Server: ").put("questDB/1.0").put(Misc.EOL);
+            put("Date: ");
+            DateFormatUtils.formatHTTP(this, clock.getTicks());
+            put(Misc.EOL);
+            if (contentLength > -2) {
+                if (this.chunky = (contentLength == -1)) {
+                    put("Transfer-Encoding: ").put("chunked").put(Misc.EOL);
+                } else {
+                    put("Content-Length: ").put(contentLength).put(Misc.EOL);
+                }
+            }
+            if (contentType != null) {
+                put("Content-Type: ").put(contentType).put(Misc.EOL);
+            }
+
+            return status;
+        }
+
+        private void prepareToSend() {
+            if (!chunky) {
+                put(Misc.EOL);
+            }
+            flushBuf = headerPtr;
+            flushBufSize = (int) (_wptr - headerPtr);
+        }
+
+    }
+
     public class SimpleResponseImpl {
 
-        public void send(int code) {
-            send(code, null);
-        }
-
-        public void send(int code, CharSequence message) {
-            final String std = headerSink.status(code, "text/html; charset=utf-8", -1L);
+        public void sendStatus(int code, CharSequence message) throws PeerDisconnectedException, PeerIsSlowException {
+            final String std = headerImpl.status(code, "text/html; charset=utf-8", -1L);
             sink.put(message == null ? std : message).put(Misc.EOL);
             prepareHeaderSink();
-            machine(CHUNK_HEAD);
+            resumeSend(CHUNK_HEAD);
         }
 
-        public void sendEmptyBody(int code) {
-            headerSink.status(code, "text/html; charset=utf-8", -2);
+        public void sendStatus(int code) throws PeerDisconnectedException, PeerIsSlowException {
+            headerImpl.status(code, "text/html; charset=utf-8", -2L);
             prepareHeaderSink();
             flushSingle();
+        }
+
+        public void sendStatusWithDefaultMessage(int code) throws PeerDisconnectedException, PeerIsSlowException {
+            sendStatus(code, null);
         }
     }
 
     private class ResponseSinkImpl extends AbstractCharSink {
-
-        @Override
-        public void flush() {
-            prepareHeaderSink();
-            machine(CHUNK_HEAD);
-        }
 
         @Override
         public CharSink put(CharSequence seq) {
@@ -410,7 +495,7 @@ public class HttpResponseSink implements Closeable, Mutable {
         }
 
         public void status(int status, CharSequence contentType) {
-            headerSink.status(status, contentType, -1);
+            headerImpl.status(status, contentType, -1);
         }
 
         private void escapeSpace(char c) {
@@ -437,74 +522,22 @@ public class HttpResponseSink implements Closeable, Mutable {
         }
     }
 
-    public class FixedSizeResponseImpl {
+    public class HttpRawSocketImpl implements HttpRawSocket {
 
-        public void done() {
-        }
-
-        public CharSink headers() {
-            return headerSink;
-        }
-
-        public void sendChunk() {
-            flushBuf = out;
-            flushBufSize = 0;
-            flushSingle();
-        }
-
-        public void sendHeader() {
-            ByteBuffer that = headerSink.prepareBuffer();
-            flushBuf = ByteBuffers.getAddress(that);
-            flushBufSize = that.limit();
-            flushSingle();
-        }
-
-        public void status(int status, CharSequence contentType, long len) {
-            headerSink.status(status, contentType, len);
-        }
-    }
-
-    public class DirectBufferResponse {
-
-        public long getBuffer() {
+        @Override
+        public long getBufferAddress() {
             return out;
         }
 
+        @Override
         public int getBufferSize() {
             return responseBufferSize;
         }
 
-        public CharSink headerSink() {
-            return headerSink;
-        }
-
-        public void send(int size) {
+        @Override
+        public void send(int size) throws PeerDisconnectedException, PeerIsSlowException {
             flushBuf = out;
             flushBufSize = size;
-            flushSingle();
-        }
-
-        public void sendHeader() {
-            ByteBuffer that = headerSink.prepareBuffer();
-            flushBuf = ByteBuffers.getAddress(that);
-            flushBufSize = that.limit();
-            flushSingle();
-        }
-
-        public void status(int status, CharSequence contentType, long len) {
-            headerSink.status(status, contentType, len);
-        }
-    }
-
-    public class HeaderOnlyResponse {
-        public HttpResponseHeaderSink getHeaderSink() {
-            return headerSink;
-        }
-
-        public void send() {
-            ByteBuffer that = headerSink.prepareBuffer();
-            flushBuf = ByteBuffers.getAddress(that);
-            flushBufSize = that.limit();
             flushSingle();
         }
     }
@@ -517,30 +550,22 @@ public class HttpResponseSink implements Closeable, Mutable {
             bookmark = _wPtr;
         }
 
-        public void done() {
+        public void done() throws PeerDisconnectedException, PeerIsSlowException {
             flushBufSize = 0;
             if (compressed) {
-                machine(FLUSH);
+                resumeSend(FLUSH);
             } else {
-                machine(END_CHUNK);
+                resumeSend(END_CHUNK);
             }
         }
 
-        @Override
-        public void flush() {
-            sendChunk();
-        }
-
-        @Override
-        public void status(int status, CharSequence contentType) {
-            super.status(status, contentType);
-            if (compressed) {
-                headerSink.put("Content-Encoding: gzip").put(Misc.EOL);
-            }
-        }
+//        @Override
+//        public void flush() {
+//            sendChunk();
+//        }
 
         public CharSink headers() {
-            return headerSink;
+            return headerImpl;
         }
 
         public boolean resetToBookmark() {
@@ -548,27 +573,44 @@ public class HttpResponseSink implements Closeable, Mutable {
             return bookmark != outPtr;
         }
 
-        public void sendChunk() {
+        public void sendChunk() throws PeerDisconnectedException, PeerIsSlowException {
             if (outPtr != _wPtr) {
                 if (compressed) {
                     flushBufSize = 0;
-                    machine(MULTI_CHUNK);
+                    resumeSend(MULTI_CHUNK);
                 } else {
                     prepareChunk((int) (_wPtr - outPtr));
-                    machine(MULTI_CHUNK);
+                    resumeSend(MULTI_CHUNK);
                 }
             }
         }
 
-        public void sendHeader() {
-            ByteBuffer that = headerSink.prepareBuffer();
-            flushBuf = ByteBuffers.getAddress(that);
-            flushBufSize = that.limit();
+        public void sendHeader() throws PeerDisconnectedException, PeerIsSlowException {
+            prepareHeaderSink();
             flushSingle();
         }
 
         public void setCompressed(boolean compressed) {
             HttpResponseSink.this.compressed = compressed;
         }
+
+        @Override
+        public void status(int status, CharSequence contentType) {
+            super.status(status, contentType);
+            if (compressed) {
+                headerImpl.put("Content-Encoding: gzip").put(Misc.EOL);
+            }
+        }
+    }
+
+    static {
+        httpStatusMap.put(200, "OK");
+        httpStatusMap.put(206, "Partial content");
+        httpStatusMap.put(304, "Not Modified");
+        httpStatusMap.put(400, "Bad request");
+        httpStatusMap.put(404, "Not Found");
+        httpStatusMap.put(416, "Request range not satisfiable");
+        httpStatusMap.put(431, "Headers too large");
+        httpStatusMap.put(500, "Internal server error");
     }
 }

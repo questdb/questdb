@@ -23,31 +23,10 @@
 
 package com.questdb.cutlass.http;
 
-import com.questdb.std.ObjList;
-import com.questdb.std.str.DirectByteCharSequence;
+public interface HttpRawSocket {
+    long getBufferAddress();
 
-public interface HttpHeaders {
-    CharSequence getBoundary();
+    int getBufferSize();
 
-    DirectByteCharSequence getCharset();
-
-    CharSequence getContentDisposition();
-
-    CharSequence getContentDispositionFilename();
-
-    CharSequence getContentDispositionName();
-
-    CharSequence getContentType();
-
-    DirectByteCharSequence getHeader(CharSequence name);
-
-    ObjList<CharSequence> getHeaderNames();
-
-    CharSequence getMethod();
-
-    CharSequence getMethodLine();
-
-    CharSequence getUrl();
-
-    CharSequence getUrlParam(CharSequence name);
+    void send(int size) throws PeerDisconnectedException, PeerIsSlowException;
 }

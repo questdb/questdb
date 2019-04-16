@@ -43,8 +43,8 @@ public class HttpConnectionContext implements IOContext, Locality {
     private final HttpServerConfiguration configuration;
     private final long fd;
     private final LocalValueMap localValueMap = new LocalValueMap();
-    private HttpRequestProcessor resumeProcessor = null;
     private final NetworkFacade nf;
+    private HttpRequestProcessor resumeProcessor = null;
 
     public HttpConnectionContext(HttpServerConfiguration configuration, long fd) {
         this.configuration = configuration;
@@ -65,6 +65,8 @@ public class HttpConnectionContext implements IOContext, Locality {
         this.multipartContentParser.clear();
         this.multipartContentParser.clear();
         this.csPool.clear();
+        this.localValueMap.clear();
+        this.responseSink.clear();
     }
 
     @Override
@@ -83,21 +85,21 @@ public class HttpConnectionContext implements IOContext, Locality {
         return fd;
     }
 
-    public HttpResponseSink.DirectBufferResponse getDirectBufferResponse() {
-        return responseSink.getDirectBufferResponse();
-    }
-
-    public HttpResponseSink.HeaderOnlyResponse getHeaderOnlyResponse() {
-        return responseSink.getHeaderOnlyResponse();
-    }
-
-    public HttpHeaders getHeaders() {
-        return headerParser;
-    }
-
     @Override
     public LocalValueMap getMap() {
         return localValueMap;
+    }
+
+    public HttpRawSocket getRawResponseSocket() {
+        return responseSink.getRawSocket();
+    }
+
+    public HttpRequestHeader getRequestHeader() {
+        return headerParser;
+    }
+
+    public HttpResponseHeader getResponseHeader() {
+        return responseSink.getHeader();
     }
 
     public void handleClientOperation(int operation, IODispatcher<HttpConnectionContext> dispatcher, HttpRequestProcessorSelector selector) {
@@ -108,8 +110,8 @@ public class HttpConnectionContext implements IOContext, Locality {
             case IOOperation.WRITE:
                 if (resumeProcessor != null) {
                     try {
-                        responseSink.resume();
-                        resumeProcessor.resume(this);
+                        responseSink.resumeSend();
+                        resumeProcessor.resumeSend(this, dispatcher);
                         resumeProcessor = null;
                     } catch (PeerIsSlowException ignore) {
                         dispatcher.registerChannel(this, IOOperation.WRITE);
@@ -137,11 +139,13 @@ public class HttpConnectionContext implements IOContext, Locality {
             LOG.debug().$("disconnect after request [fd=").$(fd).$(']').$();
             dispatcher.disconnect(this, DisconnectReason.PEER);
         } else {
-            LOG.debug().$("good [fd=").$(fd).$(']').$();
+            LOG.debug().$("ok [fd=").$(fd).$(']').$();
             try {
                 processor.onRequestComplete(this, dispatcher);
             } catch (PeerDisconnectedException ignore) {
                 dispatcher.disconnect(this, DisconnectReason.PEER);
+            } catch (PeerIsSlowException e) {
+                e.printStackTrace();
             }
         }
     }

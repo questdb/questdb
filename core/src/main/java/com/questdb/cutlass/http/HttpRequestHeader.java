@@ -23,13 +23,31 @@
 
 package com.questdb.cutlass.http;
 
-import com.questdb.network.IODispatcher;
+import com.questdb.std.ObjList;
+import com.questdb.std.str.DirectByteCharSequence;
 
-public interface HttpRequestProcessor {
-    void onHeadersReady(HttpConnectionContext context);
+public interface HttpRequestHeader {
+    CharSequence getBoundary();
 
-    void onRequestComplete(HttpConnectionContext context, IODispatcher<HttpConnectionContext> dispatcher) throws PeerDisconnectedException, PeerIsSlowException;
+    DirectByteCharSequence getCharset();
 
-    default void resumeSend(HttpConnectionContext context, IODispatcher<HttpConnectionContext> dispatcher) throws PeerDisconnectedException, PeerIsSlowException {
-    }
+    CharSequence getContentDisposition();
+
+    CharSequence getContentDispositionFilename();
+
+    CharSequence getContentDispositionName();
+
+    CharSequence getContentType();
+
+    DirectByteCharSequence getHeader(CharSequence name);
+
+    ObjList<CharSequence> getHeaderNames();
+
+    CharSequence getMethod();
+
+    CharSequence getMethodLine();
+
+    CharSequence getUrl();
+
+    CharSequence getUrlParam(CharSequence name);
 }

@@ -171,6 +171,12 @@ public final class Unsafe {
         return ptr;
     }
 
+    public static long realloc(long address, long oldSize, long newSize) {
+        long ptr = getUnsafe().reallocateMemory(address, newSize);
+        MEM_USED.addAndGet(-oldSize + newSize);
+        return ptr;
+    }
+
     public static long calloc(long size) {
         long ptr = malloc(size);
         getUnsafe().setMemory(ptr, size, (byte) 0);
