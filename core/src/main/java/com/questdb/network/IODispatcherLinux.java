@@ -152,7 +152,7 @@ public class IODispatcherLinux<C extends IOContext> extends SynchronizedJob impl
                 .$(", reason=").$(DisconnectReason.nameOf(disconnectReason))
                 .$(']').$();
         nf.close(fd, LOG);
-        context.close();
+        ioContextFactory.done(context);
         connectionCount.decrementAndGet();
     }
 

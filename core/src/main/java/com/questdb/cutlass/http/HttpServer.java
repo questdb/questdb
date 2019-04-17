@@ -31,11 +31,7 @@ import com.questdb.mp.Worker;
 import com.questdb.network.IOContextFactory;
 import com.questdb.network.IODispatcher;
 import com.questdb.network.IODispatchers;
-import com.questdb.network.NetworkFacade;
-import com.questdb.std.CharSequenceObjHashMap;
-import com.questdb.std.Misc;
-import com.questdb.std.ObjHashSet;
-import com.questdb.std.ObjList;
+import com.questdb.std.*;
 
 import java.io.Closeable;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -49,7 +45,7 @@ public class HttpServer implements Closeable {
     private final SOCountDownLatch started = new SOCountDownLatch(1);
     private final int workerCount;
     private final AtomicBoolean running = new AtomicBoolean();
-    private final ObjList<Worker> workers;
+    private final ObjList<HttpServerWorker> workers;
     private IODispatcher<HttpConnectionContext> dispatcher;
 
     public HttpServer(HttpServerConfiguration configuration) {
@@ -113,6 +109,10 @@ public class HttpServer implements Closeable {
                 workers.getQuick(i).halt();
             }
             workerHaltLatch.await();
+
+            for (int i = 0; i < workerCount; i++) {
+                Misc.free(workers.getQuick(i));
+            }
             LOG.info().$("stopped").$();
         }
     }
@@ -123,8 +123,6 @@ public class HttpServer implements Closeable {
                     configuration.getDispatcherConfiguration(),
                     httpContextFactory
             );
-
-            final NetworkFacade nf = configuration.getDispatcherConfiguration().getNetworkFacade();
 
             for (int i = 0; i < workerCount; i++) {
                 ObjHashSet<Job> jobs = new ObjHashSet<>();
@@ -141,13 +139,40 @@ public class HttpServer implements Closeable {
                         );
                     }
                 });
-                Worker worker = new Worker(jobs, workerHaltLatch, -1, LOG);
+                HttpServerWorker worker = new HttpServerWorker(
+                        configuration,
+                        jobs,
+                        workerHaltLatch,
+                        -1,
+                        LOG,
+                        configuration.getConnectionPoolInitialSize()
+                );
                 worker.setName("questdb-http-" + i);
                 workers.add(worker);
                 worker.start();
             }
             LOG.info().$("started").$();
             started.countDown();
+        }
+    }
+
+    private static class HttpServerWorker extends Worker implements Closeable {
+        private final WeakObjectPool<HttpConnectionContext> contextPool;
+
+        public HttpServerWorker(
+                HttpServerConfiguration configuration,
+                ObjHashSet<? extends Job> jobs,
+                SOCountDownLatch haltLatch,
+                int affinity, Log log,
+                int contextPoolSize
+        ) {
+            super(jobs, haltLatch, affinity, log);
+            this.contextPool = new WeakObjectPool<>(() -> new HttpConnectionContext(configuration), contextPoolSize);
+        }
+
+        @Override
+        public void close() {
+            contextPool.close();
         }
     }
 
@@ -170,7 +195,23 @@ public class HttpServer implements Closeable {
     private class HttpContextFactory implements IOContextFactory<HttpConnectionContext> {
         @Override
         public HttpConnectionContext newInstance(long fd) {
-            return new HttpConnectionContext(configuration, fd);
+            Thread thread = Thread.currentThread();
+            assert thread instanceof HttpServerWorker;
+            HttpConnectionContext connectionContext = ((HttpServerWorker) thread).contextPool.pop();
+            return connectionContext.of(fd);
+        }
+
+        @Override
+        public void done(HttpConnectionContext context) {
+            Thread thread = Thread.currentThread();
+            // it is possible that context is in transit (on a queue somewhere)
+            // and server shutdown is performed by a non-worker thread
+            // in this case we just close context
+            if (thread instanceof HttpServerWorker) {
+                ((HttpServerWorker) thread).contextPool.push(context);
+            } else {
+                Misc.free(context);
+            }
         }
     }
 }

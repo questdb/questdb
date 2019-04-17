@@ -30,15 +30,17 @@ import com.questdb.std.time.MillisecondClock;
 public interface HttpServerConfiguration {
     String DEFAULT_PROCESSOR_URL = "*";
 
-    int getConnectionHeaderBufferSize();
+    int getConnectionPoolInitialSize();
 
-    int getConnectionMultipartHeaderBufferSize();
+    int getConnectionStringPoolSize();
 
-    int getConnectionRecvBufferSize();
+    int getMultipartHeaderBufferSize();
 
-    int getConnectionSendBufferSize();
+    int getRecvBufferSize();
 
-    int getConnectionWrapperObjPoolSize();
+    int getRequestHeaderBufferSize();
+
+    int getResponseHeaderBufferSize();
 
     MillisecondClock getClock();
 
@@ -47,4 +49,6 @@ public interface HttpServerConfiguration {
     StaticContentProcessorConfiguration getStaticContentProcessorConfiguration();
 
     int getWorkerCount();
+
+    int getSendBufferSize();
 }

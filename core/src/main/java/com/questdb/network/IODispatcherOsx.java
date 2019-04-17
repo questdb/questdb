@@ -164,7 +164,7 @@ public class IODispatcherOsx<C extends IOContext> extends SynchronizedJob implem
                 .$(", reason=").$(DisconnectReason.nameOf(disconnectReason))
                 .$(']').$();
         nf.close(fd, LOG);
-        context.close();
+        ioContextFactory.done(context);
         connectionCount.decrementAndGet();
     }
 

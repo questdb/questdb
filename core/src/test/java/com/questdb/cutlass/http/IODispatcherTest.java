@@ -143,7 +143,7 @@ public class IODispatcherTest {
                         @Override
                         public HttpConnectionContext newInstance(long fd) {
                             connectLatch.countDown();
-                            return new HttpConnectionContext(httpServerConfiguration, fd) {
+                            return new HttpConnectionContext(httpServerConfiguration) {
                                 @Override
                                 public void close() {
                                     // it is possible that context is closed twice in error
@@ -154,7 +154,7 @@ public class IODispatcherTest {
                                         contextClosedLatch.countDown();
                                     }
                                 }
-                            };
+                            }.of(fd);
                         }
                     }
             )) {
@@ -250,13 +250,13 @@ public class IODispatcherTest {
                         @Override
                         public HttpConnectionContext newInstance(long fd) {
                             openCount.incrementAndGet();
-                            return new HttpConnectionContext(httpServerConfiguration, fd) {
+                            return new HttpConnectionContext(httpServerConfiguration) {
                                 @Override
                                 public void close() {
                                     closeCount.incrementAndGet();
                                     super.close();
                                 }
-                            };
+                            }.of(fd);
                         }
                     }
             )) {
@@ -312,8 +312,185 @@ public class IODispatcherTest {
                 serverRunning.set(false);
                 serverHaltLatch.await();
             }
-            System.out.println("open: " + openCount.get());
-            System.out.println("close: " + closeCount.get());
+        });
+    }
+
+    @Test
+    public void testSCPConnectDownloadDisconnect() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final String baseDir = System.getProperty("java.io.tmpdir");
+            final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir);
+
+            try (HttpServer httpServer = new HttpServer(httpConfiguration)) {
+                httpServer.bind(new HttpRequestProcessorFactory() {
+                    @Override
+                    public String getUrl() {
+                        return HttpServerConfiguration.DEFAULT_PROCESSOR_URL;
+                    }
+
+                    @Override
+                    public HttpRequestProcessor newInstance() {
+                        return new StaticContentProcessor(httpConfiguration.getStaticContentProcessorConfiguration());
+                    }
+                });
+
+                httpServer.start();
+
+                // create 20Mb file in /tmp directory
+                try (Path path = new Path().of(baseDir).concat("questdb-temp.txt").$()) {
+                    try {
+                        Rnd rnd = new Rnd();
+                        final int diskBufferLen = 1024 * 1024;
+
+                        writeRandomFile(path, rnd, 122222212222L, diskBufferLen);
+
+                        httpServer.getStartedLatch().await();
+
+                        long sockAddr = Net.sockaddr("127.0.0.1", 9001);
+                        try {
+                            int netBufferLen = 4 * 1024;
+                            long buffer = Unsafe.calloc(netBufferLen);
+                            try {
+
+                                // send request to server to download file we just created
+                                final String request = "GET /questdb-temp.txt HTTP/1.1\r\n" +
+                                        "Host: localhost:9000\r\n" +
+                                        "Connection: keep-alive\r\n" +
+                                        "Cache-Control: max-age=0\r\n" +
+                                        "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8\r\n" +
+                                        "User-Agent: Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/31.0.1650.48 Safari/537.36\r\n" +
+                                        "Accept-Encoding: gzip,deflate,sdch\r\n" +
+                                        "Accept-Language: en-US,en;q=0.8\r\n" +
+                                        "Cookie: textwrapon=false; textautoformat=false; wysiwyg=textarea\r\n" +
+                                        "\r\n";
+
+                                String expectedResponseHeader = "HTTP/1.1 200 OK\r\n" +
+                                        "Server: questDB/1.0\r\n" +
+                                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                                        "Content-Length: 20971520\r\n" +
+                                        "Content-Type: text/plain\r\n" +
+                                        "ETag: \"122222212000\"\r\n" + // this is last modified timestamp on the file, we set this value when we created file
+                                        "\r\n";
+
+                                for (int j = 0; j < 10; j++) {
+                                    long fd = Net.socketTcp(true);
+                                    Assert.assertTrue(fd > -1);
+                                    Assert.assertEquals(0, Net.connect(fd, sockAddr));
+                                    try {
+                                        sendRequest(request, fd, buffer);
+                                        assertDownloadResponse(fd, rnd, buffer, netBufferLen, diskBufferLen, expectedResponseHeader, 20971670);
+                                    } finally {
+                                        Net.close(fd);
+                                    }
+                                }
+
+                                // send few requests to receive 304
+                                final String request2 = "GET /questdb-temp.txt HTTP/1.1\r\n" +
+                                        "Host: localhost:9000\r\n" +
+                                        "Connection: keep-alive\r\n" +
+                                        "Cache-Control: max-age=0\r\n" +
+                                        "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8\r\n" +
+                                        "User-Agent: Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/31.0.1650.48 Safari/537.36\r\n" +
+                                        "Accept-Encoding: gzip,deflate,sdch\r\n" +
+                                        "Accept-Language: en-US,en;q=0.8\r\n" +
+                                        "If-None-Match: \"122222212000\"\r\n" + // this header should make static processor return 304
+                                        "Cookie: textwrapon=false; textautoformat=false; wysiwyg=textarea\r\n" +
+                                        "\r\n";
+
+                                String expectedResponseHeader2 = "HTTP/1.1 304 Not Modified\r\n" +
+                                        "Server: questDB/1.0\r\n" +
+                                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                                        "Content-Type: text/html; charset=utf-8\r\n" +
+                                        "\r\n";
+
+                                for (int i = 0; i < 3; i++) {
+                                    long fd = Net.socketTcp(true);
+                                    Assert.assertTrue(fd > -1);
+                                    Assert.assertEquals(0, Net.connect(fd, sockAddr));
+                                    try {
+                                        sendRequest(request2, fd, buffer);
+                                        assertDownloadResponse(fd, rnd, buffer, netBufferLen, 0, expectedResponseHeader2, 126);
+                                    } finally {
+                                        Net.close(fd);
+                                    }
+                                }
+
+                                // couple more full downloads after 304
+                                for (int j = 0; j < 2; j++) {
+                                    long fd = Net.socketTcp(true);
+                                    Assert.assertTrue(fd > -1);
+                                    Assert.assertEquals(0, Net.connect(fd, sockAddr));
+                                    try {
+                                        sendRequest(request, fd, buffer);
+                                        assertDownloadResponse(fd, rnd, buffer, netBufferLen, diskBufferLen, expectedResponseHeader, 20971670);
+                                    } finally {
+                                        Net.close(fd);
+                                    }
+                                }
+
+                                // get a 404 now
+                                final String request3 = "GET /questdb-temp_!.txt HTTP/1.1\r\n" +
+                                        "Host: localhost:9000\r\n" +
+                                        "Connection: keep-alive\r\n" +
+                                        "Cache-Control: max-age=0\r\n" +
+                                        "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8\r\n" +
+                                        "User-Agent: Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/31.0.1650.48 Safari/537.36\r\n" +
+                                        "Accept-Encoding: gzip,deflate,sdch\r\n" +
+                                        "Accept-Language: en-US,en;q=0.8\r\n" +
+                                        "Cookie: textwrapon=false; textautoformat=false; wysiwyg=textarea\r\n" +
+                                        "\r\n";
+
+                                String expectedResponseHeader3 = "HTTP/1.1 404 Not Found\r\n" +
+                                        "Server: questDB/1.0\r\n" +
+                                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                                        "Transfer-Encoding: chunked\r\n" +
+                                        "Content-Type: text/html; charset=utf-8\r\n" +
+                                        "\r\n" +
+                                        "b\r\n" +
+                                        "Not Found\r\n" +
+                                        "\r\n" +
+                                        "0\r\n" +
+                                        "\r\n";
+
+
+                                for (int i = 0; i < 4; i++) {
+                                    long fd = Net.socketTcp(true);
+                                    Assert.assertTrue(fd > -1);
+                                    Assert.assertEquals(0, Net.connect(fd, sockAddr));
+                                    try {
+                                        sendRequest(request3, fd, buffer);
+                                        assertDownloadResponse(fd, rnd, buffer, netBufferLen, 0, expectedResponseHeader3, expectedResponseHeader3.length());
+                                    } finally {
+                                        Net.close(fd);
+                                    }
+                                }
+
+                                // and few more 304s
+
+                                for (int i = 0; i < 3; i++) {
+                                    long fd = Net.socketTcp(true);
+                                    Assert.assertTrue(fd > -1);
+                                    Assert.assertEquals(0, Net.connect(fd, sockAddr));
+                                    try {
+                                        sendRequest(request2, fd, buffer);
+                                        assertDownloadResponse(fd, rnd, buffer, netBufferLen, 0, expectedResponseHeader2, 126);
+                                    } finally {
+                                        Net.close(fd);
+                                    }
+                                }
+
+                            } finally {
+                                Unsafe.free(buffer, netBufferLen);
+                            }
+                        } finally {
+                            Net.freeSockAddr(sockAddr);
+                        }
+                        httpServer.halt();
+                    } finally {
+                        Files.remove(path);
+                    }
+                }
+            }
         });
     }
 
@@ -337,8 +514,6 @@ public class IODispatcherTest {
                 });
 
                 httpServer.start();
-
-//                Thread.sleep(100000000000000000L);
 
                 // create 20Mb file in /tmp directory
                 try (Path path = new Path().of(baseDir).concat("questdb-temp.txt").$()) {
@@ -515,7 +690,7 @@ public class IODispatcherTest {
                         @Override
                         public HttpConnectionContext newInstance(long fd) {
                             connectLatch.countDown();
-                            return new HttpConnectionContext(httpServerConfiguration, fd) {
+                            return new HttpConnectionContext(httpServerConfiguration) {
                                 @Override
                                 public void close() {
                                     // it is possible that context is closed twice in error
@@ -526,7 +701,7 @@ public class IODispatcherTest {
                                         contextClosedLatch.countDown();
                                     }
                                 }
-                            };
+                            }.of(fd);
                         }
                     }
             )) {
@@ -680,7 +855,7 @@ public class IODispatcherTest {
                         @Override
                         public HttpConnectionContext newInstance(long fd) {
                             connectLatch.countDown();
-                            return new HttpConnectionContext(httpServerConfiguration, fd) {
+                            return new HttpConnectionContext(httpServerConfiguration) {
                                 @Override
                                 public void close() {
                                     // it is possible that context is closed twice in error
@@ -691,7 +866,7 @@ public class IODispatcherTest {
                                         contextClosedLatch.countDown();
                                     }
                                 }
-                            };
+                            }.of(fd);
                         }
                     }
             )) {
@@ -836,7 +1011,7 @@ public class IODispatcherTest {
                         @Override
                         public HttpConnectionContext newInstance(long fd) {
                             connectLatch.countDown();
-                            return new HttpConnectionContext(httpServerConfiguration, fd) {
+                            return new HttpConnectionContext(httpServerConfiguration) {
                                 @Override
                                 public void close() {
                                     // it is possible that context is closed twice in error
@@ -847,7 +1022,7 @@ public class IODispatcherTest {
                                         contextClosedLatch.countDown();
                                     }
                                 }
-                            };
+                            }.of(fd);
                         }
                     }
             )) {
@@ -990,7 +1165,7 @@ public class IODispatcherTest {
 
             try (IODispatcher<HttpConnectionContext> dispatcher = IODispatchers.create(
                     new DefaultIODispatcherConfiguration(),
-                    fd -> new HttpConnectionContext(httpServerConfiguration, fd)
+                    fd -> new HttpConnectionContext(httpServerConfiguration).of(fd)
             )) {
 
                 // server will publish status of each request to this queue
@@ -1130,7 +1305,7 @@ public class IODispatcherTest {
         });
     }
 
-    private void assertDownloadResponse(long fd, Rnd rnd, long buffer, int len, int nonRepeatedContentLength, String expectedResponseHeader, long expectedResponseLen) {
+    private static void assertDownloadResponse(long fd, Rnd rnd, long buffer, int len, int nonRepeatedContentLength, String expectedResponseHeader, long expectedResponseLen) {
         int expectedHeaderLen = expectedResponseHeader.length();
         int headerCheckRemaining = expectedResponseHeader.length();
         long downloadedSoFar = 0;
@@ -1167,6 +1342,12 @@ public class IODispatcherTest {
                 downloadedSoFar += n;
             }
         }
+    }
+
+    private static void sendRequest(String request, long fd, long buffer) {
+        final int requestLen = request.length();
+        Chars.strcpy(request, requestLen, buffer);
+        Assert.assertEquals(requestLen, Net.send(fd, buffer, requestLen));
     }
 
     @NotNull
@@ -1207,12 +1388,6 @@ public class IODispatcherTest {
         };
     }
 
-    private void sendRequest(String request, long fd, long buffer) {
-        final int requestLen = request.length();
-        Chars.strcpy(request, requestLen, buffer);
-        Assert.assertEquals(requestLen, Net.send(fd, buffer, requestLen));
-    }
-
     private void writeRandomFile(Path path, Rnd rnd, long lastModified, int bufLen) {
         if (Files.exists(path)) {
             Assert.assertTrue(Files.remove(path));
@@ -1229,7 +1404,7 @@ public class IODispatcherTest {
         }
 
         Files.close(fd);
-        Files.setLastModified(path, 122222212222L);
+        Files.setLastModified(path, lastModified);
         Unsafe.free(buf, bufLen);
     }
 

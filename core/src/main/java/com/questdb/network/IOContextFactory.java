@@ -23,7 +23,12 @@
 
 package com.questdb.network;
 
-@FunctionalInterface
+import com.questdb.std.Misc;
+
 public interface IOContextFactory<C extends IOContext> {
     C newInstance(long fd);
+
+    default void done(C context) {
+        Misc.free(context);
+    }
 }

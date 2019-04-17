@@ -29,7 +29,7 @@ import com.questdb.network.*;
 import com.questdb.std.*;
 import com.questdb.std.str.DirectByteCharSequence;
 
-public class HttpConnectionContext implements IOContext, Locality {
+public class HttpConnectionContext implements IOContext, Locality, Mutable {
     private static final Log LOG = LogFactory.getLog(HttpConnectionContext.class);
 
     private final HttpHeaderParser headerParser;
@@ -41,25 +41,26 @@ public class HttpConnectionContext implements IOContext, Locality {
     private final ObjectPool<DirectByteCharSequence> csPool;
     private final long sendBuffer;
     private final HttpServerConfiguration configuration;
-    private final long fd;
+    private long fd;
     private final LocalValueMap localValueMap = new LocalValueMap();
     private final NetworkFacade nf;
     private HttpRequestProcessor resumeProcessor = null;
 
-    public HttpConnectionContext(HttpServerConfiguration configuration, long fd) {
+    public HttpConnectionContext(HttpServerConfiguration configuration) {
         this.configuration = configuration;
         this.nf = configuration.getDispatcherConfiguration().getNetworkFacade();
-        this.csPool = new ObjectPool<>(DirectByteCharSequence.FACTORY, configuration.getConnectionWrapperObjPoolSize());
-        this.headerParser = new HttpHeaderParser(configuration.getConnectionHeaderBufferSize(), csPool);
-        this.multipartContentHeaderParser = new HttpHeaderParser(configuration.getConnectionMultipartHeaderBufferSize(), csPool);
+        this.csPool = new ObjectPool<>(DirectByteCharSequence.FACTORY, configuration.getConnectionStringPoolSize());
+        this.headerParser = new HttpHeaderParser(configuration.getRequestHeaderBufferSize(), csPool);
+        this.multipartContentHeaderParser = new HttpHeaderParser(configuration.getMultipartHeaderBufferSize(), csPool);
         this.multipartContentParser = new HttpMultipartContentParser(multipartContentHeaderParser);
-        this.recvBufferSize = configuration.getConnectionRecvBufferSize();
+        this.recvBufferSize = configuration.getRecvBufferSize();
         this.recvBuffer = Unsafe.malloc(recvBufferSize);
-        this.sendBuffer = Unsafe.malloc(configuration.getConnectionSendBufferSize());
-        this.fd = fd;
-        this.responseSink = new HttpResponseSink(configuration, fd);
+        this.sendBuffer = Unsafe.malloc(configuration.getSendBufferSize());
+        this.responseSink = new HttpResponseSink(configuration);
+        LOG.info().$("new").$();
     }
 
+    @Override
     public void clear() {
         this.headerParser.clear();
         this.multipartContentParser.clear();
@@ -77,7 +78,13 @@ public class HttpConnectionContext implements IOContext, Locality {
         responseSink.close();
         headerParser.close();
         Unsafe.free(recvBuffer, recvBufferSize);
-        Unsafe.free(sendBuffer, configuration.getConnectionSendBufferSize());
+        Unsafe.free(sendBuffer, configuration.getSendBufferSize());
+    }
+
+    public HttpConnectionContext of(long fd) {
+        this.fd = fd;
+        this.responseSink.of(fd);
+        return this;
     }
 
     @Override

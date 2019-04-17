@@ -64,7 +64,7 @@ public class HttpResponseSink implements Closeable, Mutable {
     private final HttpRawSocketImpl rawSocket = new HttpRawSocketImpl();
     private final NetworkFacade nf;
     private final int responseBufferSize;
-    private final long fd;
+    private long fd;
     private long _wPtr;
     private ByteBuffer zout;
     private long flushBuf;
@@ -77,18 +77,17 @@ public class HttpResponseSink implements Closeable, Mutable {
     private long total = 0;
     private boolean header = true;
 
-    public HttpResponseSink(HttpServerConfiguration configuration, long fd) {
-        this.responseBufferSize = Numbers.ceilPow2(configuration.getConnectionSendBufferSize());
+    public HttpResponseSink(HttpServerConfiguration configuration) {
+        this.responseBufferSize = Numbers.ceilPow2(configuration.getSendBufferSize());
         this.nf = configuration.getDispatcherConfiguration().getNetworkFacade();
         this.out = Unsafe.calloc(responseBufferSize);
-        this.headerImpl = new HttpResponseHeaderImpl(1024, configuration.getClock());
+        this.headerImpl = new HttpResponseHeaderImpl(configuration.getResponseHeaderBufferSize(), configuration.getClock());
         // size is 32bit int, as hex string max 8 bytes
         this.chunkHeaderBuf = Unsafe.calloc(8 + 2 * Misc.EOL.length());
         this.chunkSink = new DirectUnboundedByteSink(chunkHeaderBuf);
         this.chunkSink.put(Misc.EOL);
         this.outPtr = this._wPtr = out;
         this.limit = outPtr + responseBufferSize;
-        this.fd = fd;
     }
 
     @Override
@@ -254,13 +253,8 @@ public class HttpResponseSink implements Closeable, Mutable {
         return rawSocket;
     }
 
-    private void prepareHeaderSink() {
-        headerImpl.prepareToSend();
-    }
-
-    private void resumeSend(int nextState) throws PeerDisconnectedException, PeerIsSlowException {
-        state = nextState;
-        resumeSend();
+    void of(long fd) {
+        this.fd = fd;
     }
 
     private void prepareBody() {
@@ -290,6 +284,23 @@ public class HttpResponseSink implements Closeable, Mutable {
         _wPtr = outPtr;
     }
 
+    private void prepareHeaderSink() {
+        headerImpl.prepareToSend();
+    }
+
+    private void resetZip() {
+        if (z_streamp != 0) {
+            Zip.deflateReset(z_streamp);
+        }
+        this.crc = 0;
+        this.total = 0;
+    }
+
+    private void resumeSend(int nextState) throws PeerDisconnectedException, PeerIsSlowException {
+        state = nextState;
+        resumeSend();
+    }
+
     private void send() throws PeerDisconnectedException, PeerIsSlowException {
         int sent = 0;
         while (sent < flushBufSize) {
@@ -308,14 +319,6 @@ public class HttpResponseSink implements Closeable, Mutable {
                 sent += n;
             }
         }
-    }
-
-    private void resetZip() {
-        if (z_streamp != 0) {
-            Zip.deflateReset(z_streamp);
-        }
-        this.crc = 0;
-        this.total = 0;
     }
 
     public class HttpResponseHeaderImpl extends AbstractCharSink implements Closeable, Mutable, HttpResponseHeader {

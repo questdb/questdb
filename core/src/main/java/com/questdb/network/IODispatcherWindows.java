@@ -160,7 +160,7 @@ public class IODispatcherWindows<C extends IOContext> extends SynchronizedJob im
                 .$(", reason=").$(DisconnectReason.nameOf(disconnectReason))
                 .$(']').$();
         nf.close(fd, LOG);
-        context.close();
+        ioContextFactory.done(context);
         connectionCount.decrementAndGet();
     }
 

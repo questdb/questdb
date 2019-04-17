@@ -71,27 +71,32 @@ class DefaultHttpServerConfiguration implements HttpServerConfiguration {
     }
 
     @Override
-    public int getConnectionHeaderBufferSize() {
+    public int getRequestHeaderBufferSize() {
         return 1024;
     }
 
     @Override
-    public int getConnectionMultipartHeaderBufferSize() {
+    public int getResponseHeaderBufferSize() {
+        return 1024;
+    }
+
+    @Override
+    public int getMultipartHeaderBufferSize() {
         return 512;
     }
 
     @Override
-    public int getConnectionRecvBufferSize() {
+    public int getRecvBufferSize() {
         return 1024 * 1024;
     }
 
     @Override
-    public int getConnectionSendBufferSize() {
+    public int getSendBufferSize() {
         return 1024 * 1024;
     }
 
     @Override
-    public int getConnectionWrapperObjPoolSize() {
+    public int getConnectionStringPoolSize() {
         return 128;
     }
 
@@ -113,5 +118,10 @@ class DefaultHttpServerConfiguration implements HttpServerConfiguration {
     @Override
     public int getWorkerCount() {
         return 2;
+    }
+
+    @Override
+    public int getConnectionPoolInitialSize() {
+        return 16;
     }
 }
