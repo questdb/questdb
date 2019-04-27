@@ -173,7 +173,8 @@ public class IODispatcherLinux<C extends IOContext> extends SynchronizedJob impl
                 return;
             }
 
-            if (connectionCount.get() == activeConnectionLimit) {
+            final int connectionCount = this.connectionCount.get();
+            if (connectionCount == activeConnectionLimit) {
                 LOG.info().$("connection limit exceeded [fd=").$(fd)
                         .$(", connectionCount=").$(connectionCount)
                         .$(", activeConnectionLimit=").$(activeConnectionLimit)
@@ -183,7 +184,7 @@ public class IODispatcherLinux<C extends IOContext> extends SynchronizedJob impl
             }
 
             LOG.info().$("connected [ip=").$ip(nf.getPeerIP(fd)).$(", fd=").$(fd).$(']').$();
-            connectionCount.incrementAndGet();
+            this.connectionCount.incrementAndGet();
             addPending(fd, clock.getTicks());
         }
     }

@@ -38,6 +38,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     public static final int JOIN_OUTER = 2;
     public static final int JOIN_CROSS = 3;
     public static final int JOIN_ASOF = 4;
+    public static final int JOIN_SPLICE = 5;
     public static final String SUB_QUERY_ALIAS_PREFIX = "_xQdbA";
     public static final int SELECT_MODEL_NONE = 0;
     public static final int SELECT_MODEL_CHOOSE = 1;
@@ -639,6 +640,9 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                             break;
                         case JOIN_ASOF:
                             sink.put(" asof join ");
+                            break;
+                        case JOIN_SPLICE:
+                            sink.put(" splice join ");
                             break;
                         case JOIN_CROSS:
                             sink.put(" cross join ");

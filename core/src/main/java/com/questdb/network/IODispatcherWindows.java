@@ -26,7 +26,10 @@ package com.questdb.network;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.mp.*;
-import com.questdb.std.*;
+import com.questdb.std.LongIntHashMap;
+import com.questdb.std.LongMatrix;
+import com.questdb.std.Misc;
+import com.questdb.std.Unsafe;
 import com.questdb.std.time.MillisecondClock;
 
 import java.util.concurrent.atomic.AtomicInteger;
@@ -169,14 +172,11 @@ public class IODispatcherWindows<C extends IOContext> extends SynchronizedJob im
             long fd = nf.accept(serverFd);
 
             if (fd < 0) {
-                int err = Os.errno();
-                if (err != Net.EWOULDBLOCK && err != 0) {
-                    LOG.error().$("Error in accept(): ").$(err).$();
+                if (nf.errno() != Net.EWOULDBLOCK) {
+                    LOG.error().$("could not accept [errno=").$(nf.errno()).$(']').$();
                 }
-                break;
+                return;
             }
-
-            LOG.info().$(" Connected ").$(fd).$();
 
             if (nf.configureNonBlocking(fd) < 0) {
                 LOG.error().$("could not configure non-blocking [fd=").$(fd).$(", errno=").$(nf.errno()).$(']').$();
@@ -184,15 +184,18 @@ public class IODispatcherWindows<C extends IOContext> extends SynchronizedJob im
                 return;
             }
 
-            int connectionCount = this.connectionCount.incrementAndGet();
-
-            if (connectionCount > activeConnectionLimit) {
-                LOG.info().$("Too many connections, kicking out [fd=").$(fd).$(']').$();
+            final int connectionCount = this.connectionCount.get();
+            if (connectionCount == activeConnectionLimit) {
+                LOG.info().$("connection limit exceeded [fd=").$(fd)
+                        .$(", connectionCount=").$(connectionCount)
+                        .$(", activeConnectionLimit=").$(activeConnectionLimit)
+                        .$(']').$();
                 nf.close(fd, LOG);
-                this.connectionCount.decrementAndGet();
                 return;
             }
 
+            LOG.info().$("connected [ip=").$ip(nf.getPeerIP(fd)).$(", fd=").$(fd).$(']').$();
+            this.connectionCount.incrementAndGet();
             addPending(fd, timestamp);
         }
     }

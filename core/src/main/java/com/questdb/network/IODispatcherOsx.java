@@ -46,7 +46,7 @@ public class IODispatcherOsx<C extends IOContext> extends SynchronizedJob implem
     private final Sequence ioEventSubSeq;
     private final RingQueue<IOEvent<C>> interestQueue;
     private final MPSequence interestPubSeq;
-    private final SCSequence interestSubSeq = new SCSequence();
+    private final SCSequence interestSubSeq;
     private final MillisecondClock clock;
     private final Kqueue kqueue;
     private final long idleConnectionTimeout;
@@ -68,9 +68,9 @@ public class IODispatcherOsx<C extends IOContext> extends SynchronizedJob implem
         this.ioEventPubSeq = new SPSequence(configuration.getIOQueueCapacity());
         this.ioEventSubSeq = new MCSequence(configuration.getIOQueueCapacity());
         this.ioEventPubSeq.then(this.ioEventSubSeq).then(this.ioEventPubSeq);
-
         this.interestQueue = new RingQueue<>(IOEvent::new, configuration.getInterestQueueCapacity());
         this.interestPubSeq = new MPSequence(interestQueue.getCapacity());
+        this.interestSubSeq = new SCSequence();
         this.interestPubSeq.then(this.interestSubSeq).then(this.interestPubSeq);
         this.clock = configuration.getClock();
         this.activeConnectionLimit = configuration.getActiveConnectionLimit();

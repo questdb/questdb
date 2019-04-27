@@ -34,7 +34,8 @@ public class MapFactory {
     public static Map createMap(
             CairoConfiguration configuration,
             @Transient @NotNull ColumnTypes keyTypes,
-            @Transient @NotNull ColumnTypes valueTypes) {
+            @Transient @NotNull ColumnTypes valueTypes
+    ) {
         CharSequence mapType = configuration.getDefaultMapType();
         if (Chars.equalsIgnoreCase(mapType, "fast")) {
             return new FastMap(

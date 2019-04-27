@@ -743,6 +743,7 @@ public final class SqlParser {
 
         switch (joinType) {
             case QueryModel.JOIN_ASOF:
+            case QueryModel.JOIN_SPLICE:
                 if (tok == null || !Chars.equals("on", tok)) {
                     lexer.unparse();
                     break;
@@ -1141,6 +1142,7 @@ public final class SqlParser {
         tableAliasStop.add("inner");
         tableAliasStop.add("outer");
         tableAliasStop.add("asof");
+        tableAliasStop.add("splice");
         tableAliasStop.add("cross");
         tableAliasStop.add("sample");
         tableAliasStop.add("order");
@@ -1162,5 +1164,6 @@ public final class SqlParser {
         joinStartSet.put("outer", QueryModel.JOIN_OUTER);
         joinStartSet.put("cross", QueryModel.JOIN_CROSS);
         joinStartSet.put("asof", QueryModel.JOIN_ASOF);
+        joinStartSet.put("splice", QueryModel.JOIN_SPLICE);
     }
 }

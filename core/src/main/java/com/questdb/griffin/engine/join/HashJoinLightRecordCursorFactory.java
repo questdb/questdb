@@ -117,7 +117,6 @@ public class HashJoinLightRecordCursorFactory extends AbstractRecordCursorFactor
         private RecordCursor masterCursor;
         private RecordCursor slaveCursor;
         private Record masterRecord;
-        private Record slaveRecord;
         private LongChain.TreeCursor slaveChainCursor;
 
         public HashJoinRecordCursor(int columnSplit, Map joinKeyMap, LongChain slaveChain) {
@@ -179,7 +178,7 @@ public class HashJoinLightRecordCursorFactory extends AbstractRecordCursorFactor
             this.masterCursor = masterCursor;
             this.slaveCursor = slaveCursor;
             this.masterRecord = masterCursor.getRecord();
-            this.slaveRecord = slaveCursor.getRecord();
+            Record slaveRecord = slaveCursor.getRecord();
             record.of(masterRecord, slaveRecord);
             slaveChainCursor = null;
         }

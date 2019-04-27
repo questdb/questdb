@@ -76,8 +76,6 @@ public class CrossJoinRecordCursorFactory extends AbstractRecordCursorFactory {
         private final int columnSplit;
         private RecordCursor masterCursor;
         private RecordCursor slaveCursor;
-        private Record masterRecord;
-        private Record slaveRecord;
 
         public HashJoinRecordCursor(int columnSplit) {
             this.record = new JoinRecord(columnSplit);
@@ -128,9 +126,7 @@ public class CrossJoinRecordCursorFactory extends AbstractRecordCursorFactory {
         void of(RecordCursor masterCursor, RecordCursor slaveCursor) {
             this.masterCursor = masterCursor;
             this.slaveCursor = slaveCursor;
-            this.masterRecord = masterCursor.getRecord();
-            this.slaveRecord = slaveCursor.getRecord();
-            record.of(masterRecord, slaveRecord);
+            record.of(masterCursor.getRecord(), slaveCursor.getRecord());
         }
     }
 }

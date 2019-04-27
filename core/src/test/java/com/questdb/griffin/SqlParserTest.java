@@ -96,6 +96,21 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testSpliceJoin() throws SqlException {
+        assertQuery(
+                "select-choose" +
+                        " t.timestamp timestamp," +
+                        " t.tag tag," +
+                        " q.timestamp timestamp1" +
+                        " from (" +
+                        "trades t timestamp (timestamp) splice join quotes q timestamp (timestamp) post-join-where tag = null)",
+                "trades t splice join quotes q where tag = null",
+                modelOf("trades").timestamp().col("tag", ColumnType.SYMBOL),
+                modelOf("quotes").timestamp()
+        );
+    }
+
+    @Test
     public void testAsOfJoinColumnAliasNull() throws SqlException {
         assertQuery(
                 "select-choose customerId, kk, count" +
@@ -124,6 +139,34 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testSpliceJoinColumnAliasNull() throws SqlException {
+        assertQuery(
+                "select-choose customerId, kk, count" +
+                        " from " +
+                        "(" +
+                        "(" +
+                        "select-group-by customerId, kk, count() count" +
+                        " from " +
+                        "(" +
+                        "select-choose c.customerId customerId, o.customerId kk" +
+                        " from " +
+                        "(customers c" +
+                        " splice join orders o" +
+                        " on o.customerId = c.customerId" +
+                        " post-join-where o.customerId = null" +
+                        ")" +
+                        ")" +
+                        ") _xQdbA1 limit 10" +
+                        ")",
+                "(select c.customerId, o.customerId kk, count() from customers c" +
+                        " splice join orders o on c.customerId = o.customerId) " +
+                        " where kk = null limit 10",
+                modelOf("customers").col("customerId", ColumnType.INT),
+                modelOf("orders").col("customerId", ColumnType.INT)
+        );
+    }
+
+    @Test
     public void testAsOfJoinOrder() throws Exception {
         assertQuery(
                 "select-choose" +
@@ -137,6 +180,26 @@ public class SqlParserTest extends AbstractGriffinTest {
                         ")",
                 "customers c" +
                         " asof join employees e on c.customerId = e.employeeId" +
+                        " join orders o on c.customerId = o.customerId",
+                modelOf("customers").col("customerId", ColumnType.SYMBOL),
+                modelOf("employees").col("employeeId", ColumnType.STRING),
+                modelOf("orders").col("customerId", ColumnType.SYMBOL));
+    }
+
+    @Test
+    public void testSpliceJoinOrder() throws Exception {
+        assertQuery(
+                "select-choose" +
+                        " c.customerId customerId," +
+                        " e.employeeId employeeId," +
+                        " o.customerId customerId1" +
+                        " from (" +
+                        "customers c" +
+                        " splice join employees e on e.employeeId = c.customerId" +
+                        " join orders o on o.customerId = c.customerId" +
+                        ")",
+                "customers c" +
+                        " splice join employees e on c.customerId = e.employeeId" +
                         " join orders o on c.customerId = o.customerId",
                 modelOf("customers").col("customerId", ColumnType.SYMBOL),
                 modelOf("employees").col("employeeId", ColumnType.STRING),
@@ -194,6 +257,56 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testSpliceJoinSubQuery() throws Exception {
+        // execution order must be (src: SQL Server)
+        //        1. FROM
+        //        2. ON
+        //        3. JOIN
+        //        4. WHERE
+        //        5. GROUP BY
+        //        6. WITH CUBE or WITH ROLLUP
+        //        7. HAVING
+        //        8. SELECT
+        //        9. DISTINCT
+        //        10. ORDER BY
+        //        11. TOP
+        //
+        // which means "where" clause for "e" table has to be explicitly as post-join-where
+        assertQuery(
+                "select-choose" +
+                        " c.customerId customerId," +
+                        " e.blah blah," +
+                        " e.lastName lastName," +
+                        " e.employeeId employeeId," +
+                        " e.timestamp timestamp," +
+                        " o.customerId customerId1" +
+                        " from (" +
+                        "customers c" +
+                        " splice join" +
+                        " (select-virtual" +
+                        " '1' blah," +
+                        " lastName," +
+                        " employeeId," +
+                        " timestamp" +
+                        " from (employees)" +
+                        " order by lastName) e on e.employeeId = c.customerId post-join-where e.lastName = 'x' and e.blah = 'y'" +
+                        " join orders o on o.customerId = c.customerId" +
+                        ")",
+                "customers c" +
+                        " splice join (select '1' blah, lastName, employeeId, timestamp from employees order by lastName) e on c.customerId = e.employeeId" +
+                        " join orders o on c.customerId = o.customerId where e.lastName = 'x' and e.blah = 'y'",
+                modelOf("customers")
+                        .col("customerId", ColumnType.SYMBOL),
+                modelOf("employees")
+                        .col("employeeId", ColumnType.STRING)
+                        .col("lastName", ColumnType.STRING)
+                        .col("timestamp", ColumnType.TIMESTAMP),
+                modelOf("orders")
+                        .col("customerId", ColumnType.SYMBOL)
+        );
+    }
+
+    @Test
     public void testAsOfJoinSubQuerySimpleAlias() throws Exception {
         assertQuery(
                 "select-choose" +
@@ -228,6 +341,40 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testSpliceJoinSubQuerySimpleAlias() throws Exception {
+        assertQuery(
+                "select-choose" +
+                        " c.customerId customerId," +
+                        " a.blah blah," +
+                        " a.lastName lastName," +
+                        " a.customerId customerId1," +
+                        " a.timestamp timestamp" +
+                        " from " +
+                        "(" +
+                        "customers c" +
+                        " splice join (" +
+                        "select-virtual" +
+                        " '1' blah," +
+                        " lastName," +
+                        " customerId," +
+                        " timestamp" +
+                        " from (" +
+                        "select-choose" +
+                        " lastName," +
+                        " employeeId customerId," +
+                        " timestamp from (employees)) order by lastName) a on a.customerId = c.customerId)",
+                "customers c" +
+                        " splice join (select '1' blah, lastName, employeeId customerId, timestamp from employees order by lastName) a on (customerId)",
+                modelOf("customers")
+                        .col("customerId", ColumnType.SYMBOL),
+                modelOf("employees")
+                        .col("employeeId", ColumnType.STRING)
+                        .col("lastName", ColumnType.STRING)
+                        .col("timestamp", ColumnType.TIMESTAMP)
+        );
+    }
+
+    @Test
     public void testAsOfJoinSubQuerySimpleNoAlias() throws Exception {
         assertQuery(
                 "select-choose" +
@@ -243,6 +390,30 @@ public class SqlParserTest extends AbstractGriffinTest {
                         " from (employees)) order by lastName) _xQdbA1 on _xQdbA1.customerId = c.customerId)",
                 "customers c" +
                         " asof join (select '1' blah, lastName, employeeId customerId, timestamp from employees order by lastName) on (customerId)",
+                modelOf("customers").col("customerId", ColumnType.SYMBOL),
+                modelOf("employees")
+                        .col("employeeId", ColumnType.STRING)
+                        .col("lastName", ColumnType.STRING)
+                        .col("timestamp", ColumnType.TIMESTAMP)
+        );
+    }
+
+    @Test
+    public void testSpliceJoinSubQuerySimpleNoAlias() throws Exception {
+        assertQuery(
+                "select-choose" +
+                        " c.customerId customerId," +
+                        " _xQdbA1.blah blah," +
+                        " _xQdbA1.lastName lastName," +
+                        " _xQdbA1.customerId customerId1," +
+                        " _xQdbA1.timestamp timestamp" +
+                        " from (" +
+                        "customers c" +
+                        " splice join (select-virtual '1' blah, lastName, customerId, timestamp" +
+                        " from (select-choose lastName, employeeId customerId, timestamp" +
+                        " from (employees)) order by lastName) _xQdbA1 on _xQdbA1.customerId = c.customerId)",
+                "customers c" +
+                        " splice join (select '1' blah, lastName, employeeId customerId, timestamp from employees order by lastName) on (customerId)",
                 modelOf("customers").col("customerId", ColumnType.SYMBOL),
                 modelOf("employees")
                         .col("employeeId", ColumnType.STRING)

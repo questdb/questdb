@@ -315,7 +315,29 @@ public class SqlCodeGenerator {
     }
 
     @NotNull
-    private JoinRecordMetadata createJoinMetadata(CharSequence masterAlias, RecordMetadata masterMetadata, CharSequence slaveAlias, RecordMetadata slaveMetadata) {
+    private JoinRecordMetadata createJoinMetadata(
+            CharSequence masterAlias,
+            RecordMetadata masterMetadata,
+            CharSequence slaveAlias,
+            RecordMetadata slaveMetadata
+    ) {
+        return createJoinMetadata(
+                masterAlias,
+                masterMetadata,
+                slaveAlias,
+                slaveMetadata,
+                masterMetadata.getTimestampIndex()
+        );
+    }
+
+    @NotNull
+    private JoinRecordMetadata createJoinMetadata(
+            CharSequence masterAlias,
+            RecordMetadata masterMetadata,
+            CharSequence slaveAlias,
+            RecordMetadata slaveMetadata,
+            int timestampIndex
+    ) {
         JoinRecordMetadata metadata;
         metadata = new JoinRecordMetadata(
                 configuration,
@@ -325,10 +347,37 @@ public class SqlCodeGenerator {
         metadata.copyColumnMetadataFrom(masterAlias, masterMetadata);
         metadata.copyColumnMetadataFrom(slaveAlias, slaveMetadata);
 
-        if (masterMetadata.getTimestampIndex() != -1) {
-            metadata.setTimestampIndex(masterMetadata.getTimestampIndex());
+        if (timestampIndex != -1) {
+            metadata.setTimestampIndex(timestampIndex);
         }
         return metadata;
+    }
+
+    private RecordCursorFactory createSpliceJoin(
+            RecordMetadata metadata,
+            RecordCursorFactory master,
+            RecordSink masterKeySink,
+            RecordCursorFactory slave,
+            RecordSink slaveKeySink,
+            int columnSplit
+    ) {
+        valueTypes.reset();
+        valueTypes.add(ColumnType.LONG); // master previous
+        valueTypes.add(ColumnType.LONG); // master current
+        valueTypes.add(ColumnType.LONG); // slave previous
+        valueTypes.add(ColumnType.LONG); // slave current
+
+        return new SpliceJoinLightRecordCursorFactory(
+                configuration,
+                metadata,
+                master,
+                slave,
+                keyTypes,
+                valueTypes,
+                masterKeySink,
+                slaveKeySink,
+                columnSplit
+        );
     }
 
     RecordCursorFactory generate(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
@@ -377,13 +426,13 @@ public class SqlCodeGenerator {
                     final RecordMetadata masterMetadata = master.getMetadata();
                     final RecordMetadata slaveMetadata = slave.getMetadata();
 
-                    if (joinType == QueryModel.JOIN_ASOF) {
+                    if (joinType == QueryModel.JOIN_ASOF || joinType == QueryModel.JOIN_SPLICE) {
                         if (masterMetadata.getTimestampIndex() == -1) {
-                            throw SqlException.$(slaveModel.getJoinKeywordPosition(), "left side of ASOF join has no timestamp");
+                            throw SqlException.$(slaveModel.getJoinKeywordPosition(), "left side of time series join has no timestamp");
                         }
 
                         if (slaveMetadata.getTimestampIndex() == -1) {
-                            throw SqlException.$(slaveModel.getJoinKeywordPosition(), "right side of ASOF join has no timestamp");
+                            throw SqlException.$(slaveModel.getJoinKeywordPosition(), "right side of time series join has no timestamp");
                         }
                     }
 
@@ -428,6 +477,32 @@ public class SqlCodeGenerator {
                                 );
                             }
                             masterAlias = null;
+                            break;
+                        case QueryModel.JOIN_SPLICE:
+                            processJoinContext(index == 1, slaveModel.getContext(), masterMetadata, slaveMetadata);
+                            if (slave.isRandomAccessCursor() && master.isRandomAccessCursor() && !fullFatJoins) {
+                                master = createSpliceJoin(
+                                        // splice join result does not have timestamp
+                                        createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata, -1),
+                                        master,
+                                        RecordSinkFactory.getInstance(
+                                                asm,
+                                                masterMetadata,
+                                                listColumnFilterB,
+                                                true
+                                        ),
+                                        slave,
+                                        RecordSinkFactory.getInstance(
+                                                asm,
+                                                slaveMetadata,
+                                                listColumnFilterA,
+                                                true
+                                        ),
+                                        masterMetadata.getColumnCount()
+                                );
+                            } else {
+                                assert false;
+                            }
                             break;
                         default:
                             processJoinContext(index == 1, slaveModel.getContext(), masterMetadata, slaveMetadata);

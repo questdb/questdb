@@ -499,7 +499,7 @@ class SqlOptimiser {
         JoinContext jc;
         for (int i = 0, n = models.size(); i < n; i++) {
             QueryModel m = models.getQuick(i);
-            if (m.getJoinType() == QueryModel.JOIN_ASOF) {
+            if (m.getJoinType() == QueryModel.JOIN_ASOF || m.getJoinType() == QueryModel.JOIN_SPLICE) {
                 linkDependencies(parent, 0, i);
                 if (m.getContext() == null) {
                     m.setContext(jc = contextPool.next());
@@ -930,7 +930,11 @@ class SqlOptimiser {
                 if (c != null && c.parents.size() > 0) {
                     m.setJoinType(QueryModel.JOIN_INNER);
                 }
-            } else if (m.getJoinType() != QueryModel.JOIN_ASOF && (c == null || c.parents.size() == 0)) {
+            } else if (
+                    m.getJoinType() != QueryModel.JOIN_ASOF &&
+                            m.getJoinType() != QueryModel.JOIN_SPLICE &&
+                            (c == null || c.parents.size() == 0)
+            ) {
                 m.setJoinType(QueryModel.JOIN_CROSS);
             }
         }
@@ -1145,7 +1149,7 @@ class SqlOptimiser {
                 // Outer join can produce nulls in slave model columns.
                 int joinType = parent.getJoinType();
                 if (tableIndex > 0
-                        && (joinType == QueryModel.JOIN_OUTER || joinType == QueryModel.JOIN_ASOF)
+                        && (joinBarriers.contains(joinType))
                         && literalCollector.nullCount > 0) {
                     model.setPostJoinWhereClause(concatFilters(model.getPostJoinWhereClause(), node));
                     continue;
@@ -2304,6 +2308,7 @@ class SqlOptimiser {
         joinBarriers = new IntHashSet();
         joinBarriers.add(QueryModel.JOIN_OUTER);
         joinBarriers.add(QueryModel.JOIN_ASOF);
+        joinBarriers.add(QueryModel.JOIN_SPLICE);
 
         nullConstants.add("null");
         nullConstants.add("NaN");
