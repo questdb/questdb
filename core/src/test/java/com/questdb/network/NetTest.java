@@ -33,11 +33,12 @@ import java.util.concurrent.BrokenBarrierException;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 
 public class NetTest {
     @Test
-    public void testNoLinger() throws InterruptedException {
+    public void testNoLinger() throws InterruptedException, BrokenBarrierException {
         bindAcceptConnectClose();
         bindAcceptConnectClose();
     }
@@ -84,7 +85,7 @@ public class NetTest {
         }
     }
 
-    private void bindAcceptConnectClose() throws InterruptedException {
+    private void bindAcceptConnectClose() throws InterruptedException, BrokenBarrierException {
         int port = 9992;
         long fd = Net.socketTcp(true);
         Assert.assertTrue(fd > 0);
@@ -95,16 +96,27 @@ public class NetTest {
         StringSink sink = new StringSink();
 
         CountDownLatch haltLatch = new CountDownLatch(1);
+        CyclicBarrier barrier = new CyclicBarrier(2);
+        AtomicBoolean threadFailed = new AtomicBoolean(false);
 
         new Thread(() -> {
-            long clientfd = Net.accept(fd);
-            Net.appendIP4(sink, Net.getPeerIP(clientfd));
-            Net.configureNoLinger(clientfd);
-            Net.close(clientfd);
-            haltLatch.countDown();
+            try {
+                barrier.await();
+                long clientfd = Net.accept(fd);
+                Net.appendIP4(sink, Net.getPeerIP(clientfd));
+                Net.configureNoLinger(clientfd);
+                Net.close(clientfd);
+                haltLatch.countDown();
+            } catch (Exception e) {
+                threadFailed.set(true);
+                e.printStackTrace();
+            } finally {
+                haltLatch.countDown();
+            }
         }).start();
 
 
+        barrier.await();
         long clientFd = Net.socketTcp(true);
         long sockAddr = Net.sockaddr("127.0.0.1", port);
         Assert.assertEquals(0, Net.connect(clientFd, sockAddr));
@@ -113,6 +125,7 @@ public class NetTest {
         Net.close(fd);
 
         TestUtils.assertEquals("127.0.0.1", sink);
+        Assert.assertFalse(threadFailed.get());
     }
 
     @Test
