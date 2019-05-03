@@ -23,6 +23,7 @@
 
 package com.questdb.cairo.sql;
 
+import com.questdb.cairo.CairoConfiguration;
 import com.questdb.cairo.TableReader;
 import com.questdb.cairo.TableWriter;
 import com.questdb.std.str.Path;
@@ -55,4 +56,6 @@ public interface CairoEngine extends Closeable {
     void rename(Path path, CharSequence tableName, Path otherPath, String newName);
 
     void unlock(CharSequence tableName, @Nullable TableWriter writer);
+
+    CairoConfiguration getConfiguration();
 }

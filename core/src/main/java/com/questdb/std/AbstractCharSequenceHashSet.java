@@ -136,6 +136,11 @@ public abstract class AbstractCharSequenceHashSet implements Mutable {
         return capacity - free;
     }
 
+    /**
+     * Erases entry in array.
+     *
+     * @param index always posititive, no arithmetic required.
+     */
     abstract protected void erase(int index);
 
     abstract protected void move(int from, int to);

@@ -21,33 +21,12 @@
  *
  ******************************************************************************/
 
-package com.questdb.cutlass.http;
+package com.questdb.cutlass.http.processors;
 
-import com.questdb.std.ObjList;
-import com.questdb.std.str.DirectByteCharSequence;
+import com.questdb.cutlass.text.TextConfiguration;
 
-public interface HttpRequestHeader {
-    DirectByteCharSequence getBoundary();
+public interface TextImportProcessorConfiguration {
+    boolean abortBrokenUploads();
 
-    DirectByteCharSequence getCharset();
-
-    CharSequence getContentDisposition();
-
-    CharSequence getContentDispositionFilename();
-
-    CharSequence getContentDispositionName();
-
-    CharSequence getContentType();
-
-    DirectByteCharSequence getHeader(CharSequence name);
-
-    ObjList<CharSequence> getHeaderNames();
-
-    CharSequence getMethod();
-
-    CharSequence getMethodLine();
-
-    CharSequence getUrl();
-
-    CharSequence getUrlParam(CharSequence name);
+    TextConfiguration getTextConfiguration();
 }

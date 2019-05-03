@@ -23,8 +23,12 @@
 
 package com.questdb.cutlass.http;
 
+import com.questdb.cairo.DefaultCairoConfiguration;
+import com.questdb.cairo.Engine;
+import com.questdb.cairo.sql.CairoEngine;
 import com.questdb.cutlass.http.processors.StaticContentProcessor;
 import com.questdb.cutlass.http.processors.StaticContentProcessorConfiguration;
+import com.questdb.cutlass.http.processors.TextImportProcessor;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.mp.MPSequence;
@@ -39,6 +43,7 @@ import com.questdb.std.time.MillisecondClock;
 import com.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
+import org.junit.Ignore;
 import org.junit.Test;
 
 import java.util.concurrent.CountDownLatch;
@@ -644,6 +649,174 @@ public class IODispatcherTest {
                         Files.remove(path);
                     }
                 }
+            }
+        });
+    }
+
+    @Test
+    @Ignore
+    public void testImportSimpleText() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final String baseDir = System.getProperty("java.io.tmpdir");
+            final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir);
+
+
+            try (CairoEngine engine = new Engine(new DefaultCairoConfiguration(baseDir));
+                 HttpServer httpServer = new HttpServer(httpConfiguration)) {
+                httpServer.bind(new HttpRequestProcessorFactory() {
+                    @Override
+                    public String getUrl() {
+                        return HttpServerConfiguration.DEFAULT_PROCESSOR_URL;
+                    }
+
+                    @Override
+                    public HttpRequestProcessor newInstance() {
+                        return new StaticContentProcessor(httpConfiguration.getStaticContentProcessorConfiguration());
+                    }
+                });
+
+                httpServer.bind(new HttpRequestProcessorFactory() {
+                    @Override
+                    public String getUrl() {
+                        return "/upload";
+                    }
+
+                    @Override
+                    public HttpRequestProcessor newInstance() {
+                        return new TextImportProcessor(httpConfiguration.getTextImportProcessorConfiguration(), engine);
+                    }
+                });
+
+                httpServer.start();
+
+                // send multipart request to server
+                final String request = "POST /upload HTTP/1.1\r\n" +
+                        "Host: localhost:9001\r\n" +
+                        "User-Agent: curl/7.64.0\r\n" +
+                        "Accept: */*\r\n" +
+                        "Content-Length: 437760673\r\n" +
+                        "Content-Type: multipart/form-data; boundary=------------------------27d997ca93d2689d\r\n" +
+                        "Expect: 100-continue\r\n" +
+                        "\r\n" +
+                        "--------------------------27d997ca93d2689d\r\n" +
+                        "Content-Disposition: form-data; name=\"schema\"; filename=\"schema.json\"\r\n" +
+                        "Content-Type: application/octet-stream\r\n" +
+                        "\r\n" +
+                        "[\r\n" +
+                        "  {\r\n" +
+                        "    \"name\": \"date\",\r\n" +
+                        "    \"type\": \"DATE\",\r\n" +
+                        "    \"pattern\": \"d MMMM y.\",\r\n" +
+                        "    \"locale\": \"ru-RU\"\r\n" +
+                        "  }\r\n" +
+                        "]\r\n" +
+                        "\r\n" +
+                        "--------------------------27d997ca93d2689d\r\n" +
+                        "Content-Disposition: form-data; name=\"data\"; filename=\"fhv_tripdata_2017-02.csv\"\r\n" +
+                        "Content-Type: application/octet-stream\r\n" +
+                        "\r\n" +
+                        "Dispatching_base_num,Pickup_DateTime,DropOff_datetime,PUlocationID,DOlocationID\r\n" +
+                        "B00008,2017-02-01 00:30:00,,,\r\n" +
+                        "B00008,2017-02-01 00:40:00,,,\r\n" +
+                        "B00009,2017-02-01 00:30:00,,,\r\n" +
+                        "B00013,2017-02-01 00:11:00,,,\r\n" +
+                        "B00013,2017-02-01 00:41:00,,,\r\n" +
+                        "B00013,2017-02-01 00:00:00,,,\r\n" +
+                        "B00013,2017-02-01 00:53:00,,,\r\n" +
+                        "B00013,2017-02-01 00:44:00,,,\r\n" +
+                        "B00013,2017-02-01 00:05:00,,,\r\n" +
+                        "B00013,2017-02-01 00:54:00,,,\r\n" +
+                        "B00014,2017-02-01 00:45:00,,,\r\n" +
+                        "B00014,2017-02-01 00:45:00,,,\r\n" +
+                        "B00014,2017-02-01 00:46:00,,,\r\n" +
+                        "B00014,2017-02-01 00:54:00,,,\r\n" +
+                        "B00014,2017-02-01 00:45:00,,,\r\n" +
+                        "B00014,2017-02-01 00:45:00,,,\r\n" +
+                        "B00014,2017-02-01 00:45:00,,,\r\n" +
+                        "B00014,2017-02-01 00:26:00,,,\r\n" +
+                        "B00014,2017-02-01 00:55:00,,,\r\n" +
+                        "B00014,2017-02-01 00:47:00,,,\r\n" +
+                        "B00014,2017-02-01 00:05:00,,,\r\n" +
+                        "B00014,2017-02-01 00:58:00,,,\r\n" +
+                        "B00014,2017-02-01 00:33:00,,,\r\n" +
+                        "B00014,2017-02-01 00:45:00,,,\r\n" +
+                        "\r\n" +
+                        "--------------------------8af96af01e210723";
+
+
+                long fd = Net.socketTcp(true);
+                try {
+                    long sockAddr = Net.sockaddr("127.0.0.1", 9001);
+                    try {
+                        Assert.assertTrue(fd > -1);
+                        Assert.assertEquals(0, Net.connect(fd, sockAddr));
+
+
+                        int len = request.length();
+                        int sent = 0;
+                        long buffer = TestUtils.toMemory(request);
+                        try {
+                            while (len > 0) {
+                                int r = Net.send(fd, buffer + sent, len);
+                                Assert.assertTrue(r > -1);
+                                sent += r;
+                                len -= r;
+                            }
+                        } finally {
+                            Unsafe.free(buffer, len);
+                        }
+
+                    } finally {
+                        Net.freeSockAddr(sockAddr);
+                    }
+                } finally {
+                    Net.close(fd);
+                }
+
+                Thread.sleep(1000000L);
+                httpServer.halt();
+            }
+        });
+    }
+
+    @Test
+    @Ignore
+    public void testUpload() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final String baseDir = System.getProperty("java.io.tmpdir");
+//            final String baseDir = "/home/vlad/dev/123";
+            final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir);
+
+
+            try (CairoEngine engine = new Engine(new DefaultCairoConfiguration(baseDir));
+                 HttpServer httpServer = new HttpServer(httpConfiguration)) {
+                httpServer.bind(new HttpRequestProcessorFactory() {
+                    @Override
+                    public String getUrl() {
+                        return HttpServerConfiguration.DEFAULT_PROCESSOR_URL;
+                    }
+
+                    @Override
+                    public HttpRequestProcessor newInstance() {
+                        return new StaticContentProcessor(httpConfiguration.getStaticContentProcessorConfiguration());
+                    }
+                });
+
+                httpServer.bind(new HttpRequestProcessorFactory() {
+                    @Override
+                    public String getUrl() {
+                        return "/upload";
+                    }
+
+                    @Override
+                    public HttpRequestProcessor newInstance() {
+                        return new TextImportProcessor(httpConfiguration.getTextImportProcessorConfiguration(), engine);
+                    }
+                });
+
+                httpServer.start();
+
+                Thread.sleep(2000000);
             }
         });
     }

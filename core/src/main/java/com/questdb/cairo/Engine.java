@@ -73,6 +73,7 @@ public class Engine implements Closeable, CairoEngine {
         return writerPool.getBusyCount();
     }
 
+    @Override
     public CairoConfiguration getConfiguration() {
         return configuration;
     }

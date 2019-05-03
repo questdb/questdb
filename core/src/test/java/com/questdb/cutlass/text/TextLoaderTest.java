@@ -617,7 +617,6 @@ public class TextLoaderTest extends AbstractCairoTest {
                     "CMP1,5,4938,4.42754498450086,2015-02-09T19:15:09.000Z,2015-02-09 19:15:09,02/09/2015,7817,FALSE,61983099\n";
 
             try (TextLoader loader = new TextLoader(
-                    configuration,
                     new DefaultTextConfiguration() {
                         @Override
                         public long getRollBufferLimit() {
@@ -882,7 +881,6 @@ public class TextLoaderTest extends AbstractCairoTest {
                     "CMP1,5,4938,4.42754498450086,2015-02-09T19:15:09.000Z,2015-02-09 19:15:09,02/09/2015,7817,FALSE,61983099\n";
 
             try (TextLoader loader = new TextLoader(
-                    configuration,
                     new DefaultTextConfiguration() {
                         @Override
                         public long getRollBufferLimit() {
@@ -2178,7 +2176,6 @@ public class TextLoaderTest extends AbstractCairoTest {
     private void assertNoLeak(TextConfiguration textConfiguration, TestCode code) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (TextLoader loader = new TextLoader(
-                    configuration,
                     textConfiguration,
                     engine,
                     DateLocaleFactory.INSTANCE,

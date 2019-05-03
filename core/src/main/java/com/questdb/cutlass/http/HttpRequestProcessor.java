@@ -30,6 +30,9 @@ public interface HttpRequestProcessor {
 
     void onRequestComplete(HttpConnectionContext context, IODispatcher<HttpConnectionContext> dispatcher) throws PeerDisconnectedException, PeerIsSlowException;
 
+    default void resumeRecv(HttpConnectionContext context, IODispatcher<HttpConnectionContext> dispatcher) {
+    }
+
     default void resumeSend(HttpConnectionContext context, IODispatcher<HttpConnectionContext> dispatcher) throws PeerDisconnectedException, PeerIsSlowException {
     }
 }

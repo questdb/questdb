@@ -309,6 +309,7 @@ public class TypeManager implements Mutable {
                     }
                     jsonLexer.parse(memBuffer, len, this::onJsonEvent);
                 }
+                jsonLexer.clear();
             } finally {
                 Unsafe.free(memBuffer, heapBuffer.length);
             }

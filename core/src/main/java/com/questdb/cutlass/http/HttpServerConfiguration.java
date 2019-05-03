@@ -24,6 +24,7 @@
 package com.questdb.cutlass.http;
 
 import com.questdb.cutlass.http.processors.StaticContentProcessorConfiguration;
+import com.questdb.cutlass.http.processors.TextImportProcessorConfiguration;
 import com.questdb.network.IODispatcherConfiguration;
 import com.questdb.std.time.MillisecondClock;
 
@@ -47,6 +48,8 @@ public interface HttpServerConfiguration {
     IODispatcherConfiguration getDispatcherConfiguration();
 
     StaticContentProcessorConfiguration getStaticContentProcessorConfiguration();
+
+    TextImportProcessorConfiguration getTextImportProcessorConfiguration();
 
     int getWorkerCount();
 

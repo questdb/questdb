@@ -23,7 +23,6 @@
 
 package com.questdb.cutlass.text;
 
-import com.questdb.cairo.CairoConfiguration;
 import com.questdb.cairo.sql.CairoEngine;
 import com.questdb.cairo.sql.RecordMetadata;
 import com.questdb.cutlass.json.JsonException;
@@ -60,7 +59,6 @@ public class TextLoader implements Closeable, Mutable {
     private byte columnDelimiter = -1;
 
     public TextLoader(
-            CairoConfiguration configuration,
             TextConfiguration textConfiguration,
             CairoEngine engine,
             DateLocaleFactory dateLocaleFactory,
@@ -76,7 +74,7 @@ public class TextLoader implements Closeable, Mutable {
         );
         this.typeManager = new TypeManager(textConfiguration, utf8Sink, jsonLexer);
         textLexer = new TextLexer(textConfiguration, typeManager);
-        textWriter = new CairoTextWriter(configuration, engine, path, textConfiguration, typeManager);
+        textWriter = new CairoTextWriter(engine, path, textConfiguration, typeManager);
         textMetadataParser = new TextMetadataParser(
                 textConfiguration,
                 dateLocaleFactory,
@@ -116,7 +114,7 @@ public class TextLoader implements Closeable, Mutable {
         assert this.columnDelimiter > 0;
     }
 
-    public void configureDestination(String tableName, boolean overwrite, boolean durable, int atomicity) {
+    public void configureDestination(CharSequence tableName, boolean overwrite, boolean durable, int atomicity) {
         textWriter.of(tableName, overwrite, durable, atomicity);
         textDelimiterScanner.setTableName(tableName);
         textMetadataParser.setTableName(tableName);
@@ -142,12 +140,24 @@ public class TextLoader implements Closeable, Mutable {
         return textWriter.getMetadata();
     }
 
+    public int getPartitionBy() {
+        return textWriter.getPartitionBy();
+    }
+
     public long getParsedLineCount() {
         return textLexer.getLineCount();
     }
 
+    public CharSequence getTableName() {
+        return textWriter.getTableName();
+    }
+
     public long getWrittenLineCount() {
         return textWriter.getWrittenLineCount();
+    }
+
+    public boolean hasHeader() {
+        return textLexer.isHeaderDetected();
     }
 
     public boolean isForceHeaders() {

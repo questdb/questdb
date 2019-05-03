@@ -77,6 +77,10 @@ public class HttpResponseSink implements Closeable, Mutable {
     private long total = 0;
     private boolean header = true;
 
+    public ChunkedResponseImpl getChunkedResponse() {
+        return chunkedResponse;
+    }
+
     public HttpResponseSink(HttpServerConfiguration configuration) {
         this.responseBufferSize = Numbers.ceilPow2(configuration.getSendBufferSize());
         this.nf = configuration.getDispatcherConfiguration().getNetworkFacade();
@@ -545,7 +549,7 @@ public class HttpResponseSink implements Closeable, Mutable {
         }
     }
 
-    private class ChunkedResponseImpl extends ResponseSinkImpl {
+    public class ChunkedResponseImpl extends ResponseSinkImpl {
 
         private long bookmark = outPtr;
 

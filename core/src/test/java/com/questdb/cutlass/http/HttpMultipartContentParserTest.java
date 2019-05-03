@@ -203,16 +203,16 @@ public class HttpMultipartContentParserTest {
     }
 
     private static class TestHttpMultipartContentListener implements HttpMultipartContentListener {
-
         @Override
-        public void onChunk(HttpHeaderParser partHeader, long lo, long hi) {
+        public void onChunk(HttpRequestHeader partHeader, long lo, long hi) {
             for (long p = lo; p < hi; p++) {
                 sink.put((char) Unsafe.getUnsafe().getByte(p));
             }
         }
 
+
         @Override
-        public void onPartBegin(HttpHeaderParser partHeader) {
+        public void onPartBegin(HttpRequestHeader partHeader) {
 
             final CharSequence name = partHeader.getContentDispositionName();
             sink.put("Content-Disposition: ").put(partHeader.getContentDisposition());
@@ -238,7 +238,7 @@ public class HttpMultipartContentParserTest {
         }
 
         @Override
-        public void onPartEnd(HttpHeaderParser partHeader) {
+        public void onPartEnd(HttpRequestHeader partHeader) {
             sink.put("\r\n");
             sink.put("-----------------------------\r\n");
         }

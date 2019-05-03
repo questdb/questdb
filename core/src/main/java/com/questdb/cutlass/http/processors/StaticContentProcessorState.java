@@ -21,33 +21,30 @@
  *
  ******************************************************************************/
 
-package com.questdb.cutlass.http;
+package com.questdb.cutlass.http.processors;
 
-import com.questdb.std.ObjList;
-import com.questdb.std.str.DirectByteCharSequence;
+import com.questdb.std.Files;
+import com.questdb.std.Mutable;
 
-public interface HttpRequestHeader {
-    DirectByteCharSequence getBoundary();
+import java.io.Closeable;
 
-    DirectByteCharSequence getCharset();
+class StaticContentProcessorState implements Mutable, Closeable {
+    long fd = -1;
+    long bytesSent;
+    long sendMax;
 
-    CharSequence getContentDisposition();
+    @Override
+    public void clear() {
+        if (fd > -1) {
+            Files.close(fd);
+            fd = -1;
+        }
+        bytesSent = 0;
+        sendMax = Long.MAX_VALUE;
+    }
 
-    CharSequence getContentDispositionFilename();
-
-    CharSequence getContentDispositionName();
-
-    CharSequence getContentType();
-
-    DirectByteCharSequence getHeader(CharSequence name);
-
-    ObjList<CharSequence> getHeaderNames();
-
-    CharSequence getMethod();
-
-    CharSequence getMethodLine();
-
-    CharSequence getUrl();
-
-    CharSequence getUrlParam(CharSequence name);
+    @Override
+    public void close() {
+        clear();
+    }
 }

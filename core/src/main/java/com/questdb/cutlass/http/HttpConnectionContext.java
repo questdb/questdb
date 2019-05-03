@@ -41,9 +41,9 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
     private final ObjectPool<DirectByteCharSequence> csPool;
     private final long sendBuffer;
     private final HttpServerConfiguration configuration;
-    private long fd;
     private final LocalValueMap localValueMap = new LocalValueMap();
     private final NetworkFacade nf;
+    private long fd;
     private HttpRequestProcessor resumeProcessor = null;
 
     public HttpConnectionContext(HttpServerConfiguration configuration) {
@@ -81,15 +81,13 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
         Unsafe.free(sendBuffer, configuration.getSendBufferSize());
     }
 
-    public HttpConnectionContext of(long fd) {
-        this.fd = fd;
-        this.responseSink.of(fd);
-        return this;
-    }
-
     @Override
     public long getFd() {
         return fd;
+    }
+
+    public HttpResponseSink.ChunkedResponseImpl getChunkedResponseSocket() {
+        return responseSink.getChunkedResponse();
     }
 
     @Override
@@ -112,7 +110,13 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
     public void handleClientOperation(int operation, IODispatcher<HttpConnectionContext> dispatcher, HttpRequestProcessorSelector selector) {
         switch (operation) {
             case IOOperation.READ:
-                handleClientRecv(dispatcher, selector);
+                try {
+                    handleClientRecv(dispatcher, selector);
+                } catch (PeerDisconnectedException ignore) {
+                    dispatcher.disconnect(this, DisconnectReason.PEER);
+                } catch (PeerIsSlowException ignore) {
+                    dispatcher.registerChannel(this, IOOperation.READ);
+                }
                 break;
             case IOOperation.WRITE:
                 if (resumeProcessor != null) {
@@ -133,6 +137,12 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
                 dispatcher.disconnect(this, DisconnectReason.SILLY);
                 break;
         }
+    }
+
+    public HttpConnectionContext of(long fd) {
+        this.fd = fd;
+        this.responseSink.of(fd);
+        return this;
     }
 
     public HttpResponseSink.SimpleResponseImpl simpleResponse() {
@@ -157,34 +167,47 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
         }
     }
 
+    private void dump(long recvBuffer, int read) {
+        for (int i = 0; i < read; i++) {
+            System.out.print((char) Unsafe.getUnsafe().getByte(recvBuffer + i));
+        }
+    }
+
     private void handleClientRecv(
             IODispatcher<HttpConnectionContext> dispatcher,
             HttpRequestProcessorSelector selector
-    ) {
+    ) throws PeerDisconnectedException, PeerIsSlowException {
         try {
             long fd = this.fd;
             // this is address of where header ended in our receive buffer
             // we need to being processing request content starting from this address
             long headerEnd = recvBuffer;
             int read = 0;
-            while (headerParser.isIncomplete()) {
-                // read headers
-                read = nf.recv(fd, recvBuffer, recvBufferSize);
-                LOG.debug().$("recv [fd=").$(fd).$(", count=").$(read).$(']').$();
-                if (read < 0) {
-                    LOG.debug().$("done [fd=").$(fd).$(']').$();
-                    // peer disconnect
-                    dispatcher.disconnect(this, DisconnectReason.PEER);
-                    return;
-                }
+            final boolean readResume;
+            if (headerParser.isIncomplete()) {
+                readResume = false;
+                while (headerParser.isIncomplete()) {
+                    // read headers
+                    read = nf.recv(fd, recvBuffer, recvBufferSize);
+//                    dump(recvBuffer, read);
+                    LOG.debug().$("recv [fd=").$(fd).$(", count=").$(read).$(']').$();
+                    if (read < 0) {
+                        LOG.debug().$("done [fd=").$(fd).$(']').$();
+                        // peer disconnect
+                        dispatcher.disconnect(this, DisconnectReason.PEER);
+                        return;
+                    }
 
-                if (read == 0) {
-                    // client is not sending anything
-                    dispatcher.registerChannel(this, IOOperation.READ);
-                    return;
-                }
+                    if (read == 0) {
+                        // client is not sending anything
+                        dispatcher.registerChannel(this, IOOperation.READ);
+                        return;
+                    }
 
-                headerEnd = headerParser.parse(recvBuffer, recvBuffer + read, true);
+                    headerEnd = headerParser.parse(recvBuffer, recvBuffer + read, true);
+                }
+            } else {
+                readResume = true;
             }
 
             HttpRequestProcessor processor = selector.select(headerParser.getUrl());
@@ -205,29 +228,39 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
                 dispatcher.registerChannel(this, IOOperation.READ);
             } else if (multipartProcessor) {
 
-                processor.onHeadersReady(this);
+                if (!readResume) {
+                    processor.onHeadersReady(this);
+                    multipartContentParser.of(headerParser.getBoundary());
+                }
 
-                HttpMultipartContentListener multipartListener = (HttpMultipartContentListener) processor;
+                processor.resumeRecv(this, dispatcher);
 
-                long bufferEnd = recvBuffer + read;
+                final HttpMultipartContentListener multipartListener = (HttpMultipartContentListener) processor;
+                final long bufferEnd = recvBuffer + read;
+                boolean connectionIntact = true;
 
                 if (headerEnd >= bufferEnd || !multipartContentParser.parse(headerEnd, bufferEnd, multipartListener)) {
                     do {
                         read = nf.recv(fd, recvBuffer, recvBufferSize);
+//                        dump(recvBuffer, read);
 
                         if (read < 0) {
                             dispatcher.disconnect(this, DisconnectReason.PEER);
+                            connectionIntact = false;
                             break;
                         }
 
                         if (read == 0) {
                             // client is not sending anything
                             dispatcher.registerChannel(this, IOOperation.READ);
+                            connectionIntact = false;
                             break;
                         }
                     } while (!multipartContentParser.parse(recvBuffer, recvBuffer + read, multipartListener));
                 }
-                checkRemainingInputAndCompleteRequest(dispatcher, fd, processor);
+                if (connectionIntact) {
+                    checkRemainingInputAndCompleteRequest(dispatcher, fd, processor);
+                }
             } else {
 
                 // Do not expect any more bytes to be sent to us before

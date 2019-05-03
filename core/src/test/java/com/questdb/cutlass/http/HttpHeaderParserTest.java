@@ -216,7 +216,7 @@ public class HttpHeaderParserTest {
         try (HttpHeaderParser hp = new HttpHeaderParser(1024, pool)) {
             hp.parse(p, p + v.length(), false);
             TestUtils.assertEquals("text/html", hp.getContentType());
-            TestUtils.assertEquals("----WebKitFormBoundaryQ3pdBTBXxEFUWDML", hp.getBoundary());
+            TestUtils.assertEquals("\r\n------WebKitFormBoundaryQ3pdBTBXxEFUWDML", hp.getBoundary());
         } finally {
             Unsafe.free(p, v.length());
         }
@@ -480,7 +480,7 @@ public class HttpHeaderParserTest {
         TestUtils.assertEquals("text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8", hp.getHeader("Accept"));
         TestUtils.assertEquals("Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/31.0.1650.48 Safari/537.36", hp.getHeader("User-Agent"));
         TestUtils.assertEquals("multipart/form-data; boundary=----WebKitFormBoundaryQ3pdBTBXxEFUWDML", hp.getHeader("Content-Type"));
-        TestUtils.assertContains("----WebKitFormBoundaryQ3pdBTBXxEFUWDML", hp.getBoundary());
+        TestUtils.assertContains(hp.getBoundary(), "----WebKitFormBoundaryQ3pdBTBXxEFUWDML");
         TestUtils.assertEquals("gzip,deflate,sdch", hp.getHeader("Accept-Encoding"));
         TestUtils.assertEquals("en-US,en;q=0.8", hp.getHeader("Accept-Language"));
         TestUtils.assertEquals("textwrapon=false; textautoformat=false; wysiwyg=textarea", hp.getHeader("Cookie"));

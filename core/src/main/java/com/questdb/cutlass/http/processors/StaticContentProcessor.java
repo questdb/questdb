@@ -36,9 +36,7 @@ import com.questdb.std.str.PrefixedPath;
 import java.io.Closeable;
 
 public class StaticContentProcessor implements HttpRequestProcessor, Closeable {
-
     private static final Log LOG = LogFactory.getLog(StaticContentProcessor.class);
-
     private final MimeTypesCache mimeTypes;
     private final LocalValue<StaticContentProcessorState> stateAccessor = new LocalValue<>();
     private final HttpRangeParser rangeParser = new HttpRangeParser();
@@ -248,24 +246,4 @@ public class StaticContentProcessor implements HttpRequestProcessor, Closeable {
         }
     }
 
-    private static class StaticContentProcessorState implements Mutable, Closeable {
-        long fd = -1;
-        long bytesSent;
-        long sendMax;
-
-        @Override
-        public void clear() {
-            if (fd > -1) {
-                Files.close(fd);
-                fd = -1;
-            }
-            bytesSent = 0;
-            sendMax = Long.MAX_VALUE;
-        }
-
-        @Override
-        public void close() {
-            clear();
-        }
-    }
 }

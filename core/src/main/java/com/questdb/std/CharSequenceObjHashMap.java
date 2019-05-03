@@ -63,8 +63,8 @@ public class CharSequenceObjHashMap<V> extends AbstractCharSequenceHashSet {
 
     @Override
     protected void erase(int index) {
-        Unsafe.arrayPut(keys, -index - 1, noEntryKey);
-        Unsafe.arrayPut(values, -index - 1, null);
+        Unsafe.arrayPut(keys, index, noEntryKey);
+        Unsafe.arrayPut(values, index, null);
     }
 
     @Override

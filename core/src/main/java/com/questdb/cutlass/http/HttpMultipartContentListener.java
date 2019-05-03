@@ -24,9 +24,9 @@
 package com.questdb.cutlass.http;
 
 public interface HttpMultipartContentListener {
-    void onChunk(HttpHeaderParser partHeader, long lo, long hi);
+    void onChunk(HttpRequestHeader partHeader, long lo, long hi);
 
-    void onPartBegin(HttpHeaderParser partHeader);
+    void onPartBegin(HttpRequestHeader partHeader) throws PeerDisconnectedException, PeerIsSlowException;
 
-    void onPartEnd(HttpHeaderParser partHeader);
+    void onPartEnd(HttpRequestHeader partHeader) throws PeerDisconnectedException, PeerIsSlowException;
 }

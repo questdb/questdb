@@ -36,6 +36,7 @@ public class HttpHeaderParser implements Mutable, Closeable, HttpRequestHeader {
     private final CharSequenceObjHashMap<DirectByteCharSequence> urlParams = new CharSequenceObjHashMap<>();
     private final long hi;
     private final DirectByteCharSequence temp = new DirectByteCharSequence();
+    private final BoundaryAugmenter boundaryAugmenter = new BoundaryAugmenter();
     private long _wptr;
     private long headerPtr;
     private DirectByteCharSequence method;
@@ -90,12 +91,13 @@ public class HttpHeaderParser implements Mutable, Closeable, HttpRequestHeader {
         if (this.headerPtr != 0) {
             Unsafe.free(this.headerPtr, this.hi - this.headerPtr);
             this.headerPtr = 0;
+            boundaryAugmenter.close();
         }
     }
 
     @Override
-    public CharSequence getBoundary() {
-        return boundary;
+    public DirectByteCharSequence getBoundary() {
+        return boundaryAugmenter.of(boundary);
     }
 
     @Override
@@ -461,4 +463,50 @@ public class HttpHeaderParser implements Mutable, Closeable, HttpRequestHeader {
 
         return offset;
     }
+
+    public static class BoundaryAugmenter implements Closeable {
+        private static final String BOUNDARY_PREFIX = "\r\n--";
+        private final DirectByteCharSequence export = new DirectByteCharSequence();
+        private long lo;
+        private long lim;
+        private long _wptr;
+
+        public BoundaryAugmenter() {
+            this.lim = 64;
+            this.lo = this._wptr = Unsafe.malloc(this.lim);
+            of0(BOUNDARY_PREFIX);
+        }
+
+        @Override
+        public void close() {
+            if (lo > 0) {
+                Unsafe.free(this.lo, this.lim);
+                this.lo = 0;
+            }
+        }
+
+        public DirectByteCharSequence of(CharSequence value) {
+            int len = value.length() + BOUNDARY_PREFIX.length();
+            if (len > lim) {
+                resize(len);
+            }
+            _wptr = lo + BOUNDARY_PREFIX.length();
+            of0(value);
+            return export.of(lo, _wptr);
+        }
+
+        private void of0(CharSequence value) {
+            int len = value.length();
+            Chars.strcpy(value, len, _wptr);
+            _wptr += len;
+        }
+
+        private void resize(int lim) {
+            Unsafe.free(this.lo, this.lim);
+            this.lim = Numbers.ceilPow2(lim);
+            this.lo = _wptr = Unsafe.malloc(this.lim);
+            of0(BOUNDARY_PREFIX);
+        }
+    }
+
 }

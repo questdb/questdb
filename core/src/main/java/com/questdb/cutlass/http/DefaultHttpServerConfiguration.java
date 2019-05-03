@@ -23,7 +23,9 @@
 
 package com.questdb.cutlass.http;
 
+import com.questdb.cutlass.http.processors.DefaultTextImportProcessorConfiguration;
 import com.questdb.cutlass.http.processors.StaticContentProcessorConfiguration;
+import com.questdb.cutlass.http.processors.TextImportProcessorConfiguration;
 import com.questdb.network.DefaultIODispatcherConfiguration;
 import com.questdb.network.IODispatcherConfiguration;
 import com.questdb.std.FilesFacade;
@@ -57,6 +59,8 @@ class DefaultHttpServerConfiguration implements HttpServerConfiguration {
             return ".";
         }
     };
+
+    private final TextImportProcessorConfiguration textImportProcessorConfiguration = new DefaultTextImportProcessorConfiguration();
 
     public DefaultHttpServerConfiguration() {
         String defaultFilePath = this.getClass().getResource("/site/conf/mime.types").getFile();
@@ -113,6 +117,11 @@ class DefaultHttpServerConfiguration implements HttpServerConfiguration {
     @Override
     public StaticContentProcessorConfiguration getStaticContentProcessorConfiguration() {
         return staticContentProcessorConfiguration;
+    }
+
+    @Override
+    public TextImportProcessorConfiguration getTextImportProcessorConfiguration() {
+        return textImportProcessorConfiguration;
     }
 
     @Override
