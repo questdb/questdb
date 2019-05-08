@@ -90,6 +90,11 @@ class DefaultHttpServerConfiguration implements HttpServerConfiguration {
     }
 
     @Override
+    public long getMultipartIdleSpinCount() {
+        return 10_000;
+    }
+
+    @Override
     public int getRecvBufferSize() {
         return 1024 * 1024;
     }

@@ -45,6 +45,7 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
     private final NetworkFacade nf;
     private long fd;
     private HttpRequestProcessor resumeProcessor = null;
+    private final long multipartIdleSpinCount;
 
     public HttpConnectionContext(HttpServerConfiguration configuration) {
         this.configuration = configuration;
@@ -57,7 +58,15 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
         this.recvBuffer = Unsafe.malloc(recvBufferSize);
         this.sendBuffer = Unsafe.malloc(configuration.getSendBufferSize());
         this.responseSink = new HttpResponseSink(configuration);
-        LOG.info().$("new").$();
+        this.multipartIdleSpinCount = configuration.getMultipartIdleSpinCount();
+        LOG.debug().$("new").$();
+    }
+
+    // todo: remove or comment out eventually
+    public static void dump(long recvBuffer, int read) {
+        for (int i = 0; i < read; i++) {
+            System.out.print((char) Unsafe.getUnsafe().getByte(recvBuffer + i));
+        }
     }
 
     @Override
@@ -77,8 +86,10 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
         multipartContentHeaderParser.close();
         responseSink.close();
         headerParser.close();
+        localValueMap.close();
         Unsafe.free(recvBuffer, recvBufferSize);
         Unsafe.free(sendBuffer, configuration.getSendBufferSize());
+        LOG.debug().$("closed").$();
     }
 
     @Override
@@ -113,8 +124,10 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
                 try {
                     handleClientRecv(dispatcher, selector);
                 } catch (PeerDisconnectedException ignore) {
+                    LOG.debug().$("peer disconnected").$();
                     dispatcher.disconnect(this, DisconnectReason.PEER);
                 } catch (PeerIsSlowException ignore) {
+                    LOG.debug().$("peer is slow writer").$();
                     dispatcher.registerChannel(this, IOOperation.READ);
                 }
                 break;
@@ -125,6 +138,7 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
                         resumeProcessor.resumeSend(this, dispatcher);
                         resumeProcessor = null;
                     } catch (PeerIsSlowException ignore) {
+                        LOG.debug().$("peer is slow reader").$();
                         dispatcher.registerChannel(this, IOOperation.WRITE);
                     } catch (PeerDisconnectedException ignore) {
                         dispatcher.disconnect(this, DisconnectReason.PEER);
@@ -149,27 +163,15 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
         return responseSink.getSimple();
     }
 
-    private void checkRemainingInputAndCompleteRequest(IODispatcher<HttpConnectionContext> dispatcher, long fd, HttpRequestProcessor processor) {
-        int read;// consume and throw away the remainder of TCP input
-        read = nf.recv(fd, recvBuffer, 1);
-        if (read != 0) {
-            LOG.debug().$("disconnect after request [fd=").$(fd).$(']').$();
+    private void completeRequest(IODispatcher<HttpConnectionContext> dispatcher, long fd, HttpRequestProcessor processor) {
+        LOG.debug().$("complete [fd=").$(fd).$(']').$();
+        try {
+            processor.onRequestComplete(this, dispatcher);
+        } catch (PeerDisconnectedException ignore) {
             dispatcher.disconnect(this, DisconnectReason.PEER);
-        } else {
-            LOG.debug().$("ok [fd=").$(fd).$(']').$();
-            try {
-                processor.onRequestComplete(this, dispatcher);
-            } catch (PeerDisconnectedException ignore) {
-                dispatcher.disconnect(this, DisconnectReason.PEER);
-            } catch (PeerIsSlowException e) {
-                e.printStackTrace();
-            }
-        }
-    }
-
-    private void dump(long recvBuffer, int read) {
-        for (int i = 0; i < read; i++) {
-            System.out.print((char) Unsafe.getUnsafe().getByte(recvBuffer + i));
+        } catch (PeerIsSlowException e) {
+            // todo: this has to be re-queued as WRITE
+            e.printStackTrace();
         }
     }
 
@@ -189,7 +191,6 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
                 while (headerParser.isIncomplete()) {
                     // read headers
                     read = nf.recv(fd, recvBuffer, recvBufferSize);
-//                    dump(recvBuffer, read);
                     LOG.debug().$("recv [fd=").$(fd).$(", count=").$(read).$(']').$();
                     if (read < 0) {
                         LOG.debug().$("done [fd=").$(fd).$(']').$();
@@ -222,9 +223,11 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
             if (multipartRequest && !multipartProcessor) {
                 // bad request - multipart request for processor that doesn't expect multipart
                 headerParser.clear();
+                LOG.error().$("bad request [multipart/non-multipart]").$();
                 dispatcher.registerChannel(this, IOOperation.READ);
             } else if (!multipartRequest && multipartProcessor) {
                 // bad request - regular request for processor that expects multipart
+                LOG.error().$("bad request [non-multipart/multipart]").$();
                 dispatcher.registerChannel(this, IOOperation.READ);
             } else if (multipartProcessor) {
 
@@ -237,29 +240,78 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
 
                 final HttpMultipartContentListener multipartListener = (HttpMultipartContentListener) processor;
                 final long bufferEnd = recvBuffer + read;
-                boolean connectionIntact = true;
 
-                if (headerEnd >= bufferEnd || !multipartContentParser.parse(headerEnd, bufferEnd, multipartListener)) {
-                    do {
-                        read = nf.recv(fd, recvBuffer, recvBufferSize);
-//                        dump(recvBuffer, read);
+                LOG.debug().$("multipart").$();
 
-                        if (read < 0) {
-                            dispatcher.disconnect(this, DisconnectReason.PEER);
-                            connectionIntact = false;
-                            break;
-                        }
+                // read socket into buffer until there is nothing to read
+                long start;
+                long buf;
+                int bufRemaining;
 
-                        if (read == 0) {
-                            // client is not sending anything
-                            dispatcher.registerChannel(this, IOOperation.READ);
-                            connectionIntact = false;
-                            break;
-                        }
-                    } while (!multipartContentParser.parse(recvBuffer, recvBuffer + read, multipartListener));
+                if (headerEnd < bufferEnd) {
+                    start = headerEnd;
+                    buf = bufferEnd;
+                    bufRemaining = (int) (recvBufferSize - (bufferEnd - recvBuffer));
+                } else {
+                    buf = start = recvBuffer;
+                    bufRemaining = recvBufferSize;
                 }
-                if (connectionIntact) {
-                    checkRemainingInputAndCompleteRequest(dispatcher, fd, processor);
+
+                long spinsRemaining = multipartIdleSpinCount;
+
+                while (true) {
+                    final int n = nf.recv(fd, buf, bufRemaining);
+                    LOG.debug().$("multipart recv [len=").$(n)
+                            .$(']').$();
+
+                    if (n < 0) {
+                        dispatcher.disconnect(this, DisconnectReason.PEER);
+                        break;
+                    }
+
+                    if (n == 0) {
+
+                        // Text loader needs as big of a data chunk as possible
+                        // to analyse columns and delimiters correctly. To make sure we
+                        // can deliver large data chunk we have to implement mini-Nagle
+                        // algorithm by accumulating small data chunks client could be
+                        // sending into our receive buffer. To make sure we don't
+                        // sit around accumulating for too long we have spin limit
+                        if (spinsRemaining-- > 0) {
+                            continue;
+                        }
+
+                        // do we have anything in the buffer?
+                        if (buf > start) {
+                            if (multipartContentParser.parse(start, buf, multipartListener)) {
+                                // request is complete
+                                completeRequest(dispatcher, fd, processor);
+                                break;
+                            }
+
+                            buf = start = recvBuffer;
+                            bufRemaining = recvBufferSize;
+                            continue;
+
+                        }
+                        LOG.debug().$("peer is slow [multipart]").$();
+                        dispatcher.registerChannel(this, IOOperation.READ);
+                        break;
+                    }
+
+                    bufRemaining -= n;
+                    buf += n;
+
+                    if (bufRemaining == 0) {
+                        if (multipartContentParser.parse(start, buf, multipartListener)) {
+                            // request is complete
+                            completeRequest(dispatcher, fd, processor);
+                            break;
+                        }
+
+                        buf = start = recvBuffer;
+                        bufRemaining = recvBufferSize;
+                    }
                 }
             } else {
 
@@ -280,6 +332,7 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
                     } catch (PeerDisconnectedException ignore) {
                         dispatcher.disconnect(this, DisconnectReason.PEER);
                     } catch (PeerIsSlowException ignore) {
+                        LOG.debug().$("peer is slow reader [two]").$();
                         dispatcher.registerChannel(this, IOOperation.WRITE);
                         resumeProcessor = processor;
                     }

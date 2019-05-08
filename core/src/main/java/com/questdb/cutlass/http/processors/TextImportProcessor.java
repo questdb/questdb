@@ -29,25 +29,26 @@ import com.questdb.cairo.sql.RecordMetadata;
 import com.questdb.cutlass.http.*;
 import com.questdb.cutlass.json.JsonException;
 import com.questdb.cutlass.text.Atomicity;
-import com.questdb.cutlass.text.TextConfiguration;
 import com.questdb.cutlass.text.TextLoader;
+import com.questdb.log.Log;
+import com.questdb.log.LogFactory;
 import com.questdb.network.DisconnectReason;
 import com.questdb.network.IODispatcher;
+import com.questdb.network.IOOperation;
 import com.questdb.std.*;
 import com.questdb.std.str.CharSink;
-import com.questdb.std.time.DateFormatFactory;
-import com.questdb.std.time.DateLocaleFactory;
 
 import java.io.Closeable;
 
 
 public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartContentListener, Closeable {
-    private static final int RESPONSE_PREFIX = 1;
+    static final int RESPONSE_PREFIX = 1;
+    static final int MESSAGE_UNKNOWN = 3;
+    private final static Log LOG = LogFactory.getLog(TextImportProcessor.class);
     private static final int RESPONSE_COLUMN = 2;
     private static final int RESPONSE_SUFFIX = 3;
     private static final int MESSAGE_SCHEMA = 1;
     private static final int MESSAGE_DATA = 2;
-    private static final int MESSAGE_UNKNOWN = 3;
     private static final int TO_STRING_COL1_PAD = 15;
     private static final int TO_STRING_COL2_PAD = 50;
     private static final int TO_STRING_COL3_PAD = 15;
@@ -83,7 +84,6 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
                 transientState.textLoader.parse(lo, (int) (hi - lo));
                 if (transientState.messagePart == MESSAGE_DATA && !transientState.analysed) {
                     transientState.analysed = true;
-                    transientState.textLoader.wrapUp();
                     transientState.textLoader.setState(TextLoader.LOAD_DATA);
                 }
             } catch (JsonException e) {
@@ -95,6 +95,7 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
 
     @Override
     public void onPartBegin(HttpRequestHeader partHeader) throws PeerDisconnectedException, PeerIsSlowException {
+        LOG.debug().$("part begin [name=").$(partHeader.getContentDispositionName()).$(']').$();
         if (Chars.equals("data", partHeader.getContentDispositionName())) {
 
             final HttpRequestHeader rh = transientContext.getRequestHeader();
@@ -123,6 +124,7 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
             transientState.forceHeader = Chars.equalsNc("true", rh.getUrlParam("forceHeader"));
             transientState.messagePart = MESSAGE_DATA;
         } else if (Chars.equals("schema", partHeader.getContentDispositionName())) {
+            transientState.textLoader.setState(TextLoader.LOAD_JSON_METADATA);
             transientState.messagePart = MESSAGE_SCHEMA;
         } else {
             // todo: disconnect
@@ -139,6 +141,7 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
     @Override
     public void onPartEnd(HttpRequestHeader partHeader) throws PeerDisconnectedException, PeerIsSlowException {
         try {
+            LOG.debug().$("part end").$();
             transientState.textLoader.wrapUp();
             if (transientState.messagePart == MESSAGE_DATA) {
                 sendResponse(transientContext);
@@ -155,10 +158,14 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
 
     @Override
     public void onRequestComplete(HttpConnectionContext context, IODispatcher<HttpConnectionContext> dispatcher) {
+        transientState.clear();
+        context.clear();
+        dispatcher.registerChannel(context, IOOperation.READ);
     }
 
     @Override
     public void resumeRecv(HttpConnectionContext context, IODispatcher<HttpConnectionContext> dispatcher) {
+
         this.transientContext = context;
         this.transientDispatcher = dispatcher;
         this.transientState = lvContext.get(context);
@@ -269,7 +276,7 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
     private static void sep(CharSink b) {
         b.put('+');
         replicate(b, '-', TO_STRING_COL1_PAD + TO_STRING_COL2_PAD + TO_STRING_COL3_PAD + TO_STRING_COL4_PAD + TO_STRING_COL5_PAD + 14);
-        b.put("+\n");
+        b.put("+\r\n");
     }
 
     private static void resumeText(TextImportProcessorState h, HttpResponseSink.ChunkedResponseImpl r) throws PeerDisconnectedException, PeerIsSlowException {
@@ -411,53 +418,6 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
             doResumeSend(state, response);
         } else {
             sendError(context, state.stateMessage, state.json);
-        }
-    }
-
-    private static class TextImportProcessorState implements Mutable, Closeable {
-        public static final int STATE_OK = 0;
-        public static final int STATE_INVALID_FORMAT = 1;
-        public static final int STATE_DATA_ERROR = 2;
-        private final TextLoader textLoader;
-        public int columnIndex = 0;
-        private int state;
-        private String stateMessage;
-        private boolean analysed = false;
-        private int messagePart = MESSAGE_UNKNOWN;
-        private int responseState = RESPONSE_PREFIX;
-        private boolean json = false;
-        private boolean forceHeader = false;
-
-        private TextImportProcessorState(
-                TextConfiguration configuration,
-                CairoEngine engine
-        ) throws JsonException {
-            this.textLoader = new TextLoader(
-                    configuration,
-                    engine,
-                    // todo: to come from configuration
-                    DateLocaleFactory.INSTANCE,
-                    new DateFormatFactory(),
-                    com.questdb.std.microtime.DateLocaleFactory.INSTANCE,
-                    new com.questdb.std.microtime.DateFormatFactory()
-
-            );
-        }
-
-        @Override
-        public void clear() {
-            responseState = RESPONSE_PREFIX;
-            columnIndex = 0;
-            messagePart = MESSAGE_UNKNOWN;
-            analysed = false;
-            state = STATE_OK;
-            textLoader.clear();
-        }
-
-        @Override
-        public void close() {
-            clear();
-            Misc.free(textLoader);
         }
     }
 

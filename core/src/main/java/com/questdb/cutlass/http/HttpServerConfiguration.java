@@ -37,6 +37,8 @@ public interface HttpServerConfiguration {
 
     int getMultipartHeaderBufferSize();
 
+    long getMultipartIdleSpinCount();
+
     int getRecvBufferSize();
 
     int getRequestHeaderBufferSize();

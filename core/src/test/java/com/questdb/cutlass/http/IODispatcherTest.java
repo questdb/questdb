@@ -50,6 +50,9 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import static com.questdb.cutlass.http.HttpConnectionContext.dump;
+
+
 public class IODispatcherTest {
     private static Log LOG = LogFactory.getLog(IODispatcherTest.class);
 
@@ -225,6 +228,333 @@ public class IODispatcherTest {
                 }
 
                 Assert.assertEquals(1, closeCount.get());
+            }
+        });
+    }
+
+    @Test
+    public void testImportMultipleOnSameConnection() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final String baseDir = System.getProperty("java.io.tmpdir");
+            final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir);
+
+            try (CairoEngine engine = new Engine(new DefaultCairoConfiguration(baseDir));
+                 HttpServer httpServer = new HttpServer(httpConfiguration)) {
+                httpServer.bind(new HttpRequestProcessorFactory() {
+                    @Override
+                    public String getUrl() {
+                        return HttpServerConfiguration.DEFAULT_PROCESSOR_URL;
+                    }
+
+                    @Override
+                    public HttpRequestProcessor newInstance() {
+                        return new StaticContentProcessor(httpConfiguration.getStaticContentProcessorConfiguration());
+                    }
+                });
+
+                httpServer.bind(new HttpRequestProcessorFactory() {
+                    @Override
+                    public String getUrl() {
+                        return "/upload";
+                    }
+
+                    @Override
+                    public HttpRequestProcessor newInstance() {
+                        return new TextImportProcessor(httpConfiguration.getTextImportProcessorConfiguration(), engine);
+                    }
+                });
+
+                httpServer.start();
+
+                // send multipart request to server
+                final String request = "POST /upload HTTP/1.1\r\n" +
+                        "Host: localhost:9001\r\n" +
+                        "User-Agent: curl/7.64.0\r\n" +
+                        "Accept: */*\r\n" +
+                        "Content-Length: 437760673\r\n" +
+                        "Content-Type: multipart/form-data; boundary=------------------------27d997ca93d2689d\r\n" +
+                        "Expect: 100-continue\r\n" +
+                        "\r\n" +
+                        "--------------------------27d997ca93d2689d\r\n" +
+                        "Content-Disposition: form-data; name=\"schema\"; filename=\"schema.json\"\r\n" +
+                        "Content-Type: application/octet-stream\r\n" +
+                        "\r\n" +
+                        "[\r\n" +
+                        "  {\r\n" +
+                        "    \"name\": \"date\",\r\n" +
+                        "    \"type\": \"DATE\",\r\n" +
+                        "    \"pattern\": \"d MMMM y.\",\r\n" +
+                        "    \"locale\": \"ru-RU\"\r\n" +
+                        "  }\r\n" +
+                        "]\r\n" +
+                        "\r\n" +
+                        "--------------------------27d997ca93d2689d\r\n" +
+                        "Content-Disposition: form-data; name=\"data\"; filename=\"fhv_tripdata_2017-02.csv\"\r\n" +
+                        "Content-Type: application/octet-stream\r\n" +
+                        "\r\n" +
+                        "Dispatching_base_num,Pickup_DateTime,DropOff_datetime,PUlocationID,DOlocationID\r\n" +
+                        "B00008,2017-02-01 00:30:00,,,\r\n" +
+                        "B00008,2017-02-01 00:40:00,,,\r\n" +
+                        "B00009,2017-02-01 00:30:00,,,\r\n" +
+                        "B00013,2017-02-01 00:11:00,,,\r\n" +
+                        "B00013,2017-02-01 00:41:00,,,\r\n" +
+                        "B00013,2017-02-01 00:00:00,,,\r\n" +
+                        "B00013,2017-02-01 00:53:00,,,\r\n" +
+                        "B00013,2017-02-01 00:44:00,,,\r\n" +
+                        "B00013,2017-02-01 00:05:00,,,\r\n" +
+                        "B00013,2017-02-01 00:54:00,,,\r\n" +
+                        "B00014,2017-02-01 00:45:00,,,\r\n" +
+                        "B00014,2017-02-01 00:45:00,,,\r\n" +
+                        "B00014,2017-02-01 00:46:00,,,\r\n" +
+                        "B00014,2017-02-01 00:54:00,,,\r\n" +
+                        "B00014,2017-02-01 00:45:00,,,\r\n" +
+                        "B00014,2017-02-01 00:45:00,,,\r\n" +
+                        "B00014,2017-02-01 00:45:00,,,\r\n" +
+                        "B00014,2017-02-01 00:26:00,,,\r\n" +
+                        "B00014,2017-02-01 00:55:00,,,\r\n" +
+                        "B00014,2017-02-01 00:47:00,,,\r\n" +
+                        "B00014,2017-02-01 00:05:00,,,\r\n" +
+                        "B00014,2017-02-01 00:58:00,,,\r\n" +
+                        "B00014,2017-02-01 00:33:00,,,\r\n" +
+                        "B00014,2017-02-01 00:45:00,,,\r\n" +
+                        "\r\n" +
+                        "--------------------------27d997ca93d2689d--";
+
+                byte[] expectedResponse = ("HTTP/1.1 200 OK\r\n" +
+                        "Server: questDB/1.0\r\n" +
+                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                        "Transfer-Encoding: chunked\r\n" +
+                        "Content-Type: text/plain; charset=utf-8\r\n" +
+                        "\r\n" +
+                        "442\r\n" +
+                        "+---------------------------------------------------------------------------------------------------------------+\r\n" +
+                        "|      Location:  |                          fhv_tripdata_2017-02.csv  |        Pattern  | Locale  |    Errors  |\r\n" +
+                        "|   Partition by  |                                              NONE  |                 |         |            |\r\n" +
+                        "+---------------------------------------------------------------------------------------------------------------+\r\n" +
+                        "|   Rows handled  |                                                24  |                 |         |            |\r\n" +
+                        "|  Rows imported  |                                                24  |                 |         |            |\r\n" +
+                        "+---------------------------------------------------------------------------------------------------------------+\r\n" +
+                        "|              0  |         0  |\r\n" +
+                        "|              1  |         0  |\r\n" +
+                        "|              2  |         0  |\r\n" +
+                        "|              3  |         0  |\r\n" +
+                        "|              4  |         0  |\r\n" +
+                        "+---------------------------------------------------------------------------------------------------------------+\r\n" +
+                        "\r\n" +
+                        "0\r\n" +
+                        "\r\n").getBytes();
+
+
+                long fd = Net.socketTcp(true);
+                try {
+                    long sockAddr = Net.sockaddr("127.0.0.1", 9001);
+                    try {
+                        Assert.assertTrue(fd > -1);
+                        Assert.assertEquals(0, Net.connect(fd, sockAddr));
+                        Net.setTcpNoDelay(fd, true);
+
+                        final int len = request.length();
+                        long ptr = Unsafe.malloc(((CharSequence) request).length());
+                        try {
+                            for (int j = 0; j < 150; j++) {
+                                int sent = 0;
+                                Chars.strcpy(request, ((CharSequence) request).length(), ptr);
+                                while (sent < len) {
+                                    int n = Net.send(fd, ptr + sent, len - sent);
+                                    Assert.assertTrue(n > -1);
+                                    sent += n;
+                                }
+
+                                // receive response
+                                final int expectedToReceive = expectedResponse.length;
+                                int received = 0;
+                                while (received < expectedToReceive) {
+                                    int n = Net.recv(fd, ptr + received, len - received);
+                                    // compare bytes
+                                    for (int i = 0; i < n; i++) {
+                                        if (expectedResponse[received + i] != Unsafe.getUnsafe().getByte(ptr + received + i)) {
+                                            Assert.fail("Error at: " + (received + i) + ", local=" + i);
+                                        }
+                                    }
+
+                                    received += n;
+                                }
+                            }
+                        } finally {
+                            Unsafe.free(ptr, len);
+                        }
+                    } finally {
+                        Net.freeSockAddr(sockAddr);
+                    }
+                } finally {
+                    Net.close(fd);
+                }
+
+                httpServer.halt();
+            }
+        });
+    }
+
+    @Test
+    public void testImportMultipleOnSameConnectionFragmented() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final String baseDir = System.getProperty("java.io.tmpdir");
+            final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir);
+
+            try (CairoEngine engine = new Engine(new DefaultCairoConfiguration(baseDir));
+                 HttpServer httpServer = new HttpServer(httpConfiguration)) {
+                httpServer.bind(new HttpRequestProcessorFactory() {
+                    @Override
+                    public String getUrl() {
+                        return HttpServerConfiguration.DEFAULT_PROCESSOR_URL;
+                    }
+
+                    @Override
+                    public HttpRequestProcessor newInstance() {
+                        return new StaticContentProcessor(httpConfiguration.getStaticContentProcessorConfiguration());
+                    }
+                });
+
+                httpServer.bind(new HttpRequestProcessorFactory() {
+                    @Override
+                    public String getUrl() {
+                        return "/upload";
+                    }
+
+                    @Override
+                    public HttpRequestProcessor newInstance() {
+                        return new TextImportProcessor(httpConfiguration.getTextImportProcessorConfiguration(), engine);
+                    }
+                });
+
+                httpServer.start();
+
+                // send multipart request to server
+                final String request = "POST /upload HTTP/1.1\r\n" +
+                        "Host: localhost:9001\r\n" +
+                        "User-Agent: curl/7.64.0\r\n" +
+                        "Accept: */*\r\n" +
+                        "Content-Length: 437760673\r\n" +
+                        "Content-Type: multipart/form-data; boundary=------------------------27d997ca93d2689d\r\n" +
+                        "Expect: 100-continue\r\n" +
+                        "\r\n" +
+                        "--------------------------27d997ca93d2689d\r\n" +
+                        "Content-Disposition: form-data; name=\"schema\"; filename=\"schema.json\"\r\n" +
+                        "Content-Type: application/octet-stream\r\n" +
+                        "\r\n" +
+                        "[\r\n" +
+                        "  {\r\n" +
+                        "    \"name\": \"date\",\r\n" +
+                        "    \"type\": \"DATE\",\r\n" +
+                        "    \"pattern\": \"d MMMM y.\",\r\n" +
+                        "    \"locale\": \"ru-RU\"\r\n" +
+                        "  }\r\n" +
+                        "]\r\n" +
+                        "\r\n" +
+                        "--------------------------27d997ca93d2689d\r\n" +
+                        "Content-Disposition: form-data; name=\"data\"; filename=\"fhv_tripdata_2017-02.csv\"\r\n" +
+                        "Content-Type: application/octet-stream\r\n" +
+                        "\r\n" +
+                        "Dispatching_base_num,Pickup_DateTime,DropOff_datetime,PUlocationID,DOlocationID\r\n" +
+                        "B00008,2017-02-01 00:30:00,,,\r\n" +
+                        "B00008,2017-02-01 00:40:00,,,\r\n" +
+                        "B00009,2017-02-01 00:30:00,,,\r\n" +
+                        "B00013,2017-02-01 00:11:00,,,\r\n" +
+                        "B00013,2017-02-01 00:41:00,,,\r\n" +
+                        "B00013,2017-02-01 00:00:00,,,\r\n" +
+                        "B00013,2017-02-01 00:53:00,,,\r\n" +
+                        "B00013,2017-02-01 00:44:00,,,\r\n" +
+                        "B00013,2017-02-01 00:05:00,,,\r\n" +
+                        "B00013,2017-02-01 00:54:00,,,\r\n" +
+                        "B00014,2017-02-01 00:45:00,,,\r\n" +
+                        "B00014,2017-02-01 00:45:00,,,\r\n" +
+                        "B00014,2017-02-01 00:46:00,,,\r\n" +
+                        "B00014,2017-02-01 00:54:00,,,\r\n" +
+                        "B00014,2017-02-01 00:45:00,,,\r\n" +
+                        "B00014,2017-02-01 00:45:00,,,\r\n" +
+                        "B00014,2017-02-01 00:45:00,,,\r\n" +
+                        "B00014,2017-02-01 00:26:00,,,\r\n" +
+                        "B00014,2017-02-01 00:55:00,,,\r\n" +
+                        "B00014,2017-02-01 00:47:00,,,\r\n" +
+                        "B00014,2017-02-01 00:05:00,,,\r\n" +
+                        "B00014,2017-02-01 00:58:00,,,\r\n" +
+                        "B00014,2017-02-01 00:33:00,,,\r\n" +
+                        "B00014,2017-02-01 00:45:00,,,\r\n" +
+                        "\r\n" +
+                        "--------------------------27d997ca93d2689d--";
+
+                byte[] expectedResponse = ("HTTP/1.1 200 OK\r\n" +
+                        "Server: questDB/1.0\r\n" +
+                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                        "Transfer-Encoding: chunked\r\n" +
+                        "Content-Type: text/plain; charset=utf-8\r\n" +
+                        "\r\n" +
+                        "442\r\n" +
+                        "+---------------------------------------------------------------------------------------------------------------+\r\n" +
+                        "|      Location:  |                          fhv_tripdata_2017-02.csv  |        Pattern  | Locale  |    Errors  |\r\n" +
+                        "|   Partition by  |                                              NONE  |                 |         |            |\r\n" +
+                        "+---------------------------------------------------------------------------------------------------------------+\r\n" +
+                        "|   Rows handled  |                                                24  |                 |         |            |\r\n" +
+                        "|  Rows imported  |                                                24  |                 |         |            |\r\n" +
+                        "+---------------------------------------------------------------------------------------------------------------+\r\n" +
+                        "|              0  |         0  |\r\n" +
+                        "|              1  |         0  |\r\n" +
+                        "|              2  |         0  |\r\n" +
+                        "|              3  |         0  |\r\n" +
+                        "|              4  |         0  |\r\n" +
+                        "+---------------------------------------------------------------------------------------------------------------+\r\n" +
+                        "\r\n" +
+                        "0\r\n" +
+                        "\r\n").getBytes();
+
+
+                long fd = Net.socketTcp(true);
+                try {
+                    long sockAddr = Net.sockaddr("127.0.0.1", 9001);
+                    try {
+                        Assert.assertTrue(fd > -1);
+                        Assert.assertEquals(0, Net.connect(fd, sockAddr));
+                        Net.setTcpNoDelay(fd, true);
+
+                        final int len = request.length();
+                        long ptr = Unsafe.malloc(((CharSequence) request).length());
+                        try {
+                            for (int j = 0; j < 5; j++) {
+                                int sent = 0;
+                                Chars.strcpy(request, ((CharSequence) request).length(), ptr);
+                                while (sent < len) {
+                                    int n = Net.send(fd, ptr + sent, 1);
+                                    Assert.assertTrue(n > -1);
+                                    sent += n;
+                                }
+
+                                // receive response
+                                final int expectedToReceive = expectedResponse.length;
+                                int received = 0;
+                                while (received < expectedToReceive) {
+                                    int n = Net.recv(fd, ptr + received, len - received);
+                                    // compare bytes
+                                    for (int i = 0; i < n; i++) {
+                                        if (expectedResponse[received + i] != Unsafe.getUnsafe().getByte(ptr + received + i)) {
+                                            dump(ptr, received + n);
+                                            Assert.fail("Error at: " + (received + i) + ", local=" + i);
+                                        }
+                                    }
+
+                                    received += n;
+                                }
+                            }
+                        } finally {
+                            Unsafe.free(ptr, len);
+                        }
+                    } finally {
+                        Net.freeSockAddr(sockAddr);
+                    }
+                } finally {
+                    Net.close(fd);
+                }
+
+                httpServer.halt();
             }
         });
     }
@@ -649,174 +979,6 @@ public class IODispatcherTest {
                         Files.remove(path);
                     }
                 }
-            }
-        });
-    }
-
-    @Test
-    @Ignore
-    public void testImportSimpleText() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            final String baseDir = System.getProperty("java.io.tmpdir");
-            final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir);
-
-
-            try (CairoEngine engine = new Engine(new DefaultCairoConfiguration(baseDir));
-                 HttpServer httpServer = new HttpServer(httpConfiguration)) {
-                httpServer.bind(new HttpRequestProcessorFactory() {
-                    @Override
-                    public String getUrl() {
-                        return HttpServerConfiguration.DEFAULT_PROCESSOR_URL;
-                    }
-
-                    @Override
-                    public HttpRequestProcessor newInstance() {
-                        return new StaticContentProcessor(httpConfiguration.getStaticContentProcessorConfiguration());
-                    }
-                });
-
-                httpServer.bind(new HttpRequestProcessorFactory() {
-                    @Override
-                    public String getUrl() {
-                        return "/upload";
-                    }
-
-                    @Override
-                    public HttpRequestProcessor newInstance() {
-                        return new TextImportProcessor(httpConfiguration.getTextImportProcessorConfiguration(), engine);
-                    }
-                });
-
-                httpServer.start();
-
-                // send multipart request to server
-                final String request = "POST /upload HTTP/1.1\r\n" +
-                        "Host: localhost:9001\r\n" +
-                        "User-Agent: curl/7.64.0\r\n" +
-                        "Accept: */*\r\n" +
-                        "Content-Length: 437760673\r\n" +
-                        "Content-Type: multipart/form-data; boundary=------------------------27d997ca93d2689d\r\n" +
-                        "Expect: 100-continue\r\n" +
-                        "\r\n" +
-                        "--------------------------27d997ca93d2689d\r\n" +
-                        "Content-Disposition: form-data; name=\"schema\"; filename=\"schema.json\"\r\n" +
-                        "Content-Type: application/octet-stream\r\n" +
-                        "\r\n" +
-                        "[\r\n" +
-                        "  {\r\n" +
-                        "    \"name\": \"date\",\r\n" +
-                        "    \"type\": \"DATE\",\r\n" +
-                        "    \"pattern\": \"d MMMM y.\",\r\n" +
-                        "    \"locale\": \"ru-RU\"\r\n" +
-                        "  }\r\n" +
-                        "]\r\n" +
-                        "\r\n" +
-                        "--------------------------27d997ca93d2689d\r\n" +
-                        "Content-Disposition: form-data; name=\"data\"; filename=\"fhv_tripdata_2017-02.csv\"\r\n" +
-                        "Content-Type: application/octet-stream\r\n" +
-                        "\r\n" +
-                        "Dispatching_base_num,Pickup_DateTime,DropOff_datetime,PUlocationID,DOlocationID\r\n" +
-                        "B00008,2017-02-01 00:30:00,,,\r\n" +
-                        "B00008,2017-02-01 00:40:00,,,\r\n" +
-                        "B00009,2017-02-01 00:30:00,,,\r\n" +
-                        "B00013,2017-02-01 00:11:00,,,\r\n" +
-                        "B00013,2017-02-01 00:41:00,,,\r\n" +
-                        "B00013,2017-02-01 00:00:00,,,\r\n" +
-                        "B00013,2017-02-01 00:53:00,,,\r\n" +
-                        "B00013,2017-02-01 00:44:00,,,\r\n" +
-                        "B00013,2017-02-01 00:05:00,,,\r\n" +
-                        "B00013,2017-02-01 00:54:00,,,\r\n" +
-                        "B00014,2017-02-01 00:45:00,,,\r\n" +
-                        "B00014,2017-02-01 00:45:00,,,\r\n" +
-                        "B00014,2017-02-01 00:46:00,,,\r\n" +
-                        "B00014,2017-02-01 00:54:00,,,\r\n" +
-                        "B00014,2017-02-01 00:45:00,,,\r\n" +
-                        "B00014,2017-02-01 00:45:00,,,\r\n" +
-                        "B00014,2017-02-01 00:45:00,,,\r\n" +
-                        "B00014,2017-02-01 00:26:00,,,\r\n" +
-                        "B00014,2017-02-01 00:55:00,,,\r\n" +
-                        "B00014,2017-02-01 00:47:00,,,\r\n" +
-                        "B00014,2017-02-01 00:05:00,,,\r\n" +
-                        "B00014,2017-02-01 00:58:00,,,\r\n" +
-                        "B00014,2017-02-01 00:33:00,,,\r\n" +
-                        "B00014,2017-02-01 00:45:00,,,\r\n" +
-                        "\r\n" +
-                        "--------------------------8af96af01e210723";
-
-
-                long fd = Net.socketTcp(true);
-                try {
-                    long sockAddr = Net.sockaddr("127.0.0.1", 9001);
-                    try {
-                        Assert.assertTrue(fd > -1);
-                        Assert.assertEquals(0, Net.connect(fd, sockAddr));
-
-
-                        int len = request.length();
-                        int sent = 0;
-                        long buffer = TestUtils.toMemory(request);
-                        try {
-                            while (len > 0) {
-                                int r = Net.send(fd, buffer + sent, len);
-                                Assert.assertTrue(r > -1);
-                                sent += r;
-                                len -= r;
-                            }
-                        } finally {
-                            Unsafe.free(buffer, len);
-                        }
-
-                    } finally {
-                        Net.freeSockAddr(sockAddr);
-                    }
-                } finally {
-                    Net.close(fd);
-                }
-
-                Thread.sleep(1000000L);
-                httpServer.halt();
-            }
-        });
-    }
-
-    @Test
-    @Ignore
-    public void testUpload() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            final String baseDir = System.getProperty("java.io.tmpdir");
-//            final String baseDir = "/home/vlad/dev/123";
-            final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir);
-
-
-            try (CairoEngine engine = new Engine(new DefaultCairoConfiguration(baseDir));
-                 HttpServer httpServer = new HttpServer(httpConfiguration)) {
-                httpServer.bind(new HttpRequestProcessorFactory() {
-                    @Override
-                    public String getUrl() {
-                        return HttpServerConfiguration.DEFAULT_PROCESSOR_URL;
-                    }
-
-                    @Override
-                    public HttpRequestProcessor newInstance() {
-                        return new StaticContentProcessor(httpConfiguration.getStaticContentProcessorConfiguration());
-                    }
-                });
-
-                httpServer.bind(new HttpRequestProcessorFactory() {
-                    @Override
-                    public String getUrl() {
-                        return "/upload";
-                    }
-
-                    @Override
-                    public HttpRequestProcessor newInstance() {
-                        return new TextImportProcessor(httpConfiguration.getTextImportProcessorConfiguration(), engine);
-                    }
-                });
-
-                httpServer.start();
-
-                Thread.sleep(2000000);
             }
         });
     }
@@ -1475,6 +1637,48 @@ public class IODispatcherTest {
                 serverHaltLatch.await();
             }
             Assert.assertEquals(N * senderCount, requestsReceived.get());
+        });
+    }
+
+    @Test
+    @Ignore
+    public void testUpload() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final String baseDir = System.getProperty("java.io.tmpdir");
+//            final String baseDir = "/home/vlad/dev/123";
+            final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir);
+
+
+            try (CairoEngine engine = new Engine(new DefaultCairoConfiguration(baseDir));
+                 HttpServer httpServer = new HttpServer(httpConfiguration)) {
+                httpServer.bind(new HttpRequestProcessorFactory() {
+                    @Override
+                    public String getUrl() {
+                        return HttpServerConfiguration.DEFAULT_PROCESSOR_URL;
+                    }
+
+                    @Override
+                    public HttpRequestProcessor newInstance() {
+                        return new StaticContentProcessor(httpConfiguration.getStaticContentProcessorConfiguration());
+                    }
+                });
+
+                httpServer.bind(new HttpRequestProcessorFactory() {
+                    @Override
+                    public String getUrl() {
+                        return "/upload";
+                    }
+
+                    @Override
+                    public HttpRequestProcessor newInstance() {
+                        return new TextImportProcessor(httpConfiguration.getTextImportProcessorConfiguration(), engine);
+                    }
+                });
+
+                httpServer.start();
+
+                Thread.sleep(2000000);
+            }
         });
     }
 

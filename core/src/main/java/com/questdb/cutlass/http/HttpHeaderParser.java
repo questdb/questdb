@@ -83,7 +83,8 @@ public class HttpHeaderParser implements Mutable, Closeable, HttpRequestHeader {
         this.m = true;
         this.u = true;
         this.q = false;
-        this.pool.clear();
+        // do not clear pool
+//        this.pool.clear();
     }
 
     @Override

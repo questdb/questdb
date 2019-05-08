@@ -325,6 +325,8 @@ public class TextLexer implements Closeable, Mutable {
     }
 
     private void rollLine(long lo, long hi) {
+        // lastLineStart is an offset from 'lo'
+        // 'lo' is the address of incoming buffer
         long l = hi - lo - lastLineStart;
         if (l < lineRollBufLen || growRollBuf(l)) {
             assert lo + lastLineStart + l <= hi;

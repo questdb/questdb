@@ -59,7 +59,7 @@ public class WeakObjectPool<T extends Mutable> implements Closeable {
     }
 
     public T pop() {
-        final T obj = cache.pop();
+        final T obj = cache.poll();
         return obj == null ? factory.newInstance() : obj;
     }
 
