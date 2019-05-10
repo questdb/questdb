@@ -28,11 +28,11 @@ import com.questdb.network.IODispatcher;
 public interface HttpRequestProcessor {
     void onHeadersReady(HttpConnectionContext context);
 
-    void onRequestComplete(HttpConnectionContext context, IODispatcher<HttpConnectionContext> dispatcher) throws PeerDisconnectedException, PeerIsSlowException;
+    void onRequestComplete(HttpConnectionContext context, IODispatcher<HttpConnectionContext> dispatcher) throws PeerDisconnectedException, PeerIsSlowToReadException;
 
     default void resumeRecv(HttpConnectionContext context, IODispatcher<HttpConnectionContext> dispatcher) {
     }
 
-    default void resumeSend(HttpConnectionContext context, IODispatcher<HttpConnectionContext> dispatcher) throws PeerDisconnectedException, PeerIsSlowException {
+    default void resumeSend(HttpConnectionContext context, IODispatcher<HttpConnectionContext> dispatcher) throws PeerDisconnectedException, PeerIsSlowToReadException {
     }
 }

@@ -54,6 +54,16 @@
             <artifactId>questdb-core</artifactId>
             <version>3.1.1</version>
         </dependency>
+        <dependency>
+            <groupId>org.apache.logging.log4j</groupId>
+            <artifactId>log4j-core</artifactId>
+            <version>2.11.2</version>
+        </dependency>
+        <dependency>
+            <groupId>com.lmax</groupId>
+            <artifactId>disruptor</artifactId>
+            <version>3.3.4</version>
+        </dependency>
     </dependencies>
 
     <properties>
@@ -62,7 +72,7 @@
         <!--
             JMH version to use with this project.
           -->
-        <jmh.version>1.19</jmh.version>
+        <jmh.version>1.21</jmh.version>
 
         <!--
             Java source/target to use for compilation.

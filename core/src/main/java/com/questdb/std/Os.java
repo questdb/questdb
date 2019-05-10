@@ -48,6 +48,8 @@ public final class Os {
 
     public static native long currentTimeMicros();
 
+    public static native long currentTimeNanos();
+
     public static native int errno();
 
     public static long forkExec(CharSequence args) {

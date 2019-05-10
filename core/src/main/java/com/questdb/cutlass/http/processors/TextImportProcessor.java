@@ -94,7 +94,7 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
     }
 
     @Override
-    public void onPartBegin(HttpRequestHeader partHeader) throws PeerDisconnectedException, PeerIsSlowException {
+    public void onPartBegin(HttpRequestHeader partHeader) throws PeerDisconnectedException, PeerIsSlowToReadException {
         LOG.debug().$("part begin [name=").$(partHeader.getContentDispositionName()).$(']').$();
         if (Chars.equals("data", partHeader.getContentDispositionName())) {
 
@@ -139,7 +139,7 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
     // valid during multipart events.
 
     @Override
-    public void onPartEnd(HttpRequestHeader partHeader) throws PeerDisconnectedException, PeerIsSlowException {
+    public void onPartEnd(HttpRequestHeader partHeader) throws PeerDisconnectedException, PeerIsSlowToReadException {
         try {
             LOG.debug().$("part end").$();
             transientState.textLoader.wrapUp();
@@ -180,11 +180,11 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
     }
 
     @Override
-    public void resumeSend(HttpConnectionContext context, IODispatcher<HttpConnectionContext> dispatcher) throws PeerDisconnectedException, PeerIsSlowException {
+    public void resumeSend(HttpConnectionContext context, IODispatcher<HttpConnectionContext> dispatcher) throws PeerDisconnectedException, PeerIsSlowToReadException {
         doResumeSend(lvContext.get(context), context.getChunkedResponseSocket());
     }
 
-    private static void resumeJson(TextImportProcessorState state, HttpResponseSink.ChunkedResponseImpl r) throws PeerDisconnectedException, PeerIsSlowException {
+    private static void resumeJson(TextImportProcessorState state, HttpResponseSink.ChunkedResponseImpl r) throws PeerDisconnectedException, PeerIsSlowToReadException {
         final TextLoader textLoader = state.textLoader;
         final RecordMetadata m = textLoader.getMetadata();
         final int columnCount = m.getColumnCount();
@@ -279,7 +279,7 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
         b.put("+\r\n");
     }
 
-    private static void resumeText(TextImportProcessorState h, HttpResponseSink.ChunkedResponseImpl r) throws PeerDisconnectedException, PeerIsSlowException {
+    private static void resumeText(TextImportProcessorState h, HttpResponseSink.ChunkedResponseImpl r) throws PeerDisconnectedException, PeerIsSlowToReadException {
         final TextLoader textLoader = h.textLoader;
         final RecordMetadata metadata = textLoader.getMetadata();
         LongList errors = textLoader.getColumnErrorCounts();
@@ -355,7 +355,7 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
         return atomicity == -1 ? Atomicity.SKIP_COL : atomicity;
     }
 
-    private void doResumeSend(TextImportProcessorState state, HttpResponseSink.ChunkedResponseImpl response) throws PeerDisconnectedException, PeerIsSlowException {
+    private void doResumeSend(TextImportProcessorState state, HttpResponseSink.ChunkedResponseImpl response) throws PeerDisconnectedException, PeerIsSlowToReadException {
         try {
 
             if (state.json) {
@@ -379,7 +379,7 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
         state.clear();
     }
 
-    private void handleJsonException(JsonException e) throws PeerDisconnectedException, PeerIsSlowException {
+    private void handleJsonException(JsonException e) throws PeerDisconnectedException, PeerIsSlowToReadException {
         if (configuration.abortBrokenUploads()) {
             sendError(transientContext, e.getMessage(), transientState.json);
             throw PeerDisconnectedException.INSTANCE;
@@ -388,7 +388,7 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
         transientState.stateMessage = e.getMessage();
     }
 
-    private void sendError(HttpConnectionContext context, String message, boolean json) throws PeerDisconnectedException, PeerIsSlowException {
+    private void sendError(HttpConnectionContext context, String message, boolean json) throws PeerDisconnectedException, PeerIsSlowToReadException {
         HttpResponseSink.ChunkedResponseImpl sink = context.getChunkedResponseSocket();
         if (json) {
             sink.status(200, CONTENT_TYPE_JSON);
@@ -402,7 +402,7 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
         throw PeerDisconnectedException.INSTANCE;
     }
 
-    private void sendResponse(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowException {
+    private void sendResponse(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException {
         TextImportProcessorState state = lvContext.get(context);
         // todo: may be set this up when headers are ready?
         state.json = Chars.equalsNc("json", context.getRequestHeader().getUrlParam("fmt"));

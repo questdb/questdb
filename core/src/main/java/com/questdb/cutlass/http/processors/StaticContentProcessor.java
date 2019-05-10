@@ -64,7 +64,7 @@ public class StaticContentProcessor implements HttpRequestProcessor, Closeable {
     public void onRequestComplete(
             HttpConnectionContext context,
             IODispatcher<HttpConnectionContext> dispatcher
-    ) throws PeerDisconnectedException, PeerIsSlowException {
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         HttpRequestHeader headers = context.getRequestHeader();
         CharSequence url = headers.getUrl();
         LOG.info().$("incoming [url=").$(url).$(']').$();
@@ -92,7 +92,7 @@ public class StaticContentProcessor implements HttpRequestProcessor, Closeable {
     }
 
     @Override
-    public void resumeSend(HttpConnectionContext context, IODispatcher<HttpConnectionContext> dispatcher) throws PeerDisconnectedException, PeerIsSlowException {
+    public void resumeSend(HttpConnectionContext context, IODispatcher<HttpConnectionContext> dispatcher) throws PeerDisconnectedException, PeerIsSlowToReadException {
         LOG.debug().$("resumeSend").$();
         StaticContentProcessorState state = stateAccessor.get(context);
 
@@ -122,7 +122,7 @@ public class StaticContentProcessor implements HttpRequestProcessor, Closeable {
         dispatcher.registerChannel(context, IOOperation.READ);
     }
 
-    private void send(HttpConnectionContext context, IODispatcher<HttpConnectionContext> dispatcher, LPSZ path, boolean asAttachment) throws PeerDisconnectedException, PeerIsSlowException {
+    private void send(HttpConnectionContext context, IODispatcher<HttpConnectionContext> dispatcher, LPSZ path, boolean asAttachment) throws PeerDisconnectedException, PeerIsSlowToReadException {
         int n = Chars.lastIndexOf(path, '.');
         if (n == -1) {
             LOG.info().$("Missing extension: ").$(path).$();
@@ -168,7 +168,7 @@ public class StaticContentProcessor implements HttpRequestProcessor, Closeable {
             CharSequence range,
             LPSZ path,
             CharSequence contentType,
-            boolean asAttachment) throws PeerDisconnectedException, PeerIsSlowException {
+            boolean asAttachment) throws PeerDisconnectedException, PeerIsSlowToReadException {
         if (rangeParser.of(range)) {
 
             StaticContentProcessorState state = stateAccessor.get(context);
@@ -210,7 +210,7 @@ public class StaticContentProcessor implements HttpRequestProcessor, Closeable {
         }
     }
 
-    private void sendStatusWithDefaultMessage(HttpConnectionContext context, IODispatcher<HttpConnectionContext> dispatcher, int code) throws PeerDisconnectedException, PeerIsSlowException {
+    private void sendStatusWithDefaultMessage(HttpConnectionContext context, IODispatcher<HttpConnectionContext> dispatcher, int code) throws PeerDisconnectedException, PeerIsSlowToReadException {
         context.simpleResponse().sendStatusWithDefaultMessage(code);
         readyForNextRequest(context, dispatcher);
     }
@@ -220,7 +220,7 @@ public class StaticContentProcessor implements HttpRequestProcessor, Closeable {
             IODispatcher<HttpConnectionContext> dispatcher,
             LPSZ path, CharSequence contentType,
             boolean asAttachment
-    ) throws PeerDisconnectedException, PeerIsSlowException {
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         long fd = ff.openRO(path);
         if (fd == -1) {
             LOG.info().$("Cannot open file: ").$(path).$('(').$(ff.errno()).$(')').$();

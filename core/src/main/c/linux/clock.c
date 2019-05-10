@@ -21,12 +21,15 @@
  *
  ******************************************************************************/
 
-package com.questdb.cutlass.http;
+#define _GNU_SOURCE
 
-import com.questdb.std.str.CharSink;
+#include <jni.h>
+#include <time.h>
 
-public interface HttpResponseHeader extends CharSink {
-    void send() throws PeerDisconnectedException, PeerIsSlowToReadException;
+JNIEXPORT jlong JNICALL Java_com_questdb_std_Os_currentTimeNanos
+        (JNIEnv *e, jclass cl) {
 
-    String status(int code, CharSequence contentType, long contentLength);
+    struct timespec timespec;
+    clock_gettime(CLOCK_REALTIME, &timespec);
+    return timespec.tv_sec * 100000000L + timespec.tv_nsec;
 }

@@ -125,7 +125,7 @@ public class HttpResponseSink implements Closeable, Mutable {
         return simple;
     }
 
-    public void resumeSend() throws PeerDisconnectedException, PeerIsSlowException {
+    public void resumeSend() throws PeerDisconnectedException, PeerIsSlowToReadException {
         while (true) {
 
             if (flushBufSize > 0) {
@@ -244,7 +244,7 @@ public class HttpResponseSink implements Closeable, Mutable {
         return flush && ret == 1 ? SEND_DEFLATED_END : SEND_DEFLATED_CONT;
     }
 
-    private void flushSingle() throws PeerDisconnectedException, PeerIsSlowException {
+    private void flushSingle() throws PeerDisconnectedException, PeerIsSlowToReadException {
         state = DONE;
         send();
     }
@@ -300,12 +300,12 @@ public class HttpResponseSink implements Closeable, Mutable {
         this.total = 0;
     }
 
-    private void resumeSend(int nextState) throws PeerDisconnectedException, PeerIsSlowException {
+    private void resumeSend(int nextState) throws PeerDisconnectedException, PeerIsSlowToReadException {
         state = nextState;
         resumeSend();
     }
 
-    private void send() throws PeerDisconnectedException, PeerIsSlowException {
+    private void send() throws PeerDisconnectedException, PeerIsSlowToReadException {
         int sent = 0;
         while (sent < flushBufSize) {
             int n = nf.send(fd, flushBuf + sent, flushBufSize - sent);
@@ -318,7 +318,7 @@ public class HttpResponseSink implements Closeable, Mutable {
                 // test how many times we tried to send before parking up
                 flushBuf += sent;
                 flushBufSize -= sent;
-                throw PeerIsSlowException.INSTANCE;
+                throw PeerIsSlowToReadException.INSTANCE;
             } else {
                 sent += n;
             }
@@ -380,7 +380,7 @@ public class HttpResponseSink implements Closeable, Mutable {
         }
 
         @Override
-        public void send() throws PeerDisconnectedException, PeerIsSlowException {
+        public void send() throws PeerDisconnectedException, PeerIsSlowToReadException {
             headerImpl.prepareToSend();
             flushSingle();
         }
@@ -423,20 +423,20 @@ public class HttpResponseSink implements Closeable, Mutable {
 
     public class SimpleResponseImpl {
 
-        public void sendStatus(int code, CharSequence message) throws PeerDisconnectedException, PeerIsSlowException {
+        public void sendStatus(int code, CharSequence message) throws PeerDisconnectedException, PeerIsSlowToReadException {
             final String std = headerImpl.status(code, "text/html; charset=utf-8", -1L);
             sink.put(message == null ? std : message).put(Misc.EOL);
             prepareHeaderSink();
             resumeSend(CHUNK_HEAD);
         }
 
-        public void sendStatus(int code) throws PeerDisconnectedException, PeerIsSlowException {
+        public void sendStatus(int code) throws PeerDisconnectedException, PeerIsSlowToReadException {
             headerImpl.status(code, "text/html; charset=utf-8", -2L);
             prepareHeaderSink();
             flushSingle();
         }
 
-        public void sendStatusWithDefaultMessage(int code) throws PeerDisconnectedException, PeerIsSlowException {
+        public void sendStatusWithDefaultMessage(int code) throws PeerDisconnectedException, PeerIsSlowToReadException {
             sendStatus(code, null);
         }
     }
@@ -542,7 +542,7 @@ public class HttpResponseSink implements Closeable, Mutable {
         }
 
         @Override
-        public void send(int size) throws PeerDisconnectedException, PeerIsSlowException {
+        public void send(int size) throws PeerDisconnectedException, PeerIsSlowToReadException {
             flushBuf = out;
             flushBufSize = size;
             flushSingle();
@@ -557,7 +557,7 @@ public class HttpResponseSink implements Closeable, Mutable {
             bookmark = _wPtr;
         }
 
-        public void done() throws PeerDisconnectedException, PeerIsSlowException {
+        public void done() throws PeerDisconnectedException, PeerIsSlowToReadException {
             flushBufSize = 0;
             if (compressed) {
                 resumeSend(FLUSH);
@@ -580,7 +580,7 @@ public class HttpResponseSink implements Closeable, Mutable {
             return bookmark != outPtr;
         }
 
-        public void sendChunk() throws PeerDisconnectedException, PeerIsSlowException {
+        public void sendChunk() throws PeerDisconnectedException, PeerIsSlowToReadException {
             if (outPtr != _wPtr) {
                 if (compressed) {
                     flushBufSize = 0;
@@ -592,7 +592,7 @@ public class HttpResponseSink implements Closeable, Mutable {
             }
         }
 
-        public void sendHeader() throws PeerDisconnectedException, PeerIsSlowException {
+        public void sendHeader() throws PeerDisconnectedException, PeerIsSlowToReadException {
             prepareHeaderSink();
             flushSingle();
         }

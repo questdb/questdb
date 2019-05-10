@@ -28,5 +28,5 @@ public interface HttpRawSocket {
 
     int getBufferSize();
 
-    void send(int size) throws PeerDisconnectedException, PeerIsSlowException;
+    void send(int size) throws PeerDisconnectedException, PeerIsSlowToReadException;
 }
