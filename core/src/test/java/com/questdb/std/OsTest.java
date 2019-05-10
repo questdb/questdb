@@ -61,7 +61,10 @@ public class OsTest {
     public void testCurrentTimeNanos() {
         long reference = System.currentTimeMillis();
         long actual = Os.currentTimeNanos();
+        Assert.assertTrue(actual > 0);
         long delta = actual / 1_000_000 - reference;
         Assert.assertTrue(delta < 200);
+        System.out.println(reference);
+        System.out.println(actual);
     }
 }
