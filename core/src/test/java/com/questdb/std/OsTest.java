@@ -5,7 +5,7 @@
  *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
  *   \__\_\\__,_|\___||___/\__|____/|____/
  *
- * Copyright (C) 2014-2018 Appsicle
+ * Copyright (C) 2014-2019 Appsicle
  *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU Affero General Public License, version 3,
@@ -50,10 +50,18 @@ public class OsTest {
     }
 
     @Test
-    public void testCurrentTime() {
+    public void testCurrentTimeMicros() {
         long reference = System.currentTimeMillis();
         long actual = Os.currentTimeMicros();
         long delta = actual / 1000 - reference;
+        Assert.assertTrue(delta < 200);
+    }
+
+    @Test
+    public void testCurrentTimeNanos() {
+        long reference = System.currentTimeMillis();
+        long actual = Os.currentTimeNanos();
+        long delta = actual / 1_000_000 - reference;
         Assert.assertTrue(delta < 200);
     }
 }

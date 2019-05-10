@@ -23,6 +23,7 @@
 
 #include <jni.h>
 #include <unistd.h>
+#include <time.h>
 #include "../share/net.h"
 
 JNIEXPORT jint JNICALL Java_com_questdb_network_Net_abortAccept

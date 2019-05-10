@@ -40,8 +40,7 @@ elseif (UNIX)
             src/main/c/linux/epoll.c
             src/main/c/linux/recvmmsg.c
             src/main/c/linux/affinity.c
-            src/main/c/linux/accept.c
-            src/main/c/linux/clock.c)
+            src/main/c/linux/accept.c)
 endif (APPLE)
 
 if (WIN32)
