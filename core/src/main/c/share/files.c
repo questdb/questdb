@@ -95,11 +95,9 @@ JNIEXPORT jlong JNICALL Java_com_questdb_std_Files_sequentialRead
 
 JNIEXPORT jlong JNICALL Java_com_questdb_std_Files_getLastModified
         (JNIEnv *e, jclass cl, jlong pchar) {
-
     struct stat st;
-
     int r = stat((const char *) pchar, &st);
-    return r == 0 ? 1000 * (jlong) st.st_mtime : r;
+    return r == 0 ? ((1000 * st.st_mtim.tv_sec) + (st.st_mtim.tv_nsec / 1000000)) : r;
 }
 
 JNIEXPORT jlong JNICALL Java_com_questdb_std_Files_openRO
@@ -281,5 +279,5 @@ JNIEXPORT jboolean JNICALL Java_com_questdb_std_Files_rename
 
 JNIEXPORT jboolean JNICALL Java_com_questdb_std_Files_exists0
         (JNIEnv *e, jclass cls, jlong lpsz) {
-    return access((const char *) lpsz, F_OK);
+    return access((const char *) lpsz, F_OK) == 0;
 }
