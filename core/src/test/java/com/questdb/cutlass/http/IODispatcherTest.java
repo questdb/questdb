@@ -561,7 +561,6 @@ public class IODispatcherTest {
     }
 
     @Test
-    @Ignore
     public void testImportMultipleOnSameConnectionSlow() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             final String baseDir = System.getProperty("java.io.tmpdir");
@@ -686,7 +685,6 @@ public class IODispatcherTest {
                         long ptr = Unsafe.malloc(((CharSequence) request).length());
                         try {
                             for (int j = 0; j < 5; j++) {
-                                System.out.println(j);
                                 int sent = 0;
                                 Chars.strcpy(request, ((CharSequence) request).length(), ptr);
                                 while (sent < len) {
@@ -874,7 +872,7 @@ public class IODispatcherTest {
                                         "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
                                         "Content-Length: 20971520\r\n" +
                                         "Content-Type: text/plain\r\n" +
-                                        "ETag: \"122222212000\"\r\n" + // this is last modified timestamp on the file, we set this value when we created file
+                                        "ETag: \"122222212222\"\r\n" + // this is last modified timestamp on the file, we set this value when we created file
                                         "\r\n";
 
                                 for (int j = 0; j < 10; j++) {
@@ -898,7 +896,7 @@ public class IODispatcherTest {
                                         "User-Agent: Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/31.0.1650.48 Safari/537.36\r\n" +
                                         "Accept-Encoding: gzip,deflate,sdch\r\n" +
                                         "Accept-Language: en-US,en;q=0.8\r\n" +
-                                        "If-None-Match: \"122222212000\"\r\n" + // this header should make static processor return 304
+                                        "If-None-Match: \"122222212222\"\r\n" + // this header should make static processor return 304
                                         "Cookie: textwrapon=false; textautoformat=false; wysiwyg=textarea\r\n" +
                                         "\r\n";
 
@@ -1058,7 +1056,7 @@ public class IODispatcherTest {
                                             "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
                                             "Content-Length: 20971520\r\n" +
                                             "Content-Type: text/plain\r\n" +
-                                            "ETag: \"122222212000\"\r\n" + // this is last modified timestamp on the file, we set this value when we created file
+                                            "ETag: \"122222212222\"\r\n" + // this is last modified timestamp on the file, we set this value when we created file
                                             "\r\n";
 
                                     for (int j = 0; j < 10; j++) {
@@ -1075,7 +1073,7 @@ public class IODispatcherTest {
                                             "User-Agent: Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/31.0.1650.48 Safari/537.36\r\n" +
                                             "Accept-Encoding: gzip,deflate,sdch\r\n" +
                                             "Accept-Language: en-US,en;q=0.8\r\n" +
-                                            "If-None-Match: \"122222212000\"\r\n" + // this header should make static processor return 304
+                                            "If-None-Match: \"122222212222\"\r\n" + // this header should make static processor return 304
                                             "Cookie: textwrapon=false; textautoformat=false; wysiwyg=textarea\r\n" +
                                             "\r\n";
 

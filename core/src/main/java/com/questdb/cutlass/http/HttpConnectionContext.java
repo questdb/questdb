@@ -71,6 +71,7 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
 
     @Override
     public void clear() {
+        LOG.debug().$("clear").$();
         this.headerParser.clear();
         this.multipartContentParser.clear();
         this.multipartContentParser.clear();
@@ -205,6 +206,8 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
                         return;
                     }
 
+//                    dump(recvBuffer, read);
+
                     headerEnd = headerParser.parse(recvBuffer, recvBuffer + read, true);
                 }
             } else {
@@ -266,8 +269,9 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
                         break;
                     }
 
-                    if (n == 0) {
+//                    dump(buf, n);
 
+                    if (n == 0) {
                         // Text loader needs as big of a data chunk as possible
                         // to analyse columns and delimiters correctly. To make sure we
                         // can deliver large data chunk we have to implement mini-Nagle
@@ -291,6 +295,7 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
                             continue;
 
                         }
+
                         LOG.debug().$("peer is slow [multipart]").$();
                         dispatcher.registerChannel(this, IOOperation.READ);
                         break;

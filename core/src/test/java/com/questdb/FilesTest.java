@@ -131,12 +131,16 @@ public class FilesTest {
     @Test
     public void testLastModified() throws IOException, NumericException {
         try (Path path = new Path()) {
-            File f = temporaryFolder.newFile();
-            Assert.assertTrue(Files.touch(path.of(f.getAbsolutePath()).$()));
-            long t = DateFormatUtils.parseDateTime("2015-10-17T10:00:00.000Z");
-            Assert.assertTrue(Files.setLastModified(path, t));
-            Assert.assertEquals(t, Files.getLastModified(path));
+            assertLastModified(path, DateFormatUtils.parseDateTime("2015-10-17T10:00:00.000Z"));
+            assertLastModified(path, 122222212222L);
         }
+    }
+
+    private void assertLastModified(Path path, long t) throws IOException {
+        File f = temporaryFolder.newFile();
+        Assert.assertTrue(Files.touch(path.of(f.getAbsolutePath()).$()));
+        Assert.assertTrue(Files.setLastModified(path, t));
+        Assert.assertEquals(t, Files.getLastModified(path));
     }
 
     @Test

@@ -40,7 +40,7 @@ public final class Files {
     public static final int DT_DIR = 4;
     //    public static final int DT_BLK = 6;
 //    public static final int DT_REG = 8;
-    public static final int DT_LNK = 10;
+//    public static final int DT_LNK = 10;
 //    public static final int DT_SOCK = 12;
 //    public static final int DT_WHT = 14;
 
@@ -83,8 +83,10 @@ public final class Files {
     public static native boolean exists(long fd);
 
     public static boolean exists(LPSZ lpsz) {
-        return lpsz != null && getLastModified(lpsz) != -1;
+        return lpsz != null && exists0(lpsz.address());
     }
+
+    private static native boolean exists0(long lpsz);
 
     public native static void findClose(long findPtr);
 

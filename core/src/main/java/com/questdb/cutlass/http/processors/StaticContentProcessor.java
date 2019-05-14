@@ -37,8 +37,8 @@ import java.io.Closeable;
 
 public class StaticContentProcessor implements HttpRequestProcessor, Closeable {
     private static final Log LOG = LogFactory.getLog(StaticContentProcessor.class);
+    private static final LocalValue<StaticContentProcessorState> LV = new LocalValue<>();
     private final MimeTypesCache mimeTypes;
-    private final LocalValue<StaticContentProcessorState> stateAccessor = new LocalValue<>();
     private final HttpRangeParser rangeParser = new HttpRangeParser();
     private final PrefixedPath prefixedPath;
     private final CharSequence indexFileName;
@@ -94,7 +94,7 @@ public class StaticContentProcessor implements HttpRequestProcessor, Closeable {
     @Override
     public void resumeSend(HttpConnectionContext context, IODispatcher<HttpConnectionContext> dispatcher) throws PeerDisconnectedException, PeerIsSlowToReadException {
         LOG.debug().$("resumeSend").$();
-        StaticContentProcessorState state = stateAccessor.get(context);
+        StaticContentProcessorState state = LV.get(context);
 
         if (state == null || state.fd == -1) {
             return;
@@ -171,9 +171,9 @@ public class StaticContentProcessor implements HttpRequestProcessor, Closeable {
             boolean asAttachment) throws PeerDisconnectedException, PeerIsSlowToReadException {
         if (rangeParser.of(range)) {
 
-            StaticContentProcessorState state = stateAccessor.get(context);
+            StaticContentProcessorState state = LV.get(context);
             if (state == null) {
-                stateAccessor.set(context, state = new StaticContentProcessorState());
+                LV.set(context, state = new StaticContentProcessorState());
             }
 
             state.fd = ff.openRO(path);
@@ -226,9 +226,9 @@ public class StaticContentProcessor implements HttpRequestProcessor, Closeable {
             LOG.info().$("Cannot open file: ").$(path).$('(').$(ff.errno()).$(')').$();
             sendStatusWithDefaultMessage(context, dispatcher, 404);
         } else {
-            StaticContentProcessorState h = stateAccessor.get(context);
+            StaticContentProcessorState h = LV.get(context);
             if (h == null) {
-                stateAccessor.set(context, h = new StaticContentProcessorState());
+                LV.set(context, h = new StaticContentProcessorState());
             }
             h.fd = fd;
             h.bytesSent = 0;

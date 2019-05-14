@@ -57,7 +57,16 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
     private static final CharSequence CONTENT_TYPE_TEXT = "text/plain; charset=utf-8";
     private static final CharSequence CONTENT_TYPE_JSON = "application/json; charset=utf-8";
     private static final CharSequenceIntHashMap atomicityParamMap = new CharSequenceIntHashMap();
-    private final LocalValue<TextImportProcessorState> lvContext = new LocalValue<>();
+    // Local value has to be static because each thread will have its own instance of
+    // processor. For different threads to lookup the same value from local value map the key,
+    // which is LV, has to be the same between processor instances
+    private static final LocalValue<TextImportProcessorState> LV = new LocalValue<>();
+
+    static {
+        atomicityParamMap.put("relaxed", Atomicity.SKIP_ROW);
+        atomicityParamMap.put("strict", Atomicity.SKIP_ALL);
+    }
+
     private final TextImportProcessorConfiguration configuration;
     private final CairoEngine engine;
     private HttpConnectionContext transientContext;
@@ -70,118 +79,6 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
     ) {
         this.configuration = configuration;
         this.engine = cairoEngine;
-    }
-
-    @Override
-    public void close() {
-
-    }
-
-    @Override
-    public void onChunk(HttpRequestHeader partHeader, long lo, long hi) {
-        if (hi > lo) {
-            try {
-                transientState.textLoader.parse(lo, (int) (hi - lo));
-                if (transientState.messagePart == MESSAGE_DATA && !transientState.analysed) {
-                    transientState.analysed = true;
-                    transientState.textLoader.setState(TextLoader.LOAD_DATA);
-                }
-            } catch (JsonException e) {
-                // todo: reply something sensible
-                e.printStackTrace();
-            }
-        }
-    }
-
-    @Override
-    public void onPartBegin(HttpRequestHeader partHeader) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        LOG.debug().$("part begin [name=").$(partHeader.getContentDispositionName()).$(']').$();
-        if (Chars.equals("data", partHeader.getContentDispositionName())) {
-
-            final HttpRequestHeader rh = transientContext.getRequestHeader();
-            CharSequence name = rh.getUrlParam("name");
-            if (name == null) {
-                name = partHeader.getContentDispositionFilename();
-            }
-            if (name == null) {
-                transientContext.simpleResponse().sendStatus(400, "no name given");
-                // we have to disconnect to interrupt potentially large upload
-                transientDispatcher.disconnect(transientContext, DisconnectReason.SILLY);
-                return;
-            }
-
-            transientState.analysed = false;
-            transientState.textLoader.configureDestination(
-                    name,
-                    Chars.equalsNc("true", rh.getUrlParam("overwrite")),
-                    Chars.equalsNc("true", rh.getUrlParam("durable")),
-                    // todo: these values are incorrect, but ok for now
-                    getAtomicity(rh.getUrlParam("atomicity"))
-            );
-            transientState.textLoader.setForceHeaders(Chars.equalsNc("true", rh.getUrlParam("forceHeader")));
-            transientState.textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
-
-            transientState.forceHeader = Chars.equalsNc("true", rh.getUrlParam("forceHeader"));
-            transientState.messagePart = MESSAGE_DATA;
-        } else if (Chars.equals("schema", partHeader.getContentDispositionName())) {
-            transientState.textLoader.setState(TextLoader.LOAD_JSON_METADATA);
-            transientState.messagePart = MESSAGE_SCHEMA;
-        } else {
-            // todo: disconnect
-            transientState.messagePart = MESSAGE_UNKNOWN;
-        }
-    }
-
-    // This processor implements HttpMultipartContentListener, methods of which
-    // have neither context nor dispatcher. During "chunk" processing we may need
-    // to send something back to client, or disconnect them. To do that we need
-    // these transient references. resumeRecv() will set them and they will remain
-    // valid during multipart events.
-
-    @Override
-    public void onPartEnd(HttpRequestHeader partHeader) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        try {
-            LOG.debug().$("part end").$();
-            transientState.textLoader.wrapUp();
-            if (transientState.messagePart == MESSAGE_DATA) {
-                sendResponse(transientContext);
-            }
-        } catch (JsonException e) {
-            handleJsonException(e);
-        }
-    }
-
-    @Override
-    public void onHeadersReady(HttpConnectionContext context) {
-
-    }
-
-    @Override
-    public void onRequestComplete(HttpConnectionContext context, IODispatcher<HttpConnectionContext> dispatcher) {
-        transientState.clear();
-        context.clear();
-        dispatcher.registerChannel(context, IOOperation.READ);
-    }
-
-    @Override
-    public void resumeRecv(HttpConnectionContext context, IODispatcher<HttpConnectionContext> dispatcher) {
-
-        this.transientContext = context;
-        this.transientDispatcher = dispatcher;
-        this.transientState = lvContext.get(context);
-        if (this.transientState == null) {
-            try {
-                lvContext.set(context, this.transientState = new TextImportProcessorState(configuration.getTextConfiguration(), engine));
-            } catch (JsonException e) {
-                // todo: handle gracefully
-                e.printStackTrace();
-            }
-        }
-    }
-
-    @Override
-    public void resumeSend(HttpConnectionContext context, IODispatcher<HttpConnectionContext> dispatcher) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        doResumeSend(lvContext.get(context), context.getChunkedResponseSocket());
     }
 
     private static void resumeJson(TextImportProcessorState state, HttpResponseSink.ChunkedResponseImpl r) throws PeerDisconnectedException, PeerIsSlowToReadException {
@@ -256,6 +153,12 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
 
         return b;
     }
+
+    // This processor implements HttpMultipartContentListener, methods of which
+    // have neither context nor dispatcher. During "chunk" processing we may need
+    // to send something back to client, or disconnect them. To do that we need
+    // these transient references. resumeRecv() will set them and they will remain
+    // valid during multipart events.
 
     private static void pad(CharSink b, int w, long value) {
         int len = (int) Math.log10(value);
@@ -355,6 +258,113 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
         return atomicity == -1 ? Atomicity.SKIP_COL : atomicity;
     }
 
+    @Override
+    public void close() {
+
+    }
+
+    @Override
+    public void onChunk(HttpRequestHeader partHeader, long lo, long hi) {
+        if (hi > lo) {
+            try {
+                transientState.textLoader.parse(lo, (int) (hi - lo));
+                if (transientState.messagePart == MESSAGE_DATA && !transientState.analysed) {
+                    transientState.analysed = true;
+                    transientState.textLoader.setState(TextLoader.LOAD_DATA);
+                }
+            } catch (JsonException e) {
+                // todo: reply something sensible
+                e.printStackTrace();
+            }
+        }
+    }
+
+    @Override
+    public void onPartBegin(HttpRequestHeader partHeader) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        LOG.debug().$("part begin [name=").$(partHeader.getContentDispositionName()).$(']').$();
+        if (Chars.equals("data", partHeader.getContentDispositionName())) {
+
+            final HttpRequestHeader rh = transientContext.getRequestHeader();
+            CharSequence name = rh.getUrlParam("name");
+            if (name == null) {
+                name = partHeader.getContentDispositionFilename();
+            }
+            if (name == null) {
+                transientContext.simpleResponse().sendStatus(400, "no name given");
+                // we have to disconnect to interrupt potentially large upload
+                transientDispatcher.disconnect(transientContext, DisconnectReason.SILLY);
+                return;
+            }
+
+            transientState.analysed = false;
+            transientState.textLoader.configureDestination(
+                    name,
+                    Chars.equalsNc("true", rh.getUrlParam("overwrite")),
+                    Chars.equalsNc("true", rh.getUrlParam("durable")),
+                    // todo: these values are incorrect, but ok for now
+                    getAtomicity(rh.getUrlParam("atomicity"))
+            );
+            transientState.textLoader.setForceHeaders(Chars.equalsNc("true", rh.getUrlParam("forceHeader")));
+            transientState.textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
+
+            transientState.forceHeader = Chars.equalsNc("true", rh.getUrlParam("forceHeader"));
+            transientState.messagePart = MESSAGE_DATA;
+        } else if (Chars.equals("schema", partHeader.getContentDispositionName())) {
+            transientState.textLoader.setState(TextLoader.LOAD_JSON_METADATA);
+            transientState.messagePart = MESSAGE_SCHEMA;
+        } else {
+            // todo: disconnect
+            transientState.messagePart = MESSAGE_UNKNOWN;
+        }
+    }
+
+    @Override
+    public void onPartEnd(HttpRequestHeader partHeader) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        try {
+            LOG.debug().$("part end").$();
+            transientState.textLoader.wrapUp();
+            if (transientState.messagePart == MESSAGE_DATA) {
+                sendResponse(transientContext);
+            }
+        } catch (JsonException e) {
+            handleJsonException(e);
+        }
+    }
+
+    @Override
+    public void onHeadersReady(HttpConnectionContext context) {
+
+    }
+
+    @Override
+    public void onRequestComplete(HttpConnectionContext context, IODispatcher<HttpConnectionContext> dispatcher) {
+        transientState.clear();
+        context.clear();
+        dispatcher.registerChannel(context, IOOperation.READ);
+    }
+
+    @Override
+    public void resumeRecv(HttpConnectionContext context, IODispatcher<HttpConnectionContext> dispatcher) {
+
+        this.transientContext = context;
+        this.transientDispatcher = dispatcher;
+        this.transientState = LV.get(context);
+        if (this.transientState == null) {
+            try {
+                LOG.debug().$("new text state").$();
+                LV.set(context, this.transientState = new TextImportProcessorState(configuration.getTextConfiguration(), engine));
+            } catch (JsonException e) {
+                // todo: handle gracefully
+                e.printStackTrace();
+            }
+        }
+    }
+
+    @Override
+    public void resumeSend(HttpConnectionContext context, IODispatcher<HttpConnectionContext> dispatcher) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        doResumeSend(LV.get(context), context.getChunkedResponseSocket());
+    }
+
     private void doResumeSend(TextImportProcessorState state, HttpResponseSink.ChunkedResponseImpl response) throws PeerDisconnectedException, PeerIsSlowToReadException {
         try {
 
@@ -403,7 +413,7 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
     }
 
     private void sendResponse(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        TextImportProcessorState state = lvContext.get(context);
+        TextImportProcessorState state = LV.get(context);
         // todo: may be set this up when headers are ready?
         state.json = Chars.equalsNc("json", context.getRequestHeader().getUrlParam("fmt"));
         HttpResponseSink.ChunkedResponseImpl response = context.getChunkedResponseSocket();
@@ -419,10 +429,5 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
         } else {
             sendError(context, state.stateMessage, state.json);
         }
-    }
-
-    static {
-        atomicityParamMap.put("relaxed", Atomicity.SKIP_ROW);
-        atomicityParamMap.put("strict", Atomicity.SKIP_ALL);
     }
 }

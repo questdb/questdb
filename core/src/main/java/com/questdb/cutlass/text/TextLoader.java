@@ -200,6 +200,7 @@ public class TextLoader implements Closeable, Mutable {
     }
 
     public void setState(int state) {
+        LOG.debug().$("state change [old=").$(this.state).$(", new=").$(state).$(']').$();
         this.state = state;
         jsonLexer.clear();
     }

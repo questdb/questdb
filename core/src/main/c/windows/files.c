@@ -23,12 +23,13 @@
 
 #define _WIN32_WINNT 0x600 /* GetFileInformationByHandleEx is Vista+ */
 
+#include <shlwapi.h>
 #include <unistd.h>
 #include <sys/stat.h>
 #include <minwindef.h>
 #include <fileapi.h>
 
-typedef HANDLE HWND;
+//typedef HANDLE HWND;
 
 #include <winbase.h>
 #include <direct.h>
@@ -76,6 +77,8 @@ JNIEXPORT jlong JNICALL Java_com_questdb_std_Files_read
     return 0;
 }
 
+#define MILLIS_SINCE_1970 11644473600000
+
 JNIEXPORT jlong JNICALL Java_com_questdb_std_Files_sequentialRead
         (JNIEnv *e, jclass cl, jlong fd, jlong address, jint len) {
     DWORD count;
@@ -88,32 +91,40 @@ JNIEXPORT jlong JNICALL Java_com_questdb_std_Files_sequentialRead
 }
 
 JNIEXPORT jlong JNICALL Java_com_questdb_std_Files_getLastModified
-        (JNIEnv *e, jclass cl, jlong pchar) {
+        (JNIEnv *e, jclass cl, jlong lpszName) {
 
-    TIME_ZONE_INFORMATION tz;
-    LONG bias;
+    HANDLE handle = CreateFile(
+            (LPCSTR) lpszName,
+            FILE_WRITE_ATTRIBUTES,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+            NULL,
+            OPEN_EXISTING,
+            FILE_ATTRIBUTE_NORMAL,
+            NULL
+    );
 
-    switch (GetTimeZoneInformation(&tz)) {
-        case TIME_ZONE_ID_STANDARD:
-            bias = tz.StandardBias;
-            break;
-        case TIME_ZONE_ID_DAYLIGHT:
-            bias = tz.DaylightBias;
-            break;
-        default:
-            bias = 0;
-    }
-    if (bias != 0) {
-        bias *= 60000L;
-    }
-    struct stat st;
-    int r = stat((const char *) pchar, &st);
-    if (r == 0) {
-        return (1000 * (jlong) st.st_mtime) + bias;
+    if (handle == INVALID_HANDLE_VALUE) {
+        SaveLastError();
+        return -1;
     }
 
+    FILETIME creation;
+    FILETIME access;
+    FILETIME write;
+
+    if (GetFileTime(handle, &creation, &access, &write)) {
+        CloseHandle(handle);
+        return  ((((jlong)write.dwHighDateTime) << 32) | write.dwLowDateTime) / 10000 - MILLIS_SINCE_1970;
+    }
+    CloseHandle(handle);
     SaveLastError();
-    return r;
+    return -1;
+}
+
+JNIEXPORT jboolean JNICALL
+Java_com_questdb_std_Files_exists0
+        (JNIEnv *e, jclass cl, jlong lpszName) {
+    return PathFileExistsA((LPCSTR) lpszName);
 }
 
 JNIEXPORT jboolean JNICALL Java_com_questdb_std_Files_setLastModified
@@ -133,24 +144,7 @@ JNIEXPORT jboolean JNICALL Java_com_questdb_std_Files_setLastModified
         return 0;
     }
 
-    LONG bias;
-    TIME_ZONE_INFORMATION tz;
-    switch (GetTimeZoneInformation(&tz)) {
-        case TIME_ZONE_ID_STANDARD:
-            bias = tz.StandardBias;
-            break;
-        case TIME_ZONE_ID_DAYLIGHT:
-            bias = tz.DaylightBias;
-            break;
-        default:
-            bias = 0;
-    }
-    if (bias != 0) {
-        bias *= 60000L;
-    }
-
-    millis += bias;
-    millis += 11644477200000;
+    millis += MILLIS_SINCE_1970; // millis between 1601-01-01 and 1970-01-01
     millis *= 10000;
     FILETIME t;
     t.dwHighDateTime = (DWORD) ((millis >> 32) & 0xFFFFFFFF);

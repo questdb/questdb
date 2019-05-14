@@ -24,7 +24,6 @@
 package com.questdb.std;
 
 import java.io.Closeable;
-import java.lang.ref.WeakReference;
 
 public class LocalValueMap implements Closeable, Mutable {
 
@@ -265,13 +264,12 @@ public class LocalValueMap implements Closeable, Mutable {
         threshold = len * 2 / 3;
     }
 
-    static class Entry extends WeakReference<LocalValue<?>> {
+    static class Entry {
         Object value;
 
         LocalValue<?> k;
 
         Entry(LocalValue<?> k, Object v) {
-            super(k);
             value = v;
             this.k = k;
         }

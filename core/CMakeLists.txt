@@ -78,5 +78,5 @@ include(${ZLIB_SOURCE_DIR}/CMakeLists.txt)
 add_library(questdb SHARED ${SOURCE_FILES} ${ZLIB_SRCS})
 
 if (WIN32)
-    target_link_libraries(questdb wsock32 ws2_32 secur32)
+    target_link_libraries(questdb wsock32 ws2_32 secur32 shlwapi)
 endif (WIN32)
