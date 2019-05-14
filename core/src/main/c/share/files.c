@@ -278,3 +278,8 @@ JNIEXPORT jboolean JNICALL Java_com_questdb_std_Files_rename
         (JNIEnv *e, jclass cls, jlong lpszOld, jlong lpszNew) {
     return (jboolean) (rename((const char *) lpszOld, (const char *) lpszNew) == 0);
 }
+
+JNIEXPORT jboolean JNICALL Java_com_questdb_std_Files_exists0
+        (JNIEnv *e, jclass cls, jlong lpsz) {
+    return access((const char *) lpsz, F_OK);
+}

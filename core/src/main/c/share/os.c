@@ -27,6 +27,7 @@
 #include <sys/errno.h>
 #include <stdlib.h>
 #include <sys/time.h>
+#include <time.h>
 #include "../share/os.h"
 
 JNIEXPORT jint JNICALL Java_com_questdb_std_Os_getPid
