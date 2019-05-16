@@ -123,27 +123,36 @@ JNIEXPORT void JNICALL Java_com_questdb_network_Net_listen
     listen((int) fd, backlog);
 }
 
-jint convert_error(ssize_t n) {
-    if (n > 0) {
-        return (jint) n;
-    }
-
-    switch (n) {
-        case 0:
-            return com_questdb_network_Net_EPEERDISCONNECT;
-        default:
-            return (jint) (errno == EWOULDBLOCK ? com_questdb_network_Net_ERETRY : com_questdb_network_Net_EOTHERDISCONNECT);
-    }
-}
-
 JNIEXPORT jint JNICALL Java_com_questdb_network_Net_send
         (JNIEnv *e, jclass cl, jlong fd, jlong ptr, jint len) {
-    return convert_error(send((int) fd, (const void *) ptr, (size_t) len, 0));
+    const ssize_t n = send((int) fd, (const void *) ptr, (size_t) len, 0);
+    if (n > -1) {
+        return n;
+    }
+
+    if (errno == EWOULDBLOCK) {
+        return com_questdb_network_Net_ERETRY;
+    }
+
+    return com_questdb_network_Net_EOTHERDISCONNECT;
 }
 
 JNIEXPORT jint JNICALL Java_com_questdb_network_Net_recv
         (JNIEnv *e, jclass cl, jlong fd, jlong ptr, jint len) {
-    return convert_error(recv((int) fd, (void *) ptr, (size_t) len, 0));
+    const ssize_t n = recv((int) fd, (void *) ptr, (size_t) len, 0);
+    if (n > 0) {
+        return n;
+    }
+
+    if (n == 0){
+        return com_questdb_network_Net_EOTHERDISCONNECT;
+    }
+
+    if (errno == EWOULDBLOCK) {
+        return com_questdb_network_Net_ERETRY;
+    }
+
+    return com_questdb_network_Net_EOTHERDISCONNECT;
 }
 
 JNIEXPORT jboolean JNICALL Java_com_questdb_network_Net_isDead
