@@ -97,7 +97,11 @@ JNIEXPORT jlong JNICALL Java_com_questdb_std_Files_getLastModified
         (JNIEnv *e, jclass cl, jlong pchar) {
     struct stat st;
     int r = stat((const char *) pchar, &st);
+#ifdef __APPLE__
+    return r == 0 ? ((1000 * st.st_mtimespec.tv_sec) + (st.st_mtimespec.tv_nsec / 1000000)) : r;
+#else
     return r == 0 ? ((1000 * st.st_mtim.tv_sec) + (st.st_mtim.tv_nsec / 1000000)) : r;
+#endif
 }
 
 JNIEXPORT jlong JNICALL Java_com_questdb_std_Files_openRO
