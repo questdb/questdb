@@ -133,7 +133,7 @@ public class NetworkFacadeImpl implements NetworkFacade {
 
     @Override
     public boolean join(long fd, CharSequence bindIPv4Address, CharSequence groupIPv4Address) {
-        return Net.join(fd, bindIPv4Address, bindIPv4Address);
+        return Net.join(fd, bindIPv4Address, groupIPv4Address);
     }
 
     @Override
