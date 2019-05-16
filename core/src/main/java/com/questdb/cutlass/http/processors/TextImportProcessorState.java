@@ -27,8 +27,6 @@ import com.questdb.cairo.sql.CairoEngine;
 import com.questdb.cutlass.json.JsonException;
 import com.questdb.cutlass.text.TextConfiguration;
 import com.questdb.cutlass.text.TextLoader;
-import com.questdb.log.Log;
-import com.questdb.log.LogFactory;
 import com.questdb.std.Misc;
 import com.questdb.std.Mutable;
 import com.questdb.std.time.DateFormatFactory;
@@ -38,9 +36,8 @@ import java.io.Closeable;
 
 class TextImportProcessorState implements Mutable, Closeable {
     public static final int STATE_OK = 0;
-    public static final int STATE_INVALID_FORMAT = 1;
+    //    public static final int STATE_INVALID_FORMAT = 1;
     public static final int STATE_DATA_ERROR = 2;
-    private static final Log LOG = LogFactory.getLog(TextImportProcessorState.class);
     final TextLoader textLoader;
     public int columnIndex = 0;
     String stateMessage;

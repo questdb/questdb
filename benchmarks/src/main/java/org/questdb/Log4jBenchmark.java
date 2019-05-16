@@ -32,7 +32,6 @@ import org.openjdk.jmh.runner.options.Options;
 import org.openjdk.jmh.runner.options.OptionsBuilder;
 
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicLong;
 
 @State(Scope.Thread)
 @BenchmarkMode(Mode.AverageTime)
@@ -40,7 +39,6 @@ import java.util.concurrent.atomic.AtomicLong;
 public class Log4jBenchmark {
 
     private static Logger LOG = LogManager.getLogger(Log4jBenchmark.class);
-    private final AtomicLong value = new AtomicLong(0);
     private long counter = 0;
 
     public static void main(String[] args) throws RunnerException {
