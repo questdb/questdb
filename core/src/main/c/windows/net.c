@@ -182,27 +182,22 @@ JNIEXPORT jint JNICALL Java_com_questdb_network_Net_configureNonBlocking
     return ioctlsocket((SOCKET) fd, FIONBIO, &mode);
 }
 
-jint convert_error(int n) {
-    SaveLastError();
-    if (n > 0) {
-        return (jint) n;
-    }
-
-    switch (n) {
-        case 0:
-            return com_questdb_network_Net_EPEERDISCONNECT;
-        default:
-            if (WSAGetLastError() == WSAEWOULDBLOCK) {
-                return com_questdb_network_Net_ERETRY;
-            } else {
-                return com_questdb_network_Net_EOTHERDISCONNECT;
-            }
-    }
-}
-
 JNIEXPORT jint JNICALL Java_com_questdb_network_Net_recv
         (JNIEnv *e, jclass cl, jlong fd, jlong addr, jint len) {
-    return convert_error(recv((SOCKET) fd, (char *) addr, len, 0));
+    const int n = recv((SOCKET) fd, (char *) addr, len, 0);
+    if (n > 0) {
+        return n;
+    }
+
+    if (n == 0) {
+        return com_questdb_network_Net_EOTHERDISCONNECT;
+    }
+
+    if (WSAGetLastError() == WSAEWOULDBLOCK) {
+        return com_questdb_network_Net_ERETRY;
+    }
+
+    return com_questdb_network_Net_EOTHERDISCONNECT;
 }
 
 JNIEXPORT jboolean JNICALL Java_com_questdb_network_Net_isDead
@@ -213,7 +208,16 @@ JNIEXPORT jboolean JNICALL Java_com_questdb_network_Net_isDead
 
 JNIEXPORT jint JNICALL Java_com_questdb_network_Net_send
         (JNIEnv *e, jclass cl, jlong fd, jlong addr, jint len) {
-    return convert_error(send((SOCKET) fd, (const char *) addr, len, 0));
+    const int n = send((SOCKET) fd, (const char *) addr, len, 0);
+    if (n > -1) {
+        return n;
+    }
+
+    if (WSAGetLastError() == WSAEWOULDBLOCK) {
+        return com_questdb_network_Net_ERETRY;
+    }
+
+    return com_questdb_network_Net_EOTHERDISCONNECT;
 }
 
 JNIEXPORT jint JNICALL Java_com_questdb_network_Net_sendTo

@@ -31,4 +31,6 @@ public interface EpollFacade {
     int epollWait(long epfd, long eventPtr, int eventCount, int timeout);
 
     NetworkFacade getNetworkFacade();
+
+    int errno();
 }

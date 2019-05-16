@@ -274,7 +274,7 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
         buildUniquePath();
         this.fd = ff.openAppend(path.$());
         if (this.fd == -1) {
-            throw new LogError("[" + Os.errno() + "] Cannot open file for append: " + path);
+            throw new LogError("[" + ff.errno() + "] Cannot open file for append: " + path);
         }
         this.currentSize = ff.length(fd);
     }

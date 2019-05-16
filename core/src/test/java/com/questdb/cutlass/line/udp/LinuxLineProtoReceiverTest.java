@@ -29,8 +29,11 @@ import com.questdb.mp.Job;
 import com.questdb.mp.SOCountDownLatch;
 import com.questdb.mp.Worker;
 import com.questdb.network.Net;
+import com.questdb.network.NetworkFacade;
 import com.questdb.network.NetworkFacadeImpl;
-import com.questdb.std.*;
+import com.questdb.std.Misc;
+import com.questdb.std.ObjHashSet;
+import com.questdb.std.Os;
 import com.questdb.std.str.StringSink;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -123,7 +126,7 @@ public class LinuxLineProtoReceiverTest extends AbstractCairoTest {
 
     private void assertCannotBindSocket(ReceiverFactory factory) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            NetFacade nf = new NetFacadeImpl() {
+            NetworkFacade nf = new NetworkFacadeImpl() {
                 @Override
                 public boolean bindUdp(long fd, int port) {
                     return false;
@@ -131,7 +134,7 @@ public class LinuxLineProtoReceiverTest extends AbstractCairoTest {
             };
             ReceiverConfiguration receiverCfg = new TestReceiverConfiguration() {
                 @Override
-                public NetFacade getNetFacade() {
+                public NetworkFacade getNetworkFacade() {
                     return nf;
                 }
             };
@@ -141,7 +144,7 @@ public class LinuxLineProtoReceiverTest extends AbstractCairoTest {
 
     private void assertCannotJoin(ReceiverFactory factory) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            NetFacade nf = new NetFacadeImpl() {
+            NetworkFacade nf = new NetworkFacadeImpl() {
                 @Override
                 public boolean join(long fd, CharSequence bindIPv4Address, CharSequence groupIPv4Address) {
                     return false;
@@ -150,7 +153,7 @@ public class LinuxLineProtoReceiverTest extends AbstractCairoTest {
             };
             ReceiverConfiguration receiverCfg = new TestReceiverConfiguration() {
                 @Override
-                public NetFacade getNetFacade() {
+                public NetworkFacade getNetworkFacade() {
                     return nf;
                 }
             };
@@ -161,7 +164,7 @@ public class LinuxLineProtoReceiverTest extends AbstractCairoTest {
 
     private void assertCannotOpenSocket(ReceiverFactory factory) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            NetFacade nf = new NetFacadeImpl() {
+            NetworkFacade nf = new NetworkFacadeImpl() {
                 @Override
                 public long socketUdp() {
                     return -1;
@@ -169,7 +172,7 @@ public class LinuxLineProtoReceiverTest extends AbstractCairoTest {
             };
             ReceiverConfiguration receiverCfg = new TestReceiverConfiguration() {
                 @Override
-                public NetFacade getNetFacade() {
+                public NetworkFacade getNetworkFacade() {
                     return nf;
                 }
             };
@@ -178,7 +181,7 @@ public class LinuxLineProtoReceiverTest extends AbstractCairoTest {
     }
 
     private void assertCannotSetReceiveBuffer(ReceiverFactory factory) throws Exception {
-        NetFacade nf = new NetFacadeImpl() {
+        NetworkFacade nf = new NetworkFacadeImpl() {
             @Override
             public int setRcvBuf(long fd, int size) {
                 return -1;
@@ -192,7 +195,7 @@ public class LinuxLineProtoReceiverTest extends AbstractCairoTest {
             }
 
             @Override
-            public NetFacade getNetFacade() {
+            public NetworkFacade getNetworkFacade() {
                 return nf;
             }
         };
@@ -325,8 +328,8 @@ public class LinuxLineProtoReceiverTest extends AbstractCairoTest {
         }
 
         @Override
-        public NetFacade getNetFacade() {
-            return NetFacadeImpl.INSTANCE;
+        public NetworkFacade getNetworkFacade() {
+            return NetworkFacadeImpl.INSTANCE;
         }
 
         @Override

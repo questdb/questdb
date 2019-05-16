@@ -311,7 +311,7 @@ public class HttpResponseSink implements Closeable, Mutable {
             int n = nf.send(fd, flushBuf + sent, flushBufSize - sent);
             if (n < 0) {
                 // disconnected
-                LOG.info().$("disconnected [errno=").$(Os.errno()).$(']').$();
+                LOG.info().$("disconnected [errno=").$(nf.errno()).$(']').$();
                 throw PeerDisconnectedException.INSTANCE;
             }
             if (n == 0) {

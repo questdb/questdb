@@ -84,4 +84,17 @@ public interface NetworkFacade {
     int setReusePort(long fd);
 
     int setTcpNoDelay(long fd, boolean noDelay);
+
+    int setRcvBuf(long fd, int size);
+
+    void freeMsgHeaders(long msgVec);
+
+    long getMMsgBuf(long msg);
+
+    long getMMsgBufLen(long msg);
+
+    long msgHeaders(int msgBufferSize, int msgCount);
+
+    @SuppressWarnings("SpellCheckingInspection")
+    int recvmmsg(long fd, long msgVec, int msgCount);
 }

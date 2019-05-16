@@ -23,6 +23,8 @@
 
 package com.questdb.network;
 
+import com.questdb.std.Os;
+
 public class EpollFacadeImpl implements EpollFacade {
     public static final EpollFacadeImpl INSTANCE = new EpollFacadeImpl();
 
@@ -44,5 +46,10 @@ public class EpollFacadeImpl implements EpollFacade {
     @Override
     public NetworkFacade getNetworkFacade() {
         return NetworkFacadeImpl.INSTANCE;
+    }
+
+    @Override
+    public int errno() {
+        return Os.errno();
     }
 }

@@ -26,7 +26,6 @@ package com.questdb.network;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.std.Files;
-import com.questdb.std.Os;
 import com.questdb.std.Unsafe;
 
 import java.io.Closeable;
@@ -84,7 +83,7 @@ public final class Epoll implements Closeable {
         Unsafe.getUnsafe().putLong(events + EpollAccessor.DATA_OFFSET, 0);
 
         if (epf.epollCtl(epollFd, EpollAccessor.EPOLL_CTL_ADD, sfd, events) != 0) {
-            throw NetworkError.instance(Os.errno(), "epoll_ctl");
+            throw NetworkError.instance(epf.errno(), "epoll_ctl");
         }
     }
 

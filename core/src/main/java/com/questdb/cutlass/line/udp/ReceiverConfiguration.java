@@ -23,7 +23,7 @@
 
 package com.questdb.cutlass.line.udp;
 
-import com.questdb.std.NetFacade;
+import com.questdb.network.NetworkFacade;
 
 public interface ReceiverConfiguration {
 
@@ -37,7 +37,7 @@ public interface ReceiverConfiguration {
 
     int getMsgCount();
 
-    NetFacade getNetFacade();
+    NetworkFacade getNetworkFacade();
 
     int getPort();
 
