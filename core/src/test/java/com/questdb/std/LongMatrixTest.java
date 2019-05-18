@@ -5,7 +5,7 @@
  *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
  *   \__\_\\__,_|\___||___/\__|____/|____/
  *
- * Copyright (C) 2014-2018 Appsicle
+ * Copyright (C) 2014-2019 Appsicle
  *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU Affero General Public License, version 3,
@@ -40,11 +40,11 @@ public class LongMatrixTest {
             k += 2;
         }
 
-        int r = m.binarySearch(631);
+        int r = m.binarySearch(631, 0);
         Assert.assertTrue(r < 0);
         Assert.assertEquals(632, m.get(-r - 1, 0));
 
-        r = m.binarySearch(2500);
+        r = m.binarySearch(2500, 0);
         Assert.assertEquals(1000, -r - 1);
     }
 
@@ -58,7 +58,7 @@ public class LongMatrixTest {
             m.set(r, "s" + i);
         }
 
-        int r = m.binarySearch(631);
+        int r = m.binarySearch(631, 0);
         Assert.assertEquals(631, m.get(r, 0));
     }
 

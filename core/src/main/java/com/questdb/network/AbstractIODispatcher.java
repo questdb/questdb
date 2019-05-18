@@ -26,12 +26,15 @@ package com.questdb.network;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.mp.*;
+import com.questdb.std.LongMatrix;
 import com.questdb.std.time.MillisecondClock;
 
 import java.util.concurrent.atomic.AtomicInteger;
 
 public abstract class AbstractIODispatcher<C extends IOContext> extends SynchronizedJob implements IODispatcher<C> {
-    protected static final Log LOG = LogFactory.getLog(IODispatcherOsx.class);
+    protected static final Log LOG = LogFactory.getLog("IODispatcher");
+    protected static final int M_TIMESTAMP = 0;
+    protected static final int M_FD = 1;
     protected final RingQueue<IOEvent<C>> interestQueue;
     protected final MPSequence interestPubSeq;
     protected final SCSequence interestSubSeq;
@@ -50,6 +53,7 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
     protected final SCSequence disconnectSubSeq;
     protected final QueueConsumer<IOEvent<C>> disconnectContextRef = this::disconnectContext;
     protected final long idleConnectionTimeout;
+    protected final LongMatrix<C> pending = new LongMatrix<>(4);
 
     public AbstractIODispatcher(
             IODispatcherConfiguration configuration,
@@ -78,6 +82,25 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
         this.ioContextFactory = ioContextFactory;
         this.initialBias = configuration.getInitialBias();
         this.idleConnectionTimeout = configuration.getIdleConnectionTimeout();
+
+        if (nf.bindTcp(this.serverFd, configuration.getBindIPv4Address(), configuration.getBindPort())) {
+            nf.listen(this.serverFd, configuration.getListenBacklog());
+        } else {
+            throw NetworkError.instance(nf.errno()).couldNotBindSocket();
+        }
+    }
+
+    @Override
+    public void close() {
+        processDisconnects();
+        nf.close(serverFd, LOG);
+
+        for (int i = 0, n = pending.size(); i < n; i++) {
+            doDisconnect(pending.get(i));
+        }
+
+        interestSubSeq.consumeAll(interestQueue, this.disconnectContextRef);
+        ioEventSubSeq.consumeAll(ioEventQueue, this.disconnectContextRef);
     }
 
     @Override
@@ -113,6 +136,60 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
 
         return false;
     }
+
+    protected void accept(long timestamp) {
+        while (true) {
+            long fd = nf.accept(serverFd);
+
+            if (fd < 0) {
+                if (nf.errno() != Net.EWOULDBLOCK) {
+                    LOG.error().$("could not accept [errno=").$(nf.errno()).$(']').$();
+                }
+                return;
+            }
+
+            if (nf.configureNonBlocking(fd) < 0) {
+                LOG.error().$("could not configure non-blocking [fd=").$(fd).$(", errno=").$(nf.errno()).$(']').$();
+                nf.close(fd, LOG);
+                return;
+            }
+
+            final int connectionCount = this.connectionCount.get();
+            if (connectionCount == activeConnectionLimit) {
+                LOG.info().$("connection limit exceeded [fd=").$(fd)
+                        .$(", connectionCount=").$(connectionCount)
+                        .$(", activeConnectionLimit=").$(activeConnectionLimit)
+                        .$(']').$();
+                nf.close(fd, LOG);
+                return;
+            }
+
+            LOG.info().$("connected [ip=").$ip(nf.getPeerIP(fd)).$(", fd=").$(fd).$(']').$();
+            this.connectionCount.incrementAndGet();
+            addPending(fd, timestamp);
+        }
+    }
+
+    private void addPending(long fd, long timestamp) {
+        // append to pending
+        // all rows below watermark will be registered with kqueue
+        int r = pending.addRow();
+        LOG.debug().$("pending [row=").$(r).$(", fd=").$(fd).$(']').$();
+        pending.set(r, M_TIMESTAMP, timestamp);
+        pending.set(r, M_FD, fd);
+        pending.set(r, ioContextFactory.newInstance(fd));
+        pendingAdded(r);
+
+    }
+
+    protected void logSuccess(IODispatcherConfiguration configuration) {
+        LOG.info()
+                .$("listening on ")
+                .$(configuration.getBindIPv4Address()).$(':').$(configuration.getBindPort())
+                .$(" [fd=").$(serverFd).$(']').$();
+    }
+
+    protected abstract void pendingAdded(int index);
 
     @Override
     public void disconnect(C context) {

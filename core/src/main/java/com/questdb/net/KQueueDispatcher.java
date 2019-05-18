@@ -183,7 +183,7 @@ public class KQueueDispatcher<C extends Context> extends SynchronizedJob impleme
     }
 
     private int findPending(int fd, long ts) {
-        int r = pending.binarySearch(ts);
+        int r = pending.binarySearch(ts, 0);
         if (r < 0) {
             return r;
         }

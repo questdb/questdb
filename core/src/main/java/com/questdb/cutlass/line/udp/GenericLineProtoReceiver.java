@@ -92,7 +92,13 @@ public class GenericLineProtoReceiver implements Closeable, Job {
         parser = new CairoLineProtoParser(cairoCfg, writerPool);
         lexer.withParser(parser);
 
-        LOG.info().$("started [fd=").$(fd).$(", bind=").$(receiverCfg.getBindIPv4Address()).$(", group=").$(receiverCfg.getGroupIPv4Address()).$(", port=").$(receiverCfg.getPort()).$(", commitRate=").$(commitRate).$(']').$();
+        LOG.info()
+                .$("started [fd=").$(fd)
+                .$(", bind=").$(receiverCfg.getBindIPv4Address())
+                .$(", group=").$(receiverCfg.getGroupIPv4Address())
+                .$(", port=").$(receiverCfg.getPort())
+                .$(", commitRate=").$(commitRate)
+                .$(']').$();
     }
 
     @Override

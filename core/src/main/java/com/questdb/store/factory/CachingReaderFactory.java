@@ -235,7 +235,7 @@ public class CachingReaderFactory extends AbstractFactory implements JournalClos
     @SuppressWarnings("unchecked")
     <T> Journal<T> reader(JournalMetadata<T> metadata) throws JournalException {
         if (closed == TRUE) {
-            LOG.info().$("Pool is closed");
+            LOG.info().$("Pool is closed").$();
             throw FactoryClosedException.INSTANCE;
         }
 

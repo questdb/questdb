@@ -204,7 +204,7 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
 
     private void checkClosed() {
         if (isClosed()) {
-            LOG.info().$("is closed");
+            LOG.info().$("is closed").$();
             throw PoolClosedException.INSTANCE;
         }
     }
@@ -309,7 +309,7 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
 
             return true;
         }
-        LOG.error().$('\'').$(name).$("' is available [at=").$(reader.entry.index).$(':').$(index).$(']');
+        LOG.error().$('\'').$(name).$("' is available [at=").$(reader.entry.index).$(':').$(index).$(']').$();
         return true;
     }
 

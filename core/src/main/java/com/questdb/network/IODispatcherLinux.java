@@ -23,14 +23,9 @@
 
 package com.questdb.network;
 
-import com.questdb.std.LongMatrix;
-
 public class IODispatcherLinux<C extends IOContext> extends AbstractIODispatcher<C> {
-    private static final int M_TIMESTAMP = 1;
-    private static final int M_FD = 2;
-    private static final int M_ID = 0;
+    private static final int M_ID = 2;
     private final Epoll epoll;
-    private final LongMatrix<C> pending = new LongMatrix<>(4);
     private long fdid = 1;
 
     public IODispatcherLinux(
@@ -39,97 +34,8 @@ public class IODispatcherLinux<C extends IOContext> extends AbstractIODispatcher
     ) {
         super(configuration, ioContextFactory);
         this.epoll = new Epoll(configuration.getEpollFacade(), configuration.getEventCapacity());
-        if (nf.bindTcp(this.serverFd, configuration.getBindIPv4Address(), configuration.getBindPort())) {
-            nf.listen(this.serverFd, configuration.getListenBacklog());
-            this.epoll.listen(serverFd);
-            LOG.info()
-                    .$("listening on ")
-                    .$(configuration.getBindIPv4Address()).$(':').$(configuration.getBindPort())
-                    .$(" [fd=").$(serverFd).$(']').$();
-        } else {
-            throw NetworkError.instance(nf.errno()).couldNotBindSocket();
-        }
-    }
-
-    @Override
-    public void close() {
-        processDisconnects();
-        this.epoll.close();
-        nf.close(serverFd, LOG);
-
-        int n = pending.size();
-        for (int i = 0; i < n; i++) {
-            doDisconnect(pending.get(i));
-        }
-
-        drainQueueAndDisconnect();
-
-        long cursor;
-        do {
-            cursor = ioEventSubSeq.next();
-            if (cursor > -1) {
-                doDisconnect(ioEventQueue.get(cursor).context);
-                ioEventSubSeq.done(cursor);
-            }
-        } while (cursor != -1);
-        LOG.info().$("closed").$();
-    }
-
-    private void accept() {
-        while (true) {
-            long fd = nf.accept(serverFd);
-
-            if (fd < 0) {
-                if (nf.errno() != Net.EWOULDBLOCK) {
-                    LOG.error().$("could not accept [errno=").$(nf.errno()).$(']').$();
-                }
-                return;
-            }
-
-            if (nf.configureNonBlocking(fd) < 0) {
-                LOG.error().$("could not configure non-blocking [fd=").$(fd).$(", errno=").$(nf.errno()).$(']').$();
-                nf.close(fd, LOG);
-                return;
-            }
-
-            final int connectionCount = this.connectionCount.get();
-            if (connectionCount == activeConnectionLimit) {
-                LOG.info().$("connection limit exceeded [fd=").$(fd)
-                        .$(", connectionCount=").$(connectionCount)
-                        .$(", activeConnectionLimit=").$(activeConnectionLimit)
-                        .$(']').$();
-                nf.close(fd, LOG);
-                return;
-            }
-
-            LOG.info().$("connected [ip=").$ip(nf.getPeerIP(fd)).$(", fd=").$(fd).$(']').$();
-            this.connectionCount.incrementAndGet();
-            addPending(fd, clock.getTicks());
-        }
-    }
-
-    private void addPending(long fd, long timestamp) {
-        // append to pending
-        int r = pending.addRow();
-        LOG.debug().$("pending [row=").$(r).$(", fd=").$(fd).$(']').$();
-        pending.set(r, M_TIMESTAMP, timestamp);
-        pending.set(r, M_FD, fd);
-        pending.set(r, M_ID, fdid++);
-        pending.set(r, ioContextFactory.newInstance(fd));
-    }
-
-    private void drainQueueAndDisconnect() {
-        long cursor;
-        do {
-            cursor = interestSubSeq.next();
-            if (cursor > -1) {
-                final long available = interestSubSeq.available();
-                while (cursor < available) {
-                    doDisconnect(interestQueue.get(cursor++).context);
-                }
-                interestSubSeq.done(available - 1);
-            }
-        } while (cursor != -1);
+        this.epoll.listen(serverFd);
+        logSuccess(configuration);
     }
 
     private void enqueuePending(int watermark) {
@@ -145,6 +51,18 @@ public class IODispatcherLinux<C extends IOContext> extends AbstractIODispatcher
                 LOG.debug().$("epoll_ctl failure ").$(nf.errno()).$();
             }
         }
+    }
+
+    @Override
+    public void close() {
+        super.close();
+        this.epoll.close();
+        LOG.info().$("closed").$();
+    }
+
+    @Override
+    protected void pendingAdded(int index) {
+        pending.set(index, M_ID, fdid++);
     }
 
     private void processIdleConnections(long deadline) {
@@ -198,7 +116,7 @@ public class IODispatcherLinux<C extends IOContext> extends AbstractIODispatcher
         boolean useful = false;
 
         processDisconnects();
-
+        final long timestamp = clock.getTicks();
         final int n = epoll.poll();
         int watermark = pending.size();
         int offset = 0;
@@ -211,12 +129,12 @@ public class IODispatcherLinux<C extends IOContext> extends AbstractIODispatcher
                 final long id = epoll.getData();
                 // this is server socket, accept if there aren't too many already
                 if (id == 0) {
-                    accept();
+                    accept(timestamp);
                 } else {
                     // find row in pending for two reasons:
                     // 1. find payload
                     // 2. remove row from pending, remaining rows will be timed out
-                    int row = pending.binarySearch(id);
+                    int row = pending.binarySearch(id, M_ID);
                     if (row < 0) {
                         LOG.error().$("internal error: epoll returned unexpected id [id=").$(id).$(']').$();
                         continue;
@@ -239,7 +157,6 @@ public class IODispatcherLinux<C extends IOContext> extends AbstractIODispatcher
         }
 
         // process timed out connections
-        final long timestamp = clock.getTicks();
         final long deadline = timestamp - idleConnectionTimeout;
         if (pending.size() > 0 && pending.get(0, M_TIMESTAMP) < deadline) {
             processIdleConnections(deadline);

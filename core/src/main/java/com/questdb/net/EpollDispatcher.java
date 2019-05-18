@@ -252,7 +252,7 @@ public class EpollDispatcher<C extends Context> extends SynchronizedJob implemen
                     // find row in pending for two reasons:
                     // 1. find payload
                     // 2. remove row from pending, remaining rows will be timed out
-                    int row = pending.binarySearch(id);
+                    int row = pending.binarySearch(id, M_ID);
                     if (row < 0) {
                         LOG.error().$("Internal error: unknown ID: ").$(id).$();
                         continue;

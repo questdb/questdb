@@ -163,7 +163,8 @@ public class HttpServer implements Closeable {
                 HttpServerConfiguration configuration,
                 ObjHashSet<? extends Job> jobs,
                 SOCountDownLatch haltLatch,
-                int affinity, Log log,
+                int affinity,
+                Log log,
                 int contextPoolSize
         ) {
             super(jobs, haltLatch, affinity, log);

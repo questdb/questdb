@@ -24,16 +24,11 @@
 package com.questdb.network;
 
 import com.questdb.net.ChannelStatus;
-import com.questdb.std.LongMatrix;
 import com.questdb.std.Os;
 
 public class IODispatcherOsx<C extends IOContext> extends AbstractIODispatcher<C> {
 
-    private static final int M_TIMESTAMP = 0;
-    private static final int M_FD = 1;
-
     private final Kqueue kqueue;
-    private final LongMatrix<C> pending = new LongMatrix<>(2);
     private final int capacity;
 
     public IODispatcherOsx(
@@ -45,78 +40,10 @@ public class IODispatcherOsx<C extends IOContext> extends AbstractIODispatcher<C
 
         // bind socket
         this.kqueue = new Kqueue(capacity);
-        if (nf.bindTcp(this.serverFd, configuration.getBindIPv4Address(), configuration.getBindPort())) {
-            nf.listen(this.serverFd, configuration.getListenBacklog());
-
-            if (this.kqueue.listen(serverFd) != 0) {
-                throw NetworkError.instance(nf.errno(), "could not kqueue.listen()");
-            }
-
-            LOG.info()
-                    .$("listening on ")
-                    .$(configuration.getBindIPv4Address()).$(':').$(configuration.getBindPort())
-                    .$(" [fd=").$(serverFd).$(']').$();
-        } else {
-            throw NetworkError.instance(nf.errno()).couldNotBindSocket();
+        if (this.kqueue.listen(serverFd) != 0) {
+            throw NetworkError.instance(nf.errno(), "could not kqueue.listen()");
         }
-    }
-
-    @Override
-    public void close() {
-        processDisconnects();
-        this.kqueue.close();
-        nf.close(serverFd, LOG);
-
-        for (int i = 0, n = pending.size(); i < n; i++) {
-            doDisconnect(pending.get(i));
-        }
-
-        interestSubSeq.consumeAll(interestQueue, this.disconnectContextRef);
-        ioEventSubSeq.consumeAll(ioEventQueue, this.disconnectContextRef);
-        LOG.info().$("closed").$();
-    }
-
-    private void accept() {
-        while (true) {
-            long fd = nf.accept(serverFd);
-
-            if (fd < 0) {
-                if (nf.errno() != Net.EWOULDBLOCK) {
-                    LOG.error().$("could not accept [errno=").$(nf.errno()).$(']').$();
-                }
-                return;
-            }
-
-            if (nf.configureNonBlocking(fd) < 0) {
-                LOG.error().$("could not configure non-blocking [fd=").$(fd).$(", errno=").$(nf.errno()).$(']').$();
-                nf.close(fd, LOG);
-                return;
-            }
-
-            final int connectionCount = this.connectionCount.get();
-            if (connectionCount == activeConnectionLimit) {
-                LOG.info().$("connection limit exceeded [fd=").$(fd)
-                        .$(", connectionCount=").$(connectionCount)
-                        .$(", activeConnectionLimit=").$(activeConnectionLimit)
-                        .$(']').$();
-                nf.close(fd, LOG);
-                return;
-            }
-
-            LOG.info().$("connected [ip=").$ip(nf.getPeerIP(fd)).$(", fd=").$(fd).$(']').$();
-            this.connectionCount.incrementAndGet();
-            addPending(fd, clock.getTicks());
-        }
-    }
-
-    private void addPending(long fd, long timestamp) {
-        // append to pending
-        // all rows below watermark will be registered with kqueue
-        int r = pending.addRow();
-        LOG.debug().$("pending [row=").$(r).$(", fd=").$(fd).$(']').$();
-        pending.set(r, M_TIMESTAMP, timestamp);
-        pending.set(r, M_FD, fd);
-        pending.set(r, ioContextFactory.newInstance(fd));
+        logSuccess(configuration);
     }
 
     private void enqueuePending(int watermark) {
@@ -142,8 +69,20 @@ public class IODispatcherOsx<C extends IOContext> extends AbstractIODispatcher<C
         }
     }
 
+    @Override
+    public void close() {
+        super.close();
+        this.kqueue.close();
+        LOG.info().$("closed").$();
+    }
+
+    @Override
+    protected void pendingAdded(int index) {
+        // nothing to do
+    }
+
     private int findPending(int fd, long ts) {
-        int r = pending.binarySearch(ts);
+        int r = pending.binarySearch(ts, M_TIMESTAMP);
         if (r < 0) {
             return r;
         }
@@ -217,6 +156,7 @@ public class IODispatcherOsx<C extends IOContext> extends AbstractIODispatcher<C
     @Override
     protected boolean runSerially() {
         processDisconnects();
+        final long timestamp = clock.getTicks();
         boolean useful = false;
         final int n = kqueue.poll();
         int watermark = pending.size();
@@ -230,7 +170,7 @@ public class IODispatcherOsx<C extends IOContext> extends AbstractIODispatcher<C
                 int fd = kqueue.getFd();
                 // this is server socket, accept if there aren't too many already
                 if (fd == serverFd) {
-                    accept();
+                    accept(timestamp);
                 } else {
                     // find row in pending for two reasons:
                     // 1. find payload
@@ -255,7 +195,6 @@ public class IODispatcherOsx<C extends IOContext> extends AbstractIODispatcher<C
         }
 
         // process timed out connections
-        final long timestamp = clock.getTicks();
         final long deadline = timestamp - idleConnectionTimeout;
         if (pending.size() > 0 && pending.get(0, M_TIMESTAMP) < deadline) {
             processIdleConnections(deadline);

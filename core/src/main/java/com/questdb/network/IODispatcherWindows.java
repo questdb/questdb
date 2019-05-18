@@ -23,23 +23,13 @@
 
 package com.questdb.network;
 
-import com.questdb.log.Log;
-import com.questdb.log.LogFactory;
 import com.questdb.std.LongIntHashMap;
-import com.questdb.std.LongMatrix;
-import com.questdb.std.Misc;
 import com.questdb.std.Unsafe;
 
 public class IODispatcherWindows<C extends IOContext> extends AbstractIODispatcher<C> {
-
-    private static final int M_TIMESTAMP = 0;
-    private static final int M_FD = 1;
     private static final int M_OPERATION = 2;
-    private static final Log LOG = LogFactory.getLog(IODispatcherWindows.class);
-
     private final FDSet readFdSet;
     private final FDSet writeFdSet;
-    private final LongMatrix<C> pending = new LongMatrix<>(4);
     private final LongIntHashMap fds = new LongIntHashMap();
     private final SelectFacade sf;
 
@@ -51,78 +41,27 @@ public class IODispatcherWindows<C extends IOContext> extends AbstractIODispatch
         this.readFdSet = new FDSet(configuration.getEventCapacity());
         this.writeFdSet = new FDSet(configuration.getEventCapacity());
         this.sf = configuration.getSelectFacade();
-        if (nf.bindTcp(this.serverFd, configuration.getBindIPv4Address(), configuration.getBindPort())) {
-            nf.listen(this.serverFd, configuration.getListenBacklog());
-            final int r = pending.addRow();
-            pending.set(r, M_TIMESTAMP, clock.getTicks());
-            pending.set(r, M_FD, serverFd);
-            pending.set(r, M_OPERATION, IOOperation.READ);
-            readFdSet.add(serverFd);
-            readFdSet.setCount(1);
-            writeFdSet.setCount(0);
-        } else {
-            throw NetworkError.instance(nf.errno()).couldNotBindSocket();
-        }
+        final int r = pending.addRow();
+        pending.set(r, M_TIMESTAMP, clock.getTicks());
+        pending.set(r, M_FD, serverFd);
+        pending.set(r, M_OPERATION, IOOperation.READ);
+        readFdSet.add(serverFd);
+        readFdSet.setCount(1);
+        writeFdSet.setCount(0);
+        logSuccess(configuration);
     }
 
     @Override
     public void close() {
-
-        processDisconnects();
-
+        super.close();
         readFdSet.close();
         writeFdSet.close();
-
-        for (int i = 0, n = pending.size(); i < n; i++) {
-            nf.close(pending.get(i, M_FD), LOG);
-            Misc.free(pending.get(i));
-        }
-
-        interestSubSeq.consumeAll(interestQueue, this.disconnectContextRef);
-        ioEventSubSeq.consumeAll(ioEventQueue, this.disconnectContextRef);
         LOG.info().$("closed").$();
     }
 
-    private void accept(long timestamp) {
-        while (true) {
-            long fd = nf.accept(serverFd);
-
-            if (fd < 0) {
-                if (nf.errno() != Net.EWOULDBLOCK) {
-                    LOG.error().$("could not accept [errno=").$(nf.errno()).$(']').$();
-                }
-                return;
-            }
-
-            if (nf.configureNonBlocking(fd) < 0) {
-                LOG.error().$("could not configure non-blocking [fd=").$(fd).$(", errno=").$(nf.errno()).$(']').$();
-                nf.close(fd, LOG);
-                return;
-            }
-
-            final int connectionCount = this.connectionCount.get();
-            if (connectionCount == activeConnectionLimit) {
-                LOG.info().$("connection limit exceeded [fd=").$(fd)
-                        .$(", connectionCount=").$(connectionCount)
-                        .$(", activeConnectionLimit=").$(activeConnectionLimit)
-                        .$(']').$();
-                nf.close(fd, LOG);
-                return;
-            }
-
-            LOG.info().$("connected [ip=").$ip(nf.getPeerIP(fd)).$(", fd=").$(fd).$(']').$();
-            this.connectionCount.incrementAndGet();
-            addPending(fd, timestamp);
-        }
-    }
-
-    private void addPending(long fd, long timestamp) {
-        int r = pending.addRow();
-        LOG.debug().$("pending [row=").$(r).$(", fd=").$(fd).$(']').$();
-        pending.set(r, M_TIMESTAMP, timestamp);
-        pending.set(r, M_FD, fd);
-        pending.set(r, M_OPERATION, initialBias == IODispatcherConfiguration.BIAS_READ ? IOOperation.READ : IOOperation.WRITE);
-        pending.set(r, ioContextFactory.newInstance(fd));
+    @Override
+    protected void pendingAdded(int index) {
+        pending.set(index, M_OPERATION, initialBias == IODispatcherConfiguration.BIAS_READ ? IOOperation.READ : IOOperation.WRITE);
     }
 
     private boolean processRegistrations(long timestamp) {

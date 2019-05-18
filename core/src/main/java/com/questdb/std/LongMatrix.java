@@ -48,18 +48,18 @@ public class LongMatrix<T> {
         }
     }
 
-    public int binarySearch(long v) {
+    public int binarySearch(long v, int index) {
         int low = 0;
         int high = pos;
 
         while (low < high) {
 
             if (high - low < 65) {
-                return scanSearch(v);
+                return scanSearch(v, index);
             }
 
             int mid = (low + high - 1) >>> 1;
-            long midVal = get(mid, 0);
+            long midVal = get(mid, index);
 
             if (midVal < v)
                 low = mid + 1;
@@ -130,10 +130,10 @@ public class LongMatrix<T> {
         return pos++;
     }
 
-    private int scanSearch(long v) {
+    private int scanSearch(long v, int index) {
         int sz = size();
         for (int i = 0; i < sz; i++) {
-            long f = get(i, 0);
+            long f = get(i, index);
             if (f == v) {
                 return i;
             }

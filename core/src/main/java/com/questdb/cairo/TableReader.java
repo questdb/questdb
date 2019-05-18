@@ -692,7 +692,13 @@ public class TableReader implements Closeable {
 
                 final long partitionSize = partitionIndex == partitionCount - 1 ? transientRowCount : TableUtils.readPartitionSize(ff, path, tempMem8b);
 
-                LOG.info().$("open partition ").utf8(path.$()).$(" [rowCount=").$(partitionSize).$(", transientRowCount=").$(transientRowCount).$(", partitionIndex=").$(partitionIndex).$(", partitionCount=").$(partitionCount).$(']').$();
+                LOG.info()
+                        .$("open partition ").utf8(path.$())
+                        .$(" [rowCount=").$(partitionSize)
+                        .$(", transientRowCount=").$(transientRowCount)
+                        .$(", partitionIndex=").$(partitionIndex)
+                        .$(", partitionCount=").$(partitionCount)
+                        .$(']').$();
 
                 if (partitionSize > 0) {
                     openPartitionColumns(path, getColumnBase(partitionIndex), partitionSize);
@@ -839,7 +845,13 @@ public class TableReader implements Closeable {
                     this.structVersion = structVersion;
                     this.dataVersion = dataVersion;
                     this.partitionTableVersion = partitionTableVersion;
-                    LOG.info().$("new transaction [txn=").$(txn).$(", transientRowCount=").$(transientRowCount).$(", fixedRowCount=").$(fixedRowCount).$(", maxTimestamp=").$(maxTimestamp).$(", attempts=").$(count).$(']').$();
+                    LOG.info()
+                            .$("new transaction [txn=").$(txn)
+                            .$(", transientRowCount=").$(transientRowCount)
+                            .$(", fixedRowCount=").$(fixedRowCount)
+                            .$(", maxTimestamp=").$(maxTimestamp)
+                            .$(", attempts=").$(count)
+                            .$(']').$();
                     return true;
                 }
                 // This is unlucky, sequences have changed while we were reading transaction data
