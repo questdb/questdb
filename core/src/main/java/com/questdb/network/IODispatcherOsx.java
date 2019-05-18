@@ -23,64 +23,28 @@
 
 package com.questdb.network;
 
-import com.questdb.log.Log;
-import com.questdb.log.LogFactory;
-import com.questdb.mp.*;
 import com.questdb.net.ChannelStatus;
 import com.questdb.std.LongMatrix;
 import com.questdb.std.Os;
-import com.questdb.std.time.MillisecondClock;
 
-import java.util.concurrent.atomic.AtomicInteger;
-
-public class IODispatcherOsx<C extends IOContext> extends SynchronizedJob implements IODispatcher<C> {
-    private static final Log LOG = LogFactory.getLog(IODispatcherOsx.class);
+public class IODispatcherOsx<C extends IOContext> extends AbstractIODispatcher<C> {
 
     private static final int M_TIMESTAMP = 0;
     private static final int M_FD = 1;
 
-    private final long serverFd;
-    private final RingQueue<IOEvent<C>> ioEventQueue;
-    private final Sequence ioEventPubSeq;
-    private final Sequence ioEventSubSeq;
-    private final RingQueue<IOEvent<C>> interestQueue;
-    private final MPSequence interestPubSeq;
-    private final SCSequence interestSubSeq;
-    private final MillisecondClock clock;
     private final Kqueue kqueue;
-    private final long idleConnectionTimeout;
     private final LongMatrix<C> pending = new LongMatrix<>(2);
-    private final int activeConnectionLimit;
     private final int capacity;
-    private final IOContextFactory<C> ioContextFactory;
-    private final NetworkFacade nf;
-    private final int initialBias;
-    private final AtomicInteger connectionCount = new AtomicInteger();
 
     public IODispatcherOsx(
             IODispatcherConfiguration configuration,
             IOContextFactory<C> ioContextFactory
     ) {
-        this.nf = configuration.getNetworkFacade();
-
-        this.ioEventQueue = new RingQueue<>(IOEvent::new, configuration.getIOQueueCapacity());
-        this.ioEventPubSeq = new SPSequence(configuration.getIOQueueCapacity());
-        this.ioEventSubSeq = new MCSequence(configuration.getIOQueueCapacity());
-        this.ioEventPubSeq.then(this.ioEventSubSeq).then(this.ioEventPubSeq);
-        this.interestQueue = new RingQueue<>(IOEvent::new, configuration.getInterestQueueCapacity());
-        this.interestPubSeq = new MPSequence(interestQueue.getCapacity());
-        this.interestSubSeq = new SCSequence();
-        this.interestPubSeq.then(this.interestSubSeq).then(this.interestPubSeq);
-        this.clock = configuration.getClock();
-        this.activeConnectionLimit = configuration.getActiveConnectionLimit();
-        this.idleConnectionTimeout = configuration.getIdleConnectionTimeout();
+        super(configuration, ioContextFactory);
         this.capacity = configuration.getEventCapacity();
-        this.ioContextFactory = ioContextFactory;
-        this.initialBias = configuration.getInitialBias();
 
         // bind socket
         this.kqueue = new Kqueue(capacity);
-        this.serverFd = nf.socketTcp(false);
         if (nf.bindTcp(this.serverFd, configuration.getBindIPv4Address(), configuration.getBindPort())) {
             nf.listen(this.serverFd, configuration.getListenBacklog());
 
@@ -99,71 +63,17 @@ public class IODispatcherOsx<C extends IOContext> extends SynchronizedJob implem
 
     @Override
     public void close() {
+        processDisconnects();
         this.kqueue.close();
         nf.close(serverFd, LOG);
 
-        int n = pending.size();
-        for (int i = 0; i < n; i++) {
-            disconnect(pending.get(i));
+        for (int i = 0, n = pending.size(); i < n; i++) {
+            doDisconnect(pending.get(i));
         }
 
-        drainQueueAndDisconnect();
-
-        long cursor;
-        do {
-            cursor = ioEventSubSeq.next();
-            if (cursor > -1) {
-                disconnect(ioEventQueue.get(cursor).context);
-                ioEventSubSeq.done(cursor);
-            }
-        } while (cursor != -1);
+        interestSubSeq.consumeAll(interestQueue, this.disconnectContextRef);
+        ioEventSubSeq.consumeAll(ioEventQueue, this.disconnectContextRef);
         LOG.info().$("closed").$();
-    }
-
-    @Override
-    public int getConnectionCount() {
-        return connectionCount.get();
-    }
-
-    @Override
-    public void registerChannel(C context, int operation) {
-        long cursor = interestPubSeq.nextBully();
-        IOEvent<C> evt = interestQueue.get(cursor);
-        evt.context = context;
-        evt.operation = operation;
-        LOG.debug().$("queuing [fd=").$(context.getFd()).$(", op=").$(operation).$(']').$();
-        interestPubSeq.done(cursor);
-    }
-
-    @Override
-    public boolean processIOQueue(IORequestProcessor<C> processor) {
-        long cursor = ioEventSubSeq.next();
-        while (cursor == -2) {
-            cursor = ioEventSubSeq.next();
-        }
-
-        if (cursor > -1) {
-            IOEvent<C> event = ioEventQueue.get(cursor);
-            C connectionContext = event.context;
-            final int operation = event.operation;
-            ioEventSubSeq.done(cursor);
-            processor.onRequest(operation, connectionContext, this);
-            return true;
-        }
-
-        return false;
-    }
-
-    @Override
-    public void disconnect(C context) {
-        final long fd = context.getFd();
-        LOG.info()
-                .$("disconnected [ip=").$ip(nf.getPeerIP(fd))
-                .$(", fd=").$(fd)
-                .$(']').$();
-        nf.close(fd, LOG);
-        ioContextFactory.done(context);
-        connectionCount.decrementAndGet();
     }
 
     private void accept() {
@@ -209,20 +119,6 @@ public class IODispatcherOsx<C extends IOContext> extends SynchronizedJob implem
         pending.set(r, ioContextFactory.newInstance(fd));
     }
 
-    private void drainQueueAndDisconnect() {
-        long cursor;
-        do {
-            cursor = interestSubSeq.next();
-            if (cursor > -1) {
-                final long available = interestSubSeq.available();
-                while (cursor < available) {
-                    disconnect(interestQueue.get(cursor++).context);
-                }
-                interestSubSeq.done(available - 1);
-            }
-        } while (cursor != -1);
-    }
-
     private void enqueuePending(int watermark) {
         int index = 0;
         for (int i = watermark, sz = pending.size(), offset = 0; i < sz; i++, offset += KqueueAccessor.SIZEOF_KEVENT) {
@@ -262,7 +158,7 @@ public class IODispatcherOsx<C extends IOContext> extends SynchronizedJob implem
     private void processIdleConnections(long deadline) {
         int count = 0;
         for (int i = 0, n = pending.size(); i < n && pending.get(i, M_TIMESTAMP) < deadline; i++, count++) {
-            disconnect(pending.get(i));
+            doDisconnect(pending.get(i));
         }
         pending.zapTop(count);
     }
@@ -311,15 +207,6 @@ public class IODispatcherOsx<C extends IOContext> extends SynchronizedJob implem
         return useful;
     }
 
-    private void publishOperation(int operation, C context) {
-        long cursor = ioEventPubSeq.nextBully();
-        IOEvent<C> evt = ioEventQueue.get(cursor);
-        evt.context = context;
-        evt.operation = operation;
-        ioEventPubSeq.done(cursor);
-        LOG.debug().$("fired [fd=").$(context.getFd()).$(", op=").$(evt.operation).$(", pos=").$(cursor).$(']').$();
-    }
-
     private void registerWithKQueue(int changeCount) {
         if (kqueue.register(changeCount) != 0) {
             throw NetworkError.instance(Os.errno()).put("could not register [changeCount=").put(changeCount).put(']');
@@ -329,6 +216,7 @@ public class IODispatcherOsx<C extends IOContext> extends SynchronizedJob implem
 
     @Override
     protected boolean runSerially() {
+        processDisconnects();
         boolean useful = false;
         final int n = kqueue.poll();
         int watermark = pending.size();

@@ -33,6 +33,18 @@ public class MCSequence extends AbstractMSequence {
         super(cycle, waitStrategy);
     }
 
+    public <T> void consumeAll(RingQueue<T> queue, QueueConsumer<T> consumer) {
+        long cursor;
+        do {
+            cursor = next();
+            if (cursor > -1) {
+                consumer.consume(queue.get(cursor));
+                done(cursor);
+            }
+        } while (cursor != -1);
+
+    }
+
     @Override
     public long next() {
         long cached = cache;

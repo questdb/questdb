@@ -25,16 +25,12 @@ package com.questdb.network;
 
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
-import com.questdb.mp.*;
 import com.questdb.std.LongIntHashMap;
 import com.questdb.std.LongMatrix;
 import com.questdb.std.Misc;
 import com.questdb.std.Unsafe;
-import com.questdb.std.time.MillisecondClock;
 
-import java.util.concurrent.atomic.AtomicInteger;
-
-public class IODispatcherWindows<C extends IOContext> extends SynchronizedJob implements IODispatcher<C> {
+public class IODispatcherWindows<C extends IOContext> extends AbstractIODispatcher<C> {
 
     private static final int M_TIMESTAMP = 0;
     private static final int M_FD = 1;
@@ -43,55 +39,17 @@ public class IODispatcherWindows<C extends IOContext> extends SynchronizedJob im
 
     private final FDSet readFdSet;
     private final FDSet writeFdSet;
-    private final long serverFd;
-    private final RingQueue<IOEvent<C>> interestQueue;
-    private final MPSequence interestPubSeq;
-    private final SCSequence interestSubSeq;
-    private final MillisecondClock clock;
-    private final long idleConnectionTimeout;
     private final LongMatrix<C> pending = new LongMatrix<>(4);
-    private final int activeConnectionLimit;
     private final LongIntHashMap fds = new LongIntHashMap();
-    private final IOContextFactory<C> ioContextFactory;
-    private final RingQueue<IOEvent<C>> ioEventQueue;
-    private final SPSequence ioEventPubSeq;
-    private final MCSequence ioEventSubSeq;
-    private final AtomicInteger connectionCount = new AtomicInteger();
-    private final NetworkFacade nf;
-    private final int initialBias;
     private final SelectFacade sf;
-    private final RingQueue<IOEvent<C>> disconnectQueue;
-    private final MPSequence disconnectPubSeq;
-    private final SCSequence disconnectSubSeq;
-    private final QueueConsumer<IOEvent<C>> disconnectContextRef = this::disconnectContext;
 
     public IODispatcherWindows(
             IODispatcherConfiguration configuration,
             IOContextFactory<C> ioContextFactory
     ) {
-        this.nf = configuration.getNetworkFacade();
+        super(configuration, ioContextFactory);
         this.readFdSet = new FDSet(configuration.getEventCapacity());
         this.writeFdSet = new FDSet(configuration.getEventCapacity());
-        this.ioEventQueue = new RingQueue<>(IOEvent::new, configuration.getIOQueueCapacity());
-        this.ioEventPubSeq = new SPSequence(configuration.getIOQueueCapacity());
-        this.ioEventSubSeq = new MCSequence(configuration.getIOQueueCapacity());
-        this.ioEventPubSeq.then(this.ioEventSubSeq).then(this.ioEventPubSeq);
-        this.interestQueue = new RingQueue<>(IOEvent::new, configuration.getInterestQueueCapacity());
-        this.interestPubSeq = new MPSequence(interestQueue.getCapacity());
-        this.interestSubSeq = new SCSequence();
-        this.interestPubSeq.then(this.interestSubSeq).then(this.interestPubSeq);
-
-        this.disconnectQueue = new RingQueue<>(IOEvent::new, configuration.getIOQueueCapacity());
-        this.disconnectPubSeq = new MPSequence(disconnectQueue.getCapacity());
-        this.disconnectSubSeq = new SCSequence();
-        this.disconnectPubSeq.then(this.disconnectSubSeq).then(disconnectPubSeq);
-
-        this.clock = configuration.getClock();
-        this.activeConnectionLimit = configuration.getActiveConnectionLimit();
-        this.idleConnectionTimeout = configuration.getIdleConnectionTimeout();
-        this.ioContextFactory = ioContextFactory;
-        this.initialBias = configuration.getInitialBias();
-        this.serverFd = nf.socketTcp(false);
         this.sf = configuration.getSelectFacade();
         if (nf.bindTcp(this.serverFd, configuration.getBindIPv4Address(), configuration.getBindPort())) {
             nf.listen(this.serverFd, configuration.getListenBacklog());
@@ -107,25 +65,6 @@ public class IODispatcherWindows<C extends IOContext> extends SynchronizedJob im
         }
     }
 
-    private void doDisconnect(C context) {
-        final long fd = context.getFd();
-        LOG.info()
-                .$("disconnected [ip=").$ip(nf.getPeerIP(fd))
-                .$(", fd=").$(fd)
-                .$(']').$();
-        nf.close(fd, LOG);
-        ioContextFactory.done(context);
-        connectionCount.decrementAndGet();
-    }
-
-    private void processDisconnects() {
-        disconnectSubSeq.consumeAll(disconnectQueue, this.disconnectContextRef);
-    }
-
-    private void disconnectContext(IOEvent<C> event) {
-        doDisconnect(event.context);
-    }
-
     @Override
     public void close() {
 
@@ -139,59 +78,9 @@ public class IODispatcherWindows<C extends IOContext> extends SynchronizedJob im
             Misc.free(pending.get(i));
         }
 
-        drainQueueAndDisconnect();
-
-        long cursor;
-        do {
-            cursor = ioEventSubSeq.next();
-            if (cursor > -1) {
-                doDisconnect(ioEventQueue.get(cursor).context);
-                ioEventSubSeq.done(cursor);
-            }
-        } while (cursor != -1);
+        interestSubSeq.consumeAll(interestQueue, this.disconnectContextRef);
+        ioEventSubSeq.consumeAll(ioEventQueue, this.disconnectContextRef);
         LOG.info().$("closed").$();
-    }
-
-    @Override
-    public int getConnectionCount() {
-        return connectionCount.get();
-    }
-
-    @Override
-    public void registerChannel(C context, int operation) {
-        long cursor = interestPubSeq.nextBully();
-        IOEvent<C> evt = interestQueue.get(cursor);
-        evt.context = context;
-        evt.operation = operation;
-        LOG.debug().$("queuing [fd=").$(context.getFd()).$(", op=").$(operation).$(']').$();
-        interestPubSeq.done(cursor);
-    }
-
-    @Override
-    public boolean processIOQueue(IORequestProcessor<C> processor) {
-        long cursor = ioEventSubSeq.next();
-        while (cursor == -2) {
-            cursor = ioEventSubSeq.next();
-        }
-
-        if (cursor > -1) {
-            IOEvent<C> event = ioEventQueue.get(cursor);
-            C connectionContext = event.context;
-            final int operation = event.operation;
-            ioEventSubSeq.done(cursor);
-            processor.onRequest(operation, connectionContext, this);
-            return true;
-        }
-
-        return false;
-    }
-
-    @Override
-    public void disconnect(C context) {
-        final long cursor = disconnectPubSeq.nextBully();
-        assert cursor > -1;
-        disconnectQueue.get(cursor).context = context;
-        disconnectPubSeq.done(cursor);
     }
 
     private void accept(long timestamp) {
@@ -236,10 +125,6 @@ public class IODispatcherWindows<C extends IOContext> extends SynchronizedJob im
         pending.set(r, ioContextFactory.newInstance(fd));
     }
 
-    private void drainQueueAndDisconnect() {
-        interestSubSeq.consumeAll(interestQueue, this.disconnectContextRef);
-    }
-
     private boolean processRegistrations(long timestamp) {
         long cursor;
         boolean useful = false;
@@ -281,15 +166,6 @@ public class IODispatcherWindows<C extends IOContext> extends SynchronizedJob im
                 fds.put(fd, SelectAccessor.FD_READ | SelectAccessor.FD_WRITE);
             }
         }
-    }
-
-    private void publishOperation(int operation, C context) {
-        long cursor = ioEventPubSeq.nextBully();
-        IOEvent<C> evt = ioEventQueue.get(cursor);
-        evt.context = context;
-        evt.operation = operation;
-        ioEventPubSeq.done(cursor);
-        LOG.debug().$("fired [fd=").$(context.getFd()).$(", op=").$(evt.operation).$(", pos=").$(cursor).$(']').$();
     }
 
     @Override
