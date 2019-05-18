@@ -204,7 +204,6 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
 
                     if (read == 0) {
                         // client is not sending anything
-                        LOG.info().$("ok, laters").$();
                         dispatcher.registerChannel(this, IOOperation.READ);
                         return;
                     }

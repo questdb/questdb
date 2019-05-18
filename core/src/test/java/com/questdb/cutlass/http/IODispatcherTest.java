@@ -794,7 +794,6 @@ public class IODispatcherTest {
                         );
                     } while (serverRunning.get());
                     serverHaltLatch.countDown();
-                    System.out.println("exit");
                 }).start();
 
 
@@ -814,7 +813,6 @@ public class IODispatcherTest {
                 Assert.assertFalse(configuration.getActiveConnectionLimit() < dispatcher.getConnectionCount());
                 serverRunning.set(false);
                 serverHaltLatch.await();
-                System.out.println("closing");
             }
         });
     }

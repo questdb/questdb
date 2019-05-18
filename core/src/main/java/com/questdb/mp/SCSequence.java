@@ -75,4 +75,18 @@ public class SCSequence extends AbstractSSequence {
         cache = barrier.availableIndex(next);
         return next > cache ? -1 : next;
     }
+
+    public <T> void consumeAll(RingQueue<T> queue, QueueConsumer<T> consumer) {
+        long cursor;
+        do {
+            cursor = next();
+            if (cursor > -1) {
+                final long available = available();
+                while (cursor < available) {
+                    consumer.consume(queue.get(cursor++));
+                }
+                done(available - 1);
+            }
+        } while (cursor != -1);
+    }
 }
