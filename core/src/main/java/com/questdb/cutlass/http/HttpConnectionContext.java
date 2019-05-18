@@ -25,7 +25,10 @@ package com.questdb.cutlass.http;
 
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
-import com.questdb.network.*;
+import com.questdb.network.IOContext;
+import com.questdb.network.IODispatcher;
+import com.questdb.network.IOOperation;
+import com.questdb.network.NetworkFacade;
 import com.questdb.std.*;
 import com.questdb.std.str.DirectByteCharSequence;
 
@@ -126,7 +129,7 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
                     handleClientRecv(dispatcher, selector);
                 } catch (PeerDisconnectedException ignore) {
                     LOG.debug().$("peer disconnected").$();
-                    dispatcher.disconnect(this, DisconnectReason.PEER);
+                    dispatcher.disconnect(this);
                 } catch (PeerIsSlowToReadException ignore) {
                     LOG.debug().$("peer is slow writer").$();
                     dispatcher.registerChannel(this, IOOperation.READ);
@@ -142,14 +145,14 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
                         LOG.debug().$("peer is slow reader").$();
                         dispatcher.registerChannel(this, IOOperation.WRITE);
                     } catch (PeerDisconnectedException ignore) {
-                        dispatcher.disconnect(this, DisconnectReason.PEER);
+                        dispatcher.disconnect(this);
                     }
                 } else {
                     assert false;
                 }
                 break;
             default:
-                dispatcher.disconnect(this, DisconnectReason.SILLY);
+                dispatcher.disconnect(this);
                 break;
         }
     }
@@ -169,7 +172,7 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
         try {
             processor.onRequestComplete(this, dispatcher);
         } catch (PeerDisconnectedException ignore) {
-            dispatcher.disconnect(this, DisconnectReason.PEER);
+            dispatcher.disconnect(this);
         } catch (PeerIsSlowToReadException e) {
             dispatcher.registerChannel(this, IOOperation.WRITE);
         }
@@ -195,7 +198,7 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
                     if (read < 0) {
                         LOG.debug().$("done [fd=").$(fd).$(']').$();
                         // peer disconnect
-                        dispatcher.disconnect(this, DisconnectReason.PEER);
+                        dispatcher.disconnect(this);
                         return;
                     }
 
@@ -265,7 +268,7 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
                 while (true) {
                     final int n = nf.recv(fd, buf, bufRemaining);
                     if (n < 0) {
-                        dispatcher.disconnect(this, DisconnectReason.PEER);
+                        dispatcher.disconnect(this);
                         break;
                     }
 
@@ -326,7 +329,7 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
                 read = nf.recv(fd, recvBuffer, 1);
                 if (read != 0) {
                     LOG.debug().$("disconnect after request [fd=").$(fd).$(']').$();
-                    dispatcher.disconnect(this, DisconnectReason.PEER);
+                    dispatcher.disconnect(this);
                 } else {
                     processor.onHeadersReady(this);
                     LOG.debug().$("good [fd=").$(fd).$(']').$();
@@ -334,7 +337,7 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
                         processor.onRequestComplete(this, dispatcher);
                         resumeProcessor = null;
                     } catch (PeerDisconnectedException ignore) {
-                        dispatcher.disconnect(this, DisconnectReason.PEER);
+                        dispatcher.disconnect(this);
                     } catch (PeerIsSlowToReadException ignore) {
                         LOG.debug().$("peer is slow reader [two]").$();
                         dispatcher.registerChannel(this, IOOperation.WRITE);

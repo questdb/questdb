@@ -32,7 +32,6 @@ import com.questdb.cutlass.text.Atomicity;
 import com.questdb.cutlass.text.TextLoader;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
-import com.questdb.network.DisconnectReason;
 import com.questdb.network.IODispatcher;
 import com.questdb.network.IOOperation;
 import com.questdb.std.*;
@@ -292,7 +291,7 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
             if (name == null) {
                 transientContext.simpleResponse().sendStatus(400, "no name given");
                 // we have to disconnect to interrupt potentially large upload
-                transientDispatcher.disconnect(transientContext, DisconnectReason.SILLY);
+                transientDispatcher.disconnect(transientContext);
                 return;
             }
 

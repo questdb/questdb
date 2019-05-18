@@ -52,6 +52,9 @@ public class IODispatcherLinux<C extends IOContext> extends SynchronizedJob impl
     private final NetworkFacade nf;
     private final int initialBias;
     private final AtomicInteger connectionCount = new AtomicInteger();
+    private final RingQueue<IOEvent<C>> disconnectQueue;
+    private final MPSequence disconnectPubSeq;
+    private final SCSequence disconnectSubSeq;
     private long fdid = 1;
 
     public IODispatcherLinux(
@@ -67,6 +70,12 @@ public class IODispatcherLinux<C extends IOContext> extends SynchronizedJob impl
         this.interestPubSeq = new MPSequence(interestQueue.getCapacity());
         this.interestSubSeq = new SCSequence();
         this.interestPubSeq.then(this.interestSubSeq).then(this.interestPubSeq);
+
+        this.disconnectQueue = new RingQueue<>(IOEvent::new, configuration.getIOQueueCapacity());
+        this.disconnectPubSeq = new MPSequence(disconnectQueue.getCapacity());
+        this.disconnectSubSeq = new SCSequence();
+        this.disconnectPubSeq.then(this.disconnectSubSeq).then(disconnectPubSeq);
+
         this.clock = configuration.getClock();
         this.activeConnectionLimit = configuration.getActiveConnectionLimit();
         this.idleConnectionTimeout = configuration.getIdleConnectionTimeout();
@@ -88,12 +97,13 @@ public class IODispatcherLinux<C extends IOContext> extends SynchronizedJob impl
 
     @Override
     public void close() {
+        processDisconnects();
         this.epoll.close();
         nf.close(serverFd, LOG);
 
         int n = pending.size();
         for (int i = 0; i < n; i++) {
-            disconnect(pending.get(i), DisconnectReason.SILLY);
+            doDisconnect(pending.get(i));
         }
 
         drainQueueAndDisconnect();
@@ -102,7 +112,7 @@ public class IODispatcherLinux<C extends IOContext> extends SynchronizedJob impl
         do {
             cursor = ioEventSubSeq.next();
             if (cursor > -1) {
-                disconnect(ioEventQueue.get(cursor).context, DisconnectReason.SILLY);
+                doDisconnect(ioEventQueue.get(cursor).context);
                 ioEventSubSeq.done(cursor);
             }
         } while (cursor != -1);
@@ -144,16 +154,11 @@ public class IODispatcherLinux<C extends IOContext> extends SynchronizedJob impl
     }
 
     @Override
-    public void disconnect(C context, int disconnectReason) {
-        final long fd = context.getFd();
-        LOG.info()
-                .$("disconnected [ip=").$ip(nf.getPeerIP(fd))
-                .$(", fd=").$(fd)
-                .$(", reason=").$(DisconnectReason.nameOf(disconnectReason))
-                .$(']').$();
-        nf.close(fd, LOG);
-        ioContextFactory.done(context);
-        connectionCount.decrementAndGet();
+    public void disconnect(C context) {
+        final long cursor = disconnectPubSeq.nextBully();
+        assert cursor > -1;
+        disconnectQueue.get(cursor).context = context;
+        disconnectPubSeq.done(cursor);
     }
 
     private void accept() {
@@ -199,6 +204,17 @@ public class IODispatcherLinux<C extends IOContext> extends SynchronizedJob impl
         pending.set(r, ioContextFactory.newInstance(fd));
     }
 
+    private void doDisconnect(C context) {
+        final long fd = context.getFd();
+        LOG.info()
+                .$("disconnected [ip=").$ip(nf.getPeerIP(fd))
+                .$(", fd=").$(fd)
+                .$(']').$();
+        nf.close(fd, LOG);
+        ioContextFactory.done(context);
+        connectionCount.decrementAndGet();
+    }
+
     private void drainQueueAndDisconnect() {
         long cursor;
         do {
@@ -206,7 +222,7 @@ public class IODispatcherLinux<C extends IOContext> extends SynchronizedJob impl
             if (cursor > -1) {
                 final long available = interestSubSeq.available();
                 while (cursor < available) {
-                    disconnect(interestQueue.get(cursor++).context, DisconnectReason.SILLY);
+                    doDisconnect(interestQueue.get(cursor++).context);
                 }
                 interestSubSeq.done(available - 1);
             }
@@ -228,10 +244,25 @@ public class IODispatcherLinux<C extends IOContext> extends SynchronizedJob impl
         }
     }
 
+    private void processDisconnects() {
+        while (true) {
+            long cursor = disconnectSubSeq.next();
+            if (cursor < 0) {
+                break;
+            }
+
+            final long available = disconnectSubSeq.available();
+            while (cursor < available) {
+                doDisconnect(disconnectQueue.get(cursor++).context);
+            }
+            disconnectSubSeq.done(available - 1);
+        }
+    }
+
     private void processIdleConnections(long deadline) {
         int count = 0;
         for (int i = 0, n = pending.size(); i < n && pending.get(i, M_TIMESTAMP) < deadline; i++, count++) {
-            disconnect(pending.get(i), DisconnectReason.IDLE);
+            doDisconnect(pending.get(i));
         }
         pending.zapTop(count);
     }
@@ -280,7 +311,15 @@ public class IODispatcherLinux<C extends IOContext> extends SynchronizedJob impl
 
     @Override
     protected boolean runSerially() {
+        // todo: introduce fairness factor
+        //  current worker impl will still proceed to execute another job even if this one was useful
+        //  we should see if we can stay inside of this method until we have a completely idle iteration
+        //  at the same time we should hog this thread in case we are always 'useful', we can probably
+        //  introduce a loop count after which we always exit
         boolean useful = false;
+
+        processDisconnects();
+
         final int n = epoll.poll();
         int watermark = pending.size();
         int offset = 0;

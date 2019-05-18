@@ -113,7 +113,7 @@ public class IODispatcherWindows<C extends IOContext> extends SynchronizedJob im
         do {
             cursor = ioEventSubSeq.next();
             if (cursor > -1) {
-                disconnect(ioEventQueue.get(cursor).context, DisconnectReason.SILLY);
+                disconnect(ioEventQueue.get(cursor).context);
                 ioEventSubSeq.done(cursor);
             }
         } while (cursor != -1);
@@ -155,12 +155,11 @@ public class IODispatcherWindows<C extends IOContext> extends SynchronizedJob im
     }
 
     @Override
-    public void disconnect(C context, int disconnectReason) {
+    public void disconnect(C context) {
         final long fd = context.getFd();
         LOG.info()
                 .$("disconnected [ip=").$ip(nf.getPeerIP(fd))
                 .$(", fd=").$(fd)
-                .$(", reason=").$(DisconnectReason.nameOf(disconnectReason))
                 .$(']').$();
         nf.close(fd, LOG);
         ioContextFactory.done(context);
@@ -216,7 +215,7 @@ public class IODispatcherWindows<C extends IOContext> extends SynchronizedJob im
             if (cursor > -1) {
                 final long available = interestSubSeq.available();
                 while (cursor < available) {
-                    disconnect(interestQueue.get(cursor++).context, DisconnectReason.SILLY);
+                    disconnect(interestQueue.get(cursor++).context);
                 }
                 interestSubSeq.done(available - 1);
             }
@@ -311,7 +310,7 @@ public class IODispatcherWindows<C extends IOContext> extends SynchronizedJob im
 
                 // check if expired
                 if (ts < deadline && fd != serverFd) {
-                    disconnect(pending.get(i), DisconnectReason.IDLE);
+                    disconnect(pending.get(i));
                     pending.deleteRow(i);
                     n--;
                     useful = true;

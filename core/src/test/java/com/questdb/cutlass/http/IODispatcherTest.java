@@ -53,7 +53,6 @@ import java.util.concurrent.locks.LockSupport;
 
 import static com.questdb.cutlass.http.HttpConnectionContext.dump;
 
-
 public class IODispatcherTest {
     private static Log LOG = LogFactory.getLog(IODispatcherTest.class);
 
@@ -89,7 +88,7 @@ public class IODispatcherTest {
                                 (operation, context, disp) -> {
                                     if (operation == IOOperation.WRITE) {
                                         Assert.assertEquals(1024, Net.send(context.getFd(), context.buffer, 1024));
-                                        disp.disconnect(context, DisconnectReason.SILLY);
+                                        disp.disconnect(context);
                                     }
                                 }
                         );
@@ -795,6 +794,7 @@ public class IODispatcherTest {
                         );
                     } while (serverRunning.get());
                     serverHaltLatch.countDown();
+                    System.out.println("exit");
                 }).start();
 
 
@@ -814,6 +814,7 @@ public class IODispatcherTest {
                 Assert.assertFalse(configuration.getActiveConnectionLimit() < dispatcher.getConnectionCount());
                 serverRunning.set(false);
                 serverHaltLatch.await();
+                System.out.println("closing");
             }
         });
     }
@@ -1730,7 +1731,7 @@ public class IODispatcherTest {
 
                                 // there is interesting situation here, its possible that header is fully
                                 // read and there are either more bytes or disconnect lingering
-                                dispatcher.disconnect(connectionContext, DisconnectReason.SILLY);
+                                dispatcher.disconnect(connectionContext);
                             }
                         };
 

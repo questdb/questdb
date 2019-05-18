@@ -27,7 +27,6 @@ import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.mp.*;
 import com.questdb.net.ChannelStatus;
-import com.questdb.net.DisconnectReason;
 import com.questdb.std.LongMatrix;
 import com.questdb.std.Os;
 import com.questdb.std.time.MillisecondClock;
@@ -105,7 +104,7 @@ public class IODispatcherOsx<C extends IOContext> extends SynchronizedJob implem
 
         int n = pending.size();
         for (int i = 0; i < n; i++) {
-            disconnect(pending.get(i), DisconnectReason.SILLY);
+            disconnect(pending.get(i));
         }
 
         drainQueueAndDisconnect();
@@ -114,7 +113,7 @@ public class IODispatcherOsx<C extends IOContext> extends SynchronizedJob implem
         do {
             cursor = ioEventSubSeq.next();
             if (cursor > -1) {
-                disconnect(ioEventQueue.get(cursor).context, DisconnectReason.SILLY);
+                disconnect(ioEventQueue.get(cursor).context);
                 ioEventSubSeq.done(cursor);
             }
         } while (cursor != -1);
@@ -156,12 +155,11 @@ public class IODispatcherOsx<C extends IOContext> extends SynchronizedJob implem
     }
 
     @Override
-    public void disconnect(C context, int disconnectReason) {
+    public void disconnect(C context) {
         final long fd = context.getFd();
         LOG.info()
                 .$("disconnected [ip=").$ip(nf.getPeerIP(fd))
                 .$(", fd=").$(fd)
-                .$(", reason=").$(DisconnectReason.nameOf(disconnectReason))
                 .$(']').$();
         nf.close(fd, LOG);
         ioContextFactory.done(context);
@@ -218,7 +216,7 @@ public class IODispatcherOsx<C extends IOContext> extends SynchronizedJob implem
             if (cursor > -1) {
                 final long available = interestSubSeq.available();
                 while (cursor < available) {
-                    disconnect(interestQueue.get(cursor++).context, DisconnectReason.SILLY);
+                    disconnect(interestQueue.get(cursor++).context);
                 }
                 interestSubSeq.done(available - 1);
             }
@@ -264,7 +262,7 @@ public class IODispatcherOsx<C extends IOContext> extends SynchronizedJob implem
     private void processIdleConnections(long deadline) {
         int count = 0;
         for (int i = 0, n = pending.size(); i < n && pending.get(i, M_TIMESTAMP) < deadline; i++, count++) {
-            disconnect(pending.get(i), DisconnectReason.IDLE);
+            disconnect(pending.get(i));
         }
         pending.zapTop(count);
     }
