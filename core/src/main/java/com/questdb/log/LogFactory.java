@@ -264,7 +264,7 @@ public class LogFactory implements Closeable {
         final Constructor constructor;
         try {
             cl = Class.forName(clazz);
-            constructor = cl.getDeclaredConstructor(RingQueue.class, Sequence.class, int.class);
+            constructor = cl.getDeclaredConstructor(RingQueue.class, SCSequence.class, int.class);
         } catch (ClassNotFoundException e) {
             throw new LogError("Class not found " + clazz, e);
         } catch (NoSuchMethodException e) {
@@ -541,7 +541,7 @@ public class LogFactory implements Closeable {
     private static class Holder implements Closeable {
         private final RingQueue<LogRecordSink> ring;
         private final Sequence lSeq;
-        private Sequence wSeq;
+        private SCSequence wSeq;
         private FanOut fanOut;
 
         public Holder(int queueDepth, final int recordLength) {

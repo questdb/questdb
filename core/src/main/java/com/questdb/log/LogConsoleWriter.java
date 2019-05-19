@@ -24,7 +24,7 @@
 package com.questdb.log;
 
 import com.questdb.mp.RingQueue;
-import com.questdb.mp.Sequence;
+import com.questdb.mp.SCSequence;
 import com.questdb.mp.SynchronizedJob;
 import com.questdb.std.Files;
 
@@ -33,10 +33,10 @@ import java.io.Closeable;
 public class LogConsoleWriter extends SynchronizedJob implements Closeable, LogWriter {
     private final long fd = Files.getStdOutFd();
     private final RingQueue<LogRecordSink> ring;
-    private final Sequence subSeq;
+    private final SCSequence subSeq;
     private final int level;
 
-    public LogConsoleWriter(RingQueue<LogRecordSink> ring, Sequence subSeq, int level) {
+    public LogConsoleWriter(RingQueue<LogRecordSink> ring, SCSequence subSeq, int level) {
         this.ring = ring;
         this.subSeq = subSeq;
         this.level = level;
@@ -52,16 +52,12 @@ public class LogConsoleWriter extends SynchronizedJob implements Closeable, LogW
 
     @Override
     public boolean runSerially() {
-        long cursor = subSeq.next();
-        if (cursor < 0) {
-            return false;
-        }
+        return subSeq.consumeAll(ring, this::toStdOut);
+    }
 
-        final LogRecordSink sink = ring.get(cursor);
+    private void toStdOut(LogRecordSink sink) {
         if ((sink.getLevel() & this.level) != 0) {
             Files.append(fd, sink.getAddress(), sink.length());
         }
-        subSeq.done(cursor);
-        return true;
     }
 }

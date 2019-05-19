@@ -54,7 +54,7 @@ public class LogBenchmark {
 
     @Benchmark
     public void testLogOneInt() {
-        LOG.debug().$("brown fox jumped over ").$(counter).$(" fence").$();
+        LOG.info().$("brown fox jumped over ").$(counter).$(" fence").$();
     }
 
 

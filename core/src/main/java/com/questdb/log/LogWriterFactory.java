@@ -24,9 +24,9 @@
 package com.questdb.log;
 
 import com.questdb.mp.RingQueue;
-import com.questdb.mp.Sequence;
+import com.questdb.mp.SCSequence;
 
 @FunctionalInterface
 public interface LogWriterFactory {
-    LogWriter createLogWriter(RingQueue<LogRecordSink> ring, Sequence seq, int level);
+    LogWriter createLogWriter(RingQueue<LogRecordSink> ring, SCSequence seq, int level);
 }

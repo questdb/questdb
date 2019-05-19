@@ -24,7 +24,7 @@
 package com.questdb.log;
 
 import com.questdb.mp.RingQueue;
-import com.questdb.mp.Sequence;
+import com.questdb.mp.SCSequence;
 import com.questdb.mp.SynchronizedJob;
 import com.questdb.std.*;
 import com.questdb.std.str.Path;
@@ -35,7 +35,7 @@ public class LogFileWriter extends SynchronizedJob implements Closeable, LogWrit
 
     private static final int DEFAULT_BUFFER_SIZE = 1024 * 1024;
     private final RingQueue<LogRecordSink> ring;
-    private final Sequence subSeq;
+    private final SCSequence subSeq;
     private final int level;
     private long fd = -1;
     private long lim;
@@ -48,7 +48,7 @@ public class LogFileWriter extends SynchronizedJob implements Closeable, LogWrit
     private String bufferSize;
     private int bufSize;
 
-    public LogFileWriter(RingQueue<LogRecordSink> ring, Sequence subSeq, int level) {
+    public LogFileWriter(RingQueue<LogRecordSink> ring, SCSequence subSeq, int level) {
         this.ring = ring;
         this.subSeq = subSeq;
         this.level = level;
@@ -101,18 +101,27 @@ public class LogFileWriter extends SynchronizedJob implements Closeable, LogWrit
 
     @Override
     public boolean runSerially() {
-        long cursor = subSeq.next();
-        if (cursor < 0) {
-
-            if (_wptr > buf) {
-                flush();
-                return true;
-            }
-
-            return false;
+        if (subSeq.consumeAll(ring, this::copyToBuffer)) {
+            return true;
+        }
+        if (_wptr > buf) {
+            flush();
+            return true;
         }
 
-        final LogRecordSink sink = ring.get(cursor);
+        return false;
+    }
+
+    @SuppressWarnings("unused")
+    public void setBufferSize(String bufferSize) {
+        this.bufferSize = bufferSize;
+    }
+
+    public void setLocation(String location) {
+        this.location = location;
+    }
+
+    private void copyToBuffer(LogRecordSink sink) {
         if ((sink.getLevel() & this.level) != 0) {
             int l = sink.length();
 
@@ -123,17 +132,6 @@ public class LogFileWriter extends SynchronizedJob implements Closeable, LogWrit
             Unsafe.getUnsafe().copyMemory(sink.getAddress(), _wptr, l);
             _wptr += l;
         }
-        subSeq.done(cursor);
-        return true;
-    }
-
-    @SuppressWarnings("unused")
-    public void setBufferSize(String bufferSize) {
-        this.bufferSize = bufferSize;
-    }
-
-    public void setLocation(String location) {
-        this.location = location;
     }
 
     private void flush() {

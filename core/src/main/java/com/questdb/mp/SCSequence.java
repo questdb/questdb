@@ -76,10 +76,13 @@ public class SCSequence extends AbstractSSequence {
         return next > cache ? -1 : next;
     }
 
-    public <T> void consumeAll(RingQueue<T> queue, QueueConsumer<T> consumer) {
-        long cursor;
+    public <T> boolean consumeAll(RingQueue<T> queue, QueueConsumer<T> consumer) {
+        long cursor = next();
+        if (cursor < 0) {
+            return false;
+        }
+
         do {
-            cursor = next();
             if (cursor > -1) {
                 final long available = available();
                 while (cursor < available) {
@@ -87,6 +90,8 @@ public class SCSequence extends AbstractSSequence {
                 }
                 done(available - 1);
             }
-        } while (cursor != -1);
+        } while ((cursor = next()) != -1);
+
+        return true;
     }
 }

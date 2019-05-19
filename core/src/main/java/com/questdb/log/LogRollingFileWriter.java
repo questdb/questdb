@@ -24,7 +24,7 @@
 package com.questdb.log;
 
 import com.questdb.mp.RingQueue;
-import com.questdb.mp.Sequence;
+import com.questdb.mp.SCSequence;
 import com.questdb.mp.SynchronizedJob;
 import com.questdb.std.*;
 import com.questdb.std.microtime.*;
@@ -39,7 +39,7 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
     private static final int DEFAULT_BUFFER_SIZE = 4 * 1024 * 1024;
     private final DateFormatCompiler compiler = new DateFormatCompiler();
     private final RingQueue<LogRecordSink> ring;
-    private final Sequence subSeq;
+    private final SCSequence subSeq;
     private final int level;
     private final Path path = new Path();
     private final Path renameToPath = new Path();
@@ -65,7 +65,7 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
     private long rollDeadline;
     private NextDeadline rollDeadlineFunction;
 
-    public LogRollingFileWriter(RingQueue<LogRecordSink> ring, Sequence subSeq, int level) {
+    public LogRollingFileWriter(RingQueue<LogRecordSink> ring, SCSequence subSeq, int level) {
         this(FilesFacadeImpl.INSTANCE, MicrosecondClockImpl.INSTANCE, ring, subSeq, level);
     }
 
@@ -73,7 +73,7 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
             FilesFacade ff,
             MicrosecondClock clock,
             RingQueue<LogRecordSink> ring,
-            Sequence subSeq,
+            SCSequence subSeq,
             int level
     ) {
         this.ff = ff;
@@ -167,29 +167,16 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
 
     @Override
     public boolean runSerially() {
-        long cursor = subSeq.next();
-        if (cursor < 0) {
-            if (++idleSpinCount > nSpinBeforeFlush && _wptr > buf) {
-                flush();
-                idleSpinCount = 0;
-                return true;
-            }
-            return false;
+        if (subSeq.consumeAll(ring, this::copyToBuffer)) {
+            return true;
         }
 
-        final LogRecordSink sink = ring.get(cursor);
-        if ((sink.getLevel() & this.level) != 0) {
-            int l = sink.length();
-
-            if (_wptr + l >= lim) {
-                flush();
-            }
-
-            Unsafe.getUnsafe().copyMemory(sink.getAddress(), _wptr, l);
-            _wptr += l;
+        if (++idleSpinCount > nSpinBeforeFlush && _wptr > buf) {
+            flush();
+            idleSpinCount = 0;
+            return true;
         }
-        subSeq.done(cursor);
-        return true;
+        return false;
     }
 
     public void setBufferSize(String bufferSize) {
@@ -224,6 +211,19 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
         while (ff.exists(path.$())) {
             pushFileStackUp();
             buildFilePath(path);
+        }
+    }
+
+    private void copyToBuffer(LogRecordSink sink) {
+        if ((sink.getLevel() & this.level) != 0) {
+            int l = sink.length();
+
+            if (_wptr + l >= lim) {
+                flush();
+            }
+
+            Unsafe.getUnsafe().copyMemory(sink.getAddress(), _wptr, l);
+            _wptr += l;
         }
     }
 
