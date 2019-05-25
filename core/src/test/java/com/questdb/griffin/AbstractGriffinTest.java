@@ -87,7 +87,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
     @BeforeClass
     public static void setUp2() {
         engine = new Engine(configuration);
-        compiler = new SqlCompiler(engine, configuration);
+        compiler = new SqlCompiler(engine);
         sqlExecutionContext = new TestExecutionContext(compiler.getCodeGenerator());
     }
 

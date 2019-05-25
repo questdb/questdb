@@ -5,7 +5,7 @@
  *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
  *   \__\_\\__,_|\___||___/\__|____/|____/
  *
- * Copyright (C) 2014-2018 Appsicle
+ * Copyright (C) 2014-2019 Appsicle
  *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU Affero General Public License, version 3,
@@ -50,7 +50,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 public class SqlCompilerTest extends AbstractCairoTest {
     private final static Engine engine = new Engine(configuration);
-    private final static SqlCompiler compiler = new SqlCompiler(engine, configuration);
+    private final static SqlCompiler compiler = new SqlCompiler(engine);
     private final static BindVariableService bindVariableService = new BindVariableService();
     private final static Path path = new Path();
 
@@ -118,7 +118,7 @@ public class SqlCompilerTest extends AbstractCairoTest {
         };
 
         CairoEngine engine = new Engine(configuration);
-        SqlCompiler compiler = new SqlCompiler(engine, configuration);
+        SqlCompiler compiler = new SqlCompiler(engine);
 
         try {
             compiler.compile("create table x (a int)", bindVariableService);
@@ -1831,7 +1831,10 @@ public class SqlCompilerTest extends AbstractCairoTest {
                     }
                 };
 
-                try (Engine engine = new Engine(configuration); SqlCompiler compiler = new SqlCompiler(engine, configuration)) {
+                try (
+                        Engine engine = new Engine(configuration);
+                        SqlCompiler compiler = new SqlCompiler(engine)
+                ) {
                     try {
                         compiler.compile(sql, bindVariableService);
                         Assert.fail();
@@ -1888,7 +1891,7 @@ public class SqlCompilerTest extends AbstractCairoTest {
                     }
                 };
 
-                try (Engine engine = new Engine(configuration); SqlCompiler compiler = new SqlCompiler(engine, configuration)) {
+                try (Engine engine = new Engine(configuration); SqlCompiler compiler = new SqlCompiler(engine)) {
                     try {
                         compiler.compile(sql, bindVariableService);
                         Assert.fail();
@@ -2238,18 +2241,19 @@ public class SqlCompilerTest extends AbstractCairoTest {
         };
 
         TestUtils.assertMemoryLeak(() -> {
-            try (Engine engine = new Engine(configuration)) {
-                try (SqlCompiler compiler = new SqlCompiler(engine, configuration)) {
-                    try {
-                        compiler.compile("create table x as (select to_int(x) c, abs(rnd_int() % 650) a from long_sequence(5000000))", bindVariableService);
-                        Assert.fail();
-                    } catch (SqlException e) {
-                        TestUtils.assertContains(e.getMessage(), "Could not create table. See log for details");
-                    }
-
-                    Assert.assertEquals(0, engine.getBusyReaderCount());
-                    Assert.assertEquals(0, engine.getBusyWriterCount());
+            try (
+                    Engine engine = new Engine(configuration);
+                    SqlCompiler compiler = new SqlCompiler(engine)
+            ) {
+                try {
+                    compiler.compile("create table x as (select to_int(x) c, abs(rnd_int() % 650) a from long_sequence(5000000))", bindVariableService);
+                    Assert.fail();
+                } catch (SqlException e) {
+                    TestUtils.assertContains(e.getMessage(), "Could not create table. See log for details");
                 }
+
+                Assert.assertEquals(0, engine.getBusyReaderCount());
+                Assert.assertEquals(0, engine.getBusyWriterCount());
             }
         });
     }
@@ -2260,7 +2264,7 @@ public class SqlCompilerTest extends AbstractCairoTest {
 
         try (TableWriter writer = engine.getWriter("доходы")) {
             for (int i = 0; i < 20; i++) {
-                TableWriter.Row row = writer.newRow(0);
+                TableWriter.Row row = writer.newRow();
                 row.putInt(0, i);
                 row.append();
             }
@@ -2935,7 +2939,7 @@ public class SqlCompilerTest extends AbstractCairoTest {
                     return super.getReader(tableName, version);
                 }
             }) {
-                try (SqlCompiler compiler = new SqlCompiler(engine, configuration)) {
+                try (SqlCompiler compiler = new SqlCompiler(engine)) {
 
                     compiler.compile("create table x (a INT, b INT)", bindVariableService);
                     compiler.compile("create table y as (select rnd_int() int1, rnd_int() int2 from long_sequence(10))", bindVariableService);
@@ -3016,58 +3020,59 @@ public class SqlCompilerTest extends AbstractCairoTest {
 
     @Test
     public void testRaceToCreateEmptyTable() throws InterruptedException {
-        SqlCompiler compiler2 = new SqlCompiler(engine, configuration);
-        AtomicInteger index = new AtomicInteger();
-        AtomicInteger success = new AtomicInteger();
+        try (SqlCompiler compiler2 = new SqlCompiler(engine)) {
+            AtomicInteger index = new AtomicInteger();
+            AtomicInteger success = new AtomicInteger();
 
-        for (int i = 0; i < 50; i++) {
-            CyclicBarrier barrier = new CyclicBarrier(2);
-            CountDownLatch haltLatch = new CountDownLatch(2);
+            for (int i = 0; i < 50; i++) {
+                CyclicBarrier barrier = new CyclicBarrier(2);
+                CountDownLatch haltLatch = new CountDownLatch(2);
 
-            index.set(-1);
-            success.set(0);
+                index.set(-1);
+                success.set(0);
 
-            new Thread(() -> {
-                try {
-                    barrier.await();
-                    compiler.compile("create table x (a INT, b FLOAT)", bindVariableService);
-                    index.set(0);
-                    success.incrementAndGet();
-                } catch (Exception ignore) {
+                new Thread(() -> {
+                    try {
+                        barrier.await();
+                        compiler.compile("create table x (a INT, b FLOAT)", bindVariableService);
+                        index.set(0);
+                        success.incrementAndGet();
+                    } catch (Exception ignore) {
 //                    e.printStackTrace();
-                } finally {
-                    haltLatch.countDown();
-                }
-            }).start();
+                    } finally {
+                        haltLatch.countDown();
+                    }
+                }).start();
 
-            new Thread(() -> {
-                try {
-                    barrier.await();
-                    compiler2.compile("create table x (a STRING, b DOUBLE)", bindVariableService);
-                    index.set(1);
-                    success.incrementAndGet();
-                } catch (Exception ignore) {
+                new Thread(() -> {
+                    try {
+                        barrier.await();
+                        compiler2.compile("create table x (a STRING, b DOUBLE)", bindVariableService);
+                        index.set(1);
+                        success.incrementAndGet();
+                    } catch (Exception ignore) {
 //                    e.printStackTrace();
-                } finally {
-                    haltLatch.countDown();
+                    } finally {
+                        haltLatch.countDown();
+                    }
+                }).start();
+
+                Assert.assertTrue(haltLatch.await(5, TimeUnit.SECONDS));
+
+                Assert.assertEquals(1, success.get());
+                Assert.assertNotEquals(-1, index.get());
+
+                try (TableReader reader = engine.getReader("x", TableUtils.ANY_TABLE_VERSION)) {
+                    sink.clear();
+                    reader.getMetadata().toJson(sink);
+                    if (index.get() == 0) {
+                        TestUtils.assertEquals("{\"columnCount\":2,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\"INT\"},{\"index\":1,\"name\":\"b\",\"type\":\"FLOAT\"}],\"timestampIndex\":-1}", sink);
+                    } else {
+                        TestUtils.assertEquals("{\"columnCount\":2,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\"STRING\"},{\"index\":1,\"name\":\"b\",\"type\":\"DOUBLE\"}],\"timestampIndex\":-1}", sink);
+                    }
                 }
-            }).start();
-
-            Assert.assertTrue(haltLatch.await(5, TimeUnit.SECONDS));
-
-            Assert.assertEquals(1, success.get());
-            Assert.assertNotEquals(-1, index.get());
-
-            try (TableReader reader = engine.getReader("x", TableUtils.ANY_TABLE_VERSION)) {
-                sink.clear();
-                reader.getMetadata().toJson(sink);
-                if (index.get() == 0) {
-                    TestUtils.assertEquals("{\"columnCount\":2,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\"INT\"},{\"index\":1,\"name\":\"b\",\"type\":\"FLOAT\"}],\"timestampIndex\":-1}", sink);
-                } else {
-                    TestUtils.assertEquals("{\"columnCount\":2,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\"STRING\"},{\"index\":1,\"name\":\"b\",\"type\":\"DOUBLE\"}],\"timestampIndex\":-1}", sink);
-                }
+                engine.remove(path, "x");
             }
-            engine.remove(path, "x");
         }
     }
 
@@ -3385,18 +3390,19 @@ public class SqlCompilerTest extends AbstractCairoTest {
             }
         }) {
 
-            SqlCompiler compiler = new SqlCompiler(engine, configuration);
-            compiler.compile(sql, bindVariableService);
+            try (SqlCompiler compiler = new SqlCompiler(engine)) {
+                compiler.compile(sql, bindVariableService);
 
-            Assert.assertTrue(fiddler.isHappy());
+                Assert.assertTrue(fiddler.isHappy());
 
-            try (TableReader reader = engine.getReader("Y", TableUtils.ANY_TABLE_VERSION)) {
-                sink.clear();
-                reader.getMetadata().toJson(sink);
-                TestUtils.assertEquals(expectedMetadata, sink);
+                try (TableReader reader = engine.getReader("Y", TableUtils.ANY_TABLE_VERSION)) {
+                    sink.clear();
+                    reader.getMetadata().toJson(sink);
+                    TestUtils.assertEquals(expectedMetadata, sink);
+                }
+
+                Assert.assertEquals(0, engine.getBusyReaderCount());
             }
-
-            Assert.assertEquals(0, engine.getBusyReaderCount());
         }
     }
 
@@ -3423,7 +3429,7 @@ public class SqlCompilerTest extends AbstractCairoTest {
         };
 
         try (Engine engine = new Engine(configuration)) {
-            try (SqlCompiler compiler = new SqlCompiler(engine, configuration)) {
+            try (SqlCompiler compiler = new SqlCompiler(engine)) {
 
                 compiler.compile("create table x (a INT, b INT)", bindVariableService);
                 try {

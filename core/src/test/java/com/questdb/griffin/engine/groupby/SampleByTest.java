@@ -247,7 +247,7 @@ public class SampleByTest extends AbstractGriffinTest {
             };
 
             try (Engine engine = new Engine(configuration)) {
-                try (SqlCompiler compiler = new SqlCompiler(engine, configuration)) {
+                try (SqlCompiler compiler = new SqlCompiler(engine)) {
                     try {
                         try (RecordCursorFactory factory = compiler.compile("select c, sum_t(d) from x", bindVariableService)) {
                             factory.getCursor(bindVariableService);
@@ -1136,7 +1136,7 @@ public class SampleByTest extends AbstractGriffinTest {
                 };
 
                 try (Engine engine = new Engine(configuration)) {
-                    try (SqlCompiler compiler = new SqlCompiler(engine, configuration)) {
+                    try (SqlCompiler compiler = new SqlCompiler(engine)) {
                         try {
                             compiler.compile("select b, sum(a), k from x sample by 3h fill(linear)", bindVariableService);
                             Assert.fail();
@@ -1190,7 +1190,7 @@ public class SampleByTest extends AbstractGriffinTest {
                 };
 
                 try (Engine engine = new Engine(configuration)) {
-                    try (SqlCompiler compiler = new SqlCompiler(engine, configuration)) {
+                    try (SqlCompiler compiler = new SqlCompiler(engine)) {
                         try {
                             try (RecordCursorFactory factory = compiler.compile("select b, sum(a), k from x sample by 3h fill(linear)", bindVariableService)) {
                                 // with mmap count = 5 we should get failure in cursor

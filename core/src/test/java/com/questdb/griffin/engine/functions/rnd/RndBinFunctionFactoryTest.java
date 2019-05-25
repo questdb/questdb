@@ -5,7 +5,7 @@
  *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
  *   \__\_\\__,_|\___||___/\__|____/|____/
  *
- * Copyright (C) 2014-2018 Appsicle
+ * Copyright (C) 2014-2019 Appsicle
  *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU Affero General Public License, version 3,
@@ -40,7 +40,7 @@ import java.io.IOException;
 
 public class RndBinFunctionFactoryTest extends AbstractFunctionFactoryTest {
     private static final CairoEngine engine = new Engine(configuration);
-    private static final SqlCompiler compiler = new SqlCompiler(engine, configuration);
+    private static final SqlCompiler compiler = new SqlCompiler(engine);
     private static final BindVariableService bindVariableService = new BindVariableService();
 
     @Before

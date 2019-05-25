@@ -65,12 +65,13 @@ public class SqlCompiler implements Closeable {
     private final TableStructureAdapter tableStructureAdapter = new TableStructureAdapter();
     private final ExecutableMethod createTableMethod = this::createTable;
 
-    public SqlCompiler(CairoEngine engine, CairoConfiguration configuration) {
-        this(engine, configuration, null);
+    public SqlCompiler(CairoEngine engine) {
+        this(engine, null);
     }
 
-    public SqlCompiler(CairoEngine engine, CairoConfiguration configuration, @Nullable CairoWorkScheduler workScheduler) {
+    public SqlCompiler(CairoEngine engine, @Nullable CairoWorkScheduler workScheduler) {
         this.engine = engine;
+        this.configuration = engine.getConfiguration();
         this.workScheduler = workScheduler;
         this.sqlNodePool = new ObjectPool<>(ExpressionNode.FACTORY, configuration.getSqlExpressionPoolCapacity());
         this.queryColumnPool = new ObjectPool<>(QueryColumn.FACTORY, configuration.getSqlColumnPoolCapacity());
@@ -82,7 +83,6 @@ public class SqlCompiler implements Closeable {
         this.lexer = new GenericLexer(configuration.getSqlLexerPoolCapacity());
         final FunctionParser functionParser = new FunctionParser(configuration, ServiceLoader.load(FunctionFactory.class));
         this.codeGenerator = new SqlCodeGenerator(engine, configuration, functionParser);
-        this.configuration = configuration;
 
         configureLexer(lexer);
 
@@ -135,6 +135,10 @@ public class SqlCompiler implements Closeable {
     public void close() {
         Misc.free(path);
         Misc.free(sqlCache);
+    }
+
+    public RecordCursorFactory compile(CharSequence query) throws SqlException {
+        return compile(query, null);
     }
 
     public RecordCursorFactory compile(CharSequence query, BindVariableService bindVariableService) throws SqlException {
@@ -876,7 +880,7 @@ public class SqlCompiler implements Closeable {
     private void copyUnordered(RecordCursor cursor, TableWriter writer, RecordToRowCopier ccopier) {
         final Record record = cursor.getRecord();
         while (cursor.hasNext()) {
-            TableWriter.Row row = writer.newRow(0);
+            TableWriter.Row row = writer.newRow();
             ccopier.copy(record, row);
             row.append();
         }

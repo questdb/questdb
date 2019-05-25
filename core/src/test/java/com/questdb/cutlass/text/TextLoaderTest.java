@@ -50,7 +50,7 @@ import java.nio.charset.StandardCharsets;
 public class TextLoaderTest extends AbstractCairoTest {
 
     private static final Engine engine = new Engine(configuration);
-    private static final SqlCompiler compiler = new SqlCompiler(engine, configuration);
+    private static final SqlCompiler compiler = new SqlCompiler(engine);
     private static final ByteManipulator ENTITY_MANIPULATOR = (index, len, b) -> b;
 
     @AfterClass
@@ -465,7 +465,7 @@ public class TextLoaderTest extends AbstractCairoTest {
                     ", h long" +
                     ", i boolean" +
                     ", k long" +
-                    ", t timestamp)", null);
+                    ", t timestamp)");
 
             configureLoaderDefaults(textLoader, (byte) -1, Atomicity.SKIP_ROW, true);
             try (TableWriter ignore = engine.getWriter("test")) {
@@ -1538,7 +1538,7 @@ public class TextLoaderTest extends AbstractCairoTest {
                     ", h long" +
                     ", i boolean" +
                     ", k long" +
-                    ", t timestamp)", null);
+                    ", t timestamp)");
 
             configureLoaderDefaults(textLoader, (byte) -1, Atomicity.SKIP_ROW, true);
             playText(
@@ -1992,29 +1992,6 @@ public class TextLoaderTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testWriteToExistingCannotConvertDate() throws Exception {
-        assertNoLeak(textLoader -> {
-            String csv = "abcd,10\n" +
-                    "efg,45\n" +
-                    "werop,90\n";
-
-            // we would mis-detect type and have no date parser to try loading data with
-            String expected = "a\tb\n" +
-                    "abcd\t\n" +
-                    "efg\t\n" +
-                    "werop\t\n";
-
-            compiler.compile("create table test(a string, b date)", null);
-            configureLoaderDefaults(textLoader);
-            playText(textLoader, csv, 1024,
-                    expected,
-                    "{\"columnCount\":2,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\"STRING\"},{\"index\":1,\"name\":\"b\",\"type\":\"DATE\"}],\"timestampIndex\":-1}",
-                    3,
-                    3);
-        });
-    }
-
-    @Test
     public void testWriteIntToBlob() throws Exception {
         assertNoLeak(textLoader -> {
             String csv = "abcd,10\n" +
@@ -2026,7 +2003,7 @@ public class TextLoaderTest extends AbstractCairoTest {
                     "efg\t45\t\n" +
                     "werop\t90\t\n";
 
-            compiler.compile("create table test(a string, d binary)", null);
+            compiler.compile("create table test(a string, d binary)");
             configureLoaderDefaults(textLoader);
             try {
                 playText(textLoader, csv, 1024,
@@ -2042,27 +2019,27 @@ public class TextLoaderTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testWriteToTableWithBlob() throws Exception {
+    public void testWriteToExistingCannotConvertDate() throws Exception {
         assertNoLeak(textLoader -> {
             String csv = "abcd,10\n" +
                     "efg,45\n" +
                     "werop,90\n";
 
-            String expected = "a\tb\td\n" +
-                    "abcd\t10\t\n" +
-                    "efg\t45\t\n" +
-                    "werop\t90\t\n";
+            // we would mis-detect type and have no date parser to try loading data with
+            String expected = "a\tb\n" +
+                    "abcd\t\n" +
+                    "efg\t\n" +
+                    "werop\t\n";
 
-            compiler.compile("create table test(a string, b int, d binary)", null);
+            compiler.compile("create table test(a string, b date)");
             configureLoaderDefaults(textLoader);
             playText(textLoader, csv, 1024,
                     expected,
-                    "{\"columnCount\":3,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\"STRING\"},{\"index\":1,\"name\":\"b\",\"type\":\"INT\"},{\"index\":2,\"name\":\"d\",\"type\":\"BINARY\"}],\"timestampIndex\":-1}",
+                    "{\"columnCount\":2,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\"STRING\"},{\"index\":1,\"name\":\"b\",\"type\":\"DATE\"}],\"timestampIndex\":-1}",
                     3,
                     3);
         });
     }
-
 
     @Test
     public void testWriteToExistingCannotConvertTimestamp() throws Exception {
@@ -2077,7 +2054,7 @@ public class TextLoaderTest extends AbstractCairoTest {
                     "efg\t\n" +
                     "werop\t\n";
 
-            compiler.compile("create table test(a string, b timestamp)", null);
+            compiler.compile("create table test(a string, b timestamp)");
             configureLoaderDefaults(textLoader);
             playText(textLoader, csv, 1024,
                     expected,
@@ -2103,7 +2080,7 @@ public class TextLoaderTest extends AbstractCairoTest {
                     "CMP2,2,4770,2.85092033445835,2015-02-08T19:15:09.000Z,2015-02-08 19:15:09,02/08/2015,253,TRUE,33766814\n" +
                     "CMP1,5,4938,4.42754498450086,2015-02-09T19:15:09.000Z,2015-02-09 19:15:09,02/09/2015,7817,FALSE,61983099\n";
 
-            compiler.compile("create table test(a int, b int)", null);
+            compiler.compile("create table test(a int, b int)");
             configureLoaderDefaults(textLoader);
             try {
                 playText0(textLoader, csv, 1024, ENTITY_MANIPULATOR);
@@ -2111,6 +2088,28 @@ public class TextLoaderTest extends AbstractCairoTest {
             } catch (CairoException e) {
                 TestUtils.assertContains(e.getMessage(), "column count mismatch [textColumnCount=10, tableColumnCount=2, table=test]");
             }
+        });
+    }
+
+    @Test
+    public void testWriteToTableWithBlob() throws Exception {
+        assertNoLeak(textLoader -> {
+            String csv = "abcd,10\n" +
+                    "efg,45\n" +
+                    "werop,90\n";
+
+            String expected = "a\tb\td\n" +
+                    "abcd\t10\t\n" +
+                    "efg\t45\t\n" +
+                    "werop\t90\t\n";
+
+            compiler.compile("create table test(a string, b int, d binary)");
+            configureLoaderDefaults(textLoader);
+            playText(textLoader, csv, 1024,
+                    expected,
+                    "{\"columnCount\":3,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\"STRING\"},{\"index\":1,\"name\":\"b\",\"type\":\"INT\"},{\"index\":2,\"name\":\"d\",\"type\":\"BINARY\"}],\"timestampIndex\":-1}",
+                    3,
+                    3);
         });
     }
 
@@ -2194,8 +2193,8 @@ public class TextLoaderTest extends AbstractCairoTest {
 
     private void assertTable(String expected) throws IOException, SqlException {
         try (
-                RecordCursorFactory factory = compiler.compile("test", null);
-                RecordCursor cursor = factory.getCursor(null)
+                RecordCursorFactory factory = compiler.compile("test");
+                RecordCursor cursor = factory.getCursor()
         ) {
             sink.clear();
             printer.print(cursor, factory.getMetadata(), true);

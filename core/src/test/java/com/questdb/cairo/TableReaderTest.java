@@ -1589,7 +1589,7 @@ public class TableReaderTest extends AbstractCairoTest {
                     startBarrier.await();
                     try (TableWriter writer = new TableWriter(configuration, "w")) {
                         for (int i = 0; i < N * scale; i++) {
-                            TableWriter.Row row = writer.newRow(0);
+                            TableWriter.Row row = writer.newRow();
                             row.putLong(0, list.getQuick(i % N));
                             row.append();
                             writer.commit();
@@ -1682,7 +1682,7 @@ public class TableReaderTest extends AbstractCairoTest {
             Rnd rnd = new Rnd();
             try (TableWriter writer = new TableWriter(configuration, "x")) {
                 for (int i = 0; i < N; i++) {
-                    TableWriter.Row r = writer.newRow(0);
+                    TableWriter.Row r = writer.newRow();
                     r.putLong(0, rnd.nextLong());
                     r.append();
                 }
@@ -1711,7 +1711,7 @@ public class TableReaderTest extends AbstractCairoTest {
         try (TableWriter writer = new TableWriter(configuration, "all")) {
             int col = writer.getMetadata().getColumnIndex("str");
             for (int i = 0; i < N; i++) {
-                TableWriter.Row r = writer.newRow(0);
+                TableWriter.Row r = writer.newRow();
                 CharSequence chars = rnd.nextChars(15);
                 r.putStr(col, chars, 2, 10);
                 r.append();
@@ -1721,7 +1721,7 @@ public class TableReaderTest extends AbstractCairoTest {
             // add more rows for good measure and rollback
 
             for (int i = 0; i < N; i++) {
-                TableWriter.Row r = writer.newRow(0);
+                TableWriter.Row r = writer.newRow();
                 CharSequence chars = rnd.nextChars(15);
                 r.putStr(col, chars, 2, 10);
                 r.append();
@@ -2053,7 +2053,7 @@ public class TableReaderTest extends AbstractCairoTest {
             }
 
             try (TableWriter writer = new TableWriter(configuration, "tab")) {
-                TableWriter.Row r = writer.newRow(0);
+                TableWriter.Row r = writer.newRow();
                 r.putSym(0, "hello");
                 r.append();
 
@@ -2393,7 +2393,7 @@ public class TableReaderTest extends AbstractCairoTest {
             // populate table and delete column
             try (TableWriter writer = new TableWriter(configuration, "x")) {
                 for (int i = 0; i < N; i++) {
-                    TableWriter.Row row = writer.newRow(0);
+                    TableWriter.Row row = writer.newRow();
                     row.putStr(0, rnd.nextChars(10));
                     row.putStr(1, rnd.nextChars(15));
                     row.append();
@@ -2496,7 +2496,7 @@ public class TableReaderTest extends AbstractCairoTest {
             // populate table and delete column
             try (TableWriter writer = new TableWriter(configuration, "x")) {
                 for (int i = 0; i < N; i++) {
-                    TableWriter.Row row = writer.newRow(0);
+                    TableWriter.Row row = writer.newRow();
                     row.putSym(0, rnd.nextChars(10));
                     row.putStr(1, rnd.nextChars(15));
                     row.append();
@@ -2529,7 +2529,7 @@ public class TableReaderTest extends AbstractCairoTest {
                     writer.addColumn("b", ColumnType.STRING);
 
                     for (int i = 0; i < N; i++) {
-                        TableWriter.Row row = writer.newRow(0);
+                        TableWriter.Row row = writer.newRow();
                         row.putSym(0, rnd.nextChars(10));
                         row.putStr(1, rnd.nextChars(15));
                         row.append();
@@ -3013,7 +3013,7 @@ public class TableReaderTest extends AbstractCairoTest {
 
     private void appendTwoSymbols(TableWriter writer, Rnd rnd) {
         for (int i = 0; i < 1000; i++) {
-            TableWriter.Row row = writer.newRow(0);
+            TableWriter.Row row = writer.newRow();
             row.putSym(0, rnd.nextChars(10));
             row.putSym(1, rnd.nextChars(15));
             row.append();

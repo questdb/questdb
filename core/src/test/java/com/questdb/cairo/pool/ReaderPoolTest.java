@@ -5,7 +5,7 @@
  *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
  *   \__\_\\__,_|\___||___/\__|____/|____/
  *
- * Copyright (C) 2014-2018 Appsicle
+ * Copyright (C) 2014-2019 Appsicle
  *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU Affero General Public License, version 3,
@@ -252,7 +252,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
 
             try (TableWriter w = new TableWriter(configuration, names[i])) {
                 for (int k = 0; k < 10; k++) {
-                    TableWriter.Row r = w.newRow(0);
+                    TableWriter.Row r = w.newRow();
                     r.putDate(0, dataRnd.nextLong());
                     r.append();
                 }
@@ -544,7 +544,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
 
             try (TableWriter w = new TableWriter(configuration, names[i])) {
                 for (int k = 0; k < 10; k++) {
-                    TableWriter.Row r = w.newRow(0);
+                    TableWriter.Row r = w.newRow();
                     r.putDate(0, dataRnd.nextLong());
                     r.append();
                 }

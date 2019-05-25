@@ -5,7 +5,7 @@
  *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
  *   \__\_\\__,_|\___||___/\__|____/|____/
  *
- * Copyright (C) 2014-2018 Appsicle
+ * Copyright (C) 2014-2019 Appsicle
  *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU Affero General Public License, version 3,
@@ -85,7 +85,7 @@ public class TableReadFailTest extends AbstractCairoTest {
 
 
                     for (int i = 0; i < N; i++) {
-                        TableWriter.Row r = w.newRow(0);
+                        TableWriter.Row r = w.newRow();
                         r.putInt(0, rnd.nextInt());
                         r.putLong(1, rnd.nextLong());
                         r.append();
@@ -144,7 +144,7 @@ public class TableReadFailTest extends AbstractCairoTest {
                 try (TableWriter w = new TableWriter(configuration, "x")) {
                     // add more data
                     for (int i = 0; i < N; i++) {
-                        TableWriter.Row r = w.newRow(0);
+                        TableWriter.Row r = w.newRow();
                         r.putInt(0, rnd.nextInt());
                         r.putLong(1, rnd.nextLong());
                         r.append();

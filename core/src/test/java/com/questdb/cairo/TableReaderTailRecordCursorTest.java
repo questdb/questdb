@@ -40,7 +40,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 public class TableReaderTailRecordCursorTest extends AbstractCairoTest {
     private final static Engine engine = new Engine(configuration);
-    private final static SqlCompiler compiler = new SqlCompiler(engine, configuration);
+    private final static SqlCompiler compiler = new SqlCompiler(engine);
     private final static BindVariableService bindVariableService = new BindVariableService();
 
     @Test
@@ -214,7 +214,7 @@ public class TableReaderTailRecordCursorTest extends AbstractCairoTest {
         final int n = 1000;
         TestUtils.assertMemoryLeak(() -> {
             try {
-                compiler.compile("create table xyz (sequence INT, event BINARY, ts LONG, stamp TIMESTAMP) timestamp(stamp) partition by " + PartitionBy.toString(partitionBy), null);
+                compiler.compile("create table xyz (sequence INT, event BINARY, ts LONG, stamp TIMESTAMP) timestamp(stamp) partition by " + PartitionBy.toString(partitionBy));
 
                 try (TableWriter writer = engine.getWriter("xyz")) {
                     long ts = 0;
@@ -275,7 +275,7 @@ public class TableReaderTailRecordCursorTest extends AbstractCairoTest {
         final int n = 1000;
         TestUtils.assertMemoryLeak(() -> {
             try {
-                compiler.compile("create table xyz (sequence INT, event BINARY, ts LONG, stamp TIMESTAMP) timestamp(stamp) partition by " + PartitionBy.toString(partitionBy), null);
+                compiler.compile("create table xyz (sequence INT, event BINARY, ts LONG, stamp TIMESTAMP) timestamp(stamp) partition by " + PartitionBy.toString(partitionBy));
 
                 try (TableWriter writer = engine.getWriter("xyz")) {
                     long ts = 0;

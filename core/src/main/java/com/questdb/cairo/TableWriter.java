@@ -445,6 +445,10 @@ public class TableWriter implements Closeable {
         return rowFunction.newRow(timestamp);
     }
 
+    public Row newRow() {
+        return newRow(0L);
+    }
+
     public void removeColumn(CharSequence name) {
 
         checkDistressed();

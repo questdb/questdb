@@ -5,7 +5,7 @@
  *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
  *   \__\_\\__,_|\___||___/\__|____/|____/
  *
- * Copyright (C) 2014-2018 Appsicle
+ * Copyright (C) 2014-2019 Appsicle
  *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU Affero General Public License, version 3,
@@ -152,7 +152,7 @@ public class AlterTableAddColumnTest extends AbstractGriffinTest {
                         };
 
                         try (Engine engine = new Engine(configuration)) {
-                            try (SqlCompiler compiler = new SqlCompiler(engine, configuration)) {
+                            try (SqlCompiler compiler = new SqlCompiler(engine)) {
                                 Assert.assertNull(compiler.compile("alter table x add column meh symbol cache", bindVariableService));
 
                                 try (TableReader reader = engine.getReader("x", TableUtils.ANY_TABLE_VERSION)) {

@@ -5,7 +5,7 @@
  *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
  *   \__\_\\__,_|\___||___/\__|____/|____/
  *
- * Copyright (C) 2014-2018 Appsicle
+ * Copyright (C) 2014-2019 Appsicle
  *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU Affero General Public License, version 3,
@@ -57,7 +57,7 @@ public class RecordValueSinkFactoryTest extends AbstractCairoTest {
         try (TableWriter writer = new TableWriter(configuration, "all")) {
 
             for (int i = 0; i < N; i++) {
-                TableWriter.Row row = writer.newRow(0);
+                TableWriter.Row row = writer.newRow();
                 row.putInt(0, rnd.nextInt());
                 row.putShort(1, rnd.nextShort());
                 row.putByte(2, rnd.nextByte());
@@ -141,7 +141,7 @@ public class RecordValueSinkFactoryTest extends AbstractCairoTest {
         try (TableWriter writer = new TableWriter(configuration, "all")) {
 
             for (int i = 0; i < N; i++) {
-                TableWriter.Row row = writer.newRow(0);
+                TableWriter.Row row = writer.newRow();
                 row.putInt(0, rnd.nextInt());
                 row.putShort(1, rnd.nextShort());
                 row.putByte(2, rnd.nextByte());
