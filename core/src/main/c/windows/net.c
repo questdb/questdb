@@ -163,7 +163,11 @@ JNIEXPORT jboolean JNICALL Java_com_questdb_network_Net_bindUdp
 
 JNIEXPORT jint JNICALL Java_com_questdb_network_Net_connect
         (JNIEnv *e, jclass cl, jlong fd, jlong sockAddr) {
-    return connect((SOCKET) fd, (const struct sockaddr *) sockAddr, sizeof(struct sockaddr));
+    jint res = connect((SOCKET) fd, (const struct sockaddr *) sockAddr, sizeof(struct sockaddr));
+    if (res < 0) {
+        SaveLastError();
+    }
+    return res;
 }
 
 JNIEXPORT void JNICALL Java_com_questdb_network_Net_listen
@@ -173,13 +177,22 @@ JNIEXPORT void JNICALL Java_com_questdb_network_Net_listen
 
 JNIEXPORT jlong JNICALL Java_com_questdb_network_Net_accept0
         (JNIEnv *e, jclass cl, jlong fd) {
-    return (jlong) accept((SOCKET) fd, NULL, 0);
+    // cast to jlong makes variable signed, otherwise < 0 comparison does not work
+    jlong sock = (jlong) accept((SOCKET) fd, NULL, 0);
+    if (sock < 0) {
+        SaveLastError();
+    }
+    return sock;
 }
 
 JNIEXPORT jint JNICALL Java_com_questdb_network_Net_configureNonBlocking
         (JNIEnv *e, jclass cl, jlong fd) {
     u_long mode = 1;
-    return ioctlsocket((SOCKET) fd, FIONBIO, &mode);
+    jint res = ioctlsocket((SOCKET) fd, FIONBIO, &mode);
+    if (res < 0) {
+        SaveLastError();
+    }
+    return res;
 }
 
 JNIEXPORT jint JNICALL Java_com_questdb_network_Net_recv

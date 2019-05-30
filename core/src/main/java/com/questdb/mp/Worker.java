@@ -43,17 +43,28 @@ public class Worker extends Thread {
     @SuppressWarnings("FieldCanBeLocal")
     private volatile int running = 0;
     private volatile int fence;
+    private final Runnable cleaner;
 
-    public Worker(ObjHashSet<? extends Job> jobs, SOCountDownLatch haltLatch) {
-        this(jobs, haltLatch, -1, null);
+    public Worker(
+            ObjHashSet<? extends Job> jobs,
+            SOCountDownLatch haltLatch
+    ) {
+        this(jobs, haltLatch, -1, null, null);
     }
 
-    public Worker(ObjHashSet<? extends Job> jobs, SOCountDownLatch haltLatch, int affinity, Log log) {
+    public Worker(
+            final ObjHashSet<? extends Job> jobs,
+            final SOCountDownLatch haltLatch,
+            final int affinity,
+            final Log log,
+            final Runnable cleaner
+    ) {
         this.log = log;
         this.jobs = jobs;
         this.haltLatch = haltLatch;
         this.setName("questdb-worker-" + COUNTER.incrementAndGet());
         this.affinity = affinity;
+        this.cleaner = cleaner;
     }
 
     public void halt() {
@@ -113,6 +124,11 @@ public class Worker extends Thread {
                     LockSupport.parkNanos(1000000);
                 }
             }
+        }
+        // cleaner will typically attempt to release
+        // thread-local instances
+        if (cleaner != null) {
+            cleaner.run();
         }
         haltLatch.countDown();
     }

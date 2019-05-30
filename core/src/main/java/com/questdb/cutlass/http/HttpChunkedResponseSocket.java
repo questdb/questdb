@@ -23,13 +23,20 @@
 
 package com.questdb.cutlass.http;
 
-import java.io.Closeable;
+import com.questdb.std.str.CharSink;
 
-public interface HttpRequestProcessorSelector extends Closeable {
-    HttpRequestProcessor select(CharSequence url);
+public interface HttpChunkedResponseSocket extends CharSink {
+    void bookmark();
 
-    HttpRequestProcessor getDefaultProcessor();
+    void done() throws PeerDisconnectedException, PeerIsSlowToReadException;
 
-    @Override
-    void close();
+    CharSink headers();
+
+    boolean resetToBookmark();
+
+    void sendChunk() throws PeerDisconnectedException, PeerIsSlowToReadException;
+
+    void sendHeader() throws PeerDisconnectedException, PeerIsSlowToReadException;
+
+    void status(int status, CharSequence contentType);
 }

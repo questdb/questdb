@@ -77,7 +77,7 @@ public class HttpResponseSink implements Closeable, Mutable {
     private long total = 0;
     private boolean header = true;
 
-    public ChunkedResponseImpl getChunkedResponse() {
+    public HttpChunkedResponseSocket getChunkedSocket() {
         return chunkedResponse;
     }
 
@@ -549,20 +549,23 @@ public class HttpResponseSink implements Closeable, Mutable {
         }
     }
 
-    public class ChunkedResponseImpl extends ResponseSinkImpl {
+    private class ChunkedResponseImpl extends ResponseSinkImpl implements HttpChunkedResponseSocket {
 
         private long bookmark = outPtr;
 
+        @Override
         public void bookmark() {
             bookmark = _wPtr;
         }
 
+        @Override
         public void done() throws PeerDisconnectedException, PeerIsSlowToReadException {
             flushBufSize = 0;
             if (compressed) {
                 resumeSend(FLUSH);
             } else {
                 resumeSend(END_CHUNK);
+                LOG.debug().$("end chunk sent").$();
             }
         }
 
@@ -571,15 +574,18 @@ public class HttpResponseSink implements Closeable, Mutable {
 //            sendChunk();
 //        }
 
+        @Override
         public CharSink headers() {
             return headerImpl;
         }
 
+        @Override
         public boolean resetToBookmark() {
             _wPtr = bookmark;
             return bookmark != outPtr;
         }
 
+        @Override
         public void sendChunk() throws PeerDisconnectedException, PeerIsSlowToReadException {
             if (outPtr != _wPtr) {
                 if (compressed) {
@@ -592,6 +598,7 @@ public class HttpResponseSink implements Closeable, Mutable {
             }
         }
 
+        @Override
         public void sendHeader() throws PeerDisconnectedException, PeerIsSlowToReadException {
             prepareHeaderSink();
             flushSingle();

@@ -21,15 +21,20 @@
  *
  ******************************************************************************/
 
-package com.questdb.cutlass.http;
+package com.questdb.cutlass.http.processors;
 
-import java.io.Closeable;
+public class JsonQueryProcessorState extends AbstractQueryContext {
+    boolean fetchAll = false;
+    boolean noMeta = false;
 
-public interface HttpRequestProcessorSelector extends Closeable {
-    HttpRequestProcessor select(CharSequence url);
-
-    HttpRequestProcessor getDefaultProcessor();
+    public JsonQueryProcessorState(long fd, int cyclesBeforeCancel) {
+        super(fd, cyclesBeforeCancel);
+    }
 
     @Override
-    void close();
+    public void clear() {
+        super.clear();
+        queryState = JsonQueryProcessor.QUERY_PREFIX;
+        fetchAll = false;
+    }
 }

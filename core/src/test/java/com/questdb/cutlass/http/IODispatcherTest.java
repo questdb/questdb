@@ -23,9 +23,12 @@
 
 package com.questdb.cutlass.http;
 
+import com.questdb.cairo.CairoTestUtils;
 import com.questdb.cairo.DefaultCairoConfiguration;
 import com.questdb.cairo.Engine;
+import com.questdb.cairo.TestRecord;
 import com.questdb.cairo.sql.CairoEngine;
+import com.questdb.cutlass.http.processors.JsonQueryProcessor;
 import com.questdb.cutlass.http.processors.StaticContentProcessor;
 import com.questdb.cutlass.http.processors.StaticContentProcessorConfiguration;
 import com.questdb.cutlass.http.processors.TextImportProcessor;
@@ -55,6 +58,48 @@ import static com.questdb.cutlass.http.HttpConnectionContext.dump;
 
 public class IODispatcherTest {
     private static Log LOG = LogFactory.getLog(IODispatcherTest.class);
+
+    private static void assertDownloadResponse(long fd, Rnd rnd, long buffer, int len, int nonRepeatedContentLength, String expectedResponseHeader, long expectedResponseLen) {
+        int expectedHeaderLen = expectedResponseHeader.length();
+        int headerCheckRemaining = expectedResponseHeader.length();
+        long downloadedSoFar = 0;
+        int contentRemaining = 0;
+        while (downloadedSoFar < expectedResponseLen) {
+            int contentOffset = 0;
+            int n = Net.recv(fd, buffer, len);
+            Assert.assertTrue(n > -1);
+            if (n > 0) {
+                if (headerCheckRemaining > 0) {
+                    for (int i = 0; i < n && headerCheckRemaining > 0; i++) {
+                        if (expectedResponseHeader.charAt(expectedHeaderLen - headerCheckRemaining) != (char) Unsafe.getUnsafe().getByte(buffer + i)) {
+                            Assert.fail("at " + (expectedHeaderLen - headerCheckRemaining));
+                        }
+                        headerCheckRemaining--;
+                        contentOffset++;
+                    }
+                }
+
+                if (headerCheckRemaining == 0) {
+                    for (int i = contentOffset; i < n; i++) {
+                        if (contentRemaining == 0) {
+                            contentRemaining = nonRepeatedContentLength;
+                            rnd.reset();
+                        }
+                        Assert.assertEquals(rnd.nextByte(), Unsafe.getUnsafe().getByte(buffer + i));
+                        contentRemaining--;
+                    }
+
+                }
+                downloadedSoFar += n;
+            }
+        }
+    }
+
+    private static void sendRequest(String request, long fd, long buffer) {
+        final int requestLen = request.length();
+        Chars.strcpy(request, requestLen, buffer);
+        Assert.assertEquals(requestLen, Net.send(fd, buffer, requestLen));
+    }
 
     @Test
     public void testBiasWrite() throws Exception {
@@ -184,6 +229,10 @@ public class IODispatcherTest {
                             public void onRequestComplete(HttpConnectionContext connectionContext, IODispatcher<HttpConnectionContext> dispatcher1) {
                             }
                         };
+                    }
+
+                    @Override
+                    public void close() {
                     }
                 };
 
@@ -378,6 +427,127 @@ public class IODispatcherTest {
                                     }
 
                                     received += n;
+                                }
+                            }
+                        } finally {
+                            Unsafe.free(ptr, len);
+                        }
+                    } finally {
+                        Net.freeSockAddr(sockAddr);
+                    }
+                } finally {
+                    Net.close(fd);
+                }
+
+                httpServer.halt();
+            }
+        });
+    }
+
+    @Test
+    public void testJsonQuery() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final String baseDir = System.getProperty("java.io.tmpdir");
+            final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir);
+
+            try (CairoEngine engine = new Engine(new DefaultCairoConfiguration(baseDir));
+                 HttpServer httpServer = new HttpServer(httpConfiguration)) {
+                httpServer.bind(new HttpRequestProcessorFactory() {
+                    @Override
+                    public String getUrl() {
+                        return HttpServerConfiguration.DEFAULT_PROCESSOR_URL;
+                    }
+
+                    @Override
+                    public HttpRequestProcessor newInstance() {
+                        return new StaticContentProcessor(httpConfiguration.getStaticContentProcessorConfiguration());
+                    }
+                });
+
+                httpServer.bind(new HttpRequestProcessorFactory() {
+                    @Override
+                    public String getUrl() {
+                        return "/query";
+                    }
+
+                    @Override
+                    public HttpRequestProcessor newInstance() {
+                        return new JsonQueryProcessor(engine);
+                    }
+                });
+
+                httpServer.start();
+
+                // create table with all column types
+                CairoTestUtils.createTestTable(
+                        engine.getConfiguration(),
+                        20,
+                        new Rnd(),
+                        new TestRecord.ArrayBinarySequence());
+
+                // send multipart request to server
+                final String request = "GET /query?query=x%20where%20i%20%3D%20(%27EHNRX%27) HTTP/1.1\r\n" +
+                        "Host: localhost:9001\r\n" +
+                        "Connection: keep-alive\r\n" +
+                        "Cache-Control: max-age=0\r\n" +
+                        "Upgrade-Insecure-Requests: 1\r\n" +
+                        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n" +
+                        "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3\r\n" +
+                        "Accept-Encoding: gzip, deflate, br\r\n" +
+                        "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                        "\r\n";
+
+                byte[] expectedResponse = ("HTTP/1.1 200 OK\r\n" +
+                        "Server: questDB/1.0\r\n" +
+                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                        "Transfer-Encoding: chunked\r\n" +
+                        "Content-Type: application/json; charset=utf-8\r\n" +
+                        "Keep-Alive: timeout=5, max=10000\r\n" +
+                        "\r\n" +
+                        "205\r\n" +
+                        "{\"query\":\"x where i = ('EHNRX')\",\"columns\":[{\"name\":\"a\",\"type\":\"BYTE\"},{\"name\":\"b\",\"type\":\"SHORT\"},{\"name\":\"c\",\"type\":\"INT\"},{\"name\":\"d\",\"type\":\"LONG\"},{\"name\":\"e\",\"type\":\"DATE\"},{\"name\":\"f\",\"type\":\"TIMESTAMP\"},{\"name\":\"g\",\"type\":\"FLOAT\"},{\"name\":\"h\",\"type\":\"DOUBLE\"},{\"name\":\"i\",\"type\":\"STRING\"},{\"name\":\"j\",\"type\":\"SYMBOL\"},{\"name\":\"k\",\"type\":\"BOOLEAN\"},{\"name\":\"l\",\"type\":\"BINARY\"}],\"dataset\":[[80,24814,-727724771,8920866532787660373,\"-169665660-01-09T01:58:28.119Z\",,null,null,\"EHNRX\",\"ZSX\",false,[]]],\"count\":1}\r\n" +
+                        "0\r\n" +
+                        "\r\n").getBytes();
+
+
+                long fd = Net.socketTcp(true);
+                try {
+                    long sockAddr = Net.sockaddr("127.0.0.1", 9001);
+                    try {
+                        Assert.assertTrue(fd > -1);
+                        Assert.assertEquals(0, Net.connect(fd, sockAddr));
+                        Net.setTcpNoDelay(fd, true);
+
+                        final int len = Math.max(expectedResponse.length, request.length()) * 2;
+                        long ptr = Unsafe.malloc(len);
+                        try {
+                            for (int j = 0; j < 10_000; j++) {
+                                int sent = 0;
+                                int reqLen = request.length();
+                                Chars.strcpy(request, reqLen, ptr);
+                                while (sent < reqLen) {
+                                    int n = Net.send(fd, ptr + sent, reqLen - sent);
+                                    Assert.assertTrue(n > -1);
+                                    sent += n;
+                                }
+
+                                // receive response
+                                final int expectedToReceive = expectedResponse.length;
+                                int received = 0;
+                                while (received < expectedToReceive) {
+                                    int n = Net.recv(fd, ptr + received, len - received);
+                                    if (n > 0) {
+                                        // compare bytes
+                                        for (int i = 0; i < n; i++) {
+                                            if (expectedResponse[received + i] != Unsafe.getUnsafe().getByte(ptr + received + i)) {
+                                                Assert.fail("Error at: " + (received + i) + ", local=" + i);
+                                            }
+                                        }
+                                        received += n;
+                                    } else if (n < 0) {
+                                        LOG.error().$("disconnected? n=").$(n).$();
+                                        Assert.fail();
+                                    }
                                 }
                             }
                         } finally {
@@ -780,6 +950,10 @@ public class IODispatcherTest {
                                     public void onRequestComplete(HttpConnectionContext connectionContext, IODispatcher<HttpConnectionContext> dispatcher) {
                                     }
                                 };
+                            }
+
+                            @Override
+                            public void close() {
                             }
                         };
 
@@ -1241,6 +1415,10 @@ public class IODispatcherTest {
                             public HttpRequestProcessor getDefaultProcessor() {
                                 return null;
                             }
+
+                            @Override
+                            public void close() {
+                            }
                         };
 
                 AtomicBoolean serverRunning = new AtomicBoolean(true);
@@ -1377,6 +1555,11 @@ public class IODispatcherTest {
                 final HttpRequestProcessorSelector selector =
 
                         new HttpRequestProcessorSelector() {
+
+                            @Override
+                            public void close() {
+                            }
+
                             @Override
                             public HttpRequestProcessor select(CharSequence url) {
                                 return null;
@@ -1531,6 +1714,11 @@ public class IODispatcherTest {
                 StringSink sink = new StringSink();
 
                 HttpRequestProcessorSelector selector = new HttpRequestProcessorSelector() {
+
+                    @Override
+                    public void close() {
+                    }
+
                     @Override
                     public HttpRequestProcessor select(CharSequence url) {
                         return null;
@@ -1734,6 +1922,11 @@ public class IODispatcherTest {
                         };
 
                         HttpRequestProcessorSelector selector = new HttpRequestProcessorSelector() {
+
+                            @Override
+                            public void close() {
+                            }
+
                             @Override
                             public HttpRequestProcessor select(CharSequence url) {
                                 return null;
@@ -1847,51 +2040,6 @@ public class IODispatcherTest {
                 Thread.sleep(2000000);
             }
         });
-    }
-
-    private static void assertDownloadResponse(long fd, Rnd rnd, long buffer, int len, int nonRepeatedContentLength, String expectedResponseHeader, long expectedResponseLen) {
-        int expectedHeaderLen = expectedResponseHeader.length();
-        int headerCheckRemaining = expectedResponseHeader.length();
-        long downloadedSoFar = 0;
-        int contentRemaining = 0;
-        while (downloadedSoFar < expectedResponseLen) {
-            int contentOffset = 0;
-            int n = Net.recv(fd, buffer, len);
-            Assert.assertTrue(n > -1);
-            if (n > 0) {
-                if (headerCheckRemaining > 0) {
-                    for (int i = 0; i < n && headerCheckRemaining > 0; i++) {
-//                        System.out.print((char) Unsafe.getUnsafe().getByte(buffer + i));
-                        if (expectedResponseHeader.charAt(expectedHeaderLen - headerCheckRemaining) != (char) Unsafe.getUnsafe().getByte(buffer + i)) {
-                            Assert.fail("at " + (expectedHeaderLen - headerCheckRemaining));
-                        }
-                        headerCheckRemaining--;
-                        contentOffset++;
-                    }
-                }
-
-                if (headerCheckRemaining == 0) {
-                    for (int i = contentOffset; i < n; i++) {
-                        if (contentRemaining == 0) {
-                            contentRemaining = nonRepeatedContentLength;
-                            rnd.reset();
-                        }
-//                        System.out.print((char)Unsafe.getUnsafe().getByte(buffer + i));
-                        Assert.assertEquals(rnd.nextByte(), Unsafe.getUnsafe().getByte(buffer + i));
-                        contentRemaining--;
-                    }
-
-                }
-//                System.out.println(downloadedSoFar);
-                downloadedSoFar += n;
-            }
-        }
-    }
-
-    private static void sendRequest(String request, long fd, long buffer) {
-        final int requestLen = request.length();
-        Chars.strcpy(request, requestLen, buffer);
-        Assert.assertEquals(requestLen, Net.send(fd, buffer, requestLen));
     }
 
     @NotNull

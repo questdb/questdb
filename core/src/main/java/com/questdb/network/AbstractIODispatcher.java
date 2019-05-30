@@ -139,11 +139,15 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
 
     protected void accept(long timestamp) {
         while (true) {
+            // this accept is greedy, rather than to rely on epoll(or similar) to
+            // fire accept requests at us one at a time we will be actively accepting
+            // until nothing left.
+
             long fd = nf.accept(serverFd);
 
             if (fd < 0) {
                 if (nf.errno() != Net.EWOULDBLOCK) {
-                    LOG.error().$("could not accept [errno=").$(nf.errno()).$(']').$();
+                    LOG.error().$("could not accept [ret=").$(fd).$(", errno=").$(nf.errno()).$(']').$();
                 }
                 return;
             }

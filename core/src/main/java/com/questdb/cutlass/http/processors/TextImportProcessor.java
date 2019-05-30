@@ -80,7 +80,7 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
         this.engine = cairoEngine;
     }
 
-    private static void resumeJson(TextImportProcessorState state, HttpResponseSink.ChunkedResponseImpl r) throws PeerDisconnectedException, PeerIsSlowToReadException {
+    private static void resumeJson(TextImportProcessorState state, HttpChunkedResponseSocket socket) throws PeerDisconnectedException, PeerIsSlowToReadException {
         final TextLoader textLoader = state.textLoader;
         final RecordMetadata m = textLoader.getMetadata();
         final int columnCount = m.getColumnCount();
@@ -91,7 +91,7 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
             case RESPONSE_PREFIX:
                 long totalRows = state.textLoader.getParsedLineCount();
                 long importedRows = state.textLoader.getWrittenLineCount();
-                r.put('{')
+                socket.put('{')
                         .putQuoted("status").put(':').putQuoted("OK").put(',')
                         .putQuoted("location").put(':').encodeUtf8AndQuote(textLoader.getTableName()).put(',')
                         .putQuoted("rowsRejected").put(':').put(totalRows - importedRows).put(',')
@@ -102,11 +102,11 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
                 // fall through
             case RESPONSE_COLUMN:
                 for (; state.columnIndex < columnCount; state.columnIndex++) {
-                    r.bookmark();
+                    socket.bookmark();
                     if (state.columnIndex > 0) {
-                        r.put(',');
+                        socket.put(',');
                     }
-                    r.put('{').
+                    socket.put('{').
                             putQuoted("name").put(':').putQuoted(m.getColumnName(state.columnIndex)).put(',').
                             putQuoted("type").put(':').putQuoted(com.questdb.cairo.ColumnType.nameOf(m.getColumnType(state.columnIndex))).put(',').
                             putQuoted("size").put(':').put(com.questdb.cairo.ColumnType.sizeOf(m.getColumnType(state.columnIndex))).put(',').
@@ -121,15 +121,15 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
 //                        r.put(',').putQuoted("locale").put(':').putQuoted(im.dateLocale.getId());
 //                    }
 
-                    r.put('}');
+                    socket.put('}');
                 }
                 state.responseState = RESPONSE_SUFFIX;
                 // fall through
             case RESPONSE_SUFFIX:
-                r.bookmark();
-                r.put(']').put('}');
-                r.sendChunk();
-                r.done();
+                socket.bookmark();
+                socket.put(']').put('}');
+                socket.sendChunk();
+                socket.done();
                 break;
             default:
                 break;
@@ -181,67 +181,67 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
         b.put("+\r\n");
     }
 
-    private static void resumeText(TextImportProcessorState h, HttpResponseSink.ChunkedResponseImpl r) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        final TextLoader textLoader = h.textLoader;
+    private static void resumeText(TextImportProcessorState state, HttpChunkedResponseSocket socket) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        final TextLoader textLoader = state.textLoader;
         final RecordMetadata metadata = textLoader.getMetadata();
         LongList errors = textLoader.getColumnErrorCounts();
 
 
-        switch (h.responseState) {
+        switch (state.responseState) {
             case RESPONSE_PREFIX:
-                sep(r);
-                r.put('|');
-                pad(r, TO_STRING_COL1_PAD, "Location:");
-                pad(r, TO_STRING_COL2_PAD, textLoader.getTableName());
-                pad(r, TO_STRING_COL3_PAD, "Pattern");
-                pad(r, TO_STRING_COL4_PAD, "Locale");
-                pad(r, TO_STRING_COL5_PAD, "Errors").put(Misc.EOL);
+                sep(socket);
+                socket.put('|');
+                pad(socket, TO_STRING_COL1_PAD, "Location:");
+                pad(socket, TO_STRING_COL2_PAD, textLoader.getTableName());
+                pad(socket, TO_STRING_COL3_PAD, "Pattern");
+                pad(socket, TO_STRING_COL4_PAD, "Locale");
+                pad(socket, TO_STRING_COL5_PAD, "Errors").put(Misc.EOL);
 
 
-                r.put('|');
-                pad(r, TO_STRING_COL1_PAD, "Partition by");
-                pad(r, TO_STRING_COL2_PAD, PartitionBy.toString(textLoader.getPartitionBy()));
-                pad(r, TO_STRING_COL3_PAD, "");
-                pad(r, TO_STRING_COL4_PAD, "");
-                pad(r, TO_STRING_COL5_PAD, "").put(Misc.EOL);
-                sep(r);
+                socket.put('|');
+                pad(socket, TO_STRING_COL1_PAD, "Partition by");
+                pad(socket, TO_STRING_COL2_PAD, PartitionBy.toString(textLoader.getPartitionBy()));
+                pad(socket, TO_STRING_COL3_PAD, "");
+                pad(socket, TO_STRING_COL4_PAD, "");
+                pad(socket, TO_STRING_COL5_PAD, "").put(Misc.EOL);
+                sep(socket);
 
-                r.put('|');
-                pad(r, TO_STRING_COL1_PAD, "Rows handled");
-                pad(r, TO_STRING_COL2_PAD, textLoader.getParsedLineCount());
-                pad(r, TO_STRING_COL3_PAD, "");
-                pad(r, TO_STRING_COL4_PAD, "");
-                pad(r, TO_STRING_COL5_PAD, "").put(Misc.EOL);
+                socket.put('|');
+                pad(socket, TO_STRING_COL1_PAD, "Rows handled");
+                pad(socket, TO_STRING_COL2_PAD, textLoader.getParsedLineCount());
+                pad(socket, TO_STRING_COL3_PAD, "");
+                pad(socket, TO_STRING_COL4_PAD, "");
+                pad(socket, TO_STRING_COL5_PAD, "").put(Misc.EOL);
 
-                r.put('|');
-                pad(r, TO_STRING_COL1_PAD, "Rows imported");
-                pad(r, TO_STRING_COL2_PAD, textLoader.getWrittenLineCount());
-                pad(r, TO_STRING_COL3_PAD, "");
-                pad(r, TO_STRING_COL4_PAD, "");
-                pad(r, TO_STRING_COL5_PAD, "").put(Misc.EOL);
-                sep(r);
+                socket.put('|');
+                pad(socket, TO_STRING_COL1_PAD, "Rows imported");
+                pad(socket, TO_STRING_COL2_PAD, textLoader.getWrittenLineCount());
+                pad(socket, TO_STRING_COL3_PAD, "");
+                pad(socket, TO_STRING_COL4_PAD, "");
+                pad(socket, TO_STRING_COL5_PAD, "").put(Misc.EOL);
+                sep(socket);
 
-                h.responseState = RESPONSE_COLUMN;
+                state.responseState = RESPONSE_COLUMN;
                 // fall through
             case RESPONSE_COLUMN:
 
                 final int columnCount = metadata.getColumnCount();
 
-                for (; h.columnIndex < columnCount; h.columnIndex++) {
-                    r.bookmark();
-                    r.put('|');
-                    pad(r, TO_STRING_COL1_PAD, h.columnIndex);
+                for (; state.columnIndex < columnCount; state.columnIndex++) {
+                    socket.bookmark();
+                    socket.put('|');
+                    pad(socket, TO_STRING_COL1_PAD, state.columnIndex);
 //                    col(r, m.getColumnQuick(h.columnIndex), importedMetadata.getQuick(h.columnIndex));
-                    pad(r, TO_STRING_COL5_PAD, errors.getQuick(h.columnIndex));
-                    r.put(Misc.EOL);
+                    pad(socket, TO_STRING_COL5_PAD, errors.getQuick(state.columnIndex));
+                    socket.put(Misc.EOL);
                 }
-                h.responseState = RESPONSE_SUFFIX;
+                state.responseState = RESPONSE_SUFFIX;
                 // fall through
             case RESPONSE_SUFFIX:
-                r.bookmark();
-                sep(r);
-                r.sendChunk();
-                r.done();
+                socket.bookmark();
+                sep(socket);
+                socket.sendChunk();
+                socket.done();
                 break;
             default:
                 break;
@@ -360,21 +360,27 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
     }
 
     @Override
-    public void resumeSend(HttpConnectionContext context, IODispatcher<HttpConnectionContext> dispatcher) throws PeerDisconnectedException, PeerIsSlowToReadException {
+    public void resumeSend(
+            HttpConnectionContext context,
+            IODispatcher<HttpConnectionContext> dispatcher
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         doResumeSend(LV.get(context), context.getChunkedResponseSocket());
     }
 
-    private void doResumeSend(TextImportProcessorState state, HttpResponseSink.ChunkedResponseImpl response) throws PeerDisconnectedException, PeerIsSlowToReadException {
+    private void doResumeSend(
+            TextImportProcessorState state,
+            HttpChunkedResponseSocket socket
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         try {
 
             if (state.json) {
-                resumeJson(state, response);
+                resumeJson(state, socket);
             } else {
-                resumeText(state, response);
+                resumeText(state, socket);
             }
         } catch (NoSpaceLeftInResponseBufferException ignored) {
-            if (response.resetToBookmark()) {
-                response.sendChunk();
+            if (socket.resetToBookmark()) {
+                socket.sendChunk();
             } else {
                 // what we have here is out unit of data, column value or query
                 // is larger that response content buffer
@@ -397,17 +403,21 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
         transientState.stateMessage = e.getMessage();
     }
 
-    private void sendError(HttpConnectionContext context, String message, boolean json) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        HttpResponseSink.ChunkedResponseImpl sink = context.getChunkedResponseSocket();
+    private void sendError(
+            HttpConnectionContext context,
+            String message,
+            boolean json
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        final HttpChunkedResponseSocket socket = context.getChunkedResponseSocket();
         if (json) {
-            sink.status(200, CONTENT_TYPE_JSON);
-            sink.put('{').putQuoted("status").put(':').encodeUtf8AndQuote(message).put('}');
+            socket.status(200, CONTENT_TYPE_JSON);
+            socket.put('{').putQuoted("status").put(':').encodeUtf8AndQuote(message).put('}');
         } else {
-            sink.status(400, CONTENT_TYPE_TEXT);
-            sink.encodeUtf8(message);
+            socket.status(400, CONTENT_TYPE_TEXT);
+            socket.encodeUtf8(message);
         }
         // todo: is this needed, both of these?
-        sink.done();
+        socket.done();
         throw PeerDisconnectedException.INSTANCE;
     }
 
@@ -415,16 +425,16 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
         TextImportProcessorState state = LV.get(context);
         // todo: may be set this up when headers are ready?
         state.json = Chars.equalsNc("json", context.getRequestHeader().getUrlParam("fmt"));
-        HttpResponseSink.ChunkedResponseImpl response = context.getChunkedResponseSocket();
+        HttpChunkedResponseSocket socket = context.getChunkedResponseSocket();
 
         if (state.state == TextImportProcessorState.STATE_OK) {
             if (state.json) {
-                response.status(200, CONTENT_TYPE_JSON);
+                socket.status(200, CONTENT_TYPE_JSON);
             } else {
-                response.status(200, CONTENT_TYPE_TEXT);
+                socket.status(200, CONTENT_TYPE_TEXT);
             }
-            response.sendHeader();
-            doResumeSend(state, response);
+            socket.sendHeader();
+            doResumeSend(state, socket);
         } else {
             sendError(context, state.stateMessage, state.json);
         }

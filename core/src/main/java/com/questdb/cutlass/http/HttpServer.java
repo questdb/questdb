@@ -125,7 +125,7 @@ public class HttpServer implements Closeable {
             );
 
             for (int i = 0; i < workerCount; i++) {
-                ObjHashSet<Job> jobs = new ObjHashSet<>();
+                final ObjHashSet<Job> jobs = new ObjHashSet<>();
                 final int index = i;
                 jobs.add(dispatcher);
                 jobs.add(new Job() {
@@ -145,7 +145,10 @@ public class HttpServer implements Closeable {
                         workerHaltLatch,
                         -1,
                         LOG,
-                        configuration.getConnectionPoolInitialSize()
+                        configuration.getConnectionPoolInitialSize(),
+                        // have each thread release their own processor selectors
+                        // in case processors stash some of their resources in thread-local variables
+                        () -> Misc.free(selectors.getQuick(index))
                 );
                 worker.setName("questdb-http-" + i);
                 workers.add(worker);
@@ -165,9 +168,10 @@ public class HttpServer implements Closeable {
                 SOCountDownLatch haltLatch,
                 int affinity,
                 Log log,
-                int contextPoolSize
+                int contextPoolSize,
+                Runnable cleaner
         ) {
-            super(jobs, haltLatch, affinity, log);
+            super(jobs, haltLatch, affinity, log, cleaner);
             this.contextPool = new WeakObjectPool<>(() -> new HttpConnectionContext(configuration), contextPoolSize);
         }
 
@@ -190,6 +194,15 @@ public class HttpServer implements Closeable {
         @Override
         public HttpRequestProcessor getDefaultProcessor() {
             return defaultRequestProcessor;
+        }
+
+        @Override
+        public void close() {
+            Misc.free(defaultRequestProcessor);
+            ObjList<CharSequence> processorKeys = processorMap.keys();
+            for (int i = 0, n = processorKeys.size(); i < n; i++) {
+                Misc.free(processorMap.get(processorKeys.getQuick(i)));
+            }
         }
     }
 

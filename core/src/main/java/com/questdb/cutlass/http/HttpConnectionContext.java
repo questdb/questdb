@@ -101,8 +101,8 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
         return fd;
     }
 
-    public HttpResponseSink.ChunkedResponseImpl getChunkedResponseSocket() {
-        return responseSink.getChunkedResponse();
+    public HttpChunkedResponseSocket getChunkedResponseSocket() {
+        return responseSink.getChunkedSocket();
     }
 
     @Override
