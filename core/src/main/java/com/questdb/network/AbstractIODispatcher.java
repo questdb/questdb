@@ -54,6 +54,8 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
     protected final QueueConsumer<IOEvent<C>> disconnectContextRef = this::disconnectContext;
     protected final long idleConnectionTimeout;
     protected final LongMatrix<C> pending = new LongMatrix<>(4);
+    private final int sndBufSize;
+    private final int rcvBufSize;
 
     public AbstractIODispatcher(
             IODispatcherConfiguration configuration,
@@ -82,6 +84,9 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
         this.ioContextFactory = ioContextFactory;
         this.initialBias = configuration.getInitialBias();
         this.idleConnectionTimeout = configuration.getIdleConnectionTimeout();
+
+        this.sndBufSize = configuration.getSndBufSize();
+        this.rcvBufSize = configuration.getRcvBufSize();
 
         if (nf.bindTcp(this.serverFd, configuration.getBindIPv4Address(), configuration.getBindPort())) {
             nf.listen(this.serverFd, configuration.getListenBacklog());
@@ -152,12 +157,6 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
                 return;
             }
 
-            if (nf.configureNonBlocking(fd) < 0) {
-                LOG.error().$("could not configure non-blocking [fd=").$(fd).$(", errno=").$(nf.errno()).$(']').$();
-                nf.close(fd, LOG);
-                return;
-            }
-
             final int connectionCount = this.connectionCount.get();
             if (connectionCount == activeConnectionLimit) {
                 LOG.info().$("connection limit exceeded [fd=").$(fd)
@@ -166,6 +165,20 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
                         .$(']').$();
                 nf.close(fd, LOG);
                 return;
+            }
+
+            if (nf.configureNonBlocking(fd) < 0) {
+                LOG.error().$("could not configure non-blocking [fd=").$(fd).$(", errno=").$(nf.errno()).$(']').$();
+                nf.close(fd, LOG);
+                return;
+            }
+
+            if (sndBufSize > 0) {
+                nf.setSndBuf(fd, sndBufSize);
+            }
+
+            if (rcvBufSize > 0) {
+                nf.setRcvBuf(fd, rcvBufSize);
             }
 
             LOG.info().$("connected [ip=").$ip(nf.getPeerIP(fd)).$(", fd=").$(fd).$(']').$();

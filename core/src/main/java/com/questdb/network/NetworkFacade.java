@@ -97,4 +97,8 @@ public interface NetworkFacade {
 
     @SuppressWarnings("SpellCheckingInspection")
     int recvmmsg(long fd, long msgVec, int msgCount);
+
+    boolean setSndBuf(long fd, int size);
+
+    int getSndBuf(long fd);
 }

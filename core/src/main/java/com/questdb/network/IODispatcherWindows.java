@@ -80,7 +80,6 @@ public class IODispatcherWindows<C extends IOContext> extends AbstractIODispatch
             pending.set(r, M_OPERATION, operation);
             pending.set(r, context);
         }
-
         return useful;
     }
 

@@ -55,7 +55,15 @@ public class Log4jBenchmark {
 
     @Benchmark
     public void testLogOneInt() {
+        LOG.info("brown fox jumped over {} fence", counter++);
+    }
+
+    @Benchmark
+    public void testLogOneIntDisabled() {
         LOG.debug("brown fox jumped over {} fence", counter++);
     }
 
+    @Benchmark
+    public void testBaseline() {
+    }
 }

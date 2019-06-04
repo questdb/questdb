@@ -27,23 +27,22 @@
 #include "errno.h"
 
 int get_int_sockopt(SOCKET fd, int level, int opt) {
-    char value = 0;
+    DWORD value = 0;
     socklen_t len = sizeof(value);
-    int result = getsockopt(fd, level, opt, &value, &len);
-    if (result == 0) {
-        return value;
-    }
-    SaveLastError();
-    return -1;
-}
-
-int set_int_sockopt(SOCKET fd, int level, int opt, char value) {
-    int result = setsockopt(fd, level, opt, &value, sizeof(value));
-    if (result == 0) {
+    int result = getsockopt(fd, level, opt, (char *) &value, &len);
+    if (result == SOCKET_ERROR) {
+        SaveLastError();
         return result;
     }
-    SaveLastError();
-    return -1;
+    return value;
+}
+
+int set_int_sockopt(SOCKET fd, int level, int opt, DWORD value) {
+    int result = setsockopt(fd, level, opt, (const char *) &value, sizeof(value));
+    if (result == SOCKET_ERROR) {
+        SaveLastError();
+    }
+    return result;
 }
 
 JNIEXPORT jlong JNICALL Java_com_questdb_network_Net_socketTcp0
@@ -249,12 +248,12 @@ JNIEXPORT jint JNICALL Java_com_questdb_network_Net_configureNoLinger
 
 JNIEXPORT jint JNICALL Java_com_questdb_network_Net_setSndBuf
         (JNIEnv *e, jclass cl, jlong fd, jint size) {
-    return set_int_sockopt((SOCKET) fd, SOL_SOCKET, SO_SNDBUF, (char) size);
+    return set_int_sockopt((SOCKET) fd, SOL_SOCKET, SO_SNDBUF, size);
 }
 
 JNIEXPORT jint JNICALL Java_com_questdb_network_Net_setRcvBuf
         (JNIEnv *e, jclass cl, jlong fd, jint size) {
-    return set_int_sockopt((SOCKET) fd, SOL_SOCKET, SO_RCVBUF, (char) size);
+    return set_int_sockopt((SOCKET) fd, SOL_SOCKET, SO_RCVBUF, size);
 }
 
 JNIEXPORT jint JNICALL Java_com_questdb_network_Net_getEwouldblock

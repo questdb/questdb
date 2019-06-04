@@ -92,4 +92,14 @@ public class DefaultIODispatcherConfiguration implements IODispatcherConfigurati
     public int getInitialBias() {
         return IODispatcherConfiguration.BIAS_READ;
     }
+
+    @Override
+    public int getSndBufSize() {
+        return -1; // use system default
+    }
+
+    @Override
+    public int getRcvBufSize() {
+        return -1; // use system default
+    }
 }

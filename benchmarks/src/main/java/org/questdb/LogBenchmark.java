@@ -57,6 +57,14 @@ public class LogBenchmark {
         LOG.info().$("brown fox jumped over ").$(counter).$(" fence").$();
     }
 
+    @Benchmark
+    public void testLogOneIntDisabled() {
+        LOG.debug().$("brown fox jumped over ").$(counter).$(" fence").$();
+    }
+
+    @Benchmark
+    public void testBaseline() {
+    }
 
     static {
         LogFactory.INSTANCE.add(new LogWriterConfig(LogLevel.LOG_LEVEL_INFO, (queue, subSeq, level) -> {

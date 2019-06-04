@@ -35,6 +35,7 @@ import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.locks.LockSupport;
 
 public class NetTest {
     @Test
@@ -123,6 +124,58 @@ public class NetTest {
         haltLatch.await(10, TimeUnit.SECONDS);
         Net.close(clientFd);
         Net.close(fd);
+
+        TestUtils.assertEquals("127.0.0.1", sink);
+        Assert.assertFalse(threadFailed.get());
+    }
+
+    @Test
+    public void testSendAndRecvBuffer() throws InterruptedException, BrokenBarrierException {
+        int port = 9992;
+        long fd = Net.socketTcp(true);
+        Assert.assertTrue(fd > 0);
+        Assert.assertTrue(Net.bindTcp(fd, 0, port));
+        Net.listen(fd, 1024);
+
+        // make sure peerIp in correct byte order
+        StringSink sink = new StringSink();
+
+        CountDownLatch haltLatch = new CountDownLatch(1);
+        CyclicBarrier barrier = new CyclicBarrier(2);
+        AtomicBoolean threadFailed = new AtomicBoolean(false);
+
+        new Thread(() -> {
+            try {
+                barrier.await();
+                long clientfd = Net.accept(fd);
+                Net.appendIP4(sink, Net.getPeerIP(clientfd));
+                Net.configureNoLinger(clientfd);
+                while (!Net.isDead(clientfd)) {
+                    LockSupport.parkNanos(1);
+                }
+                Net.close(clientfd);
+                haltLatch.countDown();
+            } catch (Exception e) {
+                threadFailed.set(true);
+                e.printStackTrace();
+            } finally {
+                haltLatch.countDown();
+            }
+        }).start();
+
+
+        barrier.await();
+        long clientFd = Net.socketTcp(true);
+        long sockAddr = Net.sockaddr("127.0.0.1", port);
+        Assert.assertEquals(0, Net.connect(clientFd, sockAddr));
+        Assert.assertEquals(0, Net.setSndBuf(clientFd, 256));
+        Assert.assertEquals(256, Net.getSndBuf(clientFd));
+
+        Assert.assertEquals(0, Net.setRcvBuf(clientFd, 512));
+        Assert.assertEquals(512, Net.getRcvBuf(clientFd));
+        Net.close(clientFd);
+        Net.close(fd);
+        haltLatch.await(10, TimeUnit.SECONDS);
 
         TestUtils.assertEquals("127.0.0.1", sink);
         Assert.assertFalse(threadFailed.get());

@@ -121,8 +121,8 @@ public class TextLoader implements Closeable, Mutable {
         textLexer.setTableName(tableName);
 
         LOG.info()
-                .$("configured [table=").$(tableName)
-                .$(", overwrite=").$(overwrite)
+                .$("configured [table=`").$(tableName)
+                .$("`, overwrite=").$(overwrite)
                 .$(", durable=").$(durable)
                 .$(", atomicity=").$(atomicity)
                 .$(']').$();

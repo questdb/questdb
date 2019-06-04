@@ -205,4 +205,14 @@ public class NetworkFacadeImpl implements NetworkFacade {
     public int recvmmsg(long fd, long msgVec, int msgCount) {
         return Net.recvmmsg(fd, msgVec, msgCount);
     }
+
+    @Override
+    public boolean setSndBuf(long fd, int size) {
+        return Net.setSndBuf(fd, size) == 0;
+    }
+
+    @Override
+    public int getSndBuf(long fd) {
+        return Net.getSndBuf(fd);
+    }
 }

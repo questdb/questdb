@@ -197,8 +197,8 @@ public class TextDelimiterScanner implements Closeable {
 
         if (lastStdDev < maxRequiredDelimiterStdDev) {
             LOG.info()
-                    .$("determined [table=").$(tableName)
-                    .$(", delimiter='").$((char) delimiter)
+                    .$("scan result [table=`").$(tableName)
+                    .$("`, delimiter='").$((char) delimiter)
                     .$("', priority=").$(lastDelimiterPriority)
                     .$(", mean=").$(lastDelimiterMean)
                     .$(", stddev=").$(lastStdDev)

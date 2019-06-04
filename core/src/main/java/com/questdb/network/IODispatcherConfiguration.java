@@ -54,4 +54,8 @@ public interface IODispatcherConfiguration {
     SelectFacade getSelectFacade();
 
     int getInitialBias();
+
+    int getSndBufSize();
+
+    int getRcvBufSize();
 }

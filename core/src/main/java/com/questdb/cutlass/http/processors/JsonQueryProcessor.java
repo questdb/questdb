@@ -106,6 +106,14 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
                 }
                 socket.put('"').putISODateMillis(d).put('"');
                 break;
+            case ColumnType.TIMESTAMP:
+                final long t = rec.getTimestamp(col);
+                if (t == Long.MIN_VALUE) {
+                    socket.put("null");
+                    break;
+                }
+                socket.put('"').putISODate(t).put('"');
+                break;
             case ColumnType.SHORT:
                 socket.put(rec.getShort(col));
                 break;
@@ -120,7 +128,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
                 socket.put(']');
                 break;
             default:
-                break;
+                assert false;
         }
     }
 
@@ -229,13 +237,13 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
                     cacheHits.incrementAndGet();
                     info(state).$("execute-new [q=`").$(state.query).
                             $("`, skip: ").$(state.skip).
-                            $(", stop: ").$(state.stop).
+                            $(", stop: ").$(state.stop == Long.MAX_VALUE ? "MAX" : state.stop).
                             $(']').$();
                 } else {
                     cacheMisses.incrementAndGet();
                     info(state).$("execute-cached [q=`").$(state.query).
                             $("`, skip: ").$(state.skip).
-                            $(", stop: ").$(state.stop).
+                            $(", stop: ").$(state.stop == Long.MAX_VALUE ? "MAX" : state.stop).
                             $(']').$();
                 }
 
@@ -247,6 +255,9 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
                         resumeSend(context, dispatcher);
                         break;
                     } catch (CairoError | CairoException e) {
+                        // todo: investigate why we need to keep retrying to execute query when it is failing
+                        //  perhaps this is unnecessary because we don't even check the type of error it is
+                        //  we could be having severe hardware issues and continue trying
                         if (retryCount == 0) {
                             // todo: we want to clear cache, no need to create string to achieve this
                             FACTORY_CACHE.get().put(state.query.toString(), null);
@@ -261,6 +272,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
                 } else {
                     header(socket, 200);
                     sendConfirmation(socket);
+                    readyForNextRequest(context, dispatcher);
                     break;
                 }
             } while (true);
@@ -269,6 +281,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             readyForNextRequest(context, dispatcher);
         } catch (CairoException | CairoError e) {
             internalError(socket, e, state);
+            readyForNextRequest(context, dispatcher);
         }
     }
 
@@ -285,8 +298,12 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         sendException(socket, sqlException.getPosition(), sqlException.getFlyweightMessage(), 400, state.query);
     }
 
-
     private void sendConfirmation(HttpChunkedResponseSocket socket) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        // todo: test what happens when we cannot send a simple confirmation out
+        //  it looks like on retry "send" we don't even handle this case unless the whole
+        //  of the confirmation fits nicely into send buffer
+        //  what happens when it doesn't?
+
         socket.put('{').putQuoted("ddl").put(':').putQuoted("OK").put('}');
         socket.sendChunk();
         socket.done();
@@ -306,6 +323,9 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             HttpChunkedResponseSocket socket,
             int status
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        // todo: same issue as with sending confirmation
+        //  what happens when header doesn't fit in buffer or there is "slow" client
+        //  half way sending header
         socket.status(status, "application/json; charset=utf-8");
         // todo: configure this header externally
         socket.headers().put("Keep-Alive: timeout=5, max=10000").put(Misc.EOL);
@@ -329,7 +349,6 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         socket.done();
     }
 
-
     private LogRecord error(JsonQueryProcessorState state) {
         return LOG.error().$('[').$(state.fd).$("] ");
     }
@@ -347,6 +366,8 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         if (state == null || state.cursor == null) {
             return;
         }
+
+        LOG.info().$("resume").$();
 
         final HttpChunkedResponseSocket socket = context.getChunkedResponseSocket();
         final int columnCount = state.metadata.getColumnCount();
@@ -470,6 +491,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
     }
 
     private void readyForNextRequest(HttpConnectionContext context, IODispatcher<HttpConnectionContext> dispatcher) {
+        LOG.info().$("all sent").$();
         context.clear();
         dispatcher.registerChannel(context, IOOperation.READ);
     }

@@ -339,8 +339,10 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
                         dispatcher.disconnect(this);
                     } catch (PeerIsSlowToReadException ignore) {
                         LOG.debug().$("peer is slow reader [two]").$();
-                        dispatcher.registerChannel(this, IOOperation.WRITE);
+                        // it is important to assign resume processor before we fire
+                        // event off to dispatcher
                         resumeProcessor = processor;
+                        dispatcher.registerChannel(this, IOOperation.WRITE);
                     }
                 }
             }

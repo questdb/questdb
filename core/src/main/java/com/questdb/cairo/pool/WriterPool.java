@@ -142,7 +142,7 @@ public class WriterPool extends AbstractPool implements ResourcePool<TableWriter
                 }
                 return checkClosedAndGetWriter(tableName, e);
             }
-            LOG.error().$('\'').utf8(tableName).$("' is busy [owner=").$(owner).$(']').$();
+            LOG.error().$("busy [table=`").utf8(tableName).$("`, owner=").$(owner).$(']').$();
             throw EntryUnavailableException.INSTANCE;
         }
     }
@@ -187,7 +187,7 @@ public class WriterPool extends AbstractPool implements ResourcePool<TableWriter
             return lockAndNotify(thread, e, tableName);
         }
 
-        LOG.error().$("cannot lock '").utf8(tableName).$("', busy [owner=").$(e.owner).$(", thread=").$(thread).$(']').$();
+        LOG.error().$("could not lock, busy [table=`").utf8(tableName).$("`, owner=").$(e.owner).$(", thread=").$(thread).$(']').$();
         notifyListener(thread, tableName, PoolListener.EV_LOCK_BUSY);
         return false;
     }
@@ -334,7 +334,7 @@ public class WriterPool extends AbstractPool implements ResourcePool<TableWriter
             w.setLifecycleManager(DefaultLifecycleManager.INSTANCE);
             w.close();
             e.writer = null;
-            LOG.info().$("closed '").utf8(name).$("' [reason=").$(PoolConstants.closeReasonText(reason)).$(", by=").$(thread).$(']').$();
+            LOG.info().$("closed [table=`").utf8(name).$("`, reason=").$(PoolConstants.closeReasonText(reason)).$(", by=").$(thread).$(']').$();
             notifyListener(thread, name, ev);
         }
     }
@@ -355,11 +355,11 @@ public class WriterPool extends AbstractPool implements ResourcePool<TableWriter
     private TableWriter createWriter(CharSequence name, Entry e, long thread) {
         try {
             checkClosed();
-            LOG.info().$("open '").utf8(name).$("' [thread=").$(thread).$(']').$();
+            LOG.info().$("open [table=`").utf8(name).$("`, thread=").$(thread).$(']').$();
             e.writer = new TableWriter(configuration, name, workScheduler, true, e);
             return logAndReturn(e, PoolListener.EV_CREATE);
         } catch (CairoException ex) {
-            LOG.error().$("failed to allocate writer '").utf8(name).$("' [thread=").$(e.owner).$(']').$();
+            LOG.error().$("could not open [table=`").utf8(name).$("`, thread=").$(e.owner).$(']').$();
             e.ex = ex;
             notifyListener(e.owner, name, PoolListener.EV_CREATE_EX);
             throw ex;
@@ -370,17 +370,17 @@ public class WriterPool extends AbstractPool implements ResourcePool<TableWriter
         TableUtils.lockName(path.of(root).concat(tableName));
         e.lockFd = TableUtils.lock(ff, path);
         if (e.lockFd == -1L) {
-            LOG.error().$("cannot lock '").utf8(tableName).$("' [thread=").$(thread).$(']').$();
+            LOG.error().$("could not lock [table=`").utf8(tableName).$("`, thread=").$(thread).$(']').$();
             e.owner = UNALLOCATED;
             return false;
         }
-        LOG.info().$('\'').utf8(tableName).$("' locked [thread=").$(thread).$(']').$();
+        LOG.info().$("locked [table=`").utf8(tableName).$("`, thread=").$(thread).$(']').$();
         notifyListener(thread, tableName, PoolListener.EV_LOCK_SUCCESS);
         return true;
     }
 
     private TableWriter logAndReturn(Entry e, short event) {
-        LOG.info().$('\'').utf8(e.writer.getName()).$("' is assigned [thread=").$(e.owner).$(']').$();
+        LOG.info().$(">> [table=`").utf8(e.writer.getName()).$("`, thread=").$(e.owner).$(']').$();
         notifyListener(e.owner, e.writer.getName(), event);
         return e.writer;
     }
@@ -389,7 +389,7 @@ public class WriterPool extends AbstractPool implements ResourcePool<TableWriter
         CharSequence name = e.writer.getName();
         long thread = Thread.currentThread().getId();
         if (e.owner != UNALLOCATED) {
-            LOG.info().$('\'').utf8(name).$("' is back [thread=").$(thread).$(']').$();
+            LOG.info().$("<< [table=`").utf8(name).$("`, thread=").$(thread).$(']').$();
             if (isClosed()) {
                 LOG.info().$("allowing '").utf8(name).$("' to close [thread=").$(e.owner).$(']').$();
                 entries.remove(name);
@@ -401,7 +401,7 @@ public class WriterPool extends AbstractPool implements ResourcePool<TableWriter
             e.lastReleaseTime = configuration.getMicrosecondClock().getTicks();
             notifyListener(thread, name, PoolListener.EV_RETURN);
         } else {
-            LOG.error().$('\'').utf8(name).$("' has no owner").$();
+            LOG.error().$("orphaned [table=`").utf8(name).$("`]").$();
             notifyListener(thread, name, PoolListener.EV_UNEXPECTED_CLOSE);
         }
         return true;
