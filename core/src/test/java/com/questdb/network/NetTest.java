@@ -23,6 +23,7 @@
 
 package com.questdb.network;
 
+import com.questdb.std.Os;
 import com.questdb.std.str.StringSink;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -169,10 +170,20 @@ public class NetTest {
         long sockAddr = Net.sockaddr("127.0.0.1", port);
         Assert.assertEquals(0, Net.connect(clientFd, sockAddr));
         Assert.assertEquals(0, Net.setSndBuf(clientFd, 256));
-        Assert.assertEquals(256, Net.getSndBuf(clientFd));
+        // Linux kernel doubles the value we set, so we handle this case separately
+        // http://man7.org/linux/man-pages/man7/socket.7.html
+        if (Os.type == Os.LINUX) {
+            Assert.assertEquals(4608, Net.getSndBuf(clientFd));
+        } else {
+            Assert.assertEquals(256, Net.getSndBuf(clientFd));
+        }
 
         Assert.assertEquals(0, Net.setRcvBuf(clientFd, 512));
-        Assert.assertEquals(512, Net.getRcvBuf(clientFd));
+        if (Os.type == Os.LINUX) {
+            Assert.assertEquals(2304, Net.getRcvBuf(clientFd));
+        } else {
+            Assert.assertEquals(512, Net.getRcvBuf(clientFd));
+        }
         Net.close(clientFd);
         Net.close(fd);
         haltLatch.await(10, TimeUnit.SECONDS);

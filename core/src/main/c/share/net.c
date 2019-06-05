@@ -184,7 +184,7 @@ JNIEXPORT jint JNICALL Java_com_questdb_network_Net_configureNoLinger
     return setsockopt((int) fd, SOL_SOCKET, SO_LINGER, &sl, sizeof(sl));
 }
 
-JNIEXPORT jint JNICALL Java_com_questdb_network_Net_connect
+JNIEXPORT jlong JNICALL Java_com_questdb_network_Net_connect
         (JNIEnv *e, jclass cl, jlong fd, jlong sockAddr) {
     return connect((int) fd, (const struct sockaddr *) sockAddr, sizeof(struct sockaddr));
 }

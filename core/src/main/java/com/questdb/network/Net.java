@@ -86,7 +86,7 @@ public final class Net {
 
     public static native int configureNonBlocking(long fd);
 
-    public native static int connect(long fd, long sockaddr);
+    public native static long connect(long fd, long sockaddr);
 
     public static native void freeMsgHeaders(long msgHeaders);
 

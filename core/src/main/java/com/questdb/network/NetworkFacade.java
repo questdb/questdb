@@ -43,7 +43,7 @@ public interface NetworkFacade {
 
     int configureNonBlocking(long fd);
 
-    int connect(long fd, long sockaddr);
+    long connect(long fd, long sockaddr);
 
     void freeSockAddr(long socketAddress);
 

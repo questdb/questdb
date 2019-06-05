@@ -72,7 +72,7 @@ public class NetworkFacadeImpl implements NetworkFacade {
     }
 
     @Override
-    public int connect(long fd, long sockaddr) {
+    public long connect(long fd, long sockaddr) {
         return Net.connect(fd, sockaddr);
     }
 

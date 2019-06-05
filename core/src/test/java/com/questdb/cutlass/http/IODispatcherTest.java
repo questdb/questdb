@@ -49,7 +49,6 @@ import org.junit.Assert;
 import org.junit.Ignore;
 import org.junit.Test;
 
-import java.io.Closeable;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -57,48 +56,6 @@ import java.util.concurrent.locks.LockSupport;
 
 public class IODispatcherTest {
     private static Log LOG = LogFactory.getLog(IODispatcherTest.class);
-
-    private static void assertDownloadResponse(long fd, Rnd rnd, long buffer, int len, int nonRepeatedContentLength, String expectedResponseHeader, long expectedResponseLen) {
-        int expectedHeaderLen = expectedResponseHeader.length();
-        int headerCheckRemaining = expectedResponseHeader.length();
-        long downloadedSoFar = 0;
-        int contentRemaining = 0;
-        while (downloadedSoFar < expectedResponseLen) {
-            int contentOffset = 0;
-            int n = Net.recv(fd, buffer, len);
-            Assert.assertTrue(n > -1);
-            if (n > 0) {
-                if (headerCheckRemaining > 0) {
-                    for (int i = 0; i < n && headerCheckRemaining > 0; i++) {
-                        if (expectedResponseHeader.charAt(expectedHeaderLen - headerCheckRemaining) != (char) Unsafe.getUnsafe().getByte(buffer + i)) {
-                            Assert.fail("at " + (expectedHeaderLen - headerCheckRemaining));
-                        }
-                        headerCheckRemaining--;
-                        contentOffset++;
-                    }
-                }
-
-                if (headerCheckRemaining == 0) {
-                    for (int i = contentOffset; i < n; i++) {
-                        if (contentRemaining == 0) {
-                            contentRemaining = nonRepeatedContentLength;
-                            rnd.reset();
-                        }
-                        Assert.assertEquals(rnd.nextByte(), Unsafe.getUnsafe().getByte(buffer + i));
-                        contentRemaining--;
-                    }
-
-                }
-                downloadedSoFar += n;
-            }
-        }
-    }
-
-    private static void sendRequest(String request, long fd, long buffer) {
-        final int requestLen = request.length();
-        Chars.strcpy(request, requestLen, buffer);
-        Assert.assertEquals(requestLen, Net.send(fd, buffer, requestLen));
-    }
 
     @Test
     public void testBiasWrite() throws Exception {
@@ -444,291 +401,6 @@ public class IODispatcherTest {
     }
 
     @Test
-    public void testJsonQuery() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            final String baseDir = System.getProperty("java.io.tmpdir");
-            final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir);
-
-            try (CairoEngine engine = new Engine(new DefaultCairoConfiguration(baseDir));
-                 HttpServer httpServer = new HttpServer(httpConfiguration)) {
-                httpServer.bind(new HttpRequestProcessorFactory() {
-                    @Override
-                    public String getUrl() {
-                        return HttpServerConfiguration.DEFAULT_PROCESSOR_URL;
-                    }
-
-                    @Override
-                    public HttpRequestProcessor newInstance() {
-                        return new StaticContentProcessor(httpConfiguration.getStaticContentProcessorConfiguration());
-                    }
-                });
-
-                httpServer.bind(new HttpRequestProcessorFactory() {
-                    @Override
-                    public String getUrl() {
-                        return "/query";
-                    }
-
-                    @Override
-                    public HttpRequestProcessor newInstance() {
-                        return new JsonQueryProcessor(engine);
-                    }
-                });
-
-                httpServer.start();
-
-                // create table with all column types
-                CairoTestUtils.createTestTable(
-                        engine.getConfiguration(),
-                        20,
-                        new Rnd(),
-                        new TestRecord.ArrayBinarySequence());
-
-                // send multipart request to server
-                final String request = "GET /query?query=x%20where%20i%20%3D%20(%27EHNRX%27) HTTP/1.1\r\n" +
-                        "Host: localhost:9001\r\n" +
-                        "Connection: keep-alive\r\n" +
-                        "Cache-Control: max-age=0\r\n" +
-                        "Upgrade-Insecure-Requests: 1\r\n" +
-                        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n" +
-                        "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3\r\n" +
-                        "Accept-Encoding: gzip, deflate, br\r\n" +
-                        "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
-                        "\r\n";
-
-                byte[] expectedResponse = ("HTTP/1.1 200 OK\r\n" +
-                        "Server: questDB/1.0\r\n" +
-                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-                        "Transfer-Encoding: chunked\r\n" +
-                        "Content-Type: application/json; charset=utf-8\r\n" +
-                        "Keep-Alive: timeout=5, max=10000\r\n" +
-                        "\r\n" +
-                        "224\r\n" +
-                        "{\"query\":\"x where i = ('EHNRX')\",\"columns\":[{\"name\":\"a\",\"type\":\"BYTE\"},{\"name\":\"b\",\"type\":\"SHORT\"},{\"name\":\"c\",\"type\":\"INT\"},{\"name\":\"d\",\"type\":\"LONG\"},{\"name\":\"e\",\"type\":\"DATE\"},{\"name\":\"f\",\"type\":\"TIMESTAMP\"},{\"name\":\"g\",\"type\":\"FLOAT\"},{\"name\":\"h\",\"type\":\"DOUBLE\"},{\"name\":\"i\",\"type\":\"STRING\"},{\"name\":\"j\",\"type\":\"SYMBOL\"},{\"name\":\"k\",\"type\":\"BOOLEAN\"},{\"name\":\"l\",\"type\":\"BINARY\"}],\"dataset\":[[80,24814,-727724771,8920866532787660373,\"-169665660-01-09T01:58:28.119Z\",\"-51129-02-11T06:38:29.397464Z\",null,null,\"EHNRX\",\"ZSX\",false,[]]],\"count\":1}\r\n" +
-                        "0\r\n" +
-                        "\r\n").getBytes();
-
-                sendAndReceive(
-                        NetworkFacadeImpl.INSTANCE,
-                        request,
-                        expectedResponse,
-                        20_000,
-                        0
-                );
-
-                httpServer.halt();
-            }
-        });
-    }
-
-    @Test
-    public void testJsonQueryAndDisconnectWithoutWaitingForResult() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            try (OneToOneSocketNetworkFacadeImpl nf = new OneToOneSocketNetworkFacadeImpl(1024)) {
-
-                final String baseDir = System.getProperty("java.io.tmpdir");
-                final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(nf, baseDir, 128);
-
-                try (CairoEngine engine = new Engine(new DefaultCairoConfiguration(baseDir));
-                     HttpServer httpServer = new HttpServer(httpConfiguration)) {
-                    httpServer.bind(new HttpRequestProcessorFactory() {
-                        @Override
-                        public String getUrl() {
-                            return HttpServerConfiguration.DEFAULT_PROCESSOR_URL;
-                        }
-
-                        @Override
-                        public HttpRequestProcessor newInstance() {
-                            return new StaticContentProcessor(httpConfiguration.getStaticContentProcessorConfiguration());
-                        }
-                    });
-
-                    httpServer.bind(new HttpRequestProcessorFactory() {
-                        @Override
-                        public String getUrl() {
-                            return "/query";
-                        }
-
-                        @Override
-                        public HttpRequestProcessor newInstance() {
-                            return new JsonQueryProcessor(engine);
-                        }
-                    });
-
-                    httpServer.start();
-
-                    // create table with all column types
-                    CairoTestUtils.createTestTable(
-                            engine.getConfiguration(),
-                            30,
-                            new Rnd(),
-                            new TestRecord.ArrayBinarySequence());
-
-                    // send multipart request to server
-                    final String request = "GET /query?query=x HTTP/1.1\r\n" +
-                            "Host: localhost:9001\r\n" +
-                            "Connection: keep-alive\r\n" +
-                            "Cache-Control: max-age=0\r\n" +
-                            "Upgrade-Insecure-Requests: 1\r\n" +
-                            "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n" +
-                            "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3\r\n" +
-                            "Accept-Encoding: gzip, deflate, br\r\n" +
-                            "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
-                            "\r\n";
-
-                    byte[] expectedResponse = ("HTTP/1.1 200 OK\r\n" +
-                            "Server: questDB/1.0\r\n" +
-                            "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-                            "Transfer-Encoding: chunked\r\n" +
-                            "Content-Type: application/json; charset=utf-8\r\n" +
-                            "Keep-Alive: timeout=5, max=10000\r\n" +
-                            "\r\n" +
-                            "68\r\n" +
-                            "{\"query\":\"x\",\"columns\":[{\"name\":\"a\",\"type\":\"BYTE\"},{\"name\":\"b\",\"type\":\"SHORT\"},{\"name\":\"c\",\"type\":\"INT\"}\r\n" +
-                            "72\r\n" +
-                            ",{\"name\":\"d\",\"type\":\"LONG\"},{\"name\":\"e\",\"type\":\"DATE\"},{\"name\":\"f\",\"type\":\"TIMESTAMP\"},{\"name\":\"g\",\"type\":\"FLOAT\"}\r\n" +
-                            "75\r\n" +
-                            ",{\"name\":\"h\",\"type\":\"DOUBLE\"},{\"name\":\"i\",\"type\":\"STRING\"},{\"name\":\"j\",\"type\":\"SYMBOL\"},{\"name\":\"k\",\"type\":\"BOOLEAN\"}\r\n" +
-                            "73\r\n" +
-                            ",{\"name\":\"l\",\"type\":\"BINARY\"}],\"dataset\":[[80,24814,-727724771,8920866532787660373,\"-169665660-01-09T01:58:28.119Z\"\r\n" +
-                            "70\r\n" +
-                            ",\"-51129-02-11T06:38:29.397464Z\",null,null,\"EHNRX\",\"ZSX\",false,[]],[30,32312,-303295973,6854658259142399220,null\r\n" +
-                            "7b\r\n" +
-                            ",\"273652-10-24T01:16:04.499209Z\",0.38179755,0.9687423277,\"EDRQQ\",\"LOF\",false,[]],[-79,-21442,1985398001,7522482991756933150\r\n" +
-                            "7f\r\n" +
-                            ",\"279864478-12-31T01:58:35.932Z\",\"20093-07-24T16:56:53.198086Z\",null,0.0538440031,\"HVUVS\",\"OTS\",true,[]],[70,-29572,-1966408995\r\n" +
-                            "79\r\n" +
-                            ",-2406077911451945242,null,\"-254163-09-17T05:33:54.251307Z\",0.81233966,null,\"IKJSM\",\"SUQ\",false,[]],[-97,15913,2011884585\r\n" +
-                            "7b\r\n" +
-                            ",4641238585508069993,\"-277437004-09-03T08:55:41.803Z\",\"186548-11-05T05:57:55.827139Z\",0.89989215,0.6583311520,\"ZIMNZ\",\"RMF\"\r\n" +
-                            "7f\r\n" +
-                            ",false,[]],[-9,5991,-907794648,null,null,null,0.13264287,null,\"OHNZH\",null,false,[]],[-94,30598,-1510166985,6056145309392106540\r\n" +
-                            "76\r\n" +
-                            ",null,null,0.54669005,null,\"MZVQE\",\"NDC\",true,[]],[-97,-11913,null,750145151786158348,\"-144112168-08-02T20:50:38.542Z\"\r\n" +
-                            "72\r\n" +
-                            ",\"-279681-08-19T06:26:33.186955Z\",0.8977236,0.5691053034,\"WIFFL\",\"BRO\",false,[]],[58,7132,null,6793615437970356479\r\n" +
-                            "77\r\n" +
-                            ",\"63572238-04-24T11:00:13.287Z\",\"171291-08-24T10:16:32.229138Z\",null,0.7215959172,\"KWZLU\",\"GXH\",false,[]],[37,7618,null\r\n" +
-                            "7e\r\n" +
-                            ",-9219078548506735248,\"286623354-12-11T19:15:45.735Z\",\"197633-02-20T09:12:49.579955Z\",null,0.8001632261,null,\"KFM\",false,[]],[\r\n" +
-                            "7e\r\n" +
-                            "109,-8207,-485549586,null,\"278802275-11-05T23:22:18.593Z\",\"122137-10-05T20:22:21.831563Z\",0.5780819,0.1858643558,\"DYOPH\",\"IMY\"\r\n" +
-                            "80\r\n" +
-                            ",false,[]],[-44,21057,-1604266757,4598876523645326656,null,\"204480-04-27T20:21:01.380246Z\",0.19736767,0.1159185576,\"DMIGQ\",\"VKH\"\r\n" +
-                            "7c\r\n" +
-                            ",false,[]],[17,23522,-861621212,-6446120489339099836,null,\"79287-08-03T02:05:46.962686Z\",0.4349324,0.1129625732,\"CGFNW\",null\r\n" +
-                            "7c\r\n" +
-                            ",true,[]],[-104,12160,1772084256,-5828188148408093893,\"-270365729-01-24T04:33:47.165Z\",\"-252298-10-09T07:11:36.011048Z\",null\r\n" +
-                            "7f\r\n" +
-                            ",0.5764439692,\"BQQEM\",null,false,[]],[-99,-7837,-159178348,null,\"81404961-06-19T18:10:11.037Z\",null,0.5598187,0.5900836402,null\r\n" +
-                            "7b\r\n" +
-                            ",\"HPZ\",true,[]],[-127,5343,-238129044,-8851773155849999621,\"-152632412-11-30T22:15:09.334Z\",\"-90192-03-24T17:45:15.784841Z\"\r\n" +
-                            "74\r\n" +
-                            ",0.7806183,null,\"CLNXF\",\"UWP\",false,[]],[-59,-10912,1665107665,-8306574409611146484,\"-243146933-02-10T16:15:15.931Z\"\r\n" +
-                            "71\r\n" +
-                            ",\"-109765-04-18T07:45:05.739795Z\",0.52387,null,\"NIJEE\",\"RUG\",true,[]],[69,4771,21764960,-5708280760166173503,null\r\n" +
-                            "7f\r\n" +
-                            ",\"-248236-04-27T14:06:03.509521Z\",0.77833515,0.5335243841,\"VOCUG\",\"UNE\",false,[]],[56,-17784,null,5637967617527425113,null,null\r\n" +
-                            "61\r\n" +
-                            ",null,0.5815065874,null,\"EVQ\",true,[]],[58,29019,-416467698,null,\"-175203601-12-02T01:02:02.378Z\"\r\n" +
-                            "74\r\n" +
-                            ",\"201101-10-20T07:35:25.133598Z\",null,0.7430101995,\"DXCBJ\",null,true,[]],[-11,-23214,1210163254,-7888017038009650608\r\n" +
-                            "7c\r\n" +
-                            ",\"152525393-08-28T08:19:48.512Z\",\"216070-11-17T13:37:58.936720Z\",null,null,\"JJILL\",\"YMI\",true,[]],[-69,-29912,217564476,null\r\n" +
-                            "7a\r\n" +
-                            ",\"-102483035-11-11T09:07:30.782Z\",\"-196714-09-04T03:57:56.227221Z\",0.08039439,0.1868426764,\"EUKWM\",\"NZZ\",true,[]],[4,19590\r\n" +
-                            "79\r\n" +
-                            ",-1505690678,6904166490726350488,\"-218006330-04-21T14:18:39.081Z\",\"283032-05-21T12:20:14.632027Z\",0.23285526,0.2212274795\r\n" +
-                            "62\r\n" +
-                            ",\"NSSTC\",\"ZUP\",false,[]],[-111,-6531,342159453,8456443351018554474,\"197601854-07-22T06:29:36.718Z\"\r\n" +
-                            "7b\r\n" +
-                            ",\"-180434-06-04T17:16:49.501207Z\",0.7910659,0.7128505999,\"YQPZG\",\"ZNY\",true,[]],[106,32411,-1426419269,-2990992799558673548\r\n" +
-                            "6a\r\n" +
-                            ",\"261692520-06-19T20:19:43.556Z\",null,0.8377384,0.0263363978,\"GENFE\",\"WWR\",false,[]],[-125,25715,null,null\r\n" +
-                            "6e\r\n" +
-                            ",\"-113894547-06-20T07:24:13.689Z\",null,0.7417434,0.6288088088,\"IJZZY\",null,true,[]],[96,-13602,1350628163,null\r\n" +
-                            "6f\r\n" +
-                            ",\"257134407-03-20T11:25:44.819Z\",null,0.7360581,null,\"LGYDO\",\"NLI\",true,[]],[-64,8270,null,-5695137753964242205\r\n" +
-                            "76\r\n" +
-                            ",\"289246073-05-28T15:10:38.644Z\",\"-220112-01-30T11:56:06.194709Z\",0.938019,null,\"GHLXG\",\"MDJ\",true,[]],[-76,12479,null\r\n" +
-                            "80\r\n" +
-                            ",-4034810129069646757,\"123619904-08-31T19:44:11.844Z\",\"267826-03-17T13:36:32.811014Z\",0.8463546,null,\"PFOYM\",\"WDS\",true,[]],[100\r\n" +
-                            "80\r\n" +
-                            ",24045,-2102123220,-7175695171900374773,\"-242871073-08-17T14:45:16.399Z\",\"125517-01-13T08:03:16.581566Z\",0.20179749,0.4293443705\r\n" +
-                            "25\r\n" +
-                            ",\"USIMY\",\"XUU\",false,[]]],\"count\":30}\r\n" +
-                            "0\r\n" +
-                            "\r\n").getBytes();
-
-                    sendAndReceive(nf, request, expectedResponse, 10, 100L);
-                    httpServer.halt();
-                }
-            }
-        });
-    }
-
-    private void sendAndReceive(
-            NetworkFacade nf,
-            String request,
-            byte[] expectedResponse,
-            int requestCount,
-            long pauseBetweenSendAndReceive
-    ) throws InterruptedException {
-        long fd = nf.socketTcp(true);
-        try {
-            long sockAddr = nf.sockaddr("127.0.0.1", 9001);
-            try {
-                Assert.assertTrue(fd > -1);
-                Assert.assertEquals(0, nf.connect(fd, sockAddr));
-                Assert.assertEquals(0, nf.setTcpNoDelay(fd, true));
-
-                final int len = Math.max(expectedResponse.length, request.length()) * 2;
-                long ptr = Unsafe.malloc(len);
-                try {
-                    for (int j = 0; j < requestCount; j++) {
-                        int sent = 0;
-                        int reqLen = request.length();
-                        Chars.strcpy(request, reqLen, ptr);
-                        while (sent < reqLen) {
-                            int n = nf.send(fd, ptr + sent, reqLen - sent);
-                            Assert.assertTrue(n > -1);
-                            sent += n;
-                        }
-
-                        if (pauseBetweenSendAndReceive > 0) {
-                            Thread.sleep(pauseBetweenSendAndReceive);
-                        }
-                        // receive response
-                        final int expectedToReceive = expectedResponse.length;
-                        int received = 0;
-                        while (received < expectedToReceive) {
-                            int n = nf.recv(fd, ptr + received, len - received);
-                            if (n > 0) {
-                                // compare bytes
-                                for (int i = 0; i < n; i++) {
-                                    if (expectedResponse[received + i] != Unsafe.getUnsafe().getByte(ptr + received + i)) {
-                                        Assert.fail("Error at: " + (received + i) + ", local=" + i);
-                                    }
-                                }
-                                received += n;
-                            } else if (n < 0) {
-                                LOG.error().$("disconnected? n=").$(n).$();
-                                Assert.fail();
-                            }
-                        }
-                    }
-                } finally {
-                    Unsafe.free(ptr, len);
-                }
-            } finally {
-                nf.freeSockAddr(sockAddr);
-            }
-        } finally {
-            nf.close(fd);
-        }
-    }
-
-    @Test
     public void testImportMultipleOnSameConnectionFragmented() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             final String baseDir = System.getProperty("java.io.tmpdir");
@@ -1008,6 +680,229 @@ public class IODispatcherTest {
                         0
                 );
 
+                httpServer.halt();
+            }
+        });
+    }
+
+    @Test
+    public void testJsonQuery() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final String baseDir = System.getProperty("java.io.tmpdir");
+            final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir);
+
+            try (CairoEngine engine = new Engine(new DefaultCairoConfiguration(baseDir));
+                 HttpServer httpServer = new HttpServer(httpConfiguration)) {
+                httpServer.bind(new HttpRequestProcessorFactory() {
+                    @Override
+                    public String getUrl() {
+                        return HttpServerConfiguration.DEFAULT_PROCESSOR_URL;
+                    }
+
+                    @Override
+                    public HttpRequestProcessor newInstance() {
+                        return new StaticContentProcessor(httpConfiguration.getStaticContentProcessorConfiguration());
+                    }
+                });
+
+                httpServer.bind(new HttpRequestProcessorFactory() {
+                    @Override
+                    public String getUrl() {
+                        return "/query";
+                    }
+
+                    @Override
+                    public HttpRequestProcessor newInstance() {
+                        return new JsonQueryProcessor(engine);
+                    }
+                });
+
+                httpServer.start();
+
+                // create table with all column types
+                CairoTestUtils.createTestTable(
+                        engine.getConfiguration(),
+                        20,
+                        new Rnd(),
+                        new TestRecord.ArrayBinarySequence());
+
+                // send multipart request to server
+                final String request = "GET /query?query=x%20where%20i%20%3D%20(%27EHNRX%27) HTTP/1.1\r\n" +
+                        "Host: localhost:9001\r\n" +
+                        "Connection: keep-alive\r\n" +
+                        "Cache-Control: max-age=0\r\n" +
+                        "Upgrade-Insecure-Requests: 1\r\n" +
+                        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n" +
+                        "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3\r\n" +
+                        "Accept-Encoding: gzip, deflate, br\r\n" +
+                        "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                        "\r\n";
+
+                byte[] expectedResponse = ("HTTP/1.1 200 OK\r\n" +
+                        "Server: questDB/1.0\r\n" +
+                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                        "Transfer-Encoding: chunked\r\n" +
+                        "Content-Type: application/json; charset=utf-8\r\n" +
+                        "Keep-Alive: timeout=5, max=10000\r\n" +
+                        "\r\n" +
+                        "224\r\n" +
+                        "{\"query\":\"x where i = ('EHNRX')\",\"columns\":[{\"name\":\"a\",\"type\":\"BYTE\"},{\"name\":\"b\",\"type\":\"SHORT\"},{\"name\":\"c\",\"type\":\"INT\"},{\"name\":\"d\",\"type\":\"LONG\"},{\"name\":\"e\",\"type\":\"DATE\"},{\"name\":\"f\",\"type\":\"TIMESTAMP\"},{\"name\":\"g\",\"type\":\"FLOAT\"},{\"name\":\"h\",\"type\":\"DOUBLE\"},{\"name\":\"i\",\"type\":\"STRING\"},{\"name\":\"j\",\"type\":\"SYMBOL\"},{\"name\":\"k\",\"type\":\"BOOLEAN\"},{\"name\":\"l\",\"type\":\"BINARY\"}],\"dataset\":[[80,24814,-727724771,8920866532787660373,\"-169665660-01-09T01:58:28.119Z\",\"-51129-02-11T06:38:29.397464Z\",null,null,\"EHNRX\",\"ZSX\",false,[]]],\"count\":1}\r\n" +
+                        "0\r\n" +
+                        "\r\n").getBytes();
+
+                sendAndReceive(
+                        NetworkFacadeImpl.INSTANCE,
+                        request,
+                        expectedResponse,
+                        100,
+                        0
+                );
+
+                httpServer.halt();
+            }
+        });
+    }
+
+    @Test
+    public void testJsonQueryAndDisconnectWithoutWaitingForResult() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+
+            final NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
+            final String baseDir = System.getProperty("java.io.tmpdir");
+            final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(nf, baseDir, 128);
+
+            try (CairoEngine engine = new Engine(new DefaultCairoConfiguration(baseDir));
+                 HttpServer httpServer = new HttpServer(httpConfiguration)) {
+                httpServer.bind(new HttpRequestProcessorFactory() {
+                    @Override
+                    public String getUrl() {
+                        return HttpServerConfiguration.DEFAULT_PROCESSOR_URL;
+                    }
+
+                    @Override
+                    public HttpRequestProcessor newInstance() {
+                        return new StaticContentProcessor(httpConfiguration.getStaticContentProcessorConfiguration());
+                    }
+                });
+
+                httpServer.bind(new HttpRequestProcessorFactory() {
+                    @Override
+                    public String getUrl() {
+                        return "/query";
+                    }
+
+                    @Override
+                    public HttpRequestProcessor newInstance() {
+                        return new JsonQueryProcessor(engine);
+                    }
+                });
+
+                httpServer.start();
+
+                // create table with all column types
+                CairoTestUtils.createTestTable(
+                        engine.getConfiguration(),
+                        30,
+                        new Rnd(),
+                        new TestRecord.ArrayBinarySequence());
+
+                // send multipart request to server
+                final String request = "GET /query?query=x HTTP/1.1\r\n" +
+                        "Host: localhost:9001\r\n" +
+                        "Connection: keep-alive\r\n" +
+                        "Cache-Control: max-age=0\r\n" +
+                        "Upgrade-Insecure-Requests: 1\r\n" +
+                        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n" +
+                        "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3\r\n" +
+                        "Accept-Encoding: gzip, deflate, br\r\n" +
+                        "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                        "\r\n";
+
+                byte[] expectedResponse = ("HTTP/1.1 200 OK\r\n" +
+                        "Server: questDB/1.0\r\n" +
+                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                        "Transfer-Encoding: chunked\r\n" +
+                        "Content-Type: application/json; charset=utf-8\r\n" +
+                        "Keep-Alive: timeout=5, max=10000\r\n" +
+                        "\r\n" +
+                        "68\r\n" +
+                        "{\"query\":\"x\",\"columns\":[{\"name\":\"a\",\"type\":\"BYTE\"},{\"name\":\"b\",\"type\":\"SHORT\"},{\"name\":\"c\",\"type\":\"INT\"}\r\n" +
+                        "72\r\n" +
+                        ",{\"name\":\"d\",\"type\":\"LONG\"},{\"name\":\"e\",\"type\":\"DATE\"},{\"name\":\"f\",\"type\":\"TIMESTAMP\"},{\"name\":\"g\",\"type\":\"FLOAT\"}\r\n" +
+                        "75\r\n" +
+                        ",{\"name\":\"h\",\"type\":\"DOUBLE\"},{\"name\":\"i\",\"type\":\"STRING\"},{\"name\":\"j\",\"type\":\"SYMBOL\"},{\"name\":\"k\",\"type\":\"BOOLEAN\"}\r\n" +
+                        "73\r\n" +
+                        ",{\"name\":\"l\",\"type\":\"BINARY\"}],\"dataset\":[[80,24814,-727724771,8920866532787660373,\"-169665660-01-09T01:58:28.119Z\"\r\n" +
+                        "70\r\n" +
+                        ",\"-51129-02-11T06:38:29.397464Z\",null,null,\"EHNRX\",\"ZSX\",false,[]],[30,32312,-303295973,6854658259142399220,null\r\n" +
+                        "7b\r\n" +
+                        ",\"273652-10-24T01:16:04.499209Z\",0.38179755,0.9687423277,\"EDRQQ\",\"LOF\",false,[]],[-79,-21442,1985398001,7522482991756933150\r\n" +
+                        "7f\r\n" +
+                        ",\"279864478-12-31T01:58:35.932Z\",\"20093-07-24T16:56:53.198086Z\",null,0.0538440031,\"HVUVS\",\"OTS\",true,[]],[70,-29572,-1966408995\r\n" +
+                        "79\r\n" +
+                        ",-2406077911451945242,null,\"-254163-09-17T05:33:54.251307Z\",0.81233966,null,\"IKJSM\",\"SUQ\",false,[]],[-97,15913,2011884585\r\n" +
+                        "7b\r\n" +
+                        ",4641238585508069993,\"-277437004-09-03T08:55:41.803Z\",\"186548-11-05T05:57:55.827139Z\",0.89989215,0.6583311520,\"ZIMNZ\",\"RMF\"\r\n" +
+                        "7f\r\n" +
+                        ",false,[]],[-9,5991,-907794648,null,null,null,0.13264287,null,\"OHNZH\",null,false,[]],[-94,30598,-1510166985,6056145309392106540\r\n" +
+                        "76\r\n" +
+                        ",null,null,0.54669005,null,\"MZVQE\",\"NDC\",true,[]],[-97,-11913,null,750145151786158348,\"-144112168-08-02T20:50:38.542Z\"\r\n" +
+                        "72\r\n" +
+                        ",\"-279681-08-19T06:26:33.186955Z\",0.8977236,0.5691053034,\"WIFFL\",\"BRO\",false,[]],[58,7132,null,6793615437970356479\r\n" +
+                        "77\r\n" +
+                        ",\"63572238-04-24T11:00:13.287Z\",\"171291-08-24T10:16:32.229138Z\",null,0.7215959172,\"KWZLU\",\"GXH\",false,[]],[37,7618,null\r\n" +
+                        "7e\r\n" +
+                        ",-9219078548506735248,\"286623354-12-11T19:15:45.735Z\",\"197633-02-20T09:12:49.579955Z\",null,0.8001632261,null,\"KFM\",false,[]],[\r\n" +
+                        "7e\r\n" +
+                        "109,-8207,-485549586,null,\"278802275-11-05T23:22:18.593Z\",\"122137-10-05T20:22:21.831563Z\",0.5780819,0.1858643558,\"DYOPH\",\"IMY\"\r\n" +
+                        "80\r\n" +
+                        ",false,[]],[-44,21057,-1604266757,4598876523645326656,null,\"204480-04-27T20:21:01.380246Z\",0.19736767,0.1159185576,\"DMIGQ\",\"VKH\"\r\n" +
+                        "7c\r\n" +
+                        ",false,[]],[17,23522,-861621212,-6446120489339099836,null,\"79287-08-03T02:05:46.962686Z\",0.4349324,0.1129625732,\"CGFNW\",null\r\n" +
+                        "7c\r\n" +
+                        ",true,[]],[-104,12160,1772084256,-5828188148408093893,\"-270365729-01-24T04:33:47.165Z\",\"-252298-10-09T07:11:36.011048Z\",null\r\n" +
+                        "7f\r\n" +
+                        ",0.5764439692,\"BQQEM\",null,false,[]],[-99,-7837,-159178348,null,\"81404961-06-19T18:10:11.037Z\",null,0.5598187,0.5900836402,null\r\n" +
+                        "7b\r\n" +
+                        ",\"HPZ\",true,[]],[-127,5343,-238129044,-8851773155849999621,\"-152632412-11-30T22:15:09.334Z\",\"-90192-03-24T17:45:15.784841Z\"\r\n" +
+                        "74\r\n" +
+                        ",0.7806183,null,\"CLNXF\",\"UWP\",false,[]],[-59,-10912,1665107665,-8306574409611146484,\"-243146933-02-10T16:15:15.931Z\"\r\n" +
+                        "71\r\n" +
+                        ",\"-109765-04-18T07:45:05.739795Z\",0.52387,null,\"NIJEE\",\"RUG\",true,[]],[69,4771,21764960,-5708280760166173503,null\r\n" +
+                        "7f\r\n" +
+                        ",\"-248236-04-27T14:06:03.509521Z\",0.77833515,0.5335243841,\"VOCUG\",\"UNE\",false,[]],[56,-17784,null,5637967617527425113,null,null\r\n" +
+                        "61\r\n" +
+                        ",null,0.5815065874,null,\"EVQ\",true,[]],[58,29019,-416467698,null,\"-175203601-12-02T01:02:02.378Z\"\r\n" +
+                        "74\r\n" +
+                        ",\"201101-10-20T07:35:25.133598Z\",null,0.7430101995,\"DXCBJ\",null,true,[]],[-11,-23214,1210163254,-7888017038009650608\r\n" +
+                        "7c\r\n" +
+                        ",\"152525393-08-28T08:19:48.512Z\",\"216070-11-17T13:37:58.936720Z\",null,null,\"JJILL\",\"YMI\",true,[]],[-69,-29912,217564476,null\r\n" +
+                        "7a\r\n" +
+                        ",\"-102483035-11-11T09:07:30.782Z\",\"-196714-09-04T03:57:56.227221Z\",0.08039439,0.1868426764,\"EUKWM\",\"NZZ\",true,[]],[4,19590\r\n" +
+                        "79\r\n" +
+                        ",-1505690678,6904166490726350488,\"-218006330-04-21T14:18:39.081Z\",\"283032-05-21T12:20:14.632027Z\",0.23285526,0.2212274795\r\n" +
+                        "62\r\n" +
+                        ",\"NSSTC\",\"ZUP\",false,[]],[-111,-6531,342159453,8456443351018554474,\"197601854-07-22T06:29:36.718Z\"\r\n" +
+                        "7b\r\n" +
+                        ",\"-180434-06-04T17:16:49.501207Z\",0.7910659,0.7128505999,\"YQPZG\",\"ZNY\",true,[]],[106,32411,-1426419269,-2990992799558673548\r\n" +
+                        "6a\r\n" +
+                        ",\"261692520-06-19T20:19:43.556Z\",null,0.8377384,0.0263363978,\"GENFE\",\"WWR\",false,[]],[-125,25715,null,null\r\n" +
+                        "6e\r\n" +
+                        ",\"-113894547-06-20T07:24:13.689Z\",null,0.7417434,0.6288088088,\"IJZZY\",null,true,[]],[96,-13602,1350628163,null\r\n" +
+                        "6f\r\n" +
+                        ",\"257134407-03-20T11:25:44.819Z\",null,0.7360581,null,\"LGYDO\",\"NLI\",true,[]],[-64,8270,null,-5695137753964242205\r\n" +
+                        "76\r\n" +
+                        ",\"289246073-05-28T15:10:38.644Z\",\"-220112-01-30T11:56:06.194709Z\",0.938019,null,\"GHLXG\",\"MDJ\",true,[]],[-76,12479,null\r\n" +
+                        "80\r\n" +
+                        ",-4034810129069646757,\"123619904-08-31T19:44:11.844Z\",\"267826-03-17T13:36:32.811014Z\",0.8463546,null,\"PFOYM\",\"WDS\",true,[]],[100\r\n" +
+                        "80\r\n" +
+                        ",24045,-2102123220,-7175695171900374773,\"-242871073-08-17T14:45:16.399Z\",\"125517-01-13T08:03:16.581566Z\",0.20179749,0.4293443705\r\n" +
+                        "25\r\n" +
+                        ",\"USIMY\",\"XUU\",false,[]]],\"count\":30}\r\n" +
+                        "0\r\n" +
+                        "\r\n").getBytes();
+
+                sendAndReceive(nf, request, expectedResponse, 10, 100L);
                 httpServer.halt();
             }
         });
@@ -1674,10 +1569,6 @@ public class IODispatcherTest {
                         new HttpRequestProcessorSelector() {
 
                             @Override
-                            public void close() {
-                            }
-
-                            @Override
                             public HttpRequestProcessor select(CharSequence url) {
                                 return null;
                             }
@@ -1705,6 +1596,10 @@ public class IODispatcherTest {
                                         dispatcher1.registerChannel(context, IOOperation.READ);
                                     }
                                 };
+                            }
+
+                            @Override
+                            public void close() {
                             }
                         };
 
@@ -1833,10 +1728,6 @@ public class IODispatcherTest {
                 HttpRequestProcessorSelector selector = new HttpRequestProcessorSelector() {
 
                     @Override
-                    public void close() {
-                    }
-
-                    @Override
                     public HttpRequestProcessor select(CharSequence url) {
                         return null;
                     }
@@ -1863,6 +1754,10 @@ public class IODispatcherTest {
                                 dispatcher1.registerChannel(connectionContext, IOOperation.READ);
                             }
                         };
+                    }
+
+                    @Override
+                    public void close() {
                     }
                 };
 
@@ -2041,10 +1936,6 @@ public class IODispatcherTest {
                         HttpRequestProcessorSelector selector = new HttpRequestProcessorSelector() {
 
                             @Override
-                            public void close() {
-                            }
-
-                            @Override
                             public HttpRequestProcessor select(CharSequence url) {
                                 return null;
                             }
@@ -2052,6 +1943,10 @@ public class IODispatcherTest {
                             @Override
                             public HttpRequestProcessor getDefaultProcessor() {
                                 return processor;
+                            }
+
+                            @Override
+                            public void close() {
                             }
                         };
 
@@ -2159,6 +2054,48 @@ public class IODispatcherTest {
         });
     }
 
+    private static void assertDownloadResponse(long fd, Rnd rnd, long buffer, int len, int nonRepeatedContentLength, String expectedResponseHeader, long expectedResponseLen) {
+        int expectedHeaderLen = expectedResponseHeader.length();
+        int headerCheckRemaining = expectedResponseHeader.length();
+        long downloadedSoFar = 0;
+        int contentRemaining = 0;
+        while (downloadedSoFar < expectedResponseLen) {
+            int contentOffset = 0;
+            int n = Net.recv(fd, buffer, len);
+            Assert.assertTrue(n > -1);
+            if (n > 0) {
+                if (headerCheckRemaining > 0) {
+                    for (int i = 0; i < n && headerCheckRemaining > 0; i++) {
+                        if (expectedResponseHeader.charAt(expectedHeaderLen - headerCheckRemaining) != (char) Unsafe.getUnsafe().getByte(buffer + i)) {
+                            Assert.fail("at " + (expectedHeaderLen - headerCheckRemaining));
+                        }
+                        headerCheckRemaining--;
+                        contentOffset++;
+                    }
+                }
+
+                if (headerCheckRemaining == 0) {
+                    for (int i = contentOffset; i < n; i++) {
+                        if (contentRemaining == 0) {
+                            contentRemaining = nonRepeatedContentLength;
+                            rnd.reset();
+                        }
+                        Assert.assertEquals(rnd.nextByte(), Unsafe.getUnsafe().getByte(buffer + i));
+                        contentRemaining--;
+                    }
+
+                }
+                downloadedSoFar += n;
+            }
+        }
+    }
+
+    private static void sendRequest(String request, long fd, long buffer) {
+        final int requestLen = request.length();
+        Chars.strcpy(request, requestLen, buffer);
+        Assert.assertEquals(requestLen, Net.send(fd, buffer, requestLen));
+    }
+
     @NotNull
     private DefaultHttpServerConfiguration createHttpServerConfiguration(String baseDir) {
         return createHttpServerConfiguration(NetworkFacadeImpl.INSTANCE, baseDir, 1024 * 1024);
@@ -2197,18 +2134,13 @@ public class IODispatcherTest {
             };
 
             @Override
-            public MillisecondClock getClock() {
-                return () -> 0;
-            }
-
-            @Override
-            public StaticContentProcessorConfiguration getStaticContentProcessorConfiguration() {
-                return staticContentProcessorConfiguration;
-            }
-
-            @Override
             public int getSendBufferSize() {
                 return sendBufferSize;
+            }
+
+            @Override
+            public MillisecondClock getClock() {
+                return () -> 0;
             }
 
             @Override
@@ -2216,8 +2148,74 @@ public class IODispatcherTest {
                 return ioDispatcherConfiguration;
             }
 
+            @Override
+            public StaticContentProcessorConfiguration getStaticContentProcessorConfiguration() {
+                return staticContentProcessorConfiguration;
+            }
+
 
         };
+    }
+
+    private void sendAndReceive(
+            NetworkFacade nf,
+            String request,
+            byte[] expectedResponse,
+            int requestCount,
+            long pauseBetweenSendAndReceive
+    ) throws InterruptedException {
+        long fd = nf.socketTcp(true);
+        try {
+            long sockAddr = nf.sockaddr("127.0.0.1", 9001);
+            try {
+                Assert.assertTrue(fd > -1);
+                Assert.assertEquals(0, nf.connect(fd, sockAddr));
+                Assert.assertEquals(0, nf.setTcpNoDelay(fd, true));
+
+                final int len = Math.max(expectedResponse.length, request.length()) * 2;
+                long ptr = Unsafe.malloc(len);
+                try {
+                    for (int j = 0; j < requestCount; j++) {
+                        int sent = 0;
+                        int reqLen = request.length();
+                        Chars.strcpy(request, reqLen, ptr);
+                        while (sent < reqLen) {
+                            int n = nf.send(fd, ptr + sent, reqLen - sent);
+                            Assert.assertTrue(n > -1);
+                            sent += n;
+                        }
+
+                        if (pauseBetweenSendAndReceive > 0) {
+                            Thread.sleep(pauseBetweenSendAndReceive);
+                        }
+                        // receive response
+                        final int expectedToReceive = expectedResponse.length;
+                        int received = 0;
+                        while (received < expectedToReceive) {
+                            int n = nf.recv(fd, ptr + received, len - received);
+                            if (n > 0) {
+                                // compare bytes
+                                for (int i = 0; i < n; i++) {
+                                    if (expectedResponse[received + i] != Unsafe.getUnsafe().getByte(ptr + received + i)) {
+                                        Assert.fail("Error at: " + (received + i) + ", local=" + i);
+                                    }
+                                }
+                                received += n;
+                            } else if (n < 0) {
+                                LOG.error().$("disconnected? n=").$(n).$();
+                                Assert.fail();
+                            }
+                        }
+                    }
+                } finally {
+                    Unsafe.free(ptr, len);
+                }
+            } finally {
+                nf.freeSockAddr(sockAddr);
+            }
+        } finally {
+            nf.close(fd);
+        }
     }
 
     private void writeRandomFile(Path path, Rnd rnd, long lastModified, int bufLen) {
@@ -2259,72 +2257,6 @@ public class IODispatcherTest {
         @Override
         public long getFd() {
             return fd;
-        }
-    }
-
-    private static class OneToOneSocketNetworkFacadeImpl extends NetworkFacadeImpl implements Closeable {
-        private final int bufLen;
-        private final long buffer;
-        private long writeIndex;
-        private long readIndex;
-
-        public OneToOneSocketNetworkFacadeImpl(int bufLen) {
-            this.bufLen = bufLen;
-            buffer = Unsafe.malloc(bufLen);
-        }
-
-        @Override
-        public void close() {
-            Unsafe.free(buffer, bufLen);
-        }
-
-        @Override
-        public int send(long fd, long buf, int bufferLen) {
-            // attempt to trigger epoll/select/kqueue
-            super.send(fd, buf, 1);
-            synchronized (this) {
-                long index = writeIndex;
-                int remaining = (int) (readIndex + bufLen - index);
-                if (remaining == 0) {
-                    return 0;
-                }
-                final long p = buffer + (index % bufLen);
-                final int len = Math.min(bufferLen, remaining);
-                writeIndex = index + len;
-                // this is a circular buffer, therefore we may need to
-                // copy data twice
-                int tailLen = (int) (bufLen - (p - buffer));
-                if (len > tailLen) {
-                    Unsafe.getUnsafe().copyMemory(buf, p, tailLen);
-                    Unsafe.getUnsafe().copyMemory(buf + tailLen, buffer, len - tailLen);
-                } else {
-                    Unsafe.getUnsafe().copyMemory(buf, p, len);
-                }
-                return len;
-            }
-        }
-
-        @Override
-        public int recv(long fd, long buf, int bufferLen) {
-            // handle epoll events
-            // read from socket and discard, this is needed to cleanly
-            super.recv(fd, buf, 1);
-            synchronized (this) {
-                long index = readIndex;
-                int available = (int) (writeIndex - index);
-                assert available > -1;
-                int len = Math.min(available, bufferLen);
-                final long p = buffer + (index % bufLen);
-                int tailLen = (int) (bufLen - (p - buffer));
-                if (len > tailLen) {
-                    Unsafe.getUnsafe().copyMemory(p, buf, tailLen);
-                    Unsafe.getUnsafe().copyMemory(buffer, buf + tailLen, len - tailLen);
-                } else {
-                    Unsafe.getUnsafe().copyMemory(p, buf, len);
-                }
-                readIndex = index + len;
-                return len;
-            }
         }
     }
 

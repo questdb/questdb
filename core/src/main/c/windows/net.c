@@ -160,9 +160,9 @@ JNIEXPORT jboolean JNICALL Java_com_questdb_network_Net_bindUdp
     return FALSE;
 }
 
-JNIEXPORT jint JNICALL Java_com_questdb_network_Net_connect
+JNIEXPORT jlong JNICALL Java_com_questdb_network_Net_connect
         (JNIEnv *e, jclass cl, jlong fd, jlong sockAddr) {
-    jint res = connect((SOCKET) fd, (const struct sockaddr *) sockAddr, sizeof(struct sockaddr));
+    jlong res = connect((SOCKET) fd, (const struct sockaddr *) sockAddr, sizeof(struct sockaddr));
     if (res < 0) {
         SaveLastError();
     }

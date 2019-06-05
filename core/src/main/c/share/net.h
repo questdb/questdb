@@ -64,9 +64,9 @@ JNIEXPORT jint JNICALL Java_com_questdb_network_Net_configureNonBlocking
 /*
  * Class:     com_questdb_network_Net
  * Method:    connect
- * Signature: (JJ)I
+ * Signature: (JJ)J
  */
-JNIEXPORT jint JNICALL Java_com_questdb_network_Net_connect
+JNIEXPORT jlong JNICALL Java_com_questdb_network_Net_connect
         (JNIEnv *, jclass, jlong, jlong);
 
 /*
