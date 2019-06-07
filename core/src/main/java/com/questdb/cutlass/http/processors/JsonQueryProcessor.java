@@ -367,7 +367,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             return;
         }
 
-        LOG.info().$("resume").$();
+        LOG.debug().$("resume [fd=").$(context.getFd()).$(']').$();
 
         final HttpChunkedResponseSocket socket = context.getChunkedResponseSocket();
         final int columnCount = state.metadata.getColumnCount();
@@ -491,7 +491,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
     }
 
     private void readyForNextRequest(HttpConnectionContext context, IODispatcher<HttpConnectionContext> dispatcher) {
-        LOG.info().$("all sent").$();
+        LOG.debug().$("all sent [fd=").$(context.getFd()).$(']').$();
         context.clear();
         dispatcher.registerChannel(context, IOOperation.READ);
     }
