@@ -70,7 +70,7 @@ public class CairoTextWriter implements TextLexer.Listener, Closeable, Mutable {
         this.engine = engine;
         this.configuration = engine.getConfiguration();
         this.path = path;
-        this.utf8Sink = new DirectCharSink(textConfiguration.getUtf8SinkCapacity());
+        this.utf8Sink = new DirectCharSink(textConfiguration.getUtf8SinkSize());
         this.typeManager = typeManager;
     }
 

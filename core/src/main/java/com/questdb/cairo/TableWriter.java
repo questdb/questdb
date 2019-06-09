@@ -814,7 +814,7 @@ public class TableWriter implements Closeable {
     private int addColumnToMeta(CharSequence name, int type, boolean indexFlag, int indexValueBlockCapacity) {
         int index;
         try {
-            index = openMetaSwapFile(ff, ddlMem, path, rootLen, configuration.getMaxNumberOfSwapFiles());
+            index = openMetaSwapFile(ff, ddlMem, path, rootLen, configuration.getMaxSwapFileCount());
             int columnCount = metaMem.getInt(META_OFFSET_COUNT);
 
             ddlMem.putInt(columnCount + 1);

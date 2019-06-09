@@ -766,141 +766,6 @@ public class IODispatcherTest {
     }
 
     @Test
-    public void testJsonQuerySyntaxError() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            final String baseDir = System.getProperty("java.io.tmpdir");
-            final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir);
-
-            try (
-                    CairoEngine engine = new Engine(new DefaultCairoConfiguration(baseDir));
-                    HttpServer httpServer = new HttpServer(httpConfiguration)
-            ) {
-                httpServer.bind(new HttpRequestProcessorFactory() {
-                    @Override
-                    public String getUrl() {
-                        return HttpServerConfiguration.DEFAULT_PROCESSOR_URL;
-                    }
-
-                    @Override
-                    public HttpRequestProcessor newInstance() {
-                        return new StaticContentProcessor(httpConfiguration.getStaticContentProcessorConfiguration());
-                    }
-                });
-
-                httpServer.bind(new HttpRequestProcessorFactory() {
-                    @Override
-                    public String getUrl() {
-                        return "/query";
-                    }
-
-                    @Override
-                    public HttpRequestProcessor newInstance() {
-                        return new JsonQueryProcessor(engine);
-                    }
-                });
-
-                httpServer.start();
-
-                // create table with all column types
-                CairoTestUtils.createTestTable(
-                        engine.getConfiguration(),
-                        20,
-                        new Rnd(),
-                        new TestRecord.ArrayBinarySequence());
-
-                // send multipart request to server
-                final String request = "GET /query?query=x%20where2%20i%20%3D%20(%27EHNRX%27) HTTP/1.1\r\n" +
-                        "Host: localhost:9001\r\n" +
-                        "Connection: keep-alive\r\n" +
-                        "Cache-Control: max-age=0\r\n" +
-                        "Upgrade-Insecure-Requests: 1\r\n" +
-                        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n" +
-                        "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3\r\n" +
-                        "Accept-Encoding: gzip, deflate, br\r\n" +
-                        "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
-                        "\r\n";
-
-                byte[] expectedResponse = ("HTTP/1.1 200 OK\r\n" +
-                        "Server: questDB/1.0\r\n" +
-                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-                        "Transfer-Encoding: chunked\r\n" +
-                        "Content-Type: application/json; charset=utf-8\r\n" +
-                        "Keep-Alive: timeout=5, max=10000\r\n" +
-                        "\r\n" +
-                        "224\r\n" +
-                        "{\"query\":\"x where i = ('EHNRX')\",\"columns\":[{\"name\":\"a\",\"type\":\"BYTE\"},{\"name\":\"b\",\"type\":\"SHORT\"},{\"name\":\"c\",\"type\":\"INT\"},{\"name\":\"d\",\"type\":\"LONG\"},{\"name\":\"e\",\"type\":\"DATE\"},{\"name\":\"f\",\"type\":\"TIMESTAMP\"},{\"name\":\"g\",\"type\":\"FLOAT\"},{\"name\":\"h\",\"type\":\"DOUBLE\"},{\"name\":\"i\",\"type\":\"STRING\"},{\"name\":\"j\",\"type\":\"SYMBOL\"},{\"name\":\"k\",\"type\":\"BOOLEAN\"},{\"name\":\"l\",\"type\":\"BINARY\"}],\"dataset\":[[80,24814,-727724771,8920866532787660373,\"-169665660-01-09T01:58:28.119Z\",\"-51129-02-11T06:38:29.397464Z\",null,null,\"EHNRX\",\"ZSX\",false,[]]],\"count\":1}\r\n" +
-                        "0\r\n" +
-                        "\r\n").getBytes();
-
-                sendAndReceive(
-                        NetworkFacadeImpl.INSTANCE,
-                        request,
-                        expectedResponse,
-                        10,
-                        0
-                );
-
-                httpServer.halt();
-            }
-        });
-    }
-
-    @Test
-    @Ignore
-    public void testUpload() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            final String baseDir = System.getProperty("java.io.tmpdir");
-//            final String baseDir = "/home/vlad/dev/123";
-            final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir);
-
-
-            try (CairoEngine engine = new Engine(new DefaultCairoConfiguration(baseDir));
-                 HttpServer httpServer = new HttpServer(httpConfiguration)) {
-                httpServer.bind(new HttpRequestProcessorFactory() {
-                    @Override
-                    public String getUrl() {
-                        return HttpServerConfiguration.DEFAULT_PROCESSOR_URL;
-                    }
-
-                    @Override
-                    public HttpRequestProcessor newInstance() {
-                        return new StaticContentProcessor(httpConfiguration.getStaticContentProcessorConfiguration());
-                    }
-                });
-
-                httpServer.bind(new HttpRequestProcessorFactory() {
-                    @Override
-                    public String getUrl() {
-                        return "/upload";
-                    }
-
-                    @Override
-                    public HttpRequestProcessor newInstance() {
-                        return new TextImportProcessor(httpConfiguration.getTextImportProcessorConfiguration(), engine);
-                    }
-                });
-
-                httpServer.bind(new HttpRequestProcessorFactory() {
-                    @Override
-                    public String getUrl() {
-                        return "/query";
-                    }
-
-                    @Override
-                    public HttpRequestProcessor newInstance() {
-                        return new JsonQueryProcessor(engine);
-                    }
-                });
-
-
-                httpServer.start();
-
-                Thread.sleep(2000000);
-            }
-        });
-    }
-
-    @Test
     public void testJsonQueryAndDisconnectWithoutWaitingForResult() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
 
@@ -1040,6 +905,86 @@ public class IODispatcherTest {
                         "\r\n").getBytes();
 
                 sendAndReceive(nf, request, expectedResponse, 10, 100L);
+                httpServer.halt();
+            }
+        });
+    }
+
+    @Test
+    public void testJsonQuerySyntaxError() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final String baseDir = System.getProperty("java.io.tmpdir");
+            final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir);
+
+            try (
+                    CairoEngine engine = new Engine(new DefaultCairoConfiguration(baseDir));
+                    HttpServer httpServer = new HttpServer(httpConfiguration)
+            ) {
+                httpServer.bind(new HttpRequestProcessorFactory() {
+                    @Override
+                    public String getUrl() {
+                        return HttpServerConfiguration.DEFAULT_PROCESSOR_URL;
+                    }
+
+                    @Override
+                    public HttpRequestProcessor newInstance() {
+                        return new StaticContentProcessor(httpConfiguration.getStaticContentProcessorConfiguration());
+                    }
+                });
+
+                httpServer.bind(new HttpRequestProcessorFactory() {
+                    @Override
+                    public String getUrl() {
+                        return "/query";
+                    }
+
+                    @Override
+                    public HttpRequestProcessor newInstance() {
+                        return new JsonQueryProcessor(engine);
+                    }
+                });
+
+                httpServer.start();
+
+                // create table with all column types
+                CairoTestUtils.createTestTable(
+                        engine.getConfiguration(),
+                        20,
+                        new Rnd(),
+                        new TestRecord.ArrayBinarySequence());
+
+                // send multipart request to server
+                final String request = "GET /query?query=x%20where2%20i%20%3D%20(%27EHNRX%27) HTTP/1.1\r\n" +
+                        "Host: localhost:9001\r\n" +
+                        "Connection: keep-alive\r\n" +
+                        "Cache-Control: max-age=0\r\n" +
+                        "Upgrade-Insecure-Requests: 1\r\n" +
+                        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n" +
+                        "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3\r\n" +
+                        "Accept-Encoding: gzip, deflate, br\r\n" +
+                        "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                        "\r\n";
+
+                byte[] expectedResponse = ("HTTP/1.1 400 Bad request\r\n" +
+                        "Server: questDB/1.0\r\n" +
+                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                        "Transfer-Encoding: chunked\r\n" +
+                        "Content-Type: application/json; charset=utf-8\r\n" +
+                        "Keep-Alive: timeout=5, max=10000\r\n" +
+                        "\r\n" +
+                        "4d\r\n" +
+                        "{\"query\":\"x where2 i = ('EHNRX')\",\"error\":\"unexpected token: i\",\"position\":9}\r\n" +
+                        "0\r\n" +
+                        "\r\n").getBytes();
+
+                sendAndReceive(
+                        NetworkFacadeImpl.INSTANCE,
+                        request,
+                        expectedResponse,
+                        10,
+                        0
+                );
+
                 httpServer.halt();
             }
         });
@@ -2149,37 +2094,59 @@ public class IODispatcherTest {
         });
     }
 
-    private static class CairoHttpServer {
-        private final CairoEngine engine;
-        private final HttpServer httpServer;
+    @Test
+    @Ignore
+    public void testUpload() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final String baseDir = System.getProperty("java.io.tmpdir");
+//            final String baseDir = "/home/vlad/dev/123";
+            final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir);
 
-        public CairoHttpServer(CharSequence cairoBaseDir, HttpServerConfiguration configuration) {
-            this.engine = new Engine(new DefaultCairoConfiguration(cairoBaseDir));
-            this.httpServer = new HttpServer(configuration);
-            httpServer.bind(new HttpRequestProcessorFactory() {
-                @Override
-                public String getUrl() {
-                    return HttpServerConfiguration.DEFAULT_PROCESSOR_URL;
-                }
 
-                @Override
-                public HttpRequestProcessor newInstance() {
-                    return new StaticContentProcessor(configuration.getStaticContentProcessorConfiguration());
-                }
-            });
+            try (CairoEngine engine = new Engine(new DefaultCairoConfiguration(baseDir));
+                 HttpServer httpServer = new HttpServer(httpConfiguration)) {
+                httpServer.bind(new HttpRequestProcessorFactory() {
+                    @Override
+                    public String getUrl() {
+                        return HttpServerConfiguration.DEFAULT_PROCESSOR_URL;
+                    }
 
-            httpServer.bind(new HttpRequestProcessorFactory() {
-                @Override
-                public String getUrl() {
-                    return "/query";
-                }
+                    @Override
+                    public HttpRequestProcessor newInstance() {
+                        return new StaticContentProcessor(httpConfiguration.getStaticContentProcessorConfiguration());
+                    }
+                });
 
-                @Override
-                public HttpRequestProcessor newInstance() {
-                    return new JsonQueryProcessor(engine);
-                }
-            });
-        }
+                httpServer.bind(new HttpRequestProcessorFactory() {
+                    @Override
+                    public String getUrl() {
+                        return "/upload";
+                    }
+
+                    @Override
+                    public HttpRequestProcessor newInstance() {
+                        return new TextImportProcessor(httpConfiguration.getTextImportProcessorConfiguration(), engine);
+                    }
+                });
+
+                httpServer.bind(new HttpRequestProcessorFactory() {
+                    @Override
+                    public String getUrl() {
+                        return "/query";
+                    }
+
+                    @Override
+                    public HttpRequestProcessor newInstance() {
+                        return new JsonQueryProcessor(engine);
+                    }
+                });
+
+
+                httpServer.start();
+
+                Thread.sleep(2000000);
+            }
+        });
     }
 
     private static void assertDownloadResponse(long fd, Rnd rnd, long buffer, int len, int nonRepeatedContentLength, String expectedResponseHeader, long expectedResponseLen) {
@@ -2320,6 +2287,7 @@ public class IODispatcherTest {
                         while (received < expectedToReceive) {
                             int n = nf.recv(fd, ptr + received, len - received);
                             if (n > 0) {
+//                                dump(ptr + received, n);
                                 // compare bytes
                                 for (int i = 0; i < n; i++) {
                                     if (expectedResponse[received + i] != Unsafe.getUnsafe().getByte(ptr + received + i)) {
@@ -2362,6 +2330,39 @@ public class IODispatcherTest {
         Files.close(fd);
         Files.setLastModified(path, lastModified);
         Unsafe.free(buf, bufLen);
+    }
+
+    private static class CairoHttpServer {
+        private final CairoEngine engine;
+        private final HttpServer httpServer;
+
+        public CairoHttpServer(CharSequence cairoBaseDir, HttpServerConfiguration configuration) {
+            this.engine = new Engine(new DefaultCairoConfiguration(cairoBaseDir));
+            this.httpServer = new HttpServer(configuration);
+            httpServer.bind(new HttpRequestProcessorFactory() {
+                @Override
+                public String getUrl() {
+                    return HttpServerConfiguration.DEFAULT_PROCESSOR_URL;
+                }
+
+                @Override
+                public HttpRequestProcessor newInstance() {
+                    return new StaticContentProcessor(configuration.getStaticContentProcessorConfiguration());
+                }
+            });
+
+            httpServer.bind(new HttpRequestProcessorFactory() {
+                @Override
+                public String getUrl() {
+                    return "/query";
+                }
+
+                @Override
+                public HttpRequestProcessor newInstance() {
+                    return new JsonQueryProcessor(engine);
+                }
+            });
+        }
     }
 
     private static class HelloContext implements IOContext {

@@ -58,7 +58,7 @@ public class TextMetadataDetector implements TextLexer.Listener, Mutable, Closea
             TextConfiguration textConfiguration
     ) {
         this.typeManager = typeManager;
-        this.utf8Sink = new DirectCharSink(textConfiguration.getUtf8SinkCapacity());
+        this.utf8Sink = new DirectCharSink(textConfiguration.getUtf8SinkSize());
     }
 
     public static boolean utf8Decode(long lo, long hi, CharSink sink) {

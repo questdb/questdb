@@ -34,8 +34,8 @@ public class DefaultIODispatcherConfiguration implements IODispatcherConfigurati
     }
 
     @Override
-    public CharSequence getBindIPv4Address() {
-        return "0.0.0.0";
+    public int getBindIPv4Address() {
+        return 0;
     }
 
     @Override
@@ -60,7 +60,7 @@ public class DefaultIODispatcherConfiguration implements IODispatcherConfigurati
 
     @Override
     public long getIdleConnectionTimeout() {
-        return 10000000000000000L;
+        return 5 * 60 * 1000L;
     }
 
     @Override

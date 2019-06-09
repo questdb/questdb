@@ -72,8 +72,8 @@ public class TypeManager implements Mutable {
 
     public TypeManager(TextConfiguration configuration, DirectCharSink utf8Sink, JsonLexer jsonLexer) throws JsonException {
         this.utf8Sink = utf8Sink;
-        this.dateAdapterPool = new ObjectPool<>(() -> new DateAdapter(utf8Sink), configuration.getDateAdapterPoolSize());
-        this.timestampAdapterPool = new ObjectPool<>(() -> new TimestampAdapter(utf8Sink), configuration.getTimestampAdapterPoolSize());
+        this.dateAdapterPool = new ObjectPool<>(() -> new DateAdapter(utf8Sink), configuration.getDateAdapterPoolCapacity());
+        this.timestampAdapterPool = new ObjectPool<>(() -> new TimestampAdapter(utf8Sink), configuration.getTimestampAdapterPoolCapacity());
         this.stringAdapter = new StringAdapter(utf8Sink);
         this.symbolAdapter = new SymbolAdapter(utf8Sink);
         this.jsonLexer = jsonLexer;

@@ -30,13 +30,13 @@ public class DefaultTextConfiguration implements TextConfiguration {
     }
 
     @Override
-    public int getDateAdapterPoolSize() {
+    public int getDateAdapterPoolCapacity() {
         return 16;
     }
 
     @Override
     public int getJsonCacheLimit() {
-        return 4096;
+        return 16384;
     }
 
     @Override
@@ -50,17 +50,17 @@ public class DefaultTextConfiguration implements TextConfiguration {
     }
 
     @Override
-    public int getMetadataStringPoolSize() {
+    public int getMetadataStringPoolCapacity() {
         return 128;
     }
 
     @Override
-    public long getRollBufferLimit() {
+    public int getRollBufferLimit() {
         return 4096;
     }
 
     @Override
-    public long getRollBufferSize() {
+    public int getRollBufferSize() {
         return 1024;
     }
 
@@ -70,17 +70,17 @@ public class DefaultTextConfiguration implements TextConfiguration {
     }
 
     @Override
-    public int getTextLexerStringPoolSize() {
+    public int getTextLexerStringPoolCapacity() {
         return 32;
     }
 
     @Override
-    public int getTimestampAdapterPoolSize() {
+    public int getTimestampAdapterPoolCapacity() {
         return 16;
     }
 
     @Override
-    public int getUtf8SinkCapacity() {
+    public int getUtf8SinkSize() {
         return 4096;
     }
 }

@@ -49,7 +49,7 @@ public interface CairoConfiguration {
 
     int getIndexValueBlockSize();
 
-    int getMaxNumberOfSwapFiles();
+    int getMaxSwapFileCount();
 
     MicrosecondClock getMicrosecondClock();
 
@@ -59,19 +59,19 @@ public interface CairoConfiguration {
 
     int getParallelIndexThreshold();
 
-    int getReaderPoolSegments();
+    int getReaderPoolMaxSegments();
 
     CharSequence getRoot();
 
     long getSpinLockTimeoutUs();
 
-    int getSqlCacheBlockCount();
+    int getSqlCacheBlocks();
 
-    int getSqlCacheBlockSize();
+    int getSqlCacheRows();
 
     int getSqlCharacterStoreCapacity();
 
-    int getSqlCharacterStorePoolCapacity();
+    int getSqlCharacterStoreSequencePoolCapacity();
 
     int getSqlColumnPoolCapacity();
 

@@ -41,7 +41,7 @@ public class TextLexer implements Closeable, Mutable {
     private final ObjList<DirectByteCharSequence> fields = new ObjList<>();
     private final ObjectPool<DirectByteCharSequence> csPool;
     private final TextMetadataDetector metadataDetector;
-    private final long lineRollBufLimit;
+    private final int lineRollBufLimit;
     private boolean ignoreEolOnce;
     private byte columnDelimiter;
     private boolean inQuote;
@@ -56,7 +56,7 @@ public class TextLexer implements Closeable, Mutable {
     private long lineRollBufCur;
     private Listener textLexerListener;
     private long lastLineStart;
-    private long lineRollBufLen;
+    private int lineRollBufLen;
     private long lineRollBufPtr;
     private boolean header;
     private long lastQuotePos = -1;
@@ -66,7 +66,7 @@ public class TextLexer implements Closeable, Mutable {
 
     public TextLexer(TextConfiguration textConfiguration, TypeManager typeManager) {
         this.metadataDetector = new TextMetadataDetector(typeManager, textConfiguration);
-        this.csPool = new ObjectPool<>(DirectByteCharSequence.FACTORY, textConfiguration.getTextLexerStringPoolSize());
+        this.csPool = new ObjectPool<>(DirectByteCharSequence.FACTORY, textConfiguration.getTextLexerStringPoolCapacity());
         this.lineRollBufLen = textConfiguration.getRollBufferSize();
         this.lineRollBufLimit = textConfiguration.getRollBufferLimit();
         this.lineRollBufPtr = Unsafe.malloc(lineRollBufLen);
@@ -164,7 +164,7 @@ public class TextLexer implements Closeable, Mutable {
         return metadataDetector.getColumnTypes();
     }
 
-    private boolean growRollBuf(long requiredLength) {
+    private boolean growRollBuf(int requiredLength) {
         if (requiredLength > lineRollBufLimit) {
             // todo: log content of roll buffer
             LOG.info().$("too long [table=").$(tableName).$(", line=").$(lineCount).$(']').$();
@@ -173,7 +173,7 @@ public class TextLexer implements Closeable, Mutable {
             return false;
         }
 
-        final long len = Math.min(lineRollBufLimit, requiredLength << 1);
+        final int len = Math.min(lineRollBufLimit, requiredLength << 1);
         LOG.info().$("resizing ").$(lineRollBufLen).$(" -> ").$(len).$(" [table=").$(tableName).$(']').$();
         long p = Unsafe.malloc(len);
         long l = lineRollBufCur - lineRollBufPtr;
@@ -327,7 +327,7 @@ public class TextLexer implements Closeable, Mutable {
     private void rollLine(long lo, long hi) {
         // lastLineStart is an offset from 'lo'
         // 'lo' is the address of incoming buffer
-        long l = hi - lo - lastLineStart;
+        int l = (int) (hi - lo - lastLineStart);
         if (l < lineRollBufLen || growRollBuf(l)) {
             assert lo + lastLineStart + l <= hi;
             Unsafe.getUnsafe().copyMemory(lo + lastLineStart, lineRollBufPtr, l);

@@ -145,7 +145,7 @@ public class HttpServer implements Closeable {
                         workerHaltLatch,
                         -1,
                         LOG,
-                        configuration.getConnectionPoolInitialSize(),
+                        configuration.getConnectionPoolInitialCapacity(),
                         // have each thread release their own processor selectors
                         // in case processors stash some of their resources in thread-local variables
                         () -> Misc.free(selectors.getQuick(index))

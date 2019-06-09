@@ -53,7 +53,7 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
     public HttpConnectionContext(HttpServerConfiguration configuration) {
         this.configuration = configuration;
         this.nf = configuration.getDispatcherConfiguration().getNetworkFacade();
-        this.csPool = new ObjectPool<>(DirectByteCharSequence.FACTORY, configuration.getConnectionStringPoolSize());
+        this.csPool = new ObjectPool<>(DirectByteCharSequence.FACTORY, configuration.getConnectionStringPoolCapacity());
         this.headerParser = new HttpHeaderParser(configuration.getRequestHeaderBufferSize(), csPool);
         this.multipartContentHeaderParser = new HttpHeaderParser(configuration.getMultipartHeaderBufferSize(), csPool);
         this.multipartContentParser = new HttpMultipartContentParser(multipartContentHeaderParser);

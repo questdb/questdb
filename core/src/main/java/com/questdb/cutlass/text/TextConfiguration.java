@@ -26,7 +26,7 @@ package com.questdb.cutlass.text;
 public interface TextConfiguration {
     String getAdapterSetConfigurationFileName();
 
-    int getDateAdapterPoolSize();
+    int getDateAdapterPoolCapacity();
 
     int getJsonCacheLimit();
 
@@ -34,17 +34,17 @@ public interface TextConfiguration {
 
     double getMaxRequiredDelimiterStdDev();
 
-    int getMetadataStringPoolSize();
+    int getMetadataStringPoolCapacity();
 
-    long getRollBufferLimit();
+    int getRollBufferLimit();
 
-    long getRollBufferSize();
+    int getRollBufferSize();
 
     int getTextAnalysisMaxLines();
 
-    int getTextLexerStringPoolSize();
+    int getTextLexerStringPoolCapacity();
 
-    int getTimestampAdapterPoolSize();
+    int getTimestampAdapterPoolCapacity();
 
-    int getUtf8SinkCapacity();
+    int getUtf8SinkSize();
 }

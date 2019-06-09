@@ -80,7 +80,7 @@ public class TextMetadataParser implements JsonParser, Mutable, Closeable {
     ) {
         this.columnNames = new ObjList<>();
         this.columnTypes = new ObjList<>();
-        this.csPool = new ObjectPool<>(FloatingCharSequence::new, textConfiguration.getMetadataStringPoolSize());
+        this.csPool = new ObjectPool<>(FloatingCharSequence::new, textConfiguration.getMetadataStringPoolCapacity());
         this.dateLocaleFactory = dateLocaleFactory;
         this.dateFormatFactory = dateFormatFactory;
         this.timestampLocaleFactory = timestampLocaleFactory;

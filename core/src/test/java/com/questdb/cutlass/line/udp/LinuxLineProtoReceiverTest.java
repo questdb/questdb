@@ -24,7 +24,7 @@
 package com.questdb.cutlass.line.udp;
 
 import com.questdb.cairo.*;
-import com.questdb.cairo.pool.WriterPool;
+import com.questdb.cairo.sql.CairoEngine;
 import com.questdb.mp.Job;
 import com.questdb.mp.SOCountDownLatch;
 import com.questdb.mp.Worker;
@@ -73,7 +73,7 @@ public class LinuxLineProtoReceiverTest extends AbstractCairoTest {
 
     @Test
     public void testGenericSimpleReceive() throws Exception {
-        assertReceive(new TestReceiverConfiguration(), GENERIC_FACTORY);
+        assertReceive(new TestLineUdpReceiverConfiguration(), GENERIC_FACTORY);
     }
 
     @Test
@@ -121,7 +121,7 @@ public class LinuxLineProtoReceiverTest extends AbstractCairoTest {
         if (Os.type != Os.LINUX) {
             return;
         }
-        assertReceive(new TestReceiverConfiguration(), LINUX_FACTORY);
+        assertReceive(new TestLineUdpReceiverConfiguration(), LINUX_FACTORY);
     }
 
     private void assertCannotBindSocket(ReceiverFactory factory) throws Exception {
@@ -132,7 +132,7 @@ public class LinuxLineProtoReceiverTest extends AbstractCairoTest {
                     return false;
                 }
             };
-            ReceiverConfiguration receiverCfg = new TestReceiverConfiguration() {
+            LineUdpReceiverConfiguration receiverCfg = new TestLineUdpReceiverConfiguration() {
                 @Override
                 public NetworkFacade getNetworkFacade() {
                     return nf;
@@ -146,12 +146,12 @@ public class LinuxLineProtoReceiverTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             NetworkFacade nf = new NetworkFacadeImpl() {
                 @Override
-                public boolean join(long fd, CharSequence bindIPv4Address, CharSequence groupIPv4Address) {
+                public boolean join(long fd, int bindIPv4Address, int groupIPv4Address) {
                     return false;
                 }
 
             };
-            ReceiverConfiguration receiverCfg = new TestReceiverConfiguration() {
+            LineUdpReceiverConfiguration receiverCfg = new TestLineUdpReceiverConfiguration() {
                 @Override
                 public NetworkFacade getNetworkFacade() {
                     return nf;
@@ -170,7 +170,7 @@ public class LinuxLineProtoReceiverTest extends AbstractCairoTest {
                     return -1;
                 }
             };
-            ReceiverConfiguration receiverCfg = new TestReceiverConfiguration() {
+            LineUdpReceiverConfiguration receiverCfg = new TestLineUdpReceiverConfiguration() {
                 @Override
                 public NetworkFacade getNetworkFacade() {
                     return nf;
@@ -188,25 +188,24 @@ public class LinuxLineProtoReceiverTest extends AbstractCairoTest {
             }
         };
 
-        ReceiverConfiguration configuration = new TestReceiverConfiguration() {
-            @Override
-            public int getReceiveBufferSize() {
-                return 2048;
-            }
-
+        LineUdpReceiverConfiguration configuration = new TestLineUdpReceiverConfiguration() {
             @Override
             public NetworkFacade getNetworkFacade() {
                 return nf;
+            }
+
+            @Override
+            public int getReceiveBufferSize() {
+                return 2048;
             }
         };
         assertReceive(configuration, factory);
     }
 
-    private void assertConstructorFail(ReceiverConfiguration receiverCfg, ReceiverFactory factory) {
-        CairoConfiguration cairoCfg = new DefaultCairoConfiguration(root);
-        try (WriterPool pool = new WriterPool(cairoCfg, null)) {
+    private void assertConstructorFail(LineUdpReceiverConfiguration receiverCfg, ReceiverFactory factory) {
+        try (CairoEngine engine = new Engine(new DefaultCairoConfiguration(root), null)) {
             try {
-                factory.createReceiver(receiverCfg, cairoCfg, pool);
+                factory.createReceiver(receiverCfg, engine);
                 Assert.fail();
             } catch (CairoException ignore) {
             }
@@ -214,7 +213,7 @@ public class LinuxLineProtoReceiverTest extends AbstractCairoTest {
     }
 
     private void assertFrequentCommit(ReceiverFactory factory) throws Exception {
-        ReceiverConfiguration configuration = new TestReceiverConfiguration() {
+        LineUdpReceiverConfiguration configuration = new TestLineUdpReceiverConfiguration() {
             @Override
             public int getCommitRate() {
                 return 0;
@@ -223,7 +222,7 @@ public class LinuxLineProtoReceiverTest extends AbstractCairoTest {
         assertReceive(configuration, factory);
     }
 
-    private void assertReceive(ReceiverConfiguration receiverCfg, ReceiverFactory factory) throws Exception {
+    private void assertReceive(LineUdpReceiverConfiguration receiverCfg, ReceiverFactory factory) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             final String expected = "colour\tshape\tsize\ttimestamp\n" +
                     "blue\tsquare\t3.400000000000\t1970-01-01T00:01:40.000000Z\n" +
@@ -237,10 +236,9 @@ public class LinuxLineProtoReceiverTest extends AbstractCairoTest {
                     "blue\tsquare\t3.400000000000\t1970-01-01T00:01:40.000000Z\n" +
                     "blue\tsquare\t3.400000000000\t1970-01-01T00:01:40.000000Z\n";
 
-            CairoConfiguration cairoCfg = new DefaultCairoConfiguration(root);
-            try (WriterPool pool = new WriterPool(cairoCfg, null)) {
+            try (CairoEngine engine = new Engine(new DefaultCairoConfiguration(root), null)) {
 
-                Job receiver = factory.createReceiver(receiverCfg, cairoCfg, pool);
+                Job receiver = factory.createReceiver(receiverCfg, engine);
 
                 try {
 
@@ -257,7 +255,7 @@ public class LinuxLineProtoReceiverTest extends AbstractCairoTest {
                     }
 
                     // warm writer up
-                    try (TableWriter w = pool.get("tab")) {
+                    try (TableWriter w = engine.getWriter("tab")) {
                         w.warmUp();
                     }
 
@@ -266,14 +264,14 @@ public class LinuxLineProtoReceiverTest extends AbstractCairoTest {
                     Worker worker = new Worker(jobs, workerHaltLatch);
                     worker.start();
 
-                    try (LineProtoSender sender = new LineProtoSender(NetworkFacadeImpl.INSTANCE, 0, Net.parseIPv4(receiverCfg.getBindIPv4Address()), receiverCfg.getPort(), 1400)) {
+                    try (LineProtoSender sender = new LineProtoSender(NetworkFacadeImpl.INSTANCE, 0, receiverCfg.getBindIPv4Address(), receiverCfg.getPort(), 1400)) {
                         for (int i = 0; i < 10; i++) {
                             sender.metric("tab").tag("colour", "blue").tag("shape", "square").field("size", 3.4, 4).$(100000000);
                         }
                         sender.flush();
                     }
 
-                    try (TableReader reader = new TableReader(cairoCfg, "tab")) {
+                    try (TableReader reader = new TableReader(new DefaultCairoConfiguration(root), "tab")) {
                         int count = 1000000;
                         while (true) {
                             if (count-- > 0 && reader.size() < 10) {
@@ -300,11 +298,11 @@ public class LinuxLineProtoReceiverTest extends AbstractCairoTest {
         });
     }
 
-    private static class TestReceiverConfiguration implements ReceiverConfiguration {
+    private static class TestLineUdpReceiverConfiguration implements LineUdpReceiverConfiguration {
 
         @Override
-        public CharSequence getBindIPv4Address() {
-            return "127.0.0.1";
+        public int getBindIPv4Address() {
+            return Net.parseIPv4("127.0.0.1");
         }
 
         @Override
@@ -313,8 +311,8 @@ public class LinuxLineProtoReceiverTest extends AbstractCairoTest {
         }
 
         @Override
-        public CharSequence getGroupIPv4Address() {
-            return "224.1.1.1";
+        public int getGroupIPv4Address() {
+            return Net.parseIPv4("224.1.1.1");
         }
 
         @Override

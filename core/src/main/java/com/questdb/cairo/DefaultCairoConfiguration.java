@@ -91,7 +91,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getMaxNumberOfSwapFiles() {
+    public int getMaxSwapFileCount() {
         return 30;
     }
 
@@ -116,7 +116,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getReaderPoolSegments() {
+    public int getReaderPoolMaxSegments() {
         return 5;
     }
 
@@ -131,13 +131,13 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getSqlCacheBlockCount() {
-        return 16;
+    public int getSqlCacheBlocks() {
+        return 4;
     }
 
     @Override
-    public int getSqlCacheBlockSize() {
-        return 4;
+    public int getSqlCacheRows() {
+        return 16;
     }
 
     @Override
@@ -148,7 +148,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getSqlCharacterStorePoolCapacity() {
+    public int getSqlCharacterStoreSequencePoolCapacity() {
         return 64;
     }
 

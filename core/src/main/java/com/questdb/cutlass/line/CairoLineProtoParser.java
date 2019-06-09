@@ -24,7 +24,7 @@
 package com.questdb.cutlass.line;
 
 import com.questdb.cairo.*;
-import com.questdb.cairo.pool.ResourcePool;
+import com.questdb.cairo.sql.CairoEngine;
 import com.questdb.cairo.sql.RecordMetadata;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
@@ -45,7 +45,7 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
     };
     private static final FieldNameParser NOOP_FIELD_NAME = name -> {
     };
-    private final ResourcePool<TableWriter> pool;
+    private final CairoEngine engine;
     private final CharSequenceObjHashMap<CacheEntry> writerCache = new CharSequenceObjHashMap<>();
     private final CharSequenceObjHashMap<TableWriter> commitList = new CharSequenceObjHashMap<>();
     private final Path path = new Path();
@@ -78,10 +78,10 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
     private final TableStructureAdapter tableStructureAdapter = new TableStructureAdapter();
     private final LineEndParser MY_NEW_LINE_END = this::createTableAndAppendRow;
 
-    public CairoLineProtoParser(CairoConfiguration configuration, ResourcePool<TableWriter> pool) {
-        this.configuration = configuration;
+    public CairoLineProtoParser(CairoEngine engine) {
+        this.configuration = engine.getConfiguration();
         this.clock = configuration.getMicrosecondClock();
-        this.pool = pool;
+        this.engine = engine;
     }
 
     @Override
@@ -157,7 +157,7 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
     }
 
     private void appendFirstRowAndCacheWriter(CharSequenceCache cache) {
-        TableWriter writer = pool.get(cache.get(tableName));
+        TableWriter writer = engine.getWriter(cache.get(tableName));
         this.writer = writer;
         this.metadata = writer.getMetadata();
         this.columnCount = metadata.getColumnCount();
@@ -224,7 +224,7 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
 
     private void cacheWriter(CacheEntry entry, CachedCharSequence tableName) {
         try {
-            entry.writer = pool.get(tableName);
+            entry.writer = engine.getWriter(tableName);
             this.tableName = tableName.getCacheAddress();
             createState(entry);
             LOG.info().$("cached writer [name=").$(tableName).$(']').$();
@@ -251,7 +251,7 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
                 configuration.getFilesFacade(),
                 appendMemory,
                 path,
-                configuration.getRoot().toString(),
+                configuration.getRoot(),
                 tableStructureAdapter.of(cache),
                 configuration.getMkDirMode()
         );

@@ -105,8 +105,8 @@ class DefaultHttpServerConfiguration implements HttpServerConfiguration {
     }
 
     @Override
-    public int getConnectionStringPoolSize() {
-        return 128;
+    public int getConnectionPoolInitialCapacity() {
+        return 16;
     }
 
     @Override
@@ -135,7 +135,7 @@ class DefaultHttpServerConfiguration implements HttpServerConfiguration {
     }
 
     @Override
-    public int getConnectionPoolInitialSize() {
-        return 16;
+    public int getConnectionStringPoolCapacity() {
+        return 128;
     }
 }

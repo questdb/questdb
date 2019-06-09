@@ -21,25 +21,10 @@
  *
  ******************************************************************************/
 
-package com.questdb.cutlass.line.udp;
+package com.questdb;
 
-import com.questdb.network.NetworkFacade;
-
-public interface ReceiverConfiguration {
-
-    CharSequence getBindIPv4Address();
-
-    int getCommitRate();
-
-    CharSequence getGroupIPv4Address();
-
-    int getMsgBufferSize();
-
-    int getMsgCount();
-
-    NetworkFacade getNetworkFacade();
-
-    int getPort();
-
-    int getReceiveBufferSize();
+public class ServerConfigurationException extends Exception {
+    public ServerConfigurationException(String key, String value) {
+        super("invalid configuration value [key=" + key + ", value=" + value + "]");
+    }
 }

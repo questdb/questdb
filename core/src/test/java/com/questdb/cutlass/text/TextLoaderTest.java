@@ -619,12 +619,12 @@ public class TextLoaderTest extends AbstractCairoTest {
             try (TextLoader loader = new TextLoader(
                     new DefaultTextConfiguration() {
                         @Override
-                        public long getRollBufferLimit() {
+                        public int getRollBufferLimit() {
                             return 128;
                         }
 
                         @Override
-                        public long getRollBufferSize() {
+                        public int getRollBufferSize() {
                             return 32;
                         }
                     },
@@ -883,12 +883,12 @@ public class TextLoaderTest extends AbstractCairoTest {
             try (TextLoader loader = new TextLoader(
                     new DefaultTextConfiguration() {
                         @Override
-                        public long getRollBufferLimit() {
+                        public int getRollBufferLimit() {
                             return 128;
                         }
 
                         @Override
-                        public long getRollBufferSize() {
+                        public int getRollBufferSize() {
                             return 32;
                         }
                     },

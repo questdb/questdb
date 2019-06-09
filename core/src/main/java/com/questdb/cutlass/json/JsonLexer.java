@@ -61,9 +61,9 @@ public class JsonLexer implements Mutable, Closeable {
     private boolean useCache = false;
     private int position = 0;
 
-    public JsonLexer(int cacheCapacity, int cacheSizeLimit) {
-        this.cacheCapacity = cacheCapacity;
-        this.cache = Unsafe.malloc(cacheCapacity);
+    public JsonLexer(int cacheSize, int cacheSizeLimit) {
+        this.cacheCapacity = cacheSize;
+        this.cache = Unsafe.malloc(cacheSize);
         this.cacheSizeLimit = cacheSizeLimit;
     }
 

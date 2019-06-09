@@ -31,9 +31,9 @@ import com.questdb.std.time.MillisecondClock;
 public interface HttpServerConfiguration {
     String DEFAULT_PROCESSOR_URL = "*";
 
-    int getConnectionPoolInitialSize();
+    int getConnectionPoolInitialCapacity();
 
-    int getConnectionStringPoolSize();
+    int getConnectionStringPoolCapacity();
 
     int getMultipartHeaderBufferSize();
 

@@ -31,7 +31,7 @@ public interface IODispatcherConfiguration {
 
     int getActiveConnectionLimit();
 
-    CharSequence getBindIPv4Address();
+    int getBindIPv4Address();
 
     int getBindPort();
 

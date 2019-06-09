@@ -98,7 +98,7 @@ public final class TableUtils {
             FilesFacade ff,
             AppendMemory memory,
             Path path,
-            CharSequence root,
+            @Transient CharSequence root,
             TableStructure structure,
             int mkDirMode
     ) {

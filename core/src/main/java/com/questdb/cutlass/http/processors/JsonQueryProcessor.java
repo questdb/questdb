@@ -53,7 +53,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
     static final int QUERY_METADATA = 2;
     static final int QUERY_PREFIX = 1;
     // Factory cache is thread local due to possibility of factory being
-    // close by another thread. Peer disconnect is a typical example of this.
+    // closed by another thread. Peer disconnect is a typical example of this.
     // Being asynchronous we may need to be able to return factory to the cache
     // by the same thread that executes the dispatcher.
     static final ThreadLocal<AssociativeCache<RecordCursorFactory>> FACTORY_CACHE = ThreadLocal.withInitial(() -> new AssociativeCache<>(8, 8));
@@ -323,9 +323,6 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             HttpChunkedResponseSocket socket,
             int status
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        // todo: same issue as with sending confirmation
-        //  what happens when header doesn't fit in buffer or there is "slow" client
-        //  half way sending header
         socket.status(status, "application/json; charset=utf-8");
         // todo: configure this header externally
         socket.headers().put("Keep-Alive: timeout=5, max=10000").put(Misc.EOL);

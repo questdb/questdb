@@ -78,7 +78,7 @@ public class SqlCompiler implements Closeable {
         this.queryModelPool = new ObjectPool<>(QueryModel.FACTORY, configuration.getSqlModelPoolCapacity());
         this.characterStore = new CharacterStore(
                 configuration.getSqlCharacterStoreCapacity(),
-                configuration.getSqlCharacterStorePoolCapacity()
+                configuration.getSqlCharacterStoreSequencePoolCapacity()
         );
         this.lexer = new GenericLexer(configuration.getSqlLexerPoolCapacity());
         final FunctionParser functionParser = new FunctionParser(configuration, ServiceLoader.load(FunctionFactory.class));
@@ -110,8 +110,8 @@ public class SqlCompiler implements Closeable {
         );
 
         this.sqlCache = new AssociativeCache<>(
-                configuration.getSqlCacheBlockSize(),
-                configuration.getSqlCacheBlockCount()
+                configuration.getSqlCacheBlocks(),
+                configuration.getSqlCacheRows()
         );
     }
 

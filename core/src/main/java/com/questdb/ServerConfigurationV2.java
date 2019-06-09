@@ -21,12 +21,17 @@
  *
  ******************************************************************************/
 
-package com.questdb.cutlass.line.udp;
+package com.questdb;
 
-import com.questdb.cairo.sql.CairoEngine;
-import com.questdb.mp.Job;
+import com.questdb.cairo.CairoConfiguration;
+import com.questdb.cutlass.http.HttpServerConfiguration;
+import com.questdb.cutlass.line.udp.LineUdpReceiverConfiguration;
 
-@FunctionalInterface
-public interface ReceiverFactory {
-    Job createReceiver(LineUdpReceiverConfiguration receiverCfg, CairoEngine engine);
+public interface ServerConfigurationV2 {
+
+    CairoConfiguration getCairoConfiguration();
+
+    HttpServerConfiguration getHttpServerConfiguration();
+
+    LineUdpReceiverConfiguration getLineUdpReceiverConfiguration();
 }

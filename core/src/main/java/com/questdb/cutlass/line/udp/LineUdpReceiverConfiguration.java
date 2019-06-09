@@ -23,10 +23,23 @@
 
 package com.questdb.cutlass.line.udp;
 
-import com.questdb.cairo.sql.CairoEngine;
-import com.questdb.mp.Job;
+import com.questdb.network.NetworkFacade;
 
-@FunctionalInterface
-public interface ReceiverFactory {
-    Job createReceiver(LineUdpReceiverConfiguration receiverCfg, CairoEngine engine);
+public interface LineUdpReceiverConfiguration {
+
+    int getBindIPv4Address();
+
+    int getCommitRate();
+
+    int getGroupIPv4Address();
+
+    int getMsgBufferSize();
+
+    int getMsgCount();
+
+    NetworkFacade getNetworkFacade();
+
+    int getPort();
+
+    int getReceiveBufferSize();
 }

@@ -67,7 +67,7 @@ public class TextLoader implements Closeable, Mutable {
             com.questdb.std.microtime.DateFormatFactory timestampFormatFactory
 
     ) throws JsonException {
-        this.utf8Sink = new DirectCharSink(textConfiguration.getUtf8SinkCapacity());
+        this.utf8Sink = new DirectCharSink(textConfiguration.getUtf8SinkSize());
         jsonLexer = new JsonLexer(
                 textConfiguration.getJsonCacheSize(),
                 textConfiguration.getJsonCacheLimit()
