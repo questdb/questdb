@@ -24,7 +24,7 @@
 package com.questdb.griffin.engine.functions.eq;
 
 import com.questdb.cairo.AbstractCairoTest;
-import com.questdb.cairo.Engine;
+import com.questdb.cairo.CairoEngine;
 import com.questdb.cairo.sql.RecordCursor;
 import com.questdb.cairo.sql.RecordCursorFactory;
 import com.questdb.griffin.SqlCompiler;
@@ -38,7 +38,7 @@ import org.junit.Test;
 public class EqStrFunctionFactoryTest extends AbstractCairoTest {
 
     private static final BindVariableService bindVariableService = new BindVariableService();
-    private static final Engine engine = new Engine(configuration);
+    private static final CairoEngine engine = new CairoEngine(configuration);
     private static final SqlCompiler compiler = new SqlCompiler(engine);
 
     @Before

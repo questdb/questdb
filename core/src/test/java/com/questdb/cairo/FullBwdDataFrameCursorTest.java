@@ -23,7 +23,6 @@
 
 package com.questdb.cairo;
 
-import com.questdb.cairo.sql.CairoEngine;
 import com.questdb.cairo.sql.DataFrame;
 import com.questdb.cairo.sql.DataFrameCursor;
 import com.questdb.std.Rnd;
@@ -85,7 +84,7 @@ public class FullBwdDataFrameCursorTest extends AbstractCairoTest {
                 }
                 w.commit();
 
-                try (CairoEngine engine = new Engine(configuration)) {
+                try (CairoEngine engine = new CairoEngine(configuration)) {
                     FullBwdDataFrameCursorFactory factory = new FullBwdDataFrameCursorFactory(engine, "x", 0);
                     final TableReaderRecord record = new TableReaderRecord();
 

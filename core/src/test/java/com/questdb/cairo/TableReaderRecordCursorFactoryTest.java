@@ -77,7 +77,7 @@ public class TableReaderRecordCursorFactoryTest extends AbstractCairoTest {
             }
 
 
-            try (Engine engine = new Engine(configuration)) {
+            try (CairoEngine engine = new CairoEngine(configuration)) {
 
                 final RecordMetadata metadata;
                 try (TableReader reader = engine.getReader("x", -1)) {

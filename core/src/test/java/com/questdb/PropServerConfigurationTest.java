@@ -32,18 +32,46 @@ import com.questdb.std.microtime.MicrosecondClockImpl;
 import com.questdb.std.time.MillisecondClockImpl;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Before;
 import org.junit.Test;
+import org.junit.rules.TemporaryFolder;
 
+import java.io.File;
+import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.Properties;
 
 public class PropServerConfigurationTest {
 
+    public final TemporaryFolder temp = new TemporaryFolder();
+
+    @Before
+    public void setUp() throws Exception {
+        temp.create();
+    }
+
+    private void copyMimeTypes(String targetDir) throws IOException {
+        try (InputStream stream = PropServerConfigurationTest.class.getResourceAsStream("/site/conf/mime.types")) {
+            Assert.assertNotNull(stream);
+            final File target = new File(targetDir, "conf/mime.types");
+            Assert.assertTrue(target.getParentFile().mkdirs());
+            try (FileOutputStream fos = new FileOutputStream(target)) {
+                byte[] buffer = new byte[1024 * 1204];
+                int len;
+                while ((len = stream.read(buffer)) > 0) {
+                    fos.write(buffer, 0, len);
+                }
+            }
+        }
+    }
+
     @Test
-    public void testAllDefaults() throws ServerConfigurationException {
+    public void testAllDefaults() throws ServerConfigurationException, IOException {
         Properties properties = new Properties();
-        PropServerConfiguration configuration = new PropServerConfiguration("root", properties);
+        File root = new File(temp.getRoot(), "root");
+        copyMimeTypes(root.getAbsolutePath());
+        PropServerConfiguration configuration = new PropServerConfiguration(root.getAbsolutePath(), properties);
         Assert.assertEquals(16, configuration.getHttpServerConfiguration().getConnectionPoolInitialCapacity());
         Assert.assertEquals(128, configuration.getHttpServerConfiguration().getConnectionStringPoolCapacity());
         Assert.assertEquals(512, configuration.getHttpServerConfiguration().getMultipartHeaderBufferSize());
@@ -54,7 +82,12 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(2, configuration.getHttpServerConfiguration().getWorkerCount());
         Assert.assertEquals(2097152, configuration.getHttpServerConfiguration().getSendBufferSize());
         Assert.assertEquals("index.html", configuration.getHttpServerConfiguration().getStaticContentProcessorConfiguration().getIndexFileName());
-        Assert.assertEquals("public", configuration.getHttpServerConfiguration().getStaticContentProcessorConfiguration().getPublicDirectory());
+
+        // this is going to need interesting validation logic
+        // configuration path is expected to be relative and we need to check if absolute path is good
+        Assert.assertEquals(new File(root, "public").getAbsolutePath(),
+                configuration.getHttpServerConfiguration().getStaticContentProcessorConfiguration().getPublicDirectory());
+
         Assert.assertTrue(configuration.getHttpServerConfiguration().getTextImportProcessorConfiguration().abortBrokenUploads());
 
         Assert.assertEquals(256, configuration.getHttpServerConfiguration().getDispatcherConfiguration().getActiveConnectionLimit());
@@ -140,7 +173,7 @@ public class PropServerConfigurationTest {
         Assert.assertSame(MillisecondClockImpl.INSTANCE, configuration.getCairoConfiguration().getMillisecondClock());
         Assert.assertSame(MicrosecondClockImpl.INSTANCE, configuration.getCairoConfiguration().getMicrosecondClock());
         Assert.assertSame(NetworkFacadeImpl.INSTANCE, configuration.getLineUdpReceiverConfiguration().getNetworkFacade());
-        TestUtils.assertEquals("root", configuration.getCairoConfiguration().getRoot());
+        TestUtils.assertEquals(root.getAbsolutePath(), configuration.getCairoConfiguration().getRoot());
 
         // assert mime types
         TestUtils.assertEquals("application/json", configuration.getHttpServerConfiguration().getStaticContentProcessorConfiguration().getMimeTypesCache().get("json"));
@@ -175,10 +208,12 @@ public class PropServerConfigurationTest {
     }
 
     @Test(expected = ServerConfigurationException.class)
-    public void testInvalidIPv4Address() throws ServerConfigurationException {
+    public void testInvalidIPv4Address() throws ServerConfigurationException, IOException {
         Properties properties = new Properties();
         properties.setProperty("line.udp.join", "12a.990.00");
-        new PropServerConfiguration("root", properties);
+        File root = new File(temp.getRoot(), "data");
+        copyMimeTypes(root.getAbsolutePath());
+        new PropServerConfiguration(root.getAbsolutePath(), properties);
     }
 
     @Test(expected = ServerConfigurationException.class)
@@ -196,10 +231,12 @@ public class PropServerConfigurationTest {
     }
 
     @Test(expected = ServerConfigurationException.class)
-    public void testInvalidLong() throws ServerConfigurationException {
+    public void testInvalidLong() throws ServerConfigurationException, IOException {
         Properties properties = new Properties();
         properties.setProperty("cairo.idle.check.interval", "1234a");
-        new PropServerConfiguration("root", properties);
+        File root = new File(temp.getRoot(), "data");
+        copyMimeTypes(root.getAbsolutePath());
+        new PropServerConfiguration(root.getAbsolutePath(), properties);
     }
 
     @Test
@@ -207,7 +244,11 @@ public class PropServerConfigurationTest {
         try (InputStream is = PropServerConfigurationTest.class.getResourceAsStream("/server.conf")) {
             Properties properties = new Properties();
             properties.load(is);
-            PropServerConfiguration configuration = new PropServerConfiguration("data", properties);
+
+            File root = new File(temp.getRoot(), "data");
+            copyMimeTypes(root.getAbsolutePath());
+
+            PropServerConfiguration configuration = new PropServerConfiguration(root.getAbsolutePath(), properties);
             Assert.assertEquals(64, configuration.getHttpServerConfiguration().getConnectionPoolInitialCapacity());
             Assert.assertEquals(512, configuration.getHttpServerConfiguration().getConnectionStringPoolCapacity());
             Assert.assertEquals(256, configuration.getHttpServerConfiguration().getMultipartHeaderBufferSize());
@@ -218,7 +259,10 @@ public class PropServerConfigurationTest {
             Assert.assertEquals(6, configuration.getHttpServerConfiguration().getWorkerCount());
             Assert.assertEquals(128, configuration.getHttpServerConfiguration().getSendBufferSize());
             Assert.assertEquals("index2.html", configuration.getHttpServerConfiguration().getStaticContentProcessorConfiguration().getIndexFileName());
-            Assert.assertEquals("public_ok", configuration.getHttpServerConfiguration().getStaticContentProcessorConfiguration().getPublicDirectory());
+
+            Assert.assertEquals(new File(root, "public_ok").getAbsolutePath(),
+                    configuration.getHttpServerConfiguration().getStaticContentProcessorConfiguration().getPublicDirectory());
+
             Assert.assertFalse(configuration.getHttpServerConfiguration().getTextImportProcessorConfiguration().abortBrokenUploads());
             Assert.assertEquals(64, configuration.getHttpServerConfiguration().getDispatcherConfiguration().getActiveConnectionLimit());
             Assert.assertEquals(2048, configuration.getHttpServerConfiguration().getDispatcherConfiguration().getEventCapacity());

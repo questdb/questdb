@@ -24,8 +24,8 @@
 package com.questdb.cutlass.text;
 
 import com.questdb.cairo.AbstractCairoTest;
+import com.questdb.cairo.CairoEngine;
 import com.questdb.cairo.CairoException;
-import com.questdb.cairo.Engine;
 import com.questdb.cairo.TableWriter;
 import com.questdb.cairo.sql.RecordCursor;
 import com.questdb.cairo.sql.RecordCursorFactory;
@@ -49,7 +49,7 @@ import java.nio.charset.StandardCharsets;
 
 public class TextLoaderTest extends AbstractCairoTest {
 
-    private static final Engine engine = new Engine(configuration);
+    private static final CairoEngine engine = new CairoEngine(configuration);
     private static final SqlCompiler compiler = new SqlCompiler(engine);
     private static final ByteManipulator ENTITY_MANIPULATOR = (index, len, b) -> b;
 

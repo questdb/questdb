@@ -23,7 +23,7 @@
 
 package com.questdb.cutlass.text;
 
-import com.questdb.cairo.sql.CairoEngine;
+import com.questdb.cairo.CairoEngine;
 import com.questdb.cairo.sql.RecordMetadata;
 import com.questdb.cutlass.json.JsonException;
 import com.questdb.cutlass.json.JsonLexer;

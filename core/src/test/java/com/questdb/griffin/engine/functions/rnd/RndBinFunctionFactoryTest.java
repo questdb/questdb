@@ -23,8 +23,7 @@
 
 package com.questdb.griffin.engine.functions.rnd;
 
-import com.questdb.cairo.Engine;
-import com.questdb.cairo.sql.CairoEngine;
+import com.questdb.cairo.CairoEngine;
 import com.questdb.cairo.sql.RecordCursorFactory;
 import com.questdb.griffin.FunctionFactory;
 import com.questdb.griffin.SqlCompiler;
@@ -39,7 +38,7 @@ import org.junit.Test;
 import java.io.IOException;
 
 public class RndBinFunctionFactoryTest extends AbstractFunctionFactoryTest {
-    private static final CairoEngine engine = new Engine(configuration);
+    private static final CairoEngine engine = new CairoEngine(configuration);
     private static final SqlCompiler compiler = new SqlCompiler(engine);
     private static final BindVariableService bindVariableService = new BindVariableService();
 

@@ -23,7 +23,7 @@
 
 package com.questdb.cutlass.http.processors;
 
-import com.questdb.cairo.sql.CairoEngine;
+import com.questdb.cairo.CairoEngine;
 import com.questdb.cutlass.json.JsonException;
 import com.questdb.cutlass.text.TextConfiguration;
 import com.questdb.cutlass.text.TextLoader;

@@ -79,17 +79,6 @@ JNIEXPORT jlong JNICALL Java_com_questdb_std_Files_read
 
 #define MILLIS_SINCE_1970 11644473600000
 
-JNIEXPORT jlong JNICALL Java_com_questdb_std_Files_sequentialRead
-        (JNIEnv *e, jclass cl, jlong fd, jlong address, jint len) {
-    DWORD count;
-    WINBOOL r = ReadFile((HANDLE) fd, (LPVOID) address, (DWORD) len, &count, NULL);
-    if (r) {
-        return count;
-    }
-    SaveLastError();
-    return 0;
-}
-
 JNIEXPORT jlong JNICALL Java_com_questdb_std_Files_getLastModified
         (JNIEnv *e, jclass cl, jlong lpszName) {
 

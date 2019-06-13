@@ -26,7 +26,6 @@ package com.questdb.cairo;
 import com.questdb.cairo.pool.PoolListener;
 import com.questdb.cairo.pool.ReaderPool;
 import com.questdb.cairo.pool.WriterPool;
-import com.questdb.cairo.sql.CairoEngine;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.mp.SynchronizedJob;
@@ -38,18 +37,18 @@ import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 
-public class Engine implements Closeable, CairoEngine {
-    private static final Log LOG = LogFactory.getLog(Engine.class);
+public class CairoEngine implements Closeable {
+    private static final Log LOG = LogFactory.getLog(CairoEngine.class);
 
     private final WriterPool writerPool;
     private final ReaderPool readerPool;
     private final CairoConfiguration configuration;
 
-    public Engine(CairoConfiguration configuration) {
+    public CairoEngine(CairoConfiguration configuration) {
         this(configuration, null);
     }
 
-    public Engine(CairoConfiguration configuration, CairoWorkScheduler workScheduler) {
+    public CairoEngine(CairoConfiguration configuration, CairoWorkScheduler workScheduler) {
         this.configuration = configuration;
         this.writerPool = new WriterPool(configuration, workScheduler);
         this.readerPool = new ReaderPool(configuration);
@@ -73,7 +72,6 @@ public class Engine implements Closeable, CairoEngine {
         return writerPool.getBusyCount();
     }
 
-    @Override
     public CairoConfiguration getConfiguration() {
         return configuration;
     }
@@ -87,7 +85,6 @@ public class Engine implements Closeable, CairoEngine {
         this.readerPool.setPoolListener(poolListener);
     }
 
-    @Override
     public TableReader getReader(CharSequence tableName, long version) {
         TableReader reader = readerPool.get(tableName);
         if (version > -1 && reader.getVersion() != version) {
@@ -97,17 +94,14 @@ public class Engine implements Closeable, CairoEngine {
         return reader;
     }
 
-    @Override
     public int getStatus(Path path, CharSequence tableName, int lo, int hi) {
         return TableUtils.exists(configuration.getFilesFacade(), path, configuration.getRoot(), tableName, lo, hi);
     }
 
-    @Override
     public TableWriter getWriter(CharSequence tableName) {
         return writerPool.get(tableName);
     }
 
-    @Override
     public boolean lock(CharSequence tableName) {
         if (writerPool.lock(tableName)) {
             boolean locked = readerPool.lock(tableName);
@@ -119,23 +113,19 @@ public class Engine implements Closeable, CairoEngine {
         return false;
     }
 
-    @Override
     public boolean releaseAllReaders() {
         return readerPool.releaseAll();
     }
 
-    @Override
     public boolean releaseAllWriters() {
         return writerPool.releaseAll();
     }
 
-    @Override
     public void unlock(CharSequence tableName, @Nullable TableWriter writer) {
         readerPool.unlock(tableName);
         writerPool.unlock(tableName, writer);
     }
 
-    @Override
     public void remove(Path path, CharSequence tableName) {
         if (lock(tableName)) {
             try {
@@ -153,7 +143,6 @@ public class Engine implements Closeable, CairoEngine {
         throw CairoException.instance(configuration.getFilesFacade().errno()).put("Cannot lock ").put(tableName);
     }
 
-    @Override
     public void rename(Path path, CharSequence tableName, Path otherPath, String newName) {
         if (lock(tableName)) {
             try {
@@ -189,6 +178,10 @@ public class Engine implements Closeable, CairoEngine {
             LOG.error().$("rename failed [from='").$(path).$("', to='").$(otherPath).$("', error=").$(error).$(']').$();
             throw CairoException.instance(error).put("Rename failed");
         }
+    }
+
+    public int getStatus(Path path, CharSequence tableName) {
+        return getStatus(path, tableName, 0, tableName.length());
     }
 
     private class WriterMaintenanceJob extends SynchronizedJob {

@@ -23,7 +23,6 @@
 
 package com.questdb.cairo;
 
-import com.questdb.cairo.sql.CairoEngine;
 import com.questdb.cairo.sql.RecordCursor;
 import com.questdb.cairo.sql.RecordMetadata;
 import com.questdb.griffin.engine.functions.bind.BindVariableService;

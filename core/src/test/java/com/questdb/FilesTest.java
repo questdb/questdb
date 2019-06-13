@@ -47,52 +47,6 @@ public class FilesTest {
     public final TemporaryFolder temporaryFolder = new TemporaryFolder();
 
     @Test
-    public void testAppendAndSeqRead() throws Exception {
-        try (Path path = new Path()) {
-            File f = temporaryFolder.newFile();
-            long fd = Files.openRW(path.of(f.getAbsolutePath()).$());
-            try {
-                Assert.assertTrue(fd > 0);
-
-                ByteBuffer buf = ByteBuffer.allocateDirect(1024).order(ByteOrder.LITTLE_ENDIAN);
-                try {
-                    ByteBuffers.putStr(buf, "hello from java");
-                    Files.append(fd, ByteBuffers.getAddress(buf), buf.position());
-
-                    buf.clear();
-
-                    ByteBuffers.putStr(buf, ", awesome");
-                    Files.append(fd, ByteBuffers.getAddress(buf), buf.position());
-                } finally {
-                    ByteBuffers.release(buf);
-                }
-            } finally {
-                Files.close(fd);
-            }
-
-            fd = Files.openRO(path);
-            try {
-                Assert.assertTrue(fd > 0);
-                ByteBuffer buf = ByteBuffer.allocateDirect(1024).order(ByteOrder.LITTLE_ENDIAN);
-                try {
-                    int len = (int) Files.length(path);
-                    long ptr = ByteBuffers.getAddress(buf);
-                    Assert.assertEquals(48, Files.sequentialRead(fd, ptr, len));
-                    DirectCharSequence cs = new DirectCharSequence().of(ptr, ptr + len);
-                    TestUtils.assertEquals("hello from java, awesome", cs);
-                } finally {
-                    ByteBuffers.release(buf);
-                }
-            } finally {
-                Files.close(fd);
-            }
-
-            Assert.assertTrue(Files.exists(path));
-            Assert.assertFalse(Files.exists(path.of("/x/yz/1/2/3").$()));
-        }
-    }
-
-    @Test
     public void testDeleteDir() throws Exception {
         File r = temporaryFolder.newFolder("to_delete");
         Assert.assertTrue(new File(r, "a/b/c").mkdirs());

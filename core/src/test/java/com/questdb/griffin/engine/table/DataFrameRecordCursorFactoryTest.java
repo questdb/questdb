@@ -73,7 +73,7 @@ public class DataFrameRecordCursorFactoryTest extends AbstractCairoTest {
                 writer.commit();
             }
 
-            try (Engine engine = new Engine(configuration)) {
+            try (CairoEngine engine = new CairoEngine(configuration)) {
                 String value = symbols[N - 10];
                 int columnIndex;
                 int symbolKey;

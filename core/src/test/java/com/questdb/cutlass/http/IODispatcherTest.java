@@ -23,11 +23,10 @@
 
 package com.questdb.cutlass.http;
 
+import com.questdb.cairo.CairoEngine;
 import com.questdb.cairo.CairoTestUtils;
 import com.questdb.cairo.DefaultCairoConfiguration;
-import com.questdb.cairo.Engine;
 import com.questdb.cairo.TestRecord;
-import com.questdb.cairo.sql.CairoEngine;
 import com.questdb.cutlass.http.processors.JsonQueryProcessor;
 import com.questdb.cutlass.http.processors.StaticContentProcessor;
 import com.questdb.cutlass.http.processors.StaticContentProcessorConfiguration;
@@ -243,7 +242,7 @@ public class IODispatcherTest {
             final String baseDir = System.getProperty("java.io.tmpdir");
             final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir);
 
-            try (CairoEngine engine = new Engine(new DefaultCairoConfiguration(baseDir));
+            try (CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir));
                  HttpServer httpServer = new HttpServer(httpConfiguration)) {
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
@@ -406,7 +405,7 @@ public class IODispatcherTest {
             final String baseDir = System.getProperty("java.io.tmpdir");
             final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir);
 
-            try (CairoEngine engine = new Engine(new DefaultCairoConfiguration(baseDir));
+            try (CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir));
                  HttpServer httpServer = new HttpServer(httpConfiguration)
             ) {
                 httpServer.bind(new HttpRequestProcessorFactory() {
@@ -545,7 +544,7 @@ public class IODispatcherTest {
             final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir);
 
             try (
-                    CairoEngine engine = new Engine(new DefaultCairoConfiguration(baseDir));
+                    CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir));
                     HttpServer httpServer = new HttpServer(httpConfiguration)
             ) {
                 httpServer.bind(new HttpRequestProcessorFactory() {
@@ -692,7 +691,7 @@ public class IODispatcherTest {
             final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir);
 
             try (
-                    CairoEngine engine = new Engine(new DefaultCairoConfiguration(baseDir));
+                    CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir));
                     HttpServer httpServer = new HttpServer(httpConfiguration)
             ) {
                 httpServer.bind(new HttpRequestProcessorFactory() {
@@ -773,7 +772,7 @@ public class IODispatcherTest {
             final String baseDir = System.getProperty("java.io.tmpdir");
             final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(nf, baseDir, 128);
 
-            try (CairoEngine engine = new Engine(new DefaultCairoConfiguration(baseDir));
+            try (CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir));
                  HttpServer httpServer = new HttpServer(httpConfiguration)) {
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
@@ -917,7 +916,7 @@ public class IODispatcherTest {
             final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir);
 
             try (
-                    CairoEngine engine = new Engine(new DefaultCairoConfiguration(baseDir));
+                    CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir));
                     HttpServer httpServer = new HttpServer(httpConfiguration)
             ) {
                 httpServer.bind(new HttpRequestProcessorFactory() {
@@ -2103,7 +2102,7 @@ public class IODispatcherTest {
             final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir);
 
 
-            try (CairoEngine engine = new Engine(new DefaultCairoConfiguration(baseDir));
+            try (CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir));
                  HttpServer httpServer = new HttpServer(httpConfiguration)) {
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
@@ -2337,7 +2336,7 @@ public class IODispatcherTest {
         private final HttpServer httpServer;
 
         public CairoHttpServer(CharSequence cairoBaseDir, HttpServerConfiguration configuration) {
-            this.engine = new Engine(new DefaultCairoConfiguration(cairoBaseDir));
+            this.engine = new CairoEngine(new DefaultCairoConfiguration(cairoBaseDir));
             this.httpServer = new HttpServer(configuration);
             httpServer.bind(new HttpRequestProcessorFactory() {
                 @Override

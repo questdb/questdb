@@ -69,7 +69,7 @@ public class FullFwdDataFrameCursorFactoryTest extends AbstractCairoTest {
                 writer.commit();
             }
 
-            try (Engine engine = new Engine(configuration)) {
+            try (CairoEngine engine = new CairoEngine(configuration)) {
                 FullFwdDataFrameCursorFactory factory = new FullFwdDataFrameCursorFactory(engine, "x", 0);
                 long count = 0;
                 try (DataFrameCursor cursor = factory.getCursor()) {

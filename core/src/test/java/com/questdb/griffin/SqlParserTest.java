@@ -24,7 +24,6 @@
 package com.questdb.griffin;
 
 import com.questdb.cairo.*;
-import com.questdb.cairo.sql.CairoEngine;
 import com.questdb.griffin.model.ExecutionModel;
 import com.questdb.griffin.model.QueryModel;
 import com.questdb.std.*;
@@ -4281,7 +4280,7 @@ public class SqlParserTest extends AbstractGriffinTest {
         };
 
         try (
-                CairoEngine engine = new Engine(configuration);
+                CairoEngine engine = new CairoEngine(configuration);
                 SqlCompiler compiler = new SqlCompiler(engine)
         ) {
             assertSyntaxError(

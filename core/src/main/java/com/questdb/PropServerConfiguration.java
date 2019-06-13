@@ -31,16 +31,21 @@ import com.questdb.cutlass.http.processors.TextImportProcessorConfiguration;
 import com.questdb.cutlass.line.udp.LineUdpReceiverConfiguration;
 import com.questdb.cutlass.text.TextConfiguration;
 import com.questdb.network.*;
-import com.questdb.std.*;
+import com.questdb.std.FilesFacade;
+import com.questdb.std.FilesFacadeImpl;
+import com.questdb.std.Numbers;
+import com.questdb.std.NumericException;
 import com.questdb.std.microtime.MicrosecondClock;
 import com.questdb.std.microtime.MicrosecondClockImpl;
 import com.questdb.std.str.Path;
 import com.questdb.std.time.MillisecondClock;
 import com.questdb.std.time.MillisecondClockImpl;
 
+import java.io.File;
 import java.util.Properties;
 
 public class PropServerConfiguration implements ServerConfigurationV2 {
+    public static final String CONFIG_DIRECTORY = "conf";
     private final IODispatcherConfiguration ioDispatcherConfiguration = new PropIODispatcherConfiguration();
     private final TextImportProcessorConfiguration textImportProcessorConfiguration = new PropTextImportProcessorConfiguration();
     private final StaticContentProcessorConfiguration staticContentProcessorConfiguration = new PropStaticContentProcessorConfiguration();
@@ -58,7 +63,7 @@ public class PropServerConfiguration implements ServerConfigurationV2 {
     private final int workerCount;
     private final int sendBufferSize;
     private final CharSequence indexFileName;
-    private final CharSequence publicDirectory;
+    private final String publicDirectory;
     private final boolean abortBrokenUploads;
     private final int activeConnectionLimit;
     private final int eventCapacity;
@@ -140,7 +145,16 @@ public class PropServerConfiguration implements ServerConfigurationV2 {
         this.workerCount = getInt(properties, "http.worker.count", 2);
         this.sendBufferSize = getIntSize(properties, "http.send.buffer.size", 2 * 1024 * 1024);
         this.indexFileName = getString(properties, "http.static.index.file.name", "index.html");
-        this.publicDirectory = getString(properties, "http.static.pubic.directory", "public");
+
+        final String publicDirectory = getString(properties, "http.static.pubic.directory", "public");
+        // translate public directory into absolute path
+        // this will generate some garbage, but this is ok - we just doing this once on startup
+        if (new File(publicDirectory).isAbsolute()) {
+            this.publicDirectory = publicDirectory;
+        } else {
+            this.publicDirectory = new File(root, publicDirectory).getAbsolutePath();
+        }
+
         this.abortBrokenUploads = getBoolean(properties, "http.text.abort.broken.uploads", true);
         this.activeConnectionLimit = getInt(properties, "http.net.active.connection.limit", 256);
         this.eventCapacity = getInt(properties, "http.net.event.capacity", 1024);
@@ -169,13 +183,8 @@ public class PropServerConfiguration implements ServerConfigurationV2 {
             bindPort = p;
         });
 
-        String defaultFilePath = this.getClass().getResource("/site/conf/mime.types").getFile();
-        if (Os.type == Os.WINDOWS) {
-            // on Windows Java returns "/C:/dir/file". This leading slash is Java specific and doesn't bode well
-            // with OS file open methods.
-            defaultFilePath = defaultFilePath.substring(1);
-        }
-        try (Path path = new Path().of(defaultFilePath).$()) {
+        // load mime types
+        try (Path path = new Path().of(new File(new File(root, CONFIG_DIRECTORY), "mime.types").getAbsolutePath()).$()) {
             this.mimeTypesCache = new MimeTypesCache(FilesFacadeImpl.INSTANCE, path);
         }
 
@@ -356,6 +365,11 @@ public class PropServerConfiguration implements ServerConfigurationV2 {
             return mimeTypesCache;
         }
 
+        /**
+         * Absolute path to HTTP public directory.
+         *
+         * @return path to public directory
+         */
         @Override
         public CharSequence getPublicDirectory() {
             return publicDirectory;

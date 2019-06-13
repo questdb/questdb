@@ -24,9 +24,9 @@
 package com.questdb.griffin.engine.groupby;
 
 import com.questdb.cairo.CairoConfiguration;
+import com.questdb.cairo.CairoEngine;
 import com.questdb.cairo.CairoException;
 import com.questdb.cairo.DefaultCairoConfiguration;
-import com.questdb.cairo.Engine;
 import com.questdb.cairo.sql.RecordCursor;
 import com.questdb.cairo.sql.RecordCursorFactory;
 import com.questdb.griffin.AbstractGriffinTest;
@@ -246,7 +246,7 @@ public class SampleByTest extends AbstractGriffinTest {
                 }
             };
 
-            try (Engine engine = new Engine(configuration)) {
+            try (CairoEngine engine = new CairoEngine(configuration)) {
                 try (SqlCompiler compiler = new SqlCompiler(engine)) {
                     try {
                         try (RecordCursorFactory factory = compiler.compile("select c, sum_t(d) from x", bindVariableService)) {
@@ -1135,7 +1135,7 @@ public class SampleByTest extends AbstractGriffinTest {
                     }
                 };
 
-                try (Engine engine = new Engine(configuration)) {
+                try (CairoEngine engine = new CairoEngine(configuration)) {
                     try (SqlCompiler compiler = new SqlCompiler(engine)) {
                         try {
                             compiler.compile("select b, sum(a), k from x sample by 3h fill(linear)", bindVariableService);
@@ -1189,7 +1189,7 @@ public class SampleByTest extends AbstractGriffinTest {
                     }
                 };
 
-                try (Engine engine = new Engine(configuration)) {
+                try (CairoEngine engine = new CairoEngine(configuration)) {
                     try (SqlCompiler compiler = new SqlCompiler(engine)) {
                         try {
                             try (RecordCursorFactory factory = compiler.compile("select b, sum(a), k from x sample by 3h fill(linear)", bindVariableService)) {

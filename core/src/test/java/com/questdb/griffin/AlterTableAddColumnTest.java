@@ -151,7 +151,7 @@ public class AlterTableAddColumnTest extends AbstractGriffinTest {
                             }
                         };
 
-                        try (Engine engine = new Engine(configuration)) {
+                        try (CairoEngine engine = new CairoEngine(configuration)) {
                             try (SqlCompiler compiler = new SqlCompiler(engine)) {
                                 Assert.assertNull(compiler.compile("alter table x add column meh symbol cache", bindVariableService));
 

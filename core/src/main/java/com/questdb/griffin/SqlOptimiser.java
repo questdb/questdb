@@ -25,7 +25,6 @@ package com.questdb.griffin;
 
 import com.questdb.cairo.*;
 import com.questdb.cairo.pool.ex.EntryLockedException;
-import com.questdb.cairo.sql.CairoEngine;
 import com.questdb.cairo.sql.Function;
 import com.questdb.cairo.sql.RecordMetadata;
 import com.questdb.griffin.model.*;

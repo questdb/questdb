@@ -24,7 +24,6 @@
 package com.questdb.cutlass.line;
 
 import com.questdb.cairo.*;
-import com.questdb.cairo.sql.CairoEngine;
 import com.questdb.cairo.sql.RecordMetadata;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;

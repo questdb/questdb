@@ -38,7 +38,7 @@ import static com.questdb.griffin.GriffinParserTestUtils.intervalToString;
 
 public class WhereClauseParserTest extends AbstractCairoTest {
 
-    private final static SqlCompiler compiler = new SqlCompiler(new Engine(configuration));
+    private final static SqlCompiler compiler = new SqlCompiler(new CairoEngine(configuration));
     private static TableReader reader;
     private static TableReader noTimestampReader;
     private static TableReader unindexedReader;

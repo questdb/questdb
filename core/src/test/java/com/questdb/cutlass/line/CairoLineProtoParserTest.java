@@ -24,7 +24,6 @@
 package com.questdb.cutlass.line;
 
 import com.questdb.cairo.*;
-import com.questdb.cairo.sql.CairoEngine;
 import com.questdb.std.*;
 import com.questdb.std.microtime.DateFormatUtils;
 import com.questdb.std.microtime.MicrosecondClock;
@@ -506,7 +505,7 @@ public class CairoLineProtoParserTest extends AbstractCairoTest {
 
     private void assertThat(String expected, String lines, CharSequence tableName, CairoConfiguration configuration) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (CairoEngine engine = new Engine(configuration, null)) {
+            try (CairoEngine engine = new CairoEngine(configuration, null)) {
                 try (CairoLineProtoParser parser = new CairoLineProtoParser(engine)) {
                     byte[] bytes = lines.getBytes(StandardCharsets.UTF_8);
                     int len = bytes.length;

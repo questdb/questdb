@@ -70,16 +70,6 @@ public final class Files {
         return res;
     }
 
-    public static long copy(long fdFrom, long fdTo, long bufPtr, int bufSize) {
-        long total = 0;
-        long l;
-        while ((l = Files.sequentialRead(fdFrom, bufPtr, bufSize)) > 0) {
-            Files.append(fdTo, bufPtr, (int) l);
-            total += l;
-        }
-        return total;
-    }
-
     public static native boolean exists(long fd);
 
     public static boolean exists(LPSZ lpsz) {

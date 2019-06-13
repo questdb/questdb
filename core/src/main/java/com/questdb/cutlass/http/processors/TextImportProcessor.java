@@ -23,8 +23,8 @@
 
 package com.questdb.cutlass.http.processors;
 
+import com.questdb.cairo.CairoEngine;
 import com.questdb.cairo.PartitionBy;
-import com.questdb.cairo.sql.CairoEngine;
 import com.questdb.cairo.sql.RecordMetadata;
 import com.questdb.cutlass.http.*;
 import com.questdb.cutlass.json.JsonException;

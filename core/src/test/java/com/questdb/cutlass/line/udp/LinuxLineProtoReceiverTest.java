@@ -24,7 +24,6 @@
 package com.questdb.cutlass.line.udp;
 
 import com.questdb.cairo.*;
-import com.questdb.cairo.sql.CairoEngine;
 import com.questdb.mp.Job;
 import com.questdb.mp.SOCountDownLatch;
 import com.questdb.mp.Worker;
@@ -203,7 +202,7 @@ public class LinuxLineProtoReceiverTest extends AbstractCairoTest {
     }
 
     private void assertConstructorFail(LineUdpReceiverConfiguration receiverCfg, ReceiverFactory factory) {
-        try (CairoEngine engine = new Engine(new DefaultCairoConfiguration(root), null)) {
+        try (CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(root), null)) {
             try {
                 factory.createReceiver(receiverCfg, engine);
                 Assert.fail();
@@ -236,7 +235,7 @@ public class LinuxLineProtoReceiverTest extends AbstractCairoTest {
                     "blue\tsquare\t3.400000000000\t1970-01-01T00:01:40.000000Z\n" +
                     "blue\tsquare\t3.400000000000\t1970-01-01T00:01:40.000000Z\n";
 
-            try (CairoEngine engine = new Engine(new DefaultCairoConfiguration(root), null)) {
+            try (CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(root), null)) {
 
                 Job receiver = factory.createReceiver(receiverCfg, engine);
 

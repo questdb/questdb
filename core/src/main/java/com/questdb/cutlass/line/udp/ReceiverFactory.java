@@ -23,7 +23,7 @@
 
 package com.questdb.cutlass.line.udp;
 
-import com.questdb.cairo.sql.CairoEngine;
+import com.questdb.cairo.CairoEngine;
 import com.questdb.mp.Job;
 
 @FunctionalInterface

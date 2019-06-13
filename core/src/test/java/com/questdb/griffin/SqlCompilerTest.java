@@ -24,7 +24,6 @@
 package com.questdb.griffin;
 
 import com.questdb.cairo.*;
-import com.questdb.cairo.sql.CairoEngine;
 import com.questdb.cairo.sql.RecordCursor;
 import com.questdb.cairo.sql.RecordCursorFactory;
 import com.questdb.griffin.engine.functions.bind.BindVariableService;
@@ -49,7 +48,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class SqlCompilerTest extends AbstractCairoTest {
-    private final static Engine engine = new Engine(configuration);
+    private final static CairoEngine engine = new CairoEngine(configuration);
     private final static SqlCompiler compiler = new SqlCompiler(engine);
     private final static BindVariableService bindVariableService = new BindVariableService();
     private final static Path path = new Path();
@@ -117,7 +116,7 @@ public class SqlCompilerTest extends AbstractCairoTest {
             }
         };
 
-        CairoEngine engine = new Engine(configuration);
+        CairoEngine engine = new CairoEngine(configuration);
         SqlCompiler compiler = new SqlCompiler(engine);
 
         try {
@@ -1832,7 +1831,7 @@ public class SqlCompilerTest extends AbstractCairoTest {
                 };
 
                 try (
-                        Engine engine = new Engine(configuration);
+                        CairoEngine engine = new CairoEngine(configuration);
                         SqlCompiler compiler = new SqlCompiler(engine)
                 ) {
                     try {
@@ -1891,7 +1890,7 @@ public class SqlCompilerTest extends AbstractCairoTest {
                     }
                 };
 
-                try (Engine engine = new Engine(configuration); SqlCompiler compiler = new SqlCompiler(engine)) {
+                try (CairoEngine engine = new CairoEngine(configuration); SqlCompiler compiler = new SqlCompiler(engine)) {
                     try {
                         compiler.compile(sql, bindVariableService);
                         Assert.fail();
@@ -2242,7 +2241,7 @@ public class SqlCompilerTest extends AbstractCairoTest {
 
         TestUtils.assertMemoryLeak(() -> {
             try (
-                    Engine engine = new Engine(configuration);
+                    CairoEngine engine = new CairoEngine(configuration);
                     SqlCompiler compiler = new SqlCompiler(engine)
             ) {
                 try {
@@ -2932,7 +2931,7 @@ public class SqlCompilerTest extends AbstractCairoTest {
         };
 
         TestUtils.assertMemoryLeak(() -> {
-            try (Engine engine = new Engine(configuration) {
+            try (CairoEngine engine = new CairoEngine(configuration) {
                 @Override
                 public TableReader getReader(CharSequence tableName, long version) {
                     fiddler.run(this);
@@ -3382,7 +3381,7 @@ public class SqlCompilerTest extends AbstractCairoTest {
         // create source table
         compiler.compile("create table X (a int, b int, t timestamp) timestamp(t)", bindVariableService);
 
-        try (Engine engine = new Engine(configuration) {
+        try (CairoEngine engine = new CairoEngine(configuration) {
             @Override
             public TableReader getReader(CharSequence tableName, long tableVersion) {
                 fiddler.run(this);
@@ -3428,7 +3427,7 @@ public class SqlCompilerTest extends AbstractCairoTest {
             }
         };
 
-        try (Engine engine = new Engine(configuration)) {
+        try (CairoEngine engine = new CairoEngine(configuration)) {
             try (SqlCompiler compiler = new SqlCompiler(engine)) {
 
                 compiler.compile("create table x (a INT, b INT)", bindVariableService);

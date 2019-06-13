@@ -35,7 +35,7 @@ import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class EngineTest extends AbstractCairoTest {
+public class CairoEngineTest extends AbstractCairoTest {
     private final static Path path = new Path();
     private final static Path otherPath = new Path();
 
@@ -55,7 +55,7 @@ public class EngineTest extends AbstractCairoTest {
 
             MyListener listener = new MyListener();
 
-            try (Engine engine = new Engine(configuration)) {
+            try (CairoEngine engine = new CairoEngine(configuration)) {
                 engine.setPoolListener(listener);
                 Assert.assertEquals(listener, engine.getPoolListener());
 
@@ -116,7 +116,7 @@ public class EngineTest extends AbstractCairoTest {
             MyListener listener = new MyListener();
             MyWorkScheduler workScheduler = new MyWorkScheduler();
 
-            try (Engine engine = new Engine(configuration, workScheduler)) {
+            try (CairoEngine engine = new CairoEngine(configuration, workScheduler)) {
                 engine.setPoolListener(listener);
 
                 assertWriter(engine, "x");
@@ -141,7 +141,7 @@ public class EngineTest extends AbstractCairoTest {
         createX();
 
         TestUtils.assertMemoryLeak(() -> {
-            try (Engine engine = new Engine(configuration)) {
+            try (CairoEngine engine = new CairoEngine(configuration)) {
                 try (TableReader reader = engine.getReader("x", TableUtils.ANY_TABLE_VERSION)) {
                     Assert.assertNotNull(reader);
                     Assert.assertFalse(engine.lock("x"));
@@ -157,7 +157,7 @@ public class EngineTest extends AbstractCairoTest {
         createX();
 
         TestUtils.assertMemoryLeak(() -> {
-            try (Engine engine = new Engine(configuration)) {
+            try (CairoEngine engine = new CairoEngine(configuration)) {
                 engine.rename(path, "x", otherPath, "y");
 
                 assertWriter(engine, "y");
@@ -171,7 +171,7 @@ public class EngineTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             createX();
 
-            try (Engine engine = new Engine(configuration)) {
+            try (CairoEngine engine = new CairoEngine(configuration)) {
                 assertReader(engine, "x");
                 assertWriter(engine, "x");
                 engine.remove(path, "x");
@@ -197,7 +197,7 @@ public class EngineTest extends AbstractCairoTest {
 
         createX();
 
-        try (Engine engine = new Engine(configuration)) {
+        try (CairoEngine engine = new CairoEngine(configuration)) {
             engine.remove(path, "x");
             Assert.assertEquals(TableUtils.TABLE_DOES_NOT_EXIST, engine.getStatus(path, "x"));
         }
@@ -207,7 +207,7 @@ public class EngineTest extends AbstractCairoTest {
     public void testRemoveNonExisting() throws Exception {
         createY(); // this will create root dir at least
         TestUtils.assertMemoryLeak(() -> {
-            try (Engine engine = new Engine(configuration)) {
+            try (CairoEngine engine = new CairoEngine(configuration)) {
                 try {
                     engine.remove(path, "x");
                     Assert.fail();
@@ -223,7 +223,7 @@ public class EngineTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             createX();
 
-            try (Engine engine = new Engine(configuration)) {
+            try (CairoEngine engine = new CairoEngine(configuration)) {
                 try (TableReader reader = engine.getReader("x", TableUtils.ANY_TABLE_VERSION)) {
                     Assert.assertNotNull(reader);
                     try {
@@ -241,7 +241,7 @@ public class EngineTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             createX();
 
-            try (Engine engine = new Engine(configuration)) {
+            try (CairoEngine engine = new CairoEngine(configuration)) {
                 try (TableWriter writer = engine.getWriter("x")) {
                     Assert.assertNotNull(writer);
                     try {
@@ -259,7 +259,7 @@ public class EngineTest extends AbstractCairoTest {
         createX();
 
         TestUtils.assertMemoryLeak(() -> {
-            try (Engine engine = new Engine(configuration)) {
+            try (CairoEngine engine = new CairoEngine(configuration)) {
                 assertWriter(engine, "x");
                 assertReader(engine, "x");
 
@@ -281,7 +281,7 @@ public class EngineTest extends AbstractCairoTest {
 
             try (TableWriter ignored1 = new TableWriter(configuration, "x")) {
 
-                try (Engine engine = new Engine(configuration)) {
+                try (CairoEngine engine = new CairoEngine(configuration)) {
                     try {
                         engine.getWriter("x");
                         Assert.fail();
@@ -325,7 +325,7 @@ public class EngineTest extends AbstractCairoTest {
                 }
             };
 
-            try (Engine engine = new Engine(configuration)) {
+            try (CairoEngine engine = new CairoEngine(configuration)) {
                 assertReader(engine, "x");
                 assertWriter(engine, "x");
                 try {
@@ -355,7 +355,7 @@ public class EngineTest extends AbstractCairoTest {
                 CairoTestUtils.create(model);
             }
 
-            try (Engine engine = new Engine(configuration)) {
+            try (CairoEngine engine = new CairoEngine(configuration)) {
                 engine.rename(path, "x", otherPath, "y");
                 Assert.fail();
             } catch (CairoException e) {
@@ -371,7 +371,7 @@ public class EngineTest extends AbstractCairoTest {
             createX();
             createY();
 
-            try (Engine engine = new Engine(configuration)) {
+            try (CairoEngine engine = new CairoEngine(configuration)) {
                 assertWriter(engine, "x");
                 assertReader(engine, "x");
                 try {
@@ -394,7 +394,7 @@ public class EngineTest extends AbstractCairoTest {
         createX();
 
         TestUtils.assertMemoryLeak(() -> {
-            try (Engine engine = new Engine(configuration)) {
+            try (CairoEngine engine = new CairoEngine(configuration)) {
                 assertWriter(engine, "x");
                 try {
                     engine.getReader("x", 2);
@@ -407,13 +407,13 @@ public class EngineTest extends AbstractCairoTest {
         });
     }
 
-    private void assertReader(Engine engine, String name) {
+    private void assertReader(CairoEngine engine, String name) {
         try (TableReader reader = engine.getReader(name, TableUtils.ANY_TABLE_VERSION)) {
             Assert.assertNotNull(reader);
         }
     }
 
-    private void assertWriter(Engine engine, String name) {
+    private void assertWriter(CairoEngine engine, String name) {
         try (TableWriter w = engine.getWriter(name)) {
             Assert.assertNotNull(w);
         }

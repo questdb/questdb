@@ -39,7 +39,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class TableReaderTailRecordCursorTest extends AbstractCairoTest {
-    private final static Engine engine = new Engine(configuration);
+    private final static CairoEngine engine = new CairoEngine(configuration);
     private final static SqlCompiler compiler = new SqlCompiler(engine);
     private final static BindVariableService bindVariableService = new BindVariableService();
 

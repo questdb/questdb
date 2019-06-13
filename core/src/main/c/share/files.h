@@ -111,14 +111,6 @@ JNIEXPORT jlong JNICALL Java_com_questdb_std_Files_read
 
 /*
  * Class:     com_questdb_std_Files
- * Method:    sequentialRead
- * Signature: (JJI)J
- */
-JNIEXPORT jlong JNICALL Java_com_questdb_std_Files_sequentialRead
-        (JNIEnv *, jclass, jlong, jlong, jint);
-
-/*
- * Class:     com_questdb_std_Files
  * Method:    truncate
  * Signature: (JJ)Z
  */

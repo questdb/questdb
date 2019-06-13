@@ -23,7 +23,10 @@
 
 package com.questdb.cairo;
 
-import com.questdb.cairo.sql.*;
+import com.questdb.cairo.sql.DataFrame;
+import com.questdb.cairo.sql.DataFrameCursor;
+import com.questdb.cairo.sql.RowCursor;
+import com.questdb.cairo.sql.SymbolTable;
 import com.questdb.std.LongList;
 import com.questdb.std.Rnd;
 import com.questdb.std.microtime.DateFormatUtils;
@@ -358,7 +361,7 @@ public class IntervalBwdDataFrameCursorTest extends AbstractCairoTest {
             final Rnd rnd = new Rnd();
             long timestamp = DateFormatUtils.parseDateTime("1980-01-01T00:00:00.000Z");
 
-            try (CairoEngine engine = new Engine(configuration)) {
+            try (CairoEngine engine = new CairoEngine(configuration)) {
                 final TableReaderRecord record = new TableReaderRecord();
                 final IntervalBwdDataFrameCursorFactory factory = new IntervalBwdDataFrameCursorFactory(engine, "x", 0, intervals);
                 try (DataFrameCursor cursor = factory.getCursor()) {

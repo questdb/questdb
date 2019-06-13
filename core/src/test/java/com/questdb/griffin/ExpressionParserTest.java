@@ -24,14 +24,14 @@
 package com.questdb.griffin;
 
 import com.questdb.cairo.AbstractCairoTest;
-import com.questdb.cairo.Engine;
+import com.questdb.cairo.CairoEngine;
 import com.questdb.std.Chars;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
 public class ExpressionParserTest extends AbstractCairoTest {
-    private final static SqlCompiler compiler = new SqlCompiler(new Engine(configuration));
+    private final static SqlCompiler compiler = new SqlCompiler(new CairoEngine(configuration));
     private final static RpnBuilder rpnBuilder = new RpnBuilder();
 
     @Test

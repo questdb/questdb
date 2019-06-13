@@ -119,13 +119,13 @@ public class MimeTypesCacheTest {
                 try (Path path = new Path()) {
                     String filePath;
                     if (Os.type == Os.WINDOWS) {
-                        filePath = this.getClass().getResource("/mime_test.types").getFile().substring(1);
+                        filePath = this.getClass().getResource("/mime.types").getFile().substring(1);
                     } else {
-                        filePath = this.getClass().getResource("/mime_test.types").getFile();
+                        filePath = this.getClass().getResource("/mime.types").getFile();
                     }
                     path.of(filePath).$();
                     MimeTypesCache mimeTypes = new MimeTypesCache(FilesFacadeImpl.INSTANCE, path);
-                    Assert.assertEquals(6, mimeTypes.size());
+                    Assert.assertEquals(980, mimeTypes.size());
                     TestUtils.assertEquals("application/andrew-inset", mimeTypes.get("ez"));
                     TestUtils.assertEquals("application/inkml+xml", mimeTypes.get("ink"));
                     TestUtils.assertEquals("application/inkml+xml", mimeTypes.get("inkml"));

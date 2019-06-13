@@ -23,10 +23,10 @@
 
 package com.questdb.cutlass.http.processors;
 
+import com.questdb.cairo.CairoEngine;
 import com.questdb.cairo.CairoError;
 import com.questdb.cairo.CairoException;
 import com.questdb.cairo.ColumnType;
-import com.questdb.cairo.sql.CairoEngine;
 import com.questdb.cairo.sql.Record;
 import com.questdb.cairo.sql.RecordCursorFactory;
 import com.questdb.cutlass.http.*;

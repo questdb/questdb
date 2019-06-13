@@ -88,11 +88,6 @@ JNIEXPORT jlong JNICALL Java_com_questdb_std_Files_read
     return pread((int) fd, (void *) address, (size_t) len, (off_t) offset);
 }
 
-JNIEXPORT jlong JNICALL Java_com_questdb_std_Files_sequentialRead
-        (JNIEnv *e, jclass cl, jlong fd, jlong address, jint len) {
-    return read((int) fd, (void *) address, (size_t) len);
-}
-
 JNIEXPORT jlong JNICALL Java_com_questdb_std_Files_getLastModified
         (JNIEnv *e, jclass cl, jlong pchar) {
     struct stat st;

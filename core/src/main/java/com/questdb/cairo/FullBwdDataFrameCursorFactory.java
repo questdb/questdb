@@ -23,7 +23,6 @@
 
 package com.questdb.cairo;
 
-import com.questdb.cairo.sql.CairoEngine;
 import com.questdb.cairo.sql.DataFrameCursor;
 
 public class FullBwdDataFrameCursorFactory extends AbstractDataFrameCursorFactory {

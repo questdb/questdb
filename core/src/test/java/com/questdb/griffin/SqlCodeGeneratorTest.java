@@ -68,7 +68,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
             };
 
             try (
-                    Engine engine = new Engine(configuration);
+                    CairoEngine engine = new CairoEngine(configuration);
                     SqlCompiler compiler = new SqlCompiler(engine)
             ) {
                 compiler.compile("create table y as (x), cast(col as symbol cache)", bindVariableService);
@@ -1118,7 +1118,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 }
             };
 
-            try (Engine engine = new Engine(configuration);
+            try (CairoEngine engine = new CairoEngine(configuration);
                  SqlCompiler compiler = new SqlCompiler(engine)) {
                 try {
                     compiler.compile(("create table x as " +

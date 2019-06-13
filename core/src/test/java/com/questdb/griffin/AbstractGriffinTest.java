@@ -24,8 +24,8 @@
 package com.questdb.griffin;
 
 import com.questdb.cairo.AbstractCairoTest;
+import com.questdb.cairo.CairoEngine;
 import com.questdb.cairo.ColumnType;
-import com.questdb.cairo.Engine;
 import com.questdb.cairo.TableUtils;
 import com.questdb.cairo.sql.*;
 import com.questdb.griffin.engine.functions.bind.BindVariableService;
@@ -44,7 +44,7 @@ import java.io.IOException;
 public class AbstractGriffinTest extends AbstractCairoTest {
     protected static final BindVariableService bindVariableService = new BindVariableService();
     private static final LongList rows = new LongList();
-    protected static Engine engine;
+    protected static CairoEngine engine;
     protected static SqlCompiler compiler;
     protected static TestExecutionContext sqlExecutionContext;
 
@@ -86,7 +86,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
 
     @BeforeClass
     public static void setUp2() {
-        engine = new Engine(configuration);
+        engine = new CairoEngine(configuration);
         compiler = new SqlCompiler(engine);
         sqlExecutionContext = new TestExecutionContext(compiler.getCodeGenerator());
     }
