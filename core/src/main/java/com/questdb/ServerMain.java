@@ -24,7 +24,14 @@
 package com.questdb;
 
 import com.questdb.cairo.CairoEngine;
-import com.questdb.net.http.HttpServer;
+import com.questdb.cutlass.http.HttpRequestProcessor;
+import com.questdb.cutlass.http.HttpRequestProcessorFactory;
+import com.questdb.cutlass.http.HttpServer;
+import com.questdb.cutlass.http.HttpServerConfiguration;
+import com.questdb.cutlass.http.processors.JsonQueryProcessor;
+import com.questdb.cutlass.http.processors.StaticContentProcessor;
+import com.questdb.cutlass.http.processors.TableStatusCheckProcessor;
+import com.questdb.cutlass.http.processors.TextImportProcessor;
 import com.questdb.std.CharSequenceObjHashMap;
 import com.questdb.std.Os;
 
@@ -81,6 +88,56 @@ public class ServerMain {
         final PropServerConfiguration configuration = new PropServerConfiguration(rootDirectory, properties);
         final CairoEngine cairoEngine = new CairoEngine(configuration.getCairoConfiguration());
 
+        final HttpServer httpServer = new HttpServer(configuration.getHttpServerConfiguration());
+        httpServer.bind(new HttpRequestProcessorFactory() {
+            @Override
+            public String getUrl() {
+                return "/exec";
+            }
+
+            @Override
+            public HttpRequestProcessor newInstance() {
+                return new JsonQueryProcessor(cairoEngine);
+            }
+        });
+
+        httpServer.bind(new HttpRequestProcessorFactory() {
+            @Override
+            public String getUrl() {
+                return "/imp";
+            }
+
+            @Override
+            public HttpRequestProcessor newInstance() {
+                return new TextImportProcessor(configuration.getHttpServerConfiguration().getTextImportProcessorConfiguration(), cairoEngine);
+            }
+        });
+
+        httpServer.bind(new HttpRequestProcessorFactory() {
+            @Override
+            public String getUrl() {
+                return "/chk";
+            }
+
+            @Override
+            public HttpRequestProcessor newInstance() {
+                return new TableStatusCheckProcessor(cairoEngine);
+            }
+        });
+
+        httpServer.bind(new HttpRequestProcessorFactory() {
+            @Override
+            public String getUrl() {
+                return HttpServerConfiguration.DEFAULT_PROCESSOR_URL;
+            }
+
+            @Override
+            public HttpRequestProcessor newInstance() {
+                return new StaticContentProcessor(configuration.getHttpServerConfiguration().getStaticContentProcessorConfiguration());
+            }
+        });
+
+        httpServer.start();
     }
 
     public static void main(String[] args) throws Exception {
@@ -118,7 +175,7 @@ public class ServerMain {
 
     private static void extractSite(String dir, boolean force) throws URISyntaxException, IOException {
         System.out.println("Preparing site content...");
-        URL url = HttpServer.class.getResource("/site/");
+        URL url = ServerMain.class.getResource("/site/");
         String[] components = url.toURI().toString().split("!");
         FileSystem fs = null;
         final Path source;

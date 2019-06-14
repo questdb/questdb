@@ -31,10 +31,7 @@ import com.questdb.cutlass.http.processors.TextImportProcessorConfiguration;
 import com.questdb.cutlass.line.udp.LineUdpReceiverConfiguration;
 import com.questdb.cutlass.text.TextConfiguration;
 import com.questdb.network.*;
-import com.questdb.std.FilesFacade;
-import com.questdb.std.FilesFacadeImpl;
-import com.questdb.std.Numbers;
-import com.questdb.std.NumericException;
+import com.questdb.std.*;
 import com.questdb.std.microtime.MicrosecondClock;
 import com.questdb.std.microtime.MicrosecondClockImpl;
 import com.questdb.std.str.Path;
@@ -98,7 +95,6 @@ public class PropServerConfiguration implements ServerConfigurationV2 {
     private final int mkdirMode;
     private final int parallelIndexThreshold;
     private final int readerPoolMaxSegments;
-    private final CharSequence root;
     private final long spinLockTimeoutUs;
     private final int sqlCacheRows;
     private final int sqlCacheBlocks;
@@ -128,13 +124,14 @@ public class PropServerConfiguration implements ServerConfigurationV2 {
     private final int lineUdpMsgCount;
     private final int lineUdpReceiveBufferSize;
     private final MimeTypesCache mimeTypesCache;
+    private final String databaseRoot;
+    private final String keepAliveHeader;
     private int bindIPv4Address;
     private int bindPort;
     private int lineUdpBindIPV4Address;
     private int lineUdpPort;
 
     public PropServerConfiguration(String root, Properties properties) throws ServerConfigurationException {
-        this.root = root;
         this.connectionPoolInitialCapacity = getInt(properties, "http.connection.pool.initial.capacity", 16);
         this.connectionStringPoolCapacity = getInt(properties, "http.connection.string.pool.capacity", 128);
         this.multipartHeaderBufferSize = getIntSize(properties, "http.multipart.header.buffer.size", 512);
@@ -146,6 +143,15 @@ public class PropServerConfiguration implements ServerConfigurationV2 {
         this.sendBufferSize = getIntSize(properties, "http.send.buffer.size", 2 * 1024 * 1024);
         this.indexFileName = getString(properties, "http.static.index.file.name", "index.html");
 
+        int keepAliveTimeout = getInt(properties, "http.keep-alive.timeout", 30);
+        int keepAliveMax = getInt(properties, "http.keep-alive.max", 1_000_000);
+
+        if (keepAliveTimeout > 0 && keepAliveMax > 0) {
+            this.keepAliveHeader = "Keep-Alive: timeout=5, max=10000" + Misc.EOL;
+        } else {
+            this.keepAliveHeader = null;
+        }
+
         final String publicDirectory = getString(properties, "http.static.pubic.directory", "public");
         // translate public directory into absolute path
         // this will generate some garbage, but this is ok - we just doing this once on startup
@@ -153,6 +159,13 @@ public class PropServerConfiguration implements ServerConfigurationV2 {
             this.publicDirectory = publicDirectory;
         } else {
             this.publicDirectory = new File(root, publicDirectory).getAbsolutePath();
+        }
+
+        final String databaseRoot = getString(properties, "cairo.root", "db");
+        if (new File(databaseRoot).isAbsolute()) {
+            this.databaseRoot = databaseRoot;
+        } else {
+            this.databaseRoot = new File(root, databaseRoot).getAbsolutePath();
         }
 
         this.abortBrokenUploads = getBoolean(properties, "http.text.abort.broken.uploads", true);
@@ -177,6 +190,7 @@ public class PropServerConfiguration implements ServerConfigurationV2 {
         this.textLexerStringPoolCapacity = getInt(properties, "http.text.lexer.string.pool.capacity", 64);
         this.timestampAdapterPoolCapacity = getInt(properties, "http.text.timestamp.adapter.pool.capacity", 64);
         this.utf8SinkSize = getIntSize(properties, "http.text.utf8.sink.size", 4096);
+
 
         parseBindTo(properties, "http.bind.to", "0.0.0.0:9000", (a, p) -> {
             bindIPv4Address = a;
@@ -373,6 +387,11 @@ public class PropServerConfiguration implements ServerConfigurationV2 {
         @Override
         public CharSequence getPublicDirectory() {
             return publicDirectory;
+        }
+
+        @Override
+        public String getKeepAliveHeader() {
+            return keepAliveHeader;
         }
     }
 
@@ -677,7 +696,7 @@ public class PropServerConfiguration implements ServerConfigurationV2 {
 
         @Override
         public CharSequence getRoot() {
-            return root;
+            return databaseRoot;
         }
 
         @Override

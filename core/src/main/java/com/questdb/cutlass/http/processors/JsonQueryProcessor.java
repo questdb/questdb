@@ -299,11 +299,6 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
     }
 
     private void sendConfirmation(HttpChunkedResponseSocket socket) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        // todo: test what happens when we cannot send a simple confirmation out
-        //  it looks like on retry "send" we don't even handle this case unless the whole
-        //  of the confirmation fits nicely into send buffer
-        //  what happens when it doesn't?
-
         socket.put('{').putQuoted("ddl").put(':').putQuoted("OK").put('}');
         socket.sendChunk();
         socket.done();
@@ -417,7 +412,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
                                     state.count++;
 
                                     if (state.fetchAll && state.count > state.stop) {
-                                        state.cancellationHandler.check();
+//                                        state.cancellationHandler.check();
                                         continue;
                                     }
 

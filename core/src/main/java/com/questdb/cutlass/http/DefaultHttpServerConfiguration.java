@@ -58,6 +58,11 @@ class DefaultHttpServerConfiguration implements HttpServerConfiguration {
         public CharSequence getPublicDirectory() {
             return ".";
         }
+
+        @Override
+        public String getKeepAliveHeader() {
+            return null;
+        }
     };
 
     private final TextImportProcessorConfiguration textImportProcessorConfiguration = new DefaultTextImportProcessorConfiguration();

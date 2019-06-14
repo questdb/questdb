@@ -90,6 +90,7 @@ import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.LockSupport;
 
+@Ignore
 public class HttpServerTest extends AbstractJournalTest {
 
     private final static Log LOG = LogFactory.getLog(HttpServerTest.class);

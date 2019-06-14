@@ -145,7 +145,5 @@ public class EqStrFunctionFactory implements FunctionFactory {
 
             return b != null && Chars.equals(a, b);
         }
-
-
     }
 }

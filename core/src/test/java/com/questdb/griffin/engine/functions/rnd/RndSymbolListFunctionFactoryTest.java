@@ -51,7 +51,7 @@ public class RndSymbolListFunctionFactoryTest extends AbstractFunctionFactoryTes
         set1.add(null);
 
         CharSequenceHashSet set2 = new CharSequenceHashSet();
-        Invocation invocation = callCustomised(true, "ABC", "CDE", "XYZ", null);
+        Invocation invocation = callCustomised(true, true, "ABC", "CDE", "XYZ", null);
         for (int i = 0; i < 1000; i++) {
             Assert.assertTrue(set1.contains(invocation.getFunction1().getSymbol(null)));
             Assert.assertTrue(set1.contains(invocation.getFunction2().getSymbol(null)));

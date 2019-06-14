@@ -43,12 +43,14 @@ public class StaticContentProcessor implements HttpRequestProcessor, Closeable {
     private final PrefixedPath prefixedPath;
     private final CharSequence indexFileName;
     private final FilesFacade ff;
+    private final String keepAliveHeader;
 
     public StaticContentProcessor(StaticContentProcessorConfiguration configuration) {
         this.mimeTypes = configuration.getMimeTypesCache();
         this.prefixedPath = new PrefixedPath(configuration.getPublicDirectory());
         this.indexFileName = configuration.getIndexFileName();
         this.ff = configuration.getFilesFacade();
+        this.keepAliveHeader = configuration.getKeepAliveHeader();
     }
 
     @Override
@@ -202,6 +204,9 @@ public class StaticContentProcessor implements HttpRequestProcessor, Closeable {
                 header.put("Accept-Ranges: bytes").put(Misc.EOL);
                 header.put("Content-Range: bytes ").put(lo).put('-').put(state.sendMax).put('/').put(length).put(Misc.EOL);
                 header.put("ETag: ").put(ff.getLastModified(path)).put(Misc.EOL);
+                if (keepAliveHeader != null) {
+                    header.put(keepAliveHeader);
+                }
                 header.send();
                 resumeSend(context, dispatcher);
             }
@@ -241,6 +246,10 @@ public class StaticContentProcessor implements HttpRequestProcessor, Closeable {
                 header.put("Content-Disposition: attachment; filename=\"").put(FileNameExtractorCharSequence.get(path)).put("\"").put(Misc.EOL);
             }
             header.put("ETag: ").put('"').put(ff.getLastModified(path)).put('"').put(Misc.EOL);
+            if (keepAliveHeader != null) {
+                header.put(keepAliveHeader);
+            }
+
             header.send();
             resumeSend(context, dispatcher);
         }

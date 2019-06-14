@@ -2225,6 +2225,11 @@ public class IODispatcherTest {
                 public CharSequence getPublicDirectory() {
                     return baseDir;
                 }
+
+                @Override
+                public String getKeepAliveHeader() {
+                    return null;
+                }
             };
 
             @Override

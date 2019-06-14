@@ -34,4 +34,6 @@ public interface StaticContentProcessorConfiguration {
     MimeTypesCache getMimeTypesCache();
 
     CharSequence getPublicDirectory();
+
+    String getKeepAliveHeader();
 }

@@ -52,7 +52,7 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
 
     public void assertFailure(boolean forceConstant, int expectedPosition, CharSequence expectedMsg, Object... args) {
         try {
-            callCustomised(forceConstant, args);
+            callCustomised(forceConstant, true, args);
             Assert.fail();
         } catch (SqlException e) {
             Assert.assertEquals(expectedPosition, e.getPosition());
@@ -64,10 +64,10 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
     }
 
     protected Invocation call(Object... args) throws SqlException {
-        return callCustomised(false, args);
+        return callCustomised(false, true, args);
     }
 
-    protected Invocation callCustomised(boolean forceConstant, Object... args) throws SqlException {
+    protected Invocation callCustomised(boolean forceConstant, boolean argTypeFromSig, Object... args) throws SqlException {
         setUp2();
         toShortRefs = 0;
         toByteRefs = 0;
@@ -127,7 +127,7 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
                             pos,
                             forceConstant,
                             metadata,
-                            true,
+                            argTypeFromSig,
                             constVarArg,
                             expression1,
                             expression2,
@@ -141,7 +141,7 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
                             pos,
                             forceConstant,
                             metadata,
-                            true,
+                            argTypeFromSig,
                             constVarArg,
                             expression1,
                             expression2,
@@ -156,7 +156,7 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
                             pos,
                             forceConstant,
                             metadata,
-                            true,
+                            argTypeFromSig,
                             constVarArg,
                             expression1,
                             expression2,
@@ -165,7 +165,6 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
                     break;
             }
         } else {
-
 
             if (!setOperation) {
                 expression1.put(name).put('(');
@@ -246,6 +245,10 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
             return ColumnType.LONG;
         }
 
+        if (arg instanceof Float) {
+            return ColumnType.FLOAT;
+        }
+
         Assert.fail("Unsupported type: " + arg.getClass());
         return -1;
     }
@@ -266,12 +269,21 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
             case ColumnType.LONG:
                 return (long) arg < 0 && (long) arg != Numbers.LONG_NaN;
             case ColumnType.SHORT:
-                // short is passed as int
-                return (int) arg < 0;
             case ColumnType.BYTE:
                 // byte is passed as int
+                // short is passed as int
                 return (int) arg < 0;
             case ColumnType.DOUBLE:
+                // double can be auto-overloaded, e.g. lesser types passed
+                // into this method. Even though method accepts double we could
+                // have byte, short, int, long, float, timestamp and date
+                if (arg instanceof Integer) {
+                    return (Integer) arg < 0;
+                }
+
+                if (arg instanceof Long) {
+                    return (Long) arg < 0;
+                }
                 return (double) arg < 0;
             case ColumnType.FLOAT:
                 return (float) arg < 0;
@@ -339,7 +351,13 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
                 sink.put((Boolean) value);
                 break;
             case ColumnType.DOUBLE:
-                sink.put((Double) value, 5);
+                if (value instanceof Integer) {
+                    sink.put((Integer) value);
+                } else if (value instanceof Long) {
+                    sink.put((Long) value);
+                } else {
+                    sink.put((Double) value, 5);
+                }
                 break;
             case ColumnType.FLOAT:
                 sink.put((Float) value, 5);
@@ -383,6 +401,9 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
             Assert.assertEquals(expected, function2.getBool(record));
         }
 
+        public void andAssertOnlyColumnValues(boolean expected) {
+            Assert.assertEquals(expected, function2.getBool(record));
+        }
 
         public void andAssert(CharSequence expected) {
             if (function1.getType() == ColumnType.STRING) {
@@ -509,7 +530,21 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
 
         @Override
         public double getDouble(int col) {
+            Object value = args[col];
+            if (value instanceof Integer) {
+                return ((Integer) value).doubleValue();
+            }
+
+            if (value instanceof Long) {
+                return ((Long) value).doubleValue();
+            }
+
             return (double) args[col];
+        }
+
+        @Override
+        public float getFloat(int col) {
+            return (float) args[col];
         }
 
         @Override

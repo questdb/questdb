@@ -23,9 +23,17 @@
 
 package com.questdb.griffin.engine.functions.eq;
 
+import com.questdb.cairo.sql.Function;
 import com.questdb.griffin.FunctionFactory;
 import com.questdb.griffin.SqlException;
 import com.questdb.griffin.engine.AbstractFunctionFactoryTest;
+import com.questdb.griffin.engine.functions.constants.DateConstant;
+import com.questdb.griffin.engine.functions.constants.DoubleConstant;
+import com.questdb.griffin.engine.functions.constants.FloatConstant;
+import com.questdb.griffin.engine.functions.constants.TimestampConstant;
+import com.questdb.std.Numbers;
+import com.questdb.std.ObjList;
+import org.junit.Assert;
 import org.junit.Test;
 
 public class EqDoubleFunctionFactoryTest extends AbstractFunctionFactoryTest {
@@ -51,13 +59,155 @@ public class EqDoubleFunctionFactoryTest extends AbstractFunctionFactoryTest {
     }
 
     @Test
+    public void testLeftNaNInt() throws SqlException {
+        call(Double.NaN, 98).andAssert(false);
+    }
+
+    @Test
+    public void testLeftNaNLong() throws SqlException {
+        call(Double.NaN, 99099112312313100L).andAssert(false);
+    }
+
+    @Test
+    public void testLeftNaNFloat() throws SqlException {
+        FunctionFactory factory = getFunctionFactory();
+        ObjList<Function> args = new ObjList<>();
+        args.add(new FloatConstant(1, 3.4f));
+        args.add(new DoubleConstant(2, Double.NaN));
+        Function function = factory.newInstance(args, 4, configuration);
+        Assert.assertFalse(function.getBool(null));
+        Assert.assertTrue(function.isConstant());
+    }
+
+    @Test
+    public void testRightNaNFloat() throws SqlException {
+        FunctionFactory factory = getFunctionFactory();
+        ObjList<Function> args = new ObjList<>();
+        args.add(new DoubleConstant(2, Double.NaN));
+        args.add(new FloatConstant(1, 5.1f) {
+            @Override
+            public boolean isConstant() {
+                return false;
+            }
+        });
+        Function function = factory.newInstance(args, 4, configuration);
+        Assert.assertFalse(function.getBool(null));
+        Assert.assertFalse(function.isConstant());
+    }
+
+    @Test
+    public void testLeftNaNLongNaN() throws SqlException {
+        // for constant expression this would generate
+        // NaN = NaN the outcome will be false
+        // however for col = NaN, where col is long this must be true
+        callCustomised(false, false, Double.NaN, Numbers.LONG_NaN).andAssertOnlyColumnValues(true);
+    }
+
+    @Test
+    public void testLeftNaNFloatNaN() throws SqlException {
+        FunctionFactory factory = getFunctionFactory();
+        ObjList<Function> args = new ObjList<>();
+        args.add(new FloatConstant(1, Float.NaN));
+        args.add(new DoubleConstant(2, Double.NaN));
+        Function function = factory.newInstance(args, 4, configuration);
+        Assert.assertTrue(function.getBool(null));
+        Assert.assertTrue(function.isConstant());
+    }
+
+    @Test
+    public void testLeftNaNIntNaN() throws SqlException {
+        // for constant expression this would generate
+        // NaN = NaN the outcome will be false
+        // however for col = NaN, where col is long this must be true
+        callCustomised(false, false, Double.NaN, Numbers.INT_NaN).andAssertOnlyColumnValues(true);
+    }
+
+    @Test
     public void testRightNaN() throws SqlException {
         call(77.1, Double.NaN).andAssert(false);
     }
 
     @Test
+    public void testRightNaNInt() throws SqlException {
+        call(123, Double.NaN).andAssert(false);
+    }
+
+    @Test
+    public void testRightNaNLong() throws SqlException {
+        call(9992290902224442L, Double.NaN).andAssert(false);
+    }
+
+    @Test
     public void testNullEqualsNull() throws SqlException {
         call(Double.NaN, Double.NaN).andAssert(true);
+    }
+
+    @Test
+    public void testRightNaNTimestamp() throws SqlException {
+        FunctionFactory factory = getFunctionFactory();
+        ObjList<Function> args = new ObjList<>();
+        args.add(new TimestampConstant(1, 20000L));
+        args.add(new DoubleConstant(2, Double.NaN));
+        Function function = factory.newInstance(args, 4, configuration);
+        Assert.assertFalse(function.getBool(null));
+    }
+
+    @Test
+    public void testRightNaNTimestampNaN() throws SqlException {
+        FunctionFactory factory = getFunctionFactory();
+        ObjList<Function> args = new ObjList<>();
+        args.add(new TimestampConstant(1, Numbers.LONG_NaN) {
+            @Override
+            public boolean isConstant() {
+                return false;
+            }
+        });
+        args.add(new DoubleConstant(2, Double.NaN));
+        Function function = factory.newInstance(args, 4, configuration);
+        Assert.assertTrue(function.getBool(null));
+        Assert.assertFalse(function.isConstant());
+    }
+
+    @Test
+    public void testLeftNaNTimestamp() throws SqlException {
+        FunctionFactory factory = getFunctionFactory();
+        ObjList<Function> args = new ObjList<>();
+        args.add(new DoubleConstant(2, Double.NaN));
+        args.add(new TimestampConstant(1, 20000L));
+        Function function = factory.newInstance(args, 4, configuration);
+        Assert.assertFalse(function.getBool(null));
+        Assert.assertTrue(function.isConstant());
+    }
+
+    @Test
+    public void testLeftNaNDate() throws SqlException {
+        FunctionFactory factory = getFunctionFactory();
+        ObjList<Function> args = new ObjList<>();
+        args.add(new DoubleConstant(2, Double.NaN));
+        args.add(new DateConstant(1, 10000L));
+        Function function = factory.newInstance(args, 4, configuration);
+        Assert.assertFalse(function.getBool(null));
+    }
+
+    @Test
+    public void testRightNaNDate() throws SqlException {
+        FunctionFactory factory = getFunctionFactory();
+        ObjList<Function> args = new ObjList<>();
+        args.add(new DateConstant(1, 10000L));
+        args.add(new DoubleConstant(2, Double.NaN));
+        Function function = factory.newInstance(args, 4, configuration);
+        Assert.assertFalse(function.getBool(null));
+    }
+
+    @Test
+    public void testRightNaNDateNaN() throws SqlException {
+        FunctionFactory factory = getFunctionFactory();
+        ObjList<Function> args = new ObjList<>();
+        args.add(new DateConstant(1, Numbers.LONG_NaN));
+        args.add(new DoubleConstant(2, Double.NaN));
+        Function function = factory.newInstance(args, 4, configuration);
+        Assert.assertTrue(function.getBool(null));
+        Assert.assertTrue(function.isConstant());
     }
 
     @Override
