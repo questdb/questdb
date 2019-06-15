@@ -144,12 +144,14 @@ public class NetTest {
         CountDownLatch haltLatch = new CountDownLatch(1);
         CyclicBarrier barrier = new CyclicBarrier(2);
         AtomicBoolean threadFailed = new AtomicBoolean(false);
+        CountDownLatch ipCollectedLatch = new CountDownLatch(1);
 
         new Thread(() -> {
             try {
                 barrier.await();
                 long clientfd = Net.accept(fd);
                 Net.appendIP4(sink, Net.getPeerIP(clientfd));
+                ipCollectedLatch.countDown();
                 Net.configureNoLinger(clientfd);
                 while (!Net.isDead(clientfd)) {
                     LockSupport.parkNanos(1);
@@ -184,6 +186,7 @@ public class NetTest {
         } else {
             Assert.assertEquals(512, Net.getRcvBuf(clientFd));
         }
+        ipCollectedLatch.await();
         Net.close(clientFd);
         Net.close(fd);
         haltLatch.await(10, TimeUnit.SECONDS);
