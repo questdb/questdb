@@ -23,6 +23,7 @@
 
 package com.questdb.cutlass.http;
 
+import com.questdb.cutlass.http.processors.JsonQueryProcessorConfiguration;
 import com.questdb.cutlass.http.processors.StaticContentProcessorConfiguration;
 import com.questdb.cutlass.http.processors.TextImportProcessorConfiguration;
 import com.questdb.network.IODispatcherConfiguration;
@@ -52,6 +53,8 @@ public interface HttpServerConfiguration {
     StaticContentProcessorConfiguration getStaticContentProcessorConfiguration();
 
     TextImportProcessorConfiguration getTextImportProcessorConfiguration();
+
+    JsonQueryProcessorConfiguration getJsonQueryProcessorConfiguration();
 
     int getWorkerCount();
 

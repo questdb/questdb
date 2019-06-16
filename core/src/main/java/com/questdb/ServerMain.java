@@ -97,7 +97,7 @@ public class ServerMain {
 
             @Override
             public HttpRequestProcessor newInstance() {
-                return new JsonQueryProcessor(cairoEngine);
+                return new JsonQueryProcessor(configuration.getHttpServerConfiguration().getJsonQueryProcessorConfiguration(), cairoEngine);
             }
         });
 

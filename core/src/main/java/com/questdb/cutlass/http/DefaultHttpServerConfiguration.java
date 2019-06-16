@@ -24,6 +24,7 @@
 package com.questdb.cutlass.http;
 
 import com.questdb.cutlass.http.processors.DefaultTextImportProcessorConfiguration;
+import com.questdb.cutlass.http.processors.JsonQueryProcessorConfiguration;
 import com.questdb.cutlass.http.processors.StaticContentProcessorConfiguration;
 import com.questdb.cutlass.http.processors.TextImportProcessorConfiguration;
 import com.questdb.network.DefaultIODispatcherConfiguration;
@@ -62,6 +63,28 @@ class DefaultHttpServerConfiguration implements HttpServerConfiguration {
         @Override
         public String getKeepAliveHeader() {
             return null;
+        }
+    };
+
+    private final JsonQueryProcessorConfiguration jsonQueryProcessorConfiguration = new JsonQueryProcessorConfiguration() {
+        @Override
+        public CharSequence getKeepAliveHeader() {
+            return "Keep-Alive: timeout=5, max=10000\r\n";
+        }
+
+        @Override
+        public int getFloatScale() {
+            return 10;
+        }
+
+        @Override
+        public int getDoubleScale() {
+            return 10;
+        }
+
+        @Override
+        public int getConnectionCheckFrequency() {
+            return 1_000_000;
         }
     };
 
@@ -142,5 +165,10 @@ class DefaultHttpServerConfiguration implements HttpServerConfiguration {
     @Override
     public int getConnectionStringPoolCapacity() {
         return 128;
+    }
+
+    @Override
+    public JsonQueryProcessorConfiguration getJsonQueryProcessorConfiguration() {
+        return jsonQueryProcessorConfiguration;
     }
 }

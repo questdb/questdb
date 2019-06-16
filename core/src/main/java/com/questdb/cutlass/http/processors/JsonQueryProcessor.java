@@ -62,13 +62,19 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
     private final AtomicLong cacheHits = new AtomicLong();
     private final AtomicLong cacheMisses = new AtomicLong();
     private final SqlCompiler compiler;
+    private final JsonQueryProcessorConfiguration configuration;
+    private final int floatScale;
+    private final int doubleScale;
 
-    public JsonQueryProcessor(CairoEngine engine) {
+    public JsonQueryProcessor(JsonQueryProcessorConfiguration configuration, CairoEngine engine) {
         // todo: add scheduler
+        this.configuration = configuration;
         this.compiler = new SqlCompiler(engine);
+        this.floatScale = configuration.getFloatScale();
+        this.doubleScale = configuration.getDoubleScale();
     }
 
-    private static void putValue(HttpChunkedResponseSocket socket, int type, Record rec, int col) {
+    private void putValue(HttpChunkedResponseSocket socket, int type, Record rec, int col) {
         switch (type) {
             case ColumnType.BOOLEAN:
                 socket.put(rec.getBool(col));
@@ -77,10 +83,10 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
                 socket.put(rec.getByte(col));
                 break;
             case ColumnType.DOUBLE:
-                socket.put(rec.getDouble(col), 10);
+                socket.put(rec.getDouble(col), doubleScale);
                 break;
             case ColumnType.FLOAT:
-                socket.put(rec.getFloat(col), 10);
+                socket.put(rec.getFloat(col), floatScale);
                 break;
             case ColumnType.INT:
                 final int i = rec.getInt(col);
@@ -143,7 +149,6 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
     @Override
     public void close() {
         Misc.free(compiler);
-        Misc.free(FACTORY_CACHE.get());
     }
 
     @Override
@@ -161,8 +166,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         JsonQueryProcessorState state = LV.get(context);
         if (state == null) {
-            // todo: configure state externally
-            LV.set(context, state = new JsonQueryProcessorState(context.getFd(), 1000));
+            LV.set(context, state = new JsonQueryProcessorState(context.getFd(), configuration.getConnectionCheckFrequency()));
         }
         HttpChunkedResponseSocket socket = context.getChunkedResponseSocket();
         if (parseUrl(socket, context.getRequestHeader(), state)) {
@@ -319,8 +323,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             int status
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         socket.status(status, "application/json; charset=utf-8");
-        // todo: configure this header externally
-        socket.headers().put("Keep-Alive: timeout=5, max=10000").put(Misc.EOL);
+        socket.headers().setKeepAlive(configuration.getKeepAliveHeader());
         socket.sendHeader();
     }
 

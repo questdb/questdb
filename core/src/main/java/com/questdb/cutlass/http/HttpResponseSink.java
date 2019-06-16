@@ -575,7 +575,7 @@ public class HttpResponseSink implements Closeable, Mutable {
 //        }
 
         @Override
-        public CharSink headers() {
+        public HttpResponseHeader headers() {
             return headerImpl;
         }
 

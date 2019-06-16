@@ -246,10 +246,7 @@ public class StaticContentProcessor implements HttpRequestProcessor, Closeable {
                 header.put("Content-Disposition: attachment; filename=\"").put(FileNameExtractorCharSequence.get(path)).put("\"").put(Misc.EOL);
             }
             header.put("ETag: ").put('"').put(ff.getLastModified(path)).put('"').put(Misc.EOL);
-            if (keepAliveHeader != null) {
-                header.put(keepAliveHeader);
-            }
-
+            header.setKeepAlive(keepAliveHeader);
             header.send();
             resumeSend(context, dispatcher);
         }

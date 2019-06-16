@@ -714,7 +714,7 @@ public class IODispatcherTest {
 
                     @Override
                     public HttpRequestProcessor newInstance() {
-                        return new JsonQueryProcessor(engine);
+                        return new JsonQueryProcessor(httpConfiguration.getJsonQueryProcessorConfiguration(), engine);
                     }
                 });
 
@@ -794,7 +794,7 @@ public class IODispatcherTest {
 
                     @Override
                     public HttpRequestProcessor newInstance() {
-                        return new JsonQueryProcessor(engine);
+                        return new JsonQueryProcessor(httpConfiguration.getJsonQueryProcessorConfiguration(), engine);
                     }
                 });
 
@@ -939,7 +939,7 @@ public class IODispatcherTest {
 
                     @Override
                     public HttpRequestProcessor newInstance() {
-                        return new JsonQueryProcessor(engine);
+                        return new JsonQueryProcessor(httpConfiguration.getJsonQueryProcessorConfiguration(), engine);
                     }
                 });
 
@@ -2136,7 +2136,7 @@ public class IODispatcherTest {
 
                     @Override
                     public HttpRequestProcessor newInstance() {
-                        return new JsonQueryProcessor(engine);
+                        return new JsonQueryProcessor(httpConfiguration.getJsonQueryProcessorConfiguration(), engine);
                     }
                 });
 
@@ -2363,7 +2363,7 @@ public class IODispatcherTest {
 
                 @Override
                 public HttpRequestProcessor newInstance() {
-                    return new JsonQueryProcessor(engine);
+                    return new JsonQueryProcessor(configuration.getJsonQueryProcessorConfiguration(), engine);
                 }
             });
         }

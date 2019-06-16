@@ -114,6 +114,10 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(0, configuration.getHttpServerConfiguration().getDispatcherConfiguration().getBindIPv4Address());
         Assert.assertEquals(9000, configuration.getHttpServerConfiguration().getDispatcherConfiguration().getBindPort());
 
+        Assert.assertEquals(1_000_000, configuration.getHttpServerConfiguration().getJsonQueryProcessorConfiguration().getConnectionCheckFrequency());
+        Assert.assertEquals(10, configuration.getHttpServerConfiguration().getJsonQueryProcessorConfiguration().getDoubleScale());
+        Assert.assertEquals(10, configuration.getHttpServerConfiguration().getJsonQueryProcessorConfiguration().getFloatScale());
+
         Assert.assertEquals(5, configuration.getCairoConfiguration().getCreateAsSelectRetryCount());
         Assert.assertEquals("fast", configuration.getCairoConfiguration().getDefaultMapType());
         Assert.assertFalse(configuration.getCairoConfiguration().getDefaultSymbolCacheFlag());
@@ -287,6 +291,10 @@ public class PropServerConfigurationTest {
             Assert.assertEquals(8192, configuration.getHttpServerConfiguration().getTextImportProcessorConfiguration().getTextConfiguration().getUtf8SinkSize());
             Assert.assertEquals(168101918, configuration.getHttpServerConfiguration().getDispatcherConfiguration().getBindIPv4Address());
             Assert.assertEquals(9900, configuration.getHttpServerConfiguration().getDispatcherConfiguration().getBindPort());
+
+            Assert.assertEquals(2_000, configuration.getHttpServerConfiguration().getJsonQueryProcessorConfiguration().getConnectionCheckFrequency());
+            Assert.assertEquals(6, configuration.getHttpServerConfiguration().getJsonQueryProcessorConfiguration().getDoubleScale());
+            Assert.assertEquals(4, configuration.getHttpServerConfiguration().getJsonQueryProcessorConfiguration().getFloatScale());
 
             Assert.assertEquals(12, configuration.getCairoConfiguration().getCreateAsSelectRetryCount());
             Assert.assertEquals("compact", configuration.getCairoConfiguration().getDefaultMapType());

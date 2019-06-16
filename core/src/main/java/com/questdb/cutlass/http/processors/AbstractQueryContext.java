@@ -48,8 +48,8 @@ public abstract class AbstractQueryContext implements Mutable, Closeable {
     int queryState = JsonQueryProcessor.QUERY_PREFIX;
     int columnIndex;
 
-    public AbstractQueryContext(long fd, int cyclesBeforeCancel) {
-        this.cancellationHandler = new ChannelCheckCancellationHandler(fd, cyclesBeforeCancel);
+    public AbstractQueryContext(long fd, int connectionCheckFrequency) {
+        this.cancellationHandler = new ChannelCheckCancellationHandler(fd, connectionCheckFrequency);
         this.fd = fd;
     }
 

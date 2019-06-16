@@ -21,18 +21,14 @@
  *
  ******************************************************************************/
 
-package com.questdb.cutlass.http;
+package com.questdb.cutlass.http.processors;
 
-import com.questdb.std.str.CharSink;
+public interface JsonQueryProcessorConfiguration {
+    CharSequence getKeepAliveHeader();
 
-public interface HttpResponseHeader extends CharSink {
-    void send() throws PeerDisconnectedException, PeerIsSlowToReadException;
+    int getFloatScale();
 
-    String status(int code, CharSequence contentType, long contentLength);
+    int getDoubleScale();
 
-    default void setKeepAlive(CharSequence keepAliveHeader) {
-        if (keepAliveHeader != null) {
-            put(keepAliveHeader);
-        }
-    }
+    int getConnectionCheckFrequency();
 }

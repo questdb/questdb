@@ -26,6 +26,7 @@ package com.questdb;
 import com.questdb.cairo.CairoConfiguration;
 import com.questdb.cutlass.http.HttpServerConfiguration;
 import com.questdb.cutlass.http.MimeTypesCache;
+import com.questdb.cutlass.http.processors.JsonQueryProcessorConfiguration;
 import com.questdb.cutlass.http.processors.StaticContentProcessorConfiguration;
 import com.questdb.cutlass.http.processors.TextImportProcessorConfiguration;
 import com.questdb.cutlass.line.udp.LineUdpReceiverConfiguration;
@@ -50,6 +51,7 @@ public class PropServerConfiguration implements ServerConfigurationV2 {
     private final TextConfiguration textConfiguration = new PropTextConfiguration();
     private final CairoConfiguration cairoConfiguration = new PropCairoConfiguration();
     private final LineUdpReceiverConfiguration lineUdpReceiverConfiguration = new PropLineUdpReceiverConfiguration();
+    private final JsonQueryProcessorConfiguration jsonQueryProcessorConfiguration = new PropJsonQueryProcessorConfiguration();
     private final int connectionPoolInitialCapacity;
     private final int connectionStringPoolCapacity;
     private final int multipartHeaderBufferSize;
@@ -130,6 +132,9 @@ public class PropServerConfiguration implements ServerConfigurationV2 {
     private int bindPort;
     private int lineUdpBindIPV4Address;
     private int lineUdpPort;
+    private final int jsonQueryFloatScale;
+    private final int jsonQueryDoubleScale;
+    private final int jsonQueryConnectionCheckFrequency;
 
     public PropServerConfiguration(String root, Properties properties) throws ServerConfigurationException {
         this.connectionPoolInitialCapacity = getInt(properties, "http.connection.pool.initial.capacity", 16);
@@ -143,8 +148,8 @@ public class PropServerConfiguration implements ServerConfigurationV2 {
         this.sendBufferSize = getIntSize(properties, "http.send.buffer.size", 2 * 1024 * 1024);
         this.indexFileName = getString(properties, "http.static.index.file.name", "index.html");
 
-        int keepAliveTimeout = getInt(properties, "http.keep-alive.timeout", 30);
-        int keepAliveMax = getInt(properties, "http.keep-alive.max", 1_000_000);
+        int keepAliveTimeout = getInt(properties, "http.keep-alive.timeout", 5);
+        int keepAliveMax = getInt(properties, "http.keep-alive.max", 10_000);
 
         if (keepAliveTimeout > 0 && keepAliveMax > 0) {
             this.keepAliveHeader = "Keep-Alive: timeout=5, max=10000" + Misc.EOL;
@@ -191,6 +196,9 @@ public class PropServerConfiguration implements ServerConfigurationV2 {
         this.timestampAdapterPoolCapacity = getInt(properties, "http.text.timestamp.adapter.pool.capacity", 64);
         this.utf8SinkSize = getIntSize(properties, "http.text.utf8.sink.size", 4096);
 
+        this.jsonQueryConnectionCheckFrequency = getInt(properties, "http.json.query.connection.check.frequency", 1_000_000);
+        this.jsonQueryDoubleScale = getInt(properties, "http.json.query.double.scale", 10);
+        this.jsonQueryFloatScale = getInt(properties, "http.json.query.float.scale", 10);
 
         parseBindTo(properties, "http.bind.to", "0.0.0.0:9000", (a, p) -> {
             bindIPv4Address = a;
@@ -611,6 +619,11 @@ public class PropServerConfiguration implements ServerConfigurationV2 {
         public int getSendBufferSize() {
             return sendBufferSize;
         }
+
+        @Override
+        public JsonQueryProcessorConfiguration getJsonQueryProcessorConfiguration() {
+            return jsonQueryProcessorConfiguration;
+        }
     }
 
     private class PropCairoConfiguration implements CairoConfiguration {
@@ -854,6 +867,28 @@ public class PropServerConfiguration implements ServerConfigurationV2 {
         @Override
         public int getReceiveBufferSize() {
             return lineUdpReceiveBufferSize;
+        }
+    }
+
+    private class PropJsonQueryProcessorConfiguration implements JsonQueryProcessorConfiguration {
+        @Override
+        public CharSequence getKeepAliveHeader() {
+            return keepAliveHeader;
+        }
+
+        @Override
+        public int getFloatScale() {
+            return jsonQueryFloatScale;
+        }
+
+        @Override
+        public int getDoubleScale() {
+            return jsonQueryDoubleScale;
+        }
+
+        @Override
+        public int getConnectionCheckFrequency() {
+            return jsonQueryConnectionCheckFrequency;
         }
     }
 }
