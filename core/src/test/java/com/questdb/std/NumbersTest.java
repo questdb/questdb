@@ -361,6 +361,11 @@ public class NumbersTest {
     }
 
     @Test(expected = NumericException.class)
+    public void testParseIntOverflow3() throws Exception {
+        Numbers.parseInt("5000000000");
+    }
+
+    @Test(expected = NumericException.class)
     public void testParseIntSignOnly() throws Exception {
         Numbers.parseInt("-");
     }

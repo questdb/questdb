@@ -1620,7 +1620,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     public void testLatestByMissingKeyValuesIndexedFiltered() throws Exception {
         TestMatchFunctionFactory.clear();
         assertQuery("a\tb\tk\n" +
-                        "54.551753247857\tHYRX\t1970-01-05T13:16:48.248832Z\n",
+                        "54.551753247857\tHYRX\t1970-02-02T07:00:00.000000Z\n",
                 "select * from x latest by b where b in ('XYZ', 'HYRX') and a > 30 and test_match()",
                 "create table x as " +
                         "(" +
@@ -1640,7 +1640,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         " from long_sequence(1)" +
                         ") timestamp(t)",
                 "a\tb\tk\n" +
-                        "54.551753247857\tHYRX\t1970-01-05T13:16:48.248832Z\n" +
+                        "54.551753247857\tHYRX\t1970-02-02T07:00:00.000000Z\n" +
                         "88.100000000000\tXYZ\t1971-01-01T00:00:00.000000Z\n");
 
         // good

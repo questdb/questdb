@@ -1451,6 +1451,9 @@ public final class Numbers {
                 throw NumericException.INSTANCE;
             }
             // val * 10 + (c - '0')
+            if (val < (Integer.MIN_VALUE / 10)) {
+                throw NumericException.INSTANCE;
+            }
             int r = (val << 3) + (val << 1) - (c - '0');
             if (r > val) {
                 throw NumericException.INSTANCE;
