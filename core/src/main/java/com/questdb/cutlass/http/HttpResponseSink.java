@@ -26,6 +26,8 @@ package com.questdb.cutlass.http;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.network.NetworkFacade;
+import com.questdb.network.PeerDisconnectedException;
+import com.questdb.network.PeerIsSlowToReadException;
 import com.questdb.std.*;
 import com.questdb.std.ex.ZLibException;
 import com.questdb.std.str.AbstractCharSink;

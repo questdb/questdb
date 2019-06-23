@@ -21,20 +21,27 @@
  *
  ******************************************************************************/
 
-package com.questdb.cutlass.http;
+package com.questdb.cutlass.pgwire.codecs;
 
-import com.questdb.network.PeerDisconnectedException;
-import com.questdb.network.PeerIsSlowToReadException;
-import com.questdb.std.str.CharSink;
+import com.questdb.std.Unsafe;
 
-public interface HttpResponseHeader extends CharSink {
-    void send() throws PeerDisconnectedException, PeerIsSlowToReadException;
+public abstract class AbstractTypePrefixedHeader {
 
-    String status(int code, CharSequence contentType, long contentLength);
+    public static final int LEN = 5;
 
-    default void setKeepAlive(CharSequence keepAliveHeader) {
-        if (keepAliveHeader != null) {
-            put(keepAliveHeader);
-        }
+    public static int getLen(long address) {
+        return NetworkByteOrderUtils.getInt(address + 1);
+    }
+
+    public static byte getType(long address) {
+        return Unsafe.getUnsafe().getByte(address);
+    }
+
+    public static void setLen(long address, int len) {
+        NetworkByteOrderUtils.putInt(address + 1, len);
+    }
+
+    public static void setType(long address, byte type) {
+        Unsafe.getUnsafe().putByte(address, type);
     }
 }

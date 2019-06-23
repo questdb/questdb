@@ -44,9 +44,8 @@ import com.questdb.std.str.StringSink;
 import com.questdb.std.time.MillisecondClock;
 import com.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
-import org.junit.Assert;
-import org.junit.Ignore;
-import org.junit.Test;
+import org.junit.*;
+import org.junit.rules.TemporaryFolder;
 
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -55,6 +54,14 @@ import java.util.concurrent.locks.LockSupport;
 
 public class IODispatcherTest {
     private static Log LOG = LogFactory.getLog(IODispatcherTest.class);
+
+    @Rule
+    public TemporaryFolder temp = new TemporaryFolder();
+
+    @Before
+    public void setUp() throws Exception {
+        temp.create();
+    }
 
     @Test
     public void testBiasWrite() throws Exception {
@@ -239,7 +246,7 @@ public class IODispatcherTest {
     @Test
     public void testImportMultipleOnSameConnection() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            final String baseDir = System.getProperty("java.io.tmpdir");
+            final String baseDir = temp.getRoot().getAbsolutePath();
             final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir);
 
             try (CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir));
@@ -402,7 +409,7 @@ public class IODispatcherTest {
     @Test
     public void testImportMultipleOnSameConnectionFragmented() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            final String baseDir = System.getProperty("java.io.tmpdir");
+            final String baseDir = temp.getRoot().getAbsolutePath();
             final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir);
 
             try (CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir));
@@ -540,7 +547,7 @@ public class IODispatcherTest {
     @Test
     public void testImportMultipleOnSameConnectionSlow() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            final String baseDir = System.getProperty("java.io.tmpdir");
+            final String baseDir = temp.getRoot().getAbsolutePath();
             final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir);
 
             try (
@@ -687,7 +694,7 @@ public class IODispatcherTest {
     @Test
     public void testJsonQuery() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            final String baseDir = System.getProperty("java.io.tmpdir");
+            final String baseDir = temp.getRoot().getAbsolutePath();
             final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir);
 
             try (
@@ -769,7 +776,7 @@ public class IODispatcherTest {
         TestUtils.assertMemoryLeak(() -> {
 
             final NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
-            final String baseDir = System.getProperty("java.io.tmpdir");
+            final String baseDir = temp.getRoot().getAbsolutePath();
             final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(nf, baseDir, 128);
 
             try (CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir));
@@ -912,7 +919,7 @@ public class IODispatcherTest {
     @Test
     public void testJsonQuerySyntaxError() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            final String baseDir = System.getProperty("java.io.tmpdir");
+            final String baseDir = temp.getRoot().getAbsolutePath();
             final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir);
 
             try (
@@ -1087,7 +1094,7 @@ public class IODispatcherTest {
     @Test
     public void testSCPConnectDownloadDisconnect() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            final String baseDir = System.getProperty("java.io.tmpdir");
+            final String baseDir = temp.getRoot().getAbsolutePath();
             final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir);
 
             try (HttpServer httpServer = new HttpServer(httpConfiguration)) {
@@ -1266,7 +1273,7 @@ public class IODispatcherTest {
     @Test
     public void testSCPFullDownload() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            final String baseDir = System.getProperty("java.io.tmpdir");
+            final String baseDir = temp.getRoot().getAbsolutePath();
             final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir);
 
             try (HttpServer httpServer = new HttpServer(httpConfiguration)) {
@@ -2097,7 +2104,7 @@ public class IODispatcherTest {
     @Ignore
     public void testUpload() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            final String baseDir = System.getProperty("java.io.tmpdir");
+            final String baseDir = temp.getRoot().getAbsolutePath();
 //            final String baseDir = "/home/vlad/dev/123";
             final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir);
 

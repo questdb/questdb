@@ -21,20 +21,11 @@
  *
  ******************************************************************************/
 
-package com.questdb.cutlass.http;
+package com.questdb.cutlass.pgwire.codecs;
 
-import com.questdb.network.PeerDisconnectedException;
-import com.questdb.network.PeerIsSlowToReadException;
-import com.questdb.std.str.CharSink;
-
-public interface HttpResponseHeader extends CharSink {
-    void send() throws PeerDisconnectedException, PeerIsSlowToReadException;
-
-    String status(int code, CharSequence contentType, long contentLength);
-
-    default void setKeepAlive(CharSequence keepAliveHeader) {
-        if (keepAliveHeader != null) {
-            put(keepAliveHeader);
-        }
-    }
+public final class Constants {
+    public static final int AUTHENTICATION_OK = 0;
+    public static final int AUTHENTICATION_KRBv5 = 2;
+    public static final int AUTHENTICATION_CLEARTEXT_PASSWORD = 3;
+    public static final int AUTHENTICATION_MD5_PASSWORD = 5;
 }

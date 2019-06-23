@@ -23,6 +23,8 @@
 
 package com.questdb.cutlass.http;
 
+import com.questdb.network.PeerDisconnectedException;
+import com.questdb.network.PeerIsSlowToReadException;
 import com.questdb.std.Mutable;
 import com.questdb.std.Unsafe;
 import com.questdb.std.str.DirectByteCharSequence;

@@ -37,6 +37,8 @@ import com.questdb.log.LogFactory;
 import com.questdb.log.LogRecord;
 import com.questdb.network.IODispatcher;
 import com.questdb.network.IOOperation;
+import com.questdb.network.PeerDisconnectedException;
+import com.questdb.network.PeerIsSlowToReadException;
 import com.questdb.std.*;
 import com.questdb.std.str.CharSink;
 

@@ -21,8 +21,8 @@
  *
  ******************************************************************************/
 
-package com.questdb.cutlass.http;
+package com.questdb.network;
 
-public class PeerDisconnectedException extends HttpFlowControlException {
+public class PeerDisconnectedException extends Exception {
     public static final PeerDisconnectedException INSTANCE = new PeerDisconnectedException();
 }

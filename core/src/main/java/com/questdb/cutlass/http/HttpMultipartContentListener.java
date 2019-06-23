@@ -23,6 +23,9 @@
 
 package com.questdb.cutlass.http;
 
+import com.questdb.network.PeerDisconnectedException;
+import com.questdb.network.PeerIsSlowToReadException;
+
 public interface HttpMultipartContentListener {
     void onChunk(HttpRequestHeader partHeader, long lo, long hi);
 

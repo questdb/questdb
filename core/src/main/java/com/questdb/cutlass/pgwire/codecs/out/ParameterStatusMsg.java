@@ -21,23 +21,29 @@
  *
  ******************************************************************************/
 
-package com.questdb.network;
+package com.questdb.cutlass.pgwire.codecs.out;
 
-public final class DisconnectReason {
-    public static final int PEER = 1;
-    public static final int IDLE = 2;
-    public static final int SILLY = 3;
+import com.questdb.cutlass.pgwire.codecs.AbstractTypePrefixedHeader;
+import com.questdb.std.Unsafe;
 
-    public static CharSequence nameOf(int disconnectReason) {
-        switch (disconnectReason) {
-            case PEER:
-                return "PEER";
-            case IDLE:
-                return "IDLE";
-            case SILLY:
-                return "SILLY";
-            default:
-                return "UNKNOWN";
-        }
+public class ParameterStatusMsg extends AbstractTypePrefixedHeader {
+    public static int setParameterPair(long address, CharSequence name, CharSequence value) {
+        setType(address, (byte) 'S');
+        long p = address + AbstractTypePrefixedHeader.LEN;
+        final long start = p;
+        p = copyStringZ(p, name);
+        p = copyStringZ(p, value);
+        int len = (int) (p - start);
+        setLen(address, len + AbstractTypePrefixedHeader.LEN - 1);
+        return len + AbstractTypePrefixedHeader.LEN;
     }
+
+    private static long copyStringZ(long p, CharSequence value) {
+        for (int i = 0, m = value.length(); i < m; i++) {
+            Unsafe.getUnsafe().putByte(p++, (byte) value.charAt(i));
+        }
+        Unsafe.getUnsafe().putByte(p, (byte) 0);
+        return p + 1;
+    }
+
 }

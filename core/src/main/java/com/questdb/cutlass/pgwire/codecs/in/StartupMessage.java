@@ -21,7 +21,16 @@
  *
  ******************************************************************************/
 
-package com.questdb.cutlass.http;
+package com.questdb.cutlass.pgwire.codecs.in;
 
-public class HttpFlowControlException extends Exception {
+import com.questdb.cutlass.pgwire.codecs.NetworkByteOrderUtils;
+
+public class StartupMessage {
+    public static int getLen(long address) {
+        return NetworkByteOrderUtils.getInt(address);
+    }
+
+    public static int getProtocol(long address) {
+        return NetworkByteOrderUtils.getInt(address + 4);
+    }
 }

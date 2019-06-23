@@ -21,8 +21,14 @@
  *
  ******************************************************************************/
 
-package com.questdb.cutlass.http;
+package com.questdb.cutlass.pgwire;
 
-public class PeerIsSlowToReadException extends HttpFlowControlException {
-    public static final PeerIsSlowToReadException INSTANCE = new PeerIsSlowToReadException();
+import com.questdb.network.NetworkFacade;
+
+public interface WireParserConfiguration {
+    NetworkFacade getNetworkFacade();
+
+    int getRecvBufferSize();
+
+    int getSendBufferSize();
 }

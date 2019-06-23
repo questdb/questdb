@@ -21,20 +21,8 @@
  *
  ******************************************************************************/
 
-package com.questdb.cutlass.http;
+package com.questdb.network;
 
-import com.questdb.network.PeerDisconnectedException;
-import com.questdb.network.PeerIsSlowToReadException;
-import com.questdb.std.str.CharSink;
-
-public interface HttpResponseHeader extends CharSink {
-    void send() throws PeerDisconnectedException, PeerIsSlowToReadException;
-
-    String status(int code, CharSequence contentType, long contentLength);
-
-    default void setKeepAlive(CharSequence keepAliveHeader) {
-        if (keepAliveHeader != null) {
-            put(keepAliveHeader);
-        }
-    }
+public class PeerIsSlowToReadException extends Exception {
+    public static final PeerIsSlowToReadException INSTANCE = new PeerIsSlowToReadException();
 }
