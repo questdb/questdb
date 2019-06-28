@@ -59,7 +59,6 @@ class TextImportProcessorState implements Mutable, Closeable {
                 new DateFormatFactory(),
                 com.questdb.std.microtime.DateLocaleFactory.INSTANCE,
                 new com.questdb.std.microtime.DateFormatFactory()
-
         );
     }
 

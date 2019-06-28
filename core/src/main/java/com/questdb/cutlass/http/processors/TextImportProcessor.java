@@ -346,7 +346,6 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
 
     @Override
     public void resumeRecv(HttpConnectionContext context, IODispatcher<HttpConnectionContext> dispatcher) {
-
         this.transientContext = context;
         this.transientDispatcher = dispatcher;
         this.transientState = LV.get(context);

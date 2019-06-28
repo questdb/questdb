@@ -23,18 +23,29 @@
 
 package com.questdb.cutlass.pgwire;
 
+import com.questdb.cairo.CairoEngine;
+import com.questdb.cairo.ColumnType;
+import com.questdb.cairo.sql.Record;
+import com.questdb.cairo.sql.RecordCursor;
+import com.questdb.cairo.sql.RecordCursorFactory;
+import com.questdb.cairo.sql.RecordMetadata;
 import com.questdb.cutlass.pgwire.codecs.AbstractTypePrefixedHeader;
+import com.questdb.cutlass.pgwire.codecs.NetworkByteOrderUtils;
 import com.questdb.cutlass.pgwire.codecs.in.StartupMessage;
-import com.questdb.cutlass.pgwire.codecs.out.AuthenticationMsg;
-import com.questdb.cutlass.pgwire.codecs.out.ParameterStatusMsg;
-import com.questdb.cutlass.pgwire.codecs.out.ReadyForQueryMsg;
+import com.questdb.griffin.SqlCompiler;
+import com.questdb.griffin.SqlException;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.network.Net;
 import com.questdb.network.NetworkFacade;
 import com.questdb.network.PeerDisconnectedException;
 import com.questdb.network.PeerIsSlowToReadException;
+import com.questdb.std.Chars;
+import com.questdb.std.IntIntHashMap;
+import com.questdb.std.Misc;
 import com.questdb.std.Unsafe;
+import com.questdb.std.str.AbstractCharSink;
+import com.questdb.std.str.CharSink;
 import com.questdb.std.str.DirectByteCharSequence;
 
 import java.io.Closeable;
@@ -42,27 +53,43 @@ import java.io.Closeable;
 public class WireParser implements Closeable {
 
     private final static Log LOG = LogFactory.getLog(WireParser.class);
+    private static final IntIntHashMap typeOidMap = new IntIntHashMap();
 
-    private int state = 0;
+    static {
+        typeOidMap.put(ColumnType.STRING, 1043); // VARCHAR
+        typeOidMap.put(ColumnType.TIMESTAMP, 1184); // TIMESTAMPZ
+        typeOidMap.put(ColumnType.DOUBLE, 701); // FLOAT8
+        typeOidMap.put(ColumnType.FLOAT, 700);
+        typeOidMap.put(ColumnType.INT, 23); // INT4
+        typeOidMap.put(ColumnType.SHORT, 21); // INT2
+    }
+
     private final NetworkFacade nf;
     private final long recvBuffer;
     private final long sendBuffer;
     private final int recvBufferSize;
     private final int sendBufferSize;
+    private final SqlCompiler compiler;
+    private final ResponseAsciiSink responseAsciiSink = new ResponseAsciiSink();
+    private long sendBufferPtr;
+    private int state = 0;
     private long recvBufferOffset = 0;
 
-    public WireParser(WireParserConfiguration configuration) {
+    public WireParser(WireParserConfiguration configuration, CairoEngine engine) {
         this.nf = configuration.getNetworkFacade();
+        this.compiler = new SqlCompiler(engine);
         this.recvBufferSize = configuration.getRecvBufferSize();
         this.recvBuffer = Unsafe.malloc(this.recvBufferSize);
         this.sendBufferSize = configuration.getSendBufferSize();
         this.sendBuffer = Unsafe.malloc(this.sendBufferSize);
+        this.sendBufferPtr = sendBuffer;
     }
 
     @Override
     public void close() {
         Unsafe.free(sendBuffer, sendBufferSize);
         Unsafe.free(recvBuffer, recvBufferSize);
+        Misc.free(compiler);
     }
 
     public void recv(long fd) throws PeerDisconnectedException, PeerIsSlowToReadException {
@@ -73,7 +100,7 @@ public class WireParser implements Closeable {
         }
 
         final int n = Net.recv(fd, recvBuffer + recvBufferOffset, remaining);
-        if (n == -1) {
+        if (n < 0) {
             throw PeerDisconnectedException.INSTANCE;
         }
 
@@ -95,30 +122,120 @@ public class WireParser implements Closeable {
     }
 
     private void executeParseAndSendResult(long fd, CharSequence query) {
-        long offset;
-        // send 'ParseComplete'
-        AuthenticationMsg.setType(sendBuffer, (byte) '1');
-        AuthenticationMsg.setLen(sendBuffer, 4);
+        responseAsciiSink.reset();
+        if (Chars.startsWith(query, "SET")) {
+            prepareParseComplete();
+            prepareReadyForQuery();
+            send(fd);
+        } else {
+            try {
+                try (RecordCursorFactory factory = compiler.compile(query)) {
+                    if (factory != null) {
+                        prepareRowDescription(factory.getMetadata());
 
-        offset = 5;
-//                                    Net.send(clientFd, sendBuffer, 5);
+                        RecordCursor cursor = factory.getCursor();
+                        Record record = cursor.getRecord();
+                        RecordMetadata metadata = factory.getMetadata();
+                        final int columnCount = metadata.getColumnCount();
 
-        // send 'ReadyForQuery'
-        ReadyForQueryMsg.setType(sendBuffer + offset, (byte) 'Z');
-        ReadyForQueryMsg.setLen(sendBuffer + offset, 5);
-        ReadyForQueryMsg.setStatus(sendBuffer + offset, (byte) 'I');
-        Net.send(fd, sendBuffer, (int) (offset + 6));
+                        while (cursor.hasNext()) {
+                            responseAsciiSink.put('D'); // data
+                            long b = responseAsciiSink.skip();
+                            long a;
+                            responseAsciiSink.putNetworkShort((short) columnCount);
+                            for (int i = 0; i < columnCount; i++) {
+                                switch (metadata.getColumnType(i)) {
+                                    case ColumnType.INT:
+                                        a = responseAsciiSink.skip();
+                                        responseAsciiSink.put(record.getInt(i));
+                                        responseAsciiSink.putLenEx(a);
+                                        break;
+                                    case ColumnType.STRING:
+                                        responseAsciiSink.putNetworkInt(record.getStrLen(i));
+                                        responseAsciiSink.encodeUtf8(record.getStr(i));
+                                        break;
+                                    case ColumnType.TIMESTAMP:
+                                        responseAsciiSink.putNetworkInt(Long.BYTES);
+                                        responseAsciiSink.put(record.getTimestamp(i));
+                                        break;
+                                    case ColumnType.DOUBLE:
+                                        responseAsciiSink.putNetworkInt(Double.BYTES);
+                                        responseAsciiSink.put(record.getDouble(i), 3);
+                                        break;
+                                    default:
+                                        assert false;
+                                }
+                            }
+                            responseAsciiSink.putLen(b);
+                        }
 
+                        prepareCommandComplete();
+                        prepareReadyForQuery();
+                        send(fd);
+                    } else {
+                        prepareParseComplete();
+                        prepareReadyForQuery();
+                        send(fd);
+                    }
+                }
+            } catch (SqlException e) {
+                prepareError(e);
+                prepareReadyForQuery();
+                send(fd);
+            }
+        }
+    }
+
+    private void prepareCommandComplete() {
+        responseAsciiSink.put('C');
+        long addr = responseAsciiSink.skip();
+        responseAsciiSink.encodeUtf8("SELECT ").put(0).put(' ').put(0).put((char) 0);
+        responseAsciiSink.putLen(addr);
+    }
+
+    private void prepareRowDescription(RecordMetadata metadata) {
+        responseAsciiSink.put('T');
+        final long addr = responseAsciiSink.skip();
+        final int n = metadata.getColumnCount();
+        responseAsciiSink.putNetworkShort((short) n);
+        for (int i = 0; i < n; i++) {
+            responseAsciiSink.encodeUtf8Z(metadata.getColumnName(i));
+            responseAsciiSink.putNetworkInt(0);
+            responseAsciiSink.putNetworkShort((short) 0);
+            responseAsciiSink.putNetworkInt(typeOidMap.get(metadata.getColumnType(i))); // type
+            responseAsciiSink.putNetworkShort((short) 0); // type size?
+            responseAsciiSink.putNetworkInt(0); // type mod?
+            responseAsciiSink.putNetworkShort((short) 0); // format code
+        }
+
+        responseAsciiSink.putLen(addr);
+    }
+
+    private void prepareNoData() {
+        responseAsciiSink.put('n');
+        responseAsciiSink.putNetworkInt(Integer.BYTES);
+    }
+
+    private void prepareError(SqlException e) {
+        responseAsciiSink.put('E');
+        long addr = responseAsciiSink.skip();
+        responseAsciiSink.put('M');
+        responseAsciiSink.encodeUtf8Z(e.getFlyweightMessage());
+        responseAsciiSink.put('S');
+        responseAsciiSink.encodeUtf8Z("ERROR");
+        responseAsciiSink.put('P').put(e.getPosition()).put((char) 0);
+        responseAsciiSink.putLen(addr);
+    }
+
+    private void prepareParseComplete() {
+        responseAsciiSink.put('1');
+        responseAsciiSink.putNetworkInt(Integer.BYTES);
     }
 
     /**
      * returns address of where parsing stopped. If there are remaining bytes left
      * int the buffer they need to be passed again in parse function along with
      * any additional bytes received
-     *
-     * @param address
-     * @param len
-     * @return
      */
     private boolean parse(long fd, long address, int len) {
         long limit = address + len;
@@ -200,6 +317,7 @@ public class WireParser implements Closeable {
                 }
 
                 msgLen = AbstractTypePrefixedHeader.getLen(address);
+                assert msgLen > 0;
 
                 // msgLen does not take into account type byte
                 if (msgLen > remaining - 1) {
@@ -235,6 +353,7 @@ public class WireParser implements Closeable {
                         // possibly more, check QueryExecutionImpl.processResults() in PG driver for more info
 
                         hi = getStringLength(lo, msgLimit);
+                        assert hi >= lo;
 
                         CharSequence preparedStatementName = new DirectByteCharSequence().of(lo, hi);
                         LOG.info().$("prepared statement name: ").$(preparedStatementName).$();
@@ -262,45 +381,48 @@ public class WireParser implements Closeable {
     }
 
     private void sendClearTextPasswordChallenge(long fd) {
-        AuthenticationMsg.setType(sendBuffer, (byte) 'R');
-        AuthenticationMsg.setLen(sendBuffer, 8);
-        AuthenticationMsg.setResponseCode(sendBuffer, 3);
-        Net.send(fd, sendBuffer, 9);
-        // todo: deal with incomplete send
+        responseAsciiSink.reset();
+        responseAsciiSink.put('R');
+        responseAsciiSink.putNetworkInt(8);
+        responseAsciiSink.putNetworkInt(3);
+        send(fd);
     }
 
     private void sendLoginOk(long fd) {
-        // send login ok
-        // send authentication challenge
-        AuthenticationMsg.setType(sendBuffer, (byte) 'R');
-        AuthenticationMsg.setLen(sendBuffer, 8);
-        AuthenticationMsg.setResponseCode(sendBuffer, 0);
-//                                    Net.send(clientFd, sendBuffer, 9);
-        // length so far 9
+        responseAsciiSink.reset();
+        prepareLoginOk();
+        prepareParams("TimeZone", "GMT");
+        prepareParams("application_name", "QuestDB");
+        prepareParams("server_version_num", "100000");
+        prepareParams("integer_datetimes", "on");
+        prepareReadyForQuery();
+        send(fd);
+    }
 
-        // send 'ParameterStatus'
-        long offset = 9;
-        offset += ParameterStatusMsg.setParameterPair(
-                sendBuffer + offset,
-                "TimeZone", "GMT");
+    private void send(long fd) {
+        // todo: deal with incomplete send
+        int n = nf.send(fd, sendBuffer, (int) (sendBufferPtr - sendBuffer));
+        LOG.info().$("sent [n=").$(n).$(']').$();
+    }
 
-        offset += ParameterStatusMsg.setParameterPair(
-                sendBuffer + offset,
-                "application_name", "QuestDB");
+    private void prepareLoginOk() {
+        responseAsciiSink.put('R');
+        responseAsciiSink.putNetworkInt(8); // length of this message
+        responseAsciiSink.putNetworkInt(0); // response code
+    }
 
-        offset += ParameterStatusMsg.setParameterPair(
-                sendBuffer + offset,
-                "server_version_num", "100000");
+    private void prepareReadyForQuery() {
+        responseAsciiSink.put('Z');
+        responseAsciiSink.putNetworkInt(5);
+        responseAsciiSink.put('I');
+    }
 
-        offset += ParameterStatusMsg.setParameterPair(
-                sendBuffer + offset,
-                "integer_datetimes", "on");
-
-        // send 'ReadyForQuery'
-        ReadyForQueryMsg.setType(sendBuffer + offset, (byte) 'Z');
-        ReadyForQueryMsg.setLen(sendBuffer + offset, 5);
-        ReadyForQueryMsg.setStatus(sendBuffer + offset, (byte) 'I');
-        nf.send(fd, sendBuffer, (int) (offset + 6));
+    private void prepareParams(String timeZone, String gmt) {
+        responseAsciiSink.put('S');
+        final long addr = responseAsciiSink.skip();
+        responseAsciiSink.encodeUtf8Z(timeZone);
+        responseAsciiSink.encodeUtf8Z(gmt);
+        responseAsciiSink.putLen(addr);
     }
 
     private long getStringLength(long x, long limit) {
@@ -313,8 +435,53 @@ public class WireParser implements Closeable {
         return -1;
     }
 
-    @FunctionalInterface
-    public interface MessageHandler {
-        int onMessage(int action);
+    private class ResponseAsciiSink extends AbstractCharSink {
+        @Override
+        public CharSink put(CharSequence cs, int start, int end) {
+            for (int i = start; i < end; i++) {
+                Unsafe.getUnsafe().putByte(sendBufferPtr + i, (byte) cs.charAt(i));
+            }
+            sendBufferPtr += (end - start);
+            return this;
+        }
+
+        @Override
+        public CharSink put(char c) {
+            Unsafe.getUnsafe().putByte(sendBufferPtr++, (byte) c);
+            return this;
+        }
+
+        public void putNetworkInt(int len) {
+            NetworkByteOrderUtils.putInt(sendBufferPtr, len);
+            sendBufferPtr += Integer.BYTES;
+        }
+
+        public void putNetworkShort(short value) {
+            NetworkByteOrderUtils.putShort(sendBufferPtr, value);
+            sendBufferPtr += Short.BYTES;
+        }
+
+        public void putLen(long start) {
+            NetworkByteOrderUtils.putInt(start, (int) (sendBufferPtr - start));
+        }
+
+        public void putLenEx(long start) {
+            NetworkByteOrderUtils.putInt(start, (int) (sendBufferPtr - start - Integer.BYTES));
+        }
+
+        long skip() {
+            long checkpoint = sendBufferPtr;
+            sendBufferPtr += Integer.BYTES;
+            return checkpoint;
+        }
+
+        void reset() {
+            sendBufferPtr = sendBuffer;
+        }
+
+        void encodeUtf8Z(CharSequence value) {
+            encodeUtf8(value);
+            Unsafe.getUnsafe().putByte(sendBufferPtr++, (byte) 0);
+        }
     }
 }

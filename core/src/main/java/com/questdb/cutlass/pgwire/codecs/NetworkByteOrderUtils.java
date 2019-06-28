@@ -27,10 +27,10 @@ import com.questdb.std.Unsafe;
 
 public class NetworkByteOrderUtils {
     public static int getInt(long address) {
-        int b = Unsafe.getUnsafe().getByte(address);
-        b = (b << 8) | Unsafe.getUnsafe().getByte(address + 1);
-        b = (b << 8) | Unsafe.getUnsafe().getByte(address + 2);
-        return (b << 8) | Unsafe.getUnsafe().getByte(address + 3);
+        int b = Unsafe.getUnsafe().getByte(address) & 0xff;
+        b = (b << 8) | Unsafe.getUnsafe().getByte(address + 1) & 0xff;
+        b = (b << 8) | Unsafe.getUnsafe().getByte(address + 2) & 0xff;
+        return (b << 8) | Unsafe.getUnsafe().getByte(address + 3) & 0xff;
     }
 
     public static void putInt(long address, int value) {
@@ -38,5 +38,10 @@ public class NetworkByteOrderUtils {
         Unsafe.getUnsafe().putByte(address + 1, (byte) (value >>> 16));
         Unsafe.getUnsafe().putByte(address + 2, (byte) (value >>> 8));
         Unsafe.getUnsafe().putByte(address + 3, (byte) (value));
+    }
+
+    public static void putShort(long address, short value) {
+        Unsafe.getUnsafe().putByte(address, (byte) (value >>> 8));
+        Unsafe.getUnsafe().putByte(address + 1, (byte) (value));
     }
 }
