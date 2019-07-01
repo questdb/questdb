@@ -173,7 +173,11 @@ public final class Os {
             String osName = System.getProperty("os.name");
             if (osName.contains("Linux")) {
                 type = LINUX;
-                loadLib("/binaries/linux/libquestdb.so");
+                if("aarch64".equals(System.getProperty("os.arch"))) {
+                    loadLib("/binaries/armlinux/libquestdb.so");
+                 } else {
+                    loadLib("/binaries/linux/libquestdb.so");
+                }
             } else if (osName.contains("Mac")) {
                 type = OSX;
                 loadLib("/binaries/osx/libquestdb.dylib");

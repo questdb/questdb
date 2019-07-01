@@ -33,7 +33,12 @@ if (APPLE)
     )
 elseif (UNIX)
     include_directories($ENV{JAVA_HOME}/include/linux/)
-    set(OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/src/main/resources/binaries/linux)
+    message(${CMAKE_SYSTEM_PROCESSOR})
+    if (CMAKE_SYSTEM_PROCESSOR MATCHES "^aarch64")
+        set(OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/src/main/resources/binaries/armlinux)
+    else ()
+        set(OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/src/main/resources/binaries/linux)
+    endif ()
     set(
             SOURCE_FILES ${SOURCE_FILES}
             src/main/c/share/net.c
