@@ -5,7 +5,7 @@
  *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
  *   \__\_\\__,_|\___||___/\__|____/|____/
  *
- * Copyright (C) 2014-2019 Appsicle
+ * Copyright (C) 2014-2018 Appsicle
  *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU Affero General Public License, version 3,
@@ -32,11 +32,20 @@ import com.questdb.griffin.engine.functions.math.NegIntFunctionFactory;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class RndDoubleFunctionFactoryTest extends AbstractFunctionFactoryTest {
+public class RndDoubleCCFunctionFactoryTest extends AbstractFunctionFactoryTest {
+    @Test
+    public void testNaNRate() {
+        assertFailure(11, "invalid NaN rate", -1);
+    }
 
     @Test
     public void testNoNaN() throws SqlException {
-        assertFunction(call());
+        assertFunction(call(0), false);
+    }
+
+    @Test
+    public void testSimple() throws SqlException {
+        assertFunction(call(4), true);
     }
 
     @Override
@@ -46,15 +55,15 @@ public class RndDoubleFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
     @Override
     protected FunctionFactory getFunctionFactory() {
-        return new RndDoubleFunctionFactory();
+        return new RndDoubleCCFunctionFactory();
     }
 
-    private void assertFunction(Invocation invocation) {
-        assertFunction(invocation.getFunction1(), invocation.getRecord());
-        assertFunction(invocation.getFunction2(), invocation.getRecord());
+    private void assertFunction(Invocation invocation, boolean expectNaN) {
+        assertFunction(invocation.getFunction1(), invocation.getRecord(), expectNaN);
+        assertFunction(invocation.getFunction2(), invocation.getRecord(), expectNaN);
     }
 
-    private void assertFunction(Function function, Record record) {
+    private void assertFunction(Function function, Record record, boolean expectNaN) {
         int nanCount = 0;
         for (int i = 0; i < 100; i++) {
             double d = function.getDouble(record);
@@ -64,6 +73,10 @@ public class RndDoubleFunctionFactoryTest extends AbstractFunctionFactoryTest {
                 Assert.assertTrue(d > 0 && d < 1);
             }
         }
-        Assert.assertEquals(0, nanCount);
+        if (expectNaN) {
+            Assert.assertTrue(nanCount > 0);
+        } else {
+            Assert.assertEquals(0, nanCount);
+        }
     }
 }

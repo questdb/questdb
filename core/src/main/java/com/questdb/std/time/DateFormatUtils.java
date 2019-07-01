@@ -39,6 +39,7 @@ public class DateFormatUtils {
     public static final DateLocale defaultLocale = DateLocaleFactory.INSTANCE.getDefaultDateLocale();
     private static final DateFormat FMT4;
     private static final DateFormat HTTP_FORMAT;
+    public static final DateFormat PG_DATE_FORMAT;
     static long referenceYear;
     static int thisCenturyLimit;
     static int thisCenturyLow;
@@ -590,5 +591,6 @@ public class DateFormatUtils {
         UTC_FORMAT = compiler.compile(UTC_PATTERN);
         HTTP_FORMAT = compiler.compile("E, d MMM yyyy HH:mm:ss Z");
         FMT4 = compiler.compile("MMM d yyyy");
+        PG_DATE_FORMAT = compiler.compile("yyyy-MM-dd");
     }
 }

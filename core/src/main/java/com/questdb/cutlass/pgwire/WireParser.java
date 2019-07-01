@@ -40,15 +40,16 @@ import com.questdb.network.Net;
 import com.questdb.network.NetworkFacade;
 import com.questdb.network.PeerDisconnectedException;
 import com.questdb.network.PeerIsSlowToReadException;
-import com.questdb.std.Chars;
-import com.questdb.std.IntIntHashMap;
-import com.questdb.std.Misc;
-import com.questdb.std.Unsafe;
+import com.questdb.std.*;
+import com.questdb.std.microtime.DateFormatUtils;
 import com.questdb.std.str.AbstractCharSink;
 import com.questdb.std.str.CharSink;
 import com.questdb.std.str.DirectByteCharSequence;
 
 import java.io.Closeable;
+
+import static com.questdb.std.time.DateFormatUtils.PG_DATE_FORMAT;
+import static com.questdb.std.time.DateFormatUtils.defaultLocale;
 
 public class WireParser implements Closeable {
 
@@ -59,9 +60,15 @@ public class WireParser implements Closeable {
         typeOidMap.put(ColumnType.STRING, 1043); // VARCHAR
         typeOidMap.put(ColumnType.TIMESTAMP, 1184); // TIMESTAMPZ
         typeOidMap.put(ColumnType.DOUBLE, 701); // FLOAT8
-        typeOidMap.put(ColumnType.FLOAT, 700);
+        typeOidMap.put(ColumnType.FLOAT, 700); // FLOAT4
         typeOidMap.put(ColumnType.INT, 23); // INT4
         typeOidMap.put(ColumnType.SHORT, 21); // INT2
+        typeOidMap.put(ColumnType.SYMBOL, 1043); // NAME
+        typeOidMap.put(ColumnType.LONG, 20); // INT8
+        typeOidMap.put(ColumnType.BYTE, 21); // INT2
+        typeOidMap.put(ColumnType.BOOLEAN, 16); // BOOL
+        typeOidMap.put(ColumnType.DATE, 1082); // DATE
+        typeOidMap.put(ColumnType.BINARY, 17); // BYTEA
     }
 
     private final NetworkFacade nf;
@@ -146,21 +153,106 @@ public class WireParser implements Closeable {
                             for (int i = 0; i < columnCount; i++) {
                                 switch (metadata.getColumnType(i)) {
                                     case ColumnType.INT:
-                                        a = responseAsciiSink.skip();
-                                        responseAsciiSink.put(record.getInt(i));
-                                        responseAsciiSink.putLenEx(a);
+                                        final int intValue = record.getInt(i);
+                                        if (intValue == Numbers.INT_NaN) {
+                                            responseAsciiSink.setNullValue();
+                                        } else {
+                                            a = responseAsciiSink.skip();
+                                            responseAsciiSink.put(intValue);
+                                            responseAsciiSink.putLenEx(a);
+                                        }
                                         break;
                                     case ColumnType.STRING:
-                                        responseAsciiSink.putNetworkInt(record.getStrLen(i));
-                                        responseAsciiSink.encodeUtf8(record.getStr(i));
+                                        CharSequence strValue = record.getStr(i);
+                                        if (strValue == null) {
+                                            responseAsciiSink.setNullValue();
+                                        } else {
+                                            a = responseAsciiSink.skip();
+                                            responseAsciiSink.encodeUtf8(strValue);
+                                            responseAsciiSink.putLenEx(a);
+                                        }
+                                        break;
+                                    case ColumnType.SYMBOL:
+                                        strValue = record.getSym(i);
+                                        if (strValue == null) {
+                                            responseAsciiSink.setNullValue();
+                                        } else {
+                                            a = responseAsciiSink.skip();
+                                            responseAsciiSink.encodeUtf8(strValue);
+                                            responseAsciiSink.putLenEx(a);
+                                        }
                                         break;
                                     case ColumnType.TIMESTAMP:
-                                        responseAsciiSink.putNetworkInt(Long.BYTES);
-                                        responseAsciiSink.put(record.getTimestamp(i));
+                                        long longValue = record.getTimestamp(i);
+                                        if (longValue == Numbers.LONG_NaN) {
+                                            responseAsciiSink.setNullValue();
+                                        } else {
+                                            a = responseAsciiSink.skip();
+                                            DateFormatUtils.PG_TIMESTAMP_FORMAT.format(longValue, DateFormatUtils.defaultLocale, "", responseAsciiSink);
+                                            responseAsciiSink.putLenEx(a);
+                                        }
+                                        break;
+                                    case ColumnType.DATE:
+                                        longValue = record.getDate(i);
+                                        if (longValue == Numbers.LONG_NaN) {
+                                            responseAsciiSink.setNullValue();
+                                        } else {
+                                            a = responseAsciiSink.skip();
+                                            PG_DATE_FORMAT.format(longValue, defaultLocale, "", responseAsciiSink);
+                                            responseAsciiSink.putLenEx(a);
+                                        }
                                         break;
                                     case ColumnType.DOUBLE:
-                                        responseAsciiSink.putNetworkInt(Double.BYTES);
-                                        responseAsciiSink.put(record.getDouble(i), 3);
+                                        final double doubleValue = record.getDouble(i);
+                                        if (Double.isNaN(doubleValue)) {
+                                            responseAsciiSink.setNullValue();
+                                        } else {
+                                            a = responseAsciiSink.skip();
+                                            responseAsciiSink.put(doubleValue, 3);
+                                            responseAsciiSink.putLenEx(a);
+                                        }
+                                        break;
+                                    case ColumnType.FLOAT:
+                                        final float floatValue = record.getFloat(i);
+                                        if (Float.isNaN(floatValue)) {
+                                            responseAsciiSink.setNullValue();
+                                        } else {
+                                            a = responseAsciiSink.skip();
+                                            responseAsciiSink.put(floatValue, 3);
+                                            responseAsciiSink.putLenEx(a);
+                                        }
+                                        break;
+                                    case ColumnType.SHORT:
+                                        a = responseAsciiSink.skip();
+                                        responseAsciiSink.put(record.getShort(i));
+                                        responseAsciiSink.putLenEx(a);
+                                        break;
+                                    case ColumnType.LONG:
+                                        longValue = record.getLong(i);
+                                        if (longValue == Numbers.LONG_NaN) {
+                                            responseAsciiSink.setNullValue();
+                                        } else {
+                                            a = responseAsciiSink.skip();
+                                            responseAsciiSink.put(longValue);
+                                            responseAsciiSink.putLenEx(a);
+                                        }
+                                        break;
+                                    case ColumnType.BYTE:
+                                        a = responseAsciiSink.skip();
+                                        responseAsciiSink.put(record.getByte(i));
+                                        responseAsciiSink.putLenEx(a);
+                                        break;
+                                    case ColumnType.BOOLEAN:
+                                        responseAsciiSink.putNetworkInt(Byte.BYTES);
+                                        responseAsciiSink.put(record.getBool(i) ? 't' : 'f');
+                                        break;
+                                    case ColumnType.BINARY:
+                                        BinarySequence sequence = record.getBin(i);
+                                        if (sequence == null) {
+                                            responseAsciiSink.setNullValue();
+                                        } else {
+                                            responseAsciiSink.put(sequence);
+                                        }
                                         break;
                                     default:
                                         assert false;
@@ -199,13 +291,15 @@ public class WireParser implements Closeable {
         final int n = metadata.getColumnCount();
         responseAsciiSink.putNetworkShort((short) n);
         for (int i = 0; i < n; i++) {
+            final int columnType = metadata.getColumnType(i);
             responseAsciiSink.encodeUtf8Z(metadata.getColumnName(i));
             responseAsciiSink.putNetworkInt(0);
             responseAsciiSink.putNetworkShort((short) 0);
-            responseAsciiSink.putNetworkInt(typeOidMap.get(metadata.getColumnType(i))); // type
+            responseAsciiSink.putNetworkInt(typeOidMap.get(columnType)); // type
             responseAsciiSink.putNetworkShort((short) 0); // type size?
             responseAsciiSink.putNetworkInt(0); // type mod?
-            responseAsciiSink.putNetworkShort((short) 0); // format code
+            // this is special behaviour for binary fields to prevent binary data being hex encoded on the wire
+            responseAsciiSink.putNetworkShort((short) (columnType == ColumnType.BINARY ? 1 : 0)); // format code
         }
 
         responseAsciiSink.putLen(addr);
@@ -445,10 +539,28 @@ public class WireParser implements Closeable {
             return this;
         }
 
+        public CharSink put(CharSequence cs) {
+            if (cs != null) {
+                this.put(cs, 0, cs.length());
+            }
+            return this;
+        }
+
         @Override
         public CharSink put(char c) {
             Unsafe.getUnsafe().putByte(sendBufferPtr++, (byte) c);
             return this;
+        }
+
+        public void put(BinarySequence sequence) {
+            final long len = sequence.length();
+            // todo: deal with overflowing blob size
+            NetworkByteOrderUtils.putInt(sendBufferPtr, (int) len);
+            sendBufferPtr += Integer.BYTES;
+            for (long x = 0; x < len; x++) {
+                Unsafe.getUnsafe().putByte(sendBufferPtr + x, sequence.byteAt(x));
+            }
+            sendBufferPtr += len;
         }
 
         public void putNetworkInt(int len) {
@@ -482,6 +594,10 @@ public class WireParser implements Closeable {
         void encodeUtf8Z(CharSequence value) {
             encodeUtf8(value);
             Unsafe.getUnsafe().putByte(sendBufferPtr++, (byte) 0);
+        }
+
+        private void setNullValue() {
+            putNetworkInt(-1);
         }
     }
 }

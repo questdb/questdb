@@ -33,29 +33,38 @@ import com.questdb.griffin.engine.functions.StatelessFunction;
 import com.questdb.std.ObjList;
 import com.questdb.std.Rnd;
 
-public class RndDoubleFunctionFactory implements FunctionFactory {
+public class RndDoubleCCFunctionFactory implements FunctionFactory {
 
     @Override
     public String getSignature() {
-        return "rnd_double()";
+        return "rnd_double(i)";
     }
 
     @Override
     public Function newInstance(ObjList<Function> args, int position, CairoConfiguration configuration) throws SqlException {
-        return new RndFunction(position, configuration);
+        int nanRate = args.getQuick(0).getInt(null);
+        if (nanRate < 0) {
+            throw SqlException.$(args.getQuick(0).getPosition(), "invalid NaN rate");
+        }
+        return new RndFunction(position, nanRate, configuration);
     }
 
     private static class RndFunction extends DoubleFunction implements StatelessFunction {
 
+        private final int nanRate;
         private final Rnd rnd;
 
-        public RndFunction(int position, CairoConfiguration configuration) {
+        public RndFunction(int position, int nanRate, CairoConfiguration configuration) {
             super(position);
+            this.nanRate = nanRate + 1;
             this.rnd = SharedRandom.getRandom(configuration);
         }
 
         @Override
         public double getDouble(Record rec) {
+            if ((rnd.nextInt() % nanRate) == 1) {
+                return Double.NaN;
+            }
             return rnd.nextDouble2();
         }
     }

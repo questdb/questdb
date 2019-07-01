@@ -35,6 +35,7 @@ public class DateFormatUtils {
     public static final int HOUR_AM = 0;
     public static final DateFormat UTC_FORMAT;
     public static final DateFormat USEC_UTC_FORMAT;
+    public static final DateFormat PG_TIMESTAMP_FORMAT;
     public static final String UTC_PATTERN = "yyyy-MM-ddTHH:mm:ss.SSSz";
     public static final DateLocale defaultLocale = DateLocaleFactory.INSTANCE.getDefaultDateLocale();
     private static final DateFormat HTTP_FORMAT;
@@ -43,6 +44,15 @@ public class DateFormatUtils {
     static int thisCenturyLow;
     static int prevCenturyLow;
     private static long newYear;
+
+    static {
+        updateReferenceYear(Os.currentTimeMicros());
+        DateFormatCompiler compiler = new DateFormatCompiler();
+        UTC_FORMAT = compiler.compile(UTC_PATTERN);
+        HTTP_FORMAT = compiler.compile("E, d MMM yyyy HH:mm:ss Z");
+        USEC_UTC_FORMAT = compiler.compile("yyyy-MM-ddTHH:mm:ss.SSSUUUz");
+        PG_TIMESTAMP_FORMAT = compiler.compile("yyyy-MM-dd HH:mm:ss.SSSUUU");
+    }
 
     public static void append0(CharSink sink, int val) {
         if (Math.abs(val) < 10) {
@@ -348,13 +358,5 @@ public class DateFormatUtils {
 
     private static long parseTimestamp(CharSequence seq, int lo, int lim) throws NumericException {
         return USEC_UTC_FORMAT.parse(seq, lo, lim, defaultLocale);
-    }
-
-    static {
-        updateReferenceYear(Os.currentTimeMicros());
-        DateFormatCompiler compiler = new DateFormatCompiler();
-        UTC_FORMAT = compiler.compile(UTC_PATTERN);
-        HTTP_FORMAT = compiler.compile("E, d MMM yyyy HH:mm:ss Z");
-        USEC_UTC_FORMAT = compiler.compile("yyyy-MM-ddTHH:mm:ss.SSSUUUz");
     }
 }
