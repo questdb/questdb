@@ -28,10 +28,14 @@ import com.questdb.log.LogFactory;
 import com.questdb.network.*;
 import com.questdb.std.*;
 import com.questdb.std.str.DirectByteCharSequence;
+import com.questdb.std.str.StdoutSink;
+
+import java.io.IOException;
 
 public class HttpConnectionContext implements IOContext, Locality, Mutable {
+    // todo: remove or comment out eventually
+    public static final StdoutSink stdOutSink = new StdoutSink();
     private static final Log LOG = LogFactory.getLog(HttpConnectionContext.class);
-
     private final HttpHeaderParser headerParser;
     private final long recvBuffer;
     private final int recvBufferSize;
@@ -62,10 +66,15 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
         LOG.debug().$("new").$();
     }
 
-    // todo: remove or comment out eventually
     public static void dump(long recvBuffer, int read) {
         for (int i = 0; i < read; i++) {
-            System.out.print((char) Unsafe.getUnsafe().getByte(recvBuffer + i));
+            Numbers.appendHex(stdOutSink, Unsafe.getUnsafe().getByte(recvBuffer + i) & 0xff);
+        }
+        stdOutSink.put('\n');
+        try {
+            stdOutSink.flush();
+        } catch (IOException e) {
+            e.printStackTrace();
         }
     }
 

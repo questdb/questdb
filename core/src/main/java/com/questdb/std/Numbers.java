@@ -697,47 +697,7 @@ public final class Numbers {
             int c = sequence.charAt(i);
             int n = val << 4;
 
-            switch (c) {
-                case '0':
-                case '1':
-                case '2':
-                case '3':
-                case '4':
-                case '5':
-                case '6':
-                case '7':
-                case '8':
-                case '9':
-                    r = n + (c - '0');
-                    break;
-                case 'A':
-                case 'a':
-                    r = n + 0xA;
-                    break;
-                case 'B':
-                case 'b':
-                    r = n + 0xB;
-                    break;
-                case 'C':
-                case 'c':
-                    r = n + 0xC;
-                    break;
-                case 'D':
-                case 'd':
-                    r = n + 0xD;
-                    break;
-                case 'E':
-                case 'e':
-                    r = n + 0xE;
-                    break;
-                case 'F':
-                case 'f':
-                    r = n + 0xF;
-                    break;
-                default:
-                    // malformed
-                    throw NumericException.INSTANCE;
-            }
+            r = n + hexToDecimal(c);
 
             if (r < val) {
                 // overflow
@@ -747,6 +707,52 @@ public final class Numbers {
             val = r;
         }
         return val;
+    }
+
+    public static int hexToDecimal(int c) throws NumericException {
+        int r;
+        switch (c) {
+            case '0':
+            case '1':
+            case '2':
+            case '3':
+            case '4':
+            case '5':
+            case '6':
+            case '7':
+            case '8':
+            case '9':
+                r = (c - '0');
+                break;
+            case 'A':
+            case 'a':
+                r = 0xA;
+                break;
+            case 'B':
+            case 'b':
+                r = 0xB;
+                break;
+            case 'C':
+            case 'c':
+                r = 0xC;
+                break;
+            case 'D':
+            case 'd':
+                r = 0xD;
+                break;
+            case 'E':
+            case 'e':
+                r = 0xE;
+                break;
+            case 'F':
+            case 'f':
+                r = 0xF;
+                break;
+            default:
+                // malformed
+                throw NumericException.INSTANCE;
+        }
+        return r;
     }
 
     public static int parseInt(CharSequence sequence) throws NumericException {

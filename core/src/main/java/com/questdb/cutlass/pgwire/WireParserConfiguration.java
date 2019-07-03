@@ -31,4 +31,6 @@ public interface WireParserConfiguration {
     int getRecvBufferSize();
 
     int getSendBufferSize();
+
+    int getIdleSendCountBeforeGivingUp();
 }

@@ -21,7 +21,9 @@
  *
  ******************************************************************************/
 
-package com.questdb.cutlass.http;
+package com.questdb.network;
+
+import com.questdb.cutlass.http.HttpException;
 
 public class NoSpaceLeftInResponseBufferException extends HttpException {
     public final static NoSpaceLeftInResponseBufferException INSTANCE = new NoSpaceLeftInResponseBufferException();
