@@ -45,6 +45,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
+@Ignore
 public class ClusterControllerTest extends AbstractTest {
 
     private final static Log LOG = LogFactory.getLog(ClusterController.class);
