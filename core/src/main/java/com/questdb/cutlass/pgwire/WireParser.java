@@ -29,7 +29,6 @@ import com.questdb.cairo.sql.Record;
 import com.questdb.cairo.sql.RecordCursor;
 import com.questdb.cairo.sql.RecordCursorFactory;
 import com.questdb.cairo.sql.RecordMetadata;
-import com.questdb.cutlass.http.HttpConnectionContext;
 import com.questdb.cutlass.pgwire.codecs.AbstractTypePrefixedHeader;
 import com.questdb.cutlass.pgwire.codecs.NetworkByteOrderUtils;
 import com.questdb.cutlass.pgwire.codecs.in.StartupMessage;
@@ -38,16 +37,20 @@ import com.questdb.griffin.SqlException;
 import com.questdb.griffin.engine.functions.bind.BindVariableService;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
-import com.questdb.network.*;
+import com.questdb.network.NetworkFacade;
+import com.questdb.network.NoSpaceLeftInResponseBufferException;
+import com.questdb.network.PeerDisconnectedException;
+import com.questdb.network.PeerIsSlowToReadException;
 import com.questdb.std.*;
 import com.questdb.std.microtime.DateFormatUtils;
 import com.questdb.std.str.AbstractCharSink;
 import com.questdb.std.str.CharSink;
 import com.questdb.std.str.DirectByteCharSequence;
+import com.questdb.std.str.StdoutSink;
 
 import java.io.Closeable;
 
-import static com.questdb.cutlass.http.HttpConnectionContext.dump;
+import static com.questdb.network.Net.dump;
 import static com.questdb.std.time.DateFormatUtils.PG_DATE_FORMAT;
 import static com.questdb.std.time.DateFormatUtils.defaultLocale;
 
@@ -63,22 +66,6 @@ public class WireParser implements Closeable {
     public static final byte MESSAGE_TYPE_PARSE_COMPLETE = '1';
     private final static Log LOG = LogFactory.getLog(WireParser.class);
     private static final IntIntHashMap typeOidMap = new IntIntHashMap();
-
-    static {
-        typeOidMap.put(ColumnType.STRING, 1043); // VARCHAR
-        typeOidMap.put(ColumnType.TIMESTAMP, 1184); // TIMESTAMPZ
-        typeOidMap.put(ColumnType.DOUBLE, 701); // FLOAT8
-        typeOidMap.put(ColumnType.FLOAT, 700); // FLOAT4
-        typeOidMap.put(ColumnType.INT, 23); // INT4
-        typeOidMap.put(ColumnType.SHORT, 21); // INT2
-        typeOidMap.put(ColumnType.SYMBOL, 1043); // NAME
-        typeOidMap.put(ColumnType.LONG, 20); // INT8
-        typeOidMap.put(ColumnType.BYTE, 21); // INT2
-        typeOidMap.put(ColumnType.BOOLEAN, 16); // BOOL
-        typeOidMap.put(ColumnType.DATE, 1082); // DATE
-        typeOidMap.put(ColumnType.BINARY, 17); // BYTEA
-    }
-
     private final NetworkFacade nf;
     private final long recvBuffer;
     private final long sendBuffer;
@@ -90,6 +77,7 @@ public class WireParser implements Closeable {
     private final int idleSendCountBeforeGivingUp;
     private final AssociativeCache<RecordCursorFactory> factoryCache = new AssociativeCache<>(16, 16);
     private final DirectByteCharSequence dbcs = new DirectByteCharSequence();
+    private final BindVariableService bindVariableService = new BindVariableService();
     private RecordCursor currentCursor = null;
     private long sendBufferPtr;
     private boolean loggedIn = false;
@@ -97,7 +85,7 @@ public class WireParser implements Closeable {
     private int bufferRemainingOffset = 0;
     private int bufferRemainingSize = 0;
     private RecordCursorFactory currentFactory = null;
-    private final BindVariableService bindVariableService = new BindVariableService();
+    private boolean dumpNetworkTraffic;
 
     public WireParser(WireParserConfiguration configuration, CairoEngine engine) {
         this.nf = configuration.getNetworkFacade();
@@ -109,6 +97,7 @@ public class WireParser implements Closeable {
         this.sendBufferPtr = sendBuffer;
         this.sendBufferLimit = sendBuffer + sendBufferSize;
         this.idleSendCountBeforeGivingUp = configuration.getIdleSendCountBeforeGivingUp();
+        this.dumpNetworkTraffic = configuration.getDumpNetworkTraffic();
     }
 
     @Override
@@ -125,7 +114,8 @@ public class WireParser implements Closeable {
             throw new RuntimeException("buffer overflow");
         }
 
-        final int n = Net.recv(fd, recvBuffer + recvBufferOffset, remaining);
+        final int n = nf.recv(fd, recvBuffer + recvBufferOffset, remaining);
+        dumpBuffer('>', recvBuffer + recvBufferOffset, n);
         if (n < 0) {
             throw PeerDisconnectedException.INSTANCE;
         }
@@ -136,8 +126,6 @@ public class WireParser implements Closeable {
             throw PeerIsSlowToReadException.INSTANCE;
         }
 
-        HttpConnectionContext.stdOutSink.put('>');
-        dump(recvBuffer, n);
         int parsed = parse(fd, recvBuffer, n);
         if (parsed == 0) {
             recvBufferOffset += n;
@@ -146,8 +134,6 @@ public class WireParser implements Closeable {
             while (true) {
                 int len = n - offset;
                 parsed = parse(fd, recvBuffer + offset, len);
-                HttpConnectionContext.stdOutSink.put('>');
-                dump(recvBuffer + offset, len);
                 if (parsed == 0) {
                     // shift to start
                     Unsafe.getUnsafe().copyMemory(recvBuffer + offset, recvBuffer, len);
@@ -166,210 +152,47 @@ public class WireParser implements Closeable {
         }
     }
 
+    public void sendRemaininBuffer(long fd) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        if (bufferRemainingSize > 0) {
+            doSendWithRetries(fd, bufferRemainingOffset, bufferRemainingSize);
+        }
+    }
+
     private void disconnectClient(long fd) {
         nf.close(fd);
         loggedIn = false;
     }
 
-    private void parseQuery(long fd, CharSequence query) {
-        if (currentFactory != null) {
-            // todo: disconnect - protocol violation
-        }
+    private void doSendWithRetries(long fd, int bufferOffset, int bufferSize) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        int offset = bufferOffset;
+        int remaining = bufferSize;
+        int idleSendCount = 0;
 
-        responseAsciiSink.reset();
-        if (!Chars.startsWith(query, "SET")) {
-            try {
-                currentFactory = factoryCache.peek(query);
-                if (currentFactory == null) {
-                    currentFactory = compiler.compile(query, bindVariableService);
-                    if (currentFactory != null) {
-                        factoryCache.put(query, currentFactory);
-                    } else {
-                        // DDL SQL
-                        prepareParseComplete();
-                    }
-                }
-            } catch (SqlException e) {
-                prepareError(e);
+        while (remaining > 0 && idleSendCount < idleSendCountBeforeGivingUp) {
+            int m = nf.send(fd, sendBuffer + offset, remaining);
+            if (m < 0) {
+                throw PeerDisconnectedException.INSTANCE;
             }
-        } else {
-            // same as DDL, but special handling because SQL compiler does not yet understand these SETs
-            prepareParseComplete();
-        }
-    }
 
-    private void sendCursor(long fd, RecordCursor cursor, RecordMetadata metadata) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        final Record record = cursor.getRecord();
-        final int columnCount = metadata.getColumnCount();
-        while (cursor.hasNext()) {
-            responseAsciiSink.put(MESSAGE_TYPE_DATA_ROW); // data
-            long b = responseAsciiSink.skip();
-            long a;
-            responseAsciiSink.putNetworkShort((short) columnCount);
-            for (int i = 0; i < columnCount; i++) {
-                switch (metadata.getColumnType(i)) {
-                    case ColumnType.INT:
-                        final int intValue = record.getInt(i);
-                        if (intValue == Numbers.INT_NaN) {
-                            responseAsciiSink.setNullValue();
-                        } else {
-                            a = responseAsciiSink.skip();
-                            responseAsciiSink.put(intValue);
-                            responseAsciiSink.putLenEx(a);
-                        }
-                        break;
-                    case ColumnType.STRING:
-                        CharSequence strValue = record.getStr(i);
-                        if (strValue == null) {
-                            responseAsciiSink.setNullValue();
-                        } else {
-                            a = responseAsciiSink.skip();
-                            responseAsciiSink.encodeUtf8(strValue);
-                            responseAsciiSink.putLenEx(a);
-                        }
-                        break;
-                    case ColumnType.SYMBOL:
-                        strValue = record.getSym(i);
-                        if (strValue == null) {
-                            responseAsciiSink.setNullValue();
-                        } else {
-                            a = responseAsciiSink.skip();
-                            responseAsciiSink.encodeUtf8(strValue);
-                            responseAsciiSink.putLenEx(a);
-                        }
-                        break;
-                    case ColumnType.TIMESTAMP:
-                        long longValue = record.getTimestamp(i);
-                        if (longValue == Numbers.LONG_NaN) {
-                            responseAsciiSink.setNullValue();
-                        } else {
-                            a = responseAsciiSink.skip();
-                            DateFormatUtils.PG_TIMESTAMP_FORMAT.format(longValue, DateFormatUtils.defaultLocale, "", responseAsciiSink);
-                            responseAsciiSink.putLenEx(a);
-                        }
-                        break;
-                    case ColumnType.DATE:
-                        longValue = record.getDate(i);
-                        if (longValue == Numbers.LONG_NaN) {
-                            responseAsciiSink.setNullValue();
-                        } else {
-                            a = responseAsciiSink.skip();
-                            PG_DATE_FORMAT.format(longValue, defaultLocale, "", responseAsciiSink);
-                            responseAsciiSink.putLenEx(a);
-                        }
-                        break;
-                    case ColumnType.DOUBLE:
-                        final double doubleValue = record.getDouble(i);
-                        if (Double.isNaN(doubleValue)) {
-                            responseAsciiSink.setNullValue();
-                        } else {
-                            a = responseAsciiSink.skip();
-                            responseAsciiSink.put(doubleValue, 3);
-                            responseAsciiSink.putLenEx(a);
-                        }
-                        break;
-                    case ColumnType.FLOAT:
-                        final float floatValue = record.getFloat(i);
-                        if (Float.isNaN(floatValue)) {
-                            responseAsciiSink.setNullValue();
-                        } else {
-                            a = responseAsciiSink.skip();
-                            responseAsciiSink.put(floatValue, 3);
-                            responseAsciiSink.putLenEx(a);
-                        }
-                        break;
-                    case ColumnType.SHORT:
-                        a = responseAsciiSink.skip();
-                        responseAsciiSink.put(record.getShort(i));
-                        responseAsciiSink.putLenEx(a);
-                        break;
-                    case ColumnType.LONG:
-                        longValue = record.getLong(i);
-                        if (longValue == Numbers.LONG_NaN) {
-                            responseAsciiSink.setNullValue();
-                        } else {
-                            a = responseAsciiSink.skip();
-                            responseAsciiSink.put(longValue);
-                            responseAsciiSink.putLenEx(a);
-                        }
-                        break;
-                    case ColumnType.BYTE:
-                        a = responseAsciiSink.skip();
-                        responseAsciiSink.put((int) record.getByte(i));
-                        responseAsciiSink.putLenEx(a);
-                        break;
-                    case ColumnType.BOOLEAN:
-                        responseAsciiSink.putNetworkInt(Byte.BYTES);
-                        responseAsciiSink.put(record.getBool(i) ? 't' : 'f');
-                        break;
-                    case ColumnType.BINARY:
-                        BinarySequence sequence = record.getBin(i);
-                        if (sequence == null) {
-                            responseAsciiSink.setNullValue();
-                        } else {
-                            responseAsciiSink.put(sequence);
-                        }
-                        break;
-                    default:
-                        assert false;
-                }
+            if (m > 0) {
+                remaining -= m;
+                offset += m;
+            } else {
+                idleSendCount++;
             }
-            responseAsciiSink.putLen(b);
-        }
-        send(fd);
-    }
-
-    private void prepareCommandComplete() {
-        responseAsciiSink.put(MESSAGE_TYPE_COMMAND_COMPLETE);
-        long addr = responseAsciiSink.skip();
-        responseAsciiSink.encodeUtf8("SELECT ").put(0).put(' ').put(0).put((char) 0);
-        responseAsciiSink.putLen(addr);
-    }
-
-    private void prepareRowDescription(RecordMetadata metadata) {
-        responseAsciiSink.put(MESSAGE_TYPE_ROW_DESCRIPTION);
-        final long addr = responseAsciiSink.skip();
-        final int n = metadata.getColumnCount();
-        responseAsciiSink.putNetworkShort((short) n);
-        for (int i = 0; i < n; i++) {
-            final int columnType = metadata.getColumnType(i);
-            responseAsciiSink.encodeUtf8Z(metadata.getColumnName(i));
-            responseAsciiSink.putNetworkInt(0);
-            responseAsciiSink.putNetworkShort((short) 0);
-            responseAsciiSink.putNetworkInt(typeOidMap.get(columnType)); // type
-            responseAsciiSink.putNetworkShort((short) 0); // type size?
-            responseAsciiSink.putNetworkInt(0); // type mod?
-            // this is special behaviour for binary fields to prevent binary data being hex encoded on the wire
-            responseAsciiSink.putNetworkShort((short) (columnType == ColumnType.BINARY ? 1 : 0)); // format code
         }
 
-        responseAsciiSink.putLen(addr);
+        if (remaining > 0) {
+            this.bufferRemainingOffset = offset;
+            this.bufferRemainingSize = remaining;
+            throw PeerIsSlowToReadException.INSTANCE;
+        }
     }
 
-    private void prepareNoData() {
-        responseAsciiSink.put('n');
-        responseAsciiSink.putNetworkInt(Integer.BYTES);
-    }
-
-    private void prepareError(SqlException e) {
-        responseAsciiSink.put(MESSAGE_TYPE_ERROR_RESPONSE);
-        long addr = responseAsciiSink.skip();
-        responseAsciiSink.put('M');
-        responseAsciiSink.encodeUtf8Z(e.getFlyweightMessage());
-        responseAsciiSink.put('S');
-        responseAsciiSink.encodeUtf8Z("ERROR");
-        responseAsciiSink.put('P').put(e.getPosition()).put((char) 0);
-        responseAsciiSink.putLen(addr);
-    }
-
-    private void prepareParseComplete() {
-        responseAsciiSink.put(MESSAGE_TYPE_PARSE_COMPLETE);
-        responseAsciiSink.putNetworkInt(Integer.BYTES);
-    }
-
-    public void sendRemaininBuffer(long fd) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        if (bufferRemainingSize > 0) {
-            doSendWithRetries(fd, bufferRemainingOffset, bufferRemainingSize);
+    private void dumpBuffer(char direction, long buffer, int len) {
+        if (dumpNetworkTraffic) {
+            StdoutSink.INSTANCE.put(direction);
+            dump(buffer, len);
         }
     }
 
@@ -500,6 +323,91 @@ public class WireParser implements Closeable {
         return msgLen + 1;
     }
 
+    private long getStringLength(long x, long limit) {
+        // calculate length
+        for (long i = x; i < limit; i++) {
+            if (Unsafe.getUnsafe().getByte(i) == 0) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    private void parseQuery(long fd, CharSequence query) {
+        if (currentFactory != null) {
+            // todo: disconnect - protocol violation
+        }
+
+        responseAsciiSink.reset();
+        if (!Chars.startsWith(query, "SET")) {
+            try {
+                currentFactory = factoryCache.peek(query);
+                if (currentFactory == null) {
+                    currentFactory = compiler.compile(query, bindVariableService);
+                    if (currentFactory != null) {
+                        factoryCache.put(query, currentFactory);
+                    } else {
+                        // DDL SQL
+                        prepareParseComplete();
+                    }
+                }
+            } catch (SqlException e) {
+                prepareError(e);
+            }
+        } else {
+            // same as DDL, but special handling because SQL compiler does not yet understand these SETs
+            prepareParseComplete();
+        }
+    }
+
+    private void prepareCommandComplete() {
+        responseAsciiSink.put(MESSAGE_TYPE_COMMAND_COMPLETE);
+        long addr = responseAsciiSink.skip();
+        responseAsciiSink.encodeUtf8("SELECT ").put(0).put(' ').put(0).put((char) 0);
+        responseAsciiSink.putLen(addr);
+    }
+
+    private void prepareError(SqlException e) {
+        responseAsciiSink.put(MESSAGE_TYPE_ERROR_RESPONSE);
+        long addr = responseAsciiSink.skip();
+        responseAsciiSink.put('M');
+        responseAsciiSink.encodeUtf8Z(e.getFlyweightMessage());
+        responseAsciiSink.put('S');
+        responseAsciiSink.encodeUtf8Z("ERROR");
+        responseAsciiSink.put('P').put(e.getPosition()).put((char) 0);
+        responseAsciiSink.putLen(addr);
+    }
+
+    private void prepareLoginOk() {
+        responseAsciiSink.put(MESSAGE_TYPE_LOGIN_RESPONSE);
+        responseAsciiSink.putNetworkInt(8); // length of this message
+        responseAsciiSink.putNetworkInt(0); // response code
+    }
+
+    private void prepareNoData() {
+        responseAsciiSink.put('n');
+        responseAsciiSink.putNetworkInt(Integer.BYTES);
+    }
+
+    private void prepareParams(String timeZone, String gmt) {
+        responseAsciiSink.put(MESSAGE_TYPE_PARAMETER_STATUS);
+        final long addr = responseAsciiSink.skip();
+        responseAsciiSink.encodeUtf8Z(timeZone);
+        responseAsciiSink.encodeUtf8Z(gmt);
+        responseAsciiSink.putLen(addr);
+    }
+
+    private void prepareParseComplete() {
+        responseAsciiSink.put(MESSAGE_TYPE_PARSE_COMPLETE);
+        responseAsciiSink.putNetworkInt(Integer.BYTES);
+    }
+
+    private void prepareReadyForQuery() {
+        responseAsciiSink.put(MESSAGE_TYPE_READY_FOR_QUERY);
+        responseAsciiSink.putNetworkInt(5);
+        responseAsciiSink.put('I');
+    }
+
     private int processLogin(long fd, long address, long limit, int remaining) throws PeerDisconnectedException, PeerIsSlowToReadException {
         int msgLen;
         long msgLimit;// expect startup request
@@ -566,11 +474,166 @@ public class WireParser implements Closeable {
         return msgLen;
     }
 
+    private void prepareRowDescription(RecordMetadata metadata) {
+        responseAsciiSink.put(MESSAGE_TYPE_ROW_DESCRIPTION);
+        final long addr = responseAsciiSink.skip();
+        final int n = metadata.getColumnCount();
+        responseAsciiSink.putNetworkShort((short) n);
+        for (int i = 0; i < n; i++) {
+            final int columnType = metadata.getColumnType(i);
+            responseAsciiSink.encodeUtf8Z(metadata.getColumnName(i));
+            responseAsciiSink.putNetworkInt(0);
+            responseAsciiSink.putNetworkShort((short) 0);
+            responseAsciiSink.putNetworkInt(typeOidMap.get(columnType)); // type
+            responseAsciiSink.putNetworkShort((short) 0); // type size?
+            responseAsciiSink.putNetworkInt(0); // type mod?
+            // this is special behaviour for binary fields to prevent binary data being hex encoded on the wire
+            responseAsciiSink.putNetworkShort((short) (columnType == ColumnType.BINARY ? 1 : 0)); // format code
+        }
+
+        responseAsciiSink.putLen(addr);
+    }
+
+    private void send(long fd) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        final int len = (int) (sendBufferPtr - sendBuffer);
+        dumpBuffer('<', sendBuffer, len);
+        final int n = nf.send(fd, sendBuffer, len);
+        if (n < 0) {
+            throw PeerDisconnectedException.INSTANCE;
+        }
+
+        if (n < len) {
+            doSendWithRetries(fd, n, len - n);
+        }
+        sendBufferPtr = sendBuffer;
+    }
+
     private void sendClearTextPasswordChallenge(long fd) throws PeerDisconnectedException, PeerIsSlowToReadException {
         responseAsciiSink.reset();
         responseAsciiSink.put(MESSAGE_TYPE_LOGIN_RESPONSE);
         responseAsciiSink.putNetworkInt(8);
         responseAsciiSink.putNetworkInt(3);
+        send(fd);
+    }
+
+    private void sendCursor(long fd, RecordCursor cursor, RecordMetadata metadata) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        final Record record = cursor.getRecord();
+        final int columnCount = metadata.getColumnCount();
+        while (cursor.hasNext()) {
+            responseAsciiSink.put(MESSAGE_TYPE_DATA_ROW); // data
+            long b = responseAsciiSink.skip();
+            long a;
+            responseAsciiSink.putNetworkShort((short) columnCount);
+            for (int i = 0; i < columnCount; i++) {
+                switch (metadata.getColumnType(i)) {
+                    case ColumnType.INT:
+                        final int intValue = record.getInt(i);
+                        if (intValue == Numbers.INT_NaN) {
+                            responseAsciiSink.setNullValue();
+                        } else {
+                            a = responseAsciiSink.skip();
+                            responseAsciiSink.put(intValue);
+                            responseAsciiSink.putLenEx(a);
+                        }
+                        break;
+                    case ColumnType.STRING:
+                        CharSequence strValue = record.getStr(i);
+                        if (strValue == null) {
+                            responseAsciiSink.setNullValue();
+                        } else {
+                            a = responseAsciiSink.skip();
+                            responseAsciiSink.encodeUtf8(strValue);
+                            responseAsciiSink.putLenEx(a);
+                        }
+                        break;
+                    case ColumnType.SYMBOL:
+                        strValue = record.getSym(i);
+                        if (strValue == null) {
+                            responseAsciiSink.setNullValue();
+                        } else {
+                            a = responseAsciiSink.skip();
+                            responseAsciiSink.encodeUtf8(strValue);
+                            responseAsciiSink.putLenEx(a);
+                        }
+                        break;
+                    case ColumnType.TIMESTAMP:
+                        long longValue = record.getTimestamp(i);
+                        if (longValue == Numbers.LONG_NaN) {
+                            responseAsciiSink.setNullValue();
+                        } else {
+                            a = responseAsciiSink.skip();
+                            DateFormatUtils.PG_TIMESTAMP_FORMAT.format(longValue, DateFormatUtils.defaultLocale, "", responseAsciiSink);
+                            responseAsciiSink.putLenEx(a);
+                        }
+                        break;
+                    case ColumnType.DATE:
+                        longValue = record.getDate(i);
+                        if (longValue == Numbers.LONG_NaN) {
+                            responseAsciiSink.setNullValue();
+                        } else {
+                            a = responseAsciiSink.skip();
+                            PG_DATE_FORMAT.format(longValue, defaultLocale, "", responseAsciiSink);
+                            responseAsciiSink.putLenEx(a);
+                        }
+                        break;
+                    case ColumnType.DOUBLE:
+                        final double doubleValue = record.getDouble(i);
+                        if (Double.isNaN(doubleValue)) {
+                            responseAsciiSink.setNullValue();
+                        } else {
+                            a = responseAsciiSink.skip();
+                            responseAsciiSink.put(doubleValue, 3);
+                            responseAsciiSink.putLenEx(a);
+                        }
+                        break;
+                    case ColumnType.FLOAT:
+                        final float floatValue = record.getFloat(i);
+                        if (Float.isNaN(floatValue)) {
+                            responseAsciiSink.setNullValue();
+                        } else {
+                            a = responseAsciiSink.skip();
+                            responseAsciiSink.put(floatValue, 3);
+                            responseAsciiSink.putLenEx(a);
+                        }
+                        break;
+                    case ColumnType.SHORT:
+                        a = responseAsciiSink.skip();
+                        responseAsciiSink.put(record.getShort(i));
+                        responseAsciiSink.putLenEx(a);
+                        break;
+                    case ColumnType.LONG:
+                        longValue = record.getLong(i);
+                        if (longValue == Numbers.LONG_NaN) {
+                            responseAsciiSink.setNullValue();
+                        } else {
+                            a = responseAsciiSink.skip();
+                            responseAsciiSink.put(longValue);
+                            responseAsciiSink.putLenEx(a);
+                        }
+                        break;
+                    case ColumnType.BYTE:
+                        a = responseAsciiSink.skip();
+                        responseAsciiSink.put((int) record.getByte(i));
+                        responseAsciiSink.putLenEx(a);
+                        break;
+                    case ColumnType.BOOLEAN:
+                        responseAsciiSink.putNetworkInt(Byte.BYTES);
+                        responseAsciiSink.put(record.getBool(i) ? 't' : 'f');
+                        break;
+                    case ColumnType.BINARY:
+                        BinarySequence sequence = record.getBin(i);
+                        if (sequence == null) {
+                            responseAsciiSink.setNullValue();
+                        } else {
+                            responseAsciiSink.put(sequence);
+                        }
+                        break;
+                    default:
+                        assert false;
+                }
+            }
+            responseAsciiSink.putLen(b);
+        }
         send(fd);
     }
 
@@ -585,78 +648,14 @@ public class WireParser implements Closeable {
         send(fd);
     }
 
-    private void send(long fd) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        final int len = (int) (sendBufferPtr - sendBuffer);
-        HttpConnectionContext.stdOutSink.put('<');
-        dump(sendBuffer, len);
-        final int n = nf.send(fd, sendBuffer, len);
-        if (n < 0) {
-            throw PeerDisconnectedException.INSTANCE;
-        }
-
-        if (n < len) {
-            doSendWithRetries(fd, n, len - n);
-        }
-        sendBufferPtr = sendBuffer;
-    }
-
-    private void doSendWithRetries(long fd, int bufferOffset, int bufferSize) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        int offset = bufferOffset;
-        int remaining = bufferSize;
-        int idleSendCount = 0;
-
-        while (remaining > 0 && idleSendCount < idleSendCountBeforeGivingUp) {
-            int m = nf.send(fd, sendBuffer + offset, remaining);
-            if (m < 0) {
-                throw PeerDisconnectedException.INSTANCE;
-            }
-
-            if (m > 0) {
-                remaining -= m;
-                offset += m;
-            } else {
-                idleSendCount++;
-            }
-        }
-
-        if (remaining > 0) {
-            this.bufferRemainingOffset = offset;
-            this.bufferRemainingSize = remaining;
-            throw PeerIsSlowToReadException.INSTANCE;
-        }
-    }
-
-    private void prepareLoginOk() {
-        responseAsciiSink.put(MESSAGE_TYPE_LOGIN_RESPONSE);
-        responseAsciiSink.putNetworkInt(8); // length of this message
-        responseAsciiSink.putNetworkInt(0); // response code
-    }
-
-    private void prepareReadyForQuery() {
-        responseAsciiSink.put(MESSAGE_TYPE_READY_FOR_QUERY);
-        responseAsciiSink.putNetworkInt(5);
-        responseAsciiSink.put('I');
-    }
-
-    private void prepareParams(String timeZone, String gmt) {
-        responseAsciiSink.put(MESSAGE_TYPE_PARAMETER_STATUS);
-        final long addr = responseAsciiSink.skip();
-        responseAsciiSink.encodeUtf8Z(timeZone);
-        responseAsciiSink.encodeUtf8Z(gmt);
-        responseAsciiSink.putLen(addr);
-    }
-
-    private long getStringLength(long x, long limit) {
-        // calculate length
-        for (long i = x; i < limit; i++) {
-            if (Unsafe.getUnsafe().getByte(i) == 0) {
-                return i;
-            }
-        }
-        return -1;
-    }
-
     private class ResponseAsciiSink extends AbstractCharSink {
+        public CharSink put(CharSequence cs) {
+            if (cs != null) {
+                this.put(cs, 0, cs.length());
+            }
+            return this;
+        }
+
         @Override
         public CharSink put(CharSequence cs, int start, int end) {
             final long len = end - start;
@@ -668,13 +667,6 @@ public class WireParser implements Closeable {
                 return this;
             }
             throw NoSpaceLeftInResponseBufferException.INSTANCE;
-        }
-
-        public CharSink put(CharSequence cs) {
-            if (cs != null) {
-                this.put(cs, 0, cs.length());
-            }
-            return this;
         }
 
         @Override
@@ -710,6 +702,14 @@ public class WireParser implements Closeable {
             }
         }
 
+        public void putLen(long start) {
+            NetworkByteOrderUtils.putInt(start, (int) (sendBufferPtr - start));
+        }
+
+        public void putLenEx(long start) {
+            NetworkByteOrderUtils.putInt(start, (int) (sendBufferPtr - start - Integer.BYTES));
+        }
+
         public void putNetworkInt(int len) {
             if (sendBufferPtr + Integer.BYTES < sendBufferLimit) {
                 NetworkByteOrderUtils.putInt(sendBufferPtr, len);
@@ -728,12 +728,21 @@ public class WireParser implements Closeable {
             }
         }
 
-        public void putLen(long start) {
-            NetworkByteOrderUtils.putInt(start, (int) (sendBufferPtr - start));
+        void encodeUtf8Z(CharSequence value) {
+            encodeUtf8(value);
+            if (sendBufferPtr < sendBufferLimit) {
+                Unsafe.getUnsafe().putByte(sendBufferPtr++, (byte) 0);
+            } else {
+                throw NoSpaceLeftInResponseBufferException.INSTANCE;
+            }
         }
 
-        public void putLenEx(long start) {
-            NetworkByteOrderUtils.putInt(start, (int) (sendBufferPtr - start - Integer.BYTES));
+        void reset() {
+            sendBufferPtr = sendBuffer;
+        }
+
+        private void setNullValue() {
+            putNetworkInt(-1);
         }
 
         long skip() {
@@ -744,22 +753,20 @@ public class WireParser implements Closeable {
             }
             throw NoSpaceLeftInResponseBufferException.INSTANCE;
         }
+    }
 
-        void reset() {
-            sendBufferPtr = sendBuffer;
-        }
-
-        void encodeUtf8Z(CharSequence value) {
-            encodeUtf8(value);
-            if (sendBufferPtr < sendBufferLimit) {
-                Unsafe.getUnsafe().putByte(sendBufferPtr++, (byte) 0);
-            } else {
-                throw NoSpaceLeftInResponseBufferException.INSTANCE;
-            }
-        }
-
-        private void setNullValue() {
-            putNetworkInt(-1);
-        }
+    static {
+        typeOidMap.put(ColumnType.STRING, 1043); // VARCHAR
+        typeOidMap.put(ColumnType.TIMESTAMP, 1184); // TIMESTAMPZ
+        typeOidMap.put(ColumnType.DOUBLE, 701); // FLOAT8
+        typeOidMap.put(ColumnType.FLOAT, 700); // FLOAT4
+        typeOidMap.put(ColumnType.INT, 23); // INT4
+        typeOidMap.put(ColumnType.SHORT, 21); // INT2
+        typeOidMap.put(ColumnType.SYMBOL, 1043); // NAME
+        typeOidMap.put(ColumnType.LONG, 20); // INT8
+        typeOidMap.put(ColumnType.BYTE, 21); // INT2
+        typeOidMap.put(ColumnType.BOOLEAN, 16); // BOOL
+        typeOidMap.put(ColumnType.DATE, 1082); // DATE
+        typeOidMap.put(ColumnType.BINARY, 17); // BYTEA
     }
 }

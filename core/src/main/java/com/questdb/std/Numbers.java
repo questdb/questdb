@@ -231,11 +231,13 @@ public final class Numbers {
         }
         int c;
         if (i < 0x10) {
+            sink.put('0');
             sink.put(hexDigits[i]);
         } else if (i < 0x100) {  // two
             sink.put(hexDigits[i / 0x10]);
             sink.put(hexDigits[i % 0x10]);
         } else if (i < 0x1000) { // three
+            sink.put('0');
             sink.put(hexDigits[i / 0x100]);
             sink.put(hexDigits[(c = i % 0x100) / 0x10]);
             sink.put(hexDigits[c % 0x10]);
@@ -245,6 +247,7 @@ public final class Numbers {
             sink.put(hexDigits[(c = c % 0x100) / 0x10]);
             sink.put(hexDigits[c % 0x10]);
         } else if (i < 0x100000) { // five
+            sink.put('0');
             sink.put(hexDigits[i / 0x10000]);
             sink.put(hexDigits[(c = i % 0x10000) / 0x1000]);
             sink.put(hexDigits[(c = c % 0x1000) / 0x100]);
@@ -258,6 +261,7 @@ public final class Numbers {
             sink.put(hexDigits[(c = c % 0x100) / 0x10]);
             sink.put(hexDigits[c % 0x10]);
         } else if (i < 0x10000000) { // seven
+            sink.put('0');
             sink.put(hexDigits[i / 0x1000000]);
             sink.put(hexDigits[(c = i % 0x1000000) / 0x100000]);
             sink.put(hexDigits[(c = c % 0x100000) / 0x10000]);

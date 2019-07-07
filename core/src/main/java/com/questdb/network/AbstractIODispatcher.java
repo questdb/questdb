@@ -142,6 +142,14 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
         return false;
     }
 
+    @Override
+    public void disconnect(C context) {
+        final long cursor = disconnectPubSeq.nextBully();
+        assert cursor > -1;
+        disconnectQueue.get(cursor).context = context;
+        disconnectPubSeq.done(cursor);
+    }
+
     protected void accept(long timestamp) {
         while (true) {
             // this accept is greedy, rather than to rely on epoll(or similar) to
@@ -199,29 +207,12 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
 
     }
 
-    protected void logSuccess(IODispatcherConfiguration configuration) {
-        LOG.info()
-                .$("listening on ")
-                .$(configuration.getBindIPv4Address()).$(':').$(configuration.getBindPort())
-                .$(" [fd=").$(serverFd).$(']').$();
-    }
-
-    protected abstract void pendingAdded(int index);
-
-    @Override
-    public void disconnect(C context) {
-        final long cursor = disconnectPubSeq.nextBully();
-        assert cursor > -1;
-        disconnectQueue.get(cursor).context = context;
-        disconnectPubSeq.done(cursor);
-    }
-
     private void disconnectContext(IOEvent<C> event) {
         doDisconnect(event.context);
     }
 
     protected void doDisconnect(C context) {
-        if (context == null) {
+        if (context == null || context.invalid()) {
             return;
         }
         final long fd = context.getFd();
@@ -233,6 +224,15 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
         ioContextFactory.done(context);
         connectionCount.decrementAndGet();
     }
+
+    protected void logSuccess(IODispatcherConfiguration configuration) {
+        LOG.info()
+                .$("listening on ")
+                .$(configuration.getBindIPv4Address()).$(':').$(configuration.getBindPort())
+                .$(" [fd=").$(serverFd).$(']').$();
+    }
+
+    protected abstract void pendingAdded(int index);
 
     protected void processDisconnects() {
         disconnectSubSeq.consumeAll(disconnectQueue, this.disconnectContextRef);

@@ -337,7 +337,7 @@ public class IODispatcherTest {
                         "Transfer-Encoding: chunked\r\n" +
                         "Content-Type: text/plain; charset=utf-8\r\n" +
                         "\r\n" +
-                        "442\r\n" +
+                        "0442\r\n" +
                         "+---------------------------------------------------------------------------------------------------------------+\r\n" +
                         "|      Location:  |                          fhv_tripdata_2017-02.csv  |        Pattern  | Locale  |    Errors  |\r\n" +
                         "|   Partition by  |                                              NONE  |                 |         |            |\r\n" +
@@ -352,7 +352,7 @@ public class IODispatcherTest {
                         "|              4  |         0  |\r\n" +
                         "+---------------------------------------------------------------------------------------------------------------+\r\n" +
                         "\r\n" +
-                        "0\r\n" +
+                        "00\r\n" +
                         "\r\n").getBytes();
 
 
@@ -501,7 +501,7 @@ public class IODispatcherTest {
                         "Transfer-Encoding: chunked\r\n" +
                         "Content-Type: text/plain; charset=utf-8\r\n" +
                         "\r\n" +
-                        "442\r\n" +
+                        "0442\r\n" +
                         "+---------------------------------------------------------------------------------------------------------------+\r\n" +
                         "|      Location:  |                          fhv_tripdata_2017-02.csv  |        Pattern  | Locale  |    Errors  |\r\n" +
                         "|   Partition by  |                                              NONE  |                 |         |            |\r\n" +
@@ -516,7 +516,7 @@ public class IODispatcherTest {
                         "|              4  |         0  |\r\n" +
                         "+---------------------------------------------------------------------------------------------------------------+\r\n" +
                         "\r\n" +
-                        "0\r\n" +
+                        "00\r\n" +
                         "\r\n").getBytes();
 
 
@@ -640,7 +640,7 @@ public class IODispatcherTest {
                         "Transfer-Encoding: chunked\r\n" +
                         "Content-Type: text/plain; charset=utf-8\r\n" +
                         "\r\n" +
-                        "442\r\n" +
+                        "0442\r\n" +
                         "+---------------------------------------------------------------------------------------------------------------+\r\n" +
                         "|      Location:  |                          fhv_tripdata_2017-02.csv  |        Pattern  | Locale  |    Errors  |\r\n" +
                         "|   Partition by  |                                              NONE  |                 |         |            |\r\n" +
@@ -655,7 +655,7 @@ public class IODispatcherTest {
                         "|              4  |         0  |\r\n" +
                         "+---------------------------------------------------------------------------------------------------------------+\r\n" +
                         "\r\n" +
-                        "0\r\n" +
+                        "00\r\n" +
                         "\r\n").getBytes();
 
 
@@ -753,9 +753,9 @@ public class IODispatcherTest {
                         "Content-Type: application/json; charset=utf-8\r\n" +
                         "Keep-Alive: timeout=5, max=10000\r\n" +
                         "\r\n" +
-                        "224\r\n" +
+                        "0224\r\n" +
                         "{\"query\":\"x where i = ('EHNRX')\",\"columns\":[{\"name\":\"a\",\"type\":\"BYTE\"},{\"name\":\"b\",\"type\":\"SHORT\"},{\"name\":\"c\",\"type\":\"INT\"},{\"name\":\"d\",\"type\":\"LONG\"},{\"name\":\"e\",\"type\":\"DATE\"},{\"name\":\"f\",\"type\":\"TIMESTAMP\"},{\"name\":\"g\",\"type\":\"FLOAT\"},{\"name\":\"h\",\"type\":\"DOUBLE\"},{\"name\":\"i\",\"type\":\"STRING\"},{\"name\":\"j\",\"type\":\"SYMBOL\"},{\"name\":\"k\",\"type\":\"BOOLEAN\"},{\"name\":\"l\",\"type\":\"BINARY\"}],\"dataset\":[[80,24814,-727724771,8920866532787660373,\"-169665660-01-09T01:58:28.119Z\",\"-51129-02-11T06:38:29.397464Z\",null,null,\"EHNRX\",\"ZSX\",false,[]]],\"count\":1}\r\n" +
-                        "0\r\n" +
+                        "00\r\n" +
                         "\r\n").getBytes();
 
                 sendAndReceive(
@@ -907,7 +907,7 @@ public class IODispatcherTest {
                         ",24045,-2102123220,-7175695171900374773,\"-242871073-08-17T14:45:16.399Z\",\"125517-01-13T08:03:16.581566Z\",0.20179749,0.4293443705\r\n" +
                         "25\r\n" +
                         ",\"USIMY\",\"XUU\",false,[]]],\"count\":30}\r\n" +
-                        "0\r\n" +
+                        "00\r\n" +
                         "\r\n").getBytes();
 
                 sendAndReceive(nf, request, expectedResponse, 10, 100L);
@@ -980,7 +980,7 @@ public class IODispatcherTest {
                         "\r\n" +
                         "4d\r\n" +
                         "{\"query\":\"x where2 i = ('EHNRX')\",\"error\":\"unexpected token: i\",\"position\":9}\r\n" +
-                        "0\r\n" +
+                        "00\r\n" +
                         "\r\n").getBytes();
 
                 sendAndReceive(
@@ -1222,10 +1222,10 @@ public class IODispatcherTest {
                                         "Transfer-Encoding: chunked\r\n" +
                                         "Content-Type: text/html; charset=utf-8\r\n" +
                                         "\r\n" +
-                                        "b\r\n" +
+                                        "0b\r\n" +
                                         "Not Found\r\n" +
                                         "\r\n" +
-                                        "0\r\n" +
+                                        "00\r\n" +
                                         "\r\n";
 
 
@@ -1385,10 +1385,10 @@ public class IODispatcherTest {
                                             "Transfer-Encoding: chunked\r\n" +
                                             "Content-Type: text/html; charset=utf-8\r\n" +
                                             "\r\n" +
-                                            "b\r\n" +
+                                            "0b\r\n" +
                                             "Not Found\r\n" +
                                             "\r\n" +
-                                            "0\r\n" +
+                                            "00\r\n" +
                                             "\r\n";
 
 
@@ -1611,10 +1611,10 @@ public class IODispatcherTest {
                 "Transfer-Encoding: chunked\r\n" +
                 "Content-Type: text/html; charset=utf-8\r\n" +
                 "\r\n" +
-                "4\r\n" +
+                "04\r\n" +
                 "OK\r\n" +
                 "\r\n" +
-                "0\r\n" +
+                "00\r\n" +
                 "\r\n";
 
         TestUtils.assertMemoryLeak(() -> {
@@ -1720,7 +1720,7 @@ public class IODispatcherTest {
                             Assert.assertEquals(len, Net.send(fd, buffer, len));
                             // read response we expect
                             StringSink sink2 = new StringSink();
-                            final int expectedLen = 158;
+                            final int expectedLen = expectedResponse.length();
                             int read = 0;
                             while (read < expectedLen) {
                                 int n = Net.recv(fd, buffer, len);
@@ -2395,6 +2395,11 @@ public class IODispatcherTest {
         @Override
         public long getFd() {
             return fd;
+        }
+
+        @Override
+        public boolean invalid() {
+            return false;
         }
     }
 

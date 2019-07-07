@@ -221,6 +221,7 @@ public class HttpServer implements Closeable {
             // it is possible that context is in transit (on a queue somewhere)
             // and server shutdown is performed by a non-worker thread
             // in this case we just close context
+            context.of(-1);
             if (thread instanceof HttpServerWorker) {
                 ((HttpServerWorker) thread).contextPool.push(context);
             } else {

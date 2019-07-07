@@ -27,7 +27,10 @@ import java.io.FileDescriptor;
 import java.io.FileOutputStream;
 import java.io.IOException;
 
-public class StdoutSink extends FlexBufferSink {
+public final class StdoutSink extends FlexBufferSink {
+
+    public static final StdoutSink INSTANCE = new StdoutSink();
+
     private final FileOutputStream out;
 
     public StdoutSink() {

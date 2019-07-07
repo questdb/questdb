@@ -28,13 +28,8 @@ import com.questdb.log.LogFactory;
 import com.questdb.network.*;
 import com.questdb.std.*;
 import com.questdb.std.str.DirectByteCharSequence;
-import com.questdb.std.str.StdoutSink;
-
-import java.io.IOException;
 
 public class HttpConnectionContext implements IOContext, Locality, Mutable {
-    // todo: remove or comment out eventually
-    public static final StdoutSink stdOutSink = new StdoutSink();
     private static final Log LOG = LogFactory.getLog(HttpConnectionContext.class);
     private final HttpHeaderParser headerParser;
     private final long recvBuffer;
@@ -51,6 +46,20 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
     private long fd;
     private HttpRequestProcessor resumeProcessor = null;
 
+    @Override
+    public void close() {
+        this.fd = -1;
+        csPool.clear();
+        multipartContentParser.close();
+        multipartContentHeaderParser.close();
+        responseSink.close();
+        headerParser.close();
+        localValueMap.close();
+        Unsafe.free(recvBuffer, recvBufferSize);
+        Unsafe.free(sendBuffer, configuration.getSendBufferSize());
+        LOG.debug().$("closed").$();
+    }
+
     public HttpConnectionContext(HttpServerConfiguration configuration) {
         this.configuration = configuration;
         this.nf = configuration.getDispatcherConfiguration().getNetworkFacade();
@@ -66,18 +75,6 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
         LOG.debug().$("new").$();
     }
 
-    public static void dump(long recvBuffer, int read) {
-        for (int i = 0; i < read; i++) {
-            Numbers.appendHex(stdOutSink, Unsafe.getUnsafe().getByte(recvBuffer + i) & 0xff);
-        }
-        stdOutSink.put('\n');
-        try {
-            stdOutSink.flush();
-        } catch (IOException e) {
-            e.printStackTrace();
-        }
-    }
-
     @Override
     public void clear() {
         LOG.debug().$("clear").$();
@@ -90,16 +87,8 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
     }
 
     @Override
-    public void close() {
-        csPool.clear();
-        multipartContentParser.close();
-        multipartContentHeaderParser.close();
-        responseSink.close();
-        headerParser.close();
-        localValueMap.close();
-        Unsafe.free(recvBuffer, recvBufferSize);
-        Unsafe.free(sendBuffer, configuration.getSendBufferSize());
-        LOG.debug().$("closed").$();
+    public boolean invalid() {
+        return this.fd == -1;
     }
 
     @Override

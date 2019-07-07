@@ -26,6 +26,10 @@ package com.questdb.cutlass.pgwire;
 import com.questdb.network.NetworkFacade;
 
 public interface WireParserConfiguration {
+    default boolean getDumpNetworkTraffic() {
+        return false;
+    }
+
     NetworkFacade getNetworkFacade();
 
     int getRecvBufferSize();

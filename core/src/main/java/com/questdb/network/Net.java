@@ -25,6 +25,9 @@ package com.questdb.network;
 
 import com.questdb.std.*;
 import com.questdb.std.str.CharSink;
+import com.questdb.std.str.StdoutSink;
+
+import java.io.IOException;
 
 public final class Net {
 
@@ -87,6 +90,20 @@ public final class Net {
     public static native int configureNonBlocking(long fd);
 
     public native static long connect(long fd, long sockaddr);
+
+    public static void dump(long buffer, int len) {
+        if (len > 0) {
+            for (int i = 0; i < len; i++) {
+                Numbers.appendHex(StdoutSink.INSTANCE, Unsafe.getUnsafe().getByte(buffer + i) & 0xff);
+            }
+            StdoutSink.INSTANCE.put('\n');
+            try {
+                StdoutSink.INSTANCE.flush();
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+        }
+    }
 
     public static native void freeMsgHeaders(long msgHeaders);
 
