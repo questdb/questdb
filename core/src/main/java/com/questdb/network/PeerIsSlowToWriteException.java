@@ -21,22 +21,8 @@
  *
  ******************************************************************************/
 
-package com.questdb.cutlass.pgwire;
+package com.questdb.network;
 
-import com.questdb.network.NetworkFacade;
-
-public interface WireParserConfiguration {
-    default boolean getDumpNetworkTraffic() {
-        return false;
-    }
-
-    int getIdleRecvCountBeforeGivingUp();
-
-    NetworkFacade getNetworkFacade();
-
-    int getRecvBufferSize();
-
-    int getSendBufferSize();
-
-    int getIdleSendCountBeforeGivingUp();
+public class PeerIsSlowToWriteException extends Exception {
+    public static final PeerIsSlowToWriteException INSTANCE = new PeerIsSlowToWriteException();
 }

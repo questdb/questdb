@@ -37,10 +37,7 @@ import com.questdb.griffin.SqlException;
 import com.questdb.griffin.engine.functions.bind.BindVariableService;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
-import com.questdb.network.NetworkFacade;
-import com.questdb.network.NoSpaceLeftInResponseBufferException;
-import com.questdb.network.PeerDisconnectedException;
-import com.questdb.network.PeerIsSlowToReadException;
+import com.questdb.network.*;
 import com.questdb.std.*;
 import com.questdb.std.microtime.DateFormatUtils;
 import com.questdb.std.str.AbstractCharSink;
@@ -56,14 +53,14 @@ import static com.questdb.std.time.DateFormatUtils.defaultLocale;
 
 public class WireParser implements Closeable {
 
-    public static final byte MESSAGE_TYPE_LOGIN_RESPONSE = 'R';
-    public static final byte MESSAGE_TYPE_READY_FOR_QUERY = 'Z';
-    public static final byte MESSAGE_TYPE_PARAMETER_STATUS = 'S';
-    public static final byte MESSAGE_TYPE_COMMAND_COMPLETE = 'C';
-    public static final byte MESSAGE_TYPE_DATA_ROW = 'D';
-    public static final byte MESSAGE_TYPE_ROW_DESCRIPTION = 'T';
-    public static final byte MESSAGE_TYPE_ERROR_RESPONSE = 'E';
-    public static final byte MESSAGE_TYPE_PARSE_COMPLETE = '1';
+    private static final byte MESSAGE_TYPE_LOGIN_RESPONSE = 'R';
+    private static final byte MESSAGE_TYPE_READY_FOR_QUERY = 'Z';
+    private static final byte MESSAGE_TYPE_PARAMETER_STATUS = 'S';
+    private static final byte MESSAGE_TYPE_COMMAND_COMPLETE = 'C';
+    private static final byte MESSAGE_TYPE_DATA_ROW = 'D';
+    private static final byte MESSAGE_TYPE_ROW_DESCRIPTION = 'T';
+    private static final byte MESSAGE_TYPE_ERROR_RESPONSE = 'E';
+    private static final byte MESSAGE_TYPE_PARSE_COMPLETE = '1';
     private final static Log LOG = LogFactory.getLog(WireParser.class);
     private static final IntIntHashMap typeOidMap = new IntIntHashMap();
     private final NetworkFacade nf;
@@ -75,6 +72,7 @@ public class WireParser implements Closeable {
     private final SqlCompiler compiler;
     private final ResponseAsciiSink responseAsciiSink = new ResponseAsciiSink();
     private final int idleSendCountBeforeGivingUp;
+    private final int idleRecvCountBeforeGivingUp;
     private final AssociativeCache<RecordCursorFactory> factoryCache = new AssociativeCache<>(16, 16);
     private final DirectByteCharSequence dbcs = new DirectByteCharSequence();
     private final BindVariableService bindVariableService = new BindVariableService();
@@ -97,6 +95,7 @@ public class WireParser implements Closeable {
         this.sendBufferPtr = sendBuffer;
         this.sendBufferLimit = sendBuffer + sendBufferSize;
         this.idleSendCountBeforeGivingUp = configuration.getIdleSendCountBeforeGivingUp();
+        this.idleRecvCountBeforeGivingUp = configuration.getIdleRecvCountBeforeGivingUp();
         this.dumpNetworkTraffic = configuration.getDumpNetworkTraffic();
     }
 
@@ -107,32 +106,47 @@ public class WireParser implements Closeable {
         Misc.free(compiler);
     }
 
-    public void recv(long fd) throws PeerDisconnectedException, PeerIsSlowToReadException {
+    public void process(long fd) throws PeerDisconnectedException, PeerIsSlowToReadException, PeerIsSlowToWriteException {
         final int remaining = (int) (recvBufferSize - recvBufferOffset);
 
         if (remaining < 1) {
             throw new RuntimeException("buffer overflow");
         }
 
-        final int n = nf.recv(fd, recvBuffer + recvBufferOffset, remaining);
-        dumpBuffer('>', recvBuffer + recvBufferOffset, n);
+        int n = doReceive(fd, remaining);
         if (n < 0) {
             throw PeerDisconnectedException.INSTANCE;
         }
 
         if (n == 0) {
-            // todo: stay in tight loop for a bit before giving up
-            // todo: this exception is misplaced - peer is writing here
-            throw PeerIsSlowToReadException.INSTANCE;
+            int retriesRemaining = idleRecvCountBeforeGivingUp;
+            while (retriesRemaining > 0) {
+                n = doReceive(fd, remaining);
+                if (n == 0) {
+                    retriesRemaining--;
+                    continue;
+                }
+
+                if (n < 0) {
+                    throw PeerDisconnectedException.INSTANCE;
+                }
+
+                break;
+            }
+
+            if (retriesRemaining == 0) {
+                throw PeerIsSlowToWriteException.INSTANCE;
+            }
         }
 
-        int parsed = parse(fd, recvBuffer, n);
+        int totalLen = (int) (n + recvBufferOffset);
+        int parsed = parse(fd, recvBuffer, totalLen);
         if (parsed == 0) {
             recvBufferOffset += n;
-        } else if (parsed < n) {
+        } else if (parsed < totalLen) {
             int offset = parsed;
             while (true) {
-                int len = n - offset;
+                int len = totalLen - offset;
                 parsed = parse(fd, recvBuffer + offset, len);
                 if (parsed == 0) {
                     // shift to start
@@ -140,7 +154,7 @@ public class WireParser implements Closeable {
                     recvBufferOffset = len;
                     // read more
                     break;
-                } else if (parsed < (n - offset)) {
+                } else if (parsed < (totalLen - offset)) {
                     offset += parsed;
                 } else {
                     recvBufferOffset = 0;
@@ -150,6 +164,12 @@ public class WireParser implements Closeable {
         } else {
             recvBufferOffset = 0;
         }
+    }
+
+    private int doReceive(long fd, int remaining) {
+        int n = nf.recv(fd, recvBuffer + recvBufferOffset, remaining);
+        dumpBuffer('>', recvBuffer + recvBufferOffset, n);
+        return n;
     }
 
     public void sendRemaininBuffer(long fd) throws PeerDisconnectedException, PeerIsSlowToReadException {
@@ -190,7 +210,7 @@ public class WireParser implements Closeable {
     }
 
     private void dumpBuffer(char direction, long buffer, int len) {
-        if (dumpNetworkTraffic) {
+        if (dumpNetworkTraffic && len > 0) {
             StdoutSink.INSTANCE.put(direction);
             dump(buffer, len);
         }

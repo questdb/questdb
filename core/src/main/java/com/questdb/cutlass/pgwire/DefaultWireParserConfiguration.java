@@ -24,19 +24,31 @@
 package com.questdb.cutlass.pgwire;
 
 import com.questdb.network.NetworkFacade;
+import com.questdb.network.NetworkFacadeImpl;
 
-public interface WireParserConfiguration {
-    default boolean getDumpNetworkTraffic() {
-        return false;
+public class DefaultWireParserConfiguration implements WireParserConfiguration {
+    @Override
+    public int getIdleRecvCountBeforeGivingUp() {
+        return 10_000;
     }
 
-    int getIdleRecvCountBeforeGivingUp();
+    @Override
+    public NetworkFacade getNetworkFacade() {
+        return NetworkFacadeImpl.INSTANCE;
+    }
 
-    NetworkFacade getNetworkFacade();
+    @Override
+    public int getRecvBufferSize() {
+        return 1024 * 1024;
+    }
 
-    int getRecvBufferSize();
+    @Override
+    public int getSendBufferSize() {
+        return 1024 * 1024;
+    }
 
-    int getSendBufferSize();
-
-    int getIdleSendCountBeforeGivingUp();
+    @Override
+    public int getIdleSendCountBeforeGivingUp() {
+        return 10_000;
+    }
 }

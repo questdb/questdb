@@ -97,7 +97,7 @@ public class HttpServer implements Closeable {
         }
     }
 
-    public SOCountDownLatch getStartedLatch() {
+    SOCountDownLatch getStartedLatch() {
         return started;
     }
 
@@ -206,7 +206,7 @@ public class HttpServer implements Closeable {
         }
     }
 
-    private class HttpContextFactory implements IOContextFactory<HttpConnectionContext> {
+    private static class HttpContextFactory implements IOContextFactory<HttpConnectionContext> {
         @Override
         public HttpConnectionContext newInstance(long fd) {
             Thread thread = Thread.currentThread();
