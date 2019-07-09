@@ -53,6 +53,41 @@ public class WireParserTest extends AbstractGriffinTest {
 
     private static final Log LOG = LogFactory.getLog(WireParserTest.class);
 
+    private static void toSink(InputStream is, CharSink sink) throws IOException {
+        // limit what we print
+        byte[] bb = new byte[1];
+        int i = 0;
+        while (is.read(bb) > 0) {
+            byte b = bb[0];
+            if (i > 0) {
+                if ((i % 16) == 0) {
+                    sink.put('\n');
+                    Numbers.appendHexPadded(sink, i);
+                }
+            } else {
+                Numbers.appendHexPadded(sink, i);
+            }
+            sink.put(' ');
+
+            final int v;
+            if (b < 0) {
+                v = 256 + b;
+            } else {
+                v = b;
+            }
+
+            if (v < 0x10) {
+                sink.put('0');
+                sink.put(hexDigits[b]);
+            } else {
+                sink.put(hexDigits[v / 0x10]);
+                sink.put(hexDigits[v % 0x10]);
+            }
+
+            i++;
+        }
+    }
+
     @Test
     public void testDDL() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
@@ -604,7 +639,7 @@ public class WireParserTest extends AbstractGriffinTest {
                 );
 
                 long clientFd = clientNf.socketTcp(true);
-                long sockAddress = clientNf.sockaddr(0, 9120);
+                long sockAddress = clientNf.sockaddr(Net.parseIPv4("127.0.0.1"), 9120);
                 Assert.assertEquals(0, clientNf.connect(clientFd, sockAddress));
 
                 final int N = 1024 * 1024;
@@ -671,6 +706,8 @@ public class WireParserTest extends AbstractGriffinTest {
                     clientNf.freeSockAddr(sockAddress);
                     clientNf.close(clientFd);
                 }
+            } catch (Throwable e) {
+                e.printStackTrace();
             } finally {
                 running.set(false);
                 haltLatch.await();
@@ -724,41 +761,6 @@ public class WireParserTest extends AbstractGriffinTest {
             }
         }).start();
         barrier.await();
-    }
-
-    private static void toSink(InputStream is, CharSink sink) throws IOException {
-        // limit what we print
-        byte[] bb = new byte[1];
-        int i = 0;
-        while (is.read(bb) > 0) {
-            byte b = bb[0];
-            if (i > 0) {
-                if ((i % 16) == 0) {
-                    sink.put('\n');
-                    Numbers.appendHexPadded(sink, i);
-                }
-            } else {
-                Numbers.appendHexPadded(sink, i);
-            }
-            sink.put(' ');
-
-            final int v;
-            if (b < 0) {
-                v = 256 + b;
-            } else {
-                v = b;
-            }
-
-            if (v < 0x10) {
-                sink.put('0');
-                sink.put(hexDigits[b]);
-            } else {
-                sink.put(hexDigits[v / 0x10]);
-                sink.put(hexDigits[v % 0x10]);
-            }
-
-            i++;
-        }
     }
 
     private void assertResultSet(String expected, StringSink sink, ResultSet rs) throws SQLException, IOException {
