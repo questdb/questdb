@@ -45,6 +45,10 @@ public class SqlException extends Exception implements Sinkable {
         return position(position).put("Invalid column: ").put(column);
     }
 
+    public static SqlException last() {
+        return tlException.get();
+    }
+
     public static SqlException invalidDate(int position) {
         return position(position).put("Invalid date");
     }
@@ -84,6 +88,11 @@ public class SqlException extends Exception implements Sinkable {
     }
 
     public SqlException put(int value) {
+        message.put(value);
+        return this;
+    }
+
+    public SqlException put(long value) {
         message.put(value);
         return this;
     }

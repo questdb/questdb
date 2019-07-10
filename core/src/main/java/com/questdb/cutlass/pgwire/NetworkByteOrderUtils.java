@@ -21,16 +21,27 @@
  *
  ******************************************************************************/
 
-package com.questdb.cutlass.pgwire.codecs.in;
+package com.questdb.cutlass.pgwire;
 
-import com.questdb.cutlass.pgwire.codecs.NetworkByteOrderUtils;
+import com.questdb.std.Unsafe;
 
-public class StartupMessage {
-    public static int getLen(long address) {
-        return NetworkByteOrderUtils.getInt(address);
+public class NetworkByteOrderUtils {
+    public static int getInt(long address) {
+        int b = Unsafe.getUnsafe().getByte(address) & 0xff;
+        b = (b << 8) | Unsafe.getUnsafe().getByte(address + 1) & 0xff;
+        b = (b << 8) | Unsafe.getUnsafe().getByte(address + 2) & 0xff;
+        return (b << 8) | Unsafe.getUnsafe().getByte(address + 3) & 0xff;
     }
 
-    public static int getProtocol(long address) {
-        return NetworkByteOrderUtils.getInt(address + 4);
+    public static void putInt(long address, int value) {
+        Unsafe.getUnsafe().putByte(address, (byte) (value >>> 24));
+        Unsafe.getUnsafe().putByte(address + 1, (byte) (value >>> 16));
+        Unsafe.getUnsafe().putByte(address + 2, (byte) (value >>> 8));
+        Unsafe.getUnsafe().putByte(address + 3, (byte) (value));
+    }
+
+    public static void putShort(long address, short value) {
+        Unsafe.getUnsafe().putByte(address, (byte) (value >>> 8));
+        Unsafe.getUnsafe().putByte(address + 1, (byte) (value));
     }
 }

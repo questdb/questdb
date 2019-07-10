@@ -25,14 +25,10 @@ package com.questdb.cutlass.pgwire;
 
 import com.questdb.cairo.CairoEngine;
 import com.questdb.cairo.ColumnType;
-import com.questdb.cairo.ColumnTypes;
 import com.questdb.cairo.sql.Record;
 import com.questdb.cairo.sql.RecordCursor;
 import com.questdb.cairo.sql.RecordCursorFactory;
 import com.questdb.cairo.sql.RecordMetadata;
-import com.questdb.cutlass.pgwire.codecs.AbstractTypePrefixedHeader;
-import com.questdb.cutlass.pgwire.codecs.NetworkByteOrderUtils;
-import com.questdb.cutlass.pgwire.codecs.in.StartupMessage;
 import com.questdb.griffin.SqlCompiler;
 import com.questdb.griffin.SqlException;
 import com.questdb.griffin.engine.functions.bind.BindVariableService;
@@ -54,6 +50,7 @@ import static com.questdb.std.time.DateFormatUtils.defaultLocale;
 
 public class WireParser implements Closeable {
 
+    private static final int PREFIXED_MESSAGE_HEADER_LEN = 5;
     private static final byte MESSAGE_TYPE_LOGIN_RESPONSE = 'R';
     private static final byte MESSAGE_TYPE_READY_FOR_QUERY = 'Z';
     private static final byte MESSAGE_TYPE_PARAMETER_STATUS = 'S';
@@ -64,6 +61,9 @@ public class WireParser implements Closeable {
     private static final byte MESSAGE_TYPE_PARSE_COMPLETE = '1';
     private final static Log LOG = LogFactory.getLog(WireParser.class);
     private static final IntIntHashMap typeOidMap = new IntIntHashMap();
+    private static final int TAIL_NONE = 0;
+    private static final int TAIL_SUCCESS = 1;
+    private static final int TAIL_ERROR = 2;
 
     static {
         typeOidMap.put(ColumnType.STRING, 1043); // VARCHAR
@@ -93,8 +93,9 @@ public class WireParser implements Closeable {
     private final AssociativeCache<RecordCursorFactory> factoryCache = new AssociativeCache<>(16, 16);
     private final DirectByteCharSequence dbcs = new DirectByteCharSequence();
     private final BindVariableService bindVariableService = new BindVariableService();
+    private final int maxBlobSizeOnQuery;
     private RecordCursor currentCursor = null;
-    private boolean sendCurrentCursorTail = false;
+    private int sendCurrentCursorTail = TAIL_NONE;
     private long sendBufferPtr;
     private boolean loginRequestProcessed = false;
     private long recvBufferWriteOffset = 0;
@@ -116,7 +117,12 @@ public class WireParser implements Closeable {
         this.idleSendCountBeforeGivingUp = configuration.getIdleSendCountBeforeGivingUp();
         this.idleRecvCountBeforeGivingUp = configuration.getIdleRecvCountBeforeGivingUp();
         this.dumpNetworkTraffic = configuration.getDumpNetworkTraffic();
-        LOG.info().$("init [recvBufferSize=").$(recvBufferSize).$(", sendBufferSize=").$(sendBufferSize).$(']').$();
+        this.maxBlobSizeOnQuery = configuration.getMaxBlobSizeOnQuery();
+        LOG.info()
+                .$("init [recvBufferSize=").$(recvBufferSize)
+                .$(", sendBufferSize=").$(sendBufferSize)
+                .$(", maxBlobSizeOnQuery=").$(maxBlobSizeOnQuery)
+                .$(']').$();
     }
 
     @Override
@@ -132,9 +138,7 @@ public class WireParser implements Closeable {
             doSend(fd, bufferRemainingOffset, bufferRemainingSize);
         }
 
-        if (sendCurrentCursorTail) {
-            sendExecuteTail(fd);
-        }
+        sendExecuteTail(fd);
 
         // If we have empty buffer we need to try to read something from socket
         // however the opposite  is a little tricky. If buffer is non-empty
@@ -260,19 +264,22 @@ public class WireParser implements Closeable {
         final int remaining = (int) (limit - address);
 
         if (!loginRequestProcessed) {
-            processLogin(fd, address, limit, remaining);
+            processLoginRequest(fd, address, limit, remaining);
             return;
         }
 
         // this is a type-prefixed message
         // we will wait until we receive the entire header
 
-        if (remaining < AbstractTypePrefixedHeader.LEN) {
+        if (remaining < PREFIXED_MESSAGE_HEADER_LEN) {
             // we need to be able to read header and length
             return;
         }
 
-        final int msgLen = AbstractTypePrefixedHeader.getLen(address);
+
+        final byte type = Unsafe.getUnsafe().getByte(address);
+        LOG.info().$("got msg '").$((char) type).$('\'').$();
+        final int msgLen = NetworkByteOrderUtils.getInt(address + 1);
         assert msgLen > 0;
 
         // msgLen does not take into account type byte
@@ -283,12 +290,8 @@ public class WireParser implements Closeable {
         // we have enough to read entire message
         recvBufferReadOffset += msgLen + 1;
 
-        final byte type = AbstractTypePrefixedHeader.getType(address);
-
-        LOG.info().$("got msg '").$((char) type).$('\'').$();
-
         long msgLimit = address + msgLen + 1;
-        long lo = address + AbstractTypePrefixedHeader.LEN; // 8 is offset where name value pairs begin
+        long lo = address + PREFIXED_MESSAGE_HEADER_LEN; // 8 is offset where name value pairs begin
 
         switch (type) {
             case 'p':
@@ -374,7 +377,7 @@ public class WireParser implements Closeable {
         }
     }
 
-    private void processLogin(long fd, long address, long limit, int remaining) throws PeerDisconnectedException, PeerIsSlowToReadException {
+    private void processLoginRequest(long fd, long address, long limit, int remaining) throws PeerDisconnectedException, PeerIsSlowToReadException {
         // todo: make it configurable how we authorize and authenticate users
         int msgLen;
         long msgLimit;// expect startup request
@@ -384,7 +387,7 @@ public class WireParser implements Closeable {
 
         // there is data for length
         // this is quite specific to message type :(
-        msgLen = StartupMessage.getLen(address); // postgesql includes length bytes in length of message
+        msgLen = NetworkByteOrderUtils.getInt(address); // postgesql includes length bytes in length of message
 
         // do we have the rest of the message?
         if (msgLen > remaining) {
@@ -398,7 +401,7 @@ public class WireParser implements Closeable {
 
         // consume message
         // process protocol
-        int protocol = StartupMessage.getProtocol(address);
+        int protocol = NetworkByteOrderUtils.getInt(address + 4);
         // todo: validate protocol, see 'NegotiateProtocolVersion'
 
         // extract properties
@@ -600,25 +603,36 @@ public class WireParser implements Closeable {
             // current DataRow will does not fit fully.
             responseAsciiSink.bookmark();
             try {
-                sendRecord(record, metadata, columnCount);
-            } catch (NoSpaceLeftInResponseBufferException e) {
+                try {
+                    sendRecord(record, metadata, columnCount);
+                } catch (NoSpaceLeftInResponseBufferException e) {
+                    responseAsciiSink.resetToBookmark();
+                    send(fd);
+                    // this is now start of send buffer, when this fails we need to log and disconnect
+                    sendRecord(record, metadata, columnCount);
+                }
+            } catch (SqlException e) {
                 responseAsciiSink.resetToBookmark();
+                LOG.error().$(e.getFlyweightMessage()).$();
+                currentCursor = Misc.free(currentCursor);
+                sendCurrentCursorTail = TAIL_ERROR;
                 send(fd);
-                sendRecord(record, metadata, columnCount);
+                return;
             }
         }
+
         currentCursor = Misc.free(currentCursor);
-        sendCurrentCursorTail = true;
+        sendCurrentCursorTail = TAIL_SUCCESS;
         send(fd);
     }
 
-    private void sendRecord(Record record, ColumnTypes types, int columnCount) {
+    private void sendRecord(Record record, RecordMetadata metadata, int columnCount) throws SqlException {
         responseAsciiSink.put(MESSAGE_TYPE_DATA_ROW); // data
         long b = responseAsciiSink.skip();
         long a;
         responseAsciiSink.putNetworkShort((short) columnCount);
         for (int i = 0; i < columnCount; i++) {
-            switch (types.getColumnType(i)) {
+            switch (metadata.getColumnType(i)) {
                 case ColumnType.INT:
                     final int intValue = record.getInt(i);
                     if (intValue == Numbers.INT_NaN) {
@@ -718,7 +732,17 @@ public class WireParser implements Closeable {
                     if (sequence == null) {
                         responseAsciiSink.setNullValue();
                     } else {
-                        responseAsciiSink.put(sequence);
+                        // if length is above max we will error out the result set
+                        long blobSize = sequence.length();
+                        if (blobSize < maxBlobSizeOnQuery) {
+                            responseAsciiSink.put(sequence);
+                        } else {
+                            throw SqlException.position(0)
+                                    .put("blob is too large [blobSize=").put(blobSize)
+                                    .put(", max=").put(maxBlobSizeOnQuery)
+                                    .put(", columnName=").put(metadata.getColumnName(i))
+                                    .put(']');
+                        }
                     }
                     break;
                 default:
@@ -729,11 +753,24 @@ public class WireParser implements Closeable {
     }
 
     private void sendExecuteTail(long fd) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        prepareCommandComplete();
-        prepareReadyForQuery();
-        LOG.info().$("executed query").$();
-        sendCurrentCursorTail = false;
-        send(fd);
+        switch (sendCurrentCursorTail) {
+            case TAIL_SUCCESS:
+                prepareCommandComplete();
+                prepareReadyForQuery();
+                LOG.info().$("executed query").$();
+                sendCurrentCursorTail = TAIL_NONE;
+                send(fd);
+                break;
+            case TAIL_ERROR:
+                prepareError(SqlException.last());
+                prepareReadyForQuery();
+                LOG.info().$("could not execute query").$();
+                sendCurrentCursorTail = TAIL_NONE;
+                send(fd);
+                break;
+            default:
+                break;
+        }
     }
 
     private void sendLoginOk(long fd) throws PeerDisconnectedException, PeerIsSlowToReadException {
@@ -778,17 +815,19 @@ public class WireParser implements Closeable {
 
         public void put(BinarySequence sequence) {
             final long len = sequence.length();
-            // todo: handle max blob size tha can be sent using this method
-            //   perhaps we should send null and log error when BLOB is larger than the max configured size
-            ensureCapacity((int) (len + Integer.BYTES));
-            // when we reach here the "long" length would have to fit in response buffer
-            // if it was larger than integers it would never fit into integer-bound response buffer
-            NetworkByteOrderUtils.putInt(sendBufferPtr, (int) len);
-            sendBufferPtr += Integer.BYTES;
-            for (long x = 0; x < len; x++) {
-                Unsafe.getUnsafe().putByte(sendBufferPtr + x, sequence.byteAt(x));
+            if (len > maxBlobSizeOnQuery) {
+                setNullValue();
+            } else {
+                ensureCapacity((int) (len + Integer.BYTES));
+                // when we reach here the "long" length would have to fit in response buffer
+                // if it was larger than integers it would never fit into integer-bound response buffer
+                NetworkByteOrderUtils.putInt(sendBufferPtr, (int) len);
+                sendBufferPtr += Integer.BYTES;
+                for (long x = 0; x < len; x++) {
+                    Unsafe.getUnsafe().putByte(sendBufferPtr + x, sequence.byteAt(x));
+                }
+                sendBufferPtr += len;
             }
-            sendBufferPtr += len;
         }
 
         public void putLen(long start) {

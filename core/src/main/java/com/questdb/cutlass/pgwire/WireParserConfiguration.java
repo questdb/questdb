@@ -39,4 +39,6 @@ public interface WireParserConfiguration {
     int getSendBufferSize();
 
     int getIdleSendCountBeforeGivingUp();
+
+    int getMaxBlobSizeOnQuery();
 }

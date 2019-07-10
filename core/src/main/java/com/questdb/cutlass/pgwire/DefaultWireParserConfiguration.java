@@ -51,4 +51,10 @@ public class DefaultWireParserConfiguration implements WireParserConfiguration {
     public int getIdleSendCountBeforeGivingUp() {
         return 10_000;
     }
+
+    @Override
+    public int getMaxBlobSizeOnQuery() {
+        // BLOBs must fit inside send buffer together with other column values
+        return 512 * 1024;
+    }
 }

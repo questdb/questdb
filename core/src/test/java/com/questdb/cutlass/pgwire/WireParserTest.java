@@ -876,6 +876,61 @@ public class WireParserTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testBlobOverLimit() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final CountDownLatch haltLatch = new CountDownLatch(1);
+            final AtomicBoolean running = new AtomicBoolean(true);
+            try {
+                startBasicServer(NetworkFacadeImpl.INSTANCE,
+                        new DefaultWireParserConfiguration() {
+                            @Override
+                            public int getMaxBlobSizeOnQuery() {
+                                return 150;
+                            }
+                        },
+                        haltLatch,
+                        running
+                );
+
+                Properties properties = new Properties();
+                properties.setProperty("user", "xyz");
+                properties.setProperty("password", "oh");
+                properties.setProperty("sslmode", "disable");
+
+                final Connection connection = DriverManager.getConnection("jdbc:postgresql://127.0.0.1:9120/nabu_app", properties);
+                Statement statement = connection.createStatement();
+
+                try {
+                    statement.executeQuery(
+                            "select " +
+                                    "rnd_str(4,4,4) s, " +
+                                    "rnd_int(0, 256, 4) i, " +
+                                    "rnd_double(4) d, " +
+                                    "timestamp_sequence(to_timestamp(0),10000) t, " +
+                                    "rnd_float(4) f, " +
+                                    "rnd_short() _short, " +
+                                    "rnd_long(0, 10000000, 5) l, " +
+                                    "rnd_timestamp(to_timestamp('2015','yyyy'),to_timestamp('2016','yyyy'),2) ts2, " +
+                                    "rnd_byte(0,127) bb, " +
+                                    "rnd_boolean() b, " +
+                                    "rnd_symbol(4,4,4,2), " +
+                                    "rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2)," +
+                                    "rnd_bin(1024,2048,2) " +
+                                    "from long_sequence(50)");
+                    Assert.fail();
+                } catch (PSQLException e) {
+                    Assert.assertEquals("blob is too large [blobSize=1903, max=150, columnName=rnd_bin]", e.getServerErrorMessage().getMessage());
+                }
+
+                connection.close();
+            } finally {
+                running.set(false);
+                haltLatch.await();
+            }
+        });
+    }
+
+    @Test
     public void testSimpleHex() throws Exception {
         // this is a HEX encoded bytes of the same script as 'testSimple' sends using postgres jdbc driver
         String script = ">0000007300030000757365720078797a006461746162617365006e6162755f61707000636c69656e745f656e636f64696e67005554463800446174655374796c650049534f0054696d655a6f6e65004575726f70652f4c6f6e646f6e0065787472615f666c6f61745f64696769747300320000\n" +
