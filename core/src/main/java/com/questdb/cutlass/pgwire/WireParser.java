@@ -25,6 +25,7 @@ package com.questdb.cutlass.pgwire;
 
 import com.questdb.cairo.CairoEngine;
 import com.questdb.cairo.ColumnType;
+import com.questdb.cairo.ColumnTypes;
 import com.questdb.cairo.sql.Record;
 import com.questdb.cairo.sql.RecordCursor;
 import com.questdb.cairo.sql.RecordCursorFactory;
@@ -63,6 +64,22 @@ public class WireParser implements Closeable {
     private static final byte MESSAGE_TYPE_PARSE_COMPLETE = '1';
     private final static Log LOG = LogFactory.getLog(WireParser.class);
     private static final IntIntHashMap typeOidMap = new IntIntHashMap();
+
+    static {
+        typeOidMap.put(ColumnType.STRING, 1043); // VARCHAR
+        typeOidMap.put(ColumnType.TIMESTAMP, 1184); // TIMESTAMPZ
+        typeOidMap.put(ColumnType.DOUBLE, 701); // FLOAT8
+        typeOidMap.put(ColumnType.FLOAT, 700); // FLOAT4
+        typeOidMap.put(ColumnType.INT, 23); // INT4
+        typeOidMap.put(ColumnType.SHORT, 21); // INT2
+        typeOidMap.put(ColumnType.SYMBOL, 1043); // NAME
+        typeOidMap.put(ColumnType.LONG, 20); // INT8
+        typeOidMap.put(ColumnType.BYTE, 21); // INT2
+        typeOidMap.put(ColumnType.BOOLEAN, 16); // BOOL
+        typeOidMap.put(ColumnType.DATE, 1082); // DATE
+        typeOidMap.put(ColumnType.BINARY, 17); // BYTEA
+    }
+
     private final NetworkFacade nf;
     private final long recvBuffer;
     private final long sendBuffer;
@@ -90,15 +107,16 @@ public class WireParser implements Closeable {
     public WireParser(WireParserConfiguration configuration, CairoEngine engine) {
         this.nf = configuration.getNetworkFacade();
         this.compiler = new SqlCompiler(engine);
-        this.recvBufferSize = configuration.getRecvBufferSize();
+        this.recvBufferSize = Numbers.ceilPow2(configuration.getRecvBufferSize());
         this.recvBuffer = Unsafe.malloc(this.recvBufferSize);
-        this.sendBufferSize = configuration.getSendBufferSize();
+        this.sendBufferSize = Numbers.ceilPow2(configuration.getSendBufferSize());
         this.sendBuffer = Unsafe.malloc(this.sendBufferSize);
         this.sendBufferPtr = sendBuffer;
         this.sendBufferLimit = sendBuffer + sendBufferSize;
         this.idleSendCountBeforeGivingUp = configuration.getIdleSendCountBeforeGivingUp();
         this.idleRecvCountBeforeGivingUp = configuration.getIdleRecvCountBeforeGivingUp();
         this.dumpNetworkTraffic = configuration.getDumpNetworkTraffic();
+        LOG.info().$("init [recvBufferSize=").$(recvBufferSize).$(", sendBufferSize=").$(sendBufferSize).$(']').$();
     }
 
     @Override
@@ -180,12 +198,6 @@ public class WireParser implements Closeable {
         int n = nf.recv(fd, recvBuffer + recvBufferWriteOffset, remaining);
         dumpBuffer('>', recvBuffer + recvBufferWriteOffset, n);
         return n;
-    }
-
-    public void sendRemaininBuffer(long fd) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        if (bufferRemainingSize > 0) {
-            doSendWithRetries(fd, bufferRemainingOffset, bufferRemainingSize);
-        }
     }
 
     private void doSend(long fd, int offset, int size) throws PeerDisconnectedException, PeerIsSlowToReadException {
@@ -316,7 +328,7 @@ public class WireParser implements Closeable {
                 // todo: read parameter information
 
                 bindVariableService.clear();
-                parseQuery(fd, dbcs);
+                parseQuery(dbcs);
                 if (currentFactory == null) {
                     prepareReadyForQuery();
                     LOG.info().$("executed DDL").$();
@@ -336,10 +348,7 @@ public class WireParser implements Closeable {
                 send(fd);
                 break;
             case 'B': // bind
-                // todo: decide what we do with this
-                if (currentFactory != null) {
-                    // todo: set parameter values
-                }
+                // todo: process parameter values when we are _not_ dealing with an DDL
                 break;
             case 'E': // execute
                 if (currentFactory != null) {
@@ -366,6 +375,7 @@ public class WireParser implements Closeable {
     }
 
     private void processLogin(long fd, long address, long limit, int remaining) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        // todo: make it configurable how we authorize and authenticate users
         int msgLen;
         long msgLimit;// expect startup request
         if (remaining < 4) {
@@ -439,10 +449,10 @@ public class WireParser implements Closeable {
         return -1;
     }
 
-    private void parseQuery(long fd, CharSequence query) {
-        if (currentFactory != null) {
-            // todo: disconnect - protocol violation
-        }
+    private void parseQuery(CharSequence query) {
+        // at this point we may have a current query that is not null
+        // this is ok to lose reference to this query because we have cache
+        // of all of them, which is looked up by query text
 
         responseAsciiSink.reset();
         if (!Chars.startsWith(query, "SET")) {
@@ -488,11 +498,6 @@ public class WireParser implements Closeable {
         responseAsciiSink.put(MESSAGE_TYPE_LOGIN_RESPONSE);
         responseAsciiSink.putNetworkInt(8); // length of this message
         responseAsciiSink.putNetworkInt(0); // response code
-    }
-
-    private void prepareNoData() {
-        responseAsciiSink.put('n');
-        responseAsciiSink.putNetworkInt(Integer.BYTES);
     }
 
     private void prepareParams(String timeZone, String gmt) {
@@ -582,126 +587,145 @@ public class WireParser implements Closeable {
     }
 
     private void sendCursor(long fd, RecordCursor cursor, RecordMetadata metadata) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        // the assumption for now is that any  will fit into response buffer. This of course precludes us from
+        // streaming large BLOBs, but, and its a big one, PostgreSQL protocol for DataRow does not allow for
+        // streaming anyway. On top of that Java PostgreSQL driver downloads data row fully. This simplifies our
+        // approach for general queries. For streaming protocol we will code something else. PostgeSQL Java driver is
+        // slow anyway.
+
         final Record record = cursor.getRecord();
         final int columnCount = metadata.getColumnCount();
         while (cursor.hasNext()) {
-            responseAsciiSink.put(MESSAGE_TYPE_DATA_ROW); // data
-            long b = responseAsciiSink.skip();
-            long a;
-            responseAsciiSink.putNetworkShort((short) columnCount);
-            for (int i = 0; i < columnCount; i++) {
-                switch (metadata.getColumnType(i)) {
-                    case ColumnType.INT:
-                        final int intValue = record.getInt(i);
-                        if (intValue == Numbers.INT_NaN) {
-                            responseAsciiSink.setNullValue();
-                        } else {
-                            a = responseAsciiSink.skip();
-                            responseAsciiSink.put(intValue);
-                            responseAsciiSink.putLenEx(a);
-                        }
-                        break;
-                    case ColumnType.STRING:
-                        CharSequence strValue = record.getStr(i);
-                        if (strValue == null) {
-                            responseAsciiSink.setNullValue();
-                        } else {
-                            a = responseAsciiSink.skip();
-                            responseAsciiSink.encodeUtf8(strValue);
-                            responseAsciiSink.putLenEx(a);
-                        }
-                        break;
-                    case ColumnType.SYMBOL:
-                        strValue = record.getSym(i);
-                        if (strValue == null) {
-                            responseAsciiSink.setNullValue();
-                        } else {
-                            a = responseAsciiSink.skip();
-                            responseAsciiSink.encodeUtf8(strValue);
-                            responseAsciiSink.putLenEx(a);
-                        }
-                        break;
-                    case ColumnType.TIMESTAMP:
-                        long longValue = record.getTimestamp(i);
-                        if (longValue == Numbers.LONG_NaN) {
-                            responseAsciiSink.setNullValue();
-                        } else {
-                            a = responseAsciiSink.skip();
-                            DateFormatUtils.PG_TIMESTAMP_FORMAT.format(longValue, DateFormatUtils.defaultLocale, "", responseAsciiSink);
-                            responseAsciiSink.putLenEx(a);
-                        }
-                        break;
-                    case ColumnType.DATE:
-                        longValue = record.getDate(i);
-                        if (longValue == Numbers.LONG_NaN) {
-                            responseAsciiSink.setNullValue();
-                        } else {
-                            a = responseAsciiSink.skip();
-                            PG_DATE_FORMAT.format(longValue, defaultLocale, "", responseAsciiSink);
-                            responseAsciiSink.putLenEx(a);
-                        }
-                        break;
-                    case ColumnType.DOUBLE:
-                        final double doubleValue = record.getDouble(i);
-                        if (Double.isNaN(doubleValue)) {
-                            responseAsciiSink.setNullValue();
-                        } else {
-                            a = responseAsciiSink.skip();
-                            responseAsciiSink.put(doubleValue, 3);
-                            responseAsciiSink.putLenEx(a);
-                        }
-                        break;
-                    case ColumnType.FLOAT:
-                        final float floatValue = record.getFloat(i);
-                        if (Float.isNaN(floatValue)) {
-                            responseAsciiSink.setNullValue();
-                        } else {
-                            a = responseAsciiSink.skip();
-                            responseAsciiSink.put(floatValue, 3);
-                            responseAsciiSink.putLenEx(a);
-                        }
-                        break;
-                    case ColumnType.SHORT:
-                        a = responseAsciiSink.skip();
-                        responseAsciiSink.put(record.getShort(i));
-                        responseAsciiSink.putLenEx(a);
-                        break;
-                    case ColumnType.LONG:
-                        longValue = record.getLong(i);
-                        if (longValue == Numbers.LONG_NaN) {
-                            responseAsciiSink.setNullValue();
-                        } else {
-                            a = responseAsciiSink.skip();
-                            responseAsciiSink.put(longValue);
-                            responseAsciiSink.putLenEx(a);
-                        }
-                        break;
-                    case ColumnType.BYTE:
-                        a = responseAsciiSink.skip();
-                        responseAsciiSink.put((int) record.getByte(i));
-                        responseAsciiSink.putLenEx(a);
-                        break;
-                    case ColumnType.BOOLEAN:
-                        responseAsciiSink.putNetworkInt(Byte.BYTES);
-                        responseAsciiSink.put(record.getBool(i) ? 't' : 'f');
-                        break;
-                    case ColumnType.BINARY:
-                        BinarySequence sequence = record.getBin(i);
-                        if (sequence == null) {
-                            responseAsciiSink.setNullValue();
-                        } else {
-                            responseAsciiSink.put(sequence);
-                        }
-                        break;
-                    default:
-                        assert false;
-                }
+            // create checkpoint to which we can undo the buffer in case
+            // current DataRow will does not fit fully.
+            responseAsciiSink.bookmark();
+            try {
+                sendRecord(record, metadata, columnCount);
+            } catch (NoSpaceLeftInResponseBufferException e) {
+                responseAsciiSink.resetToBookmark();
+                send(fd);
+                sendRecord(record, metadata, columnCount);
             }
-            responseAsciiSink.putLen(b);
         }
         currentCursor = Misc.free(currentCursor);
         sendCurrentCursorTail = true;
         send(fd);
+    }
+
+    private void sendRecord(Record record, ColumnTypes types, int columnCount) {
+        responseAsciiSink.put(MESSAGE_TYPE_DATA_ROW); // data
+        long b = responseAsciiSink.skip();
+        long a;
+        responseAsciiSink.putNetworkShort((short) columnCount);
+        for (int i = 0; i < columnCount; i++) {
+            switch (types.getColumnType(i)) {
+                case ColumnType.INT:
+                    final int intValue = record.getInt(i);
+                    if (intValue == Numbers.INT_NaN) {
+                        responseAsciiSink.setNullValue();
+                    } else {
+                        a = responseAsciiSink.skip();
+                        responseAsciiSink.put(intValue);
+                        responseAsciiSink.putLenEx(a);
+                    }
+                    break;
+                case ColumnType.STRING:
+                    CharSequence strValue = record.getStr(i);
+                    if (strValue == null) {
+                        responseAsciiSink.setNullValue();
+                    } else {
+                        a = responseAsciiSink.skip();
+                        responseAsciiSink.encodeUtf8(strValue);
+                        responseAsciiSink.putLenEx(a);
+                    }
+                    break;
+                case ColumnType.SYMBOL:
+                    strValue = record.getSym(i);
+                    if (strValue == null) {
+                        responseAsciiSink.setNullValue();
+                    } else {
+                        a = responseAsciiSink.skip();
+                        responseAsciiSink.encodeUtf8(strValue);
+                        responseAsciiSink.putLenEx(a);
+                    }
+                    break;
+                case ColumnType.TIMESTAMP:
+                    long longValue = record.getTimestamp(i);
+                    if (longValue == Numbers.LONG_NaN) {
+                        responseAsciiSink.setNullValue();
+                    } else {
+                        a = responseAsciiSink.skip();
+                        DateFormatUtils.PG_TIMESTAMP_FORMAT.format(longValue, DateFormatUtils.defaultLocale, "", responseAsciiSink);
+                        responseAsciiSink.putLenEx(a);
+                    }
+                    break;
+                case ColumnType.DATE:
+                    longValue = record.getDate(i);
+                    if (longValue == Numbers.LONG_NaN) {
+                        responseAsciiSink.setNullValue();
+                    } else {
+                        a = responseAsciiSink.skip();
+                        PG_DATE_FORMAT.format(longValue, defaultLocale, "", responseAsciiSink);
+                        responseAsciiSink.putLenEx(a);
+                    }
+                    break;
+                case ColumnType.DOUBLE:
+                    final double doubleValue = record.getDouble(i);
+                    if (Double.isNaN(doubleValue)) {
+                        responseAsciiSink.setNullValue();
+                    } else {
+                        a = responseAsciiSink.skip();
+                        responseAsciiSink.put(doubleValue, 3);
+                        responseAsciiSink.putLenEx(a);
+                    }
+                    break;
+                case ColumnType.FLOAT:
+                    final float floatValue = record.getFloat(i);
+                    if (Float.isNaN(floatValue)) {
+                        responseAsciiSink.setNullValue();
+                    } else {
+                        a = responseAsciiSink.skip();
+                        responseAsciiSink.put(floatValue, 3);
+                        responseAsciiSink.putLenEx(a);
+                    }
+                    break;
+                case ColumnType.SHORT:
+                    a = responseAsciiSink.skip();
+                    responseAsciiSink.put(record.getShort(i));
+                    responseAsciiSink.putLenEx(a);
+                    break;
+                case ColumnType.LONG:
+                    longValue = record.getLong(i);
+                    if (longValue == Numbers.LONG_NaN) {
+                        responseAsciiSink.setNullValue();
+                    } else {
+                        a = responseAsciiSink.skip();
+                        responseAsciiSink.put(longValue);
+                        responseAsciiSink.putLenEx(a);
+                    }
+                    break;
+                case ColumnType.BYTE:
+                    a = responseAsciiSink.skip();
+                    responseAsciiSink.put((int) record.getByte(i));
+                    responseAsciiSink.putLenEx(a);
+                    break;
+                case ColumnType.BOOLEAN:
+                    responseAsciiSink.putNetworkInt(Byte.BYTES);
+                    responseAsciiSink.put(record.getBool(i) ? 't' : 'f');
+                    break;
+                case ColumnType.BINARY:
+                    BinarySequence sequence = record.getBin(i);
+                    if (sequence == null) {
+                        responseAsciiSink.setNullValue();
+                    } else {
+                        responseAsciiSink.put(sequence);
+                    }
+                    break;
+                default:
+                    assert false;
+            }
+        }
+        responseAsciiSink.putLen(b);
     }
 
     private void sendExecuteTail(long fd) throws PeerDisconnectedException, PeerIsSlowToReadException {
@@ -724,25 +748,8 @@ public class WireParser implements Closeable {
     }
 
     private class ResponseAsciiSink extends AbstractCharSink {
-        public CharSink put(CharSequence cs) {
-            if (cs != null) {
-                this.put(cs, 0, cs.length());
-            }
-            return this;
-        }
 
-        @Override
-        public CharSink put(CharSequence cs, int start, int end) {
-            final long len = end - start;
-            if (sendBufferPtr + len < sendBufferLimit) {
-                for (int i = start; i < end; i++) {
-                    Unsafe.getUnsafe().putByte(sendBufferPtr + i, (byte) cs.charAt(i));
-                }
-                sendBufferPtr += len;
-                return this;
-            }
-            throw NoSpaceLeftInResponseBufferException.INSTANCE;
-        }
+        private long bookmarkPtr = -1;
 
         @Override
         public CharSink put(char c) {
@@ -753,28 +760,35 @@ public class WireParser implements Closeable {
             throw NoSpaceLeftInResponseBufferException.INSTANCE;
         }
 
+        public void bookmark() {
+            this.bookmarkPtr = sendBufferPtr;
+        }
+
+        public void resetToBookmark() {
+            assert bookmarkPtr != -1;
+            sendBufferPtr = bookmarkPtr;
+            bookmarkPtr = -1;
+        }
+
         public CharSink put(byte b) {
-            if (sendBufferPtr < sendBufferLimit) {
-                Unsafe.getUnsafe().putByte(sendBufferPtr++, b);
-                return this;
-            }
-            throw NoSpaceLeftInResponseBufferException.INSTANCE;
+            ensureCapacity(Byte.BYTES);
+            Unsafe.getUnsafe().putByte(sendBufferPtr++, b);
+            return this;
         }
 
         public void put(BinarySequence sequence) {
             final long len = sequence.length();
-            if (sendBufferPtr + len + Integer.BYTES < sendBufferLimit) {
-                // when we reach here the "long" length would have to fit in response buffer
-                // if it was larger than integers it would never fit into integer-bound response buffer
-                NetworkByteOrderUtils.putInt(sendBufferPtr, (int) len);
-                sendBufferPtr += Integer.BYTES;
-                for (long x = 0; x < len; x++) {
-                    Unsafe.getUnsafe().putByte(sendBufferPtr + x, sequence.byteAt(x));
-                }
-                sendBufferPtr += len;
-            } else {
-                throw NoSpaceLeftInResponseBufferException.INSTANCE;
+            // todo: handle max blob size tha can be sent using this method
+            //   perhaps we should send null and log error when BLOB is larger than the max configured size
+            ensureCapacity((int) (len + Integer.BYTES));
+            // when we reach here the "long" length would have to fit in response buffer
+            // if it was larger than integers it would never fit into integer-bound response buffer
+            NetworkByteOrderUtils.putInt(sendBufferPtr, (int) len);
+            sendBufferPtr += Integer.BYTES;
+            for (long x = 0; x < len; x++) {
+                Unsafe.getUnsafe().putByte(sendBufferPtr + x, sequence.byteAt(x));
             }
+            sendBufferPtr += len;
         }
 
         public void putLen(long start) {
@@ -786,30 +800,28 @@ public class WireParser implements Closeable {
         }
 
         public void putNetworkInt(int len) {
-            if (sendBufferPtr + Integer.BYTES < sendBufferLimit) {
-                NetworkByteOrderUtils.putInt(sendBufferPtr, len);
-                sendBufferPtr += Integer.BYTES;
-            } else {
-                throw NoSpaceLeftInResponseBufferException.INSTANCE;
+            ensureCapacity(Integer.BYTES);
+            NetworkByteOrderUtils.putInt(sendBufferPtr, len);
+            sendBufferPtr += Integer.BYTES;
+        }
+
+        private void ensureCapacity(int size) {
+            if (sendBufferPtr + size < sendBufferLimit) {
+                return;
             }
+            throw NoSpaceLeftInResponseBufferException.INSTANCE;
         }
 
         public void putNetworkShort(short value) {
-            if (sendBufferPtr + Short.BYTES < sendBufferLimit) {
-                NetworkByteOrderUtils.putShort(sendBufferPtr, value);
-                sendBufferPtr += Short.BYTES;
-            } else {
-                throw NoSpaceLeftInResponseBufferException.INSTANCE;
-            }
+            ensureCapacity(Short.BYTES);
+            NetworkByteOrderUtils.putShort(sendBufferPtr, value);
+            sendBufferPtr += Short.BYTES;
         }
 
         void encodeUtf8Z(CharSequence value) {
             encodeUtf8(value);
-            if (sendBufferPtr < sendBufferLimit) {
-                Unsafe.getUnsafe().putByte(sendBufferPtr++, (byte) 0);
-            } else {
-                throw NoSpaceLeftInResponseBufferException.INSTANCE;
-            }
+            ensureCapacity(Byte.BYTES);
+            Unsafe.getUnsafe().putByte(sendBufferPtr++, (byte) 0);
         }
 
         void reset() {
@@ -821,27 +833,10 @@ public class WireParser implements Closeable {
         }
 
         long skip() {
-            if (sendBufferPtr + Integer.BYTES < sendBufferLimit) {
-                long checkpoint = sendBufferPtr;
-                sendBufferPtr += Integer.BYTES;
-                return checkpoint;
-            }
-            throw NoSpaceLeftInResponseBufferException.INSTANCE;
+            ensureCapacity(Integer.BYTES);
+            long checkpoint = sendBufferPtr;
+            sendBufferPtr += Integer.BYTES;
+            return checkpoint;
         }
-    }
-
-    static {
-        typeOidMap.put(ColumnType.STRING, 1043); // VARCHAR
-        typeOidMap.put(ColumnType.TIMESTAMP, 1184); // TIMESTAMPZ
-        typeOidMap.put(ColumnType.DOUBLE, 701); // FLOAT8
-        typeOidMap.put(ColumnType.FLOAT, 700); // FLOAT4
-        typeOidMap.put(ColumnType.INT, 23); // INT4
-        typeOidMap.put(ColumnType.SHORT, 21); // INT2
-        typeOidMap.put(ColumnType.SYMBOL, 1043); // NAME
-        typeOidMap.put(ColumnType.LONG, 20); // INT8
-        typeOidMap.put(ColumnType.BYTE, 21); // INT2
-        typeOidMap.put(ColumnType.BOOLEAN, 16); // BOOL
-        typeOidMap.put(ColumnType.DATE, 1082); // DATE
-        typeOidMap.put(ColumnType.BINARY, 17); // BYTEA
     }
 }
