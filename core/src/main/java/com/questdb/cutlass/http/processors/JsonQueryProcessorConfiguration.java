@@ -24,6 +24,7 @@
 package com.questdb.cutlass.http.processors;
 
 public interface JsonQueryProcessorConfiguration {
+
     CharSequence getKeepAliveHeader();
 
     int getFloatScale();

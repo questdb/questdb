@@ -28,10 +28,7 @@ import com.questdb.cutlass.http.HttpRequestProcessor;
 import com.questdb.cutlass.http.HttpRequestProcessorFactory;
 import com.questdb.cutlass.http.HttpServer;
 import com.questdb.cutlass.http.HttpServerConfiguration;
-import com.questdb.cutlass.http.processors.JsonQueryProcessor;
-import com.questdb.cutlass.http.processors.StaticContentProcessor;
-import com.questdb.cutlass.http.processors.TableStatusCheckProcessor;
-import com.questdb.cutlass.http.processors.TextImportProcessor;
+import com.questdb.cutlass.http.processors.*;
 import com.questdb.std.CharSequenceObjHashMap;
 import com.questdb.std.Os;
 
@@ -110,6 +107,18 @@ public class ServerMain {
             @Override
             public HttpRequestProcessor newInstance() {
                 return new TextImportProcessor(configuration.getHttpServerConfiguration().getTextImportProcessorConfiguration(), cairoEngine);
+            }
+        });
+
+        httpServer.bind(new HttpRequestProcessorFactory() {
+            @Override
+            public String getUrl() {
+                return "/exp";
+            }
+
+            @Override
+            public HttpRequestProcessor newInstance() {
+                return new TextQueryProcessor(configuration.getHttpServerConfiguration().getJsonQueryProcessorConfiguration(), cairoEngine);
             }
         });
 
