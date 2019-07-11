@@ -24,7 +24,10 @@
 package com.questdb.griffin;
 
 import com.questdb.cairo.*;
-import com.questdb.cairo.sql.*;
+import com.questdb.cairo.sql.Record;
+import com.questdb.cairo.sql.RecordCursor;
+import com.questdb.cairo.sql.RecordCursorFactory;
+import com.questdb.cairo.sql.RecordMetadata;
 import com.questdb.griffin.engine.functions.bind.BindVariableService;
 import com.questdb.griffin.model.*;
 import com.questdb.log.Log;
@@ -64,6 +67,7 @@ public class SqlCompiler implements Closeable {
     private final ObjList<TableWriter> tableWriters = new ObjList<>();
     private final TableStructureAdapter tableStructureAdapter = new TableStructureAdapter();
     private final ExecutableMethod createTableMethod = this::createTable;
+    private final FunctionParser functionParser;
 
     public SqlCompiler(CairoEngine engine) {
         this(engine, null);
@@ -81,7 +85,7 @@ public class SqlCompiler implements Closeable {
                 configuration.getSqlCharacterStoreSequencePoolCapacity()
         );
         this.lexer = new GenericLexer(configuration.getSqlLexerPoolCapacity());
-        final FunctionParser functionParser = new FunctionParser(configuration, ServiceLoader.load(FunctionFactory.class));
+        this.functionParser = new FunctionParser(configuration, ServiceLoader.load(FunctionFactory.class));
         this.codeGenerator = new SqlCodeGenerator(engine, configuration, functionParser);
 
         configureLexer(lexer);
@@ -790,6 +794,7 @@ public class SqlCompiler implements Closeable {
     }
 
     private void clear() {
+        functionParser.clear();
         sqlNodePool.clear();
         characterStore.clear();
         queryColumnPool.clear();

@@ -29,31 +29,41 @@ import com.questdb.griffin.SqlException;
 import com.questdb.std.BinarySequence;
 import com.questdb.std.CharSequenceObjHashMap;
 import com.questdb.std.Chars;
+import com.questdb.std.ObjList;
 
 public class BindVariableService {
-    private final CharSequenceObjHashMap<Function> variables = new CharSequenceObjHashMap<>();
+    private final CharSequenceObjHashMap<Function> namedVariables = new CharSequenceObjHashMap<>();
+    private final ObjList<Function> indexedVariables = new ObjList<>();
 
     public void clear() {
-        variables.clear();
+        namedVariables.clear();
+        indexedVariables.clear();
     }
 
     public Function getFunction(CharSequence name) {
         assert name != null;
         assert Chars.startsWith(name, ':');
 
-        int index = variables.keyIndex(name, 1, name.length());
+        int index = namedVariables.keyIndex(name, 1, name.length());
         if (index > -1) {
             return null;
         }
-        return variables.valueAt(index);
+        return namedVariables.valueAt(index);
+    }
+
+    public Function getFunction(int index) {
+        if (index < indexedVariables.size()) {
+            return indexedVariables.getQuick(index);
+        }
+        return null;
     }
 
     public void setBin(CharSequence name, BinarySequence value) throws SqlException {
-        int index = variables.keyIndex(name);
+        int index = namedVariables.keyIndex(name);
         if (index > -1) {
-            variables.putAt(index, name, new BinBindVariable(value));
+            namedVariables.putAt(index, name, new BinBindVariable(value));
         } else {
-            Function function = variables.valueAt(index);
+            Function function = namedVariables.valueAt(index);
             if (function instanceof BinBindVariable) {
                 ((BinBindVariable) function).value = value;
             } else {
@@ -63,11 +73,11 @@ public class BindVariableService {
     }
 
     public void setBoolean(CharSequence name, boolean value) throws SqlException {
-        int index = variables.keyIndex(name);
+        int index = namedVariables.keyIndex(name);
         if (index > -1) {
-            variables.putAt(index, name, new BooleanBindVariable(value));
+            namedVariables.putAt(index, name, new BooleanBindVariable(value));
         } else {
-            Function function = variables.valueAt(index);
+            Function function = namedVariables.valueAt(index);
             if (function instanceof BooleanBindVariable) {
                 ((BooleanBindVariable) function).value = value;
             } else {
@@ -77,11 +87,11 @@ public class BindVariableService {
     }
 
     public void setByte(CharSequence name, byte value) throws SqlException {
-        int index = variables.keyIndex(name);
+        int index = namedVariables.keyIndex(name);
         if (index > -1) {
-            variables.putAt(index, name, new ByteBindVariable(value));
+            namedVariables.putAt(index, name, new ByteBindVariable(value));
         } else {
-            Function function = variables.valueAt(index);
+            Function function = namedVariables.valueAt(index);
             if (function instanceof ByteBindVariable) {
                 ((ByteBindVariable) function).value = value;
             } else {
@@ -91,11 +101,11 @@ public class BindVariableService {
     }
 
     public void setDate(CharSequence name, long value) throws SqlException {
-        int index = variables.keyIndex(name);
+        int index = namedVariables.keyIndex(name);
         if (index > -1) {
-            variables.putAt(index, name, new DateBindVariable(value));
+            namedVariables.putAt(index, name, new DateBindVariable(value));
         } else {
-            Function function = variables.valueAt(index);
+            Function function = namedVariables.valueAt(index);
             if (function instanceof DateBindVariable) {
                 ((DateBindVariable) function).value = value;
             } else {
@@ -105,11 +115,11 @@ public class BindVariableService {
     }
 
     public void setDouble(CharSequence name, double value) throws SqlException {
-        int index = variables.keyIndex(name);
+        int index = namedVariables.keyIndex(name);
         if (index > -1) {
-            variables.putAt(index, name, new DoubleBindVariable(value));
+            namedVariables.putAt(index, name, new DoubleBindVariable(value));
         } else {
-            Function function = variables.valueAt(index);
+            Function function = namedVariables.valueAt(index);
             if (function instanceof DoubleBindVariable) {
                 ((DoubleBindVariable) function).value = value;
             } else {
@@ -119,11 +129,11 @@ public class BindVariableService {
     }
 
     public void setFloat(CharSequence name, float value) throws SqlException {
-        int index = variables.keyIndex(name);
+        int index = namedVariables.keyIndex(name);
         if (index > -1) {
-            variables.putAt(index, name, new FloatBindVariable(value));
+            namedVariables.putAt(index, name, new FloatBindVariable(value));
         } else {
-            Function function = variables.valueAt(index);
+            Function function = namedVariables.valueAt(index);
             if (function instanceof FloatBindVariable) {
                 ((FloatBindVariable) function).value = value;
             } else {
@@ -133,11 +143,11 @@ public class BindVariableService {
     }
 
     public void setInt(CharSequence name, int value) throws SqlException {
-        int index = variables.keyIndex(name);
+        int index = namedVariables.keyIndex(name);
         if (index > -1) {
-            variables.putAt(index, name, new IntBindVariable(value));
+            namedVariables.putAt(index, name, new IntBindVariable(value));
         } else {
-            Function function = variables.valueAt(index);
+            Function function = namedVariables.valueAt(index);
             if (function instanceof IntBindVariable) {
                 ((IntBindVariable) function).value = value;
             } else {
@@ -147,11 +157,11 @@ public class BindVariableService {
     }
 
     public void setLong(CharSequence name, long value) throws SqlException {
-        int index = variables.keyIndex(name);
+        int index = namedVariables.keyIndex(name);
         if (index > -1) {
-            variables.putAt(index, name, new LongBindVariable(value));
+            namedVariables.putAt(index, name, new LongBindVariable(value));
         } else {
-            Function function = variables.valueAt(index);
+            Function function = namedVariables.valueAt(index);
             if (function instanceof LongBindVariable) {
                 ((LongBindVariable) function).value = value;
             } else {
@@ -160,12 +170,177 @@ public class BindVariableService {
         }
     }
 
-    public void setShort(CharSequence name, short value) throws SqlException {
-        int index = variables.keyIndex(name);
-        if (index > -1) {
-            variables.putAt(index, name, new ShortBindVariable(value));
+    public void setLong(int index, long value) throws SqlException {
+        if (index < indexedVariables.size()) {
+            Function function = indexedVariables.getQuick(index);
+            if (function == null) {
+                indexedVariables.setQuick(index, new LongBindVariable(value));
+            } else if (function instanceof LongBindVariable) {
+                ((LongBindVariable) function).value = value;
+            } else {
+                throw SqlException.position(0).put("bind variable at ").put(index).put(" is already defined as ").put(ColumnType.nameOf(function.getType()));
+            }
         } else {
-            Function function = variables.valueAt(index);
+            indexedVariables.extendAndSet(index, new LongBindVariable(value));
+        }
+    }
+
+    public void setBoolean(int index, boolean value) throws SqlException {
+        if (index < indexedVariables.size()) {
+            Function function = indexedVariables.getQuick(index);
+            if (function == null) {
+                indexedVariables.setQuick(index, new BooleanBindVariable(value));
+            } else if (function instanceof BooleanBindVariable) {
+                ((BooleanBindVariable) function).value = value;
+            } else {
+                throw SqlException.position(0).put("bind variable at ").put(index).put(" is already defined as ").put(ColumnType.nameOf(function.getType()));
+            }
+        } else {
+            indexedVariables.extendAndSet(index, new BooleanBindVariable(value));
+        }
+    }
+
+    public void setDate(int index, long value) throws SqlException {
+        if (index < indexedVariables.size()) {
+            Function function = indexedVariables.getQuick(index);
+            if (function == null) {
+                indexedVariables.setQuick(index, new DateBindVariable(value));
+            } else if (function instanceof DateBindVariable) {
+                ((DateBindVariable) function).value = value;
+            } else {
+                throw SqlException.position(0).put("bind variable at ").put(index).put(" is already defined as ").put(ColumnType.nameOf(function.getType()));
+            }
+        } else {
+            indexedVariables.extendAndSet(index, new DateBindVariable(value));
+        }
+    }
+
+    public void setTimestamp(int index, long value) throws SqlException {
+        if (index < indexedVariables.size()) {
+            Function function = indexedVariables.getQuick(index);
+            if (function == null) {
+                indexedVariables.setQuick(index, new TimestampBindVariable(value));
+            } else if (function instanceof TimestampBindVariable) {
+                ((TimestampBindVariable) function).value = value;
+            } else {
+                throw SqlException.position(0).put("bind variable at ").put(index).put(" is already defined as ").put(ColumnType.nameOf(function.getType()));
+            }
+        } else {
+            indexedVariables.extendAndSet(index, new TimestampBindVariable(value));
+        }
+    }
+
+    public void setByte(int index, byte value) throws SqlException {
+        if (index < indexedVariables.size()) {
+            Function function = indexedVariables.getQuick(index);
+            if (function == null) {
+                indexedVariables.setQuick(index, new ByteBindVariable(value));
+            } else if (function instanceof ByteBindVariable) {
+                ((ByteBindVariable) function).value = value;
+            } else {
+                throw SqlException.position(0).put("bind variable at ").put(index).put(" is already defined as ").put(ColumnType.nameOf(function.getType()));
+            }
+        } else {
+            indexedVariables.extendAndSet(index, new ByteBindVariable(value));
+        }
+    }
+
+    public void setShort(int index, short value) throws SqlException {
+        if (index < indexedVariables.size()) {
+            Function function = indexedVariables.getQuick(index);
+            if (function == null) {
+                indexedVariables.setQuick(index, new ShortBindVariable(value));
+            } else if (function instanceof ShortBindVariable) {
+                ((ShortBindVariable) function).value = value;
+            } else {
+                throw SqlException.position(0).put("bind variable at ").put(index).put(" is already defined as ").put(ColumnType.nameOf(function.getType()));
+            }
+        } else {
+            indexedVariables.extendAndSet(index, new ShortBindVariable(value));
+        }
+    }
+
+    public void setStr(int index, CharSequence value) throws SqlException {
+        if (index < indexedVariables.size()) {
+            Function function = indexedVariables.getQuick(index);
+            if (function == null) {
+                indexedVariables.setQuick(index, new StrBindVariable(value));
+            } else if (function instanceof StrBindVariable) {
+                ((StrBindVariable) function).value = value;
+            } else {
+                throw SqlException.position(0).put("bind variable at ").put(index).put(" is already defined as ").put(ColumnType.nameOf(function.getType()));
+            }
+        } else {
+            indexedVariables.extendAndSet(index, new StrBindVariable(value));
+        }
+    }
+
+    public void setBin(int index, BinarySequence value) throws SqlException {
+        if (index < indexedVariables.size()) {
+            Function function = indexedVariables.getQuick(index);
+            if (function == null) {
+                indexedVariables.setQuick(index, new BinBindVariable(value));
+            } else if (function instanceof BinBindVariable) {
+                ((BinBindVariable) function).value = value;
+            } else {
+                throw SqlException.position(0).put("bind variable at ").put(index).put(" is already defined as ").put(ColumnType.nameOf(function.getType()));
+            }
+        } else {
+            indexedVariables.extendAndSet(index, new BinBindVariable(value));
+        }
+    }
+
+    public void setFloat(int index, float value) throws SqlException {
+        if (index < indexedVariables.size()) {
+            Function function = indexedVariables.getQuick(index);
+            if (function == null) {
+                indexedVariables.setQuick(index, new FloatBindVariable(value));
+            } else if (function instanceof FloatBindVariable) {
+                ((FloatBindVariable) function).value = value;
+            } else {
+                throw SqlException.position(0).put("bind variable at ").put(index).put(" is already defined as ").put(ColumnType.nameOf(function.getType()));
+            }
+        } else {
+            indexedVariables.extendAndSet(index, new FloatBindVariable(value));
+        }
+    }
+
+    public void setDouble(int index, double value) throws SqlException {
+        if (index < indexedVariables.size()) {
+            Function function = indexedVariables.getQuick(index);
+            if (function == null) {
+                indexedVariables.setQuick(index, new DoubleBindVariable(value));
+            } else if (function instanceof DoubleBindVariable) {
+                ((DoubleBindVariable) function).value = value;
+            } else {
+                throw SqlException.position(0).put("bind variable at ").put(index).put(" is already defined as ").put(ColumnType.nameOf(function.getType()));
+            }
+        } else {
+            indexedVariables.extendAndSet(index, new DoubleBindVariable(value));
+        }
+    }
+
+    public void setInt(int index, int value) throws SqlException {
+        if (index < indexedVariables.size()) {
+            Function function = indexedVariables.getQuick(index);
+            if (function == null) {
+                indexedVariables.setQuick(index, new IntBindVariable(value));
+            } else if (function instanceof IntBindVariable) {
+                ((IntBindVariable) function).value = value;
+            } else {
+                throw SqlException.position(0).put("bind variable at ").put(index).put(" is already defined as ").put(ColumnType.nameOf(function.getType()));
+            }
+        } else {
+            indexedVariables.extendAndSet(index, new IntBindVariable(value));
+        }
+    }
+
+    public void setShort(CharSequence name, short value) throws SqlException {
+        int index = namedVariables.keyIndex(name);
+        if (index > -1) {
+            namedVariables.putAt(index, name, new ShortBindVariable(value));
+        } else {
+            Function function = namedVariables.valueAt(index);
             if (function instanceof ShortBindVariable) {
                 ((ShortBindVariable) function).value = value;
             } else {
@@ -175,11 +350,11 @@ public class BindVariableService {
     }
 
     public void setStr(CharSequence name, CharSequence value) throws SqlException {
-        int index = variables.keyIndex(name);
+        int index = namedVariables.keyIndex(name);
         if (index > -1) {
-            variables.putAt(index, name, new StrBindVariable(value));
+            namedVariables.putAt(index, name, new StrBindVariable(value));
         } else {
-            Function function = variables.valueAt(index);
+            Function function = namedVariables.valueAt(index);
             if (function instanceof StrBindVariable) {
                 ((StrBindVariable) function).value = value;
             } else {
@@ -189,11 +364,11 @@ public class BindVariableService {
     }
 
     public void setTimestamp(CharSequence name, long value) throws SqlException {
-        int index = variables.keyIndex(name);
+        int index = namedVariables.keyIndex(name);
         if (index > -1) {
-            variables.putAt(index, name, new TimestampBindVariable(value));
+            namedVariables.putAt(index, name, new TimestampBindVariable(value));
         } else {
-            Function function = variables.valueAt(index);
+            Function function = namedVariables.valueAt(index);
             if (function instanceof TimestampBindVariable) {
                 ((TimestampBindVariable) function).value = value;
             } else {

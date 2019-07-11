@@ -47,6 +47,16 @@ public class BindVariableServiceTest {
     }
 
     @Test
+    public void testBinIndexedOverride() throws SqlException {
+        bindVariableService.setLong(0, 10);
+        try {
+            bindVariableService.setBin(0, null);
+        } catch (SqlException e) {
+            TestUtils.assertContains(e.getMessage(), "bind variable at 0 is already defined as LONG");
+        }
+    }
+
+    @Test
     public void testBooleanOverride() throws SqlException {
         bindVariableService.setLong("a", 10);
         try {
@@ -57,12 +67,31 @@ public class BindVariableServiceTest {
     }
 
     @Test
+    public void testBooleanIndexedOverride() throws SqlException {
+        bindVariableService.setLong(0, 10);
+        try {
+            bindVariableService.setBoolean(0, false);
+        } catch (SqlException e) {
+            TestUtils.assertContains(e.getMessage(), "bind variable at 0 is already defined as LONG");
+        }
+    }
+    @Test
     public void testByteOverride() throws SqlException {
         bindVariableService.setLong("a", 10);
         try {
             bindVariableService.setByte("a", (byte) 5);
         } catch (SqlException e) {
             TestUtils.assertContains(e.getMessage(), "bind variable 'a' is already defined as LONG");
+        }
+    }
+
+    @Test
+    public void testByteIndexedOverride() throws SqlException {
+        bindVariableService.setLong(0, 10);
+        try {
+            bindVariableService.setByte(0, (byte) 5);
+        } catch (SqlException e) {
+            TestUtils.assertContains(e.getMessage(), "bind variable at 0 is already defined as LONG");
         }
     }
 
@@ -77,12 +106,32 @@ public class BindVariableServiceTest {
     }
 
     @Test
+    public void testDateIndexedOverride() throws SqlException {
+        bindVariableService.setLong(0, 10);
+        try {
+            bindVariableService.setDate(0, 5);
+        } catch (SqlException e) {
+            TestUtils.assertContains(e.getMessage(), "bind variable at 0 is already defined as LONG");
+        }
+    }
+
+    @Test
     public void testDoubleOverride() throws SqlException {
         bindVariableService.setInt("a", 10);
         try {
             bindVariableService.setDouble("a", 5.4);
         } catch (SqlException e) {
             TestUtils.assertContains(e.getMessage(), "bind variable 'a' is already defined as INT");
+        }
+    }
+
+    @Test
+    public void testDoubleIndexedOverride() throws SqlException {
+        bindVariableService.setInt(2, 10);
+        try {
+            bindVariableService.setDouble(2, 5.4);
+        } catch (SqlException e) {
+            TestUtils.assertContains(e.getMessage(), "bind variable at 2 is already defined as INT");
         }
     }
 
@@ -97,12 +146,32 @@ public class BindVariableServiceTest {
     }
 
     @Test
+    public void testFloatIndexedOverride() throws SqlException {
+        bindVariableService.setLong(1, 10);
+        try {
+            bindVariableService.setFloat(1, 5);
+        } catch (SqlException e) {
+            TestUtils.assertContains(e.getMessage(), "bind variable at 1 is already defined as LONG");
+        }
+    }
+
+    @Test
     public void testIntOverride() throws SqlException {
         bindVariableService.setLong("a", 10);
         try {
             bindVariableService.setInt("a", 5);
         } catch (SqlException e) {
             TestUtils.assertContains(e.getMessage(), "bind variable 'a' is already defined as LONG");
+        }
+    }
+
+    @Test
+    public void testIntIndexedOverride() throws SqlException {
+        bindVariableService.setLong(0, 10);
+        try {
+            bindVariableService.setInt(0, 5);
+        } catch (SqlException e) {
+            TestUtils.assertContains(e.getMessage(), "bind variable at 0 is already defined as LONG");
         }
     }
 
@@ -117,12 +186,32 @@ public class BindVariableServiceTest {
     }
 
     @Test
+    public void testLongIndexedOverride() throws SqlException {
+        bindVariableService.setInt(0, 10);
+        try {
+            bindVariableService.setLong(0, 5);
+        } catch (SqlException e) {
+            TestUtils.assertContains(e.getMessage(), "bind variable at 0 is already defined as INT");
+        }
+    }
+
+    @Test
     public void testShortOverride() throws SqlException {
         bindVariableService.setLong("a", 10);
         try {
             bindVariableService.setShort("a", (short) 5);
         } catch (SqlException e) {
             TestUtils.assertContains(e.getMessage(), "bind variable 'a' is already defined as LONG");
+        }
+    }
+
+    @Test
+    public void testShortIndexedOverride() throws SqlException {
+        bindVariableService.setLong(0, 10);
+        try {
+            bindVariableService.setShort(0, (short) 5);
+        } catch (SqlException e) {
+            TestUtils.assertContains(e.getMessage(), "bind variable at 0 is already defined as LONG");
         }
     }
 
@@ -137,12 +226,32 @@ public class BindVariableServiceTest {
     }
 
     @Test
+    public void testStrIndexedOverride() throws SqlException {
+        bindVariableService.setLong(0, 10);
+        try {
+            bindVariableService.setStr(0, "ok");
+        } catch (SqlException e) {
+            TestUtils.assertContains(e.getMessage(), "bind variable at 0 is already defined as LONG");
+        }
+    }
+
+    @Test
     public void testTimestampOverride() throws SqlException {
         bindVariableService.setLong("a", 10);
         try {
             bindVariableService.setTimestamp("a", 5);
         } catch (SqlException e) {
             TestUtils.assertContains(e.getMessage(), "bind variable 'a' is already defined as LONG");
+        }
+    }
+
+    @Test
+    public void testTimestampIndexedOverride() throws SqlException {
+        bindVariableService.setLong(0, 10);
+        try {
+            bindVariableService.setTimestamp(0, 5);
+        } catch (SqlException e) {
+            TestUtils.assertContains(e.getMessage(), "bind variable at 0 is already defined as LONG");
         }
     }
 }

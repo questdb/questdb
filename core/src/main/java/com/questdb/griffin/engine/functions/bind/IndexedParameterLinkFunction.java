@@ -29,14 +29,14 @@ import com.questdb.std.BinarySequence;
 import com.questdb.std.Misc;
 import com.questdb.std.str.CharSink;
 
-public class LinkFunction implements Function {
-    private final String variableName;
+public class IndexedParameterLinkFunction implements Function {
+    private final int variableIndex;
     private final int type;
     private final int position;
     private Function base;
 
-    public LinkFunction(String variableName, int type, int position) {
-        this.variableName = variableName;
+    public IndexedParameterLinkFunction(int variableIndex, int type, int position) {
+        this.variableIndex = variableIndex;
         this.type = type;
         this.position = position;
     }
@@ -148,9 +148,9 @@ public class LinkFunction implements Function {
 
     @Override
     public void init(RecordCursor recordCursor, BindVariableService bindVariableService) {
-        base = bindVariableService.getFunction(variableName);
+        base = bindVariableService.getFunction(variableIndex);
         if (base == null) {
-            throw CairoException.instance(0).put("undefined bind variable: ").put(variableName);
+            throw CairoException.instance(0).put("undefined bind variable: ").put(variableIndex);
         }
         assert base.getType() == type;
         base.init(recordCursor, bindVariableService);

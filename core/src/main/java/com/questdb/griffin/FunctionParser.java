@@ -28,7 +28,8 @@ import com.questdb.cairo.ColumnType;
 import com.questdb.cairo.sql.Function;
 import com.questdb.cairo.sql.RecordMetadata;
 import com.questdb.griffin.engine.functions.CursorFunction;
-import com.questdb.griffin.engine.functions.bind.LinkFunction;
+import com.questdb.griffin.engine.functions.bind.IndexedParameterLinkFunction;
+import com.questdb.griffin.engine.functions.bind.NamedParameterLinkFunction;
 import com.questdb.griffin.engine.functions.columns.*;
 import com.questdb.griffin.engine.functions.constants.*;
 import com.questdb.griffin.model.ExpressionNode;
@@ -38,7 +39,7 @@ import com.questdb.std.*;
 
 import java.util.ArrayDeque;
 
-public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
+public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutable {
     private static final Log LOG = LogFactory.getLog(FunctionParser.class);
 
     // order of values matters here, partial match must have greater value than fuzzy match
@@ -49,6 +50,18 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
 
     private static final IntHashSet invalidFunctionNameChars = new IntHashSet();
     private static final CharSequenceHashSet invalidFunctionNames = new CharSequenceHashSet();
+
+    static {
+        for (int i = 0, n = SqlCompiler.sqlControlSymbols.size(); i < n; i++) {
+            invalidFunctionNames.add(SqlCompiler.sqlControlSymbols.getQuick(i));
+        }
+
+        invalidFunctionNameChars.add('.');
+        invalidFunctionNameChars.add(' ');
+        invalidFunctionNameChars.add('\"');
+        invalidFunctionNameChars.add('\'');
+    }
+
     private final ObjList<Function> mutableArgs = new ObjList<>();
     private final ArrayDeque<Function> stack = new ArrayDeque<>();
     private final PostOrderTreeTraversalAlgo traverseAlgo = new PostOrderTreeTraversalAlgo();
@@ -58,6 +71,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
     private final ArrayDeque<RecordMetadata> metadataStack = new ArrayDeque<>();
     private RecordMetadata metadata;
     private SqlExecutionContext sqlExecutionContext;
+    private int bindVariableIndex = 0;
 
     public FunctionParser(CairoConfiguration configuration, Iterable<FunctionFactory> functionFactories) {
         this.configuration = configuration;
@@ -160,12 +174,43 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
         return openBraceIndex;
     }
 
-    public Function createParameter(ExpressionNode node) throws SqlException {
+    private static SqlException invalidFunction(CharSequence message, ExpressionNode node, ObjList<Function> args) {
+        SqlException ex = SqlException.position(node.position);
+        ex.put(message);
+        ex.put(": ");
+        ex.put(node.token);
+        ex.put('(');
+        if (args != null) {
+            for (int i = 0, n = args.size(); i < n; i++) {
+                if (i > 0) {
+                    ex.put(',');
+                }
+                ex.put(ColumnType.nameOf(args.getQuick(i).getType()));
+            }
+        }
+        ex.put(')');
+        return ex;
+    }
+
+    @Override
+    public void clear() {
+        bindVariableIndex = 0;
+    }
+
+    public Function createNamedParameter(ExpressionNode node) throws SqlException {
         Function function = sqlExecutionContext.getBindVariableService().getFunction(node.token);
         if (function == null) {
             throw SqlException.position(node.position).put("undefined bind variable: ").put(node.token);
         }
-        return new LinkFunction(Chars.toString(node.token), function.getType(), node.position);
+        return new NamedParameterLinkFunction(Chars.toString(node.token), function.getType(), node.position);
+    }
+
+    public Function createIndexParameter(int variableIndex, ExpressionNode node) throws SqlException {
+        Function function = sqlExecutionContext.getBindVariableService().getFunction(variableIndex);
+        if (function == null) {
+            throw SqlException.position(node.position).put("no bind variable defined at index ").put(variableIndex);
+        }
+        return new IndexedParameterLinkFunction(variableIndex, function.getType(), node.position);
     }
 
     public boolean isGroupBy(CharSequence name) {
@@ -228,8 +273,10 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
         if (argCount == 0) {
             switch (node.type) {
                 case ExpressionNode.LITERAL:
-                    if (Chars.startsWith(node.token, ':')) {
-                        stack.push(createParameter(node));
+                    if (Chars.equals(node.token, '?')) {
+                        stack.push(createIndexParameter(bindVariableIndex++, node));
+                    } else if (Chars.startsWith(node.token, ':')) {
+                        stack.push(createNamedParameter(node));
                     } else {
                         // lookup column
                         stack.push(createColumn(node));
@@ -258,24 +305,6 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
             }
             stack.push(createFunction(node, mutableArgs));
         }
-    }
-
-    private static SqlException invalidFunction(CharSequence message, ExpressionNode node, ObjList<Function> args) {
-        SqlException ex = SqlException.position(node.position);
-        ex.put(message);
-        ex.put(": ");
-        ex.put(node.token);
-        ex.put('(');
-        if (args != null) {
-            for (int i = 0, n = args.size(); i < n; i++) {
-                if (i > 0) {
-                    ex.put(',');
-                }
-                ex.put(ColumnType.nameOf(args.getQuick(i).getType()));
-            }
-        }
-        ex.put(')');
-        return ex;
     }
 
     private Function checkAndCreateFunction(FunctionFactory factory, ObjList<Function> args, int position, CairoConfiguration configuration) throws SqlException {
@@ -667,16 +696,5 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
                 groupByFunctionNames.add(name);
             }
         }
-    }
-
-    static {
-        for (int i = 0, n = SqlCompiler.sqlControlSymbols.size(); i < n; i++) {
-            invalidFunctionNames.add(SqlCompiler.sqlControlSymbols.getQuick(i));
-        }
-
-        invalidFunctionNameChars.add('.');
-        invalidFunctionNameChars.add(' ');
-        invalidFunctionNameChars.add('\"');
-        invalidFunctionNameChars.add('\'');
     }
 }
