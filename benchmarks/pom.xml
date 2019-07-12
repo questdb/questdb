@@ -52,7 +52,7 @@
         <dependency>
             <groupId>org.questdb</groupId>
             <artifactId>questdb-core</artifactId>
-            <version>3.2.0</version>
+            <version>3.2.1-SNAPSHOT</version>
         </dependency>
         <dependency>
             <groupId>org.apache.logging.log4j</groupId>
