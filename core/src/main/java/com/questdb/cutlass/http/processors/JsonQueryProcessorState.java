@@ -34,7 +34,7 @@ public class JsonQueryProcessorState extends AbstractQueryContext {
     @Override
     public void clear() {
         super.clear();
-        queryState = JsonQueryProcessor.QUERY_PREFIX;
+        queryState = AbstractQueryContext.QUERY_PREFIX;
         fetchAll = false;
     }
 }

@@ -362,7 +362,6 @@ public class WireParser implements Closeable {
                 }
                 break;
             case 'S': // sync?
-                // todo: wtf is this?
                 break;
             case 'D': // describe?
                 if (currentFactory != null) {

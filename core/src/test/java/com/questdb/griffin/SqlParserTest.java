@@ -43,6 +43,15 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testDuplicateColumnsVirtualAndGroupBySelect() throws SqlException {
+        assertQuery(
+                "select-group-by sum(b + a) sum, column, k1, k1 k from (select-virtual a, b, a + b column, k1, k1 k from (select-choose a, b, k k1 from (x timestamp (timestamp)))) sample by 1m",
+                "select sum(b+a), a+b, k k1, k from x sample by 1m",
+                modelOf("x").col("a", ColumnType.DOUBLE).col("b", ColumnType.SYMBOL).col("k", ColumnType.TIMESTAMP).timestamp()
+        );
+    }
+
+    @Test
     public void testAliasWithSpaceX() {
         assertSyntaxError("from x 'a b' where x > 1", 7, "unexpected");
     }
@@ -1576,20 +1585,21 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testDuplicateColumnsVirtualAndGroupBySelect() throws SqlException {
+    public void testDuplicateColumnsVirtualSelect() throws SqlException {
         assertQuery(
-                "select-group-by sum(b + a) sum, column, k1, k1 k from (select-virtual a, b, a + b column, k1 from (select-choose a, b, k k1 from (x timestamp (timestamp)))) sample by 1m",
-                "select sum(b+a), a+b, k k1, k from x sample by 1m",
+                "select-virtual b + a column, k1, k1 k from (select-choose a, b, k k1 from (x timestamp (timestamp)))",
+                "select b+a, k k1, k from x",
                 modelOf("x").col("a", ColumnType.DOUBLE).col("b", ColumnType.SYMBOL).col("k", ColumnType.TIMESTAMP).timestamp()
         );
     }
 
     @Test
-    public void testDuplicateColumnsVirtualSelect() throws SqlException {
-        assertQuery(
-                "select-choose column, k1, k1 k from (select-virtual b + a column, k1 from (select-choose a, b, k k1 from (x timestamp (timestamp))))",
-                "select b+a, k k1, k from x",
-                modelOf("x").col("a", ColumnType.DOUBLE).col("b", ColumnType.SYMBOL).col("k", ColumnType.TIMESTAMP).timestamp()
+    public void testFunctionWithoutAlias() throws SqlException {
+        assertQuery("select-virtual f(x) f, x from (x where x > 1)",
+                "select f(x), x from x where x > 1",
+                modelOf("x")
+                        .col("x", ColumnType.INT)
+                        .col("y", ColumnType.INT)
         );
     }
 

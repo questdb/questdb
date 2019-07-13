@@ -28,7 +28,6 @@ import com.questdb.cairo.CairoError;
 import com.questdb.cairo.CairoException;
 import com.questdb.cairo.ColumnType;
 import com.questdb.cairo.sql.Record;
-import com.questdb.cairo.sql.RecordCursorFactory;
 import com.questdb.cutlass.http.HttpChunkedResponseSocket;
 import com.questdb.cutlass.http.HttpConnectionContext;
 import com.questdb.cutlass.http.HttpRequestHeader;
@@ -43,22 +42,9 @@ import com.questdb.std.*;
 import com.questdb.std.str.CharSink;
 
 import java.io.Closeable;
-import java.lang.ThreadLocal;
 import java.util.concurrent.atomic.AtomicLong;
 
 public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
-    static final int QUERY_DATA_SUFFIX = 7;
-    static final int QUERY_RECORD_SUFFIX = 6;
-    static final int QUERY_RECORD_COLUMNS = 5;
-    static final int QUERY_RECORD_START = 4;
-    static final int QUERY_META_SUFFIX = 3;
-    static final int QUERY_METADATA = 2;
-    static final int QUERY_PREFIX = 1;
-    // Factory cache is thread local due to possibility of factory being
-    // closed by another thread. Peer disconnect is a typical example of this.
-    // Being asynchronous we may need to be able to return factory to the cache
-    // by the same thread that executes the dispatcher.
-    static final ThreadLocal<AssociativeCache<RecordCursorFactory>> FACTORY_CACHE = ThreadLocal.withInitial(() -> new AssociativeCache<>(8, 8));
     private static final LocalValue<JsonQueryProcessorState> LV = new LocalValue<>();
     private static final Log LOG = LogFactory.getLog(JsonQueryProcessor.class);
     private final AtomicLong cacheHits = new AtomicLong();
@@ -178,56 +164,6 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         }
     }
 
-    public boolean parseUrl(
-            HttpChunkedResponseSocket socket,
-            HttpRequestHeader request,
-            JsonQueryProcessorState state
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        // Query text.
-        final CharSequence query = request.getUrlParam("query");
-        if (query == null || query.length() == 0) {
-            info(state).$("Empty query request received. Sending empty reply.").$();
-            sendException(socket, 0, "No query text", 400, state.query);
-            return false;
-        }
-
-        // Url Params.
-        long skip = 0;
-        long stop = Long.MAX_VALUE;
-
-        CharSequence limit = request.getUrlParam("limit");
-        if (limit != null) {
-            int sepPos = Chars.indexOf(limit, ',');
-            try {
-                if (sepPos > 0) {
-                    skip = Numbers.parseLong(limit, 0, sepPos);
-                    if (sepPos + 1 < limit.length()) {
-                        stop = Numbers.parseLong(limit, sepPos + 1, limit.length());
-                    }
-                } else {
-                    stop = Numbers.parseLong(limit);
-                }
-            } catch (NumericException ex) {
-                // Skip or stop will have default value.
-            }
-        }
-        if (stop < 0) {
-            stop = 0;
-        }
-
-        if (skip < 0) {
-            skip = 0;
-        }
-
-        state.query = query;
-        state.skip = skip;
-        state.count = 0L;
-        state.stop = stop;
-        state.noMeta = Chars.equalsNc("true", request.getUrlParam("nm"));
-        state.fetchAll = Chars.equalsNc("true", request.getUrlParam("count"));
-        return true;
-    }
-
     public void execute(
             HttpConnectionContext context,
             IODispatcher<HttpConnectionContext> dispatcher,
@@ -235,7 +171,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             HttpChunkedResponseSocket socket
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         try {
-            state.recordCursorFactory = FACTORY_CACHE.get().poll(state.query);
+            state.recordCursorFactory = AbstractQueryContext.FACTORY_CACHE.get().poll(state.query);
             int retryCount = 0;
             do {
                 if (state.recordCursorFactory == null) {
@@ -266,7 +202,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
                         //  we could be having severe hardware issues and continue trying
                         if (retryCount == 0) {
                             // todo: we want to clear cache, no need to create string to achieve this
-                            FACTORY_CACHE.get().put(state.query.toString(), null);
+                            AbstractQueryContext.FACTORY_CACHE.get().put(state.query.toString(), null);
                             state.recordCursorFactory = null;
                             LOG.error().$("RecordSource execution failed. ").$(e.getMessage()).$(". Retrying ...").$();
                             retryCount++;
@@ -289,6 +225,139 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             internalError(socket, e, state);
             readyForNextRequest(context, dispatcher);
         }
+    }
+
+    @Override
+    public void resumeSend(
+            HttpConnectionContext context,
+            IODispatcher<HttpConnectionContext> dispatcher
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        JsonQueryProcessorState state = LV.get(context);
+        if (state == null || state.cursor == null) {
+            return;
+        }
+
+        LOG.debug().$("resume [fd=").$(context.getFd()).$(']').$();
+
+        final HttpChunkedResponseSocket socket = context.getChunkedResponseSocket();
+        final int columnCount = state.metadata.getColumnCount();
+
+        OUT:
+        while (true) {
+            try {
+                SWITCH:
+                switch (state.queryState) {
+                    case AbstractQueryContext.QUERY_PREFIX:
+                        if (state.noMeta) {
+                            socket.put('{').putQuoted("dataset").put(":[");
+                            state.queryState = AbstractQueryContext.QUERY_RECORD_START;
+                            break;
+                        }
+                        socket.bookmark();
+                        socket.put('{').putQuoted("query").put(':').encodeUtf8AndQuote(state.query);
+                        socket.put(',').putQuoted("columns").put(':').put('[');
+                        state.queryState = AbstractQueryContext.QUERY_METADATA;
+                        state.columnIndex = 0;
+                        // fall through
+                    case AbstractQueryContext.QUERY_METADATA:
+                        for (; state.columnIndex < columnCount; state.columnIndex++) {
+
+                            socket.bookmark();
+
+                            if (state.columnIndex > 0) {
+                                socket.put(',');
+                            }
+                            socket.put('{').
+                                    putQuoted("name").put(':').putQuoted(state.metadata.getColumnName(state.columnIndex)).
+                                    put(',').
+                                    putQuoted("type").put(':').putQuoted(ColumnType.nameOf(state.metadata.getColumnType(state.columnIndex)));
+                            socket.put('}');
+                        }
+                        state.queryState = AbstractQueryContext.QUERY_META_SUFFIX;
+                        // fall through
+                    case AbstractQueryContext.QUERY_META_SUFFIX:
+                        socket.bookmark();
+                        socket.put("],\"dataset\":[");
+                        state.queryState = AbstractQueryContext.QUERY_RECORD_START;
+                        // fall through
+                    case AbstractQueryContext.QUERY_RECORD_START:
+
+                        if (state.record == null) {
+                            // check if cursor has any records
+                            state.record = state.cursor.getRecord();
+                            while (true) {
+                                if (state.cursor.hasNext()) {
+                                    state.count++;
+
+                                    if (state.fetchAll && state.count > state.stop) {
+//                                        state.cancellationHandler.check();
+                                        continue;
+                                    }
+
+                                    if (state.count > state.skip) {
+                                        break;
+                                    }
+                                } else {
+                                    state.queryState = AbstractQueryContext.QUERY_DATA_SUFFIX;
+                                    break SWITCH;
+                                }
+                            }
+                        }
+
+                        if (state.count > state.stop) {
+                            state.queryState = AbstractQueryContext.QUERY_DATA_SUFFIX;
+                            break;
+                        }
+
+                        socket.bookmark();
+                        if (state.count > state.skip + 1) {
+                            socket.put(',');
+                        }
+                        socket.put('[');
+
+                        state.queryState = AbstractQueryContext.QUERY_RECORD_COLUMNS;
+                        state.columnIndex = 0;
+                        // fall through
+                    case AbstractQueryContext.QUERY_RECORD_COLUMNS:
+
+                        for (; state.columnIndex < columnCount; state.columnIndex++) {
+                            socket.bookmark();
+                            if (state.columnIndex > 0) {
+                                socket.put(',');
+                            }
+                            putValue(socket, state.metadata.getColumnType(state.columnIndex), state.record, state.columnIndex);
+                        }
+
+                        state.queryState = AbstractQueryContext.QUERY_RECORD_SUFFIX;
+                        // fall through
+
+                    case AbstractQueryContext.QUERY_RECORD_SUFFIX:
+                        socket.bookmark();
+                        socket.put(']');
+                        state.record = null;
+                        state.queryState = AbstractQueryContext.QUERY_RECORD_START;
+                        break;
+                    case AbstractQueryContext.QUERY_DATA_SUFFIX:
+                        sendDone(socket, state);
+                        break OUT;
+                    default:
+                        break OUT;
+                }
+            } catch (NoSpaceLeftInResponseBufferException ignored) {
+                if (socket.resetToBookmark()) {
+                    socket.sendChunk();
+                } else {
+                    // what we have here is out unit of data, column value or query
+                    // is larger that response content buffer
+                    // all we can do in this scenario is to log appropriately
+                    // and disconnect socket
+                    info(state).$("Response buffer is too small, state=").$(state.queryState).$();
+                    throw PeerDisconnectedException.INSTANCE;
+                }
+            }
+        }
+        // reached the end naturally?
+        readyForNextRequest(context, dispatcher);
     }
 
     private void syntaxError(
@@ -354,137 +423,54 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         return LOG.info().$('[').$(state.fd).$("] ");
     }
 
-    @Override
-    public void resumeSend(
-            HttpConnectionContext context,
-            IODispatcher<HttpConnectionContext> dispatcher
+    private boolean parseUrl(
+            HttpChunkedResponseSocket socket,
+            HttpRequestHeader request,
+            JsonQueryProcessorState state
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        JsonQueryProcessorState state = LV.get(context);
-        if (state == null || state.cursor == null) {
-            return;
+        // Query text.
+        final CharSequence query = request.getUrlParam("query");
+        if (query == null || query.length() == 0) {
+            info(state).$("Empty query request received. Sending empty reply.").$();
+            sendException(socket, 0, "No query text", 400, state.query);
+            return false;
         }
 
-        LOG.debug().$("resume [fd=").$(context.getFd()).$(']').$();
+        // Url Params.
+        long skip = 0;
+        long stop = Long.MAX_VALUE;
 
-        final HttpChunkedResponseSocket socket = context.getChunkedResponseSocket();
-        final int columnCount = state.metadata.getColumnCount();
-
-        OUT:
-        while (true) {
+        CharSequence limit = request.getUrlParam("limit");
+        if (limit != null) {
+            int sepPos = Chars.indexOf(limit, ',');
             try {
-                SWITCH:
-                switch (state.queryState) {
-                    case QUERY_PREFIX:
-                        if (state.noMeta) {
-                            socket.put('{').putQuoted("dataset").put(":[");
-                            state.queryState = QUERY_RECORD_START;
-                            break;
-                        }
-                        socket.bookmark();
-                        socket.put('{').putQuoted("query").put(':').encodeUtf8AndQuote(state.query);
-                        socket.put(',').putQuoted("columns").put(':').put('[');
-                        state.queryState = QUERY_METADATA;
-                        state.columnIndex = 0;
-                        // fall through
-                    case QUERY_METADATA:
-                        for (; state.columnIndex < columnCount; state.columnIndex++) {
-
-                            socket.bookmark();
-
-                            if (state.columnIndex > 0) {
-                                socket.put(',');
-                            }
-                            socket.put('{').
-                                    putQuoted("name").put(':').putQuoted(state.metadata.getColumnName(state.columnIndex)).
-                                    put(',').
-                                    putQuoted("type").put(':').putQuoted(ColumnType.nameOf(state.metadata.getColumnType(state.columnIndex)));
-                            socket.put('}');
-                        }
-                        state.queryState = QUERY_META_SUFFIX;
-                        // fall through
-                    case QUERY_META_SUFFIX:
-                        socket.bookmark();
-                        socket.put("],\"dataset\":[");
-                        state.queryState = QUERY_RECORD_START;
-                        // fall through
-                    case QUERY_RECORD_START:
-
-                        if (state.record == null) {
-                            // check if cursor has any records
-                            state.record = state.cursor.getRecord();
-                            while (true) {
-                                if (state.cursor.hasNext()) {
-                                    state.count++;
-
-                                    if (state.fetchAll && state.count > state.stop) {
-//                                        state.cancellationHandler.check();
-                                        continue;
-                                    }
-
-                                    if (state.count > state.skip) {
-                                        break;
-                                    }
-                                } else {
-                                    state.queryState = QUERY_DATA_SUFFIX;
-                                    break SWITCH;
-                                }
-                            }
-                        }
-
-                        if (state.count > state.stop) {
-                            state.queryState = QUERY_DATA_SUFFIX;
-                            break;
-                        }
-
-                        socket.bookmark();
-                        if (state.count > state.skip + 1) {
-                            socket.put(',');
-                        }
-                        socket.put('[');
-
-                        state.queryState = QUERY_RECORD_COLUMNS;
-                        state.columnIndex = 0;
-                        // fall through
-                    case QUERY_RECORD_COLUMNS:
-
-                        for (; state.columnIndex < columnCount; state.columnIndex++) {
-                            socket.bookmark();
-                            if (state.columnIndex > 0) {
-                                socket.put(',');
-                            }
-                            putValue(socket, state.metadata.getColumnType(state.columnIndex), state.record, state.columnIndex);
-                        }
-
-                        state.queryState = QUERY_RECORD_SUFFIX;
-                        // fall through
-
-                    case QUERY_RECORD_SUFFIX:
-                        socket.bookmark();
-                        socket.put(']');
-                        state.record = null;
-                        state.queryState = QUERY_RECORD_START;
-                        break;
-                    case QUERY_DATA_SUFFIX:
-                        sendDone(socket, state);
-                        break OUT;
-                    default:
-                        break OUT;
-                }
-            } catch (NoSpaceLeftInResponseBufferException ignored) {
-                if (socket.resetToBookmark()) {
-                    socket.sendChunk();
+                if (sepPos > 0) {
+                    skip = Numbers.parseLong(limit, 0, sepPos);
+                    if (sepPos + 1 < limit.length()) {
+                        stop = Numbers.parseLong(limit, sepPos + 1, limit.length());
+                    }
                 } else {
-                    // what we have here is out unit of data, column value or query
-                    // is larger that response content buffer
-                    // all we can do in this scenario is to log appropriately
-                    // and disconnect socket
-                    info(state).$("Response buffer is too small, state=").$(state.queryState).$();
-                    throw PeerDisconnectedException.INSTANCE;
+                    stop = Numbers.parseLong(limit);
                 }
+            } catch (NumericException ex) {
+                // Skip or stop will have default value.
             }
         }
-        // reached the end naturally?
-        readyForNextRequest(context, dispatcher);
+        if (stop < 0) {
+            stop = 0;
+        }
+
+        if (skip < 0) {
+            skip = 0;
+        }
+
+        state.query = query;
+        state.skip = skip;
+        state.count = 0L;
+        state.stop = stop;
+        state.noMeta = Chars.equalsNc("true", request.getUrlParam("nm"));
+        state.fetchAll = Chars.equalsNc("true", request.getUrlParam("count"));
+        return true;
     }
 
     private void readyForNextRequest(HttpConnectionContext context, IODispatcher<HttpConnectionContext> dispatcher) {

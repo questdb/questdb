@@ -28,7 +28,6 @@ import com.questdb.cairo.CairoError;
 import com.questdb.cairo.CairoException;
 import com.questdb.cairo.ColumnType;
 import com.questdb.cairo.sql.Record;
-import com.questdb.cairo.sql.RecordCursorFactory;
 import com.questdb.cutlass.http.HttpChunkedResponseSocket;
 import com.questdb.cutlass.http.HttpConnectionContext;
 import com.questdb.cutlass.http.HttpRequestHeader;
@@ -43,21 +42,15 @@ import com.questdb.std.*;
 import com.questdb.std.str.CharSink;
 
 import java.io.Closeable;
-import java.lang.ThreadLocal;
 import java.util.concurrent.atomic.AtomicLong;
 
+import static com.questdb.cutlass.http.processors.AbstractQueryContext.*;
+
 public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
-    static final int QUERY_DATA_SUFFIX = 7;
-    static final int QUERY_RECORD_SUFFIX = 6;
-    static final int QUERY_RECORD_COLUMNS = 5;
-    static final int QUERY_RECORD_START = 4;
-    static final int QUERY_METADATA = 2;
-    static final int QUERY_PREFIX = 1;
     // Factory cache is thread local due to possibility of factory being
     // closed by another thread. Peer disconnect is a typical example of this.
     // Being asynchronous we may need to be able to return factory to the cache
     // by the same thread that executes the dispatcher.
-    static final ThreadLocal<AssociativeCache<RecordCursorFactory>> FACTORY_CACHE = ThreadLocal.withInitial(() -> new AssociativeCache<>(8, 8));
     private static final LocalValue<JsonQueryProcessorState> LV = new LocalValue<>();
     private static final Log LOG = LogFactory.getLog(TextQueryProcessor.class);
     private final AtomicLong cacheHits = new AtomicLong();
@@ -171,7 +164,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
         }
     }
 
-    public boolean parseUrl(
+    private boolean parseUrl(
             HttpChunkedResponseSocket socket,
             HttpRequestHeader request,
             JsonQueryProcessorState state
@@ -476,10 +469,6 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
             JsonQueryProcessorState state
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         if (state.count > -1) {
-            socket.bookmark();
-            socket.put(']');
-            socket.put(',').putQuoted("count").put(':').put(state.count);
-            socket.put('}');
             state.count = -1;
             socket.sendChunk();
         }

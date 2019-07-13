@@ -567,6 +567,7 @@ class SqlOptimiser {
             groupByModel.addColumn(translatedColumn);
             analyticModel.addColumn(translatedColumn);
             outerModel.addColumn(translatedColumn);
+            innerModel.addColumn(translatedColumn);
         } else {
             final CharSequence alias = createColumnAlias(columnName, translatingModel);
             addColumnToTranslatingModel(

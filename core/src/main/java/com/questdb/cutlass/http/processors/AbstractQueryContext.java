@@ -28,6 +28,7 @@ import com.questdb.cairo.sql.RecordCursor;
 import com.questdb.cairo.sql.RecordCursorFactory;
 import com.questdb.cairo.sql.RecordMetadata;
 import com.questdb.ql.ChannelCheckCancellationHandler;
+import com.questdb.std.AssociativeCache;
 import com.questdb.std.Misc;
 import com.questdb.std.Mutable;
 
@@ -35,6 +36,17 @@ import java.io.Closeable;
 
 
 public abstract class AbstractQueryContext implements Mutable, Closeable {
+    static final int QUERY_DATA_SUFFIX = 7;
+    static final int QUERY_RECORD_SUFFIX = 6;
+    static final int QUERY_RECORD_COLUMNS = 5;
+    static final int QUERY_RECORD_START = 4;
+    static final int QUERY_META_SUFFIX = 3;
+    static final int QUERY_METADATA = 2;
+    // Factory cache is thread local due to possibility of factory being
+    // closed by another thread. Peer disconnect is a typical example of this.
+    // Being asynchronous we may need to be able to return factory to the cache
+    // by the same thread that executes the dispatcher.
+    static final ThreadLocal<AssociativeCache<RecordCursorFactory>> FACTORY_CACHE = ThreadLocal.withInitial(() -> new AssociativeCache<>(8, 8));
     final ChannelCheckCancellationHandler cancellationHandler;
     final long fd;
     RecordCursorFactory recordCursorFactory;
@@ -45,7 +57,8 @@ public abstract class AbstractQueryContext implements Mutable, Closeable {
     long skip;
     long stop;
     Record record;
-    int queryState = JsonQueryProcessor.QUERY_PREFIX;
+    static final int QUERY_PREFIX = 1;
+    int queryState = QUERY_PREFIX;
     int columnIndex;
 
     public AbstractQueryContext(long fd, int connectionCheckFrequency) {
@@ -60,11 +73,11 @@ public abstract class AbstractQueryContext implements Mutable, Closeable {
         record = null;
         if (recordCursorFactory != null) {
             // todo: avoid toString()
-            JsonQueryProcessor.FACTORY_CACHE.get().put(query.toString(), recordCursorFactory);
+            FACTORY_CACHE.get().put(query.toString(), recordCursorFactory);
             recordCursorFactory = null;
         }
         query = null;
-        queryState = JsonQueryProcessor.QUERY_PREFIX;
+        queryState = QUERY_PREFIX;
         columnIndex = 0;
     }
 
