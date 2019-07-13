@@ -175,7 +175,12 @@ public class WriterPool extends AbstractPool implements ResourcePool<TableWriter
             e = new Entry(clock.getTicks());
             Entry other = entries.putIfAbsent(tableName, e);
             if (other == null) {
-                return lockAndNotify(thread, e, tableName);
+                if (lockAndNotify(thread, e, tableName)) {
+                    return true;
+                } else {
+                    entries.remove(tableName);
+                    return false;
+                }
             } else {
                 e = other;
             }
