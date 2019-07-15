@@ -31,6 +31,7 @@ import com.questdb.cutlass.http.processors.StaticContentProcessorConfiguration;
 import com.questdb.cutlass.http.processors.TextImportProcessorConfiguration;
 import com.questdb.cutlass.line.udp.LineUdpReceiverConfiguration;
 import com.questdb.cutlass.text.TextConfiguration;
+import com.questdb.mp.WorkerPoolConfiguration;
 import com.questdb.network.*;
 import com.questdb.std.*;
 import com.questdb.std.microtime.MicrosecondClock;
@@ -40,6 +41,7 @@ import com.questdb.std.time.MillisecondClock;
 import com.questdb.std.time.MillisecondClockImpl;
 
 import java.io.File;
+import java.util.Arrays;
 import java.util.Properties;
 
 public class PropServerConfiguration implements ServerConfigurationV2 {
@@ -52,38 +54,7 @@ public class PropServerConfiguration implements ServerConfigurationV2 {
     private final CairoConfiguration cairoConfiguration = new PropCairoConfiguration();
     private final LineUdpReceiverConfiguration lineUdpReceiverConfiguration = new PropLineUdpReceiverConfiguration();
     private final JsonQueryProcessorConfiguration jsonQueryProcessorConfiguration = new PropJsonQueryProcessorConfiguration();
-    private final int connectionPoolInitialCapacity;
-    private final int connectionStringPoolCapacity;
-    private final int multipartHeaderBufferSize;
-    private final long multipartIdleSpinCount;
-    private final int recvBufferSize;
-    private final int requestHeaderBufferSize;
-    private final int responseHeaderBufferSize;
-    private final int workerCount;
-    private final int sendBufferSize;
-    private final CharSequence indexFileName;
-    private final String publicDirectory;
-    private final boolean abortBrokenUploads;
-    private final int activeConnectionLimit;
-    private final int eventCapacity;
-    private final int ioQueueCapacity;
-    private final long idleConnectionTimeout;
-    private final int interestQueueCapacity;
-    private final int listenBacklog;
-    private final int sndBufSize;
-    private final int rcvBufSize;
-    private final String adapterSetConfigurationFileName;
-    private final int dateAdapterPoolCapacity;
-    private final int jsonCacheLimit;
-    private final int jsonCacheSize;
-    private final double maxRequiredDelimiterStdDev;
-    private final int metadataStringPoolCapacity;
-    private final int rollBufferLimit;
-    private final int rollBufferSize;
-    private final int textAnalysisMaxLines;
-    private final int textLexerStringPoolCapacity;
-    private final int timestampAdapterPoolCapacity;
-    private final int utf8SinkSize;
+    private final boolean httpServerEnabled;
     private final int createAsSelectRetryCount;
     private final CharSequence defaultMapType;
     private final boolean defaultSymbolCacheFlag;
@@ -125,89 +96,130 @@ public class PropServerConfiguration implements ServerConfigurationV2 {
     private final int lineUdpMsgBufferSize;
     private final int lineUdpMsgCount;
     private final int lineUdpReceiveBufferSize;
-    private final MimeTypesCache mimeTypesCache;
-    private final String databaseRoot;
-    private final String keepAliveHeader;
+    private final int[] sharedWorkerAffinity;
+    private final int sharedWorkerCount;
+    private final WorkerPoolConfiguration workerPoolConfiguration = new PropWorkerPoolConfiguration();
+    private int[] httpWorkerAffinity;
+    private int connectionPoolInitialCapacity;
+    private int connectionStringPoolCapacity;
+    private int multipartHeaderBufferSize;
+    private long multipartIdleSpinCount;
+    private int recvBufferSize;
+    private int requestHeaderBufferSize;
+    private int responseHeaderBufferSize;
+    private int httpWorkerCount;
+    private int sendBufferSize;
+    private CharSequence indexFileName;
+    private String publicDirectory;
+    private boolean abortBrokenUploads;
+    private int activeConnectionLimit;
+    private int eventCapacity;
+    private int ioQueueCapacity;
+    private long idleConnectionTimeout;
+    private int interestQueueCapacity;
+    private int listenBacklog;
+    private int sndBufSize;
+    private int rcvBufSize;
+    private String adapterSetConfigurationFileName;
+    private int dateAdapterPoolCapacity;
+    private int jsonCacheLimit;
+    private int jsonCacheSize;
+    private double maxRequiredDelimiterStdDev;
+    private int metadataStringPoolCapacity;
+    private int rollBufferLimit;
+    private int rollBufferSize;
+    private int textAnalysisMaxLines;
+    private int textLexerStringPoolCapacity;
+    private int timestampAdapterPoolCapacity;
+    private int utf8SinkSize;
+    private MimeTypesCache mimeTypesCache;
+    private String databaseRoot;
+    private String keepAliveHeader;
     private int bindIPv4Address;
     private int bindPort;
     private int lineUdpBindIPV4Address;
     private int lineUdpPort;
-    private final int jsonQueryFloatScale;
-    private final int jsonQueryDoubleScale;
-    private final int jsonQueryConnectionCheckFrequency;
-
+    private int jsonQueryFloatScale;
+    private int jsonQueryDoubleScale;
+    private int jsonQueryConnectionCheckFrequency;
     public PropServerConfiguration(String root, Properties properties) throws ServerConfigurationException {
-        this.connectionPoolInitialCapacity = getInt(properties, "http.connection.pool.initial.capacity", 16);
-        this.connectionStringPoolCapacity = getInt(properties, "http.connection.string.pool.capacity", 128);
-        this.multipartHeaderBufferSize = getIntSize(properties, "http.multipart.header.buffer.size", 512);
-        this.multipartIdleSpinCount = getLong(properties, "http.multipart.idle.spin.count", 10_000);
-        this.recvBufferSize = getIntSize(properties, "http.receive.buffer.size", 1024 * 1024);
-        this.requestHeaderBufferSize = getIntSize(properties, "http.request.header.buffer.size", 1024);
-        this.responseHeaderBufferSize = getIntSize(properties, "http.response.header.buffer.size", 1024 * 1024);
-        this.workerCount = getInt(properties, "http.worker.count", 2);
-        this.sendBufferSize = getIntSize(properties, "http.send.buffer.size", 2 * 1024 * 1024);
-        this.indexFileName = getString(properties, "http.static.index.file.name", "index.html");
+        this.sharedWorkerCount = getInt(properties, "shared.worker.count", 2);
+        this.sharedWorkerAffinity = getAffinity(properties, "shared.worker.affinity", sharedWorkerCount);
+        this.httpServerEnabled = getBoolean(properties, "http.enabled", true);
+        if (httpServerEnabled) {
+            this.connectionPoolInitialCapacity = getInt(properties, "http.connection.pool.initial.capacity", 16);
+            this.connectionStringPoolCapacity = getInt(properties, "http.connection.string.pool.capacity", 128);
+            this.multipartHeaderBufferSize = getIntSize(properties, "http.multipart.header.buffer.size", 512);
+            this.multipartIdleSpinCount = getLong(properties, "http.multipart.idle.spin.count", 10_000);
+            this.recvBufferSize = getIntSize(properties, "http.receive.buffer.size", 1024 * 1024);
+            this.requestHeaderBufferSize = getIntSize(properties, "http.request.header.buffer.size", 1024);
+            this.responseHeaderBufferSize = getIntSize(properties, "http.response.header.buffer.size", 1024 * 1024);
+            this.httpWorkerCount = getInt(properties, "http.worker.count", 0);
+            this.httpWorkerAffinity = getAffinity(properties, "http.worker.affinity", httpWorkerCount);
+            this.sendBufferSize = getIntSize(properties, "http.send.buffer.size", 2 * 1024 * 1024);
+            this.indexFileName = getString(properties, "http.static.index.file.name", "index.html");
 
-        int keepAliveTimeout = getInt(properties, "http.keep-alive.timeout", 5);
-        int keepAliveMax = getInt(properties, "http.keep-alive.max", 10_000);
+            int keepAliveTimeout = getInt(properties, "http.keep-alive.timeout", 5);
+            int keepAliveMax = getInt(properties, "http.keep-alive.max", 10_000);
 
-        if (keepAliveTimeout > 0 && keepAliveMax > 0) {
-            this.keepAliveHeader = "Keep-Alive: timeout=5, max=10000" + Misc.EOL;
-        } else {
-            this.keepAliveHeader = null;
-        }
+            if (keepAliveTimeout > 0 && keepAliveMax > 0) {
+                this.keepAliveHeader = "Keep-Alive: timeout=5, max=10000" + Misc.EOL;
+            } else {
+                this.keepAliveHeader = null;
+            }
 
-        final String publicDirectory = getString(properties, "http.static.pubic.directory", "public");
-        // translate public directory into absolute path
-        // this will generate some garbage, but this is ok - we just doing this once on startup
-        if (new File(publicDirectory).isAbsolute()) {
-            this.publicDirectory = publicDirectory;
-        } else {
-            this.publicDirectory = new File(root, publicDirectory).getAbsolutePath();
-        }
+            final String publicDirectory = getString(properties, "http.static.pubic.directory", "public");
+            // translate public directory into absolute path
+            // this will generate some garbage, but this is ok - we just doing this once on startup
+            if (new File(publicDirectory).isAbsolute()) {
+                this.publicDirectory = publicDirectory;
+            } else {
+                this.publicDirectory = new File(root, publicDirectory).getAbsolutePath();
+            }
 
-        final String databaseRoot = getString(properties, "cairo.root", "db");
-        if (new File(databaseRoot).isAbsolute()) {
-            this.databaseRoot = databaseRoot;
-        } else {
-            this.databaseRoot = new File(root, databaseRoot).getAbsolutePath();
-        }
+            final String databaseRoot = getString(properties, "cairo.root", "db");
+            if (new File(databaseRoot).isAbsolute()) {
+                this.databaseRoot = databaseRoot;
+            } else {
+                this.databaseRoot = new File(root, databaseRoot).getAbsolutePath();
+            }
 
-        this.abortBrokenUploads = getBoolean(properties, "http.text.abort.broken.uploads", true);
-        this.activeConnectionLimit = getInt(properties, "http.net.active.connection.limit", 256);
-        this.eventCapacity = getInt(properties, "http.net.event.capacity", 1024);
-        this.ioQueueCapacity = getInt(properties, "http.net.io.queue.capacity", 1024);
-        this.idleConnectionTimeout = getLong(properties, "http.net.idle.connection.timeout", 5 * 60 * 1000L);
-        this.interestQueueCapacity = getInt(properties, "http.net.interest.queue.capacity", 1024);
-        this.listenBacklog = getInt(properties, "http.net.listen.backlog", 256);
-        this.sndBufSize = getIntSize(properties, "http.net.snd.buf.size", 2 * 1024 * 1024);
-        this.rcvBufSize = getIntSize(properties, "http.net.rcv.buf.size", 2 * 1024 * 1024);
-        this.adapterSetConfigurationFileName = getString(properties, "http.text.adapter.set.config", "/text_loader.json");
-        this.dateAdapterPoolCapacity = getInt(properties, "http.text.date.adapter.pool.capacity", 16);
-        this.jsonCacheLimit = getIntSize(properties, "http.text.json.cache.limit", 16384);
-        this.jsonCacheSize = getIntSize(properties, "http.text.json.cache.size", 8192);
-        this.maxRequiredDelimiterStdDev = getDouble(properties, "http.text.max.required.delimiter.stddev", 0.1222d);
-        this.metadataStringPoolCapacity = getInt(properties, "http.text.metadata.string.pool.capacity", 128);
+            this.abortBrokenUploads = getBoolean(properties, "http.text.abort.broken.uploads", true);
+            this.activeConnectionLimit = getInt(properties, "http.net.active.connection.limit", 256);
+            this.eventCapacity = getInt(properties, "http.net.event.capacity", 1024);
+            this.ioQueueCapacity = getInt(properties, "http.net.io.queue.capacity", 1024);
+            this.idleConnectionTimeout = getLong(properties, "http.net.idle.connection.timeout", 5 * 60 * 1000L);
+            this.interestQueueCapacity = getInt(properties, "http.net.interest.queue.capacity", 1024);
+            this.listenBacklog = getInt(properties, "http.net.listen.backlog", 256);
+            this.sndBufSize = getIntSize(properties, "http.net.snd.buf.size", 2 * 1024 * 1024);
+            this.rcvBufSize = getIntSize(properties, "http.net.rcv.buf.size", 2 * 1024 * 1024);
+            this.adapterSetConfigurationFileName = getString(properties, "http.text.adapter.set.config", "/text_loader.json");
+            this.dateAdapterPoolCapacity = getInt(properties, "http.text.date.adapter.pool.capacity", 16);
+            this.jsonCacheLimit = getIntSize(properties, "http.text.json.cache.limit", 16384);
+            this.jsonCacheSize = getIntSize(properties, "http.text.json.cache.size", 8192);
+            this.maxRequiredDelimiterStdDev = getDouble(properties, "http.text.max.required.delimiter.stddev", 0.1222d);
+            this.metadataStringPoolCapacity = getInt(properties, "http.text.metadata.string.pool.capacity", 128);
 
-        this.rollBufferLimit = getIntSize(properties, "http.text.roll.buffer.limit", 4096);
-        this.rollBufferSize = getIntSize(properties, "http.text.roll.buffer.size", 1024);
-        this.textAnalysisMaxLines = getInt(properties, "http.text.analysis.max.lines", 1000);
-        this.textLexerStringPoolCapacity = getInt(properties, "http.text.lexer.string.pool.capacity", 64);
-        this.timestampAdapterPoolCapacity = getInt(properties, "http.text.timestamp.adapter.pool.capacity", 64);
-        this.utf8SinkSize = getIntSize(properties, "http.text.utf8.sink.size", 4096);
+            this.rollBufferLimit = getIntSize(properties, "http.text.roll.buffer.limit", 4096);
+            this.rollBufferSize = getIntSize(properties, "http.text.roll.buffer.size", 1024);
+            this.textAnalysisMaxLines = getInt(properties, "http.text.analysis.max.lines", 1000);
+            this.textLexerStringPoolCapacity = getInt(properties, "http.text.lexer.string.pool.capacity", 64);
+            this.timestampAdapterPoolCapacity = getInt(properties, "http.text.timestamp.adapter.pool.capacity", 64);
+            this.utf8SinkSize = getIntSize(properties, "http.text.utf8.sink.size", 4096);
 
-        this.jsonQueryConnectionCheckFrequency = getInt(properties, "http.json.query.connection.check.frequency", 1_000_000);
-        this.jsonQueryDoubleScale = getInt(properties, "http.json.query.double.scale", 10);
-        this.jsonQueryFloatScale = getInt(properties, "http.json.query.float.scale", 10);
+            this.jsonQueryConnectionCheckFrequency = getInt(properties, "http.json.query.connection.check.frequency", 1_000_000);
+            this.jsonQueryDoubleScale = getInt(properties, "http.json.query.double.scale", 10);
+            this.jsonQueryFloatScale = getInt(properties, "http.json.query.float.scale", 10);
 
-        parseBindTo(properties, "http.bind.to", "0.0.0.0:9000", (a, p) -> {
-            bindIPv4Address = a;
-            bindPort = p;
-        });
+            parseBindTo(properties, "http.bind.to", "0.0.0.0:9000", (a, p) -> {
+                bindIPv4Address = a;
+                bindPort = p;
+            });
 
-        // load mime types
-        try (Path path = new Path().of(new File(new File(root, CONFIG_DIRECTORY), "mime.types").getAbsolutePath()).$()) {
-            this.mimeTypesCache = new MimeTypesCache(FilesFacadeImpl.INSTANCE, path);
+            // load mime types
+            try (Path path = new Path().of(new File(new File(root, CONFIG_DIRECTORY), "mime.types").getAbsolutePath()).$()) {
+                this.mimeTypesCache = new MimeTypesCache(FilesFacadeImpl.INSTANCE, path);
+            }
         }
 
         this.createAsSelectRetryCount = getInt(properties, "cairo.create.as.select.retry.count", 5);
@@ -272,6 +284,32 @@ public class PropServerConfiguration implements ServerConfigurationV2 {
     @Override
     public LineUdpReceiverConfiguration getLineUdpReceiverConfiguration() {
         return lineUdpReceiverConfiguration;
+    }
+
+    @Override
+    public WorkerPoolConfiguration getWorkerPoolConfiguration() {
+        return workerPoolConfiguration;
+    }
+
+    private int[] getAffinity(Properties properties, String key, int httpWorkerCount) throws ServerConfigurationException {
+        final int[] result = new int[httpWorkerCount];
+        String value = properties.getProperty(key);
+        if (value == null) {
+            Arrays.fill(result, -1);
+        } else {
+            String[] affinity = value.split(",");
+            if (affinity.length != httpWorkerCount) {
+                throw new ServerConfigurationException(key, "wrong number of affinity values");
+            }
+            for (int i = 0; i < httpWorkerCount; i++) {
+                try {
+                    result[i] = Numbers.parseInt(affinity[i]);
+                } catch (NumericException e) {
+                    throw new ServerConfigurationException(key, "Invalid affinity value: " + affinity[i]);
+                }
+            }
+        }
+        return result;
     }
 
     private boolean getBoolean(Properties properties, String key, boolean defaultValue) {
@@ -611,8 +649,18 @@ public class PropServerConfiguration implements ServerConfigurationV2 {
         }
 
         @Override
+        public JsonQueryProcessorConfiguration getJsonQueryProcessorConfiguration() {
+            return jsonQueryProcessorConfiguration;
+        }
+
+        @Override
         public int getWorkerCount() {
-            return workerCount;
+            return httpWorkerCount;
+        }
+
+        @Override
+        public int[] getWorkerAffinity() {
+            return httpWorkerAffinity;
         }
 
         @Override
@@ -621,8 +669,8 @@ public class PropServerConfiguration implements ServerConfigurationV2 {
         }
 
         @Override
-        public JsonQueryProcessorConfiguration getJsonQueryProcessorConfiguration() {
-            return jsonQueryProcessorConfiguration;
+        public boolean isEnabled() {
+            return httpServerEnabled;
         }
     }
 
@@ -889,6 +937,18 @@ public class PropServerConfiguration implements ServerConfigurationV2 {
         @Override
         public int getConnectionCheckFrequency() {
             return jsonQueryConnectionCheckFrequency;
+        }
+    }
+
+    private class PropWorkerPoolConfiguration implements WorkerPoolConfiguration {
+        @Override
+        public int[] getWorkerAffinity() {
+            return sharedWorkerAffinity;
+        }
+
+        @Override
+        public int getWorkerCount() {
+            return sharedWorkerCount;
         }
     }
 }

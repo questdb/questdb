@@ -26,49 +26,21 @@ package com.questdb.cutlass.http;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.mp.Job;
-import com.questdb.mp.SOCountDownLatch;
-import com.questdb.mp.Worker;
+import com.questdb.mp.WorkerPool;
 import com.questdb.network.IOContextFactory;
 import com.questdb.network.IODispatcher;
 import com.questdb.network.IODispatchers;
+import com.questdb.std.ThreadLocal;
 import com.questdb.std.*;
 
 import java.io.Closeable;
-import java.util.concurrent.atomic.AtomicBoolean;
 
 public class HttpServer implements Closeable {
-    private final static Log LOG = LogFactory.getLog(HttpServer.class);
-    private final HttpServerConfiguration configuration;
-    private final HttpContextFactory httpContextFactory;
     private final ObjList<HttpRequestProcessorSelectorImpl> selectors;
-    private final SOCountDownLatch workerHaltLatch;
-    private final SOCountDownLatch started = new SOCountDownLatch(1);
+    private static final Log LOG = LogFactory.getLog(HttpServer.class);
+    private final IODispatcher<HttpConnectionContext> dispatcher;
     private final int workerCount;
-    private final AtomicBoolean running = new AtomicBoolean();
-    private final ObjList<HttpServerWorker> workers;
-    private IODispatcher<HttpConnectionContext> dispatcher;
-
-    public HttpServer(HttpServerConfiguration configuration) {
-        this.configuration = configuration;
-        this.httpContextFactory = new HttpContextFactory();
-
-        // We want processor instances to be local to each worker
-        // this will allow processors to use their member variables
-        // for state. This of course it not request state, but
-        // still it is better than having multiple threads hit
-        // same class instance.
-        this.workerCount = configuration.getWorkerCount();
-        this.workers = new ObjList<>(workerCount);
-        this.selectors = new ObjList<>(workerCount);
-        for (int i = 0; i < workerCount; i++) {
-            selectors.add(new HttpRequestProcessorSelectorImpl());
-        }
-
-        // halt latch that each worker will count down to let main
-        // thread know that server is done and allow server shutdown
-        // gracefully
-        this.workerHaltLatch = new SOCountDownLatch(workerCount);
-    }
+    private final HttpContextFactory httpContextFactory;
 
     public void bind(HttpRequestProcessorFactory factory) {
         final String url = factory.getUrl();
@@ -83,101 +55,41 @@ public class HttpServer implements Closeable {
         }
     }
 
-    @Override
-    public void close() {
-        halt();
-        Misc.free(dispatcher);
+    public HttpServer(HttpServerConfiguration configuration, WorkerPool pool) {
+        this.workerCount = pool.getWorkerCount();
+        this.selectors = new ObjList<>(workerCount);
         for (int i = 0; i < workerCount; i++) {
-            HttpRequestProcessorSelectorImpl selector = selectors.getQuick(i);
-            Misc.free(selector.defaultRequestProcessor);
-            final ObjList<CharSequence> urls = selector.processorMap.keys();
-            for (int j = 0, m = urls.size(); j < m; j++) {
-                Misc.free(selector.processorMap.get(urls.getQuick(j)));
-            }
-        }
-    }
-
-    SOCountDownLatch getStartedLatch() {
-        return started;
-    }
-
-    public void halt() {
-        if (running.compareAndSet(true, false)) {
-            LOG.info().$("stopping").$();
-            started.await();
-            for (int i = 0; i < workerCount; i++) {
-                workers.getQuick(i).halt();
-            }
-            workerHaltLatch.await();
-
-            for (int i = 0; i < workerCount; i++) {
-                Misc.free(workers.getQuick(i));
-            }
-            LOG.info().$("stopped").$();
-        }
-    }
-
-    public void start() {
-        if (running.compareAndSet(false, true)) {
-            dispatcher = IODispatchers.create(
-                    configuration.getDispatcherConfiguration(),
-                    httpContextFactory
-            );
-
-            for (int i = 0; i < workerCount; i++) {
-                final ObjHashSet<Job> jobs = new ObjHashSet<>();
-                final int index = i;
-                jobs.add(dispatcher);
-                jobs.add(new Job() {
-                    private final HttpRequestProcessorSelector selector = selectors.getQuick(index);
-
-                    @Override
-                    public boolean run() {
-                        return dispatcher.processIOQueue(
-                                (operation, context, dispatcher1)
-                                        -> context.handleClientOperation(operation, dispatcher1, selector)
-                        );
-                    }
-                });
-                HttpServerWorker worker = new HttpServerWorker(
-                        configuration,
-                        jobs,
-                        workerHaltLatch,
-                        -1,
-                        LOG,
-                        configuration.getConnectionPoolInitialCapacity(),
-                        // have each thread release their own processor selectors
-                        // in case processors stash some of their resources in thread-local variables
-                        () -> Misc.free(selectors.getQuick(index))
-                );
-                worker.setName("questdb-http-" + i);
-                workers.add(worker);
-                worker.start();
-            }
-            LOG.info().$("started").$();
-            started.countDown();
-        }
-    }
-
-    private static class HttpServerWorker extends Worker implements Closeable {
-        private final WeakObjectPool<HttpConnectionContext> contextPool;
-
-        public HttpServerWorker(
-                HttpServerConfiguration configuration,
-                ObjHashSet<? extends Job> jobs,
-                SOCountDownLatch haltLatch,
-                int affinity,
-                Log log,
-                int contextPoolSize,
-                Runnable cleaner
-        ) {
-            super(jobs, haltLatch, affinity, log, cleaner);
-            this.contextPool = new WeakObjectPool<>(() -> new HttpConnectionContext(configuration), contextPoolSize);
+            selectors.add(new HttpRequestProcessorSelectorImpl());
         }
 
-        @Override
-        public void close() {
-            contextPool.close();
+        this.httpContextFactory = new HttpContextFactory(configuration, configuration.getConnectionPoolInitialCapacity());
+        this.dispatcher = IODispatchers.create(
+                configuration.getDispatcherConfiguration(),
+                httpContextFactory
+        );
+
+        pool.assign(dispatcher);
+
+        for (int i = 0, n = pool.getWorkerCount(); i < n; i++) {
+            final int index = i;
+            pool.assign(i, new Job() {
+                private final HttpRequestProcessorSelector selector = selectors.getQuick(index);
+
+                @Override
+                public boolean run() {
+                    return dispatcher.processIOQueue(
+                            (operation, context, dispatcher1)
+                                    -> context.handleClientOperation(operation, dispatcher1, selector)
+                    );
+                }
+            });
+
+            // http context factory has thread local pools
+            // therefore we need each thread to clean their thread locals individually
+            pool.assign(i, () -> {
+                Misc.free(selectors.getQuick(index));
+                httpContextFactory.closeContextPool();
+            });
         }
     }
 
@@ -206,27 +118,52 @@ public class HttpServer implements Closeable {
         }
     }
 
-    private static class HttpContextFactory implements IOContextFactory<HttpConnectionContext> {
+    @Override
+    public void close() {
+        Misc.free(httpContextFactory);
+        Misc.free(dispatcher);
+        for (int i = 0; i < workerCount; i++) {
+            HttpRequestProcessorSelectorImpl selector = selectors.getQuick(i);
+            Misc.free(selector.defaultRequestProcessor);
+            final ObjList<CharSequence> urls = selector.processorMap.keys();
+            for (int j = 0, m = urls.size(); j < m; j++) {
+                Misc.free(selector.processorMap.get(urls.getQuick(j)));
+            }
+        }
+    }
+
+    private static class HttpContextFactory implements IOContextFactory<HttpConnectionContext>, Closeable {
+        private final ThreadLocal<WeakObjectPool<HttpConnectionContext>> contextPool;
+        private boolean closed = false;
+
+        public HttpContextFactory(HttpServerConfiguration configuration, int poolSize) {
+            this.contextPool = new ThreadLocal<>(() -> new WeakObjectPool<>(() -> new HttpConnectionContext(configuration), poolSize));
+        }
+
+        @Override
+        public void close() {
+            closed = true;
+        }
+
         @Override
         public HttpConnectionContext newInstance(long fd) {
-            Thread thread = Thread.currentThread();
-            assert thread instanceof HttpServerWorker;
-            HttpConnectionContext connectionContext = ((HttpServerWorker) thread).contextPool.pop();
-            return connectionContext.of(fd);
+            return contextPool.get().pop().of(fd);
         }
 
         @Override
         public void done(HttpConnectionContext context) {
-            Thread thread = Thread.currentThread();
-            // it is possible that context is in transit (on a queue somewhere)
-            // and server shutdown is performed by a non-worker thread
-            // in this case we just close context
-            context.of(-1);
-            if (thread instanceof HttpServerWorker) {
-                ((HttpServerWorker) thread).contextPool.push(context);
-            } else {
+            if (closed) {
                 Misc.free(context);
+            } else {
+                context.of(-1);
+                contextPool.get().push(context);
+                LOG.info().$("pushed").$();
             }
+        }
+
+        private void closeContextPool() {
+            Misc.free(this.contextPool.get());
+            LOG.info().$("closed").$();
         }
     }
 }

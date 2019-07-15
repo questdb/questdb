@@ -58,5 +58,9 @@ public interface HttpServerConfiguration {
 
     int getWorkerCount();
 
+    int[] getWorkerAffinity();
+
     int getSendBufferSize();
+
+    boolean isEnabled();
 }

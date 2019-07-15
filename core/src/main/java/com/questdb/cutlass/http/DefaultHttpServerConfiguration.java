@@ -65,7 +65,6 @@ class DefaultHttpServerConfiguration implements HttpServerConfiguration {
             return null;
         }
     };
-
     private final JsonQueryProcessorConfiguration jsonQueryProcessorConfiguration = new JsonQueryProcessorConfiguration() {
         @Override
         public CharSequence getKeepAliveHeader() {
@@ -87,7 +86,6 @@ class DefaultHttpServerConfiguration implements HttpServerConfiguration {
             return 1_000_000;
         }
     };
-
     private final TextImportProcessorConfiguration textImportProcessorConfiguration = new DefaultTextImportProcessorConfiguration();
 
     public DefaultHttpServerConfiguration() {
@@ -103,13 +101,13 @@ class DefaultHttpServerConfiguration implements HttpServerConfiguration {
     }
 
     @Override
-    public int getRequestHeaderBufferSize() {
-        return 1024;
+    public int getConnectionPoolInitialCapacity() {
+        return 16;
     }
 
     @Override
-    public int getResponseHeaderBufferSize() {
-        return 1024;
+    public int getConnectionStringPoolCapacity() {
+        return 128;
     }
 
     @Override
@@ -128,13 +126,13 @@ class DefaultHttpServerConfiguration implements HttpServerConfiguration {
     }
 
     @Override
-    public int getSendBufferSize() {
-        return 1024 * 1024;
+    public int getRequestHeaderBufferSize() {
+        return 1024;
     }
 
     @Override
-    public int getConnectionPoolInitialCapacity() {
-        return 16;
+    public int getResponseHeaderBufferSize() {
+        return 1024;
     }
 
     @Override
@@ -158,17 +156,27 @@ class DefaultHttpServerConfiguration implements HttpServerConfiguration {
     }
 
     @Override
+    public JsonQueryProcessorConfiguration getJsonQueryProcessorConfiguration() {
+        return jsonQueryProcessorConfiguration;
+    }
+
+    @Override
     public int getWorkerCount() {
         return 2;
     }
 
     @Override
-    public int getConnectionStringPoolCapacity() {
-        return 128;
+    public int[] getWorkerAffinity() {
+        return new int[]{-1, -1};
     }
 
     @Override
-    public JsonQueryProcessorConfiguration getJsonQueryProcessorConfiguration() {
-        return jsonQueryProcessorConfiguration;
+    public int getSendBufferSize() {
+        return 1024 * 1024;
+    }
+
+    @Override
+    public boolean isEnabled() {
+        return true;
     }
 }

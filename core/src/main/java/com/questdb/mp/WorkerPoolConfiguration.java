@@ -21,20 +21,10 @@
  *
  ******************************************************************************/
 
-package com.questdb;
+package com.questdb.mp;
 
-import com.questdb.cairo.CairoConfiguration;
-import com.questdb.cutlass.http.HttpServerConfiguration;
-import com.questdb.cutlass.line.udp.LineUdpReceiverConfiguration;
-import com.questdb.mp.WorkerPoolConfiguration;
+public interface WorkerPoolConfiguration {
+    int[] getWorkerAffinity();
 
-public interface ServerConfigurationV2 {
-
-    CairoConfiguration getCairoConfiguration();
-
-    HttpServerConfiguration getHttpServerConfiguration();
-
-    LineUdpReceiverConfiguration getLineUdpReceiverConfiguration();
-
-    WorkerPoolConfiguration getWorkerPoolConfiguration();
+    int getWorkerCount();
 }
