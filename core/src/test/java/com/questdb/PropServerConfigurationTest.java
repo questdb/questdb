@@ -79,7 +79,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(1048576, configuration.getHttpServerConfiguration().getRecvBufferSize());
         Assert.assertEquals(1024, configuration.getHttpServerConfiguration().getRequestHeaderBufferSize());
         Assert.assertEquals(1048576, configuration.getHttpServerConfiguration().getResponseHeaderBufferSize());
-        Assert.assertEquals(2, configuration.getHttpServerConfiguration().getWorkerCount());
+        Assert.assertEquals(0, configuration.getHttpServerConfiguration().getWorkerCount());
         Assert.assertEquals(2097152, configuration.getHttpServerConfiguration().getSendBufferSize());
         Assert.assertEquals("index.html", configuration.getHttpServerConfiguration().getStaticContentProcessorConfiguration().getIndexFileName());
 
