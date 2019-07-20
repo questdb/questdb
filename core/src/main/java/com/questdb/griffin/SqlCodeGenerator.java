@@ -385,14 +385,22 @@ public class SqlCodeGenerator {
         return generateQuery(model, executionContext, true);
     }
 
-    private RecordCursorFactory generateFunctionQuery(QueryModel model) throws SqlException {
+    private RecordCursorFactory generateFunctionQuery(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
         final Function function = model.getTableNameFunction();
         assert function != null;
         if (function.getType() != TypeEx.CURSOR) {
             throw SqlException.position(model.getTableName().position).put("function must return CURSOR [actual=").put(ColumnType.nameOf(function.getType())).put(']');
         }
 
-        return function.getRecordCursorFactory();
+        RecordCursorFactory factory = function.getRecordCursorFactory();
+
+        // check if there are post-filters
+        ExpressionNode filter = model.getWhereClause();
+        if (filter != null) {
+            factory = new FilteredRecordCursorFactory(factory, functionParser.parseFunction(filter, factory.getMetadata(), executionContext));
+        }
+
+        return factory;
     }
 
     private RecordCursorFactory generateJoins(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
@@ -731,7 +739,7 @@ public class SqlCodeGenerator {
         ExpressionNode tableName = model.getTableName();
         if (tableName != null) {
             if (tableName.type == ExpressionNode.FUNCTION) {
-                return generateFunctionQuery(model);
+                return generateFunctionQuery(model, executionContext);
             } else {
                 return generateTableQuery(model, executionContext);
             }
@@ -839,7 +847,8 @@ public class SqlCodeGenerator {
                         generateSelect(
                                 model,
                                 executionContext,
-                                processJoins),
+                                processJoins
+                        ),
                         model
                 ),
                 model,

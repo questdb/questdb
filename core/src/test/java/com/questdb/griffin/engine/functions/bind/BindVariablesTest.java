@@ -5,7 +5,7 @@
  *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
  *   \__\_\\__,_|\___||___/\__|____/|____/
  *
- * Copyright (C) 2014-2018 Appsicle
+ * Copyright (C) 2014-2019 Appsicle
  *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU Affero General Public License, version 3,
@@ -318,6 +318,66 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
         func.init(null, bindVariableService);
 
         Assert.assertEquals(7.73f, func.getFloat(builder.getRecord()), 0.001f);
+
+        func.close();
+    }
+
+    @Test
+    public void testExplicitlyIndexedInvalidIndex() {
+        bindVariableService.setFloat(2, Float.NaN);
+        bindVariableService.setFloat(0, 7.6f);
+        bindVariableService.setFloat(1, 9.21f);
+
+        try {
+            expr("$0 + $2")
+                    .withFunction(new AddFloatFunctionFactory())
+                    .$();
+            Assert.fail();
+        } catch (SqlException e) {
+            TestUtils.assertContains(e.getMessage(), "invalid bind variable index");
+        }
+    }
+
+    @Test
+    public void testFloatExplicitlyIndexed() throws SqlException {
+        bindVariableService.setFloat(2, Float.NaN);
+        bindVariableService.setFloat(0, 7.6f);
+        bindVariableService.setFloat(1, 9.21f);
+
+        Function func = expr("$1 + $1")
+                .withFunction(new AddFloatFunctionFactory())
+                .$();
+
+        func.init(null, bindVariableService);
+        Assert.assertEquals(15.2f, func.getFloat(builder.getRecord()), 0.001f);
+
+        bindVariableService.setFloat(0, 0.13f);
+
+        func.init(null, bindVariableService);
+
+        Assert.assertEquals(0.26f, func.getFloat(builder.getRecord()), 0.001f);
+
+        func.close();
+    }
+
+    @Test
+    public void testFloatExplicitlyIndexedTwoVars() throws SqlException {
+        bindVariableService.setFloat(2, Float.NaN);
+        bindVariableService.setFloat(0, 7.6f);
+        bindVariableService.setFloat(1, 9.21f);
+
+        Function func = expr("$1 + $2")
+                .withFunction(new AddFloatFunctionFactory())
+                .$();
+
+        func.init(null, bindVariableService);
+        Assert.assertEquals(16.81, func.getFloat(builder.getRecord()), 0.001f);
+
+        bindVariableService.setFloat(0, 0.13f);
+
+        func.init(null, bindVariableService);
+
+        Assert.assertEquals(9.34f, func.getFloat(builder.getRecord()), 0.001f);
 
         func.close();
     }

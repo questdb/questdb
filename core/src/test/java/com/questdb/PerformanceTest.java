@@ -5,7 +5,7 @@
  *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
  *   \__\_\\__,_|\___||___/\__|____/|____/
  *
- * Copyright (C) 2014-2018 Appsicle
+ * Copyright (C) 2014-2019 Appsicle
  *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU Affero General Public License, version 3,
@@ -46,6 +46,7 @@ import com.questdb.test.tools.AbstractTest;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.BeforeClass;
+import org.junit.Ignore;
 import org.junit.Test;
 
 import java.io.File;
@@ -317,6 +318,7 @@ public class PerformanceTest extends AbstractTest {
     }
 
     @Test
+    @Ignore
     public void testLatestBySymbol() throws JournalException, NumericException {
 
         try (JournalWriter<Quote> w = getFactory().writer(Quote.class, null, TEST_DATA_SIZE)) {

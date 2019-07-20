@@ -130,6 +130,33 @@ class SqlOptimiser {
         model.getJoinModels().getQuick(parent).removeDependency(child);
     }
 
+    private static boolean isNotBindVariable(CharSequence token) {
+        int len = token.length();
+        if (len < 1) {
+            return true;
+        }
+
+        final char first = token.charAt(0);
+        if (first == ':') {
+            return false;
+        }
+
+        if (first == '?' && len == 1) {
+            return false;
+        }
+
+        if (first == '$') {
+            try {
+                Numbers.parseInt(token, 1, len);
+                return false;
+            } catch (NumericException e) {
+                return true;
+            }
+        }
+
+        return true;
+    }
+
     /*
      * Uses validating model to determine if column name exists and non-ambiguous in case of using joins.
      */
@@ -185,6 +212,25 @@ class SqlOptimiser {
         }
 
         deletedContexts.add(idx);
+    }
+
+    private void addFunction(QueryColumn qc, QueryModel baseModel, QueryModel groupByModel, QueryModel outerModel, QueryModel innerModel, QueryModel analyticModel, QueryModel translatingModel) throws SqlException {
+        // there were no aggregation functions emitted therefore
+        // this is just a function that goes into virtual model
+        innerModel.addColumn(qc);
+
+        // we also create column that references this inner layer from outer layer,
+        // for example when we have:
+        // select a, b+c ...
+        // it should translate to:
+        // select a, x from (select a, b+c x from (select a,b,c ...))
+        final QueryColumn innerColumn = nextColumn(qc.getAlias());
+
+        // pull literals only into translating model
+        emitLiterals(qc.getAst(), translatingModel, null, baseModel);
+        groupByModel.addColumn(innerColumn);
+        analyticModel.addColumn(innerColumn);
+        outerModel.addColumn(innerColumn);
     }
 
     private void addJoinContext(QueryModel parent, JoinContext context) {
@@ -1933,10 +1979,13 @@ class SqlOptimiser {
             }
 
             if (qc.getAst().type == ExpressionNode.LITERAL) {
-                // in general sense we need to create new column in case
-                // there is change of alias, for example we may have something as simple as
-                // select a.f, b.f from ....
-                if (Chars.endsWith(qc.getAst().token, '*')) {
+                if (!isNotBindVariable(qc.getAst().token)) {
+                    addFunction(qc, baseModel, groupByModel, outerModel, innerModel, analyticModel, translatingModel);
+                    useInnerModel = true;
+                } else if (Chars.endsWith(qc.getAst().token, '*')) {
+                    // in general sense we need to create new column in case
+                    // there is change of alias, for example we may have something as simple as
+                    // select a.f, b.f from ....
                     createSelectColumnsForWildcard(qc, baseModel, translatingModel, innerModel, groupByModel, analyticModel, outerModel, hasJoins);
                 } else {
                     createSelectColumn(
@@ -1995,23 +2044,8 @@ class SqlOptimiser {
                     useGroupByModel = true;
                     useOuterModel = true;
                 } else {
-                    // there were no aggregation functions emitted therefore
-                    // this is just a function that goes into virtual model
-                    innerModel.addColumn(qc);
+                    addFunction(qc, baseModel, groupByModel, outerModel, innerModel, analyticModel, translatingModel);
                     useInnerModel = true;
-
-                    // we also create column that references this inner layer from outer layer,
-                    // for example when we have:
-                    // select a, b+c ...
-                    // it should translate to:
-                    // select a, x from (select a, b+c x from (select a,b,c ...))
-                    final QueryColumn innerColumn = nextColumn(qc.getAlias());
-
-                    // pull literals only into translating model
-                    emitLiterals(qc.getAst(), translatingModel, null, baseModel);
-                    groupByModel.addColumn(innerColumn);
-                    analyticModel.addColumn(innerColumn);
-                    outerModel.addColumn(innerColumn);
                 }
             }
         }
@@ -2229,8 +2263,6 @@ class SqlOptimiser {
             }
             return node;
         }
-
-
     }
 
     private class LiteralCollector implements PostOrderTreeTraversalAlgo.Visitor {
@@ -2244,7 +2276,7 @@ class SqlOptimiser {
             switch (node.type) {
                 case ExpressionNode.LITERAL:
                     // ignore bind variables
-                    if (!Chars.startsWith(node.token, ':')) {
+                    if (isNotBindVariable(node.token)) {
                         int dot = Chars.indexOf(node.token, '.');
                         CharSequence name = extractColumnName(node.token, dot);
                         indexes.add(getIndexOfTableForColumn(model, node.token, dot, node.position));

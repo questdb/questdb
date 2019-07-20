@@ -33,6 +33,22 @@ public class NetworkByteOrderUtils {
         return (b << 8) | Unsafe.getUnsafe().getByte(address + 3) & 0xff;
     }
 
+    public static long getLong(long address) {
+        long b = Unsafe.getUnsafe().getByte(address) & 0xff;
+        b = (b << 8) | Unsafe.getUnsafe().getByte(address + 1) & 0xff;
+        b = (b << 8) | Unsafe.getUnsafe().getByte(address + 2) & 0xff;
+        b = (b << 8) | Unsafe.getUnsafe().getByte(address + 3) & 0xff;
+        b = (b << 8) | Unsafe.getUnsafe().getByte(address + 4) & 0xff;
+        b = (b << 8) | Unsafe.getUnsafe().getByte(address + 5) & 0xff;
+        b = (b << 8) | Unsafe.getUnsafe().getByte(address + 6) & 0xff;
+        return (b << 8) | Unsafe.getUnsafe().getByte(address + 7) & 0xff;
+    }
+
+    public static short getShort(long address) {
+        int b = Unsafe.getUnsafe().getByte(address) & 0xff;
+        return (short) ((b << 8) | Unsafe.getUnsafe().getByte(address + 1) & 0xff);
+    }
+
     public static void putInt(long address, int value) {
         Unsafe.getUnsafe().putByte(address, (byte) (value >>> 24));
         Unsafe.getUnsafe().putByte(address + 1, (byte) (value >>> 16));

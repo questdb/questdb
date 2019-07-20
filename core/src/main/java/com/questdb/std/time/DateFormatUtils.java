@@ -40,6 +40,8 @@ public class DateFormatUtils {
     private static final DateFormat FMT4;
     private static final DateFormat HTTP_FORMAT;
     public static final DateFormat PG_DATE_FORMAT;
+    public static final DateFormat PG_DATE_Z_FORMAT;
+    public static final DateFormat PG_DATE_TIME_Z_FORMAT;
     static long referenceYear;
     static int thisCenturyLimit;
     static int thisCenturyLow;
@@ -592,5 +594,7 @@ public class DateFormatUtils {
         HTTP_FORMAT = compiler.compile("E, d MMM yyyy HH:mm:ss Z");
         FMT4 = compiler.compile("MMM d yyyy");
         PG_DATE_FORMAT = compiler.compile("yyyy-MM-dd");
+        PG_DATE_Z_FORMAT = compiler.compile("yyyy-MM-dd z");
+        PG_DATE_TIME_Z_FORMAT = compiler.compile("yyyy-MM-dd HH:mm:ss.SSSz");
     }
 }

@@ -51,7 +51,7 @@ public final class Unsafe {
 
     @SuppressWarnings("unchecked")
     public static <T> T arrayGet(T[] array, int index) {
-        assert index > -1 && index < array.length;
+        assert index > -1 && index < array.length : "index=" + index + ", len=" + array.length;
         return (T) Unsafe.getUnsafe().getObject(array, OBJ_OFFSET + (index << OBJ_SCALE));
     }
 

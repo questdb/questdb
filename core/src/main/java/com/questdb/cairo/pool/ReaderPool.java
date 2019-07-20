@@ -298,19 +298,29 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
         long thread = Thread.currentThread().getId();
 
         int index = reader.index;
+        final ReaderPool.Entry e = reader.entry;
+        if (e == null) {
+            return false;
+        }
 
-        if (Unsafe.arrayGetVolatile(reader.entry.allocations, index) != UNALLOCATED) {
+        if (Unsafe.arrayGetVolatile(e.allocations, index) != UNALLOCATED) {
 
-            LOG.debug().$('\'').$(name).$("' is back [at=").$(reader.entry.index).$(':').$(index).$(", thread=").$(thread).$(']').$();
+            LOG.debug().$('\'').$(name).$("' is back [at=").$(e.index).$(':').$(index).$(", thread=").$(thread).$(']').$();
             notifyListener(thread, name, PoolListener.EV_RETURN, reader.entry.index, index);
 
-            Unsafe.arrayPut(reader.entry.releaseTimes, index, clock.getTicks());
-            Unsafe.arrayPutOrdered(reader.entry.allocations, index, UNALLOCATED);
+            Unsafe.arrayPut(e.releaseTimes, index, clock.getTicks());
+            Unsafe.arrayPutOrdered(e.allocations, index, UNALLOCATED);
 
+            // todo: there is a race condition between this method and
+            //   releaseAll() when the latter shuts down the pool. I thought of adding a version counter
+            //   that each method will attempt to increment thus recognising race condition and
+            //   taking action
             return true;
         }
-        LOG.error().$('\'').$(name).$("' is available [at=").$(reader.entry.index).$(':').$(index).$(']').$();
+
+        LOG.error().$('\'').$(name).$("' is available [at=").$(e.index).$(':').$(index).$(']').$();
         return true;
+
     }
 
     private static class Entry {
