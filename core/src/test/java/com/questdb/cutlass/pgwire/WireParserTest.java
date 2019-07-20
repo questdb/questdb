@@ -28,6 +28,7 @@ import com.questdb.griffin.engine.functions.rnd.SharedRandom;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.network.*;
+import com.questdb.std.Chars;
 import com.questdb.std.Numbers;
 import com.questdb.std.Rnd;
 import com.questdb.std.Unsafe;
@@ -44,6 +45,7 @@ import java.io.InputStream;
 import java.sql.*;
 import java.util.GregorianCalendar;
 import java.util.Properties;
+import java.util.TimeZone;
 import java.util.concurrent.BrokenBarrierException;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
@@ -615,7 +617,7 @@ public class WireParserTest extends AbstractGriffinTest {
                 properties.setProperty("user", "xyz");
                 properties.setProperty("password", "oh");
                 properties.setProperty("sslmode", "disable");
-
+                TimeZone.setDefault(TimeZone.getTimeZone("EDT"));
                 final Connection connection = DriverManager.getConnection("jdbc:postgresql://127.0.0.1:9120/nabu_app", properties);
                 PreparedStatement statement = connection.prepareStatement("select x,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,? from long_sequence(5)");
                 statement.setInt(1, 4);
@@ -649,11 +651,11 @@ public class WireParserTest extends AbstractGriffinTest {
                 statement.setTimestamp(22, new PGTimestamp(500023, new GregorianCalendar()));
 
                 final String expected = "x[BIGINT],$1[INTEGER],$2[BIGINT],$3[REAL],$4[DOUBLE],$5[SMALLINT],$6[BIT],$7[VARCHAR],$8[VARCHAR],$9[TIMESTAMP],$10[TIMESTAMP],$11[INTEGER],$12[BIGINT],$13[REAL],$14[DOUBLE],$15[SMALLINT],$16[BIT],$17[VARCHAR],$18[VARCHAR],$19[TIMESTAMP],$20[TIMESTAMP],$21[TIMESTAMP],$22[TIMESTAMP]\n" +
-                        "1,4,123,5.4300,0.56800000,91,true,hello,группа туристов,1969-12-31 23:00:00.0,1970-08-20 11:33:20.033,null,null,null,null,0,false,null,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023\n" +
-                        "2,4,123,5.4300,0.56800000,91,true,hello,группа туристов,1969-12-31 23:00:00.0,1970-08-20 11:33:20.033,null,null,null,null,0,false,null,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023\n" +
-                        "3,4,123,5.4300,0.56800000,91,true,hello,группа туристов,1969-12-31 23:00:00.0,1970-08-20 11:33:20.033,null,null,null,null,0,false,null,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023\n" +
-                        "4,4,123,5.4300,0.56800000,91,true,hello,группа туристов,1969-12-31 23:00:00.0,1970-08-20 11:33:20.033,null,null,null,null,0,false,null,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023\n" +
-                        "5,4,123,5.4300,0.56800000,91,true,hello,группа туристов,1969-12-31 23:00:00.0,1970-08-20 11:33:20.033,null,null,null,null,0,false,null,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023\n";
+                        "1,4,123,5.4300,0.56800000,91,true,hello,группа туристов,1970-01-01 00:00:00.0,1970-08-20 11:33:20.033,null,null,null,null,0,false,null,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023\n" +
+                        "2,4,123,5.4300,0.56800000,91,true,hello,группа туристов,1970-01-01 00:00:00.0,1970-08-20 11:33:20.033,null,null,null,null,0,false,null,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023\n" +
+                        "3,4,123,5.4300,0.56800000,91,true,hello,группа туристов,1970-01-01 00:00:00.0,1970-08-20 11:33:20.033,null,null,null,null,0,false,null,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023\n" +
+                        "4,4,123,5.4300,0.56800000,91,true,hello,группа туристов,1970-01-01 00:00:00.0,1970-08-20 11:33:20.033,null,null,null,null,0,false,null,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023\n" +
+                        "5,4,123,5.4300,0.56800000,91,true,hello,группа туристов,1970-01-01 00:00:00.0,1970-08-20 11:33:20.033,null,null,null,null,0,false,null,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023\n";
 
                 StringSink sink = new StringSink();
                 for (int i = 0; i < 10; i++) {
@@ -842,6 +844,47 @@ public class WireParserTest extends AbstractGriffinTest {
             running.set(false);
             haltLatch.await();
         }
+    }
+
+    @Test
+    public void testUnsupportedParameterType() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final CountDownLatch haltLatch = new CountDownLatch(1);
+            final AtomicBoolean running = new AtomicBoolean(true);
+            try {
+                startBasicServer(
+                        NetworkFacadeImpl.INSTANCE,
+                        new DefaultWireParserConfiguration() {
+                            @Override
+                            public boolean getDumpNetworkTraffic() {
+                                return true;
+                            }
+                        },
+                        haltLatch,
+                        running
+                );
+
+                Properties properties = new Properties();
+                properties.setProperty("user", "xyz");
+                properties.setProperty("password", "oh");
+                properties.setProperty("sslmode", "disable");
+
+                final Connection connection = DriverManager.getConnection("jdbc:postgresql://127.0.0.1:9120/nabu_app", properties);
+                PreparedStatement statement = connection.prepareStatement("select x, ? from long_sequence(5)");
+                statement.setTime(1, new Time(100L));
+
+                try {
+                    statement.executeQuery();
+                    Assert.fail();
+                } catch (SQLException e) {
+                    Assert.assertTrue(Chars.startsWith(e.getMessage(), "ERROR: unknown date query parameter"));
+                }
+                connection.close();
+            } finally {
+                running.set(false);
+                haltLatch.await();
+            }
+        });
     }
 
     private static void toSink(InputStream is, CharSink sink) throws IOException {

@@ -62,7 +62,6 @@ public class WireParser implements Closeable {
     public static final int PG_INT2 = 21;
     public static final int PG_INT8 = 20;
     public static final int PG_BOOL = 16;
-    public static final int PG_TIME = 1083;
     public static final int PG_DATE = 1082;
     public static final int PG_BYTEA = 17;
     public static final int PG_UNSPECIFIED = 0;
@@ -152,47 +151,57 @@ public class WireParser implements Closeable {
             recv(fd);
         }
 
-        long readOffsetBeforeParse = recvBufferReadOffset;
+        try {
+            long readOffsetBeforeParse = recvBufferReadOffset;
 
-        // Parse will update the value of recvBufferOffset upon completion of
-        // logical block. We cannot count on return value because 'parse' may try to
-        // respond to client and fail with exception. When it does fail we would have
-        // to retry 'send' but not parse the same input again
-        parse(fd, recvBuffer + recvBufferReadOffset, (int) (recvBufferWriteOffset - recvBufferReadOffset));
+            // Parse will update the value of recvBufferOffset upon completion of
+            // logical block. We cannot count on return value because 'parse' may try to
+            // respond to client and fail with exception. When it does fail we would have
+            // to retry 'send' but not parse the same input again
+            parse(fd, recvBuffer + recvBufferReadOffset, (int) (recvBufferWriteOffset - recvBufferReadOffset));
 
-        // nothing changed?
-        if (readOffsetBeforeParse == recvBufferReadOffset) {
-            // how come we have something in buffer and parse didn't do anything?
-            if (readOffsetBeforeParse < recvBufferWriteOffset) {
-                // may be content was incomplete?
-                recv(fd);
-                // still nothing? oh well
-                if (readOffsetBeforeParse == recvBufferReadOffset) {
+            // nothing changed?
+            if (readOffsetBeforeParse == recvBufferReadOffset) {
+                // how come we have something in buffer and parse didn't do anything?
+                if (readOffsetBeforeParse < recvBufferWriteOffset) {
+                    // may be content was incomplete?
+                    recv(fd);
+                    // still nothing? oh well
+                    if (readOffsetBeforeParse == recvBufferReadOffset) {
+                        return;
+                    }
+                    // at this point we have some contact and parse did do something
+                } else {
                     return;
                 }
-                // at this point we have some contact and parse did do something
-            } else {
-                return;
             }
-        }
 
-        // we do not pre-compute length because 'parse' will mutate 'recvBufferReadOffset'
-        if (recvBufferWriteOffset - recvBufferReadOffset > 0) {
-            // did we not parse input fully?
-            do {
-                readOffsetBeforeParse = recvBufferReadOffset;
-                parse(fd, recvBuffer + recvBufferReadOffset, (int) (recvBufferWriteOffset - recvBufferReadOffset));
-                // nothing changed?
-                if (readOffsetBeforeParse == recvBufferReadOffset) {
-                    // shift to start
-                    Unsafe.getUnsafe().copyMemory(recvBuffer + readOffsetBeforeParse, recvBuffer, recvBufferWriteOffset - readOffsetBeforeParse);
-                    recvBufferWriteOffset = recvBufferWriteOffset - readOffsetBeforeParse;
-                    recvBufferReadOffset = 0;
-                    // read more
-                    return;
-                }
-            } while (recvBufferReadOffset < recvBufferWriteOffset);
+            // we do not pre-compute length because 'parse' will mutate 'recvBufferReadOffset'
+            if (recvBufferWriteOffset - recvBufferReadOffset > 0) {
+                // did we not parse input fully?
+                do {
+                    readOffsetBeforeParse = recvBufferReadOffset;
+                    parse(fd, recvBuffer + recvBufferReadOffset, (int) (recvBufferWriteOffset - recvBufferReadOffset));
+                    // nothing changed?
+                    if (readOffsetBeforeParse == recvBufferReadOffset) {
+                        // shift to start
+                        Unsafe.getUnsafe().copyMemory(recvBuffer + readOffsetBeforeParse, recvBuffer, recvBufferWriteOffset - readOffsetBeforeParse);
+                        recvBufferWriteOffset = recvBufferWriteOffset - readOffsetBeforeParse;
+                        recvBufferReadOffset = 0;
+                        // read more
+                        return;
+                    }
+                } while (recvBufferReadOffset < recvBufferWriteOffset);
+            }
+            clearRecvBuffer();
+        } catch (SqlException e) {
+            sendCurrentCursorTail = TAIL_ERROR;
+            sendExecuteTail(fd);
+            clearRecvBuffer();
         }
+    }
+
+    private void clearRecvBuffer() {
         recvBufferWriteOffset = 0;
         recvBufferReadOffset = 0;
     }
@@ -280,7 +289,7 @@ public class WireParser implements Closeable {
      * int the buffer they need to be passed again in parse function along with
      * any additional bytes received
      */
-    private void parse(long fd, long address, int len) throws PeerDisconnectedException, PeerIsSlowToReadException, BadProtocolException {
+    private void parse(long fd, long address, int len) throws PeerDisconnectedException, PeerIsSlowToReadException, BadProtocolException, SqlException {
         long limit = address + len;
         final int remaining = (int) (limit - address);
 
@@ -402,13 +411,11 @@ public class WireParser implements Closeable {
                             bindVariableService.setDate(j, Numbers.LONG_NaN);
                             break;
                         default:
-                            LOG.error().$("unsupported parameter [type=").$(pgType).$(']').$();
-                            throw BadProtocolException.INSTANCE;
+                            throw SqlException.$(0, "unsupported parameter [type=").put(pgType).put(", index=").put(j).put(']');
                     }
                     parameterTypes.add(pgType);
                 }
 
-                // todo: deal with exception
                 parseQuery(dbcs);
                 if (currentFactory == null) {
                     prepareReadyForQuery();
@@ -525,8 +532,7 @@ public class WireParser implements Closeable {
                                 try {
                                     bindVariableService.setDate(j, PG_DATE_TIME_Z_FORMAT.parse(dbcs, DateLocaleFactory.INSTANCE.getDefaultDateLocale()));
                                 } catch (NumericException exc) {
-                                    LOG.error().$("unknown date [value=").$(dbcs).$(']').$();
-                                    throw BadProtocolException.INSTANCE;
+                                    throw SqlException.$(0, "unknown date query parameter [value=").put(dbcs).put(", index=").put(j).put(']');
                                 }
                             }
                             LOG.error().$("timestamp: ").$(dbcs).$();
@@ -569,27 +575,22 @@ public class WireParser implements Closeable {
         }
     }
 
-    private void parseQuery(CharSequence query) {
+    private void parseQuery(CharSequence query) throws SqlException {
         // at this point we may have a current query that is not null
         // this is ok to lose reference to this query because we have cache
         // of all of them, which is looked up by query text
 
         responseAsciiSink.reset();
         if (!Chars.startsWith(query, "SET")) {
-            try {
-                currentFactory = factoryCache.peek(query);
-                if (currentFactory == null) {
-                    currentFactory = compiler.compile(query, bindVariableService);
-                    if (currentFactory != null) {
-                        factoryCache.put(query, currentFactory);
-                    } else {
-                        // DDL SQL
-                        prepareParseComplete();
-                    }
+            currentFactory = factoryCache.peek(query);
+            if (currentFactory == null) {
+                currentFactory = compiler.compile(query, bindVariableService);
+                if (currentFactory != null) {
+                    factoryCache.put(query, currentFactory);
+                } else {
+                    // DDL SQL
+                    prepareParseComplete();
                 }
-            } catch (SqlException e) {
-                e.printStackTrace();
-                prepareError(e);
             }
         } else {
             // same as DDL, but special handling because SQL compiler does not yet understand these SETs
@@ -819,9 +820,10 @@ public class WireParser implements Closeable {
                 send(fd);
                 break;
             case TAIL_ERROR:
-                prepareError(SqlException.last());
+                SqlException e = SqlException.last();
+                prepareError(e);
                 prepareReadyForQuery();
-                LOG.info().$("could not execute query").$();
+                LOG.info().$("SQL exception [pos=").$(e.getPosition()).$(", msg=").$(e.getFlyweightMessage()).$(']').$();
                 sendCurrentCursorTail = TAIL_NONE;
                 send(fd);
                 break;
@@ -1065,16 +1067,6 @@ public class WireParser implements Closeable {
 
         void reset() {
             sendBufferPtr = sendBuffer;
-        }
-
-        private void setBinDouble(BindVariableService bindVariableService, int index, long address, int len) throws BadProtocolException {
-            ensureLength(index, Double.BYTES, len, "binary double");
-            bindVariableService.setDouble(index, Unsafe.getUnsafe().getDouble(address));
-        }
-
-        private void setBinInt(BindVariableService bindVariableService, int index, long address, int len) throws BadProtocolException {
-            ensureLength(index, Integer.BYTES, len, "binary int");
-            bindVariableService.setDouble(index, Unsafe.getUnsafe().getDouble(address));
         }
 
         private void setNullValue() {
