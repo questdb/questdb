@@ -26,9 +26,17 @@ package com.questdb.cutlass.pgwire;
 import com.questdb.network.NetworkFacade;
 
 public interface WireParserConfiguration {
+    int getCharacterStoreCapacity();
+
+    int getCharacterStorePoolCapacity();
+
     default boolean getDumpNetworkTraffic() {
         return false;
     }
+
+    int getFactoryCacheColumnCount();
+
+    int getFactoryCacheRowCount();
 
     int getIdleRecvCountBeforeGivingUp();
 

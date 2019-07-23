@@ -57,4 +57,24 @@ public class DefaultWireParserConfiguration implements WireParserConfiguration {
         // BLOBs must fit inside send buffer together with other column values
         return 512 * 1024;
     }
+
+    @Override
+    public int getCharacterStoreCapacity() {
+        return 4096;
+    }
+
+    @Override
+    public int getCharacterStorePoolCapacity() {
+        return 64;
+    }
+
+    @Override
+    public int getFactoryCacheColumnCount() {
+        return 16;
+    }
+
+    @Override
+    public int getFactoryCacheRowCount() {
+        return 16;
+    }
 }
