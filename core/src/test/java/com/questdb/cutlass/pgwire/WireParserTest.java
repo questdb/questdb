@@ -1115,13 +1115,16 @@ public class WireParserTest extends AbstractGriffinTest {
 
                 final Connection connection = DriverManager.getConnection("jdbc:postgresql://127.0.0.1:9120/nabu_app", properties);
                 PreparedStatement statement = connection.prepareStatement("select x, ? from long_sequence(5)");
+                // TIME is passed over protocol as UNSPECIFIED type
+                // it will rely on date parser to work out what it is
+                // for now date parser does not parse just time, it could i guess if required.
                 statement.setTime(1, new Time(100L));
 
                 try {
                     statement.executeQuery();
                     Assert.fail();
                 } catch (SQLException e) {
-                    Assert.assertTrue(Chars.startsWith(e.getMessage(), "ERROR: unknown date query parameter"));
+                    Assert.assertTrue(Chars.startsWith(e.getMessage(), "ERROR: bad parameter value"));
                 }
                 connection.close();
             } finally {

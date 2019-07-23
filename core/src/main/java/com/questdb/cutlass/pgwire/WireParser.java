@@ -98,9 +98,9 @@ public class WireParser implements Closeable {
     private final BindVariableService bindVariableService = new BindVariableService();
     private final int maxBlobSizeOnQuery;
     private final ArrayColumnTypes parameterTypes = new ArrayColumnTypes();
-    private final IntList parameterFormatCodes = new IntList();
     // todo: this is thread local
     private final CharacterStore characterStore;
+    private final ObjList<BindVariableSetter> bindVariableSetters = new ObjList<>();
     private RecordCursor currentCursor = null;
     private int sendCurrentCursorTail = TAIL_NONE;
     private long sendBufferPtr;
@@ -213,6 +213,106 @@ public class WireParser implements Closeable {
         }
     }
 
+    @SuppressWarnings("unused")
+    public void setBooleanBindVariable(int index, long address, int valueLen) throws SqlException {
+        if (valueLen != 4 && valueLen != 5) {
+            throw SqlException.$(0, "bad value for BOOLEAN parameter [index=").put(index).put(", valueLen=").put(valueLen).put(']');
+        }
+        bindVariableService.setBoolean(index, valueLen == 4);
+    }
+
+    public void setByteBindVariable(int index, long address, int valueLen) throws BadProtocolException {
+        ensureValueLength(Short.BYTES, valueLen);
+        bindVariableService.setByte(index, (byte) NetworkByteOrderUtils.getShort(address));
+    }
+
+    public void setByteTextBindVariable(int index, long address, int valueLen) throws BadProtocolException {
+        try {
+            bindVariableService.setByte(index, (byte) Numbers.parseInt(dbcs.of(address, address + valueLen)));
+        } catch (NumericException e) {
+            throw BadProtocolException.INSTANCE;
+        }
+    }
+
+    public void setDateBindVariable(int index, long address, int valueLen) throws SqlException {
+        dbcs.of(address, address + valueLen);
+        try {
+            bindVariableService.setDate(index, PG_DATE_Z_FORMAT.parse(dbcs, DateLocaleFactory.INSTANCE.getDefaultDateLocale()));
+        } catch (NumericException ex) {
+            try {
+                bindVariableService.setDate(index, PG_DATE_TIME_Z_FORMAT.parse(dbcs, DateLocaleFactory.INSTANCE.getDefaultDateLocale()));
+            } catch (NumericException exc) {
+                throw SqlException.$(0, "bad parameter value [index=").put(index).put(", value=").put(dbcs).put(']');
+            }
+        }
+    }
+
+    public void setDoubleBindVariable(int index, long address, int valueLen) throws BadProtocolException {
+        ensureValueLength(Double.BYTES, valueLen);
+        bindVariableService.setDouble(index, Double.longBitsToDouble(NetworkByteOrderUtils.getLong(address)));
+    }
+
+    public void setDoubleTextBindVariable(int index, long address, int valueLen) throws BadProtocolException {
+        try {
+            bindVariableService.setDouble(index, Numbers.parseDouble(dbcs.of(address, address + valueLen)));
+        } catch (NumericException e) {
+            throw BadProtocolException.INSTANCE;
+        }
+    }
+
+    public void setFloatBindVariable(int index, long address, int valueLen) throws BadProtocolException {
+        ensureValueLength(Float.BYTES, valueLen);
+        bindVariableService.setFloat(index, Float.intBitsToFloat(NetworkByteOrderUtils.getInt(address)));
+    }
+
+    public void setFloatTextBindVariable(int index, long address, int valueLen) throws BadProtocolException {
+        try {
+            bindVariableService.setFloat(index, Numbers.parseFloat(dbcs.of(address, address + valueLen)));
+        } catch (NumericException e) {
+            throw BadProtocolException.INSTANCE;
+        }
+    }
+
+    public void setIntBindVariable(int index, long address, int valueLen) throws BadProtocolException {
+        ensureValueLength(Integer.BYTES, valueLen);
+        bindVariableService.setInt(index, NetworkByteOrderUtils.getInt(address));
+    }
+
+    public void setIntTextBindVariable(int index, long address, int valueLen) throws BadProtocolException {
+        try {
+            bindVariableService.setInt(index, Numbers.parseInt(dbcs.of(address, address + valueLen)));
+        } catch (NumericException e) {
+            throw BadProtocolException.INSTANCE;
+        }
+    }
+
+    public void setLongBindVariable(int index, long address, int valueLen) throws BadProtocolException {
+        ensureValueLength(Long.BYTES, valueLen);
+        bindVariableService.setLong(index, NetworkByteOrderUtils.getLong(address));
+    }
+
+    public void setLongTextBindVariable(int index, long address, int valueLen) throws BadProtocolException {
+        try {
+            bindVariableService.setLong(index, Numbers.parseLong(dbcs.of(address, address + valueLen)));
+        } catch (NumericException e) {
+            throw BadProtocolException.INSTANCE;
+        }
+    }
+
+    @SuppressWarnings("unused")
+    public void setNoopBindVariable(int index, long address, int valueLen) {
+    }
+
+    public void setStrBindVariable(int index, long address, int valueLen) throws BadProtocolException {
+        CharacterStoreEntry e = characterStore.newEntry();
+        if (Chars.utf8Decode(address, address + valueLen, e)) {
+            bindVariableService.setStr(index, characterStore.toImmutable());
+        } else {
+            LOG.error().$("invalid UTF8 bytes [index=").$(index).$(']').$();
+            throw BadProtocolException.INSTANCE;
+        }
+    }
+
     private void bindVariables(long lo, long msgLimit, short parameterCount) throws BadProtocolException, SqlException {
         // do we have enough data for all codes?
         if (lo + Short.BYTES * parameterCount > msgLimit) {
@@ -220,15 +320,18 @@ public class WireParser implements Closeable {
             throw BadProtocolException.INSTANCE;
         }
 
-        parameterFormatCodes.clear();
         for (int j = 0; j < parameterCount; j++) {
             final short code = NetworkByteOrderUtils.getShort(lo + j * Short.BYTES);
-            if (code != 1 && code != 0) {
+            if (code == 1) {
+                continue;
+            }
+
+            if (code == 0) {
+                bindVariableSetters.setQuick(j * 2, bindVariableSetters.getQuick(j * 2 + 1));
+            } else {
                 LOG.error().$("unsupported code [index=").$(j).$(", code=").$(code).$(']').$();
                 throw BadProtocolException.INSTANCE;
             }
-            parameterFormatCodes.add(code);
-            LOG.debug().$("parameter format code ").$(code).$();
         }
 
         lo += parameterCount * Short.BYTES;
@@ -271,116 +374,8 @@ public class WireParser implements Closeable {
                         .$(']').$();
                 throw BadProtocolException.INSTANCE;
             }
-
-            switch (parameterTypes.getColumnType(j)) {
-                case PG_INT2: // byte
-                    // postgres sends 'byte' as two-byte short
-                    if (this.parameterFormatCodes.getQuick(j) == 1) {
-                        ensureData(lo, Short.BYTES, msgLimit, j);
-                        bindVariableService.setByte(j, (byte) NetworkByteOrderUtils.getShort(lo));
-                    } else {
-                        ensureData(lo, valueLen, msgLimit, j);
-                        try {
-                            bindVariableService.setByte(j, (byte) Numbers.parseInt(dbcs.of(lo, lo + valueLen)));
-                        } catch (NumericException e) {
-                            e.printStackTrace();
-                        }
-                    }
-                    break;
-                case PG_FLOAT4: // float
-                    if (this.parameterFormatCodes.getQuick(j) == 1) {
-                        ensureData(lo, Float.BYTES, msgLimit, j);
-                        bindVariableService.setFloat(j, Float.intBitsToFloat(NetworkByteOrderUtils.getInt(lo)));
-                    } else {
-                        ensureData(lo, valueLen, msgLimit, j);
-                        try {
-                            bindVariableService.setFloat(j, Numbers.parseFloat(dbcs.of(lo, lo + valueLen)));
-                        } catch (NumericException e) {
-                            e.printStackTrace();
-                        }
-                    }
-                    break;
-                case PG_FLOAT8: // double
-                    if (this.parameterFormatCodes.getQuick(j) == 1) {
-                        ensureData(lo, Double.BYTES, msgLimit, j);
-                        bindVariableService.setDouble(j, Double.longBitsToDouble(NetworkByteOrderUtils.getLong(lo)));
-                    } else {
-                        ensureData(lo, valueLen, msgLimit, j);
-                        try {
-                            bindVariableService.setDouble(j, Numbers.parseDouble(dbcs.of(lo, lo + valueLen)));
-                        } catch (NumericException e) {
-                            e.printStackTrace();
-                        }
-                    }
-                    break;
-                case PG_INT8: // LONG
-                    if (this.parameterFormatCodes.getQuick(j) == 1) {
-                        ensureData(lo, Long.BYTES, msgLimit, j);
-                        bindVariableService.setLong(j, NetworkByteOrderUtils.getLong(lo));
-                    } else {
-                        ensureData(lo, valueLen, msgLimit, j);
-                        try {
-                            bindVariableService.setLong(j, Numbers.parseLong(dbcs.of(lo, lo + valueLen)));
-                        } catch (NumericException e) {
-                            e.printStackTrace();
-                        }
-                    }
-                    break;
-                case PG_INT4: // INT
-                    if (this.parameterFormatCodes.getQuick(j) == 1) {
-                        ensureData(lo, Integer.BYTES, msgLimit, j);
-                        bindVariableService.setInt(j, NetworkByteOrderUtils.getInt(lo));
-                    } else {
-                        ensureData(lo, valueLen, msgLimit, j);
-                        try {
-                            bindVariableService.setInt(j, Numbers.parseInt(dbcs.of(lo, lo + valueLen)));
-                        } catch (NumericException e) {
-                            e.printStackTrace();
-                        }
-                    }
-                    break;
-                case PG_BOOL:
-                    if (valueLen != 4 && valueLen != 5) {
-                        throw BadProtocolException.INSTANCE;
-                    }
-                    bindVariableService.setBoolean(j, valueLen == 4);
-                    break;
-                case PG_VARCHAR:
-                    CharacterStoreEntry e = characterStore.newEntry();
-                    if (Chars.utf8Decode(lo, lo + valueLen, e)) {
-                        bindVariableService.setStr(j, characterStore.toImmutable());
-                    } else {
-                        LOG.error().$("invalid UTF8 bytes [index=").$(j).$(']').$();
-                        throw BadProtocolException.INSTANCE;
-                    }
-                    break;
-                case PG_UNSPECIFIED:
-                case PG_TIMESTAMP:
-                case PG_TIMESTAMPZ:
-                    // this could be either Date or Timestamp
-                    dbcs.of(lo, lo + valueLen);
-                    try {
-                        bindVariableService.setDate(j, PG_DATE_Z_FORMAT.parse(dbcs, DateLocaleFactory.INSTANCE.getDefaultDateLocale()));
-                    } catch (NumericException ex) {
-                        try {
-                            bindVariableService.setDate(j, PG_DATE_TIME_Z_FORMAT.parse(dbcs, DateLocaleFactory.INSTANCE.getDefaultDateLocale()));
-                        } catch (NumericException exc) {
-                            throw SqlException.$(0, "unknown date query parameter [value=").put(dbcs).put(", index=").put(j).put(']');
-                        }
-                    }
-                    break;
-                case PG_DATE:
-                    // by default statement.setDate() will send type as UNSPECIFIED
-                    // when one calls statement.setNull(Types.DATE) postgres sends PG_DATE, go figure
-                    // todo: attempt for force postgress JDBC to send date as binary when value is not null
-                    break;
-                default:
-                    LOG.error()
-                            .$("invalid BIND column type [parameterIndex=").$(j)
-                            .$(", type=").$(parameterTypes.getColumnType(j))
-                            .$(']').$();
-                    throw BadProtocolException.INSTANCE;
-            }
+            ensureData(lo, valueLen, msgLimit, j);
+            bindVariableSetters.getQuick(j * 2).set(j, lo, valueLen);
             lo += valueLen;
         }
     }
@@ -454,6 +449,12 @@ public class WireParser implements Closeable {
     private void ensureData(long lo, int required, long msgLimit, int j) throws BadProtocolException {
         if (lo + required > msgLimit) {
             LOG.info().$("not enough bytes for parameter [index=").$(j).$(']').$();
+            throw BadProtocolException.INSTANCE;
+        }
+    }
+
+    private void ensureValueLength(int required, int valueLen) throws BadProtocolException {
+        if (required != valueLen) {
             throw BadProtocolException.INSTANCE;
         }
     }
@@ -815,11 +816,12 @@ public class WireParser implements Closeable {
         sendClearTextPasswordChallenge(fd);
     }
 
-    private void recv(long fd) throws PeerDisconnectedException, PeerIsSlowToWriteException {
+    private void recv(long fd) throws PeerDisconnectedException, PeerIsSlowToWriteException, BadProtocolException {
         final int remaining = (int) (recvBufferSize - recvBufferWriteOffset);
 
         if (remaining < 1) {
-            throw new RuntimeException("buffer overflow");
+            LOG.error().$("undersized receive buffer or someone is abusing protocol").$();
+            throw BadProtocolException.INSTANCE;
         }
 
         int n = doReceive(fd, remaining);
@@ -1033,7 +1035,7 @@ public class WireParser implements Closeable {
                     responseAsciiSink.putNetworkInt(Byte.BYTES);
                     responseAsciiSink.put(record.getBool(i) ? 't' : 'f');
                     break;
-                case ColumnType.BINARY:
+                default:
                     BinarySequence sequence = record.getBin(i);
                     if (sequence == null) {
                         responseAsciiSink.setNullValue();
@@ -1051,40 +1053,57 @@ public class WireParser implements Closeable {
                         }
                     }
                     break;
-                default:
-                    assert false;
             }
         }
         responseAsciiSink.putLen(b);
     }
 
     private void setupBindVariables(long lo, short pc) throws SqlException {
+        bindVariableSetters.clear();
         for (int j = 0; j < pc; j++) {
             int pgType = NetworkByteOrderUtils.getInt(lo + j * Integer.BYTES);
             switch (pgType) {
                 case PG_FLOAT8: // FLOAT8 - double
                     bindVariableService.setDouble(j, Double.NaN);
+                    bindVariableSetters.add(this::setDoubleBindVariable);
+                    bindVariableSetters.add(this::setDoubleTextBindVariable);
                     break;
                 case PG_INT4: // INT
                     bindVariableService.setInt(j, Numbers.INT_NaN);
+                    bindVariableSetters.add(this::setIntBindVariable);
+                    bindVariableSetters.add(this::setIntTextBindVariable);
                     break;
                 case PG_INT8:
                     bindVariableService.setLong(j, Numbers.LONG_NaN);
+                    bindVariableSetters.add(this::setLongBindVariable);
+                    bindVariableSetters.add(this::setLongTextBindVariable);
                     break;
                 case PG_FLOAT4:
                     bindVariableService.setFloat(j, Float.NaN);
+                    bindVariableSetters.add(this::setFloatBindVariable);
+                    bindVariableSetters.add(this::setFloatTextBindVariable);
                     break;
                 case PG_INT2:
                     bindVariableService.setByte(j, (byte) 0);
+                    bindVariableSetters.add(this::setByteBindVariable);
+                    bindVariableSetters.add(this::setByteTextBindVariable);
                     break;
                 case PG_BOOL:
                     bindVariableService.setBoolean(j, false);
+                    bindVariableSetters.add(this::setBooleanBindVariable);
+                    bindVariableSetters.add(this::setBooleanBindVariable);
                     break;
                 case PG_VARCHAR:
                     bindVariableService.setStr(j, null);
+                    bindVariableSetters.add(this::setStrBindVariable);
+                    bindVariableSetters.add(this::setStrBindVariable);
+                    break;
+                case PG_DATE:
+                    bindVariableService.setDate(j, Numbers.LONG_NaN);
+                    bindVariableSetters.add(this::setNoopBindVariable);
+                    bindVariableSetters.add(this::setNoopBindVariable);
                     break;
                 case PG_UNSPECIFIED:
-                case PG_DATE:
                 case PG_TIMESTAMP:
                 case PG_TIMESTAMPZ:
                     // postgres JDBC driver does not seem to send
@@ -1094,12 +1113,19 @@ public class WireParser implements Closeable {
                     // QuestDB has to know types to resolve function linkage
                     // at compile time rather than at runtime.
                     bindVariableService.setDate(j, Numbers.LONG_NaN);
+                    bindVariableSetters.add(this::setDateBindVariable);
+                    bindVariableSetters.add(this::setDateBindVariable);
                     break;
                 default:
                     throw SqlException.$(0, "unsupported parameter [type=").put(pgType).put(", index=").put(j).put(']');
             }
             parameterTypes.add(pgType);
         }
+    }
+
+    @FunctionalInterface
+    private interface BindVariableSetter {
+        void set(int index, long address, int valueLen) throws SqlException, BadProtocolException;
     }
 
     private class ResponseAsciiSink extends AbstractCharSink {
