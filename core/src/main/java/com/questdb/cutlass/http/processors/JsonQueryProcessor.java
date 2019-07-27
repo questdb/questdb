@@ -179,13 +179,13 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
                     cacheHits.incrementAndGet();
                     info(state).$("execute-new [q=`").$(state.query).
                             $("`, skip: ").$(state.skip).
-                            $(", stop: ").$(state.stop == Long.MAX_VALUE ? "MAX" : state.stop).
+                            $(", stop: ").$(state.stop).
                             $(']').$();
                 } else {
                     cacheMisses.incrementAndGet();
                     info(state).$("execute-cached [q=`").$(state.query).
                             $("`, skip: ").$(state.skip).
-                            $(", stop: ").$(state.stop == Long.MAX_VALUE ? "MAX" : state.stop).
+                            $(", stop: ").$(state.stop).
                             $(']').$();
                 }
 

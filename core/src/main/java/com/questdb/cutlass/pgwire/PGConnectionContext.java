@@ -23,8 +23,6 @@
 
 package com.questdb.cutlass.pgwire;
 
-import com.questdb.cairo.ArrayColumnTypes;
-import com.questdb.cairo.CairoEngine;
 import com.questdb.cairo.ColumnType;
 import com.questdb.cairo.sql.Record;
 import com.questdb.cairo.sql.RecordCursor;
@@ -37,6 +35,7 @@ import com.questdb.griffin.SqlException;
 import com.questdb.griffin.engine.functions.bind.BindVariableService;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
+import com.questdb.log.LogRecord;
 import com.questdb.network.*;
 import com.questdb.std.*;
 import com.questdb.std.microtime.DateFormatUtils;
@@ -46,121 +45,166 @@ import com.questdb.std.str.DirectByteCharSequence;
 import com.questdb.std.str.StdoutSink;
 import com.questdb.std.time.DateLocaleFactory;
 
-import java.io.Closeable;
-
+import static com.questdb.cutlass.pgwire.PGJobContext.*;
 import static com.questdb.network.Net.dump;
 import static com.questdb.std.time.DateFormatUtils.*;
 
-public class WireParser implements Closeable {
-
-    public static final int PG_VARCHAR = 1043;
-    public static final int PG_TIMESTAMP = 1114;
-    public static final int PG_TIMESTAMPZ = 1184;
-    public static final int PG_FLOAT8 = 701;
-    public static final int PG_FLOAT4 = 700;
-    public static final int PG_INT4 = 23;
-    public static final int PG_INT2 = 21;
-    public static final int PG_INT8 = 20;
-    public static final int PG_BOOL = 16;
-    public static final int PG_DATE = 1082;
-    public static final int PG_BYTEA = 17;
-    public static final int PG_UNSPECIFIED = 0;
-    private static final int PREFIXED_MESSAGE_HEADER_LEN = 5;
-    private static final byte MESSAGE_TYPE_LOGIN_RESPONSE = 'R';
-    private static final byte MESSAGE_TYPE_READY_FOR_QUERY = 'Z';
-    private static final byte MESSAGE_TYPE_PARAMETER_STATUS = 'S';
-    private static final byte MESSAGE_TYPE_COMMAND_COMPLETE = 'C';
-    private static final byte MESSAGE_TYPE_DATA_ROW = 'D';
-    private static final byte MESSAGE_TYPE_ROW_DESCRIPTION = 'T';
-    private static final byte MESSAGE_TYPE_ERROR_RESPONSE = 'E';
-    private static final byte MESSAGE_TYPE_PARSE_COMPLETE = '1';
-    private final static Log LOG = LogFactory.getLog(WireParser.class);
-    private static final IntIntHashMap typeOidMap = new IntIntHashMap();
+public class PGConnectionContext implements IOContext, Mutable {
+    static final byte MESSAGE_TYPE_ERROR_RESPONSE = 'E';
+    private static final int INIT_SSL_REQUEST = 80877103;
+    private static final int INIT_STARTUP_MESSAGE = 196608;
+    private static final int INIT_CANCEL_REQUEST = 80877102;
     private static final int TAIL_NONE = 0;
     private static final int TAIL_SUCCESS = 1;
     private static final int TAIL_ERROR = 2;
-    private final NetworkFacade nf;
+    private static final byte MESSAGE_TYPE_COMMAND_COMPLETE = 'C';
+    private static final byte MESSAGE_TYPE_DATA_ROW = 'D';
+    private static final byte MESSAGE_TYPE_READY_FOR_QUERY = 'Z';
+    private final static Log LOG = LogFactory.getLog(PGConnectionContext.class);
+    private static final IntIntHashMap typeOidMap = new IntIntHashMap();
+    private static final int PREFIXED_MESSAGE_HEADER_LEN = 5;
+    private static final byte MESSAGE_TYPE_LOGIN_RESPONSE = 'R';
+    private static final byte MESSAGE_TYPE_PARAMETER_STATUS = 'S';
+    private static final byte MESSAGE_TYPE_ROW_DESCRIPTION = 'T';
+    private static final byte MESSAGE_TYPE_PARSE_COMPLETE = '1';
     private final long recvBuffer;
     private final long sendBuffer;
-    private final long sendBufferLimit;
     private final int recvBufferSize;
+    private final CharacterStore characterStore;
+    private final BindVariableService bindVariableService = new BindVariableService();
+    private final long sendBufferLimit;
     private final int sendBufferSize;
-    // todo: thread local
-    private final SqlCompiler compiler;
     private final ResponseAsciiSink responseAsciiSink = new ResponseAsciiSink();
+    private final DirectByteCharSequence dbcs = new DirectByteCharSequence();
+    private final int maxBlobSizeOnQuery;
+    private final NetworkFacade nf;
+    private final boolean dumpNetworkTraffic;
     private final int idleSendCountBeforeGivingUp;
     private final int idleRecvCountBeforeGivingUp;
-    // todo: thread local
-    private final AssociativeCache<RecordCursorFactory> factoryCache;
-    // todo: thread local
-    private final DirectByteCharSequence dbcs = new DirectByteCharSequence();
-    // todo: thread local
-    private final BindVariableService bindVariableService = new BindVariableService();
-    private final int maxBlobSizeOnQuery;
-    private final ArrayColumnTypes parameterTypes = new ArrayColumnTypes();
-    // todo: this is thread local
-    private final CharacterStore characterStore;
-    private final ObjList<BindVariableSetter> bindVariableSetters = new ObjList<>();
-    private RecordCursor currentCursor = null;
+    private final String serverVersion;
     private int sendCurrentCursorTail = TAIL_NONE;
     private long sendBufferPtr;
-    private boolean loginRequestProcessed = false;
+    private boolean needLogin = false;
     private long recvBufferWriteOffset = 0;
     private long recvBufferReadOffset = 0;
     private int bufferRemainingOffset = 0;
     private int bufferRemainingSize = 0;
+    private RecordCursor currentCursor = null;
     private RecordCursorFactory currentFactory = null;
-    private boolean dumpNetworkTraffic;
+    private long fd;
+    private CharSequence queryText;
 
-    public WireParser(WireParserConfiguration configuration, CairoEngine engine) {
+    public PGConnectionContext(PGWireConfiguration configuration) {
         this.nf = configuration.getNetworkFacade();
-        this.compiler = new SqlCompiler(engine);
         this.recvBufferSize = Numbers.ceilPow2(configuration.getRecvBufferSize());
         this.recvBuffer = Unsafe.malloc(this.recvBufferSize);
         this.sendBufferSize = Numbers.ceilPow2(configuration.getSendBufferSize());
         this.sendBuffer = Unsafe.malloc(this.sendBufferSize);
         this.sendBufferPtr = sendBuffer;
         this.sendBufferLimit = sendBuffer + sendBufferSize;
-        this.idleSendCountBeforeGivingUp = configuration.getIdleSendCountBeforeGivingUp();
-        this.idleRecvCountBeforeGivingUp = configuration.getIdleRecvCountBeforeGivingUp();
-        this.dumpNetworkTraffic = configuration.getDumpNetworkTraffic();
-        this.maxBlobSizeOnQuery = configuration.getMaxBlobSizeOnQuery();
         this.characterStore = new CharacterStore(
                 configuration.getCharacterStoreCapacity(),
                 configuration.getCharacterStorePoolCapacity()
         );
-        this.factoryCache = new AssociativeCache<>(
-                configuration.getFactoryCacheColumnCount(),
-                configuration.getFactoryCacheRowCount()
-        );
-        LOG.info()
-                .$("init [recvBufferSize=").$(recvBufferSize)
-                .$(", sendBufferSize=").$(sendBufferSize)
-                .$(", maxBlobSizeOnQuery=").$(maxBlobSizeOnQuery)
-                .$(']').$();
+        this.maxBlobSizeOnQuery = configuration.getMaxBlobSizeOnQuery();
+        this.dumpNetworkTraffic = configuration.getDumpNetworkTraffic();
+        this.idleSendCountBeforeGivingUp = configuration.getIdleSendCountBeforeGivingUp();
+        this.idleRecvCountBeforeGivingUp = configuration.getIdleRecvCountBeforeGivingUp();
+        this.serverVersion = configuration.getServerVersion();
+    }
+
+    public static int getInt(long address) {
+        int b = Unsafe.getUnsafe().getByte(address) & 0xff;
+        b = (b << 8) | Unsafe.getUnsafe().getByte(address + 1) & 0xff;
+        b = (b << 8) | Unsafe.getUnsafe().getByte(address + 2) & 0xff;
+        return (b << 8) | Unsafe.getUnsafe().getByte(address + 3) & 0xff;
+    }
+
+    public static long getLong(long address) {
+        long b = Unsafe.getUnsafe().getByte(address) & 0xff;
+        b = (b << 8) | Unsafe.getUnsafe().getByte(address + 1) & 0xff;
+        b = (b << 8) | Unsafe.getUnsafe().getByte(address + 2) & 0xff;
+        b = (b << 8) | Unsafe.getUnsafe().getByte(address + 3) & 0xff;
+        b = (b << 8) | Unsafe.getUnsafe().getByte(address + 4) & 0xff;
+        b = (b << 8) | Unsafe.getUnsafe().getByte(address + 5) & 0xff;
+        b = (b << 8) | Unsafe.getUnsafe().getByte(address + 6) & 0xff;
+        return (b << 8) | Unsafe.getUnsafe().getByte(address + 7) & 0xff;
+    }
+
+    public static short getShort(long address) {
+        int b = Unsafe.getUnsafe().getByte(address) & 0xff;
+        return (short) ((b << 8) | Unsafe.getUnsafe().getByte(address + 1) & 0xff);
+    }
+
+    public static void putInt(long address, int value) {
+        Unsafe.getUnsafe().putByte(address, (byte) (value >>> 24));
+        Unsafe.getUnsafe().putByte(address + 1, (byte) (value >>> 16));
+        Unsafe.getUnsafe().putByte(address + 2, (byte) (value >>> 8));
+        Unsafe.getUnsafe().putByte(address + 3, (byte) (value));
+    }
+
+    public static void putShort(long address, short value) {
+        Unsafe.getUnsafe().putByte(address, (byte) (value >>> 8));
+        Unsafe.getUnsafe().putByte(address + 1, (byte) (value));
+    }
+
+    @Override
+    public void clear() {
+        sendCurrentCursorTail = TAIL_NONE;
+        sendBufferPtr = sendBuffer;
+        needLogin = true;
+        recvBufferWriteOffset = 0;
+        recvBufferReadOffset = 0;
+        bufferRemainingOffset = 0;
+        bufferRemainingSize = 0;
+        currentCursor = Misc.free(currentCursor);
+        currentFactory = Misc.free(currentFactory);
+        responseAsciiSink.reset();
+        characterStore.clear();
+        bindVariableService.clear();
     }
 
     @Override
     public void close() {
+        this.fd = -1;
         Unsafe.free(sendBuffer, sendBufferSize);
         Unsafe.free(recvBuffer, recvBufferSize);
-        Misc.free(compiler);
     }
 
-    public void process(long fd) throws PeerDisconnectedException, PeerIsSlowToReadException, PeerIsSlowToWriteException, BadProtocolException {
+    @Override
+    public long getFd() {
+        return fd;
+    }
+
+    @Override
+    public boolean invalid() {
+        return fd == -1;
+    }
+
+    public void handleClientOperation(
+            @Transient SqlCompiler compiler,
+            @Transient AssociativeCache<RecordCursorFactory> factoryCache,
+            @Transient ObjList<BindVariableSetter> binsVariableSetters
+    ) throws PeerDisconnectedException,
+            PeerIsSlowToReadException,
+            PeerIsSlowToWriteException,
+            BadProtocolException {
 
         if (bufferRemainingSize > 0) {
-            doSend(fd, bufferRemainingOffset, bufferRemainingSize);
+            doSend(
+                    bufferRemainingOffset,
+                    bufferRemainingSize
+            );
         }
 
-        sendExecuteTail(fd);
+        sendExecuteTail();
 
         // If we have empty buffer we need to try to read something from socket
         // however the opposite  is a little tricky. If buffer is non-empty
         // we still may need to read from socket if contents of this buffer
         // is incomplete and cannot be parsed
         if (recvBufferReadOffset == recvBufferWriteOffset) {
-            recv(fd);
+            recv();
         }
 
         try {
@@ -170,14 +214,20 @@ public class WireParser implements Closeable {
             // logical block. We cannot count on return value because 'parse' may try to
             // respond to client and fail with exception. When it does fail we would have
             // to retry 'send' but not parse the same input again
-            parse(fd, recvBuffer + recvBufferReadOffset, (int) (recvBufferWriteOffset - recvBufferReadOffset));
+            parse(
+                    recvBuffer + recvBufferReadOffset,
+                    (int) (recvBufferWriteOffset - recvBufferReadOffset),
+                    compiler,
+                    factoryCache,
+                    binsVariableSetters
+            );
 
             // nothing changed?
             if (readOffsetBeforeParse == recvBufferReadOffset) {
                 // how come we have something in buffer and parse didn't do anything?
                 if (readOffsetBeforeParse < recvBufferWriteOffset) {
                     // may be content was incomplete?
-                    recv(fd);
+                    recv();
                     // still nothing? oh well
                     if (readOffsetBeforeParse == recvBufferReadOffset) {
                         return;
@@ -193,11 +243,20 @@ public class WireParser implements Closeable {
                 // did we not parse input fully?
                 do {
                     readOffsetBeforeParse = recvBufferReadOffset;
-                    parse(fd, recvBuffer + recvBufferReadOffset, (int) (recvBufferWriteOffset - recvBufferReadOffset));
+                    parse(
+                            recvBuffer + recvBufferReadOffset,
+                            (int) (recvBufferWriteOffset - recvBufferReadOffset),
+                            compiler,
+                            factoryCache,
+                            binsVariableSetters
+                    );
                     // nothing changed?
                     if (readOffsetBeforeParse == recvBufferReadOffset) {
                         // shift to start
-                        Unsafe.getUnsafe().copyMemory(recvBuffer + readOffsetBeforeParse, recvBuffer, recvBufferWriteOffset - readOffsetBeforeParse);
+                        Unsafe.getUnsafe().copyMemory(
+                                recvBuffer + readOffsetBeforeParse,
+                                recvBuffer,
+                                recvBufferWriteOffset - readOffsetBeforeParse);
                         recvBufferWriteOffset = recvBufferWriteOffset - readOffsetBeforeParse;
                         recvBufferReadOffset = 0;
                         // read more
@@ -208,9 +267,15 @@ public class WireParser implements Closeable {
             clearRecvBuffer();
         } catch (SqlException e) {
             sendCurrentCursorTail = TAIL_ERROR;
-            sendExecuteTail(fd);
+            sendExecuteTail();
             clearRecvBuffer();
         }
+    }
+
+    public PGConnectionContext of(long clientFd) {
+        this.fd = clientFd;
+        clear();
+        return this;
     }
 
     @SuppressWarnings("unused")
@@ -223,7 +288,7 @@ public class WireParser implements Closeable {
 
     public void setByteBindVariable(int index, long address, int valueLen) throws BadProtocolException {
         ensureValueLength(Short.BYTES, valueLen);
-        bindVariableService.setByte(index, (byte) NetworkByteOrderUtils.getShort(address));
+        bindVariableService.setByte(index, (byte) getShort(address));
     }
 
     public void setByteTextBindVariable(int index, long address, int valueLen) throws BadProtocolException {
@@ -249,7 +314,7 @@ public class WireParser implements Closeable {
 
     public void setDoubleBindVariable(int index, long address, int valueLen) throws BadProtocolException {
         ensureValueLength(Double.BYTES, valueLen);
-        bindVariableService.setDouble(index, Double.longBitsToDouble(NetworkByteOrderUtils.getLong(address)));
+        bindVariableService.setDouble(index, Double.longBitsToDouble(getLong(address)));
     }
 
     public void setDoubleTextBindVariable(int index, long address, int valueLen) throws BadProtocolException {
@@ -262,7 +327,7 @@ public class WireParser implements Closeable {
 
     public void setFloatBindVariable(int index, long address, int valueLen) throws BadProtocolException {
         ensureValueLength(Float.BYTES, valueLen);
-        bindVariableService.setFloat(index, Float.intBitsToFloat(NetworkByteOrderUtils.getInt(address)));
+        bindVariableService.setFloat(index, Float.intBitsToFloat(getInt(address)));
     }
 
     public void setFloatTextBindVariable(int index, long address, int valueLen) throws BadProtocolException {
@@ -275,7 +340,7 @@ public class WireParser implements Closeable {
 
     public void setIntBindVariable(int index, long address, int valueLen) throws BadProtocolException {
         ensureValueLength(Integer.BYTES, valueLen);
-        bindVariableService.setInt(index, NetworkByteOrderUtils.getInt(address));
+        bindVariableService.setInt(index, getInt(address));
     }
 
     public void setIntTextBindVariable(int index, long address, int valueLen) throws BadProtocolException {
@@ -288,7 +353,7 @@ public class WireParser implements Closeable {
 
     public void setLongBindVariable(int index, long address, int valueLen) throws BadProtocolException {
         ensureValueLength(Long.BYTES, valueLen);
-        bindVariableService.setLong(index, NetworkByteOrderUtils.getLong(address));
+        bindVariableService.setLong(index, getLong(address));
     }
 
     public void setLongTextBindVariable(int index, long address, int valueLen) throws BadProtocolException {
@@ -313,628 +378,38 @@ public class WireParser implements Closeable {
         }
     }
 
-    private void bindVariables(long lo, long msgLimit, short parameterCount) throws BadProtocolException, SqlException {
-        // do we have enough data for all codes?
-        if (lo + Short.BYTES * parameterCount > msgLimit) {
-            LOG.error().$("invalid format code count [value=").$(parameterCount).$(']').$();
+    private static void ensureValueLength(int required, int valueLen) throws BadProtocolException {
+        if (required != valueLen) {
             throw BadProtocolException.INSTANCE;
         }
-
-        for (int j = 0; j < parameterCount; j++) {
-            final short code = NetworkByteOrderUtils.getShort(lo + j * Short.BYTES);
-            if (code == 1) {
-                continue;
-            }
-
-            if (code == 0) {
-                bindVariableSetters.setQuick(j * 2, bindVariableSetters.getQuick(j * 2 + 1));
-            } else {
-                LOG.error().$("unsupported code [index=").$(j).$(", code=").$(code).$(']').$();
-                throw BadProtocolException.INSTANCE;
-            }
-        }
-
-        lo += parameterCount * Short.BYTES;
-
-        if (lo + Short.BYTES > msgLimit) {
-            LOG.error().$("could not read parameter value count").$();
-            throw BadProtocolException.INSTANCE;
-        }
-        parameterCount = NetworkByteOrderUtils.getShort(lo);
-
-        if (parameterCount != parameterTypes.getColumnCount()) {
-            LOG.error()
-                    .$("parameter count from parse message does not match parameter value count [valueCount=").$(parameterCount)
-                    .$(", typeCount=").$(parameterTypes.getColumnCount())
-                    .$(']').$();
-            throw BadProtocolException.INSTANCE;
-        }
-
-        lo += Short.BYTES;
-        characterStore.clear();
-
-        for (int j = 0; j < parameterCount; j++) {
-            if (lo + Integer.BYTES > msgLimit) {
-                LOG.error().$("could not read parameter value length [index=").$(j).$(']').$();
-                throw BadProtocolException.INSTANCE;
-            }
-
-            int valueLen = NetworkByteOrderUtils.getInt(lo);
-            lo += Integer.BYTES;
-            if (valueLen == -1) {
-                // this is null we have already defaulted parameters to
-                continue;
-            }
-
-            if (lo + valueLen > msgLimit) {
-                LOG.error()
-                        .$("value length is outside of buffer [parameterIndex=").$(j)
-                        .$(", valueLen=").$(valueLen)
-                        .$(", messageRemaining=").$(msgLimit - lo)
-                        .$(']').$();
-                throw BadProtocolException.INSTANCE;
-            }
-            ensureData(lo, valueLen, msgLimit, j);
-            bindVariableSetters.getQuick(j * 2).set(j, lo, valueLen);
-            lo += valueLen;
-        }
     }
 
-    private void clearRecvBuffer() {
-        recvBufferWriteOffset = 0;
-        recvBufferReadOffset = 0;
-    }
-
-    private void disconnectClient(long fd) {
-        nf.close(fd);
-        loginRequestProcessed = false;
-    }
-
-    private int doReceive(long fd, int remaining) {
-        int n = nf.recv(fd, recvBuffer + recvBufferWriteOffset, remaining);
-        dumpBuffer('>', recvBuffer + recvBufferWriteOffset, n);
-        return n;
-    }
-
-    private void doSend(long fd, int offset, int size) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        final int n = nf.send(fd, sendBuffer + offset, size);
-        dumpBuffer('<', sendBuffer, n);
-        if (n < 0) {
-            throw PeerDisconnectedException.INSTANCE;
-        }
-
-        if (n < size) {
-            doSendWithRetries(fd, n, size - n);
-        }
-        sendBufferPtr = sendBuffer;
-        bufferRemainingSize = 0;
-        bufferRemainingOffset = 0;
-    }
-
-    private void doSendWithRetries(long fd, int bufferOffset, int bufferSize) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        int offset = bufferOffset;
-        int remaining = bufferSize;
-        int idleSendCount = 0;
-
-        while (remaining > 0 && idleSendCount < idleSendCountBeforeGivingUp) {
-            int m = nf.send(fd, sendBuffer + offset, remaining);
-            if (m < 0) {
-                throw PeerDisconnectedException.INSTANCE;
-            }
-
-            dumpBuffer('<', sendBuffer, m);
-
-            if (m > 0) {
-                remaining -= m;
-                offset += m;
-            } else {
-                idleSendCount++;
-            }
-        }
-
-        if (remaining > 0) {
-            this.bufferRemainingOffset = offset;
-            this.bufferRemainingSize = remaining;
-            throw PeerIsSlowToReadException.INSTANCE;
-        }
-    }
-
-    private void dumpBuffer(char direction, long buffer, int len) {
-        if (dumpNetworkTraffic && len > 0) {
-            StdoutSink.INSTANCE.put(direction);
-            dump(buffer, len);
-        }
-    }
-
-    private void ensureData(long lo, int required, long msgLimit, int j) throws BadProtocolException {
+    private static void ensureData(long lo, int required, long msgLimit, int j) throws BadProtocolException {
         if (lo + required > msgLimit) {
             LOG.info().$("not enough bytes for parameter [index=").$(j).$(']').$();
             throw BadProtocolException.INSTANCE;
         }
     }
 
-    private void ensureValueLength(int required, int valueLen) throws BadProtocolException {
-        if (required != valueLen) {
-            throw BadProtocolException.INSTANCE;
-        }
+    private static void prepareLoginOk(PGConnectionContext.ResponseAsciiSink sink) {
+        sink.put(MESSAGE_TYPE_LOGIN_RESPONSE);
+        sink.putNetworkInt(Integer.BYTES * 2); // length of this message
+        sink.putNetworkInt(0); // response code
     }
 
-    private long getStringLength(long x, long limit) {
-        return Unsafe.getUnsafe().getByte(x) == 0 ? x : getStringLengthTedious(x, limit);
+    private static void prepareParams(PGConnectionContext.ResponseAsciiSink sink, String name, String value) {
+        sink.put(MESSAGE_TYPE_PARAMETER_STATUS);
+        final long addr = sink.skip();
+        sink.encodeUtf8Z(name);
+        sink.encodeUtf8Z(value);
+        sink.putLen(addr);
     }
 
-    private long getStringLengthTedious(long x, long limit) {
-        // calculate length
-        for (long i = x; i < limit; i++) {
-            if (Unsafe.getUnsafe().getByte(i) == 0) {
-                return i;
-            }
-        }
-        return -1;
-    }
-
-    /**
-     * returns address of where parsing stopped. If there are remaining bytes left
-     * int the buffer they need to be passed again in parse function along with
-     * any additional bytes received
-     */
-    private void parse(long fd, long address, int len) throws PeerDisconnectedException, PeerIsSlowToReadException, BadProtocolException, SqlException {
-        long limit = address + len;
-        final int remaining = (int) (limit - address);
-
-        if (!loginRequestProcessed) {
-            processLoginRequest(fd, address, limit, remaining);
-            return;
-        }
-
-        // this is a type-prefixed message
-        // we will wait until we receive the entire header
-
-        if (remaining < PREFIXED_MESSAGE_HEADER_LEN) {
-            // we need to be able to read header and length
-            return;
-        }
-
-        final byte type = Unsafe.getUnsafe().getByte(address);
-        LOG.debug().$("received msg [type=").$((char) type).$(']').$();
-        final int msgLen = NetworkByteOrderUtils.getInt(address + 1);
-        if (msgLen < 1) {
-            LOG.error().$("invalid message length [type=").$(type).$(", msgLen=").$(msgLen).$(']').$();
-            throw BadProtocolException.INSTANCE;
-        }
-
-        // msgLen does not take into account type byte
-        if (msgLen > remaining - 1) {
-            // When this happens we need to shift our receive buffer left
-            // to fit this message. Outer function will do that if we
-            // just exit.
-            return;
-        }
-
-        // we have enough to read entire message
-        recvBufferReadOffset += msgLen + 1;
-        long msgLimit = address + msgLen + 1;
-        long lo = address + PREFIXED_MESSAGE_HEADER_LEN; // 8 is offset where name value pairs begin
-
-        switch (type) {
-            case 'p':
-                // +1 is 'type' byte that message length does not account for
-                long hi = getStringLength(lo, msgLimit);
-
-                assert hi > -1;
-
-                dbcs.of(lo, hi);
-
-                LOG.info().$("password=").$(dbcs).$();
-
-                // todo: check that this is all client sent
-                assert limit == msgLimit;
-
-                // send login ok
-                sendLoginOk(fd);
-                break;
-            case 'P':
-
-                // 'Parse'
-                // this appears to be the execution side - we must at least return 'RowDescription'
-                // possibly more, check QueryExecutionImpl.processResults() in PG driver for more info
-
-                hi = getStringLength(lo, msgLimit);
-                if (hi == -1) {
-                    // we did not find 0 within message limit
-                    LOG.error().$("bad prepared statement name length [msgType='P']").$();
-                    throw BadProtocolException.INSTANCE;
-                }
-
-                lo = hi + 1;
-                hi = getStringLength(lo, msgLimit);
-                if (hi == -1) {
-                    // we did not find 0 within message limit
-                    LOG.error().$("bad query text length").$();
-                    throw BadProtocolException.INSTANCE;
-                }
-
-                LOG.info().$("parse [q=`").$(dbcs.of(lo, hi)).$("`]").$();
-
-                lo = hi + 1;
-                if (lo + Short.BYTES > msgLimit) {
-                    LOG.error().$("could not read parameter count").$();
-                    throw BadProtocolException.INSTANCE;
-                }
-
-                short parameterCount = NetworkByteOrderUtils.getShort(lo);
-
-                if (parameterCount > 0) {
-                    if (lo + Short.BYTES + parameterCount * Integer.BYTES > msgLimit) {
-                        LOG.error()
-                                .$("could not read parameters [parameterCount=").$(parameterCount)
-                                .$(", offset=").$(lo - address)
-                                .$(", remaining=").$(msgLimit - lo)
-                                .$(']').$();
-                        throw BadProtocolException.INSTANCE;
-                    }
-
-                    LOG.debug().$("params [count=").$(parameterCount).$(']').$();
-                    lo += Short.BYTES;
-
-                    bindVariableService.clear();
-                    parameterTypes.reset();
-                    setupBindVariables(lo, parameterCount);
-                } else if (parameterCount < 0) {
-                    LOG.error()
-                            .$("invalid parameter count [parameterCount=").$(parameterCount)
-                            .$(", offset=").$(lo - address)
-                            .$(']').$();
-                    throw BadProtocolException.INSTANCE;
-                }
-
-                parseQuery(dbcs);
-                if (currentFactory == null) {
-                    prepareReadyForQuery();
-                    LOG.info().$("executed DDL").$();
-                    send(fd);
-                }
-                break;
-            case 'X':
-                // 'Terminate'
-                disconnectClient(fd);
-                break;
-            case 'C':
-                // close
-                // todo: read what we are closing
-                currentFactory = null;
-                responseAsciiSink.put('3'); // close complete
-                responseAsciiSink.putNetworkInt(Integer.BYTES);
-                send(fd);
-                break;
-            case 'B': // bind
-                hi = getStringLength(lo, msgLimit);
-                if (hi == -1) {
-                    // we did not find 0 within message limit
-                    LOG.error().$("bad portal name length [msgType='B']").$();
-                    throw BadProtocolException.INSTANCE;
-                }
-
-                lo = hi + 1;
-                hi = getStringLength(lo, msgLimit);
-                if (hi == -1) {
-                    // we did not find 0 within message limit
-                    LOG.error().$("bad prepared statement name length [msgType='B']").$();
-                    throw BadProtocolException.INSTANCE;
-                }
-
-                lo = hi + 1;
-                if (lo + Short.BYTES > msgLimit) {
-                    LOG.error().$("could not read parameter format code count").$();
-                    throw BadProtocolException.INSTANCE;
-                }
-
-                parameterCount = NetworkByteOrderUtils.getShort(lo);
-                if (parameterCount != parameterTypes.getColumnCount()) {
-                    LOG.error()
-                            .$("parameter count from parse message does not match format code count [fmtCodeCount=").$(parameterCount)
-                            .$(", typeCount=").$(parameterTypes.getColumnCount())
-                            .$(']').$();
-                    throw BadProtocolException.INSTANCE;
-                }
-                if (parameterCount > 0) {
-                    lo += Short.BYTES;
-                    bindVariables(lo, msgLimit, parameterCount);
-                }
-                break;
-            case 'E': // execute
-                if (currentFactory != null) {
-                    LOG.info().$("executing query").$();
-                    currentCursor = currentFactory.getCursor(bindVariableService);
-                    sendCursor(fd, currentCursor, currentFactory.getMetadata());
-                    sendExecuteTail(fd);
-                }
-                break;
-            case 'S': // sync?
-                break;
-            case 'D': // describe?
-                if (currentFactory != null) {
-                    prepareRowDescription(currentFactory.getMetadata());
-                    send(fd);
-                    LOG.info().$("described").$();
-                }
-                break;
-            default:
-                LOG.error().$("unknown message [type=").$(type).$(']').$();
-                throw BadProtocolException.INSTANCE;
-        }
-    }
-
-    private void parseQuery(CharSequence query) throws SqlException {
-        // at this point we may have a current query that is not null
-        // this is ok to lose reference to this query because we have cache
-        // of all of them, which is looked up by query text
-
-        responseAsciiSink.reset();
-        if (!Chars.startsWith(query, "SET")) {
-            currentFactory = factoryCache.peek(query);
-            if (currentFactory == null) {
-                currentFactory = compiler.compile(query, bindVariableService);
-                if (currentFactory != null) {
-                    factoryCache.put(query, currentFactory);
-                } else {
-                    // DDL SQL
-                    prepareParseComplete();
-                }
-            }
-        } else {
-            // same as DDL, but special handling because SQL compiler does not yet understand these SETs
-            prepareParseComplete();
-        }
-    }
-
-    private void prepareCommandComplete() {
-        responseAsciiSink.put(MESSAGE_TYPE_COMMAND_COMPLETE);
-        long addr = responseAsciiSink.skip();
-        responseAsciiSink.encodeUtf8("SELECT ").put(0).put(' ').put(0).put((char) 0);
-        responseAsciiSink.putLen(addr);
-    }
-
-    private void prepareError(SqlException e) {
-        responseAsciiSink.put(MESSAGE_TYPE_ERROR_RESPONSE);
-        long addr = responseAsciiSink.skip();
-        responseAsciiSink.put('M');
-        responseAsciiSink.encodeUtf8Z(e.getFlyweightMessage());
-        responseAsciiSink.put('S');
-        responseAsciiSink.encodeUtf8Z("ERROR");
-        responseAsciiSink.put('P').put(e.getPosition()).put((char) 0);
-        responseAsciiSink.putLen(addr);
-    }
-
-    private void prepareLoginOk() {
-        responseAsciiSink.put(MESSAGE_TYPE_LOGIN_RESPONSE);
-        responseAsciiSink.putNetworkInt(Integer.BYTES * 2); // length of this message
-        responseAsciiSink.putNetworkInt(0); // response code
-    }
-
-    private void prepareParams(String timeZone, String gmt) {
-        responseAsciiSink.put(MESSAGE_TYPE_PARAMETER_STATUS);
-        final long addr = responseAsciiSink.skip();
-        responseAsciiSink.encodeUtf8Z(timeZone);
-        responseAsciiSink.encodeUtf8Z(gmt);
-        responseAsciiSink.putLen(addr);
-    }
-
-    private void prepareParseComplete() {
-        responseAsciiSink.put(MESSAGE_TYPE_PARSE_COMPLETE);
-        responseAsciiSink.putNetworkInt(Integer.BYTES);
-    }
-
-    private void prepareReadyForQuery() {
-        responseAsciiSink.put(MESSAGE_TYPE_READY_FOR_QUERY);
-        responseAsciiSink.putNetworkInt(Integer.BYTES + Byte.BYTES);
-        responseAsciiSink.put('I');
-    }
-
-    private void prepareRowDescription(RecordMetadata metadata) {
-        responseAsciiSink.put(MESSAGE_TYPE_ROW_DESCRIPTION);
-        final long addr = responseAsciiSink.skip();
-        final int n = metadata.getColumnCount();
-        responseAsciiSink.putNetworkShort((short) n);
-        for (int i = 0; i < n; i++) {
-            final int columnType = metadata.getColumnType(i);
-            responseAsciiSink.encodeUtf8Z(metadata.getColumnName(i));
-            responseAsciiSink.putNetworkInt(0);
-            responseAsciiSink.putNetworkShort((short) 0);
-            responseAsciiSink.putNetworkInt(typeOidMap.get(columnType)); // type
-            responseAsciiSink.putNetworkShort((short) 0); // type size?
-            responseAsciiSink.putNetworkInt(0); // type mod?
-            // this is special behaviour for binary fields to prevent binary data being hex encoded on the wire
-            responseAsciiSink.putNetworkShort((short) (columnType == ColumnType.BINARY ? 1 : 0)); // format code
-        }
-
-        responseAsciiSink.putLen(addr);
-    }
-
-    private void processLoginRequest(long fd, long address, long limit, int remaining) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        // todo: make it configurable how we authorize and authenticate users
-        int msgLen;
-        long msgLimit;// expect startup request
-        if (remaining < 4) {
-            return;
-        }
-
-        // there is data for length
-        // this is quite specific to message type :(
-        msgLen = NetworkByteOrderUtils.getInt(address); // postgesql includes length bytes in length of message
-
-        // do we have the rest of the message?
-        if (msgLen > remaining) {
-            // we have length - get the rest when ready
-            return;
-        }
-
-        // enough to read login request
-        recvBufferReadOffset += msgLen;
-        loginRequestProcessed = true;
-
-        // consume message
-        // process protocol
-        int protocol = NetworkByteOrderUtils.getInt(address + 4);
-        // todo: validate protocol, see 'NegotiateProtocolVersion'
-
-        // extract properties
-        msgLimit = address + msgLen;
-        long lo = address + 8; // 8 is offset where name value pairs begin
-        // there is an extra byte at the end and it has to be 0
-        while (lo < msgLimit - 1) {
-
-            long hi = getStringLength(lo, msgLimit);
-
-            // todo: close connection when protocol is broken
-            assert hi > -1;
-            CharSequence name = new DirectByteCharSequence().of(lo, hi);
-
-            // name is ready
-
-            lo = hi + 1;
-
-            hi = getStringLength(lo, msgLimit);
-            assert hi > -1;
-            CharSequence value = new DirectByteCharSequence().of(lo, hi);
-
-            lo = hi + 1;
-
-            LOG.info()
-                    .$("protocol [major=").$(protocol >> 16)
-                    .$(", minor=").$((short) protocol)
-                    .$(", name=").$(name)
-                    .$(", value=").$(value)
-                    .$(']').$();
-        }
-
-        // todo: close connection if protocol is violated
-        assert Unsafe.getUnsafe().getByte(lo) == 0;
-
-        // todo: check that there is no more data sent
-        assert lo + 1 == limit;
-        sendClearTextPasswordChallenge(fd);
-    }
-
-    private void recv(long fd) throws PeerDisconnectedException, PeerIsSlowToWriteException, BadProtocolException {
-        final int remaining = (int) (recvBufferSize - recvBufferWriteOffset);
-
-        if (remaining < 1) {
-            LOG.error().$("undersized receive buffer or someone is abusing protocol").$();
-            throw BadProtocolException.INSTANCE;
-        }
-
-        int n = doReceive(fd, remaining);
-        if (n < 0) {
-            throw PeerDisconnectedException.INSTANCE;
-        }
-
-        if (n == 0) {
-            int retriesRemaining = idleRecvCountBeforeGivingUp;
-            while (retriesRemaining > 0) {
-                n = doReceive(fd, remaining);
-                if (n == 0) {
-                    retriesRemaining--;
-                    continue;
-                }
-
-                if (n < 0) {
-                    throw PeerDisconnectedException.INSTANCE;
-                }
-
-                break;
-            }
-
-            if (retriesRemaining == 0) {
-                throw PeerIsSlowToWriteException.INSTANCE;
-            }
-        }
-        recvBufferWriteOffset += n;
-    }
-
-    private void send(long fd) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        doSend(fd, 0, (int) (sendBufferPtr - sendBuffer));
-    }
-
-    private void sendClearTextPasswordChallenge(long fd) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        responseAsciiSink.reset();
-        responseAsciiSink.put(MESSAGE_TYPE_LOGIN_RESPONSE);
-        responseAsciiSink.putNetworkInt(Integer.BYTES * 2);
-        responseAsciiSink.putNetworkInt(3);
-        send(fd);
-    }
-
-    private void sendCursor(long fd, RecordCursor cursor, RecordMetadata metadata) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        // the assumption for now is that any  will fit into response buffer. This of course precludes us from
-        // streaming large BLOBs, but, and its a big one, PostgreSQL protocol for DataRow does not allow for
-        // streaming anyway. On top of that Java PostgreSQL driver downloads data row fully. This simplifies our
-        // approach for general queries. For streaming protocol we will code something else. PostgeSQL Java driver is
-        // slow anyway.
-
-        final Record record = cursor.getRecord();
-        final int columnCount = metadata.getColumnCount();
-        while (cursor.hasNext()) {
-            // create checkpoint to which we can undo the buffer in case
-            // current DataRow will does not fit fully.
-            responseAsciiSink.bookmark();
-            try {
-                try {
-                    sendRecord(record, metadata, columnCount);
-                } catch (NoSpaceLeftInResponseBufferException e) {
-                    responseAsciiSink.resetToBookmark();
-                    send(fd);
-                    // this is now start of send buffer, when this fails we need to log and disconnect
-                    sendRecord(record, metadata, columnCount);
-                }
-            } catch (SqlException e) {
-                responseAsciiSink.resetToBookmark();
-                LOG.error().$(e.getFlyweightMessage()).$();
-                currentCursor = Misc.free(currentCursor);
-                sendCurrentCursorTail = TAIL_ERROR;
-                send(fd);
-                return;
-            }
-        }
-
-        currentCursor = Misc.free(currentCursor);
-        sendCurrentCursorTail = TAIL_SUCCESS;
-        send(fd);
-    }
-
-    private void sendExecuteTail(long fd) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        switch (sendCurrentCursorTail) {
-            case TAIL_SUCCESS:
-                prepareCommandComplete();
-                prepareReadyForQuery();
-                LOG.info().$("executed query").$();
-                sendCurrentCursorTail = TAIL_NONE;
-                send(fd);
-                break;
-            case TAIL_ERROR:
-                SqlException e = SqlException.last();
-                prepareError(e);
-                prepareReadyForQuery();
-                LOG.info().$("SQL exception [pos=").$(e.getPosition()).$(", msg=").$(e.getFlyweightMessage()).$(']').$();
-                sendCurrentCursorTail = TAIL_NONE;
-                send(fd);
-                break;
-            default:
-                break;
-        }
-    }
-
-    private void sendLoginOk(long fd) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        responseAsciiSink.reset();
-        prepareLoginOk();
-        prepareParams("TimeZone", "GMT");
-        prepareParams("application_name", "QuestDB");
-        prepareParams("server_version_num", "100000");
-        prepareParams("integer_datetimes", "on");
-        prepareReadyForQuery();
-        send(fd);
-    }
-
-    private void sendRecord(Record record, RecordMetadata metadata, int columnCount) throws SqlException {
+    void appendRecord(
+            Record record,
+            RecordMetadata metadata,
+            int columnCount
+    ) throws SqlException {
         responseAsciiSink.put(MESSAGE_TYPE_DATA_ROW); // data
         long b = responseAsciiSink.skip();
         long a;
@@ -1058,10 +533,681 @@ public class WireParser implements Closeable {
         responseAsciiSink.putLen(b);
     }
 
-    private void setupBindVariables(long lo, short pc) throws SqlException {
+    private void bindVariables(
+            long lo,
+            long msgLimit,
+            short parameterCount,
+            ObjList<BindVariableSetter> bindVariableSetters
+    ) throws BadProtocolException, SqlException {
+        // do we have enough data for all codes?
+        if (lo + Short.BYTES * parameterCount > msgLimit) {
+            LOG.error().$("invalid format code count [value=").$(parameterCount).$(']').$();
+            throw BadProtocolException.INSTANCE;
+        }
+
+        for (int j = 0; j < parameterCount; j++) {
+            final short code = getShort(lo + j * Short.BYTES);
+            if (code == 1) {
+                continue;
+            }
+
+            if (code == 0) {
+                bindVariableSetters.setQuick(j * 2, bindVariableSetters.getQuick(j * 2 + 1));
+            } else {
+                LOG.error().$("unsupported code [index=").$(j).$(", code=").$(code).$(']').$();
+                throw BadProtocolException.INSTANCE;
+            }
+        }
+
+        lo += parameterCount * Short.BYTES;
+
+        if (lo + Short.BYTES > msgLimit) {
+            LOG.error().$("could not read parameter value count").$();
+            throw BadProtocolException.INSTANCE;
+        }
+        parameterCount = getShort(lo);
+
+        if (parameterCount != bindVariableService.getIndexedVariableCount()) {
+            LOG.error()
+                    .$("parameter count from parse message does not match parameter value count [valueCount=").$(parameterCount)
+                    .$(", typeCount=").$(bindVariableService.getIndexedVariableCount())
+                    .$(']').$();
+            throw BadProtocolException.INSTANCE;
+        }
+
+        lo += Short.BYTES;
+        characterStore.clear();
+
+        for (int j = 0; j < parameterCount; j++) {
+            if (lo + Integer.BYTES > msgLimit) {
+                LOG.error().$("could not read parameter value length [index=").$(j).$(']').$();
+                throw BadProtocolException.INSTANCE;
+            }
+
+            int valueLen = getInt(lo);
+            lo += Integer.BYTES;
+            if (valueLen == -1) {
+                // this is null we have already defaulted parameters to
+                continue;
+            }
+
+            if (lo + valueLen > msgLimit) {
+                LOG.error()
+                        .$("value length is outside of buffer [parameterIndex=").$(j)
+                        .$(", valueLen=").$(valueLen)
+                        .$(", messageRemaining=").$(msgLimit - lo)
+                        .$(']').$();
+                throw BadProtocolException.INSTANCE;
+            }
+            ensureData(lo, valueLen, msgLimit, j);
+            bindVariableSetters.getQuick(j * 2).set(j, lo, valueLen);
+            lo += valueLen;
+        }
+    }
+
+    void clearRecvBuffer() {
+        recvBufferWriteOffset = 0;
+        recvBufferReadOffset = 0;
+    }
+
+    int doReceive(int remaining) {
+        final long data = recvBuffer + recvBufferWriteOffset;
+        final int n = nf.recv(getFd(), data, remaining);
+        dumpBuffer('>', data, n);
+        return n;
+    }
+
+    void doSend(int offset, int size) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        final int n = nf.send(getFd(), sendBuffer + offset, size);
+        dumpBuffer('<', sendBuffer + offset, n);
+        if (n < 0) {
+            throw PeerDisconnectedException.INSTANCE;
+        }
+
+        if (n < size) {
+            doSendWithRetries(n, size - n);
+        }
+        sendBufferPtr = sendBuffer;
+        bufferRemainingSize = 0;
+        bufferRemainingOffset = 0;
+    }
+
+    private void doSendWithRetries(int bufferOffset, int bufferSize) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        int offset = bufferOffset;
+        int remaining = bufferSize;
+        int idleSendCount = 0;
+
+        while (remaining > 0 && idleSendCount < idleSendCountBeforeGivingUp) {
+            int m = nf.send(
+                    getFd(),
+                    sendBuffer + offset,
+                    remaining
+            );
+            if (m < 0) {
+                throw PeerDisconnectedException.INSTANCE;
+            }
+
+            dumpBuffer('<', sendBuffer + offset, m);
+
+            if (m > 0) {
+                remaining -= m;
+                offset += m;
+            } else {
+                idleSendCount++;
+            }
+        }
+
+        if (remaining > 0) {
+            bufferRemainingOffset = offset;
+            bufferRemainingSize = remaining;
+            throw PeerIsSlowToReadException.INSTANCE;
+        }
+    }
+
+    private void dumpBuffer(char direction, long buffer, int len) {
+        if (dumpNetworkTraffic && len > 0) {
+            StdoutSink.INSTANCE.put(direction);
+            dump(buffer, len);
+        }
+    }
+
+    private long getStringLength(long x, long limit) {
+        return Unsafe.getUnsafe().getByte(x) == 0 ? x : getStringLengthTedious(x, limit);
+    }
+
+    private long getStringLengthTedious(long x, long limit) {
+        // calculate length
+        for (long i = x; i < limit; i++) {
+            if (Unsafe.getUnsafe().getByte(i) == 0) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    /**
+     * returns address of where parsing stopped. If there are remaining bytes left
+     * int the buffer they need to be passed again in parse function along with
+     * any additional bytes received
+     */
+    private void parse(
+            long address,
+            int len,
+            @Transient SqlCompiler compiler,
+            @Transient AssociativeCache<RecordCursorFactory> factoryCache,
+            @Transient ObjList<BindVariableSetter> bindVariableSetters
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException, BadProtocolException, SqlException {
+        long limit = address + len;
+        final int remaining = (int) (limit - address);
+
+        if (needLogin) {
+            processLoginRequest(address, remaining);
+            return;
+        }
+
+        // this is a type-prefixed message
+        // we will wait until we receive the entire header
+
+        if (remaining < PREFIXED_MESSAGE_HEADER_LEN) {
+            // we need to be able to read header and length
+            return;
+        }
+
+        final byte type = Unsafe.getUnsafe().getByte(address);
+        LOG.debug().$("received msg [type=").$((char) type).$(']').$();
+        final int msgLen = getInt(address + 1);
+        if (msgLen < 1) {
+            LOG.error().$("invalid message length [type=").$(type).$(", msgLen=").$(msgLen).$(']').$();
+            throw BadProtocolException.INSTANCE;
+        }
+
+        // msgLen does not take into account type byte
+        if (msgLen > remaining - 1) {
+            // When this happens we need to shift our receive buffer left
+            // to fit this message. Outer function will do that if we
+            // just exit.
+            return;
+        }
+
+        // we have enough to read entire message
+        recvBufferReadOffset += msgLen + 1;
+        long msgLimit = address + msgLen + 1;
+        long lo = address + PREFIXED_MESSAGE_HEADER_LEN; // 8 is offset where name value pairs begin
+
+        switch (type) {
+            case 'p':
+                // +1 is 'type' byte that message length does not account for
+                long hi = getStringLength(lo, msgLimit);
+
+                assert hi > -1;
+
+                dbcs.of(lo, hi);
+
+                LOG.info().$("password=").$(dbcs).$();
+
+                // todo: check that this is all client sent
+                assert limit == msgLimit;
+
+                // send login ok
+                sendLoginOk();
+                break;
+            case 'P':
+
+                // 'Parse'
+                // this appears to be the execution side - we must at least return 'RowDescription'
+                // possibly more, check QueryExecutionImpl.processResults() in PG driver for more info
+
+                hi = getStringLength(lo, msgLimit);
+                if (hi == -1) {
+                    // we did not find 0 within message limit
+                    LOG.error().$("bad prepared statement name length [msgType='P']").$();
+                    throw BadProtocolException.INSTANCE;
+                }
+
+                lo = hi + 1;
+                hi = getStringLength(lo, msgLimit);
+                if (hi == -1) {
+                    // we did not find 0 within message limit
+                    LOG.error().$("bad query text length").$();
+                    throw BadProtocolException.INSTANCE;
+                }
+
+                CharacterStoreEntry e = characterStore.newEntry();
+                if (Chars.utf8Decode(lo, hi, e)) {
+                    queryText = characterStore.toImmutable();
+                    LOG.info().$("parse [q=").utf8(queryText).$(']').$();
+                } else {
+                    LOG.error().$("invalid UTF8 bytes in parse query").$();
+                    throw BadProtocolException.INSTANCE;
+                }
+
+                lo = hi + 1;
+                if (lo + Short.BYTES > msgLimit) {
+                    LOG.error().$("could not read parameter count").$();
+                    throw BadProtocolException.INSTANCE;
+                }
+
+                short parameterCount = getShort(lo);
+
+                if (parameterCount > 0) {
+                    if (lo + Short.BYTES + parameterCount * Integer.BYTES > msgLimit) {
+                        LOG.error()
+                                .$("could not read parameters [parameterCount=").$(parameterCount)
+                                .$(", offset=").$(lo - address)
+                                .$(", remaining=").$(msgLimit - lo)
+                                .$(']').$();
+                        throw BadProtocolException.INSTANCE;
+                    }
+
+                    LOG.debug().$("params [count=").$(parameterCount).$(']').$();
+                    lo += Short.BYTES;
+
+                    bindVariableService.clear();
+                    setupBindVariables(lo, parameterCount, bindVariableSetters);
+                } else if (parameterCount < 0) {
+                    LOG.error()
+                            .$("invalid parameter count [parameterCount=").$(parameterCount)
+                            .$(", offset=").$(lo - address)
+                            .$(']').$();
+                    throw BadProtocolException.INSTANCE;
+                }
+
+                parseQuery(queryText, compiler, factoryCache);
+                if (currentFactory == null) {
+                    prepareReadyForQuery();
+                    LOG.info().$("executed DDL").$();
+                    send();
+                }
+                break;
+            case 'X':
+                // 'Terminate'
+                throw PeerDisconnectedException.INSTANCE;
+            case 'C':
+                // close
+                // todo: read what we are closing
+                currentFactory = null;
+                sink().put('3'); // close complete
+                sink().putNetworkInt(Integer.BYTES);
+                send();
+                break;
+            case 'B': // bind
+                hi = getStringLength(lo, msgLimit);
+                if (hi == -1) {
+                    // we did not find 0 within message limit
+                    LOG.error().$("bad portal name length [msgType='B']").$();
+                    throw BadProtocolException.INSTANCE;
+                }
+
+                lo = hi + 1;
+                hi = getStringLength(lo, msgLimit);
+                if (hi == -1) {
+                    // we did not find 0 within message limit
+                    LOG.error().$("bad prepared statement name length [msgType='B']").$();
+                    throw BadProtocolException.INSTANCE;
+                }
+
+                lo = hi + 1;
+                if (lo + Short.BYTES > msgLimit) {
+                    LOG.error().$("could not read parameter format code count").$();
+                    throw BadProtocolException.INSTANCE;
+                }
+
+                parameterCount = getShort(lo);
+                if (parameterCount != bindVariableService.getIndexedVariableCount()) {
+                    LOG.error()
+                            .$("parameter count from parse message does not match format code count [fmtCodeCount=").$(parameterCount)
+                            .$(", typeCount=").$(bindVariableService.getIndexedVariableCount())
+                            .$(']').$();
+                    throw BadProtocolException.INSTANCE;
+                }
+                if (parameterCount > 0) {
+                    lo += Short.BYTES;
+                    bindVariables(lo, msgLimit, parameterCount, bindVariableSetters);
+                }
+                break;
+            case 'E': // execute
+                if (currentFactory != null) {
+                    LOG.info().$("executing query").$();
+                    currentCursor = currentFactory.getCursor(bindVariableService);
+                    sendCursor();
+                    sendExecuteTail();
+                }
+                break;
+            case 'S': // sync?
+                break;
+            case 'D': // describe?
+                if (currentFactory != null) {
+                    prepareRowDescription(currentFactory.getMetadata());
+                    send();
+                    LOG.info().$("described").$();
+                }
+                break;
+            case 'Q':
+                // vanilla query
+                bindVariableService.clear();
+                characterStore.clear();
+
+                e = characterStore.newEntry();
+                if (Chars.utf8Decode(lo, limit - 1, e)) {
+                    queryText = characterStore.toImmutable();
+                    LOG.info().$("simple query [q=").utf8(queryText).$(']').$();
+                } else {
+                    LOG.error().$("invalid UTF8 bytes in simple query").$();
+                    throw BadProtocolException.INSTANCE;
+                }
+
+                currentFactory = factoryCache.peek(queryText);
+                if (currentFactory == null) {
+                    currentFactory = compiler.compile(queryText, bindVariableService);
+                    if (currentFactory != null) {
+                        factoryCache.put(queryText, currentFactory);
+                    } else {
+                        // DDL SQL
+                        sendCurrentCursorTail = TAIL_SUCCESS;
+                        sendExecuteTail();
+                    }
+                }
+
+                if (currentFactory != null) {
+                    if (currentCursor != null) {
+                        currentCursor.close();
+                    }
+
+                    currentCursor = currentFactory.getCursor(bindVariableService);
+                    prepareRowDescription(currentFactory.getMetadata());
+                    sendCursor();
+                    sendExecuteTail();
+                }
+                break;
+            default:
+                LOG.error().$("unknown message [type=").$(type).$(']').$();
+                throw BadProtocolException.INSTANCE;
+        }
+    }
+
+    private void parseQuery(
+            CharSequence query,
+            @Transient SqlCompiler compiler,
+            @Transient AssociativeCache<RecordCursorFactory> factoryCache
+    ) throws SqlException {
+        // at this point we may have a current query that is not null
+        // this is ok to lose reference to this query because we have cache
+        // of all of them, which is looked up by query text
+
+        responseAsciiSink.reset();
+        if (!Chars.startsWith(query, "SET")) {
+            currentFactory = factoryCache.peek(query);
+            if (currentFactory == null) {
+                currentFactory = compiler.compile(query, bindVariableService);
+                if (currentFactory != null) {
+                    factoryCache.put(query, currentFactory);
+                } else {
+                    // DDL SQL
+                    prepareParseComplete();
+                }
+            }
+        } else {
+            // same as DDL, but special handling because SQL compiler does not yet understand these SETs
+            prepareParseComplete();
+        }
+    }
+
+    void prepareCommandComplete() {
+        responseAsciiSink.put(MESSAGE_TYPE_COMMAND_COMPLETE);
+        long addr = responseAsciiSink.skip();
+        responseAsciiSink.encodeUtf8(queryText).put((char) 0);
+        responseAsciiSink.putLen(addr);
+    }
+
+    private void prepareError(SqlException e) {
+        responseAsciiSink.put(MESSAGE_TYPE_ERROR_RESPONSE);
+        long addr = responseAsciiSink.skip();
+        responseAsciiSink.put('M');
+        responseAsciiSink.encodeUtf8Z(e.getFlyweightMessage());
+        responseAsciiSink.put('S');
+        responseAsciiSink.encodeUtf8Z("ERROR");
+        responseAsciiSink.put('P').put(e.getPosition() + 1).put((char) 0);
+        responseAsciiSink.put((char) 0);
+        responseAsciiSink.putLen(addr);
+    }
+
+    private void prepareParseComplete() {
+        responseAsciiSink.put(MESSAGE_TYPE_PARSE_COMPLETE);
+        responseAsciiSink.putNetworkInt(Integer.BYTES);
+    }
+
+    void prepareReadyForQuery() {
+        responseAsciiSink.put(MESSAGE_TYPE_READY_FOR_QUERY);
+        responseAsciiSink.putNetworkInt(Integer.BYTES + Byte.BYTES);
+        responseAsciiSink.put('I');
+    }
+
+    private void prepareRowDescription(
+            RecordMetadata metadata
+    ) {
+        ResponseAsciiSink sink = responseAsciiSink;
+        sink.put(MESSAGE_TYPE_ROW_DESCRIPTION);
+        final long addr = sink.skip();
+        final int n = metadata.getColumnCount();
+        sink.putNetworkShort((short) n);
+        for (int i = 0; i < n; i++) {
+            final int columnType = metadata.getColumnType(i);
+            sink.encodeUtf8Z(metadata.getColumnName(i));
+            sink.putNetworkInt(0);
+            sink.putNetworkShort((short) 0);
+            sink.putNetworkInt(typeOidMap.get(columnType)); // type
+            sink.putNetworkShort((short) 0); // type size?
+            sink.putNetworkInt(0); // type mod?
+            // this is special behaviour for binary fields to prevent binary data being hex encoded on the wire
+            sink.putNetworkShort((short) (columnType == ColumnType.BINARY ? 1 : 0)); // format code
+        }
+        sink.putLen(addr);
+    }
+
+    private void processLoginRequest(long address, int remaining) throws PeerDisconnectedException, PeerIsSlowToReadException, BadProtocolException {
+        // todo: make it configurable how we authorize and authenticate users
+        int msgLen;
+        long msgLimit;// expect startup request
+        if (remaining < Long.BYTES) {
+            return;
+        }
+
+        // there is data for length
+        // this is quite specific to message type :(
+        msgLen = getInt(address); // postgesql includes length bytes in length of message
+
+        // do we have the rest of the message?
+        if (msgLen > remaining) {
+            // we have length - get the rest when ready
+            return;
+        }
+
+        // enough to read login request
+        recvBufferReadOffset += msgLen;
+
+        // consume message
+        // process protocol
+        int protocol = getInt(address + Integer.BYTES);
+        switch (protocol) {
+            case INIT_SSL_REQUEST:
+                // SSLRequest
+                responseAsciiSink.put('N');
+                send();
+                return;
+            case INIT_STARTUP_MESSAGE:
+                // StartupMessage
+                // extract properties
+                needLogin = false;
+                msgLimit = address + msgLen;
+                long lo = address + Long.BYTES;
+                // there is an extra byte at the end and it has to be 0
+                LOG.info()
+                        .$("protocol [major=").$(protocol >> 16)
+                        .$(", minor=").$((short) protocol)
+                        .$(']').$();
+
+                while (lo < msgLimit - 1) {
+
+                    final LogRecord log = LOG.info();
+                    log.$("property [");
+                    try {
+                        long hi = getStringLength(lo, msgLimit);
+                        assert hi > -1;
+                        log.$("name=").$(dbcs.of(lo, hi));
+
+                        // name is ready
+
+                        lo = hi + 1;
+
+                        hi = getStringLength(lo, msgLimit);
+                        assert hi > -1;
+                        log.$(", value=").$(dbcs.of(lo, hi));
+                        lo = hi + 1;
+                    } finally {
+                        log.$(']').$(); // release under all circumstances
+                    }
+                }
+                sendClearTextPasswordChallenge();
+                break;
+            case INIT_CANCEL_REQUEST:
+                LOG.info().$("cancel request").$();
+                throw PeerDisconnectedException.INSTANCE;
+            default:
+                LOG.error().$("unknown init message [protocol=").$(protocol).$(']').$();
+                throw BadProtocolException.INSTANCE;
+        }
+    }
+
+    void recv() throws PeerDisconnectedException, PeerIsSlowToWriteException, BadProtocolException {
+        final int remaining = (int) (recvBufferSize - recvBufferWriteOffset);
+
+        if (remaining < 1) {
+            LOG.error().$("undersized receive buffer or someone is abusing protocol").$();
+            throw BadProtocolException.INSTANCE;
+        }
+
+        int n = doReceive(remaining);
+        if (n < 0) {
+            throw PeerDisconnectedException.INSTANCE;
+        }
+
+        if (n == 0) {
+            int retriesRemaining = idleRecvCountBeforeGivingUp;
+            while (retriesRemaining > 0) {
+                n = doReceive(remaining);
+                if (n == 0) {
+                    retriesRemaining--;
+                    continue;
+                }
+
+                if (n < 0) {
+                    throw PeerDisconnectedException.INSTANCE;
+                }
+
+                break;
+            }
+
+            if (retriesRemaining == 0) {
+                throw PeerIsSlowToWriteException.INSTANCE;
+            }
+        }
+        recvBufferWriteOffset += n;
+    }
+
+    void send() throws PeerDisconnectedException, PeerIsSlowToReadException {
+        doSend(
+                0,
+                (int) (sendBufferPtr - sendBuffer)
+        );
+    }
+
+    private void sendClearTextPasswordChallenge() throws PeerDisconnectedException, PeerIsSlowToReadException {
+        responseAsciiSink.reset();
+        responseAsciiSink.put(MESSAGE_TYPE_LOGIN_RESPONSE);
+        responseAsciiSink.putNetworkInt(Integer.BYTES * 2);
+        responseAsciiSink.putNetworkInt(3);
+        send();
+    }
+
+    private void sendCursor() throws PeerDisconnectedException, PeerIsSlowToReadException {
+        // the assumption for now is that any  will fit into response buffer. This of course precludes us from
+        // streaming large BLOBs, but, and its a big one, PostgreSQL protocol for DataRow does not allow for
+        // streaming anyway. On top of that Java PostgreSQL driver downloads data row fully. This simplifies our
+        // approach for general queries. For streaming protocol we will code something else. PostgeSQL Java driver is
+        // slow anyway.
+
+        final Record record = currentCursor.getRecord();
+        final RecordMetadata metadata = currentFactory.getMetadata();
+        final int columnCount = metadata.getColumnCount();
+        while (currentCursor.hasNext()) {
+            // create checkpoint to which we can undo the buffer in case
+            // current DataRow will does not fit fully.
+            responseAsciiSink.bookmark();
+            try {
+                try {
+                    appendRecord(record, metadata, columnCount);
+                } catch (NoSpaceLeftInResponseBufferException e) {
+                    responseAsciiSink.resetToBookmark();
+                    send();
+                    // this is now start of send buffer, when this fails we need to log and disconnect
+                    appendRecord(record, metadata, columnCount);
+                }
+            } catch (SqlException e) {
+                responseAsciiSink.resetToBookmark();
+                LOG.error().$(e.getFlyweightMessage()).$();
+                currentCursor = Misc.free(currentCursor);
+                sendCurrentCursorTail = PGConnectionContext.TAIL_ERROR;
+                send();
+                return;
+            }
+        }
+
+        currentCursor = Misc.free(currentCursor);
+        sendCurrentCursorTail = PGConnectionContext.TAIL_SUCCESS;
+        send();
+    }
+
+    void sendExecuteTail() throws PeerDisconnectedException, PeerIsSlowToReadException {
+        switch (sendCurrentCursorTail) {
+            case TAIL_SUCCESS:
+                prepareCommandComplete();
+                prepareReadyForQuery();
+                LOG.info().$("executed query").$();
+                sendCurrentCursorTail = PGConnectionContext.TAIL_NONE;
+                send();
+                break;
+            case PGConnectionContext.TAIL_ERROR:
+                SqlException e = SqlException.last();
+                prepareError(e);
+                prepareReadyForQuery();
+                LOG.info().$("SQL exception [pos=").$(e.getPosition()).$(", msg=").$(e.getFlyweightMessage()).$(']').$();
+                sendCurrentCursorTail = PGConnectionContext.TAIL_NONE;
+                send();
+                break;
+            default:
+                break;
+        }
+    }
+
+    private void sendLoginOk() throws PeerDisconnectedException, PeerIsSlowToReadException {
+        responseAsciiSink.reset();
+        prepareLoginOk(responseAsciiSink);
+        prepareParams(responseAsciiSink, "TimeZone", "GMT");
+        prepareParams(responseAsciiSink, "application_name", "QuestDB");
+        prepareParams(responseAsciiSink, "server_version", serverVersion);
+        prepareParams(responseAsciiSink, "integer_datetimes", "on");
+        prepareReadyForQuery();
+        send();
+    }
+
+    private void setupBindVariables(
+            long lo,
+            short pc,
+            @Transient ObjList<BindVariableSetter> bindVariableSetters
+    ) throws SqlException {
         bindVariableSetters.clear();
         for (int j = 0; j < pc; j++) {
-            int pgType = NetworkByteOrderUtils.getInt(lo + j * Integer.BYTES);
+            int pgType = getInt(lo + j * Integer.BYTES);
             switch (pgType) {
                 case PG_FLOAT8: // FLOAT8 - double
                     bindVariableService.setDouble(j, Double.NaN);
@@ -1119,16 +1265,14 @@ public class WireParser implements Closeable {
                 default:
                     throw SqlException.$(0, "unsupported parameter [type=").put(pgType).put(", index=").put(j).put(']');
             }
-            parameterTypes.add(pgType);
         }
     }
 
-    @FunctionalInterface
-    private interface BindVariableSetter {
-        void set(int index, long address, int valueLen) throws SqlException, BadProtocolException;
+    ResponseAsciiSink sink() {
+        return responseAsciiSink;
     }
 
-    private class ResponseAsciiSink extends AbstractCharSink {
+    class ResponseAsciiSink extends AbstractCharSink {
 
         private long bookmarkPtr = -1;
 
@@ -1138,28 +1282,29 @@ public class WireParser implements Closeable {
 
         @Override
         public CharSink put(CharSequence cs) {
+            // this method is only called by date format utility to print timezone name
             if (cs == null) {
                 return this;
             }
 
             final int len = cs.length();
-            if (sendBufferPtr + len < sendBufferLimit) {
-                for (int i = 0; i < len; i++) {
-                    Unsafe.getUnsafe().putByte(sendBufferPtr + i, (byte) cs.charAt(i));
-                }
-                sendBufferPtr += len;
+            if (len == 0) {
                 return this;
             }
-            throw NoSpaceLeftInResponseBufferException.INSTANCE;
+
+            ensureCapacity(len);
+            for (int i = 0; i < len; i++) {
+                Unsafe.getUnsafe().putByte(sendBufferPtr + i, (byte) cs.charAt(i));
+            }
+            sendBufferPtr += len;
+            return this;
         }
 
         @Override
         public CharSink put(char c) {
-            if (sendBufferPtr < sendBufferLimit) {
-                Unsafe.getUnsafe().putByte(sendBufferPtr++, (byte) c);
-                return this;
-            }
-            throw NoSpaceLeftInResponseBufferException.INSTANCE;
+            ensureCapacity(Byte.BYTES);
+            Unsafe.getUnsafe().putByte(sendBufferPtr++, (byte) c);
+            return this;
         }
 
         public CharSink put(byte b) {
@@ -1176,7 +1321,7 @@ public class WireParser implements Closeable {
                 ensureCapacity((int) (len + Integer.BYTES));
                 // when we reach here the "long" length would have to fit in response buffer
                 // if it was larger than integers it would never fit into integer-bound response buffer
-                NetworkByteOrderUtils.putInt(sendBufferPtr, (int) len);
+                putInt(sendBufferPtr, (int) len);
                 sendBufferPtr += Integer.BYTES;
                 for (long x = 0; x < len; x++) {
                     Unsafe.getUnsafe().putByte(sendBufferPtr + x, sequence.byteAt(x));
@@ -1186,22 +1331,22 @@ public class WireParser implements Closeable {
         }
 
         public void putLen(long start) {
-            NetworkByteOrderUtils.putInt(start, (int) (sendBufferPtr - start));
+            putInt(start, (int) (sendBufferPtr - start));
         }
 
         public void putLenEx(long start) {
-            NetworkByteOrderUtils.putInt(start, (int) (sendBufferPtr - start - Integer.BYTES));
+            putInt(start, (int) (sendBufferPtr - start - Integer.BYTES));
         }
 
         public void putNetworkInt(int len) {
             ensureCapacity(Integer.BYTES);
-            NetworkByteOrderUtils.putInt(sendBufferPtr, len);
+            putInt(sendBufferPtr, len);
             sendBufferPtr += Integer.BYTES;
         }
 
         public void putNetworkShort(short value) {
             ensureCapacity(Short.BYTES);
-            NetworkByteOrderUtils.putShort(sendBufferPtr, value);
+            putShort(sendBufferPtr, value);
             sendBufferPtr += Short.BYTES;
         }
 
@@ -1228,7 +1373,7 @@ public class WireParser implements Closeable {
             sendBufferPtr = sendBuffer;
         }
 
-        private void setNullValue() {
+        void setNullValue() {
             putNetworkInt(-1);
         }
 

@@ -39,6 +39,10 @@ public class BindVariableService {
         indexedVariables.clear();
     }
 
+    public int getIndexedVariableCount() {
+        return indexedVariables.size();
+    }
+
     public Function getFunction(CharSequence name) {
         assert name != null;
         assert Chars.startsWith(name, ':');

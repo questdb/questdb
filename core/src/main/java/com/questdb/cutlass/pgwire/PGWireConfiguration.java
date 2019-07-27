@@ -21,45 +21,45 @@
  *
  ******************************************************************************/
 
-package com.questdb.network;
+package com.questdb.cutlass.pgwire;
 
-import com.questdb.std.time.MillisecondClock;
+import com.questdb.network.IODispatcherConfiguration;
+import com.questdb.network.NetworkFacade;
 
-public interface IODispatcherConfiguration {
-    int BIAS_READ = 1;
-    int BIAS_WRITE = 2;
+public interface PGWireConfiguration {
+    int getCharacterStoreCapacity();
 
-    int getActiveConnectionLimit();
+    int getCharacterStorePoolCapacity();
 
-    int getBindIPv4Address();
+    int getConnectionPoolInitialCapacity();
 
-    int getBindPort();
+    IODispatcherConfiguration getDispatcherConfiguration();
 
-    MillisecondClock getClock();
-
-    default String getDispatcherLogName() {
-        return "IODispatcher";
+    default boolean getDumpNetworkTraffic() {
+        return false;
     }
 
-    EpollFacade getEpollFacade();
+    String getServerVersion();
 
-    int getEventCapacity();
+    int getFactoryCacheColumnCount();
 
-    int getIOQueueCapacity();
+    int getFactoryCacheRowCount();
 
-    long getIdleConnectionTimeout();
-
-    int getInitialBias();
-
-    int getInterestQueueCapacity();
-
-    int getListenBacklog();
+    int getIdleRecvCountBeforeGivingUp();
 
     NetworkFacade getNetworkFacade();
 
-    int getRcvBufSize();
+    int getRecvBufferSize();
 
-    SelectFacade getSelectFacade();
+    int getSendBufferSize();
 
-    int getSndBufSize();
+    int getIdleSendCountBeforeGivingUp();
+
+    int getMaxBlobSizeOnQuery();
+
+    int[] getWorkerAffinity();
+
+    int getWorkerCount();
+
+    boolean isEnabled();
 }

@@ -23,10 +23,62 @@
 
 package com.questdb.cutlass.pgwire;
 
+import com.questdb.network.DefaultIODispatcherConfiguration;
+import com.questdb.network.IODispatcherConfiguration;
 import com.questdb.network.NetworkFacade;
 import com.questdb.network.NetworkFacadeImpl;
 
-public class DefaultWireParserConfiguration implements WireParserConfiguration {
+public class DefaultPGWireConfiguration implements PGWireConfiguration {
+
+    private final IODispatcherConfiguration ioDispatcherConfiguration = new DefaultIODispatcherConfiguration() {
+        @Override
+        public int getBindPort() {
+            return 8812;
+        }
+
+        @Override
+        public String getDispatcherLogName() {
+            return "pg-server";
+        }
+    };
+
+    private final int[] workerAffinity = new int[]{-1};
+
+    @Override
+    public int getCharacterStoreCapacity() {
+        return 4096;
+    }
+
+    @Override
+    public int getCharacterStorePoolCapacity() {
+        return 64;
+    }
+
+    @Override
+    public int getConnectionPoolInitialCapacity() {
+        return 64;
+    }
+
+    @Override
+    public IODispatcherConfiguration getDispatcherConfiguration() {
+        return ioDispatcherConfiguration;
+    }
+
+    @Override
+    public String getServerVersion() {
+        return "11.3";
+    }
+
+    @Override
+    public int getFactoryCacheColumnCount() {
+        return 16;
+    }
+
+    @Override
+    public int getFactoryCacheRowCount() {
+        return 16;
+    }
+
     @Override
     public int getIdleRecvCountBeforeGivingUp() {
         return 10_000;
@@ -59,22 +111,17 @@ public class DefaultWireParserConfiguration implements WireParserConfiguration {
     }
 
     @Override
-    public int getCharacterStoreCapacity() {
-        return 4096;
+    public int[] getWorkerAffinity() {
+        return workerAffinity;
     }
 
     @Override
-    public int getCharacterStorePoolCapacity() {
-        return 64;
+    public int getWorkerCount() {
+        return 1;
     }
 
     @Override
-    public int getFactoryCacheColumnCount() {
-        return 16;
-    }
-
-    @Override
-    public int getFactoryCacheRowCount() {
-        return 16;
+    public boolean isEnabled() {
+        return true;
     }
 }

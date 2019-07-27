@@ -38,6 +38,8 @@ public interface LogRecord {
 
     LogRecord $(long x);
 
+    LogRecord $(boolean x);
+
     LogRecord $(char c);
 
     LogRecord $(Throwable e);

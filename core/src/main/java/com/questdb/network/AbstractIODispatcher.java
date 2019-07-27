@@ -32,7 +32,7 @@ import com.questdb.std.time.MillisecondClock;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public abstract class AbstractIODispatcher<C extends IOContext> extends SynchronizedJob implements IODispatcher<C> {
-    protected static final Log LOG = LogFactory.getLog("IODispatcher");
+    protected final Log LOG;
     protected static final int M_TIMESTAMP = 0;
     protected static final int M_FD = 1;
     protected final RingQueue<IOEvent<C>> interestQueue;
@@ -61,6 +61,7 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
             IODispatcherConfiguration configuration,
             IOContextFactory<C> ioContextFactory
     ) {
+        this.LOG = LogFactory.getLog(configuration.getDispatcherLogName());
         this.nf = configuration.getNetworkFacade();
         this.serverFd = nf.socketTcp(false);
 

@@ -29,6 +29,7 @@ import com.questdb.cutlass.http.HttpRequestProcessorFactory;
 import com.questdb.cutlass.http.HttpServer;
 import com.questdb.cutlass.http.HttpServerConfiguration;
 import com.questdb.cutlass.http.processors.*;
+import com.questdb.cutlass.pgwire.PGWireServer;
 import com.questdb.mp.WorkerPool;
 import com.questdb.mp.WorkerPoolConfiguration;
 import com.questdb.std.CharSequenceObjHashMap;
@@ -115,6 +116,35 @@ public class ServerMain {
             httpServer = null;
         }
 
+        final PGWireServer pgWireServer;
+
+        if (configuration.getPGWireConfiguration().isEnabled()) {
+            final WorkerPool localPool;
+            if (configuration.getPGWireConfiguration().getWorkerCount() > 0) {
+                localPool = new WorkerPool(new WorkerPoolConfiguration() {
+                    @Override
+                    public int[] getWorkerAffinity() {
+                        return configuration.getPGWireConfiguration().getWorkerAffinity();
+                    }
+
+                    @Override
+                    public int getWorkerCount() {
+                        return configuration.getPGWireConfiguration().getWorkerCount();
+                    }
+                });
+            } else {
+                localPool = workerPool;
+            }
+
+            pgWireServer = new PGWireServer(configuration.getPGWireConfiguration(), cairoEngine, localPool);
+
+            if (localPool != workerPool) {
+                localPool.start();
+            }
+        } else {
+            pgWireServer = null;
+        }
+
         workerPool.start();
 
         if (Os.type != Os.WINDOWS && optHash.get("-n") == null) {
@@ -126,6 +156,7 @@ public class ServerMain {
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             System.err.println(new Date() + " QuestDB is shutting down");
             workerPool.halt();
+            Misc.free(pgWireServer);
             Misc.free(httpServer);
             Misc.free(cairoEngine);
             System.err.println(new Date() + " QuestDB is down");

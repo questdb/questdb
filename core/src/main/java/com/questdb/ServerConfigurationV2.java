@@ -26,6 +26,7 @@ package com.questdb;
 import com.questdb.cairo.CairoConfiguration;
 import com.questdb.cutlass.http.HttpServerConfiguration;
 import com.questdb.cutlass.line.udp.LineUdpReceiverConfiguration;
+import com.questdb.cutlass.pgwire.PGWireConfiguration;
 import com.questdb.mp.WorkerPoolConfiguration;
 
 public interface ServerConfigurationV2 {
@@ -37,4 +38,6 @@ public interface ServerConfigurationV2 {
     LineUdpReceiverConfiguration getLineUdpReceiverConfiguration();
 
     WorkerPoolConfiguration getWorkerPoolConfiguration();
+
+    PGWireConfiguration getPGWireConfiguration();
 }

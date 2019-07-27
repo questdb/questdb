@@ -890,7 +890,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
                         pool.unlock("x");
                         Assert.fail();
                     } catch (CairoException e) {
-                        TestUtils.assertContains(e.getMessage(), "Not lock owner");
+                        TestUtils.assertContains(e.getMessage(), "Not the lock owner");
                     }
                 } catch (Throwable e) {
                     e.printStackTrace();

@@ -30,6 +30,8 @@ import com.questdb.cutlass.http.processors.JsonQueryProcessorConfiguration;
 import com.questdb.cutlass.http.processors.StaticContentProcessorConfiguration;
 import com.questdb.cutlass.http.processors.TextImportProcessorConfiguration;
 import com.questdb.cutlass.line.udp.LineUdpReceiverConfiguration;
+import com.questdb.cutlass.pgwire.DefaultPGWireConfiguration;
+import com.questdb.cutlass.pgwire.PGWireConfiguration;
 import com.questdb.cutlass.text.TextConfiguration;
 import com.questdb.mp.WorkerPoolConfiguration;
 import com.questdb.network.*;
@@ -46,7 +48,7 @@ import java.util.Properties;
 
 public class PropServerConfiguration implements ServerConfigurationV2 {
     public static final String CONFIG_DIRECTORY = "conf";
-    private final IODispatcherConfiguration ioDispatcherConfiguration = new PropIODispatcherConfiguration();
+    private final IODispatcherConfiguration httpIODispatcherConfiguration = new HttpIODispatcherConfiguration();
     private final TextImportProcessorConfiguration textImportProcessorConfiguration = new PropTextImportProcessorConfiguration();
     private final StaticContentProcessorConfiguration staticContentProcessorConfiguration = new PropStaticContentProcessorConfiguration();
     private final HttpServerConfiguration httpServerConfiguration = new PropHttpServerConfiguration();
@@ -142,6 +144,13 @@ public class PropServerConfiguration implements ServerConfigurationV2 {
     private int jsonQueryFloatScale;
     private int jsonQueryDoubleScale;
     private int jsonQueryConnectionCheckFrequency;
+    private final PGWireConfiguration pgWireConfiguration = new DefaultPGWireConfiguration() {
+        @Override
+        public int getWorkerCount() {
+            return 0;
+        }
+    };
+
     public PropServerConfiguration(String root, Properties properties) throws ServerConfigurationException {
         this.sharedWorkerCount = getInt(properties, "shared.worker.count", 2);
         this.sharedWorkerAffinity = getAffinity(properties, "shared.worker.affinity", sharedWorkerCount);
@@ -152,8 +161,8 @@ public class PropServerConfiguration implements ServerConfigurationV2 {
             this.multipartHeaderBufferSize = getIntSize(properties, "http.multipart.header.buffer.size", 512);
             this.multipartIdleSpinCount = getLong(properties, "http.multipart.idle.spin.count", 10_000);
             this.recvBufferSize = getIntSize(properties, "http.receive.buffer.size", 1024 * 1024);
-            this.requestHeaderBufferSize = getIntSize(properties, "http.request.header.buffer.size", 1024);
-            this.responseHeaderBufferSize = getIntSize(properties, "http.response.header.buffer.size", 1024 * 1024);
+            this.requestHeaderBufferSize = getIntSize(properties, "http.request.header.buffer.size", 32 * 2014);
+            this.responseHeaderBufferSize = getIntSize(properties, "http.response.header.buffer.size", 32 * 1024);
             this.httpWorkerCount = getInt(properties, "http.worker.count", 0);
             this.httpWorkerAffinity = getAffinity(properties, "http.worker.affinity", httpWorkerCount);
             this.sendBufferSize = getIntSize(properties, "http.send.buffer.size", 2 * 1024 * 1024);
@@ -279,6 +288,11 @@ public class PropServerConfiguration implements ServerConfigurationV2 {
     @Override
     public HttpServerConfiguration getHttpServerConfiguration() {
         return httpServerConfiguration;
+    }
+
+    @Override
+    public PGWireConfiguration getPGWireConfiguration() {
+        return pgWireConfiguration;
     }
 
     @Override
@@ -453,7 +467,7 @@ public class PropServerConfiguration implements ServerConfigurationV2 {
         }
     }
 
-    private class PropIODispatcherConfiguration implements IODispatcherConfiguration {
+    private class HttpIODispatcherConfiguration implements IODispatcherConfiguration {
         @Override
         public int getActiveConnectionLimit() {
             return activeConnectionLimit;
@@ -527,6 +541,11 @@ public class PropServerConfiguration implements ServerConfigurationV2 {
         @Override
         public int getRcvBufSize() {
             return rcvBufSize;
+        }
+
+        @Override
+        public String getDispatcherLogName() {
+            return "http-server";
         }
     }
 
@@ -635,7 +654,7 @@ public class PropServerConfiguration implements ServerConfigurationV2 {
 
         @Override
         public IODispatcherConfiguration getDispatcherConfiguration() {
-            return ioDispatcherConfiguration;
+            return httpIODispatcherConfiguration;
         }
 
         @Override

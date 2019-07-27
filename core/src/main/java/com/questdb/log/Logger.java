@@ -135,6 +135,12 @@ class Logger implements LogRecord, Log {
     }
 
     @Override
+    public LogRecord $(boolean x) {
+        sink().put(x);
+        return this;
+    }
+
+    @Override
     public LogRecord $(Throwable e) {
         if (e != null) {
             sink().put(Misc.EOL).put(e);

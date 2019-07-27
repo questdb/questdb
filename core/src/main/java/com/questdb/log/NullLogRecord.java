@@ -59,6 +59,11 @@ final class NullLogRecord implements LogRecord {
     }
 
     @Override
+    public LogRecord $(boolean x) {
+        return this;
+    }
+
+    @Override
     public LogRecord $(char c) {
         return this;
     }

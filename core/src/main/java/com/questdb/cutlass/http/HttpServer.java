@@ -62,7 +62,7 @@ public class HttpServer implements Closeable {
             selectors.add(new HttpRequestProcessorSelectorImpl());
         }
 
-        this.httpContextFactory = new HttpContextFactory(configuration, configuration.getConnectionPoolInitialCapacity());
+        this.httpContextFactory = new HttpContextFactory(configuration);
         this.dispatcher = IODispatchers.create(
                 configuration.getDispatcherConfiguration(),
                 httpContextFactory
@@ -136,8 +136,9 @@ public class HttpServer implements Closeable {
         private final ThreadLocal<WeakObjectPool<HttpConnectionContext>> contextPool;
         private boolean closed = false;
 
-        public HttpContextFactory(HttpServerConfiguration configuration, int poolSize) {
-            this.contextPool = new ThreadLocal<>(() -> new WeakObjectPool<>(() -> new HttpConnectionContext(configuration), poolSize));
+        public HttpContextFactory(HttpServerConfiguration configuration) {
+            this.contextPool = new ThreadLocal<>(() -> new WeakObjectPool<>(() ->
+                    new HttpConnectionContext(configuration), configuration.getConnectionPoolInitialCapacity()));
         }
 
         @Override
