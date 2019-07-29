@@ -74,7 +74,7 @@ public class TableStatusCheckProcessor implements HttpRequestProcessor {
         if (tableName == null) {
             context.simpleResponse().sendStatus(400, "table name missing");
         } else {
-            int check = cairoEngine.getStatus(path, tableName);
+            int check = cairoEngine.getStatus(context.getCairoSecurityContext(), path, tableName);
             if (Chars.equalsNc("json", context.getRequestHeader().getUrlParam("f"))) {
                 HttpChunkedResponseSocket r = context.getChunkedResponseSocket();
                 r.status(200, "application/json");

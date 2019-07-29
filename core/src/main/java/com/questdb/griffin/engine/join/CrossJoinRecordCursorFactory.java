@@ -25,8 +25,8 @@ package com.questdb.griffin.engine.join;
 
 import com.questdb.cairo.AbstractRecordCursorFactory;
 import com.questdb.cairo.sql.*;
+import com.questdb.griffin.SqlExecutionContext;
 import com.questdb.griffin.engine.EmptyTableRecordCursor;
-import com.questdb.griffin.engine.functions.bind.BindVariableService;
 import com.questdb.std.Misc;
 
 public class CrossJoinRecordCursorFactory extends AbstractRecordCursorFactory {
@@ -55,9 +55,9 @@ public class CrossJoinRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
-    public RecordCursor getCursor(BindVariableService bindVariableService) {
-        final RecordCursor masterCursor = masterFactory.getCursor(bindVariableService);
-        RecordCursor slaveCursor = slaveFactory.getCursor(bindVariableService);
+    public RecordCursor getCursor(SqlExecutionContext executionContext) {
+        final RecordCursor masterCursor = masterFactory.getCursor(executionContext);
+        RecordCursor slaveCursor = slaveFactory.getCursor(executionContext);
         if (masterCursor.hasNext()) {
             cursor.of(masterCursor, slaveCursor);
             return cursor;
@@ -71,7 +71,7 @@ public class CrossJoinRecordCursorFactory extends AbstractRecordCursorFactory {
         return false;
     }
 
-    private class HashJoinRecordCursor implements NoRandomAccessRecordCursor {
+    private static class HashJoinRecordCursor implements NoRandomAccessRecordCursor {
         private final JoinRecord record;
         private final int columnSplit;
         private RecordCursor masterCursor;

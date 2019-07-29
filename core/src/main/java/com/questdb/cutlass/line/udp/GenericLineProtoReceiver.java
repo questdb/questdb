@@ -25,6 +25,7 @@ package com.questdb.cutlass.line.udp;
 
 import com.questdb.cairo.CairoEngine;
 import com.questdb.cairo.CairoException;
+import com.questdb.cairo.CairoSecurityContext;
 import com.questdb.cutlass.line.CairoLineProtoParser;
 import com.questdb.cutlass.line.LineProtoLexer;
 import com.questdb.log.Log;
@@ -50,7 +51,11 @@ public class GenericLineProtoReceiver implements Closeable, Job {
     private long totalCount = 0;
     private long buf;
 
-    public GenericLineProtoReceiver(LineUdpReceiverConfiguration receiverCfg, CairoEngine engine) {
+    public GenericLineProtoReceiver(
+            LineUdpReceiverConfiguration receiverCfg,
+            CairoEngine engine,
+            CairoSecurityContext cairoSecurityContext
+    ) {
 
         nf = receiverCfg.getNetworkFacade();
 
@@ -87,7 +92,7 @@ public class GenericLineProtoReceiver implements Closeable, Job {
         this.buf = Unsafe.malloc(this.bufLen = receiverCfg.getMsgBufferSize());
 
         lexer = new LineProtoLexer(receiverCfg.getMsgBufferSize());
-        parser = new CairoLineProtoParser(engine);
+        parser = new CairoLineProtoParser(engine, cairoSecurityContext);
         lexer.withParser(parser);
 
         LOG.info()

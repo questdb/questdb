@@ -26,7 +26,7 @@ package com.questdb.griffin.engine;
 import com.questdb.cairo.AbstractRecordCursorFactory;
 import com.questdb.cairo.sql.RecordCursor;
 import com.questdb.cairo.sql.RecordMetadata;
-import com.questdb.griffin.engine.functions.bind.BindVariableService;
+import com.questdb.griffin.SqlExecutionContext;
 import com.questdb.std.Misc;
 
 public class EmptyTableRecordCursorFactory extends AbstractRecordCursorFactory {
@@ -40,7 +40,7 @@ public class EmptyTableRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
-    public RecordCursor getCursor(BindVariableService bindVariableService) {
+    public RecordCursor getCursor(SqlExecutionContext executionContext) {
         return EmptyTableRecordCursor.INSTANCE;
     }
 

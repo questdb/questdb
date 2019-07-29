@@ -29,7 +29,7 @@ import com.questdb.cairo.map.MapFactory;
 import com.questdb.cairo.map.MapKey;
 import com.questdb.cairo.map.MapValue;
 import com.questdb.cairo.sql.*;
-import com.questdb.griffin.engine.functions.bind.BindVariableService;
+import com.questdb.griffin.SqlExecutionContext;
 import com.questdb.std.Misc;
 import com.questdb.std.Transient;
 
@@ -74,15 +74,15 @@ public class HashJoinLightRecordCursorFactory extends AbstractRecordCursorFactor
     }
 
     @Override
-    public RecordCursor getCursor(BindVariableService bindVariableService) {
-        RecordCursor slaveCursor = slaveFactory.getCursor(bindVariableService);
+    public RecordCursor getCursor(SqlExecutionContext executionContext) {
+        RecordCursor slaveCursor = slaveFactory.getCursor(executionContext);
         try {
             buildMapOfSlaveRecords(slaveCursor);
         } catch (CairoException e) {
             slaveCursor.close();
             throw e;
         }
-        cursor.of(masterFactory.getCursor(bindVariableService), slaveCursor);
+        cursor.of(masterFactory.getCursor(executionContext), slaveCursor);
         return cursor;
     }
 

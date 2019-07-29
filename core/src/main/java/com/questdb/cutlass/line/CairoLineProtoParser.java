@@ -55,6 +55,8 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
     private final MicrosecondClock clock;
     private final FieldNameParser MY_NEW_FIELD_NAME = this::parseFieldNameNewTable;
     private final FieldValueParser MY_NEW_TAG_VALUE = this::parseTagValueNewTable;
+    private final TableStructureAdapter tableStructureAdapter = new TableStructureAdapter();
+    private final CairoSecurityContext cairoSecurityContext;
     // state
     // cache entry index is always a negative value
     private int cacheEntryIndex = 0;
@@ -67,6 +69,7 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
     private int columnType;
     private final FieldNameParser MY_FIELD_NAME = this::parseFieldName;
     private long tableName;
+    private final LineEndParser MY_NEW_LINE_END = this::createTableAndAppendRow;
     private LineEndParser onLineEnd;
     private FieldNameParser onFieldName;
     private FieldValueParser onFieldValue;
@@ -74,13 +77,12 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
     private final FieldValueParser MY_FIELD_VALUE = this::parseFieldValue;
     private final FieldValueParser MY_NEW_FIELD_VALUE = this::parseFieldValueNewTable;
     private final FieldValueParser MY_TAG_VALUE = this::parseTagValue;
-    private final TableStructureAdapter tableStructureAdapter = new TableStructureAdapter();
-    private final LineEndParser MY_NEW_LINE_END = this::createTableAndAppendRow;
 
-    public CairoLineProtoParser(CairoEngine engine) {
+    public CairoLineProtoParser(CairoEngine engine, CairoSecurityContext cairoSecurityContext) {
         this.configuration = engine.getConfiguration();
         this.clock = configuration.getMicrosecondClock();
         this.engine = engine;
+        this.cairoSecurityContext = cairoSecurityContext;
     }
 
     @Override
@@ -156,7 +158,7 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
     }
 
     private void appendFirstRowAndCacheWriter(CharSequenceCache cache) {
-        TableWriter writer = engine.getWriter(cache.get(tableName));
+        TableWriter writer = engine.getWriter(cairoSecurityContext, cache.get(tableName));
         this.writer = writer;
         this.metadata = writer.getMetadata();
         this.columnCount = metadata.getColumnCount();
@@ -223,7 +225,7 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
 
     private void cacheWriter(CacheEntry entry, CachedCharSequence tableName) {
         try {
-            entry.writer = engine.getWriter(tableName);
+            entry.writer = engine.getWriter(cairoSecurityContext, tableName);
             this.tableName = tableName.getCacheAddress();
             createState(entry);
             LOG.info().$("cached writer [name=").$(tableName).$(']').$();
@@ -246,13 +248,11 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
     }
 
     private void createTableAndAppendRow(CharSequenceCache cache) {
-        TableUtils.createTable(
-                configuration.getFilesFacade(),
+        engine.creatTable(
+                cairoSecurityContext,
                 appendMemory,
                 path,
-                configuration.getRoot(),
-                tableStructureAdapter.of(cache),
-                configuration.getMkDirMode()
+                tableStructureAdapter.of(cache)
         );
         appendFirstRowAndCacheWriter(cache);
     }
@@ -282,7 +282,7 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
     private void initCacheEntry(CachedCharSequence token, CacheEntry entry) {
         switch (entry.state) {
             case 0:
-                int exists = TableUtils.exists(configuration.getFilesFacade(), path, configuration.getRoot(), token);
+                int exists = engine.getStatus(cairoSecurityContext, path, token);
                 switch (exists) {
                     case TABLE_EXISTS:
                         entry.state = 1;
@@ -487,6 +487,11 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
         private static final BadCastException INSTANCE = new BadCastException();
     }
 
+    private static class CacheEntry {
+        private TableWriter writer;
+        private int state = 0;
+    }
+
     private class TableStructureAdapter implements TableStructure {
         private CharSequenceCache cache;
         private int columnCount;
@@ -554,10 +559,5 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
             this.columnCount = timestampIndex + 1;
             return this;
         }
-    }
-
-    private class CacheEntry {
-        private TableWriter writer;
-        private int state = 0;
     }
 }

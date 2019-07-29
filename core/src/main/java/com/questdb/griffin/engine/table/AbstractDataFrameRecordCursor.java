@@ -28,7 +28,7 @@ import com.questdb.cairo.sql.DataFrameCursor;
 import com.questdb.cairo.sql.Record;
 import com.questdb.cairo.sql.RecordCursor;
 import com.questdb.cairo.sql.SymbolTable;
-import com.questdb.griffin.engine.functions.bind.BindVariableService;
+import com.questdb.griffin.SqlExecutionContext;
 import com.questdb.std.Rows;
 
 public abstract class AbstractDataFrameRecordCursor implements RecordCursor {
@@ -70,5 +70,5 @@ public abstract class AbstractDataFrameRecordCursor implements RecordCursor {
         recordAt(record, rowId);
     }
 
-    abstract void of(DataFrameCursor cursor, BindVariableService bindVariableService);
+    abstract void of(DataFrameCursor cursor, SqlExecutionContext executionContext);
 }

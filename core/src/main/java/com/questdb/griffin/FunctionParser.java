@@ -58,8 +58,10 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
     private final CharSequenceHashSet groupByFunctionNames = new CharSequenceHashSet();
     private final ArrayDeque<RecordMetadata> metadataStack = new ArrayDeque<>();
     private RecordMetadata metadata;
-    private SqlExecutionContext sqlExecutionContext;
+    private SqlCodeGenerator sqlCodeGenerator;
     private int bindVariableIndex = 0;
+    private SqlExecutionContext sqlExecutionContext;
+
     public FunctionParser(CairoConfiguration configuration, Iterable<FunctionFactory> functionFactories) {
         this.configuration = configuration;
         loadFunctionFactories(functionFactories);
@@ -236,6 +238,10 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         }
     }
 
+    public void setSqlCodeGenerator(SqlCodeGenerator sqlCodeGenerator) {
+        this.sqlCodeGenerator = sqlCodeGenerator;
+    }
+
     @Override
     public void visit(ExpressionNode node) throws SqlException {
         int argCount = node.paramCount;
@@ -400,8 +406,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
 
     private Function createCursorFunction(ExpressionNode node) throws SqlException {
         assert node.queryModel != null;
-        return new CursorFunction(node.position,
-                sqlExecutionContext.getCodeGenerator().generate(node.queryModel, sqlExecutionContext)
+        return new CursorFunction(node.position, sqlCodeGenerator.generate(node.queryModel, sqlExecutionContext)
         );
     }
 

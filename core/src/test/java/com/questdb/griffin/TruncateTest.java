@@ -5,7 +5,7 @@
  *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
  *   \__\_\\__,_|\___||___/\__|____/|____/
  *
- * Copyright (C) 2014-2018 Appsicle
+ * Copyright (C) 2014-2019 Appsicle
  *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU Affero General Public License, version 3,
@@ -24,6 +24,7 @@
 package com.questdb.griffin;
 
 import com.questdb.cairo.TableWriter;
+import com.questdb.cairo.security.AllowAllCairoSecurityContext;
 import com.questdb.griffin.engine.functions.rnd.SharedRandom;
 import com.questdb.std.Rnd;
 import com.questdb.test.tools.TestUtils;
@@ -46,7 +47,7 @@ public class TruncateTest extends AbstractGriffinTest {
     public void testExpectTableKeyword() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try {
-                compiler.compile("truncate x", bindVariableService);
+                compiler.compile("truncate x", AllowAllCairoSecurityContext.INSTANCE, bindVariableService);
                 Assert.fail();
             } catch (SqlException e) {
                 Assert.assertEquals(9, e.getPosition());
@@ -59,7 +60,7 @@ public class TruncateTest extends AbstractGriffinTest {
     public void testExpectTableName() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try {
-                compiler.compile("truncate table", bindVariableService);
+                compiler.compile("truncate table", AllowAllCairoSecurityContext.INSTANCE, bindVariableService);
                 Assert.fail();
             } catch (SqlException e) {
                 Assert.assertEquals(14, e.getPosition());
@@ -75,7 +76,7 @@ public class TruncateTest extends AbstractGriffinTest {
             try {
                 createX();
 
-                compiler.compile("truncate table x,", bindVariableService);
+                compiler.compile("truncate table x,", AllowAllCairoSecurityContext.INSTANCE, bindVariableService);
                 Assert.fail();
             } catch (SqlException e) {
                 Assert.assertEquals(17, e.getPosition());
@@ -102,7 +103,7 @@ public class TruncateTest extends AbstractGriffinTest {
                                 true
                         );
 
-                        Assert.assertNull(compiler.compile("truncate table x", bindVariableService));
+                        Assert.assertNull(compiler.compile("truncate table x", AllowAllCairoSecurityContext.INSTANCE, bindVariableService));
 
                         assertQuery(
                                 "count\n",
@@ -149,7 +150,7 @@ public class TruncateTest extends AbstractGriffinTest {
 
             new Thread(() -> {
                 // lock table and wait until main thread uses it
-                try (TableWriter ignore = engine.getWriter("y")) {
+                try (TableWriter ignore = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "y")) {
                     useBarrier.await();
                     releaseBarrier.await();
                 } catch (Exception e) {
@@ -162,7 +163,7 @@ public class TruncateTest extends AbstractGriffinTest {
 
             useBarrier.await();
             try {
-                Assert.assertNull(compiler.compile("truncate table x,y", bindVariableService));
+                Assert.assertNull(compiler.compile("truncate table x,y", AllowAllCairoSecurityContext.INSTANCE, bindVariableService));
                 Assert.fail();
             } catch (SqlException e) {
                 Assert.assertEquals(17, e.getPosition());
@@ -217,7 +218,7 @@ public class TruncateTest extends AbstractGriffinTest {
             );
 
             try {
-                Assert.assertNull(compiler.compile("truncate table x, y,z", bindVariableService));
+                Assert.assertNull(compiler.compile("truncate table x, y,z", AllowAllCairoSecurityContext.INSTANCE, bindVariableService));
                 Assert.fail();
             } catch (SqlException e) {
                 Assert.assertEquals(20, e.getPosition());
@@ -267,7 +268,7 @@ public class TruncateTest extends AbstractGriffinTest {
                     true
             );
 
-            Assert.assertNull(compiler.compile("truncate table x, y", bindVariableService));
+            Assert.assertNull(compiler.compile("truncate table x, y", AllowAllCairoSecurityContext.INSTANCE, bindVariableService));
 
             assertQuery(
                     "count\n",
@@ -311,6 +312,7 @@ public class TruncateTest extends AbstractGriffinTest {
                         " rnd_str(5,16,2) n" +
                         " from long_sequence(10)" +
                         ") timestamp (timestamp)",
+                AllowAllCairoSecurityContext.INSTANCE,
                 bindVariableService
         );
     }
@@ -337,6 +339,7 @@ public class TruncateTest extends AbstractGriffinTest {
                         " rnd_str(5,16,2) n" +
                         " from long_sequence(20)" +
                         ") timestamp (timestamp)",
+                AllowAllCairoSecurityContext.INSTANCE,
                 bindVariableService
         );
     }

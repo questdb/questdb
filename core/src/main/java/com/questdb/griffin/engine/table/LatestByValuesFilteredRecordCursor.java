@@ -26,7 +26,7 @@ package com.questdb.griffin.engine.table;
 import com.questdb.cairo.TableUtils;
 import com.questdb.cairo.sql.DataFrame;
 import com.questdb.cairo.sql.Function;
-import com.questdb.griffin.engine.functions.bind.BindVariableService;
+import com.questdb.griffin.SqlExecutionContext;
 import com.questdb.std.IntHashSet;
 import com.questdb.std.IntIntHashMap;
 import com.questdb.std.Numbers;
@@ -59,7 +59,7 @@ class LatestByValuesFilteredRecordCursor extends AbstractTreeSetRecordCursor {
     }
 
     @Override
-    protected void buildTreeMap(BindVariableService bindVariableService) {
+    protected void buildTreeMap(SqlExecutionContext executionContext) {
         prepare();
 
         while (this.dataFrameCursor.hasNext()) {

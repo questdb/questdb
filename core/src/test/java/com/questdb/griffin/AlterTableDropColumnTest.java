@@ -5,7 +5,7 @@
  *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
  *   \__\_\\__,_|\___||___/\__|____/|____/
  *
- * Copyright (C) 2014-2018 Appsicle
+ * Copyright (C) 2014-2019 Appsicle
  *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU Affero General Public License, version 3,
@@ -26,6 +26,7 @@ package com.questdb.griffin;
 import com.questdb.cairo.TableReader;
 import com.questdb.cairo.TableUtils;
 import com.questdb.cairo.TableWriter;
+import com.questdb.cairo.security.AllowAllCairoSecurityContext;
 import com.questdb.griffin.engine.functions.rnd.SharedRandom;
 import com.questdb.std.Rnd;
 import com.questdb.test.tools.TestUtils;
@@ -63,7 +64,7 @@ public class AlterTableDropColumnTest extends AbstractGriffinTest {
                 CyclicBarrier startBarrier = new CyclicBarrier(2);
                 CountDownLatch haltLatch = new CountDownLatch(1);
                 new Thread(() -> {
-                    try (TableWriter ignore = engine.getWriter("x")) {
+                    try (TableWriter ignore = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "x")) {
                         // make sure writer is locked before test begins
                         startBarrier.await();
                         // make sure we don't release writer until main test finishes
@@ -81,7 +82,7 @@ public class AlterTableDropColumnTest extends AbstractGriffinTest {
 
                 startBarrier.await();
                 try {
-                    compiler.compile("alter table x drop column ik", bindVariableService);
+                    compiler.compile("alter table x drop column ik", AllowAllCairoSecurityContext.INSTANCE, bindVariableService);
                     Assert.fail();
                 } finally {
                     haltLatch.countDown();
@@ -115,11 +116,11 @@ public class AlterTableDropColumnTest extends AbstractGriffinTest {
                     try {
                         createX();
 
-                        Assert.assertNull(compiler.compile("alter table x drop column e, m", bindVariableService));
+                        Assert.assertNull(compiler.compile("alter table x drop column e, m", AllowAllCairoSecurityContext.INSTANCE, bindVariableService));
 
                         String expected = "{\"columnCount\":14,\"columns\":[{\"index\":0,\"name\":\"i\",\"type\":\"INT\"},{\"index\":1,\"name\":\"sym\",\"type\":\"SYMBOL\"},{\"index\":2,\"name\":\"amt\",\"type\":\"DOUBLE\"},{\"index\":3,\"name\":\"timestamp\",\"type\":\"TIMESTAMP\"},{\"index\":4,\"name\":\"b\",\"type\":\"BOOLEAN\"},{\"index\":5,\"name\":\"c\",\"type\":\"STRING\"},{\"index\":6,\"name\":\"d\",\"type\":\"DOUBLE\"},{\"index\":7,\"name\":\"f\",\"type\":\"SHORT\"},{\"index\":8,\"name\":\"g\",\"type\":\"DATE\"},{\"index\":9,\"name\":\"ik\",\"type\":\"SYMBOL\"},{\"index\":10,\"name\":\"j\",\"type\":\"LONG\"},{\"index\":11,\"name\":\"k\",\"type\":\"TIMESTAMP\"},{\"index\":12,\"name\":\"l\",\"type\":\"BYTE\"},{\"index\":13,\"name\":\"n\",\"type\":\"STRING\"}],\"timestampIndex\":3}";
 
-                        try (TableReader reader = engine.getReader("x", TableUtils.ANY_TABLE_VERSION)) {
+                        try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_VERSION)) {
                             sink.clear();
                             reader.getMetadata().toJson(sink);
                             TestUtils.assertEquals(expected, sink);
@@ -169,7 +170,7 @@ public class AlterTableDropColumnTest extends AbstractGriffinTest {
         TestUtils.assertMemoryLeak(() -> {
             try {
                 createX();
-                compiler.compile(sql, bindVariableService);
+                compiler.compile(sql, AllowAllCairoSecurityContext.INSTANCE, bindVariableService);
                 Assert.fail();
             } catch (SqlException e) {
                 Assert.assertEquals(position, e.getPosition());
@@ -203,6 +204,7 @@ public class AlterTableDropColumnTest extends AbstractGriffinTest {
                         " rnd_str(5,16,2) n" +
                         " from long_sequence(10)" +
                         ") timestamp (timestamp)",
+                AllowAllCairoSecurityContext.INSTANCE,
                 bindVariableService
         );
     }

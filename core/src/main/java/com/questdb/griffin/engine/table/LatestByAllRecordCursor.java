@@ -27,7 +27,7 @@ import com.questdb.cairo.RecordSink;
 import com.questdb.cairo.map.Map;
 import com.questdb.cairo.map.MapKey;
 import com.questdb.cairo.sql.DataFrame;
-import com.questdb.griffin.engine.functions.bind.BindVariableService;
+import com.questdb.griffin.SqlExecutionContext;
 import com.questdb.std.Rows;
 
 class LatestByAllRecordCursor extends AbstractTreeSetRecordCursor {
@@ -41,7 +41,8 @@ class LatestByAllRecordCursor extends AbstractTreeSetRecordCursor {
         this.recordSink = recordSink;
     }
 
-    protected void buildTreeMap(BindVariableService bindVariableService) {
+    @Override
+    protected void buildTreeMap(SqlExecutionContext executionContext) {
         map.clear();
 
         while (this.dataFrameCursor.hasNext()) {

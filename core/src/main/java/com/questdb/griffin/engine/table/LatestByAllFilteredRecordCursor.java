@@ -28,7 +28,7 @@ import com.questdb.cairo.map.Map;
 import com.questdb.cairo.map.MapKey;
 import com.questdb.cairo.sql.DataFrame;
 import com.questdb.cairo.sql.Function;
-import com.questdb.griffin.engine.functions.bind.BindVariableService;
+import com.questdb.griffin.SqlExecutionContext;
 import com.questdb.std.Rows;
 import org.jetbrains.annotations.NotNull;
 
@@ -56,9 +56,9 @@ class LatestByAllFilteredRecordCursor extends AbstractTreeSetRecordCursor {
     }
 
     @Override
-    protected void buildTreeMap(BindVariableService bindVariableService) {
+    protected void buildTreeMap(SqlExecutionContext executionContext) {
         map.clear();
-        filter.init(this, bindVariableService);
+        filter.init(this, executionContext);
 
         while (this.dataFrameCursor.hasNext()) {
             final DataFrame frame = this.dataFrameCursor.next();

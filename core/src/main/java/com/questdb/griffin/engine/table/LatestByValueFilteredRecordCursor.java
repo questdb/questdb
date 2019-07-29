@@ -26,7 +26,7 @@ package com.questdb.griffin.engine.table;
 import com.questdb.cairo.sql.DataFrame;
 import com.questdb.cairo.sql.DataFrameCursor;
 import com.questdb.cairo.sql.Function;
-import com.questdb.griffin.engine.functions.bind.BindVariableService;
+import com.questdb.griffin.SqlExecutionContext;
 import org.jetbrains.annotations.NotNull;
 
 class LatestByValueFilteredRecordCursor extends AbstractDataFrameRecordCursor {
@@ -64,12 +64,12 @@ class LatestByValueFilteredRecordCursor extends AbstractDataFrameRecordCursor {
     }
 
     @Override
-    void of(DataFrameCursor dataFrameCursor, BindVariableService bindVariableService) {
+    void of(DataFrameCursor dataFrameCursor, SqlExecutionContext executionContext) {
         this.dataFrameCursor = dataFrameCursor;
         this.record.of(dataFrameCursor.getTableReader());
         findRecord();
         hasNext = !empty;
-        filter.init(this, bindVariableService);
+        filter.init(this, executionContext);
     }
 
     private void findRecord() {

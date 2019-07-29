@@ -34,7 +34,6 @@ import com.questdb.griffin.SqlException;
 import com.questdb.griffin.SqlExecutionContext;
 import com.questdb.griffin.engine.EmptyTableRecordCursor;
 import com.questdb.griffin.engine.functions.GroupByFunction;
-import com.questdb.griffin.engine.functions.bind.BindVariableService;
 import com.questdb.griffin.model.QueryModel;
 import com.questdb.std.*;
 import org.jetbrains.annotations.NotNull;
@@ -125,8 +124,8 @@ public class AbstractSampleByRecordCursorFactory implements RecordCursorFactory 
     }
 
     @Override
-    public RecordCursor getCursor(BindVariableService bindVariableService) {
-        final RecordCursor baseCursor = base.getCursor(bindVariableService);
+    public RecordCursor getCursor(SqlExecutionContext executionContext) {
+        final RecordCursor baseCursor = base.getCursor(executionContext);
         map.clear();
 
         // This factory fills gaps in data. To do that we
@@ -163,7 +162,7 @@ public class AbstractSampleByRecordCursorFactory implements RecordCursorFactory 
         boolean next = baseCursor.hasNext();
         // we know base cursor has value
         assert next;
-        return initFunctionsAndCursor(bindVariableService, baseCursor);
+        return initFunctionsAndCursor(executionContext, baseCursor);
     }
 
     @Override
@@ -177,11 +176,11 @@ public class AbstractSampleByRecordCursorFactory implements RecordCursorFactory 
     }
 
     @NotNull
-    protected RecordCursor initFunctionsAndCursor(BindVariableService bindVariableService, RecordCursor baseCursor) {
+    protected RecordCursor initFunctionsAndCursor(SqlExecutionContext executionContext, RecordCursor baseCursor) {
         cursor.of(baseCursor);
         // init all record function for this cursor, in case functions require metadata and/or symbol tables
         for (int i = 0, m = recordFunctions.size(); i < m; i++) {
-            recordFunctions.getQuick(i).init(cursor, bindVariableService);
+            recordFunctions.getQuick(i).init(cursor, executionContext);
         }
         return cursor;
     }

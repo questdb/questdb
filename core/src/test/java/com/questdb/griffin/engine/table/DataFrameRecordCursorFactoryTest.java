@@ -5,7 +5,7 @@
  *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
  *   \__\_\\__,_|\___||___/\__|____/|____/
  *
- * Copyright (C) 2014-2018 Appsicle
+ * Copyright (C) 2014-2019 Appsicle
  *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU Affero General Public License, version 3,
@@ -24,10 +24,12 @@
 package com.questdb.griffin.engine.table;
 
 import com.questdb.cairo.*;
+import com.questdb.cairo.security.AllowAllCairoSecurityContext;
 import com.questdb.cairo.sql.Record;
 import com.questdb.cairo.sql.RecordCursor;
 import com.questdb.cairo.sql.RecordMetadata;
-import com.questdb.griffin.engine.functions.bind.BindVariableService;
+import com.questdb.griffin.SqlExecutionContext;
+import com.questdb.griffin.SqlExecutionContextImpl;
 import com.questdb.std.Rnd;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Test;
@@ -78,7 +80,7 @@ public class DataFrameRecordCursorFactoryTest extends AbstractCairoTest {
                 int columnIndex;
                 int symbolKey;
                 RecordMetadata metadata;
-                try (TableReader reader = engine.getReader("x", TableUtils.ANY_TABLE_VERSION)) {
+                try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_VERSION)) {
                     columnIndex = reader.getMetadata().getColumnIndexQuiet("b");
                     symbolKey = reader.getSymbolMapReader(columnIndex).getQuick(value);
                     metadata = GenericRecordMetadata.copyOf(reader.getMetadata());
@@ -87,8 +89,8 @@ public class DataFrameRecordCursorFactoryTest extends AbstractCairoTest {
                 FullFwdDataFrameCursorFactory dataFrameFactory = new FullFwdDataFrameCursorFactory(engine, "x", TableUtils.ANY_TABLE_VERSION);
                 DataFrameRecordCursorFactory factory = new DataFrameRecordCursorFactory(metadata, dataFrameFactory, symbolIndexRowCursorFactory, null);
 
-                BindVariableService bindVariableService = new BindVariableService();
-                try (RecordCursor cursor = factory.getCursor(bindVariableService)) {
+                SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl().with(AllowAllCairoSecurityContext.INSTANCE, null);
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     Record record = cursor.getRecord();
                     while (cursor.hasNext()) {
                         TestUtils.assertEquals(value, record.getSym(1));

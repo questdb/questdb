@@ -26,8 +26,8 @@ package com.questdb.griffin.engine.groupby;
 import com.questdb.cairo.sql.Record;
 import com.questdb.cairo.sql.RecordCursor;
 import com.questdb.cairo.sql.SymbolTable;
+import com.questdb.griffin.SqlExecutionContext;
 import com.questdb.griffin.engine.functions.SymbolFunction;
-import com.questdb.griffin.engine.functions.bind.BindVariableService;
 
 public class MapSymbolColumn extends SymbolFunction {
     private final int mapColumnIndex;
@@ -51,7 +51,7 @@ public class MapSymbolColumn extends SymbolFunction {
     }
 
     @Override
-    public void init(RecordCursor recordCursor, BindVariableService bindVariableService) {
+    public void init(RecordCursor recordCursor, SqlExecutionContext executionContext) {
         this.symbolTable = recordCursor.getSymbolTable(cursorColumnIndex);
     }
 }

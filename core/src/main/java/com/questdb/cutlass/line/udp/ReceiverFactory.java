@@ -24,9 +24,14 @@
 package com.questdb.cutlass.line.udp;
 
 import com.questdb.cairo.CairoEngine;
+import com.questdb.cairo.CairoSecurityContext;
 import com.questdb.mp.Job;
 
 @FunctionalInterface
 public interface ReceiverFactory {
-    Job createReceiver(LineUdpReceiverConfiguration receiverCfg, CairoEngine engine);
+    Job createReceiver(
+            LineUdpReceiverConfiguration receiverCfg,
+            CairoEngine engine,
+            CairoSecurityContext cairoSecurityContext
+    );
 }

@@ -5,7 +5,7 @@
  *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
  *   \__\_\\__,_|\___||___/\__|____/|____/
  *
- * Copyright (C) 2014-2018 Appsicle
+ * Copyright (C) 2014-2019 Appsicle
  *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU Affero General Public License, version 3,
@@ -35,11 +35,9 @@ import java.util.ArrayList;
 public class BaseFunctionFactoryTest extends AbstractGriffinTest {
     protected static final ArrayList<FunctionFactory> functions = new ArrayList<>();
     protected final static QueryModel queryModel = QueryModel.FACTORY.newInstance();
-    protected static final TestExecutionContext sqlExecutionContext = new TestExecutionContext(compiler.getCodeGenerator());
 
     @Before
     public void setUp4() {
-        sqlExecutionContext.clear();
         functions.clear();
     }
 

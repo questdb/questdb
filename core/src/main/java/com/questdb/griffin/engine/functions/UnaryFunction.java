@@ -25,7 +25,7 @@ package com.questdb.griffin.engine.functions;
 
 import com.questdb.cairo.sql.Function;
 import com.questdb.cairo.sql.RecordCursor;
-import com.questdb.griffin.engine.functions.bind.BindVariableService;
+import com.questdb.griffin.SqlExecutionContext;
 
 public interface UnaryFunction extends Function {
     @Override
@@ -34,8 +34,8 @@ public interface UnaryFunction extends Function {
     }
 
     @Override
-    default void init(RecordCursor recordCursor, BindVariableService bindVariableService) {
-        getArg().init(recordCursor, bindVariableService);
+    default void init(RecordCursor recordCursor, SqlExecutionContext executionContext) {
+        getArg().init(recordCursor, executionContext);
     }
 
     @Override

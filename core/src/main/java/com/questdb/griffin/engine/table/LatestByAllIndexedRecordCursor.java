@@ -26,7 +26,7 @@ package com.questdb.griffin.engine.table;
 import com.questdb.cairo.BitmapIndexReader;
 import com.questdb.cairo.sql.DataFrame;
 import com.questdb.cairo.sql.RowCursor;
-import com.questdb.griffin.engine.functions.bind.BindVariableService;
+import com.questdb.griffin.SqlExecutionContext;
 import com.questdb.std.IntHashSet;
 import com.questdb.std.Rows;
 
@@ -41,7 +41,7 @@ class LatestByAllIndexedRecordCursor extends AbstractTreeSetRecordCursor {
     }
 
     @Override
-    protected void buildTreeMap(BindVariableService bindVariableService) {
+    protected void buildTreeMap(SqlExecutionContext executionContext) {
         found.clear();
 
         int keyCount = dataFrameCursor.getTableReader().getSymbolMapReader(columnIndex).size() + 1;

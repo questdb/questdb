@@ -5,7 +5,7 @@
  *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
  *   \__\_\\__,_|\___||___/\__|____/|____/
  *
- * Copyright (C) 2014-2018 Appsicle
+ * Copyright (C) 2014-2019 Appsicle
  *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU Affero General Public License, version 3,
@@ -23,10 +23,13 @@
 
 package com.questdb.cairo;
 
+import com.questdb.cairo.security.AllowAllCairoSecurityContext;
 import com.questdb.cairo.sql.Record;
 import com.questdb.cairo.sql.RecordCursor;
 import com.questdb.cairo.sql.RecordCursorFactory;
 import com.questdb.cairo.sql.RecordMetadata;
+import com.questdb.griffin.SqlExecutionContext;
+import com.questdb.griffin.SqlExecutionContextImpl;
 import com.questdb.griffin.engine.functions.bind.BindVariableService;
 import com.questdb.std.Rnd;
 import com.questdb.test.tools.TestUtils;
@@ -80,14 +83,14 @@ public class TableReaderRecordCursorFactoryTest extends AbstractCairoTest {
             try (CairoEngine engine = new CairoEngine(configuration)) {
 
                 final RecordMetadata metadata;
-                try (TableReader reader = engine.getReader("x", -1)) {
+                try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", -1)) {
                     metadata = GenericRecordMetadata.copyOf(reader.getMetadata());
                 }
                 try (RecordCursorFactory factory = new TableReaderRecordCursorFactory(metadata, engine, "x", TableUtils.ANY_TABLE_VERSION)) {
 
                     long count = 0;
-                    final BindVariableService bindVariableService = new BindVariableService();
-                    try (RecordCursor cursor = factory.getCursor(bindVariableService)) {
+                    final SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl().with(AllowAllCairoSecurityContext.INSTANCE, new BindVariableService());
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                         final Record record = cursor.getRecord();
                         rnd.reset();
                         while (cursor.hasNext()) {

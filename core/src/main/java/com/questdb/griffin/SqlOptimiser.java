@@ -856,7 +856,7 @@ class SqlOptimiser {
             if (tableName.type == ExpressionNode.FUNCTION) {
                 parseFunctionAndEnumerateColumns(model, executionContext);
             } else {
-                openReaderAndEnumerateColumns(model);
+                openReaderAndEnumerateColumns(executionContext.getCairoSecurityContext(), model);
             }
         } else {
             if (model.getNestedModel() != null) {
@@ -1269,7 +1269,7 @@ class SqlOptimiser {
         return nextLiteral(token, 0);
     }
 
-    private void openReaderAndEnumerateColumns(QueryModel model) throws SqlException {
+    private void openReaderAndEnumerateColumns(CairoSecurityContext cairoSecurityContext, QueryModel model) throws SqlException {
         final ExpressionNode tableNameNode = model.getTableName();
 
         // table name must not contain quotes by now
@@ -1286,7 +1286,7 @@ class SqlOptimiser {
             throw SqlException.$(tableNamePosition, "come on, where is table name?");
         }
 
-        int status = engine.getStatus(path, tableName, lo, hi);
+        int status = engine.getStatus(cairoSecurityContext, path, tableName, lo, hi);
 
         if (status == TableUtils.TABLE_DOES_NOT_EXIST) {
             throw SqlException.$(tableNamePosition, "table does not exist");
@@ -1296,7 +1296,11 @@ class SqlOptimiser {
             throw SqlException.$(tableNamePosition, "table directory is of unknown format");
         }
 
-        try (TableReader r = engine.getReader(tableLookupSequence.of(tableName, lo, hi - lo), TableUtils.ANY_TABLE_VERSION)) {
+        try (TableReader r = engine.getReader(
+                cairoSecurityContext,
+                tableLookupSequence.of(tableName, lo, hi - lo),
+                TableUtils.ANY_TABLE_VERSION
+        )) {
             model.setTableVersion(r.getVersion());
             copyColumnsFromMetadata(model, r.getMetadata());
         } catch (EntryLockedException e) {

@@ -156,7 +156,17 @@ public class PGJobContextTest extends AbstractGriffinTest {
                 getFragmentedSendFacade(),
                 NetworkFacadeImpl.INSTANCE,
                 script,
-                new DefaultPGWireConfiguration()
+                new DefaultPGWireConfiguration() {
+                    @Override
+                    public String getDefaultPassword() {
+                        return "oh";
+                    }
+
+                    @Override
+                    public String getDefaultUsername() {
+                        return "xyz";
+                    }
+                }
         );
     }
 
@@ -193,8 +203,8 @@ public class PGJobContextTest extends AbstractGriffinTest {
                 );
 
                 Properties properties = new Properties();
-                properties.setProperty("user", "xyz");
-                properties.setProperty("password", "oh");
+                properties.setProperty("user", "admin");
+                properties.setProperty("password", "quest");
 //                properties.setProperty("sslmode", "disable");
 
                 final Connection connection = DriverManager.getConnection("jdbc:postgresql://127.0.0.1:9120/nabu_app", properties);
@@ -244,8 +254,8 @@ public class PGJobContextTest extends AbstractGriffinTest {
                 );
 
                 Properties properties = new Properties();
-                properties.setProperty("user", "xyz");
-                properties.setProperty("password", "oh");
+                properties.setProperty("user", "admin");
+                properties.setProperty("password", "quest");
                 properties.setProperty("sslmode", "disable");
 
                 final Connection connection = DriverManager.getConnection("jdbc:postgresql://127.0.0.1:9120/nabu_app", properties);
@@ -279,7 +289,17 @@ public class PGJobContextTest extends AbstractGriffinTest {
                 getFragmentedSendFacade(),
                 NetworkFacadeImpl.INSTANCE,
                 script,
-                new DefaultPGWireConfiguration()
+                new DefaultPGWireConfiguration() {
+                    @Override
+                    public String getDefaultPassword() {
+                        return "oh";
+                    }
+
+                    @Override
+                    public String getDefaultUsername() {
+                        return "xyz";
+                    }
+                }
         );
     }
 
@@ -355,8 +375,8 @@ public class PGJobContextTest extends AbstractGriffinTest {
                 );
 
                 Properties properties = new Properties();
-                properties.setProperty("user", "xyz");
-                properties.setProperty("password", "oh");
+                properties.setProperty("user", "admin");
+                properties.setProperty("password", "quest");
                 properties.setProperty("sslmode", "disable");
 
                 final Connection connection = DriverManager.getConnection("jdbc:postgresql://127.0.0.1:9120/nabu_app", properties);
@@ -518,6 +538,16 @@ public class PGJobContextTest extends AbstractGriffinTest {
             public int getSendBufferSize() {
                 return 512;
             }
+
+            @Override
+            public String getDefaultPassword() {
+                return "oh";
+            }
+
+            @Override
+            public String getDefaultUsername() {
+                return "xyz";
+            }
         });
     }
 
@@ -530,10 +560,20 @@ public class PGJobContextTest extends AbstractGriffinTest {
                 ">5000000022005345542065787472615f666c6f61745f646967697473203d203308899889988998\n" +
                 "<!!";
         assertHexScript(
-                getFragmentedSendFacade(),
+                NetworkFacadeImpl.INSTANCE,
                 NetworkFacadeImpl.INSTANCE,
                 script,
-                new DefaultPGWireConfiguration()
+                new DefaultPGWireConfiguration() {
+                    @Override
+                    public String getDefaultPassword() {
+                        return "oh";
+                    }
+
+                    @Override
+                    public String getDefaultUsername() {
+                        return "xyz";
+                    }
+                }
         );
     }
 
@@ -549,7 +589,17 @@ public class PGJobContextTest extends AbstractGriffinTest {
                 NetworkFacadeImpl.INSTANCE,
                 NetworkFacadeImpl.INSTANCE,
                 script,
-                new DefaultPGWireConfiguration()
+                new DefaultPGWireConfiguration() {
+                    @Override
+                    public String getDefaultPassword() {
+                        return "oh";
+                    }
+
+                    @Override
+                    public String getDefaultUsername() {
+                        return "xyz";
+                    }
+                }
         );
     }
 
@@ -569,7 +619,17 @@ public class PGJobContextTest extends AbstractGriffinTest {
                 NetworkFacadeImpl.INSTANCE,
                 NetworkFacadeImpl.INSTANCE,
                 script,
-                new DefaultPGWireConfiguration()
+                new DefaultPGWireConfiguration() {
+                    @Override
+                    public String getDefaultPassword() {
+                        return "oh";
+                    }
+
+                    @Override
+                    public String getDefaultUsername() {
+                        return "xyz";
+                    }
+                }
         );
     }
 
@@ -589,7 +649,17 @@ public class PGJobContextTest extends AbstractGriffinTest {
                 NetworkFacadeImpl.INSTANCE,
                 NetworkFacadeImpl.INSTANCE,
                 script,
-                new DefaultPGWireConfiguration()
+                new DefaultPGWireConfiguration() {
+                    @Override
+                    public String getDefaultPassword() {
+                        return "oh";
+                    }
+
+                    @Override
+                    public String getDefaultUsername() {
+                        return "xyz";
+                    }
+                }
         );
     }
 
@@ -610,7 +680,17 @@ public class PGJobContextTest extends AbstractGriffinTest {
                 NetworkFacadeImpl.INSTANCE,
                 NetworkFacadeImpl.INSTANCE,
                 script,
-                new DefaultPGWireConfiguration()
+                new DefaultPGWireConfiguration() {
+                    @Override
+                    public String getDefaultPassword() {
+                        return "oh";
+                    }
+
+                    @Override
+                    public String getDefaultUsername() {
+                        return "xyz";
+                    }
+                }
         );
     }
 
@@ -628,8 +708,8 @@ public class PGJobContextTest extends AbstractGriffinTest {
                 );
 
                 Properties properties = new Properties();
-                properties.setProperty("user", "xyz");
-                properties.setProperty("password", "oh");
+                properties.setProperty("user", "admin");
+                properties.setProperty("password", "quest");
                 properties.setProperty("sslmode", "disable");
 
                 final Connection connection = DriverManager.getConnection("jdbc:postgresql://127.0.0.1:9120/nabu_app", properties);
@@ -658,7 +738,17 @@ public class PGJobContextTest extends AbstractGriffinTest {
 
     @Test
     public void testPreparedStatementHex() throws Exception {
-        assertPreparedStatementHex(NetworkFacadeImpl.INSTANCE, new DefaultPGWireConfiguration());
+        assertPreparedStatementHex(NetworkFacadeImpl.INSTANCE, new DefaultPGWireConfiguration() {
+            @Override
+            public String getDefaultPassword() {
+                return "oh";
+            }
+
+            @Override
+            public String getDefaultUsername() {
+                return "xyz";
+            }
+        });
     }
 
     @Test
@@ -688,6 +778,16 @@ public class PGJobContextTest extends AbstractGriffinTest {
             @Override
             public int getIdleSendCountBeforeGivingUp() {
                 return 0;
+            }
+
+            @Override
+            public String getDefaultPassword() {
+                return "oh";
+            }
+
+            @Override
+            public String getDefaultUsername() {
+                return "xyz";
             }
         };
         assertPreparedStatementHex(nf, configuration);
@@ -720,6 +820,16 @@ public class PGJobContextTest extends AbstractGriffinTest {
             @Override
             public int getIdleSendCountBeforeGivingUp() {
                 return 1;
+            }
+
+            @Override
+            public String getDefaultPassword() {
+                return "oh";
+            }
+
+            @Override
+            public String getDefaultUsername() {
+                return "xyz";
             }
         };
 
@@ -754,6 +864,16 @@ public class PGJobContextTest extends AbstractGriffinTest {
             public int getIdleSendCountBeforeGivingUp() {
                 return 1;
             }
+
+            @Override
+            public String getDefaultPassword() {
+                return "oh";
+            }
+
+            @Override
+            public String getDefaultUsername() {
+                return "xyz";
+            }
         };
 
         assertPreparedStatementHex(nf, configuration);
@@ -773,8 +893,8 @@ public class PGJobContextTest extends AbstractGriffinTest {
                 );
 
                 Properties properties = new Properties();
-                properties.setProperty("user", "xyz");
-                properties.setProperty("password", "oh");
+                properties.setProperty("user", "admin");
+                properties.setProperty("password", "quest");
                 properties.setProperty("sslmode", "disable");
                 TimeZone.setDefault(TimeZone.getTimeZone("EDT"));
                 final Connection connection = DriverManager.getConnection("jdbc:postgresql://127.0.0.1:9120/nabu_app", properties);
@@ -845,8 +965,8 @@ public class PGJobContextTest extends AbstractGriffinTest {
                 );
 
                 Properties properties = new Properties();
-                properties.setProperty("user", "xyz");
-                properties.setProperty("password", "oh");
+                properties.setProperty("user", "admin");
+                properties.setProperty("password", "quest");
                 properties.setProperty("sslmode", "disable");
                 properties.setProperty("binaryTransfer", "false");
                 TimeZone.setDefault(TimeZone.getTimeZone("EDT"));
@@ -917,9 +1037,8 @@ public class PGJobContextTest extends AbstractGriffinTest {
                 );
 
                 Properties properties = new Properties();
-                properties.setProperty("user", "xyz");
-                properties.setProperty("password", "oh");
-                properties.setProperty("sslmode", "disable");
+                properties.setProperty("user", "admin");
+                properties.setProperty("password", "quest");
 
                 final Connection connection = DriverManager.getConnection("jdbc:postgresql://127.0.0.1:9120/nabu_app", properties);
                 Statement statement = connection.createStatement();
@@ -1048,8 +1167,8 @@ public class PGJobContextTest extends AbstractGriffinTest {
             );
 
             Properties properties = new Properties();
-            properties.setProperty("user", "xyz");
-            properties.setProperty("password", "oh");
+            properties.setProperty("user", "admin");
+            properties.setProperty("password", "quest");
             properties.setProperty("sslmode", "disable");
 
             final Connection connection = DriverManager.getConnection("jdbc:postgresql://127.0.0.1:9120/nabu_app", properties);
@@ -1085,8 +1204,8 @@ public class PGJobContextTest extends AbstractGriffinTest {
                 );
 
                 Properties properties = new Properties();
-                properties.setProperty("user", "xyz");
-                properties.setProperty("password", "oh");
+                properties.setProperty("user", "admin");
+                properties.setProperty("password", "quest");
                 properties.setProperty("sslmode", "disable");
 
                 final Connection connection = DriverManager.getConnection("jdbc:postgresql://127.0.0.1:9120/nabu_app", properties);
@@ -1146,7 +1265,17 @@ public class PGJobContextTest extends AbstractGriffinTest {
     }
 
     private void assertHexScript(String script) throws Exception {
-        assertHexScript(NetworkFacadeImpl.INSTANCE, NetworkFacadeImpl.INSTANCE, script, new DefaultPGWireConfiguration());
+        assertHexScript(NetworkFacadeImpl.INSTANCE, NetworkFacadeImpl.INSTANCE, script, new DefaultPGWireConfiguration() {
+            @Override
+            public String getDefaultPassword() {
+                return "oh";
+            }
+
+            @Override
+            public String getDefaultUsername() {
+                return "xyz";
+            }
+        });
     }
 
     private void assertHexScript(

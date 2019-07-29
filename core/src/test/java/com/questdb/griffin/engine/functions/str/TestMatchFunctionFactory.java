@@ -5,7 +5,7 @@
  *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
  *   \__\_\\__,_|\___||___/\__|____/|____/
  *
- * Copyright (C) 2014-2018 Appsicle
+ * Copyright (C) 2014-2019 Appsicle
  *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU Affero General Public License, version 3,
@@ -28,8 +28,8 @@ import com.questdb.cairo.sql.Function;
 import com.questdb.cairo.sql.Record;
 import com.questdb.cairo.sql.RecordCursor;
 import com.questdb.griffin.FunctionFactory;
+import com.questdb.griffin.SqlExecutionContext;
 import com.questdb.griffin.engine.functions.BooleanFunction;
-import com.questdb.griffin.engine.functions.bind.BindVariableService;
 import com.questdb.std.ObjList;
 
 import java.util.concurrent.atomic.AtomicInteger;
@@ -85,7 +85,7 @@ public class TestMatchFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void init(RecordCursor recordCursor, BindVariableService bindVariableService) {
+        public void init(RecordCursor recordCursor, SqlExecutionContext sqlExecutionContext) {
             openCounter.incrementAndGet();
         }
 

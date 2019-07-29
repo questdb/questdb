@@ -24,6 +24,7 @@
 package com.questdb.cutlass.text;
 
 import com.questdb.cairo.CairoEngine;
+import com.questdb.cairo.CairoSecurityContext;
 import com.questdb.cairo.sql.RecordMetadata;
 import com.questdb.cutlass.json.JsonException;
 import com.questdb.cutlass.json.JsonLexer;
@@ -168,7 +169,7 @@ public class TextLoader implements Closeable, Mutable {
         this.forceHeaders = forceHeaders;
     }
 
-    public void parse(long address, int len) throws JsonException {
+    public void parse(long address, int len, CairoSecurityContext cairoSecurityContext) throws JsonException {
 
         switch (state) {
             case LOAD_JSON_METADATA:
@@ -188,7 +189,7 @@ public class TextLoader implements Closeable, Mutable {
                         textMetadataParser.getColumnNames(),
                         textMetadataParser.getColumnTypes()
                 );
-                textWriter.prepareTable(textLexer.getColumnNames(), textLexer.getColumnTypes());
+                textWriter.prepareTable(cairoSecurityContext, textLexer.getColumnNames(), textLexer.getColumnTypes());
                 textLexer.parse(address, len, Integer.MAX_VALUE, textWriter);
                 break;
             case LOAD_DATA:

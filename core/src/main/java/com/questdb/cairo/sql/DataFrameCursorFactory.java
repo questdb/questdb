@@ -23,6 +23,8 @@
 
 package com.questdb.cairo.sql;
 
+import com.questdb.cairo.CairoSecurityContext;
+
 public interface DataFrameCursorFactory {
-    DataFrameCursor getCursor();
+    DataFrameCursor getCursor(CairoSecurityContext securityContext);
 }

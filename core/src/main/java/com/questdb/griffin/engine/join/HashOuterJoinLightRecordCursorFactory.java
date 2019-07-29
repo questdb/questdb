@@ -29,7 +29,7 @@ import com.questdb.cairo.map.MapFactory;
 import com.questdb.cairo.map.MapKey;
 import com.questdb.cairo.map.MapValue;
 import com.questdb.cairo.sql.*;
-import com.questdb.griffin.engine.functions.bind.BindVariableService;
+import com.questdb.griffin.SqlExecutionContext;
 import com.questdb.std.Misc;
 import com.questdb.std.Transient;
 
@@ -79,15 +79,15 @@ public class HashOuterJoinLightRecordCursorFactory extends AbstractRecordCursorF
     }
 
     @Override
-    public RecordCursor getCursor(BindVariableService bindVariableService) {
-        RecordCursor slaveCursor = slaveFactory.getCursor(bindVariableService);
+    public RecordCursor getCursor(SqlExecutionContext executionContext) {
+        RecordCursor slaveCursor = slaveFactory.getCursor(executionContext);
         try {
             buildMapOfSlaveRecords(slaveCursor);
         } catch (CairoException e) {
             slaveCursor.close();
             throw e;
         }
-        cursor.of(masterFactory.getCursor(bindVariableService), slaveCursor);
+        cursor.of(masterFactory.getCursor(executionContext), slaveCursor);
         return cursor;
     }
 
@@ -122,7 +122,6 @@ public class HashOuterJoinLightRecordCursorFactory extends AbstractRecordCursorF
         private RecordCursor masterCursor;
         private RecordCursor slaveCursor;
         private Record masterRecord;
-        private Record slaveRecord;
         private LongChain.TreeCursor slaveChainCursor;
 
         public HashJoinRecordCursor(
@@ -194,7 +193,7 @@ public class HashOuterJoinLightRecordCursorFactory extends AbstractRecordCursorF
             this.masterCursor = masterCursor;
             this.slaveCursor = slaveCursor;
             this.masterRecord = masterCursor.getRecord();
-            this.slaveRecord = slaveCursor.getRecord();
+            Record slaveRecord = slaveCursor.getRecord();
             record.of(masterRecord, slaveRecord);
             slaveChainCursor = null;
         }

@@ -33,13 +33,15 @@ public interface PGWireConfiguration {
 
     int getConnectionPoolInitialCapacity();
 
+    String getDefaultPassword();
+
+    String getDefaultUsername();
+
     IODispatcherConfiguration getDispatcherConfiguration();
 
     default boolean getDumpNetworkTraffic() {
         return false;
     }
-
-    String getServerVersion();
 
     int getFactoryCacheColumnCount();
 
@@ -47,15 +49,17 @@ public interface PGWireConfiguration {
 
     int getIdleRecvCountBeforeGivingUp();
 
+    int getIdleSendCountBeforeGivingUp();
+
+    int getMaxBlobSizeOnQuery();
+
     NetworkFacade getNetworkFacade();
 
     int getRecvBufferSize();
 
     int getSendBufferSize();
 
-    int getIdleSendCountBeforeGivingUp();
-
-    int getMaxBlobSizeOnQuery();
+    String getServerVersion();
 
     int[] getWorkerAffinity();
 

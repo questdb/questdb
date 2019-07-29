@@ -33,7 +33,6 @@ import com.questdb.griffin.FunctionParser;
 import com.questdb.griffin.SqlException;
 import com.questdb.griffin.SqlExecutionContext;
 import com.questdb.griffin.engine.functions.GroupByFunction;
-import com.questdb.griffin.engine.functions.bind.BindVariableService;
 import com.questdb.griffin.model.QueryModel;
 import com.questdb.std.*;
 import org.jetbrains.annotations.NotNull;
@@ -107,9 +106,9 @@ public class GroupByRecordCursorFactory implements RecordCursorFactory {
     }
 
     @Override
-    public RecordCursor getCursor(BindVariableService bindVariableService) {
+    public RecordCursor getCursor(SqlExecutionContext executionContext) {
         dataMap.clear();
-        final RecordCursor baseCursor = base.getCursor(bindVariableService);
+        final RecordCursor baseCursor = base.getCursor(executionContext);
         try {
             final Record baseRecord = baseCursor.getRecord();
             final int n = groupByFunctions.size();
@@ -119,7 +118,7 @@ public class GroupByRecordCursorFactory implements RecordCursorFactory {
                 MapValue value = key.createValue();
                 GroupByUtils.updateFunctions(groupByFunctions, n, value, baseRecord);
             }
-            return initFunctionsAndCursor(bindVariableService, dataMap.getCursor(), baseCursor);
+            return initFunctionsAndCursor(executionContext, dataMap.getCursor(), baseCursor);
         } catch (CairoException e) {
             baseCursor.close();
             throw e;
@@ -137,11 +136,15 @@ public class GroupByRecordCursorFactory implements RecordCursorFactory {
     }
 
     @NotNull
-    protected RecordCursor initFunctionsAndCursor(BindVariableService bindVariableService, RecordCursor mapCursor, RecordCursor baseCursor) {
+    protected RecordCursor initFunctionsAndCursor(
+            SqlExecutionContext executionContext,
+            RecordCursor mapCursor,
+            RecordCursor baseCursor
+    ) {
         cursor.of(mapCursor, baseCursor);
         // init all record function for this cursor, in case functions require metadata and/or symbol tables
         for (int i = 0, m = recordFunctions.size(); i < m; i++) {
-            recordFunctions.getQuick(i).init(cursor, bindVariableService);
+            recordFunctions.getQuick(i).init(cursor, executionContext);
         }
         return cursor;
     }

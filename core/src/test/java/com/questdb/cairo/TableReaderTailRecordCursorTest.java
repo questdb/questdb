@@ -23,6 +23,7 @@
 
 package com.questdb.cairo;
 
+import com.questdb.cairo.security.AllowAllCairoSecurityContext;
 import com.questdb.cairo.sql.Record;
 import com.questdb.griffin.SqlCompiler;
 import com.questdb.griffin.engine.functions.bind.BindVariableService;
@@ -136,15 +137,15 @@ public class TableReaderTailRecordCursorTest extends AbstractCairoTest {
 
     private void testBusyPoll(long timestampIncrement, int n, String createStatement) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            compiler.compile(createStatement, bindVariableService);
+            compiler.compile(createStatement, AllowAllCairoSecurityContext.INSTANCE, bindVariableService);
             final AtomicInteger errorCount = new AtomicInteger();
             final CyclicBarrier barrier = new CyclicBarrier(2);
             final CountDownLatch latch = new CountDownLatch(2);
             try {
                 new Thread(() -> {
-                    try (TableWriter writer = engine.getWriter("xyz")) {
+                    try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "xyz")) {
                         barrier.await();
-                        long ts = (long) 0;
+                        long ts = 0;
                         long addr = Unsafe.malloc(128);
                         try {
                             Rnd rnd = new Rnd();
@@ -172,7 +173,7 @@ public class TableReaderTailRecordCursorTest extends AbstractCairoTest {
                 }).start();
 
                 new Thread(() -> {
-                    try (TableReader reader = engine.getReader("xyz", TableUtils.ANY_TABLE_VERSION)) {
+                    try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "xyz", TableUtils.ANY_TABLE_VERSION)) {
                         Rnd rnd = new Rnd();
                         int count = 0;
                         final TableReaderTailRecordCursor cursor = new TableReaderTailRecordCursor();
@@ -214,9 +215,13 @@ public class TableReaderTailRecordCursorTest extends AbstractCairoTest {
         final int n = 1000;
         TestUtils.assertMemoryLeak(() -> {
             try {
-                compiler.compile("create table xyz (sequence INT, event BINARY, ts LONG, stamp TIMESTAMP) timestamp(stamp) partition by " + PartitionBy.toString(partitionBy));
+                compiler.compile(
+                        "create table xyz (sequence INT, event BINARY, ts LONG, stamp TIMESTAMP) timestamp(stamp) partition by " + PartitionBy.toString(partitionBy),
+                        AllowAllCairoSecurityContext.INSTANCE,
+                        bindVariableService
+                );
 
-                try (TableWriter writer = engine.getWriter("xyz")) {
+                try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "xyz")) {
                     long ts = 0;
                     long addr = Unsafe.malloc(blobSize);
                     try {
@@ -225,7 +230,7 @@ public class TableReaderTailRecordCursorTest extends AbstractCairoTest {
                         appendRecords(0, n, timestampIncrement, writer, ts, addr, rnd);
                         ts = n * timestampIncrement;
                         try (
-                                TableReader reader = engine.getReader("xyz", TableUtils.ANY_TABLE_VERSION);
+                                TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "xyz", TableUtils.ANY_TABLE_VERSION);
                                 TableReaderTailRecordCursor cursor = new TableReaderTailRecordCursor()
                         ) {
                             cursor.of(reader);
@@ -275,9 +280,13 @@ public class TableReaderTailRecordCursorTest extends AbstractCairoTest {
         final int n = 1000;
         TestUtils.assertMemoryLeak(() -> {
             try {
-                compiler.compile("create table xyz (sequence INT, event BINARY, ts LONG, stamp TIMESTAMP) timestamp(stamp) partition by " + PartitionBy.toString(partitionBy));
+                compiler.compile(
+                        "create table xyz (sequence INT, event BINARY, ts LONG, stamp TIMESTAMP) timestamp(stamp) partition by " + PartitionBy.toString(partitionBy)
+                        , AllowAllCairoSecurityContext.INSTANCE
+                        , bindVariableService
+                );
 
-                try (TableWriter writer = engine.getWriter("xyz")) {
+                try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "xyz")) {
                     long ts = 0;
                     long addr = Unsafe.malloc(blobSize);
                     try {
@@ -286,7 +295,7 @@ public class TableReaderTailRecordCursorTest extends AbstractCairoTest {
                         appendRecords(0, n, timestampIncrement, writer, ts, addr, rnd);
                         ts = n * timestampIncrement;
                         try (
-                                TableReader reader = engine.getReader("xyz", TableUtils.ANY_TABLE_VERSION);
+                                TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "xyz", TableUtils.ANY_TABLE_VERSION);
                                 TableReaderTailRecordCursor cursor = new TableReaderTailRecordCursor()
                         ) {
                             cursor.of(reader);

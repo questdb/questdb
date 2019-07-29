@@ -61,13 +61,14 @@ public class SqlCompiler implements Closeable {
     private final ListColumnFilter listColumnFilter = new ListColumnFilter();
     private final EntityColumnFilter entityColumnFilter = new EntityColumnFilter();
     private final IntIntHashMap typeCast = new IntIntHashMap();
-    private final ExecutableMethod insertAsSelectMethod = this::insertAsSelect;
     private final SqlExecutionContextImpl executionContext = new SqlExecutionContextImpl();
+    private final ExecutableMethod insertAsSelectMethod = this::insertAsSelect;
     private final AssociativeCache<RecordCursorFactory> sqlCache;
     private final ObjList<TableWriter> tableWriters = new ObjList<>();
     private final TableStructureAdapter tableStructureAdapter = new TableStructureAdapter();
     private final ExecutableMethod createTableMethod = this::createTable;
     private final FunctionParser functionParser;
+    private final BindVariableService bindVariableService = new BindVariableService();
 
     public SqlCompiler(CairoEngine engine) {
         this(engine, null);
@@ -87,6 +88,9 @@ public class SqlCompiler implements Closeable {
         this.lexer = new GenericLexer(configuration.getSqlLexerPoolCapacity());
         this.functionParser = new FunctionParser(configuration, ServiceLoader.load(FunctionFactory.class));
         this.codeGenerator = new SqlCodeGenerator(engine, configuration, functionParser);
+
+        // we have cyclical dependency here
+        functionParser.setSqlCodeGenerator(codeGenerator);
 
         configureLexer(lexer);
 
@@ -141,20 +145,25 @@ public class SqlCompiler implements Closeable {
         Misc.free(sqlCache);
     }
 
-    public RecordCursorFactory compile(CharSequence query) throws SqlException {
-        return compile(query, null);
+    public RecordCursorFactory compile(CharSequence query, CairoSecurityContext cairoSecurityContext) throws SqlException {
+        return compile(query, cairoSecurityContext, null);
     }
 
-    public RecordCursorFactory compile(CharSequence query, BindVariableService bindVariableService) throws SqlException {
-
+    public RecordCursorFactory compile(
+            CharSequence query,
+            CairoSecurityContext cairoSecurityContext,
+            BindVariableService bindVariableService
+    ) throws SqlException {
         //
         // these are quick executions that do not require building of a model
         //
         lexer.of(query);
+        executionContext.with(cairoSecurityContext, bindVariableService);
+
 
         CharSequence tok = SqlUtil.fetchNext(lexer);
         if (Chars.equals(tok, "truncate")) {
-            truncateTables(lexer);
+            truncateTables(lexer, executionContext);
             return null;
         }
 
@@ -169,7 +178,15 @@ public class SqlCompiler implements Closeable {
             return result;
         }
 
-        return compileUsingModel(query, bindVariableService);
+        return compileUsingModel(query);
+    }
+
+    public BindVariableService getBindVariableService() {
+        return bindVariableService;
+    }
+
+    public SqlExecutionContextImpl getExecutionContext() {
+        return executionContext;
     }
 
     // Creates data type converter.
@@ -623,10 +640,10 @@ public class SqlCompiler implements Closeable {
 
         tok = expectToken(lexer, "table name");
 
-        tableExistsOrFail(tableNamePosition, tok);
+        tableExistsOrFail(tableNamePosition, tok, executionContext);
 
         CharSequence tableName = GenericLexer.immutableOf(tok);
-        try (TableWriter writer = engine.getWriter(tableName)) {
+        try (TableWriter writer = engine.getWriter(executionContext.getCairoSecurityContext(), tableName)) {
 
             tok = expectToken(lexer, "'add' or 'drop'");
 
@@ -803,26 +820,26 @@ public class SqlCompiler implements Closeable {
         parser.clear();
     }
 
-    private ExecutionModel compileExecutionModel(GenericLexer lexer, SqlExecutionContext executionContext) throws SqlException {
+    private ExecutionModel compileExecutionModel(GenericLexer lexer) throws SqlException {
         ExecutionModel model = parser.parse(lexer, executionContext);
         switch (model.getModelType()) {
             case ExecutionModel.QUERY:
                 return optimiser.optimise((QueryModel) model, executionContext);
             case ExecutionModel.INSERT_AS_SELECT:
-                return validateAndOptimiseInsertAsSelect((InsertAsSelectModel) model, executionContext);
+                return validateAndOptimiseInsertAsSelect((InsertAsSelectModel) model);
             default:
                 return model;
         }
     }
 
-    ExecutionModel compileExecutionModel(CharSequence query, SqlExecutionContext executionContext) throws SqlException {
+    ExecutionModel compileExecutionModel(CharSequence query) throws SqlException {
         clear();
         lexer.of(query);
-        return compileExecutionModel(lexer, executionContext);
+        return compileExecutionModel(lexer);
     }
 
     @Nullable
-    private RecordCursorFactory compileUsingModel(CharSequence query, BindVariableService bindVariableService) throws SqlException {
+    private RecordCursorFactory compileUsingModel(CharSequence query) throws SqlException {
         // This method will not populate sql cache directly;
         // factories are assumed to be non reentrant and once
         // factory is out of this method the caller assumes
@@ -830,12 +847,11 @@ public class SqlCompiler implements Closeable {
         // chose to return factory back to this or any other
         // instance of compiler for safekeeping
 
-        executionContext.with(bindVariableService);
 
-        ExecutionModel executionModel = compileExecutionModel(query, executionContext);
+        ExecutionModel executionModel = compileExecutionModel(query);
         switch (executionModel.getModelType()) {
             case ExecutionModel.QUERY:
-                return generate((QueryModel) executionModel, executionContext);
+                return generate((QueryModel) executionModel);
             case ExecutionModel.CREATE_TABLE:
                 createTableWithRetries(query, executionModel);
                 break;
@@ -894,62 +910,51 @@ public class SqlCompiler implements Closeable {
 
     private void createTable(final ExecutionModel model, SqlExecutionContext executionContext) throws SqlException {
         final CreateTableModel createTableModel = (CreateTableModel) model;
-        final FilesFacade ff = configuration.getFilesFacade();
         final ExpressionNode name = createTableModel.getName();
 
-        if (TableUtils.exists(ff, path, configuration.getRoot(), name.token) != TableUtils.TABLE_DOES_NOT_EXIST) {
+        if (engine.getStatus(
+                executionContext.getCairoSecurityContext(),
+                path,
+                name.token
+        ) != TableUtils.TABLE_DOES_NOT_EXIST) {
             throw SqlException.$(name.position, "table already exists");
         }
 
-        if (engine.lock(name.token)) {
+        if (engine.lock(executionContext.getCairoSecurityContext(), name.token)) {
 
             TableWriter writer = null;
 
             try {
-//                if (ff.mkdir(path.chopZ().put(Files.SEPARATOR).$(), configuration.getMkDirMode()) != 0) {
-//                    LOG.error().$("table already exists [path=").utf8(path).$(", errno=").$(ff.errno()).$(']').$();
-//                    throw SqlException.$(name.position, "Cannot create table. See log for details.");
-//                }
-
                 try {
                     if (createTableModel.getQueryModel() == null) {
-                        TableUtils.createTable(
-                                configuration.getFilesFacade(),
-                                this.mem,
-                                this.path,
-                                configuration.getRoot(),
-                                createTableModel,
-                                configuration.getMkDirMode()
-                        );
+                        engine.creatTable(executionContext.getCairoSecurityContext(), mem, path, createTableModel);
                     } else {
-                        writer = createTableFromCursor(createTableModel, executionContext);
+                        writer = createTableFromCursor(createTableModel);
                     }
                 } catch (CairoException e) {
                     LOG.error().$("could not create table [error=").$((Sinkable) e).$(']').$();
                     throw SqlException.$(name.position, "Could not create table. See log for details.");
                 }
             } finally {
-                engine.unlock(name.token, writer);
+                engine.unlock(executionContext.getCairoSecurityContext(), name.token, writer);
             }
         } else {
             throw SqlException.$(name.position, "cannot acquire table lock");
         }
     }
 
-    private TableWriter createTableFromCursor(CreateTableModel model, SqlExecutionContext executionContext) throws SqlException {
-        try (final RecordCursorFactory factory = generate(model.getQueryModel(), executionContext);
-             final RecordCursor cursor = factory.getCursor(executionContext.getBindVariableService())
+    private TableWriter createTableFromCursor(CreateTableModel model) throws SqlException {
+        try (final RecordCursorFactory factory = generate(model.getQueryModel());
+             final RecordCursor cursor = factory.getCursor(executionContext)
         ) {
             typeCast.clear();
             final RecordMetadata metadata = factory.getMetadata();
             validateTableModelAndCreateTypeCast(model, metadata, typeCast);
-            TableUtils.createTable(
-                    configuration.getFilesFacade(),
-                    this.mem,
-                    this.path,
-                    configuration.getRoot(),
-                    tableStructureAdapter.of(model, metadata, typeCast),
-                    configuration.getMkDirMode()
+            engine.creatTable(
+                    executionContext.getCairoSecurityContext(),
+                    mem,
+                    path,
+                    tableStructureAdapter.of(model, metadata, typeCast)
             );
 
             try {
@@ -999,7 +1004,7 @@ public class SqlCompiler implements Closeable {
                 break;
             } catch (ReaderOutOfDateException e) {
                 attemptsLeft--;
-                executionModel = compileExecutionModel(query, executionContext);
+                executionModel = compileExecutionModel(query);
             }
         } while (attemptsLeft > 0);
 
@@ -1008,7 +1013,7 @@ public class SqlCompiler implements Closeable {
         }
     }
 
-    RecordCursorFactory generate(QueryModel queryModel, SqlExecutionContext executionContext) throws SqlException {
+    RecordCursorFactory generate(QueryModel queryModel) throws SqlException {
         return codeGenerator.generate(queryModel, executionContext);
     }
 
@@ -1019,10 +1024,10 @@ public class SqlCompiler implements Closeable {
     private void insertAsSelect(ExecutionModel executionModel, SqlExecutionContext executionContext) throws SqlException {
         final InsertAsSelectModel model = (InsertAsSelectModel) executionModel;
         final ExpressionNode name = model.getTableName();
-        tableExistsOrFail(name.position, name.token);
+        tableExistsOrFail(name.position, name.token, executionContext);
 
-        try (TableWriter writer = engine.getWriter(name.token);
-             RecordCursorFactory factory = generate(model.getQueryModel(), executionContext)) {
+        try (TableWriter writer = engine.getWriter(executionContext.getCairoSecurityContext(), name.token);
+             RecordCursorFactory factory = generate(model.getQueryModel())) {
 
             final RecordMetadata cursorMetadata = factory.getMetadata();
             final RecordMetadata writerMetadata = writer.getMetadata();
@@ -1099,7 +1104,7 @@ public class SqlCompiler implements Closeable {
                 copier = assembleRecordToRowCopier(asm, cursorMetadata, writerMetadata, entityColumnFilter);
             }
 
-            try (RecordCursor cursor = factory.getCursor(executionContext.getBindVariableService())) {
+            try (RecordCursor cursor = factory.getCursor(executionContext)) {
                 try {
                     if (writerTimestampIndex == -1) {
                         copyUnordered(cursor, writer, copier);
@@ -1130,12 +1135,13 @@ public class SqlCompiler implements Closeable {
     }
 
     private boolean removeTableDirectory(CreateTableModel model) {
-        path.of(configuration.getRoot()).concat(model.getName().token);
-        final FilesFacade ff = configuration.getFilesFacade();
-        if (ff.rmdir(path.put(Files.SEPARATOR).$())) {
+        if (engine.removeDirectory(path, model.getName().token)) {
             return true;
         }
-        LOG.error().$("failed to clean up after create table failure [path=").$(path).$(", errno=").$(ff.errno()).$(']').$();
+        LOG.error()
+                .$("failed to clean up after create table failure [path=").$(path)
+                .$(", errno=").$(configuration.getFilesFacade().errno())
+                .$(']').$();
         return false;
     }
 
@@ -1143,13 +1149,13 @@ public class SqlCompiler implements Closeable {
         codeGenerator.setFullFatJoins(value);
     }
 
-    private void tableExistsOrFail(int position, CharSequence tableName) throws SqlException {
-        if (TableUtils.exists(configuration.getFilesFacade(), path, configuration.getRoot(), tableName) == TableUtils.TABLE_DOES_NOT_EXIST) {
+    private void tableExistsOrFail(int position, CharSequence tableName, SqlExecutionContext executionContext) throws SqlException {
+        if (engine.getStatus(executionContext.getCairoSecurityContext(), path, tableName) == TableUtils.TABLE_DOES_NOT_EXIST) {
             throw SqlException.$(position, "table '").put(tableName).put("' does not exist");
         }
     }
 
-    private void truncateTables(GenericLexer lexer) throws SqlException {
+    private void truncateTables(GenericLexer lexer, SqlExecutionContext executionContext) throws SqlException {
         CharSequence tok;
         tok = SqlUtil.fetchNext(lexer);
         if (!Chars.equals("table", tok)) {
@@ -1166,10 +1172,10 @@ public class SqlCompiler implements Closeable {
                         throw SqlException.$(lexer.getPosition(), "table name expected");
                     }
 
-                    tableExistsOrFail(lexer.lastTokenPosition(), tok);
+                    tableExistsOrFail(lexer.lastTokenPosition(), tok, executionContext);
 
                     try {
-                        tableWriters.add(engine.getWriter(tok));
+                        tableWriters.add(engine.getWriter(executionContext.getCairoSecurityContext(), tok));
                     } catch (CairoException e) {
                         LOG.info().$("failed to lock table for truncate: ").$((Sinkable) e).$();
                         throw SqlException.$(lexer.lastTokenPosition(), "table '").put(tok).put("' is busy");
@@ -1194,7 +1200,7 @@ public class SqlCompiler implements Closeable {
         }
     }
 
-    private InsertAsSelectModel validateAndOptimiseInsertAsSelect(InsertAsSelectModel model, SqlExecutionContext executionContext) throws SqlException {
+    private InsertAsSelectModel validateAndOptimiseInsertAsSelect(InsertAsSelectModel model) throws SqlException {
         final QueryModel queryModel = optimiser.optimise(model.getQueryModel(), executionContext);
         int targetColumnCount = model.getColumnSet().size();
         if (targetColumnCount > 0 && queryModel.getColumns().size() != targetColumnCount) {
@@ -1322,24 +1328,6 @@ public class SqlCompiler implements Closeable {
             this.metadata = metadata;
             this.typeCast = typeCast;
             return this;
-        }
-    }
-
-    private class SqlExecutionContextImpl implements SqlExecutionContext {
-        private BindVariableService bindVariableService;
-
-        @Override
-        public BindVariableService getBindVariableService() {
-            return bindVariableService;
-        }
-
-        @Override
-        public SqlCodeGenerator getCodeGenerator() {
-            return codeGenerator;
-        }
-
-        void with(BindVariableService bindVariableService) {
-            this.bindVariableService = bindVariableService;
         }
     }
 

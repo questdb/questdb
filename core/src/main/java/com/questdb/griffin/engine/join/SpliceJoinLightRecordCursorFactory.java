@@ -32,7 +32,7 @@ import com.questdb.cairo.map.MapFactory;
 import com.questdb.cairo.map.MapKey;
 import com.questdb.cairo.map.MapValue;
 import com.questdb.cairo.sql.*;
-import com.questdb.griffin.engine.functions.bind.BindVariableService;
+import com.questdb.griffin.SqlExecutionContext;
 import com.questdb.std.BinarySequence;
 import com.questdb.std.Misc;
 import com.questdb.std.Transient;
@@ -103,10 +103,10 @@ public class SpliceJoinLightRecordCursorFactory extends AbstractRecordCursorFact
     }
 
     @Override
-    public RecordCursor getCursor(BindVariableService bindVariableService) {
+    public RecordCursor getCursor(SqlExecutionContext executionContext) {
         cursor.of(
-                masterFactory.getCursor(bindVariableService),
-                slaveFactory.getCursor(bindVariableService));
+                masterFactory.getCursor(executionContext),
+                slaveFactory.getCursor(executionContext));
         return cursor;
     }
 

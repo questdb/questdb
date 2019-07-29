@@ -24,6 +24,7 @@
 package com.questdb.griffin;
 
 import com.questdb.cairo.*;
+import com.questdb.cairo.security.AllowAllCairoSecurityContext;
 import com.questdb.cairo.sql.RecordCursorFactory;
 import com.questdb.griffin.engine.functions.rnd.SharedRandom;
 import com.questdb.griffin.engine.functions.str.TestMatchFunctionFactory;
@@ -53,9 +54,100 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testBindVariableInSelect() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+
+            final CairoConfiguration configuration = new DefaultCairoConfiguration(root);
+            try (
+                    CairoEngine engine = new CairoEngine(configuration);
+                    SqlCompiler compiler = new SqlCompiler(engine)
+            ) {
+                bindVariableService.clear();
+                bindVariableService.setLong(0, 10);
+                try (RecordCursorFactory factory = compiler.compile("select x, ? from long_sequence(2)", AllowAllCairoSecurityContext.INSTANCE, bindVariableService)) {
+                    assertCursor("x\t?\n" +
+                                    "1\t10\n" +
+                                    "2\t10\n",
+                            factory,
+                            true
+                    );
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testBindVariableInSelect2() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+
+            final CairoConfiguration configuration = new DefaultCairoConfiguration(root);
+            try (
+                    CairoEngine engine = new CairoEngine(configuration);
+                    SqlCompiler compiler = new SqlCompiler(engine)
+            ) {
+                bindVariableService.clear();
+                bindVariableService.setLong("y", 10);
+                try (RecordCursorFactory factory = compiler.compile("select x, :y from long_sequence(2)", AllowAllCairoSecurityContext.INSTANCE, bindVariableService)) {
+                    assertCursor("x\t:y\n" +
+                                    "1\t10\n" +
+                                    "2\t10\n",
+                            factory,
+                            true
+                    );
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testBindVariableInSelect3() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+
+            final CairoConfiguration configuration = new DefaultCairoConfiguration(root);
+            try (
+                    CairoEngine engine = new CairoEngine(configuration);
+                    SqlCompiler compiler = new SqlCompiler(engine)
+            ) {
+                bindVariableService.clear();
+                bindVariableService.setLong(0, 10);
+                try (RecordCursorFactory factory = compiler.compile("select x, $1 from long_sequence(2)", AllowAllCairoSecurityContext.INSTANCE, bindVariableService)) {
+                    assertCursor("x\t$1\n" +
+                                    "1\t10\n" +
+                                    "2\t10\n",
+                            factory,
+                            true
+                    );
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testBindVariableInWhere() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+
+            final CairoConfiguration configuration = new DefaultCairoConfiguration(root);
+            try (
+                    CairoEngine engine = new CairoEngine(configuration);
+                    SqlCompiler compiler = new SqlCompiler(engine)
+            ) {
+                bindVariableService.clear();
+                bindVariableService.setLong(0, 10);
+                try (RecordCursorFactory factory = compiler.compile("select x from long_sequence(100) where x = ?", AllowAllCairoSecurityContext.INSTANCE, bindVariableService)) {
+                    assertCursor("x\n" +
+                                    "10\n",
+                            factory,
+                            true
+                    );
+                }
+            }
+        });
+    }
+
+    @Test
     public void testCreateTableSymbolColumnViaCastCached() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            Assert.assertNull(compiler.compile("create table x (col string)", bindVariableService));
+            Assert.assertNull(compiler.compile("create table x (col string)", AllowAllCairoSecurityContext.INSTANCE, bindVariableService));
 
             engine.releaseAllReaders();
             engine.releaseAllWriters();
@@ -71,9 +163,9 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                     CairoEngine engine = new CairoEngine(configuration);
                     SqlCompiler compiler = new SqlCompiler(engine)
             ) {
-                compiler.compile("create table y as (x), cast(col as symbol cache)", bindVariableService);
+                compiler.compile("create table y as (x), cast(col as symbol cache)", AllowAllCairoSecurityContext.INSTANCE, bindVariableService);
 
-                try (TableReader reader = engine.getReader("y", TableUtils.ANY_TABLE_VERSION)) {
+                try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "y", TableUtils.ANY_TABLE_VERSION)) {
                     Assert.assertTrue(reader.getSymbolMapReader(0).isCached());
                 }
             }
@@ -83,9 +175,9 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     @Test
     public void testCreateTableSymbolColumnViaCastCachedSymbolCapacityHigh() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            Assert.assertNull(compiler.compile("create table x (col string)", bindVariableService));
+            Assert.assertNull(compiler.compile("create table x (col string)", AllowAllCairoSecurityContext.INSTANCE, bindVariableService));
             try {
-                compiler.compile("create table y as (x), cast(col as symbol capacity 100000000)", bindVariableService);
+                compiler.compile("create table y as (x), cast(col as symbol capacity 100000000)", AllowAllCairoSecurityContext.INSTANCE, bindVariableService);
                 Assert.fail();
             } catch (SqlException e) {
                 Assert.assertEquals(51, e.getPosition());
@@ -100,11 +192,11 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     @Test
     public void testCreateTableSymbolColumnViaCastNocache() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            Assert.assertNull(compiler.compile("create table x (col string)", bindVariableService));
+            Assert.assertNull(compiler.compile("create table x (col string)", AllowAllCairoSecurityContext.INSTANCE, bindVariableService));
 
-            compiler.compile("create table y as (x), cast(col as symbol nocache)", bindVariableService);
+            compiler.compile("create table y as (x), cast(col as symbol nocache)", AllowAllCairoSecurityContext.INSTANCE, bindVariableService);
 
-            try (TableReader reader = engine.getReader("y", TableUtils.ANY_TABLE_VERSION)) {
+            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "y", TableUtils.ANY_TABLE_VERSION)) {
                 Assert.assertFalse(reader.getSymbolMapReader(0).isCached());
             }
 
@@ -1106,17 +1198,23 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                  SqlCompiler compiler = new SqlCompiler(engine)) {
                 try {
                     compiler.compile(("create table x as " +
-                            "(" +
-                            "select * from" +
-                            " random_cursor" +
-                            "(200," +
-                            " 'a', rnd_double(0)*100," +
-                            " 'b', rnd_symbol(5,4,4,1)," +
-                            " 'k', timestamp_sequence(to_timestamp(0), 100000000000)" +
-                            ")" +
-                            ") timestamp(k) partition by DAY"), bindVariableService);
+                                    "(" +
+                                    "select * from" +
+                                    " random_cursor" +
+                                    "(200," +
+                                    " 'a', rnd_double(0)*100," +
+                                    " 'b', rnd_symbol(5,4,4,1)," +
+                                    " 'k', timestamp_sequence(to_timestamp(0), 100000000000)" +
+                                    ")" +
+                                    ") timestamp(k) partition by DAY"),
+                            AllowAllCairoSecurityContext.INSTANCE,
+                            bindVariableService);
 
-                    try (final RecordCursorFactory factory = compiler.compile("select * from x latest by b where b = 'PEHN' and a < 22", bindVariableService)) {
+                    try (final RecordCursorFactory factory = compiler.compile(
+                            "select * from x latest by b where b = 'PEHN' and a < 22",
+                            AllowAllCairoSecurityContext.INSTANCE,
+                            bindVariableService
+                    )) {
                         try {
                             assertCursor(("a\tb\tk\n" +
                                     "5.942010834028\tPEHN\t1970-08-03T02:53:20.000000Z\n"), factory, true);
@@ -2025,97 +2123,6 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testBindVariableInSelect() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-
-            final CairoConfiguration configuration = new DefaultCairoConfiguration(root);
-            try (
-                    CairoEngine engine = new CairoEngine(configuration);
-                    SqlCompiler compiler = new SqlCompiler(engine)
-            ) {
-                bindVariableService.clear();
-                bindVariableService.setLong(0, 10);
-                try (RecordCursorFactory factory = compiler.compile("select x, ? from long_sequence(2)", bindVariableService)) {
-                    assertCursor("x\t?\n" +
-                                    "1\t10\n" +
-                                    "2\t10\n",
-                            factory,
-                            true
-                    );
-                }
-            }
-        });
-    }
-
-    @Test
-    public void testBindVariableInSelect2() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-
-            final CairoConfiguration configuration = new DefaultCairoConfiguration(root);
-            try (
-                    CairoEngine engine = new CairoEngine(configuration);
-                    SqlCompiler compiler = new SqlCompiler(engine)
-            ) {
-                bindVariableService.clear();
-                bindVariableService.setLong("y", 10);
-                try (RecordCursorFactory factory = compiler.compile("select x, :y from long_sequence(2)", bindVariableService)) {
-                    assertCursor("x\t:y\n" +
-                                    "1\t10\n" +
-                                    "2\t10\n",
-                            factory,
-                            true
-                    );
-                }
-            }
-        });
-    }
-
-    @Test
-    public void testBindVariableInSelect3() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-
-            final CairoConfiguration configuration = new DefaultCairoConfiguration(root);
-            try (
-                    CairoEngine engine = new CairoEngine(configuration);
-                    SqlCompiler compiler = new SqlCompiler(engine)
-            ) {
-                bindVariableService.clear();
-                bindVariableService.setLong(0, 10);
-                try (RecordCursorFactory factory = compiler.compile("select x, $1 from long_sequence(2)", bindVariableService)) {
-                    assertCursor("x\t$1\n" +
-                                    "1\t10\n" +
-                                    "2\t10\n",
-                            factory,
-                            true
-                    );
-                }
-            }
-        });
-    }
-
-    @Test
-    public void testBindVariableInWhere() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-
-            final CairoConfiguration configuration = new DefaultCairoConfiguration(root);
-            try (
-                    CairoEngine engine = new CairoEngine(configuration);
-                    SqlCompiler compiler = new SqlCompiler(engine)
-            ) {
-                bindVariableService.clear();
-                bindVariableService.setLong(0, 10);
-                try (RecordCursorFactory factory = compiler.compile("select x from long_sequence(100) where x = ?", bindVariableService)) {
-                    assertCursor("x\n" +
-                                    "10\n",
-                            factory,
-                            true
-                    );
-                }
-            }
-        });
-    }
-
-    @Test
     public void testNamedBindVariableInWhere() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
 
@@ -2126,7 +2133,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
             ) {
                 bindVariableService.clear();
                 bindVariableService.setLong("var", 10);
-                try (RecordCursorFactory factory = compiler.compile("select x from long_sequence(100) where x = :var", bindVariableService)) {
+                try (RecordCursorFactory factory = compiler.compile("select x from long_sequence(100) where x = :var", AllowAllCairoSecurityContext.INSTANCE, bindVariableService)) {
                     assertCursor("x\n" +
                                     "10\n",
                             factory,
@@ -2848,10 +2855,10 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     @Test
     public void testSelectFromAliasedTable() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            Assert.assertNull(compiler.compile("create table my_table (sym int, id long)", bindVariableService));
+            Assert.assertNull(compiler.compile("create table my_table (sym int, id long)", AllowAllCairoSecurityContext.INSTANCE, bindVariableService));
 
             try {
-                try (RecordCursorFactory factory = compiler.compile("select sum(a.sym) yo, a.id from my_table a", bindVariableService)) {
+                try (RecordCursorFactory factory = compiler.compile("select sum(a.sym) yo, a.id from my_table a", AllowAllCairoSecurityContext.INSTANCE, bindVariableService)) {
                     Assert.assertNotNull(factory);
                 }
             } finally {

@@ -27,10 +27,10 @@ import com.questdb.cairo.CairoConfiguration;
 import com.questdb.cairo.ColumnType;
 import com.questdb.cairo.TableUtils;
 import com.questdb.cairo.sql.*;
+import com.questdb.griffin.SqlExecutionContext;
 import com.questdb.griffin.engine.StrTypeCaster;
 import com.questdb.griffin.engine.SymbolTypeCaster;
 import com.questdb.griffin.engine.TypeCaster;
-import com.questdb.griffin.engine.functions.bind.BindVariableService;
 import com.questdb.std.IntHashSet;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -88,10 +88,13 @@ public class LatestBySubQueryRecordCursorFactory extends AbstractTreeSetRecordCu
     }
 
     @Override
-    protected AbstractDataFrameRecordCursor getCursorInstance(DataFrameCursor dataFrameCursor, BindVariableService bindVariableService) {
+    protected AbstractDataFrameRecordCursor getCursorInstance(
+            DataFrameCursor dataFrameCursor,
+            SqlExecutionContext executionContext
+    ) {
         SymbolTable symbolTable = dataFrameCursor.getSymbolTable(columnIndex);
         symbolKeys.clear();
-        try (RecordCursor cursor = recordCursorFactory.getCursor(bindVariableService)) {
+        try (RecordCursor cursor = recordCursorFactory.getCursor(executionContext)) {
             final Record record = cursor.getRecord();
             while (cursor.hasNext()) {
                 int symbolKey = symbolTable.getQuick(typeCaster.getValue(record, 0));
@@ -102,11 +105,11 @@ public class LatestBySubQueryRecordCursorFactory extends AbstractTreeSetRecordCu
         }
 
         if (filter != null) {
-            AbstractDataFrameRecordCursor cursor = super.getCursorInstance(dataFrameCursor, bindVariableService);
-            filter.init(cursor, bindVariableService);
+            AbstractDataFrameRecordCursor cursor = super.getCursorInstance(dataFrameCursor, executionContext);
+            filter.init(cursor, executionContext);
             return cursor;
         }
-        return super.getCursorInstance(dataFrameCursor, bindVariableService);
+        return super.getCursorInstance(dataFrameCursor, executionContext);
     }
 
     @Override

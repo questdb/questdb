@@ -34,6 +34,7 @@ import com.questdb.cutlass.http.HttpRequestHeader;
 import com.questdb.cutlass.http.HttpRequestProcessor;
 import com.questdb.griffin.SqlCompiler;
 import com.questdb.griffin.SqlException;
+import com.questdb.griffin.SqlExecutionContextImpl;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.log.LogRecord;
@@ -59,6 +60,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
     private final JsonQueryProcessorConfiguration configuration;
     private final int floatScale;
     private final int doubleScale;
+    private final SqlExecutionContextImpl sqlExecutionContext = new SqlExecutionContextImpl();
 
     public TextQueryProcessor(JsonQueryProcessorConfiguration configuration, CairoEngine engine) {
         // todo: add scheduler
@@ -84,7 +86,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
             int retryCount = 0;
             do {
                 if (state.recordCursorFactory == null) {
-                    state.recordCursorFactory = compiler.compile(state.query);
+                    state.recordCursorFactory = compiler.compile(state.query, context.getCairoSecurityContext());
                     cacheHits.incrementAndGet();
                     info(state).$("execute-new [q=`").$(state.query).
                             $("`, skip: ").$(state.skip).
@@ -100,7 +102,9 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
 
                 if (state.recordCursorFactory != null) {
                     try {
-                        state.cursor = state.recordCursorFactory.getCursor();
+                        state.cursor = state.recordCursorFactory.getCursor(
+                                sqlExecutionContext.with(context.getCairoSecurityContext(), null)
+                        );
                         state.metadata = state.recordCursorFactory.getMetadata();
                         header(socket, 200);
                         resumeSend(context, dispatcher);

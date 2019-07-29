@@ -24,6 +24,7 @@
 package com.questdb.griffin;
 
 import com.questdb.cairo.*;
+import com.questdb.cairo.security.AllowAllCairoSecurityContext;
 import com.questdb.griffin.model.ExecutionModel;
 import com.questdb.griffin.model.QueryModel;
 import com.questdb.std.*;
@@ -2913,8 +2914,7 @@ public class SqlParserTest extends AbstractGriffinTest {
                                 "count() \n" +
                                 "-- from acc\n" +
                                 "from acc(Date) sample by 1d\n" +
-                                "-- where x = 10\n",
-                        sqlExecutionContext);
+                        "-- where x = 10\n");
                 Assert.fail();
             } catch (SqlException e) {
                 TestUtils.assertEquals("Invalid column: Date", e.getFlyweightMessage());
@@ -2996,7 +2996,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     @Test
     public void testMissingWhere() {
         try {
-            compiler.compileExecutionModel("select id, x + 10, x from tab id ~ 'HBRO'", sqlExecutionContext);
+            compiler.compileExecutionModel("select id, x + 10, x from tab id ~ 'HBRO'");
             Assert.fail("Exception expected");
         } catch (SqlException e) {
             Assert.assertEquals(33, e.getPosition());
@@ -4315,7 +4315,7 @@ public class SqlParserTest extends AbstractGriffinTest {
 
     @Test
     public void testTableNameLocked() {
-        engine.lock("tab");
+        engine.lock(AllowAllCairoSecurityContext.INSTANCE, "tab");
         try {
             assertSyntaxError(
                     "select * from tab",
@@ -4324,7 +4324,7 @@ public class SqlParserTest extends AbstractGriffinTest {
                     modelOf("tab").col("x", ColumnType.INT)
             );
         } finally {
-            engine.unlock("tab", null);
+            engine.unlock(AllowAllCairoSecurityContext.INSTANCE, "tab", null);
         }
     }
 
@@ -4384,7 +4384,7 @@ public class SqlParserTest extends AbstractGriffinTest {
             }
             b.append('f').append(i);
         }
-        QueryModel st = (QueryModel) compiler.compileExecutionModel(b, sqlExecutionContext);
+        QueryModel st = (QueryModel) compiler.compileExecutionModel(b);
         Assert.assertEquals(SqlParser.MAX_ORDER_BY_COLUMNS - 1, st.getOrderBy().size());
     }
 
@@ -4399,7 +4399,7 @@ public class SqlParserTest extends AbstractGriffinTest {
             b.append('f').append(i);
         }
         try {
-            compiler.compileExecutionModel(b, sqlExecutionContext);
+            compiler.compileExecutionModel(b);
         } catch (SqlException e) {
             TestUtils.assertEquals("Too many columns", e.getFlyweightMessage());
         }
@@ -4510,7 +4510,7 @@ public class SqlParserTest extends AbstractGriffinTest {
             for (int i = 0, n = tableModels.length; i < n; i++) {
                 CairoTestUtils.create(tableModels[i]);
             }
-            compiler.compileExecutionModel(query, sqlExecutionContext);
+            compiler.compileExecutionModel(query);
             Assert.fail("Exception expected");
         } catch (SqlException e) {
             Assert.assertEquals(position, e.getPosition());
@@ -4533,7 +4533,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     private void assertModel(String expected, String query, int modelType, TableModel... tableModels) throws SqlException {
         createModelsAndRun(() -> {
             sink.clear();
-            ExecutionModel model = compiler.compileExecutionModel(query, sqlExecutionContext);
+            ExecutionModel model = compiler.compileExecutionModel(query);
             Assert.assertEquals(model.getModelType(), modelType);
             ((Sinkable) model).toSink(sink);
             TestUtils.assertEquals(expected, sink);

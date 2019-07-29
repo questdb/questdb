@@ -29,7 +29,7 @@ import com.questdb.cairo.map.MapFactory;
 import com.questdb.cairo.map.MapKey;
 import com.questdb.cairo.map.MapValue;
 import com.questdb.cairo.sql.*;
-import com.questdb.griffin.engine.functions.bind.BindVariableService;
+import com.questdb.griffin.SqlExecutionContext;
 import com.questdb.std.Misc;
 import com.questdb.std.Transient;
 
@@ -75,15 +75,15 @@ public class HashJoinRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
-    public RecordCursor getCursor(BindVariableService bindVariableService) {
-        RecordCursor slaveCursor = slaveFactory.getCursor(bindVariableService);
+    public RecordCursor getCursor(SqlExecutionContext executionContext) {
+        RecordCursor slaveCursor = slaveFactory.getCursor(executionContext);
         try {
             buildMapOfSlaveRecords(slaveCursor);
         } catch (CairoException e) {
             slaveCursor.close();
             throw e;
         }
-        cursor.of(masterFactory.getCursor(bindVariableService), slaveCursor);
+        cursor.of(masterFactory.getCursor(executionContext), slaveCursor);
         return cursor;
     }
 
@@ -104,7 +104,6 @@ public class HashJoinRecordCursorFactory extends AbstractRecordCursorFactory {
         private RecordCursor masterCursor;
         private RecordCursor slaveCursor;
         private Record masterRecord;
-        private Record slaveRecord;
         private boolean useSlaveCursor;
 
         public HashJoinRecordCursor(int columnSplit, Map joinKeyMap, RecordChain slaveChain) {
@@ -165,7 +164,7 @@ public class HashJoinRecordCursorFactory extends AbstractRecordCursorFactory {
             this.masterCursor = masterCursor;
             this.slaveCursor = slaveCursor;
             this.masterRecord = masterCursor.getRecord();
-            this.slaveRecord = slaveChain.getRecord();
+            Record slaveRecord = slaveChain.getRecord();
             this.slaveChain.setSymbolTableResolver(slaveCursor);
             record.of(masterRecord, slaveRecord);
             useSlaveCursor = false;

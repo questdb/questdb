@@ -25,7 +25,7 @@ package com.questdb.griffin.engine.functions;
 
 import com.questdb.cairo.sql.Function;
 import com.questdb.cairo.sql.RecordCursor;
-import com.questdb.griffin.engine.functions.bind.BindVariableService;
+import com.questdb.griffin.SqlExecutionContext;
 
 public interface BinaryFunction extends Function {
 
@@ -36,9 +36,9 @@ public interface BinaryFunction extends Function {
     }
 
     @Override
-    default void init(RecordCursor recordCursor, BindVariableService bindVariableService) {
-        getLeft().init(recordCursor, bindVariableService);
-        getRight().init(recordCursor, bindVariableService);
+    default void init(RecordCursor recordCursor, SqlExecutionContext executionContext) {
+        getLeft().init(recordCursor, executionContext);
+        getRight().init(recordCursor, executionContext);
     }
 
     @Override

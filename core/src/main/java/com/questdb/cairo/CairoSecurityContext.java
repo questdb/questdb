@@ -5,7 +5,7 @@
  *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
  *   \__\_\\__,_|\___||___/\__|____/|____/
  *
- * Copyright (C) 2014-2018 Appsicle
+ * Copyright (C) 2014-2019 Appsicle
  *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU Affero General Public License, version 3,
@@ -21,36 +21,7 @@
  *
  ******************************************************************************/
 
-package com.questdb.griffin;
+package com.questdb.cairo;
 
-import com.questdb.griffin.engine.functions.bind.BindVariableService;
-import com.questdb.std.Mutable;
-import com.questdb.std.ObjList;
-
-import java.io.Closeable;
-
-public class TestExecutionContext implements SqlExecutionContext, Mutable {
-    private final BindVariableService bindVariableService = new BindVariableService();
-    private final ObjList<Closeable> closeables = new ObjList<>();
-    private final SqlCodeGenerator sqlCodeGenerator;
-
-    public TestExecutionContext(SqlCodeGenerator sqlCodeGenerator) {
-        this.sqlCodeGenerator = sqlCodeGenerator;
-    }
-
-    @Override
-    public void clear() {
-        closeables.clear();
-        bindVariableService.clear();
-    }
-
-    @Override
-    public BindVariableService getBindVariableService() {
-        return bindVariableService;
-    }
-
-    @Override
-    public SqlCodeGenerator getCodeGenerator() {
-        return sqlCodeGenerator;
-    }
+public interface CairoSecurityContext {
 }

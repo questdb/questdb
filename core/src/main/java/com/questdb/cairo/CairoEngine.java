@@ -29,8 +29,10 @@ import com.questdb.cairo.pool.WriterPool;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.mp.SynchronizedJob;
+import com.questdb.std.Files;
 import com.questdb.std.FilesFacade;
 import com.questdb.std.Misc;
+import com.questdb.std.Transient;
 import com.questdb.std.microtime.MicrosecondClock;
 import com.questdb.std.str.Path;
 import org.jetbrains.annotations.Nullable;
@@ -64,6 +66,22 @@ public class CairoEngine implements Closeable {
         Misc.free(readerPool);
     }
 
+    public void creatTable(
+            CairoSecurityContext securityContext,
+            AppendMemory mem,
+            Path path,
+            TableStructure struct
+    ) {
+        TableUtils.createTable(
+                configuration.getFilesFacade(),
+                mem,
+                path,
+                configuration.getRoot(),
+                struct,
+                configuration.getMkDirMode()
+        );
+    }
+
     public int getBusyReaderCount() {
         return readerPool.getBusyCount();
     }
@@ -85,7 +103,11 @@ public class CairoEngine implements Closeable {
         this.readerPool.setPoolListener(poolListener);
     }
 
-    public TableReader getReader(CharSequence tableName, long version) {
+    public TableReader getReader(
+            CairoSecurityContext securityContext,
+            CharSequence tableName,
+            long version
+    ) {
         TableReader reader = readerPool.get(tableName);
         if (version > -1 && reader.getVersion() != version) {
             reader.close();
@@ -94,15 +116,35 @@ public class CairoEngine implements Closeable {
         return reader;
     }
 
-    public int getStatus(Path path, CharSequence tableName, int lo, int hi) {
+    public int getStatus(
+            CairoSecurityContext securityContext,
+            Path path,
+            CharSequence tableName,
+            int lo,
+            int hi
+    ) {
         return TableUtils.exists(configuration.getFilesFacade(), path, configuration.getRoot(), tableName, lo, hi);
     }
 
-    public TableWriter getWriter(CharSequence tableName) {
+    public int getStatus(
+            CairoSecurityContext securityContext,
+            Path path,
+            CharSequence tableName
+    ) {
+        return getStatus(securityContext, path, tableName, 0, tableName.length());
+    }
+
+    public TableWriter getWriter(
+            CairoSecurityContext securityContext,
+            CharSequence tableName
+    ) {
         return writerPool.get(tableName);
     }
 
-    public boolean lock(CharSequence tableName) {
+    public boolean lock(
+            CairoSecurityContext securityContext,
+            CharSequence tableName
+    ) {
         if (writerPool.lock(tableName)) {
             boolean locked = readerPool.lock(tableName);
             if (locked) {
@@ -121,13 +163,12 @@ public class CairoEngine implements Closeable {
         return writerPool.releaseAll();
     }
 
-    public void unlock(CharSequence tableName, @Nullable TableWriter writer) {
-        readerPool.unlock(tableName);
-        writerPool.unlock(tableName, writer);
-    }
-
-    public void remove(Path path, CharSequence tableName) {
-        if (lock(tableName)) {
+    public void remove(
+            CairoSecurityContext securityContext,
+            Path path,
+            CharSequence tableName
+    ) {
+        if (lock(securityContext, tableName)) {
             try {
                 path.of(configuration.getRoot()).concat(tableName).$();
                 if (!configuration.getFilesFacade().rmdir(path)) {
@@ -137,23 +178,44 @@ public class CairoEngine implements Closeable {
                 }
                 return;
             } finally {
-                unlock(tableName, null);
+                unlock(securityContext, tableName, null);
             }
         }
         throw CairoException.instance(configuration.getFilesFacade().errno()).put("Cannot lock ").put(tableName);
     }
 
-    public void rename(Path path, CharSequence tableName, Path otherPath, String newName) {
-        if (lock(tableName)) {
+    public boolean removeDirectory(@Transient Path path, CharSequence dir) {
+        path.of(configuration.getRoot()).concat(dir);
+        final FilesFacade ff = configuration.getFilesFacade();
+        return ff.rmdir(path.put(Files.SEPARATOR).$());
+    }
+
+    public void rename(
+            CairoSecurityContext securityContext,
+            Path path,
+            CharSequence tableName,
+            Path otherPath,
+            String newName
+    ) {
+        if (lock(securityContext, tableName)) {
             try {
                 rename0(path, tableName, otherPath, newName);
             } finally {
-                unlock(tableName, null);
+                unlock(securityContext, tableName, null);
             }
         } else {
             LOG.error().$("cannot lock and rename [from='").$(tableName).$("', to='").$(newName).$("']").$();
             throw CairoException.instance(0).put("Cannot lock [table=").put(tableName).put(']');
         }
+    }
+
+    public void unlock(
+            CairoSecurityContext securityContext,
+            CharSequence tableName,
+            @Nullable TableWriter writer
+    ) {
+        readerPool.unlock(tableName);
+        writerPool.unlock(tableName, writer);
     }
 
     private void rename0(Path path, CharSequence tableName, Path otherPath, CharSequence to) {
@@ -178,10 +240,6 @@ public class CairoEngine implements Closeable {
             LOG.error().$("rename failed [from='").$(path).$("', to='").$(otherPath).$("', error=").$(error).$(']').$();
             throw CairoException.instance(error).put("Rename failed");
         }
-    }
-
-    public int getStatus(Path path, CharSequence tableName) {
-        return getStatus(path, tableName, 0, tableName.length());
     }
 
     private class WriterMaintenanceJob extends SynchronizedJob {

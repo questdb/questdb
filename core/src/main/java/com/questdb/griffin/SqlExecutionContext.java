@@ -23,11 +23,12 @@
 
 package com.questdb.griffin;
 
+import com.questdb.cairo.CairoSecurityContext;
 import com.questdb.griffin.engine.functions.bind.BindVariableService;
 
 public interface SqlExecutionContext {
 
     BindVariableService getBindVariableService();
 
-    SqlCodeGenerator getCodeGenerator();
+    CairoSecurityContext getCairoSecurityContext();
 }

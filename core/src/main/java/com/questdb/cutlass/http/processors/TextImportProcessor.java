@@ -265,7 +265,7 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
     public void onChunk(HttpRequestHeader partHeader, long lo, long hi) {
         if (hi > lo) {
             try {
-                transientState.textLoader.parse(lo, (int) (hi - lo));
+                transientState.textLoader.parse(lo, (int) (hi - lo), transientContext.getCairoSecurityContext());
                 if (transientState.messagePart == MESSAGE_DATA && !transientState.analysed) {
                     transientState.analysed = true;
                     transientState.textLoader.setState(TextLoader.LOAD_DATA);

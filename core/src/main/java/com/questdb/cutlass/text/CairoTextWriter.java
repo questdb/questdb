@@ -154,14 +154,16 @@ public class CairoTextWriter implements TextLexer.Listener, Closeable, Mutable {
         w.append();
     }
 
-    private void createTable(ObjList<CharSequence> names, ObjList<TypeAdapter> detectedTypes) {
-        TableUtils.createTable(
-                configuration.getFilesFacade(),
+    private void createTable(
+            ObjList<CharSequence> names,
+            ObjList<TypeAdapter> detectedTypes,
+            CairoSecurityContext cairoSecurityContext
+    ) {
+        engine.creatTable(
+                cairoSecurityContext,
                 appendMemory,
                 path,
-                configuration.getRoot(),
-                tableStructureAdapter.of(names, detectedTypes),
-                configuration.getMkDirMode()
+                tableStructureAdapter.of(names, detectedTypes)
         );
         this.types = detectedTypes;
     }
@@ -174,9 +176,12 @@ public class CairoTextWriter implements TextLexer.Listener, Closeable, Mutable {
                 .$(']').$();
     }
 
-    private TableWriter openWriterAndOverrideImportTypes(ObjList<TypeAdapter> detectedTypes) {
+    private TableWriter openWriterAndOverrideImportTypes(
+            CairoSecurityContext cairoSecurityContext,
+            ObjList<TypeAdapter> detectedTypes
+    ) {
 
-        TableWriter writer = engine.getWriter(tableName);
+        TableWriter writer = engine.getWriter(cairoSecurityContext, tableName);
         RecordMetadata metadata = writer.getMetadata();
 
         // now, compare column count.
@@ -222,25 +227,29 @@ public class CairoTextWriter implements TextLexer.Listener, Closeable, Mutable {
         return writer;
     }
 
-    void prepareTable(ObjList<CharSequence> names, ObjList<TypeAdapter> detectedTypes) {
+    void prepareTable(
+            CairoSecurityContext cairoSecurityContext,
+            ObjList<CharSequence> names,
+            ObjList<TypeAdapter> detectedTypes
+    ) {
         assert writer == null;
 
         if (detectedTypes.size() == 0) {
             throw CairoException.instance(0).put("cannot determine text structure");
         }
 
-        switch (engine.getStatus(path, tableName)) {
+        switch (engine.getStatus(cairoSecurityContext, path, tableName)) {
             case TableUtils.TABLE_DOES_NOT_EXIST:
-                createTable(names, detectedTypes);
-                writer = engine.getWriter(tableName);
+                createTable(names, detectedTypes, cairoSecurityContext);
+                writer = engine.getWriter(cairoSecurityContext, tableName);
                 break;
             case TableUtils.TABLE_EXISTS:
                 if (overwrite) {
-                    engine.remove(path, tableName);
-                    createTable(names, detectedTypes);
-                    writer = engine.getWriter(tableName);
+                    engine.remove(cairoSecurityContext, path, tableName);
+                    createTable(names, detectedTypes, cairoSecurityContext);
+                    writer = engine.getWriter(cairoSecurityContext, tableName);
                 } else {
-                    writer = openWriterAndOverrideImportTypes(detectedTypes);
+                    writer = openWriterAndOverrideImportTypes(cairoSecurityContext, detectedTypes);
                 }
                 break;
             default:

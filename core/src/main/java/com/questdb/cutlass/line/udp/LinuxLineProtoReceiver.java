@@ -25,6 +25,7 @@ package com.questdb.cutlass.line.udp;
 
 import com.questdb.cairo.CairoEngine;
 import com.questdb.cairo.CairoException;
+import com.questdb.cairo.CairoSecurityContext;
 import com.questdb.cutlass.line.CairoLineProtoParser;
 import com.questdb.cutlass.line.LineProtoLexer;
 import com.questdb.log.Log;
@@ -48,7 +49,11 @@ public class LinuxLineProtoReceiver implements Closeable, Job {
     private int commitRate;
     private long totalCount = 0;
 
-    public LinuxLineProtoReceiver(LineUdpReceiverConfiguration receiverCfg, CairoEngine engine) {
+    public LinuxLineProtoReceiver(
+            LineUdpReceiverConfiguration receiverCfg,
+            CairoEngine engine,
+            CairoSecurityContext cairoSecurityContext
+    ) {
 
         nf = receiverCfg.getNetworkFacade();
 
@@ -85,7 +90,7 @@ public class LinuxLineProtoReceiver implements Closeable, Job {
 
         msgVec = nf.msgHeaders(receiverCfg.getMsgBufferSize(), msgCount);
         lexer = new LineProtoLexer(receiverCfg.getMsgBufferSize());
-        parser = new CairoLineProtoParser(engine);
+        parser = new CairoLineProtoParser(engine, cairoSecurityContext);
         lexer.withParser(parser);
 
         LOG.info().$("started [fd=").$(fd).$(", bind=").$(receiverCfg.getBindIPv4Address()).$(", group=").$(receiverCfg.getGroupIPv4Address()).$(", port=").$(receiverCfg.getPort()).$(", batch=").$(msgCount).$(", commitRate=").$(commitRate).$(']').$();

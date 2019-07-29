@@ -24,6 +24,7 @@
 package com.questdb.griffin;
 
 import com.questdb.cairo.*;
+import com.questdb.cairo.security.AllowAllCairoSecurityContext;
 import com.questdb.cairo.sql.RecordCursor;
 import com.questdb.cairo.sql.RecordCursorFactory;
 import com.questdb.griffin.engine.functions.bind.BindVariableService;
@@ -120,7 +121,7 @@ public class SqlCompilerTest extends AbstractCairoTest {
         SqlCompiler compiler = new SqlCompiler(engine);
 
         try {
-            compiler.compile("create table x (a int)", bindVariableService);
+            compiler.compile("create table x (a int)", AllowAllCairoSecurityContext.INSTANCE, bindVariableService);
             Assert.fail();
         } catch (SqlException e) {
             Assert.assertEquals(13, e.getPosition());
@@ -152,45 +153,6 @@ public class SqlCompilerTest extends AbstractCairoTest {
                         "1970-01-01T00:00:00.116Z\n" +
                         "1970-01-01T00:00:00.117Z\n",
                 ColumnType.DATE);
-    }
-
-    @Test
-    public void testCloseFactoryWithoutUsingCursor() throws Exception {
-        String query = "select * from y where j > :lim";
-        TestUtils.assertMemoryLeak(() -> {
-            try {
-                compiler.compile(
-                        "create table y as (" +
-                                "select" +
-                                " to_int(x) i," +
-                                " rnd_symbol('msft','ibm', 'googl') sym2," +
-                                " round(rnd_double(0), 3) price," +
-                                " to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp," +
-                                " rnd_boolean() b," +
-                                " rnd_str(1,1,2) c," +
-                                " rnd_double(2) d," +
-                                " rnd_float(2) e," +
-                                " rnd_short(10,1024) f," +
-                                " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
-                                " rnd_symbol(4,4,4,2) ik," +
-                                " rnd_long() j," +
-                                " timestamp_sequence(to_timestamp(0), 1000000000) k," +
-                                " rnd_byte(2,50) l," +
-                                " rnd_bin(10, 20, 2) m," +
-                                " rnd_str(5,16,2) n" +
-                                " from long_sequence(30)" +
-                                ") timestamp(timestamp)"
-                        , bindVariableService
-                );
-
-                bindVariableService.setLong("lim", 4);
-                final RecordCursorFactory factory = compiler.compile(query, bindVariableService);
-                factory.close();
-            } finally {
-                engine.releaseAllWriters();
-                engine.releaseAllReaders();
-            }
-        });
     }
 
     @Test
@@ -1671,6 +1633,46 @@ public class SqlCompilerTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCloseFactoryWithoutUsingCursor() throws Exception {
+        String query = "select * from y where j > :lim";
+        TestUtils.assertMemoryLeak(() -> {
+            try {
+                compiler.compile(
+                        "create table y as (" +
+                                "select" +
+                                " to_int(x) i," +
+                                " rnd_symbol('msft','ibm', 'googl') sym2," +
+                                " round(rnd_double(0), 3) price," +
+                                " to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp," +
+                                " rnd_boolean() b," +
+                                " rnd_str(1,1,2) c," +
+                                " rnd_double(2) d," +
+                                " rnd_float(2) e," +
+                                " rnd_short(10,1024) f," +
+                                " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                                " rnd_symbol(4,4,4,2) ik," +
+                                " rnd_long() j," +
+                                " timestamp_sequence(to_timestamp(0), 1000000000) k," +
+                                " rnd_byte(2,50) l," +
+                                " rnd_bin(10, 20, 2) m," +
+                                " rnd_str(5,16,2) n" +
+                                " from long_sequence(30)" +
+                                ") timestamp(timestamp)"
+                        , AllowAllCairoSecurityContext.INSTANCE,
+                        bindVariableService
+                );
+
+                bindVariableService.setLong("lim", 4);
+                final RecordCursorFactory factory = compiler.compile(query, AllowAllCairoSecurityContext.INSTANCE, bindVariableService);
+                factory.close();
+            } finally {
+                engine.releaseAllWriters();
+                engine.releaseAllReaders();
+            }
+        });
+    }
+
+    @Test
     public void testCreateAsSelect() throws SqlException, IOException {
         String expectedData = "a1\ta\tb\tc\td\te\tf\tf1\tg\th\ti\tj\tj1\tk\tl\tm\n" +
                 "1569490116\tNaN\tfalse\t\tNaN\t0.7611\t428\t-1593\t2015-04-04T16:34:47.226Z\t\t\t185\t7039584373105579285\t1970-01-01T00:00:00.000000Z\t4\t00000000 af 19 c4 95 94 36 53 49 b4 59 7e\n" +
@@ -1777,7 +1779,7 @@ public class SqlCompilerTest extends AbstractCairoTest {
                         public void run(CairoEngine engine) {
                             if (state++ > 0) {
                                 // remove column from table X
-                                try (TableWriter writer = engine.getWriter("X")) {
+                                try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "X")) {
                                     if (state == 2) {
                                         writer.removeColumn("b");
                                     } else {
@@ -1835,7 +1837,7 @@ public class SqlCompilerTest extends AbstractCairoTest {
                         SqlCompiler compiler = new SqlCompiler(engine)
                 ) {
                     try {
-                        compiler.compile(sql, bindVariableService);
+                        compiler.compile(sql, AllowAllCairoSecurityContext.INSTANCE, bindVariableService);
                         Assert.fail();
                     } catch (SqlException e) {
                         TestUtils.assertContains(e.getMessage(), "Could not create table. See log for details");
@@ -1892,7 +1894,7 @@ public class SqlCompilerTest extends AbstractCairoTest {
 
                 try (CairoEngine engine = new CairoEngine(configuration); SqlCompiler compiler = new SqlCompiler(engine)) {
                     try {
-                        compiler.compile(sql, bindVariableService);
+                        compiler.compile(sql, AllowAllCairoSecurityContext.INSTANCE, bindVariableService);
                         Assert.fail();
                     } catch (SqlException e) {
                         TestUtils.assertContains(e.getMessage(), "Could not create table. See log for details");
@@ -1935,7 +1937,7 @@ public class SqlCompilerTest extends AbstractCairoTest {
                     public void run(CairoEngine engine) {
                         if (state++ == 1) {
                             // remove column from table X
-                            try (TableWriter writer = engine.getWriter("X")) {
+                            try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "X")) {
                                 writer.removeColumn("b");
                             }
                         }
@@ -1962,7 +1964,7 @@ public class SqlCompilerTest extends AbstractCairoTest {
                         public void run(CairoEngine engine) {
                             if (state++ == 1) {
                                 // remove column from table X
-                                try (TableWriter writer = engine.getWriter("X")) {
+                                try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "X")) {
                                     writer.removeColumn("b");
                                 }
                             }
@@ -1992,7 +1994,7 @@ public class SqlCompilerTest extends AbstractCairoTest {
                     public void run(CairoEngine engine) {
                         if (state++ == 1) {
                             // remove column from table X
-                            try (TableWriter writer = engine.getWriter("X")) {
+                            try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "X")) {
                                 writer.removeColumn("a");
                                 writer.addColumn("c", ColumnType.FLOAT);
                             }
@@ -2019,7 +2021,7 @@ public class SqlCompilerTest extends AbstractCairoTest {
                         public void run(CairoEngine engine) {
                             if (state++ == 1) {
                                 // remove column from table X
-                                try (TableWriter writer = engine.getWriter("X")) {
+                                try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "X")) {
                                     writer.removeColumn("t");
                                     writer.addColumn("t", ColumnType.FLOAT);
                                 }
@@ -2049,10 +2051,11 @@ public class SqlCompilerTest extends AbstractCairoTest {
                         "z STRING, " +
                         "y BOOLEAN) " +
                         "timestamp(t)",
+                AllowAllCairoSecurityContext.INSTANCE,
                 bindVariableService
         );
 
-        try (TableReader reader = engine.getReader("x", TableUtils.ANY_TABLE_VERSION)) {
+        try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_VERSION)) {
             sink.clear();
             reader.getMetadata().toJson(sink);
             TestUtils.assertEquals(
@@ -2085,10 +2088,11 @@ public class SqlCompilerTest extends AbstractCairoTest {
                         "z STRING, " +
                         "y BOOLEAN) " +
                         "partition by MONTH",
+                AllowAllCairoSecurityContext.INSTANCE,
                 bindVariableService
         );
 
-        try (TableReader reader = engine.getReader("x", TableUtils.ANY_TABLE_VERSION)) {
+        try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_VERSION)) {
             sink.clear();
             reader.getMetadata().toJson(sink);
             TestUtils.assertEquals(
@@ -2122,10 +2126,11 @@ public class SqlCompilerTest extends AbstractCairoTest {
                         "y BOOLEAN) " +
                         "timestamp(t) " +
                         "partition by MONTH",
+                AllowAllCairoSecurityContext.INSTANCE,
                 bindVariableService
         );
 
-        try (TableReader reader = engine.getReader("x", TableUtils.ANY_TABLE_VERSION)) {
+        try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_VERSION)) {
             sink.clear();
             reader.getMetadata().toJson(sink);
             TestUtils.assertEquals(
@@ -2159,10 +2164,12 @@ public class SqlCompilerTest extends AbstractCairoTest {
                         "y BOOLEAN) " +
                         "timestamp(t) " +
                         "partition by MONTH",
+                AllowAllCairoSecurityContext.INSTANCE,
                 bindVariableService
         );
 
-        try (TableReader reader = engine.getReader("x", TableUtils.ANY_TABLE_VERSION)) {
+        try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE,
+                "x", TableUtils.ANY_TABLE_VERSION)) {
             sink.clear();
             reader.getMetadata().toJson(sink);
             TestUtils.assertEquals(
@@ -2196,10 +2203,12 @@ public class SqlCompilerTest extends AbstractCairoTest {
                         "y BOOLEAN) " +
                         "timestamp(t) " +
                         "partition by MONTH",
+                AllowAllCairoSecurityContext.INSTANCE,
                 bindVariableService
         );
 
-        try (TableReader reader = engine.getReader("x", TableUtils.ANY_TABLE_VERSION)) {
+        try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE,
+                "x", TableUtils.ANY_TABLE_VERSION)) {
             sink.clear();
             reader.getMetadata().toJson(sink);
             TestUtils.assertEquals(
@@ -2245,7 +2254,7 @@ public class SqlCompilerTest extends AbstractCairoTest {
                     SqlCompiler compiler = new SqlCompiler(engine)
             ) {
                 try {
-                    compiler.compile("create table x as (select to_int(x) c, abs(rnd_int() % 650) a from long_sequence(5000000))", bindVariableService);
+                    compiler.compile("create table x as (select to_int(x) c, abs(rnd_int() % 650) a from long_sequence(5000000))", AllowAllCairoSecurityContext.INSTANCE, bindVariableService);
                     Assert.fail();
                 } catch (SqlException e) {
                     TestUtils.assertContains(e.getMessage(), "Could not create table. See log for details");
@@ -2259,9 +2268,9 @@ public class SqlCompilerTest extends AbstractCairoTest {
 
     @Test
     public void testCreateTableUtf8() throws SqlException, IOException {
-        compiler.compile("create table доходы(экспорт int)", bindVariableService);
+        compiler.compile("create table доходы(экспорт int)", AllowAllCairoSecurityContext.INSTANCE, bindVariableService);
 
-        try (TableWriter writer = engine.getWriter("доходы")) {
+        try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "доходы")) {
             for (int i = 0; i < 20; i++) {
                 TableWriter.Row row = writer.newRow();
                 row.putInt(0, i);
@@ -2270,9 +2279,9 @@ public class SqlCompilerTest extends AbstractCairoTest {
             writer.commit();
         }
 
-        compiler.compile("create table миллионы as (select * from доходы)", bindVariableService);
+        compiler.compile("create table миллионы as (select * from доходы)", AllowAllCairoSecurityContext.INSTANCE, bindVariableService);
 
-        try (TableReader reader = engine.getReader("миллионы", TableUtils.ANY_TABLE_VERSION)) {
+        try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "миллионы", TableUtils.ANY_TABLE_VERSION)) {
             sink.clear();
             printer.print(reader.getCursor(), reader.getMetadata(), true);
         }
@@ -2311,6 +2320,7 @@ public class SqlCompilerTest extends AbstractCairoTest {
                         "y BOOLEAN) " +
                         "timestamp(t) " +
                         "partition by MONTH",
+                AllowAllCairoSecurityContext.INSTANCE,
                 bindVariableService
         );
 
@@ -2754,7 +2764,8 @@ public class SqlCompilerTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             try {
                 if (ddl != null) {
-                    compiler.compile(ddl, bindVariableService);
+                    compiler.compile(ddl, AllowAllCairoSecurityContext.INSTANCE,
+                            bindVariableService);
                 }
                 assertFailure0(errorPosition, errorMessage, insert);
 
@@ -2771,9 +2782,11 @@ public class SqlCompilerTest extends AbstractCairoTest {
     public void testInsertAsSelectFewerSelectColumns() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try {
-                compiler.compile("create table y as (select x, to_int(2*((x-1)/2))+2 m, abs(rnd_int() % 100) b from long_sequence(10))", bindVariableService);
+                compiler.compile("create table y as (select x, to_int(2*((x-1)/2))+2 m, abs(rnd_int() % 100) b from long_sequence(10))", AllowAllCairoSecurityContext.INSTANCE,
+                        bindVariableService);
                 try {
-                    compiler.compile("insert into y select to_int(2*((x-1+10)/2))+2 m, abs(rnd_int() % 100) b from long_sequence(6)", bindVariableService);
+                    compiler.compile("insert into y select to_int(2*((x-1+10)/2))+2 m, abs(rnd_int() % 100) b from long_sequence(6)", AllowAllCairoSecurityContext.INSTANCE,
+                            bindVariableService);
                 } catch (SqlException e) {
                     Assert.assertEquals(14, e.getPosition());
                     Assert.assertTrue(Chars.contains(e.getFlyweightMessage(), "not enough"));
@@ -2922,7 +2935,10 @@ public class SqlCompilerTest extends AbstractCairoTest {
             public void run(CairoEngine engine) {
                 if (state++ == 1) {
                     // remove column from table X
-                    try (TableWriter writer = engine.getWriter("y")) {
+                    try (TableWriter writer = engine.getWriter(
+                            AllowAllCairoSecurityContext.INSTANCE,
+                            "y"
+                    )) {
                         writer.removeColumn("int1");
                         writer.addColumn("c", ColumnType.INT);
                     }
@@ -2933,20 +2949,20 @@ public class SqlCompilerTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             try (CairoEngine engine = new CairoEngine(configuration) {
                 @Override
-                public TableReader getReader(CharSequence tableName, long version) {
+                public TableReader getReader(CairoSecurityContext cairoSecurityContext, CharSequence tableName, long version) {
                     fiddler.run(this);
-                    return super.getReader(tableName, version);
+                    return super.getReader(cairoSecurityContext, tableName, version);
                 }
             }) {
                 try (SqlCompiler compiler = new SqlCompiler(engine)) {
 
-                    compiler.compile("create table x (a INT, b INT)", bindVariableService);
-                    compiler.compile("create table y as (select rnd_int() int1, rnd_int() int2 from long_sequence(10))", bindVariableService);
-                    compiler.compile("insert into x select * from y", bindVariableService);
+                    compiler.compile("create table x (a INT, b INT)", AllowAllCairoSecurityContext.INSTANCE, bindVariableService);
+                    compiler.compile("create table y as (select rnd_int() int1, rnd_int() int2 from long_sequence(10))", AllowAllCairoSecurityContext.INSTANCE, bindVariableService);
+                    compiler.compile("insert into x select * from y", AllowAllCairoSecurityContext.INSTANCE, bindVariableService);
 
-                    try (RecordCursorFactory factory = compiler.compile("select * from x", bindVariableService)) {
+                    try (RecordCursorFactory factory = compiler.compile("select * from x", AllowAllCairoSecurityContext.INSTANCE, bindVariableService)) {
                         sink.clear();
-                        try (RecordCursor cursor = factory.getCursor(bindVariableService)) {
+                        try (RecordCursor cursor = factory.getCursor(compiler.getExecutionContext())) {
                             printer.print(cursor, factory.getMetadata(), true);
                         }
                         TestUtils.assertEquals(expected, sink);
@@ -2978,16 +2994,16 @@ public class SqlCompilerTest extends AbstractCairoTest {
                 int pageCount = 0;
 
                 @Override
+                public long getMapPageSize() {
+                    return getPageSize();
+                }
+
+                @Override
                 public long mmap(long fd, long len, long offset, int mode) {
                     if (inError.get() && pageCount++ == 9) {
                         return -1;
                     }
                     return super.mmap(fd, len, offset, mode);
-                }
-
-                @Override
-                public long getMapPageSize() {
-                    return getPageSize();
                 }
             };
 
@@ -3033,7 +3049,7 @@ public class SqlCompilerTest extends AbstractCairoTest {
                 new Thread(() -> {
                     try {
                         barrier.await();
-                        compiler.compile("create table x (a INT, b FLOAT)", bindVariableService);
+                        compiler.compile("create table x (a INT, b FLOAT)", AllowAllCairoSecurityContext.INSTANCE, bindVariableService);
                         index.set(0);
                         success.incrementAndGet();
                     } catch (Exception ignore) {
@@ -3046,7 +3062,7 @@ public class SqlCompilerTest extends AbstractCairoTest {
                 new Thread(() -> {
                     try {
                         barrier.await();
-                        compiler2.compile("create table x (a STRING, b DOUBLE)", bindVariableService);
+                        compiler2.compile("create table x (a STRING, b DOUBLE)", AllowAllCairoSecurityContext.INSTANCE, bindVariableService);
                         index.set(1);
                         success.incrementAndGet();
                     } catch (Exception ignore) {
@@ -3061,7 +3077,7 @@ public class SqlCompilerTest extends AbstractCairoTest {
                 Assert.assertEquals(1, success.get());
                 Assert.assertNotEquals(-1, index.get());
 
-                try (TableReader reader = engine.getReader("x", TableUtils.ANY_TABLE_VERSION)) {
+                try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_VERSION)) {
                     sink.clear();
                     reader.getMetadata().toJson(sink);
                     if (index.get() == 0) {
@@ -3070,7 +3086,7 @@ public class SqlCompilerTest extends AbstractCairoTest {
                         TestUtils.assertEquals("{\"columnCount\":2,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\"STRING\"},{\"index\":1,\"name\":\"b\",\"type\":\"DOUBLE\"}],\"timestampIndex\":-1}", sink);
                     }
                 }
-                engine.remove(path, "x");
+                engine.remove(AllowAllCairoSecurityContext.INSTANCE, path, "x");
             }
         }
     }
@@ -3086,15 +3102,15 @@ public class SqlCompilerTest extends AbstractCairoTest {
                     " from long_sequence(30)";
             String query = "x where a = :sym";
 
-            compiler.compile(ddl, bindVariableService);
-            compiler.compile(insert, bindVariableService);
+            compiler.compile(ddl, AllowAllCairoSecurityContext.INSTANCE, bindVariableService);
+            compiler.compile(insert, AllowAllCairoSecurityContext.INSTANCE, bindVariableService);
 
 
             bindVariableService.setStr("sym", null);
-            RecordCursorFactory factory = compiler.compile(query, bindVariableService);
+            RecordCursorFactory factory = compiler.compile(query, AllowAllCairoSecurityContext.INSTANCE, bindVariableService);
             sink.clear();
             bindVariableService.setStr("sym", "RXGZSXUX");
-            try (RecordCursor cursor = factory.getCursor(bindVariableService)) {
+            try (RecordCursor cursor = factory.getCursor(compiler.getExecutionContext())) {
                 printer.print(cursor, factory.getMetadata(), true);
             }
 
@@ -3107,10 +3123,10 @@ public class SqlCompilerTest extends AbstractCairoTest {
 
             sink.clear();
 
-            try (RecordCursorFactory f = compiler.compile(query, bindVariableService)) {
+            try (RecordCursorFactory f = compiler.compile(query, AllowAllCairoSecurityContext.INSTANCE, bindVariableService)) {
 
                 bindVariableService.setStr("sym", null);
-                try (RecordCursor cursor = f.getCursor(bindVariableService)) {
+                try (RecordCursor cursor = f.getCursor(compiler.getExecutionContext())) {
                     printer.print(cursor, f.getMetadata(), true);
                 }
 
@@ -3130,10 +3146,10 @@ public class SqlCompilerTest extends AbstractCairoTest {
             // attempt to compile factory again after it is closed
 
             bindVariableService.setStr("sym", null);
-            try (RecordCursorFactory f2 = compiler.compile(query, bindVariableService)) {
+            try (RecordCursorFactory f2 = compiler.compile(query, AllowAllCairoSecurityContext.INSTANCE, bindVariableService)) {
                 sink.clear();
                 bindVariableService.setStr("sym", "RXGZSXUX");
-                try (RecordCursor cursor = f2.getCursor(bindVariableService)) {
+                try (RecordCursor cursor = f2.getCursor(compiler.getExecutionContext())) {
                     printer.print(cursor, f2.getMetadata(), true);
                 }
 
@@ -3148,8 +3164,8 @@ public class SqlCompilerTest extends AbstractCairoTest {
     }
 
     private void assertCast(String expectedData, String expectedMeta, String sql) throws SqlException, IOException {
-        compiler.compile(sql, bindVariableService);
-        try (TableReader reader = engine.getReader("y", TableUtils.ANY_TABLE_VERSION)) {
+        compiler.compile(sql, AllowAllCairoSecurityContext.INSTANCE, bindVariableService);
+        try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "y", TableUtils.ANY_TABLE_VERSION)) {
             sink.clear();
             reader.getMetadata().toJson(sink);
             TestUtils.assertEquals(expectedMeta, sink);
@@ -3179,6 +3195,7 @@ public class SqlCompilerTest extends AbstractCairoTest {
                             " 20," + // record count
                             " 'a', rnd_byte(2,50)" +
                             ")), cast(a as " + ColumnType.nameOf(castTo) + ")",
+                    AllowAllCairoSecurityContext.INSTANCE,
                     bindVariableService);
             Assert.fail();
         } catch (SqlException e) {
@@ -3218,6 +3235,7 @@ public class SqlCompilerTest extends AbstractCairoTest {
                             " 20," + // record count
                             " 'a', rnd_double(2)" +
                             ")), cast(a as " + ColumnType.nameOf(castTo) + ")",
+                    AllowAllCairoSecurityContext.INSTANCE,
                     bindVariableService);
             Assert.fail();
         } catch (SqlException e) {
@@ -3245,6 +3263,7 @@ public class SqlCompilerTest extends AbstractCairoTest {
                             " 20," + // record count
                             " 'a', rnd_float(2)" +
                             ")), cast(a as " + ColumnType.nameOf(castTo) + ")",
+                    AllowAllCairoSecurityContext.INSTANCE,
                     bindVariableService);
             Assert.fail();
         } catch (SqlException e) {
@@ -3272,6 +3291,7 @@ public class SqlCompilerTest extends AbstractCairoTest {
                             " 20," + // record count
                             " 'a', rnd_int(0, 30, 2)" +
                             ")), cast(a as " + ColumnType.nameOf(castTo) + ")",
+                    AllowAllCairoSecurityContext.INSTANCE,
                     bindVariableService);
             Assert.fail();
         } catch (SqlException e) {
@@ -3299,6 +3319,7 @@ public class SqlCompilerTest extends AbstractCairoTest {
                             " 20," + // record count
                             " 'a', rnd_long(0, 30, 2)" +
                             ")), cast(a as " + ColumnType.nameOf(castTo) + ")",
+                    AllowAllCairoSecurityContext.INSTANCE,
                     bindVariableService);
             Assert.fail();
         } catch (SqlException e) {
@@ -3326,6 +3347,7 @@ public class SqlCompilerTest extends AbstractCairoTest {
                             " 20," + // record count
                             " 'a', rnd_short(2,10)" +
                             ")), cast(a as " + ColumnType.nameOf(castTo) + ")",
+                    AllowAllCairoSecurityContext.INSTANCE,
                     bindVariableService);
             Assert.fail();
         } catch (SqlException e) {
@@ -3341,6 +3363,7 @@ public class SqlCompilerTest extends AbstractCairoTest {
                             " 20," + // record count
                             " 'a', rnd_str(5,10,2)" +
                             ")), cast(a as " + ColumnType.nameOf(castTo) + ")",
+                    AllowAllCairoSecurityContext.INSTANCE,
                     bindVariableService);
             Assert.fail();
         } catch (SqlException e) {
@@ -3356,6 +3379,7 @@ public class SqlCompilerTest extends AbstractCairoTest {
                             " 20," + // record count
                             " 'a', rnd_symbol(4,6,10,2)" +
                             ")), cast(a as " + ColumnType.nameOf(castTo) + ")",
+                    AllowAllCairoSecurityContext.INSTANCE,
                     bindVariableService);
             Assert.fail();
         } catch (SqlException e) {
@@ -3379,22 +3403,22 @@ public class SqlCompilerTest extends AbstractCairoTest {
     private void assertCreateTableAsSelect(CharSequence expectedMetadata, CharSequence sql, Fiddler fiddler) throws SqlException {
 
         // create source table
-        compiler.compile("create table X (a int, b int, t timestamp) timestamp(t)", bindVariableService);
+        compiler.compile("create table X (a int, b int, t timestamp) timestamp(t)", AllowAllCairoSecurityContext.INSTANCE, bindVariableService);
 
         try (CairoEngine engine = new CairoEngine(configuration) {
             @Override
-            public TableReader getReader(CharSequence tableName, long tableVersion) {
+            public TableReader getReader(CairoSecurityContext cairoSecurityContext, CharSequence tableName, long tableVersion) {
                 fiddler.run(this);
-                return super.getReader(tableName, tableVersion);
+                return super.getReader(cairoSecurityContext, tableName, tableVersion);
             }
         }) {
 
             try (SqlCompiler compiler = new SqlCompiler(engine)) {
-                compiler.compile(sql, bindVariableService);
+                compiler.compile(sql, AllowAllCairoSecurityContext.INSTANCE, bindVariableService);
 
                 Assert.assertTrue(fiddler.isHappy());
 
-                try (TableReader reader = engine.getReader("Y", TableUtils.ANY_TABLE_VERSION)) {
+                try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "Y", TableUtils.ANY_TABLE_VERSION)) {
                     sink.clear();
                     reader.getMetadata().toJson(sink);
                     TestUtils.assertEquals(expectedMetadata, sink);
@@ -3411,7 +3435,7 @@ public class SqlCompilerTest extends AbstractCairoTest {
 
     private void assertFailure0(int position, CharSequence expectedMessage, CharSequence sql) {
         try {
-            compiler.compile(sql, bindVariableService);
+            compiler.compile(sql, AllowAllCairoSecurityContext.INSTANCE, bindVariableService);
             Assert.fail();
         } catch (SqlException e) {
             Assert.assertEquals(position, e.getPosition());
@@ -3430,25 +3454,25 @@ public class SqlCompilerTest extends AbstractCairoTest {
         try (CairoEngine engine = new CairoEngine(configuration)) {
             try (SqlCompiler compiler = new SqlCompiler(engine)) {
 
-                compiler.compile("create table x (a INT, b INT)", bindVariableService);
+                compiler.compile("create table x (a INT, b INT)", AllowAllCairoSecurityContext.INSTANCE, bindVariableService);
                 try {
-                    compiler.compile("insert into x select rnd_int() int1, rnd_int() int2 from long_sequence(1000000)", bindVariableService);
+                    compiler.compile("insert into x select rnd_int() int1, rnd_int() int2 from long_sequence(1000000)", AllowAllCairoSecurityContext.INSTANCE, bindVariableService);
                     Assert.fail();
                 } catch (CairoException ignore) {
                 }
 
-                try (TableWriter w = engine.getWriter("x")) {
+                try (TableWriter w = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "x")) {
                     Assert.assertEquals(0, w.size());
                 }
 
                 inError.set(false);
 
-                compiler.compile("insert into x select rnd_int() int1, rnd_int() int2 from long_sequence(1000000)", bindVariableService);
-                try (TableWriter w = engine.getWriter("x")) {
+                compiler.compile("insert into x select rnd_int() int1, rnd_int() int2 from long_sequence(1000000)", AllowAllCairoSecurityContext.INSTANCE, bindVariableService);
+                try (TableWriter w = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "x")) {
                     Assert.assertEquals(1000000, w.size());
                 }
 
-                try (TableReader reader = engine.getReader("x", 0)) {
+                try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", 0)) {
                     Assert.assertEquals(1000000, reader.size());
                 }
 
@@ -3461,12 +3485,12 @@ public class SqlCompilerTest extends AbstractCairoTest {
     private void testInsertAsSelect(CharSequence expectedData, CharSequence ddl, CharSequence insert, CharSequence select) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try {
-                compiler.compile(ddl, bindVariableService);
-                compiler.compile(insert, bindVariableService);
+                compiler.compile(ddl, AllowAllCairoSecurityContext.INSTANCE, bindVariableService);
+                compiler.compile(insert, AllowAllCairoSecurityContext.INSTANCE, bindVariableService);
 
-                try (RecordCursorFactory factory = compiler.compile(select, bindVariableService)) {
+                try (RecordCursorFactory factory = compiler.compile(select, AllowAllCairoSecurityContext.INSTANCE, bindVariableService)) {
                     sink.clear();
-                    try (RecordCursor cursor = factory.getCursor(bindVariableService)) {
+                    try (RecordCursor cursor = factory.getCursor(compiler.getExecutionContext())) {
                         printer.print(cursor, factory.getMetadata(), true);
                     }
                     TestUtils.assertEquals(expectedData, sink);

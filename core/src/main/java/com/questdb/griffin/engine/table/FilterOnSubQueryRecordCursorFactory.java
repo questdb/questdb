@@ -25,11 +25,11 @@ package com.questdb.griffin.engine.table;
 
 import com.questdb.cairo.ColumnType;
 import com.questdb.cairo.sql.*;
+import com.questdb.griffin.SqlExecutionContext;
 import com.questdb.griffin.engine.EmptyTableRecordCursor;
 import com.questdb.griffin.engine.StrTypeCaster;
 import com.questdb.griffin.engine.SymbolTypeCaster;
 import com.questdb.griffin.engine.TypeCaster;
-import com.questdb.griffin.engine.functions.bind.BindVariableService;
 import com.questdb.std.IntObjHashMap;
 import com.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
@@ -84,7 +84,10 @@ public class FilterOnSubQueryRecordCursorFactory extends AbstractDataFrameRecord
     }
 
     @Override
-    protected RecordCursor getCursorInstance(DataFrameCursor dataFrameCursor, BindVariableService bindVariableService) {
+    protected RecordCursor getCursorInstance(
+            DataFrameCursor dataFrameCursor,
+            SqlExecutionContext executionContext
+    ) {
         SymbolTable symbolTable = dataFrameCursor.getSymbolTable(columnIndex);
         IntObjHashMap<RowCursorFactory> targetFactories;
         if (factories == factoriesA) {
@@ -96,7 +99,7 @@ public class FilterOnSubQueryRecordCursorFactory extends AbstractDataFrameRecord
         cursorFactories.clear();
         targetFactories.clear();
 
-        try (RecordCursor cursor = recordCursorFactory.getCursor(bindVariableService)) {
+        try (RecordCursor cursor = recordCursorFactory.getCursor(executionContext)) {
             final Record record = cursor.getRecord();
             while (cursor.hasNext()) {
                 final CharSequence symbol = typeCaster.getValue(record, 0);
@@ -132,7 +135,7 @@ public class FilterOnSubQueryRecordCursorFactory extends AbstractDataFrameRecord
             return EmptyTableRecordCursor.INSTANCE;
         }
 
-        this.cursor.of(dataFrameCursor, bindVariableService);
+        this.cursor.of(dataFrameCursor, executionContext);
         return this.cursor;
     }
 }

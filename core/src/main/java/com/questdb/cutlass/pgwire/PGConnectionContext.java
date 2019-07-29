@@ -23,15 +23,13 @@
 
 package com.questdb.cutlass.pgwire;
 
+import com.questdb.cairo.CairoSecurityContext;
 import com.questdb.cairo.ColumnType;
 import com.questdb.cairo.sql.Record;
 import com.questdb.cairo.sql.RecordCursor;
 import com.questdb.cairo.sql.RecordCursorFactory;
 import com.questdb.cairo.sql.RecordMetadata;
-import com.questdb.griffin.CharacterStore;
-import com.questdb.griffin.CharacterStoreEntry;
-import com.questdb.griffin.SqlCompiler;
-import com.questdb.griffin.SqlException;
+import com.questdb.griffin.*;
 import com.questdb.griffin.engine.functions.bind.BindVariableService;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
@@ -70,7 +68,8 @@ public class PGConnectionContext implements IOContext, Mutable {
     private final long recvBuffer;
     private final long sendBuffer;
     private final int recvBufferSize;
-    private final CharacterStore characterStore;
+    private final CharacterStore connectionCharacterStore;
+    private final CharacterStore queryCharacterStore;
     private final BindVariableService bindVariableService = new BindVariableService();
     private final long sendBufferLimit;
     private final int sendBufferSize;
@@ -82,9 +81,12 @@ public class PGConnectionContext implements IOContext, Mutable {
     private final int idleSendCountBeforeGivingUp;
     private final int idleRecvCountBeforeGivingUp;
     private final String serverVersion;
+    private final PGAuthenticator authenticator;
+    private final SqlExecutionContextImpl sqlExecutionContext = new SqlExecutionContextImpl();
+    private CairoSecurityContext cairoSecurityContext = null;
     private int sendCurrentCursorTail = TAIL_NONE;
     private long sendBufferPtr;
-    private boolean needLogin = false;
+    private boolean requireInitalMessage = false;
     private long recvBufferWriteOffset = 0;
     private long recvBufferReadOffset = 0;
     private int bufferRemainingOffset = 0;
@@ -93,6 +95,8 @@ public class PGConnectionContext implements IOContext, Mutable {
     private RecordCursorFactory currentFactory = null;
     private long fd;
     private CharSequence queryText;
+    private CharSequence username;
+    private boolean authenticationRequired = true;
 
     public PGConnectionContext(PGWireConfiguration configuration) {
         this.nf = configuration.getNetworkFacade();
@@ -102,15 +106,17 @@ public class PGConnectionContext implements IOContext, Mutable {
         this.sendBuffer = Unsafe.malloc(this.sendBufferSize);
         this.sendBufferPtr = sendBuffer;
         this.sendBufferLimit = sendBuffer + sendBufferSize;
-        this.characterStore = new CharacterStore(
+        this.queryCharacterStore = new CharacterStore(
                 configuration.getCharacterStoreCapacity(),
                 configuration.getCharacterStorePoolCapacity()
         );
+        this.connectionCharacterStore = new CharacterStore(256, 2);
         this.maxBlobSizeOnQuery = configuration.getMaxBlobSizeOnQuery();
         this.dumpNetworkTraffic = configuration.getDumpNetworkTraffic();
         this.idleSendCountBeforeGivingUp = configuration.getIdleSendCountBeforeGivingUp();
         this.idleRecvCountBeforeGivingUp = configuration.getIdleRecvCountBeforeGivingUp();
         this.serverVersion = configuration.getServerVersion();
+        this.authenticator = new PGBasicAuthenticator(configuration.getDefaultUsername(), configuration.getDefaultPassword());
     }
 
     public static int getInt(long address) {
@@ -136,6 +142,20 @@ public class PGConnectionContext implements IOContext, Mutable {
         return (short) ((b << 8) | Unsafe.getUnsafe().getByte(address + 1) & 0xff);
     }
 
+    public static long getStringLength(long x, long limit) {
+        return Unsafe.getUnsafe().getByte(x) == 0 ? x : getStringLengthTedious(x, limit);
+    }
+
+    public static long getStringLengthTedious(long x, long limit) {
+        // calculate length
+        for (long i = x; i < limit; i++) {
+            if (Unsafe.getUnsafe().getByte(i) == 0) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
     public static void putInt(long address, int value) {
         Unsafe.getUnsafe().putByte(address, (byte) (value >>> 24));
         Unsafe.getUnsafe().putByte(address + 1, (byte) (value >>> 16));
@@ -152,7 +172,7 @@ public class PGConnectionContext implements IOContext, Mutable {
     public void clear() {
         sendCurrentCursorTail = TAIL_NONE;
         sendBufferPtr = sendBuffer;
-        needLogin = true;
+        requireInitalMessage = true;
         recvBufferWriteOffset = 0;
         recvBufferReadOffset = 0;
         bufferRemainingOffset = 0;
@@ -160,8 +180,10 @@ public class PGConnectionContext implements IOContext, Mutable {
         currentCursor = Misc.free(currentCursor);
         currentFactory = Misc.free(currentFactory);
         responseAsciiSink.reset();
-        characterStore.clear();
-        bindVariableService.clear();
+        prepareForNewQuery();
+        // todo: test that both of these are cleared (unit test)
+        authenticationRequired = true;
+        username = null;
     }
 
     @Override
@@ -369,9 +391,9 @@ public class PGConnectionContext implements IOContext, Mutable {
     }
 
     public void setStrBindVariable(int index, long address, int valueLen) throws BadProtocolException {
-        CharacterStoreEntry e = characterStore.newEntry();
+        CharacterStoreEntry e = queryCharacterStore.newEntry();
         if (Chars.utf8Decode(address, address + valueLen, e)) {
-            bindVariableService.setStr(index, characterStore.toImmutable());
+            bindVariableService.setStr(index, queryCharacterStore.toImmutable());
         } else {
             LOG.error().$("invalid UTF8 bytes [index=").$(index).$(']').$();
             throw BadProtocolException.INSTANCE;
@@ -391,18 +413,18 @@ public class PGConnectionContext implements IOContext, Mutable {
         }
     }
 
-    private static void prepareLoginOk(PGConnectionContext.ResponseAsciiSink sink) {
-        sink.put(MESSAGE_TYPE_LOGIN_RESPONSE);
-        sink.putNetworkInt(Integer.BYTES * 2); // length of this message
-        sink.putNetworkInt(0); // response code
-    }
-
     private static void prepareParams(PGConnectionContext.ResponseAsciiSink sink, String name, String value) {
         sink.put(MESSAGE_TYPE_PARAMETER_STATUS);
         final long addr = sink.skip();
         sink.encodeUtf8Z(name);
         sink.encodeUtf8Z(value);
         sink.putLen(addr);
+    }
+
+    static void prepareReadyForQuery(ResponseAsciiSink responseAsciiSink) {
+        responseAsciiSink.put(MESSAGE_TYPE_READY_FOR_QUERY);
+        responseAsciiSink.putNetworkInt(Integer.BYTES + Byte.BYTES);
+        responseAsciiSink.put('I');
     }
 
     void appendRecord(
@@ -576,7 +598,6 @@ public class PGConnectionContext implements IOContext, Mutable {
         }
 
         lo += Short.BYTES;
-        characterStore.clear();
 
         for (int j = 0; j < parameterCount; j++) {
             if (lo + Integer.BYTES > msgLimit) {
@@ -671,20 +692,6 @@ public class PGConnectionContext implements IOContext, Mutable {
         }
     }
 
-    private long getStringLength(long x, long limit) {
-        return Unsafe.getUnsafe().getByte(x) == 0 ? x : getStringLengthTedious(x, limit);
-    }
-
-    private long getStringLengthTedious(long x, long limit) {
-        // calculate length
-        for (long i = x; i < limit; i++) {
-            if (Unsafe.getUnsafe().getByte(i) == 0) {
-                return i;
-            }
-        }
-        return -1;
-    }
-
     /**
      * returns address of where parsing stopped. If there are remaining bytes left
      * int the buffer they need to be passed again in parse function along with
@@ -700,8 +707,8 @@ public class PGConnectionContext implements IOContext, Mutable {
         long limit = address + len;
         final int remaining = (int) (limit - address);
 
-        if (needLogin) {
-            processLoginRequest(address, remaining);
+        if (requireInitalMessage) {
+            processInitialMessage(address, remaining);
             return;
         }
 
@@ -728,36 +735,38 @@ public class PGConnectionContext implements IOContext, Mutable {
             // just exit.
             return;
         }
-
         // we have enough to read entire message
         recvBufferReadOffset += msgLen + 1;
-        long msgLimit = address + msgLen + 1;
+        final long msgLimit = address + msgLen + 1;
         long lo = address + PREFIXED_MESSAGE_HEADER_LEN; // 8 is offset where name value pairs begin
 
+        if (authenticationRequired) {
+            try {
+                cairoSecurityContext = authenticator.authenticate(username, lo, msgLimit);
+            } catch (SqlException e) {
+                prepareError(e);
+                send();
+                return;
+            }
+
+            if (cairoSecurityContext != null) {
+                sqlExecutionContext.with(cairoSecurityContext, bindVariableService);
+                authenticationRequired = false;
+                prepareLoginOk(responseAsciiSink);
+                send();
+            }
+            return;
+        }
+
         switch (type) {
-            case 'p':
-                // +1 is 'type' byte that message length does not account for
-                long hi = getStringLength(lo, msgLimit);
-
-                assert hi > -1;
-
-                dbcs.of(lo, hi);
-
-                LOG.info().$("password=").$(dbcs).$();
-
-                // todo: check that this is all client sent
-                assert limit == msgLimit;
-
-                // send login ok
-                sendLoginOk();
-                break;
             case 'P':
 
+                prepareForNewQuery();
                 // 'Parse'
                 // this appears to be the execution side - we must at least return 'RowDescription'
                 // possibly more, check QueryExecutionImpl.processResults() in PG driver for more info
 
-                hi = getStringLength(lo, msgLimit);
+                long hi = getStringLength(lo, msgLimit);
                 if (hi == -1) {
                     // we did not find 0 within message limit
                     LOG.error().$("bad prepared statement name length [msgType='P']").$();
@@ -772,9 +781,9 @@ public class PGConnectionContext implements IOContext, Mutable {
                     throw BadProtocolException.INSTANCE;
                 }
 
-                CharacterStoreEntry e = characterStore.newEntry();
+                CharacterStoreEntry e = queryCharacterStore.newEntry();
                 if (Chars.utf8Decode(lo, hi, e)) {
-                    queryText = characterStore.toImmutable();
+                    queryText = queryCharacterStore.toImmutable();
                     LOG.info().$("parse [q=").utf8(queryText).$(']').$();
                 } else {
                     LOG.error().$("invalid UTF8 bytes in parse query").$();
@@ -814,7 +823,7 @@ public class PGConnectionContext implements IOContext, Mutable {
 
                 parseQuery(queryText, compiler, factoryCache);
                 if (currentFactory == null) {
-                    prepareReadyForQuery();
+                    prepareReadyForQuery(responseAsciiSink);
                     LOG.info().$("executed DDL").$();
                     send();
                 }
@@ -868,7 +877,7 @@ public class PGConnectionContext implements IOContext, Mutable {
             case 'E': // execute
                 if (currentFactory != null) {
                     LOG.info().$("executing query").$();
-                    currentCursor = currentFactory.getCursor(bindVariableService);
+                    currentCursor = currentFactory.getCursor(sqlExecutionContext);
                     sendCursor();
                     sendExecuteTail();
                 }
@@ -884,12 +893,11 @@ public class PGConnectionContext implements IOContext, Mutable {
                 break;
             case 'Q':
                 // vanilla query
-                bindVariableService.clear();
-                characterStore.clear();
+                prepareForNewQuery();
 
-                e = characterStore.newEntry();
+                e = queryCharacterStore.newEntry();
                 if (Chars.utf8Decode(lo, limit - 1, e)) {
-                    queryText = characterStore.toImmutable();
+                    queryText = queryCharacterStore.toImmutable();
                     LOG.info().$("simple query [q=").utf8(queryText).$(']').$();
                 } else {
                     LOG.error().$("invalid UTF8 bytes in simple query").$();
@@ -898,7 +906,7 @@ public class PGConnectionContext implements IOContext, Mutable {
 
                 currentFactory = factoryCache.peek(queryText);
                 if (currentFactory == null) {
-                    currentFactory = compiler.compile(queryText, bindVariableService);
+                    currentFactory = compiler.compile(queryText, cairoSecurityContext, bindVariableService);
                     if (currentFactory != null) {
                         factoryCache.put(queryText, currentFactory);
                     } else {
@@ -913,7 +921,7 @@ public class PGConnectionContext implements IOContext, Mutable {
                         currentCursor.close();
                     }
 
-                    currentCursor = currentFactory.getCursor(bindVariableService);
+                    currentCursor = currentFactory.getCursor(sqlExecutionContext);
                     prepareRowDescription(currentFactory.getMetadata());
                     sendCursor();
                     sendExecuteTail();
@@ -938,7 +946,7 @@ public class PGConnectionContext implements IOContext, Mutable {
         if (!Chars.startsWith(query, "SET")) {
             currentFactory = factoryCache.peek(query);
             if (currentFactory == null) {
-                currentFactory = compiler.compile(query, bindVariableService);
+                currentFactory = compiler.compile(query, cairoSecurityContext, bindVariableService);
                 if (currentFactory != null) {
                     factoryCache.put(query, currentFactory);
                 } else {
@@ -950,6 +958,11 @@ public class PGConnectionContext implements IOContext, Mutable {
             // same as DDL, but special handling because SQL compiler does not yet understand these SETs
             prepareParseComplete();
         }
+    }
+
+    private void prepareForNewQuery() {
+        queryCharacterStore.clear();
+        bindVariableService.clear();
     }
 
     void prepareCommandComplete() {
@@ -971,15 +984,21 @@ public class PGConnectionContext implements IOContext, Mutable {
         responseAsciiSink.putLen(addr);
     }
 
+    private void prepareLoginOk(ResponseAsciiSink sink) {
+        sink.reset();
+        sink.put(MESSAGE_TYPE_LOGIN_RESPONSE);
+        sink.putNetworkInt(Integer.BYTES * 2); // length of this message
+        sink.putNetworkInt(0); // response code
+        prepareParams(sink, "TimeZone", "GMT");
+        prepareParams(sink, "application_name", "QuestDB");
+        prepareParams(sink, "server_version", serverVersion);
+        prepareParams(sink, "integer_datetimes", "on");
+        prepareReadyForQuery(sink);
+    }
+
     private void prepareParseComplete() {
         responseAsciiSink.put(MESSAGE_TYPE_PARSE_COMPLETE);
         responseAsciiSink.putNetworkInt(Integer.BYTES);
-    }
-
-    void prepareReadyForQuery() {
-        responseAsciiSink.put(MESSAGE_TYPE_READY_FOR_QUERY);
-        responseAsciiSink.putNetworkInt(Integer.BYTES + Byte.BYTES);
-        responseAsciiSink.put('I');
     }
 
     private void prepareRowDescription(
@@ -1004,8 +1023,7 @@ public class PGConnectionContext implements IOContext, Mutable {
         sink.putLen(addr);
     }
 
-    private void processLoginRequest(long address, int remaining) throws PeerDisconnectedException, PeerIsSlowToReadException, BadProtocolException {
-        // todo: make it configurable how we authorize and authenticate users
+    private void processInitialMessage(long address, int remaining) throws PeerDisconnectedException, PeerIsSlowToReadException, BadProtocolException {
         int msgLen;
         long msgLimit;// expect startup request
         if (remaining < Long.BYTES) {
@@ -1037,7 +1055,7 @@ public class PGConnectionContext implements IOContext, Mutable {
             case INIT_STARTUP_MESSAGE:
                 // StartupMessage
                 // extract properties
-                needLogin = false;
+                requireInitalMessage = false;
                 msgLimit = address + msgLen;
                 long lo = address + Long.BYTES;
                 // there is an extra byte at the end and it has to be 0
@@ -1045,6 +1063,8 @@ public class PGConnectionContext implements IOContext, Mutable {
                         .$("protocol [major=").$(protocol >> 16)
                         .$(", minor=").$((short) protocol)
                         .$(']').$();
+
+                connectionCharacterStore.clear();
 
                 while (lo < msgLimit - 1) {
 
@@ -1055,17 +1075,27 @@ public class PGConnectionContext implements IOContext, Mutable {
                         assert hi > -1;
                         log.$("name=").$(dbcs.of(lo, hi));
 
+                        final boolean username = Chars.equals("user", dbcs);
+
                         // name is ready
-
                         lo = hi + 1;
-
                         hi = getStringLength(lo, msgLimit);
                         assert hi > -1;
                         log.$(", value=").$(dbcs.of(lo, hi));
                         lo = hi + 1;
+                        if (username) {
+                            CharacterStoreEntry e = connectionCharacterStore.newEntry();
+                            e.put(dbcs);
+                            this.username = e.toImmutable();
+                        }
                     } finally {
                         log.$(']').$(); // release under all circumstances
                     }
+                }
+
+                if (this.username == null) {
+                    LOG.error().$("user is not specified").$();
+                    throw BadProtocolException.INSTANCE;
                 }
                 sendClearTextPasswordChallenge();
                 break;
@@ -1171,7 +1201,7 @@ public class PGConnectionContext implements IOContext, Mutable {
         switch (sendCurrentCursorTail) {
             case TAIL_SUCCESS:
                 prepareCommandComplete();
-                prepareReadyForQuery();
+                prepareReadyForQuery(responseAsciiSink);
                 LOG.info().$("executed query").$();
                 sendCurrentCursorTail = PGConnectionContext.TAIL_NONE;
                 send();
@@ -1179,7 +1209,7 @@ public class PGConnectionContext implements IOContext, Mutable {
             case PGConnectionContext.TAIL_ERROR:
                 SqlException e = SqlException.last();
                 prepareError(e);
-                prepareReadyForQuery();
+                prepareReadyForQuery(responseAsciiSink);
                 LOG.info().$("SQL exception [pos=").$(e.getPosition()).$(", msg=").$(e.getFlyweightMessage()).$(']').$();
                 sendCurrentCursorTail = PGConnectionContext.TAIL_NONE;
                 send();
@@ -1187,17 +1217,6 @@ public class PGConnectionContext implements IOContext, Mutable {
             default:
                 break;
         }
-    }
-
-    private void sendLoginOk() throws PeerDisconnectedException, PeerIsSlowToReadException {
-        responseAsciiSink.reset();
-        prepareLoginOk(responseAsciiSink);
-        prepareParams(responseAsciiSink, "TimeZone", "GMT");
-        prepareParams(responseAsciiSink, "application_name", "QuestDB");
-        prepareParams(responseAsciiSink, "server_version", serverVersion);
-        prepareParams(responseAsciiSink, "integer_datetimes", "on");
-        prepareReadyForQuery();
-        send();
     }
 
     private void setupBindVariables(

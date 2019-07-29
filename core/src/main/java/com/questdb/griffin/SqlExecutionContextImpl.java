@@ -21,22 +21,28 @@
  *
  ******************************************************************************/
 
-package com.questdb.cairo;
+package com.questdb.griffin;
 
-import com.questdb.cairo.sql.DataFrameCursor;
-import com.questdb.std.LongList;
+import com.questdb.cairo.CairoSecurityContext;
+import com.questdb.griffin.engine.functions.bind.BindVariableService;
 
-public class IntervalBwdDataFrameCursorFactory extends AbstractDataFrameCursorFactory {
-    private final IntervalBwdDataFrameCursor cursor;
+public class SqlExecutionContextImpl implements SqlExecutionContext {
+    private BindVariableService bindVariableService;
+    private CairoSecurityContext cairoSecurityContext;
 
-    public IntervalBwdDataFrameCursorFactory(CairoEngine engine, String tableName, long tableVersion, LongList intervals) {
-        super(engine, tableName, tableVersion);
-        this.cursor = new IntervalBwdDataFrameCursor(intervals);
+    @Override
+    public BindVariableService getBindVariableService() {
+        return bindVariableService;
     }
 
     @Override
-    public DataFrameCursor getCursor(CairoSecurityContext securityContext) {
-        cursor.of(getReader(securityContext));
-        return cursor;
+    public CairoSecurityContext getCairoSecurityContext() {
+        return cairoSecurityContext;
+    }
+
+    public SqlExecutionContextImpl with(CairoSecurityContext cairoSecurityContext, BindVariableService bindVariableService) {
+        this.cairoSecurityContext = cairoSecurityContext;
+        this.bindVariableService = bindVariableService;
+        return this;
     }
 }

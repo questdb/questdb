@@ -36,7 +36,11 @@ public abstract class AbstractDataFrameCursorFactory implements DataFrameCursorF
         this.tableVersion = tableVersion;
     }
 
-    protected TableReader getReader() {
-        return engine.getReader(tableName, tableVersion);
+    protected TableReader getReader(CairoSecurityContext securityContext) {
+        return engine.getReader(
+                securityContext,
+                tableName,
+                tableVersion
+        );
     }
 }

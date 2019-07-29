@@ -29,7 +29,6 @@ import com.questdb.griffin.FunctionFactory;
 import com.questdb.griffin.SqlCompiler;
 import com.questdb.griffin.SqlException;
 import com.questdb.griffin.engine.AbstractFunctionFactoryTest;
-import com.questdb.griffin.engine.functions.bind.BindVariableService;
 import com.questdb.griffin.engine.functions.math.NegIntFunctionFactory;
 import com.questdb.std.Rnd;
 import org.junit.Before;
@@ -40,7 +39,6 @@ import java.io.IOException;
 public class RndBinFunctionFactoryTest extends AbstractFunctionFactoryTest {
     private static final CairoEngine engine = new CairoEngine(configuration);
     private static final SqlCompiler compiler = new SqlCompiler(engine);
-    private static final BindVariableService bindVariableService = new BindVariableService();
 
     @Before
     public void setup() {
@@ -137,7 +135,7 @@ public class RndBinFunctionFactoryTest extends AbstractFunctionFactoryTest {
     }
 
     private void assertQuery(CharSequence expected, CharSequence sql) throws SqlException, IOException {
-        RecordCursorFactory factory = compiler.compile(sql, bindVariableService);
-        assertOnce(expected, factory.getCursor(bindVariableService), factory.getMetadata(), true);
+        RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext.getCairoSecurityContext(), sqlExecutionContext.getBindVariableService());
+        assertOnce(expected, factory.getCursor(sqlExecutionContext), factory.getMetadata(), true);
     }
 }

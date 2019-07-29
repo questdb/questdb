@@ -27,6 +27,7 @@ import com.questdb.cairo.AbstractCairoTest;
 import com.questdb.cairo.CairoEngine;
 import com.questdb.cairo.ColumnType;
 import com.questdb.cairo.TableUtils;
+import com.questdb.cairo.security.AllowAllCairoSecurityContext;
 import com.questdb.cairo.sql.*;
 import com.questdb.griffin.engine.functions.bind.BindVariableService;
 import com.questdb.std.BinarySequence;
@@ -43,13 +44,13 @@ import java.io.IOException;
 
 public class AbstractGriffinTest extends AbstractCairoTest {
     protected static final BindVariableService bindVariableService = new BindVariableService();
+    protected static final SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl().with(AllowAllCairoSecurityContext.INSTANCE, bindVariableService);
     private static final LongList rows = new LongList();
     protected static CairoEngine engine;
     protected static SqlCompiler compiler;
-    protected static TestExecutionContext sqlExecutionContext;
 
     public static void assertVariableColumns(RecordCursorFactory factory) {
-        try (RecordCursor cursor = factory.getCursor(bindVariableService)) {
+        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
             RecordMetadata metadata = factory.getMetadata();
             final int columnCount = metadata.getColumnCount();
             final Record record = cursor.getRecord();
@@ -88,7 +89,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
     public static void setUp2() {
         engine = new CairoEngine(configuration);
         compiler = new SqlCompiler(engine);
-        sqlExecutionContext = new TestExecutionContext(compiler.getCodeGenerator());
+        bindVariableService.clear();
     }
 
     @AfterClass
@@ -98,7 +99,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
     }
 
     protected static void assertCursor(CharSequence expected, RecordCursorFactory factory, boolean supportsRandomAccess) throws IOException {
-        try (RecordCursor cursor = factory.getCursor(bindVariableService)) {
+        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
             if (expected == null) {
                 Assert.assertFalse(cursor.hasNext());
                 cursor.toTop();
@@ -227,7 +228,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
     protected static void assertTimestampColumnValues(RecordCursorFactory factory) {
         int index = factory.getMetadata().getTimestampIndex();
         long timestamp = Long.MIN_VALUE;
-        try (RecordCursor cursor = factory.getCursor(bindVariableService)) {
+        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
             final Record record = cursor.getRecord();
             while (cursor.hasNext()) {
                 long ts = record.getTimestamp(index);
@@ -245,7 +246,11 @@ public class AbstractGriffinTest extends AbstractCairoTest {
             CharSequence expected2,
             boolean supportsRandomAccess
     ) throws IOException, SqlException {
-        try (final RecordCursorFactory factory = compiler.compile(query, bindVariableService)) {
+        try (final RecordCursorFactory factory = compiler.compile(
+                query,
+                sqlExecutionContext.getCairoSecurityContext(),
+                sqlExecutionContext.getBindVariableService()
+        )) {
             assertTimestamp(expectedTimestamp, factory);
             assertCursor(expected, factory, supportsRandomAccess);
             // make sure we get the same outcome when we get factory to create new cursor
@@ -254,7 +259,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
             assertVariableColumns(factory);
 
             if (ddl2 != null) {
-                compiler.compile(ddl2, bindVariableService);
+                compiler.compile(ddl2, sqlExecutionContext.getCairoSecurityContext(), sqlExecutionContext.getBindVariableService());
                 assertCursor(expected2, factory, supportsRandomAccess);
                 // and again
                 assertCursor(expected2, factory, supportsRandomAccess);
@@ -275,7 +280,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             try {
                 if (ddl != null) {
-                    compiler.compile(ddl, bindVariableService);
+                    compiler.compile(ddl, sqlExecutionContext.getCairoSecurityContext(), sqlExecutionContext.getBindVariableService());
                 }
                 if (verify != null) {
                     printSqlResult(null, verify, expectedTimestamp, ddl2, expected2, supportsRandomAccess);
@@ -357,10 +362,10 @@ public class AbstractGriffinTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             try {
                 if (ddl != null) {
-                    compiler.compile(ddl, bindVariableService);
+                    compiler.compile(ddl, sqlExecutionContext.getCairoSecurityContext(), sqlExecutionContext.getBindVariableService());
                 }
                 try {
-                    compiler.compile(query, bindVariableService);
+                    compiler.compile(query, sqlExecutionContext.getCairoSecurityContext(), sqlExecutionContext.getBindVariableService());
                     Assert.fail();
                 } catch (SqlException e) {
                     Assert.assertEquals(expectedPosition, e.getPosition());
@@ -380,7 +385,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
     }
 
     protected void assertQuery(String expected, String query, String expectedTimestamp, boolean supportsRandomAccess) throws IOException, SqlException {
-        try (final RecordCursorFactory factory = compiler.compile(query, bindVariableService)) {
+        try (final RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext.getCairoSecurityContext(), sqlExecutionContext.getBindVariableService())) {
             assertFactoryCursor(expected, expectedTimestamp, factory, supportsRandomAccess);
         }
     }
@@ -390,7 +395,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
     }
 
     protected void assertQueryAndCache(String expected, String query, String expectedTimestamp, boolean supportsRandomAccess) throws IOException, SqlException {
-        final RecordCursorFactory factory = compiler.compile(query, bindVariableService);
+        final RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext.getCairoSecurityContext(), sqlExecutionContext.getBindVariableService());
         assertFactoryCursor(expected, expectedTimestamp, factory, supportsRandomAccess);
         compiler.cache(query, factory);
     }

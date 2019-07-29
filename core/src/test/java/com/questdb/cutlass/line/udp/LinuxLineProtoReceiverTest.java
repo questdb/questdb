@@ -24,6 +24,7 @@
 package com.questdb.cutlass.line.udp;
 
 import com.questdb.cairo.*;
+import com.questdb.cairo.security.AllowAllCairoSecurityContext;
 import com.questdb.mp.Job;
 import com.questdb.mp.SOCountDownLatch;
 import com.questdb.mp.Worker;
@@ -204,7 +205,7 @@ public class LinuxLineProtoReceiverTest extends AbstractCairoTest {
     private void assertConstructorFail(LineUdpReceiverConfiguration receiverCfg, ReceiverFactory factory) {
         try (CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(root), null)) {
             try {
-                factory.createReceiver(receiverCfg, engine);
+                factory.createReceiver(receiverCfg, engine, AllowAllCairoSecurityContext.INSTANCE);
                 Assert.fail();
             } catch (CairoException ignore) {
             }
@@ -237,7 +238,7 @@ public class LinuxLineProtoReceiverTest extends AbstractCairoTest {
 
             try (CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(root), null)) {
 
-                Job receiver = factory.createReceiver(receiverCfg, engine);
+                Job receiver = factory.createReceiver(receiverCfg, engine, AllowAllCairoSecurityContext.INSTANCE);
 
                 try {
 
@@ -254,7 +255,7 @@ public class LinuxLineProtoReceiverTest extends AbstractCairoTest {
                     }
 
                     // warm writer up
-                    try (TableWriter w = engine.getWriter("tab")) {
+                    try (TableWriter w = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "tab")) {
                         w.warmUp();
                     }
 

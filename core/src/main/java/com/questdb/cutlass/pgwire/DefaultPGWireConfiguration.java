@@ -124,4 +124,14 @@ public class DefaultPGWireConfiguration implements PGWireConfiguration {
     public boolean isEnabled() {
         return true;
     }
+
+    @Override
+    public String getDefaultPassword() {
+        return "quest";
+    }
+
+    @Override
+    public String getDefaultUsername() {
+        return "admin";
+    }
 }

@@ -5,7 +5,7 @@
  *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
  *   \__\_\\__,_|\___||___/\__|____/|____/
  *
- * Copyright (C) 2014-2018 Appsicle
+ * Copyright (C) 2014-2019 Appsicle
  *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU Affero General Public License, version 3,
@@ -23,6 +23,7 @@
 
 package com.questdb.griffin;
 
+import com.questdb.cairo.security.AllowAllCairoSecurityContext;
 import com.questdb.griffin.engine.functions.rnd.SharedRandom;
 import com.questdb.std.Rnd;
 import com.questdb.test.tools.TestUtils;
@@ -344,25 +345,25 @@ public class LimitTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testTopNVariable() throws Exception {
-        String query = "select * from y limit :lim";
+    public void testRangeVariable() throws Exception {
+        String query = "select * from y limit :lo,:hi";
         TestUtils.assertMemoryLeak(() -> {
             try {
                 String expected1 = "i\tsym2\tprice\ttimestamp\tb\tc\td\te\tf\tg\tik\tj\tk\tl\tm\tn\n" +
-                        "1\tmsft\t0.509000000000\t2018-01-01T00:02:00.000000Z\tfalse\tU\t0.524372285929\t0.8072\t365\t2015-05-02T19:30:57.935Z\t\t-4485747798769957016\t1970-01-01T00:00:00.000000Z\t19\t00000000 19 c4 95 94 36 53 49 b4 59 7e 3b 08 a1 1e\tYSBEOUOJSHRUEDRQ\n" +
-                        "2\tgoogl\t0.423000000000\t2018-01-01T00:04:00.000000Z\tfalse\tG\t0.529840594176\tNaN\t493\t2015-04-09T11:42:28.332Z\tHYRX\t-8811278461560712840\t1970-01-01T00:16:40.000000Z\t29\t00000000 53 d0 fb 64 bb 1a d4 f0 2d 40 e2 4b b1 3e e3 f1\t\n" +
-                        "3\tgoogl\t0.174000000000\t2018-01-01T00:06:00.000000Z\tfalse\tW\t0.882822836670\t0.7230\t845\t2015-08-26T10:57:26.275Z\tVTJW\t9029468389542245059\t1970-01-01T00:33:20.000000Z\t46\t00000000 e5 61 2f 64 0e 2c 7f d7 6f b8 c9 ae 28 c7 84 47\tDSWUGSHOLNV\n" +
-                        "4\tibm\t0.148000000000\t2018-01-01T00:08:00.000000Z\ttrue\tI\t0.345689799154\t0.2401\t775\t2015-08-03T15:58:03.335Z\tVTJW\t-8910603140262731534\t1970-01-01T00:50:00.000000Z\t24\t00000000 ac a8 3b a6 dc 3b 7d 2b e3 92 fe 69 38 e1 77 9a\n" +
-                        "00000010 e7 0c 89\tLJUMLGLHMLLEO\n";
+                        "5\tgoogl\t0.868000000000\t2018-01-01T00:10:00.000000Z\ttrue\tZ\t0.427470428635\t0.0212\t179\t\t\t5746626297238459939\t1970-01-01T01:06:40.000000Z\t35\t00000000 91 88 28 a5 18 93 bd 0b 61 f5 5d d0 eb\tRGIIH\n" +
+                        "6\tmsft\t0.297000000000\t2018-01-01T00:12:00.000000Z\tfalse\tY\t0.267212048922\t0.1326\t215\t\t\t-8534688874718947140\t1970-01-01T01:23:20.000000Z\t34\t00000000 1c 0b 20 a2 86 89 37 11 2c 14\tUSZMZVQE\n" +
+                        "7\tgoogl\t0.076000000000\t2018-01-01T00:14:00.000000Z\ttrue\tE\t0.760625263412\t0.0658\t1018\t2015-02-23T07:09:35.550Z\tPEHN\t7797019568426198829\t1970-01-01T01:40:00.000000Z\t10\t00000000 80 c9 eb a3 67 7a 1a 79 e4 35 e4 3a dc 5c 65 ff\tIGYVFZ\n" +
+                        "8\tibm\t0.543000000000\t2018-01-01T00:16:00.000000Z\ttrue\tO\t0.483525620204\t0.8688\t355\t2015-09-06T20:21:06.672Z\t\t-9219078548506735248\t1970-01-01T01:56:40.000000Z\t33\t00000000 b3 14 cd 47 0b 0c 39 12 f7 05 10 f4 6d f1\tXUKLGMXSLUQ\n";
 
                 String expected2 = "i\tsym2\tprice\ttimestamp\tb\tc\td\te\tf\tg\tik\tj\tk\tl\tm\tn\n" +
-                        "1\tmsft\t0.509000000000\t2018-01-01T00:02:00.000000Z\tfalse\tU\t0.524372285929\t0.8072\t365\t2015-05-02T19:30:57.935Z\t\t-4485747798769957016\t1970-01-01T00:00:00.000000Z\t19\t00000000 19 c4 95 94 36 53 49 b4 59 7e 3b 08 a1 1e\tYSBEOUOJSHRUEDRQ\n" +
-                        "2\tgoogl\t0.423000000000\t2018-01-01T00:04:00.000000Z\tfalse\tG\t0.529840594176\tNaN\t493\t2015-04-09T11:42:28.332Z\tHYRX\t-8811278461560712840\t1970-01-01T00:16:40.000000Z\t29\t00000000 53 d0 fb 64 bb 1a d4 f0 2d 40 e2 4b b1 3e e3 f1\t\n" +
-                        "3\tgoogl\t0.174000000000\t2018-01-01T00:06:00.000000Z\tfalse\tW\t0.882822836670\t0.7230\t845\t2015-08-26T10:57:26.275Z\tVTJW\t9029468389542245059\t1970-01-01T00:33:20.000000Z\t46\t00000000 e5 61 2f 64 0e 2c 7f d7 6f b8 c9 ae 28 c7 84 47\tDSWUGSHOLNV\n" +
-                        "4\tibm\t0.148000000000\t2018-01-01T00:08:00.000000Z\ttrue\tI\t0.345689799154\t0.2401\t775\t2015-08-03T15:58:03.335Z\tVTJW\t-8910603140262731534\t1970-01-01T00:50:00.000000Z\t24\t00000000 ac a8 3b a6 dc 3b 7d 2b e3 92 fe 69 38 e1 77 9a\n" +
-                        "00000010 e7 0c 89\tLJUMLGLHMLLEO\n" +
-                        "5\tgoogl\t0.868000000000\t2018-01-01T00:10:00.000000Z\ttrue\tZ\t0.427470428635\t0.0212\t179\t\t\t5746626297238459939\t1970-01-01T01:06:40.000000Z\t35\t00000000 91 88 28 a5 18 93 bd 0b 61 f5 5d d0 eb\tRGIIH\n" +
-                        "6\tmsft\t0.297000000000\t2018-01-01T00:12:00.000000Z\tfalse\tY\t0.267212048922\t0.1326\t215\t\t\t-8534688874718947140\t1970-01-01T01:23:20.000000Z\t34\t00000000 1c 0b 20 a2 86 89 37 11 2c 14\tUSZMZVQE\n";
+                        "7\tgoogl\t0.076000000000\t2018-01-01T00:14:00.000000Z\ttrue\tE\t0.760625263412\t0.0658\t1018\t2015-02-23T07:09:35.550Z\tPEHN\t7797019568426198829\t1970-01-01T01:40:00.000000Z\t10\t00000000 80 c9 eb a3 67 7a 1a 79 e4 35 e4 3a dc 5c 65 ff\tIGYVFZ\n" +
+                        "8\tibm\t0.543000000000\t2018-01-01T00:16:00.000000Z\ttrue\tO\t0.483525620204\t0.8688\t355\t2015-09-06T20:21:06.672Z\t\t-9219078548506735248\t1970-01-01T01:56:40.000000Z\t33\t00000000 b3 14 cd 47 0b 0c 39 12 f7 05 10 f4 6d f1\tXUKLGMXSLUQ\n" +
+                        "9\tmsft\t0.623000000000\t2018-01-01T00:18:00.000000Z\tfalse\tI\t0.878611111254\t0.9966\t403\t2015-08-19T00:36:24.375Z\tCPSW\t-8506266080452644687\t1970-01-01T02:13:20.000000Z\t6\t00000000 9a ef 88 cb 4b a1 cf cf 41 7d a6\t\n" +
+                        "10\tmsft\t0.509000000000\t2018-01-01T00:20:00.000000Z\ttrue\tI\t0.491532681548\t0.0024\t195\t2015-10-15T17:45:21.025Z\t\t3987576220753016999\t1970-01-01T02:30:00.000000Z\t20\t00000000 96 37 08 dd 98 ef 54 88 2a a2\t\n" +
+                        "11\tmsft\t0.578000000000\t2018-01-01T00:22:00.000000Z\ttrue\tP\t0.746701366813\t0.5795\t122\t2015-11-25T07:36:56.937Z\t\t2004830221820243556\t1970-01-01T02:46:40.000000Z\t45\t00000000 a0 dd 44 11 e2 a3 24 4e 44 a8 0d fe 27 ec 53 13\n" +
+                        "00000010 5d b2 15 e7\tWGRMDGGIJYDVRV\n" +
+                        "12\tmsft\t0.661000000000\t2018-01-01T00:24:00.000000Z\ttrue\tO\t0.013960795460\t0.8136\t345\t2015-08-18T10:31:42.373Z\tVTJW\t5045825384817367685\t1970-01-01T03:03:20.000000Z\t23\t00000000 51 9d 5d 28 ac 02 2e fe 05 3b 94 5f ec d3 dc f8\n" +
+                        "00000010 43\tJCTIZKYFLUHZ\n";
 
                 compiler.compile(
                         "create table y as (" +
@@ -385,12 +386,17 @@ public class LimitTest extends AbstractGriffinTest {
                                 " rnd_str(5,16,2) n" +
                                 " from long_sequence(30)" +
                                 ") timestamp(timestamp)"
+                        , AllowAllCairoSecurityContext.INSTANCE
                         , bindVariableService
                 );
 
-                bindVariableService.setLong("lim", 4);
+                bindVariableService.setLong("lo", 4);
+                bindVariableService.setInt("hi", 8);
+
                 assertQueryAndCache(expected1, query, "timestamp", true);
-                bindVariableService.setLong("lim", 6);
+                bindVariableService.setLong("lo", 6);
+                bindVariableService.setInt("hi", 12);
+
                 assertQueryAndCache(expected2, query, "timestamp", true);
             } finally {
                 engine.releaseAllWriters();
@@ -441,6 +447,7 @@ public class LimitTest extends AbstractGriffinTest {
                                 " rnd_str(5,16,2) n" +
                                 " from long_sequence(30)" +
                                 ") timestamp(timestamp)"
+                        , AllowAllCairoSecurityContext.INSTANCE
                         , bindVariableService
                 );
 
@@ -456,25 +463,25 @@ public class LimitTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testRangeVariable() throws Exception {
-        String query = "select * from y limit :lo,:hi";
+    public void testTopNVariable() throws Exception {
+        String query = "select * from y limit :lim";
         TestUtils.assertMemoryLeak(() -> {
             try {
                 String expected1 = "i\tsym2\tprice\ttimestamp\tb\tc\td\te\tf\tg\tik\tj\tk\tl\tm\tn\n" +
-                        "5\tgoogl\t0.868000000000\t2018-01-01T00:10:00.000000Z\ttrue\tZ\t0.427470428635\t0.0212\t179\t\t\t5746626297238459939\t1970-01-01T01:06:40.000000Z\t35\t00000000 91 88 28 a5 18 93 bd 0b 61 f5 5d d0 eb\tRGIIH\n" +
-                        "6\tmsft\t0.297000000000\t2018-01-01T00:12:00.000000Z\tfalse\tY\t0.267212048922\t0.1326\t215\t\t\t-8534688874718947140\t1970-01-01T01:23:20.000000Z\t34\t00000000 1c 0b 20 a2 86 89 37 11 2c 14\tUSZMZVQE\n" +
-                        "7\tgoogl\t0.076000000000\t2018-01-01T00:14:00.000000Z\ttrue\tE\t0.760625263412\t0.0658\t1018\t2015-02-23T07:09:35.550Z\tPEHN\t7797019568426198829\t1970-01-01T01:40:00.000000Z\t10\t00000000 80 c9 eb a3 67 7a 1a 79 e4 35 e4 3a dc 5c 65 ff\tIGYVFZ\n" +
-                        "8\tibm\t0.543000000000\t2018-01-01T00:16:00.000000Z\ttrue\tO\t0.483525620204\t0.8688\t355\t2015-09-06T20:21:06.672Z\t\t-9219078548506735248\t1970-01-01T01:56:40.000000Z\t33\t00000000 b3 14 cd 47 0b 0c 39 12 f7 05 10 f4 6d f1\tXUKLGMXSLUQ\n";
+                        "1\tmsft\t0.509000000000\t2018-01-01T00:02:00.000000Z\tfalse\tU\t0.524372285929\t0.8072\t365\t2015-05-02T19:30:57.935Z\t\t-4485747798769957016\t1970-01-01T00:00:00.000000Z\t19\t00000000 19 c4 95 94 36 53 49 b4 59 7e 3b 08 a1 1e\tYSBEOUOJSHRUEDRQ\n" +
+                        "2\tgoogl\t0.423000000000\t2018-01-01T00:04:00.000000Z\tfalse\tG\t0.529840594176\tNaN\t493\t2015-04-09T11:42:28.332Z\tHYRX\t-8811278461560712840\t1970-01-01T00:16:40.000000Z\t29\t00000000 53 d0 fb 64 bb 1a d4 f0 2d 40 e2 4b b1 3e e3 f1\t\n" +
+                        "3\tgoogl\t0.174000000000\t2018-01-01T00:06:00.000000Z\tfalse\tW\t0.882822836670\t0.7230\t845\t2015-08-26T10:57:26.275Z\tVTJW\t9029468389542245059\t1970-01-01T00:33:20.000000Z\t46\t00000000 e5 61 2f 64 0e 2c 7f d7 6f b8 c9 ae 28 c7 84 47\tDSWUGSHOLNV\n" +
+                        "4\tibm\t0.148000000000\t2018-01-01T00:08:00.000000Z\ttrue\tI\t0.345689799154\t0.2401\t775\t2015-08-03T15:58:03.335Z\tVTJW\t-8910603140262731534\t1970-01-01T00:50:00.000000Z\t24\t00000000 ac a8 3b a6 dc 3b 7d 2b e3 92 fe 69 38 e1 77 9a\n" +
+                        "00000010 e7 0c 89\tLJUMLGLHMLLEO\n";
 
                 String expected2 = "i\tsym2\tprice\ttimestamp\tb\tc\td\te\tf\tg\tik\tj\tk\tl\tm\tn\n" +
-                        "7\tgoogl\t0.076000000000\t2018-01-01T00:14:00.000000Z\ttrue\tE\t0.760625263412\t0.0658\t1018\t2015-02-23T07:09:35.550Z\tPEHN\t7797019568426198829\t1970-01-01T01:40:00.000000Z\t10\t00000000 80 c9 eb a3 67 7a 1a 79 e4 35 e4 3a dc 5c 65 ff\tIGYVFZ\n" +
-                        "8\tibm\t0.543000000000\t2018-01-01T00:16:00.000000Z\ttrue\tO\t0.483525620204\t0.8688\t355\t2015-09-06T20:21:06.672Z\t\t-9219078548506735248\t1970-01-01T01:56:40.000000Z\t33\t00000000 b3 14 cd 47 0b 0c 39 12 f7 05 10 f4 6d f1\tXUKLGMXSLUQ\n" +
-                        "9\tmsft\t0.623000000000\t2018-01-01T00:18:00.000000Z\tfalse\tI\t0.878611111254\t0.9966\t403\t2015-08-19T00:36:24.375Z\tCPSW\t-8506266080452644687\t1970-01-01T02:13:20.000000Z\t6\t00000000 9a ef 88 cb 4b a1 cf cf 41 7d a6\t\n" +
-                        "10\tmsft\t0.509000000000\t2018-01-01T00:20:00.000000Z\ttrue\tI\t0.491532681548\t0.0024\t195\t2015-10-15T17:45:21.025Z\t\t3987576220753016999\t1970-01-01T02:30:00.000000Z\t20\t00000000 96 37 08 dd 98 ef 54 88 2a a2\t\n" +
-                        "11\tmsft\t0.578000000000\t2018-01-01T00:22:00.000000Z\ttrue\tP\t0.746701366813\t0.5795\t122\t2015-11-25T07:36:56.937Z\t\t2004830221820243556\t1970-01-01T02:46:40.000000Z\t45\t00000000 a0 dd 44 11 e2 a3 24 4e 44 a8 0d fe 27 ec 53 13\n" +
-                        "00000010 5d b2 15 e7\tWGRMDGGIJYDVRV\n" +
-                        "12\tmsft\t0.661000000000\t2018-01-01T00:24:00.000000Z\ttrue\tO\t0.013960795460\t0.8136\t345\t2015-08-18T10:31:42.373Z\tVTJW\t5045825384817367685\t1970-01-01T03:03:20.000000Z\t23\t00000000 51 9d 5d 28 ac 02 2e fe 05 3b 94 5f ec d3 dc f8\n" +
-                        "00000010 43\tJCTIZKYFLUHZ\n";
+                        "1\tmsft\t0.509000000000\t2018-01-01T00:02:00.000000Z\tfalse\tU\t0.524372285929\t0.8072\t365\t2015-05-02T19:30:57.935Z\t\t-4485747798769957016\t1970-01-01T00:00:00.000000Z\t19\t00000000 19 c4 95 94 36 53 49 b4 59 7e 3b 08 a1 1e\tYSBEOUOJSHRUEDRQ\n" +
+                        "2\tgoogl\t0.423000000000\t2018-01-01T00:04:00.000000Z\tfalse\tG\t0.529840594176\tNaN\t493\t2015-04-09T11:42:28.332Z\tHYRX\t-8811278461560712840\t1970-01-01T00:16:40.000000Z\t29\t00000000 53 d0 fb 64 bb 1a d4 f0 2d 40 e2 4b b1 3e e3 f1\t\n" +
+                        "3\tgoogl\t0.174000000000\t2018-01-01T00:06:00.000000Z\tfalse\tW\t0.882822836670\t0.7230\t845\t2015-08-26T10:57:26.275Z\tVTJW\t9029468389542245059\t1970-01-01T00:33:20.000000Z\t46\t00000000 e5 61 2f 64 0e 2c 7f d7 6f b8 c9 ae 28 c7 84 47\tDSWUGSHOLNV\n" +
+                        "4\tibm\t0.148000000000\t2018-01-01T00:08:00.000000Z\ttrue\tI\t0.345689799154\t0.2401\t775\t2015-08-03T15:58:03.335Z\tVTJW\t-8910603140262731534\t1970-01-01T00:50:00.000000Z\t24\t00000000 ac a8 3b a6 dc 3b 7d 2b e3 92 fe 69 38 e1 77 9a\n" +
+                        "00000010 e7 0c 89\tLJUMLGLHMLLEO\n" +
+                        "5\tgoogl\t0.868000000000\t2018-01-01T00:10:00.000000Z\ttrue\tZ\t0.427470428635\t0.0212\t179\t\t\t5746626297238459939\t1970-01-01T01:06:40.000000Z\t35\t00000000 91 88 28 a5 18 93 bd 0b 61 f5 5d d0 eb\tRGIIH\n" +
+                        "6\tmsft\t0.297000000000\t2018-01-01T00:12:00.000000Z\tfalse\tY\t0.267212048922\t0.1326\t215\t\t\t-8534688874718947140\t1970-01-01T01:23:20.000000Z\t34\t00000000 1c 0b 20 a2 86 89 37 11 2c 14\tUSZMZVQE\n";
 
                 compiler.compile(
                         "create table y as (" +
@@ -497,16 +504,13 @@ public class LimitTest extends AbstractGriffinTest {
                                 " rnd_str(5,16,2) n" +
                                 " from long_sequence(30)" +
                                 ") timestamp(timestamp)"
+                        , AllowAllCairoSecurityContext.INSTANCE
                         , bindVariableService
                 );
 
-                bindVariableService.setLong("lo", 4);
-                bindVariableService.setInt("hi", 8);
-
+                bindVariableService.setLong("lim", 4);
                 assertQueryAndCache(expected1, query, "timestamp", true);
-                bindVariableService.setLong("lo", 6);
-                bindVariableService.setInt("hi", 12);
-
+                bindVariableService.setLong("lim", 6);
                 assertQueryAndCache(expected2, query, "timestamp", true);
             } finally {
                 engine.releaseAllWriters();
@@ -549,6 +553,7 @@ public class LimitTest extends AbstractGriffinTest {
                                 " rnd_str(5,16,2) n" +
                                 " from long_sequence(30)" +
                                 ") timestamp(timestamp)"
+                        , AllowAllCairoSecurityContext.INSTANCE
                         , bindVariableService
                 );
                 assertQueryAndCache(expected1, query, "timestamp", true);
@@ -574,6 +579,7 @@ public class LimitTest extends AbstractGriffinTest {
                                 " rnd_str(5,16,2) n" +
                                 " from long_sequence(30)" +
                                 ") timestamp(timestamp)"
+                        , AllowAllCairoSecurityContext.INSTANCE
                         , bindVariableService
                 );
 

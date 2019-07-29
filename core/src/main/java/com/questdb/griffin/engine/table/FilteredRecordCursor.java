@@ -27,7 +27,7 @@ import com.questdb.cairo.sql.Function;
 import com.questdb.cairo.sql.Record;
 import com.questdb.cairo.sql.RecordCursor;
 import com.questdb.cairo.sql.SymbolTable;
-import com.questdb.griffin.engine.functions.bind.BindVariableService;
+import com.questdb.griffin.SqlExecutionContext;
 
 class FilteredRecordCursor implements RecordCursor {
     private final Function filter;
@@ -84,9 +84,9 @@ class FilteredRecordCursor implements RecordCursor {
         filter.toTop();
     }
 
-    void of(RecordCursor base, BindVariableService bindVariableService) {
+    void of(RecordCursor base, SqlExecutionContext executionContext) {
         this.base = base;
         this.record = base.getRecord();
-        filter.init(this, bindVariableService);
+        filter.init(this, executionContext);
     }
 }

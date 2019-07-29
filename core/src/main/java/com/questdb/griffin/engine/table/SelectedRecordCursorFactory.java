@@ -27,7 +27,7 @@ import com.questdb.cairo.AbstractRecordCursorFactory;
 import com.questdb.cairo.sql.RecordCursor;
 import com.questdb.cairo.sql.RecordCursorFactory;
 import com.questdb.cairo.sql.RecordMetadata;
-import com.questdb.griffin.engine.functions.bind.BindVariableService;
+import com.questdb.griffin.SqlExecutionContext;
 import com.questdb.std.IntList;
 
 public class SelectedRecordCursorFactory extends AbstractRecordCursorFactory {
@@ -47,8 +47,8 @@ public class SelectedRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
-    public RecordCursor getCursor(BindVariableService bindVariableService) {
-        this.cursor.of(base.getCursor(bindVariableService));
+    public RecordCursor getCursor(SqlExecutionContext executionContext) {
+        this.cursor.of(base.getCursor(executionContext));
         return cursor;
     }
 

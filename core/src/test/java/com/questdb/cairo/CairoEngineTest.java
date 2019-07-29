@@ -5,7 +5,7 @@
  *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
  *   \__\_\\__,_|\___||___/\__|____/|____/
  *
- * Copyright (C) 2014-2018 Appsicle
+ * Copyright (C) 2014-2019 Appsicle
  *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU Affero General Public License, version 3,
@@ -24,6 +24,7 @@
 package com.questdb.cairo;
 
 import com.questdb.cairo.pool.PoolListener;
+import com.questdb.cairo.security.AllowAllCairoSecurityContext;
 import com.questdb.mp.Job;
 import com.questdb.mp.RingQueue;
 import com.questdb.mp.Sequence;
@@ -59,8 +60,8 @@ public class CairoEngineTest extends AbstractCairoTest {
                 engine.setPoolListener(listener);
                 Assert.assertEquals(listener, engine.getPoolListener());
 
-                TableReader reader = engine.getReader("x", -1);
-                TableWriter writer = engine.getWriter("x");
+                TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", -1);
+                TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "x");
                 Assert.assertEquals(1, engine.getBusyReaderCount());
                 Assert.assertEquals(1, engine.getBusyWriterCount());
 
@@ -142,9 +143,9 @@ public class CairoEngineTest extends AbstractCairoTest {
 
         TestUtils.assertMemoryLeak(() -> {
             try (CairoEngine engine = new CairoEngine(configuration)) {
-                try (TableReader reader = engine.getReader("x", TableUtils.ANY_TABLE_VERSION)) {
+                try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_VERSION)) {
                     Assert.assertNotNull(reader);
-                    Assert.assertFalse(engine.lock("x"));
+                    Assert.assertFalse(engine.lock(AllowAllCairoSecurityContext.INSTANCE, "x"));
                     assertReader(engine, "x");
                     assertWriter(engine, "x");
                 }
@@ -158,7 +159,7 @@ public class CairoEngineTest extends AbstractCairoTest {
 
         TestUtils.assertMemoryLeak(() -> {
             try (CairoEngine engine = new CairoEngine(configuration)) {
-                engine.rename(path, "x", otherPath, "y");
+                engine.rename(AllowAllCairoSecurityContext.INSTANCE, path, "x", otherPath, "y");
 
                 assertWriter(engine, "y");
                 assertReader(engine, "y");
@@ -174,17 +175,17 @@ public class CairoEngineTest extends AbstractCairoTest {
             try (CairoEngine engine = new CairoEngine(configuration)) {
                 assertReader(engine, "x");
                 assertWriter(engine, "x");
-                engine.remove(path, "x");
-                Assert.assertEquals(TableUtils.TABLE_DOES_NOT_EXIST, engine.getStatus(path, "x"));
+                engine.remove(AllowAllCairoSecurityContext.INSTANCE, path, "x");
+                Assert.assertEquals(TableUtils.TABLE_DOES_NOT_EXIST, engine.getStatus(AllowAllCairoSecurityContext.INSTANCE, path, "x"));
 
                 try {
-                    engine.getReader("x", TableUtils.ANY_TABLE_VERSION);
+                    engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_VERSION);
                     Assert.fail();
                 } catch (CairoException ignored) {
                 }
 
                 try {
-                    engine.getWriter("x");
+                    engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "x");
                     Assert.fail();
                 } catch (CairoException ignored) {
                 }
@@ -198,8 +199,8 @@ public class CairoEngineTest extends AbstractCairoTest {
         createX();
 
         try (CairoEngine engine = new CairoEngine(configuration)) {
-            engine.remove(path, "x");
-            Assert.assertEquals(TableUtils.TABLE_DOES_NOT_EXIST, engine.getStatus(path, "x"));
+            engine.remove(AllowAllCairoSecurityContext.INSTANCE, path, "x");
+            Assert.assertEquals(TableUtils.TABLE_DOES_NOT_EXIST, engine.getStatus(AllowAllCairoSecurityContext.INSTANCE, path, "x"));
         }
     }
 
@@ -209,7 +210,7 @@ public class CairoEngineTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             try (CairoEngine engine = new CairoEngine(configuration)) {
                 try {
-                    engine.remove(path, "x");
+                    engine.remove(AllowAllCairoSecurityContext.INSTANCE, path, "x");
                     Assert.fail();
                 } catch (CairoException e) {
                     TestUtils.assertContains(e.getMessage(), "remove failed");
@@ -224,10 +225,10 @@ public class CairoEngineTest extends AbstractCairoTest {
             createX();
 
             try (CairoEngine engine = new CairoEngine(configuration)) {
-                try (TableReader reader = engine.getReader("x", TableUtils.ANY_TABLE_VERSION)) {
+                try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_VERSION)) {
                     Assert.assertNotNull(reader);
                     try {
-                        engine.remove(path, "x");
+                        engine.remove(AllowAllCairoSecurityContext.INSTANCE, path, "x");
                         Assert.fail();
                     } catch (CairoException ignored) {
                     }
@@ -242,10 +243,10 @@ public class CairoEngineTest extends AbstractCairoTest {
             createX();
 
             try (CairoEngine engine = new CairoEngine(configuration)) {
-                try (TableWriter writer = engine.getWriter("x")) {
+                try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "x")) {
                     Assert.assertNotNull(writer);
                     try {
-                        engine.remove(path, "x");
+                        engine.remove(AllowAllCairoSecurityContext.INSTANCE, path, "x");
                         Assert.fail();
                     } catch (CairoException ignored) {
                     }
@@ -263,7 +264,7 @@ public class CairoEngineTest extends AbstractCairoTest {
                 assertWriter(engine, "x");
                 assertReader(engine, "x");
 
-                engine.rename(path, "x", otherPath, "y");
+                engine.rename(AllowAllCairoSecurityContext.INSTANCE, path, "x", otherPath, "y");
 
                 assertWriter(engine, "y");
                 assertReader(engine, "y");
@@ -283,13 +284,13 @@ public class CairoEngineTest extends AbstractCairoTest {
 
                 try (CairoEngine engine = new CairoEngine(configuration)) {
                     try {
-                        engine.getWriter("x");
+                        engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "x");
                         Assert.fail();
                     } catch (CairoException ignored) {
                     }
 
                     try {
-                        engine.rename(path, "x", otherPath, "y");
+                        engine.rename(AllowAllCairoSecurityContext.INSTANCE, path, "x", otherPath, "y");
                         Assert.fail();
                     } catch (CairoException e) {
                         TestUtils.assertContains(e.getMessage(), "Cannot lock");
@@ -329,7 +330,7 @@ public class CairoEngineTest extends AbstractCairoTest {
                 assertReader(engine, "x");
                 assertWriter(engine, "x");
                 try {
-                    engine.rename(path, "x", otherPath, "y");
+                    engine.rename(AllowAllCairoSecurityContext.INSTANCE, path, "x", otherPath, "y");
                     Assert.fail();
                 } catch (CairoException e) {
                     TestUtils.assertContains(e.getMessage(), "Rename failed");
@@ -337,7 +338,7 @@ public class CairoEngineTest extends AbstractCairoTest {
 
                 assertReader(engine, "x");
                 assertWriter(engine, "x");
-                engine.rename(path, "x", otherPath, "y");
+                engine.rename(AllowAllCairoSecurityContext.INSTANCE, path, "x", otherPath, "y");
                 assertReader(engine, "y");
                 assertWriter(engine, "y");
             }
@@ -356,7 +357,7 @@ public class CairoEngineTest extends AbstractCairoTest {
             }
 
             try (CairoEngine engine = new CairoEngine(configuration)) {
-                engine.rename(path, "x", otherPath, "y");
+                engine.rename(AllowAllCairoSecurityContext.INSTANCE, path, "x", otherPath, "y");
                 Assert.fail();
             } catch (CairoException e) {
                 TestUtils.assertContains(e.getMessage(), "does not exist");
@@ -375,7 +376,7 @@ public class CairoEngineTest extends AbstractCairoTest {
                 assertWriter(engine, "x");
                 assertReader(engine, "x");
                 try {
-                    engine.rename(path, "x", otherPath, "y");
+                    engine.rename(AllowAllCairoSecurityContext.INSTANCE, path, "x", otherPath, "y");
                     Assert.fail();
                 } catch (CairoException e) {
                     TestUtils.assertContains(e.getMessage(), "exists");
@@ -397,7 +398,7 @@ public class CairoEngineTest extends AbstractCairoTest {
             try (CairoEngine engine = new CairoEngine(configuration)) {
                 assertWriter(engine, "x");
                 try {
-                    engine.getReader("x", 2);
+                    engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", 2);
                     Assert.fail();
                 } catch (ReaderOutOfDateException ignored) {
                 }
@@ -408,13 +409,13 @@ public class CairoEngineTest extends AbstractCairoTest {
     }
 
     private void assertReader(CairoEngine engine, String name) {
-        try (TableReader reader = engine.getReader(name, TableUtils.ANY_TABLE_VERSION)) {
+        try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, name, TableUtils.ANY_TABLE_VERSION)) {
             Assert.assertNotNull(reader);
         }
     }
 
     private void assertWriter(CairoEngine engine, String name) {
-        try (TableWriter w = engine.getWriter(name)) {
+        try (TableWriter w = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, name)) {
             Assert.assertNotNull(w);
         }
     }

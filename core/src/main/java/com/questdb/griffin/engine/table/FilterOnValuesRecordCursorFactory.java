@@ -26,8 +26,8 @@ package com.questdb.griffin.engine.table;
 import com.questdb.cairo.SymbolMapReader;
 import com.questdb.cairo.TableReader;
 import com.questdb.cairo.sql.*;
+import com.questdb.griffin.SqlExecutionContext;
 import com.questdb.griffin.engine.EmptyTableRecordCursor;
-import com.questdb.griffin.engine.functions.bind.BindVariableService;
 import com.questdb.std.CharSequenceHashSet;
 import com.questdb.std.Chars;
 import com.questdb.std.ObjList;
@@ -94,11 +94,14 @@ public class FilterOnValuesRecordCursorFactory extends AbstractDataFrameRecordCu
     }
 
     @Override
-    protected RecordCursor getCursorInstance(DataFrameCursor dataFrameCursor, BindVariableService bindVariableService) {
+    protected RecordCursor getCursorInstance(
+            DataFrameCursor dataFrameCursor,
+            SqlExecutionContext executionContext
+    ) {
         if (deferredSymbols != null && lookupDeferredSymbols(dataFrameCursor)) {
             return EmptyTableRecordCursor.INSTANCE;
         }
-        this.cursor.of(dataFrameCursor, bindVariableService);
+        this.cursor.of(dataFrameCursor, executionContext);
         return this.cursor;
     }
 

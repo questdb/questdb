@@ -28,12 +28,12 @@ import com.questdb.cairo.ColumnType;
 import com.questdb.cairo.sql.*;
 import com.questdb.griffin.FunctionFactory;
 import com.questdb.griffin.SqlException;
+import com.questdb.griffin.SqlExecutionContext;
 import com.questdb.griffin.engine.StrTypeCaster;
 import com.questdb.griffin.engine.SymbolTypeCaster;
 import com.questdb.griffin.engine.TypeCaster;
 import com.questdb.griffin.engine.functions.BinaryFunction;
 import com.questdb.griffin.engine.functions.BooleanFunction;
-import com.questdb.griffin.engine.functions.bind.BindVariableService;
 import com.questdb.griffin.engine.functions.columns.SymbolColumn;
 import com.questdb.std.CharSequenceHashSet;
 import com.questdb.std.Chars;
@@ -105,15 +105,15 @@ public class SymbolInCursorFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void init(RecordCursor recordCursor, BindVariableService bindVariableService) {
-            valueArg.init(recordCursor, bindVariableService);
-            cursorArg.init(recordCursor, bindVariableService);
+        public void init(RecordCursor recordCursor, SqlExecutionContext executionContext) {
+            valueArg.init(recordCursor, executionContext);
+            cursorArg.init(recordCursor, executionContext);
             symbolKeys.clear();
 
             SymbolTable symbolTable = recordCursor.getSymbolTable(columnIndex);
 
             RecordCursorFactory factory = cursorArg.getRecordCursorFactory();
-            try (RecordCursor cursor = factory.getCursor(bindVariableService)) {
+            try (RecordCursor cursor = factory.getCursor(executionContext)) {
                 final Record record = cursor.getRecord();
                 while (cursor.hasNext()) {
                     int key = symbolTable.getQuick(typeCaster.getValue(record, 0));
@@ -150,9 +150,9 @@ public class SymbolInCursorFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void init(RecordCursor recordCursor, BindVariableService bindVariableService) {
-            valueArg.init(recordCursor, bindVariableService);
-            cursorArg.init(recordCursor, bindVariableService);
+        public void init(RecordCursor recordCursor, SqlExecutionContext executionContext) {
+            valueArg.init(recordCursor, executionContext);
+            cursorArg.init(recordCursor, executionContext);
 
             CharSequenceHashSet valueSet;
             if (this.valueSet == this.valueSetA) {
@@ -165,7 +165,7 @@ public class SymbolInCursorFunctionFactory implements FunctionFactory {
 
 
             RecordCursorFactory factory = cursorArg.getRecordCursorFactory();
-            try (RecordCursor cursor = factory.getCursor(bindVariableService)) {
+            try (RecordCursor cursor = factory.getCursor(executionContext)) {
                 final Record record = cursor.getRecord();
                 while (cursor.hasNext()) {
                     CharSequence value = typeCaster.getValue(record, 0);

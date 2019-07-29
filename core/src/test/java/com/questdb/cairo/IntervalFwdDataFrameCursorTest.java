@@ -5,7 +5,7 @@
  *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
  *   \__\_\\__,_|\___||___/\__|____/|____/
  *
- * Copyright (C) 2014-2018 Appsicle
+ * Copyright (C) 2014-2019 Appsicle
  *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU Affero General Public License, version 3,
@@ -23,6 +23,7 @@
 
 package com.questdb.cairo;
 
+import com.questdb.cairo.security.AllowAllCairoSecurityContext;
 import com.questdb.cairo.sql.DataFrame;
 import com.questdb.cairo.sql.DataFrameCursor;
 import com.questdb.cairo.sql.RowCursor;
@@ -365,7 +366,7 @@ public class IntervalFwdDataFrameCursorTest extends AbstractCairoTest {
             try (CairoEngine engine = new CairoEngine(configuration)) {
                 final TableReaderRecord record = new TableReaderRecord();
                 final IntervalFwdDataFrameCursorFactory factory = new IntervalFwdDataFrameCursorFactory(engine, "x", 0, intervals);
-                try (DataFrameCursor cursor = factory.getCursor()) {
+                try (DataFrameCursor cursor = factory.getCursor(AllowAllCairoSecurityContext.INSTANCE)) {
 
                     // assert that there is nothing to start with
                     record.of(cursor.getTableReader());
@@ -407,12 +408,12 @@ public class IntervalFwdDataFrameCursorTest extends AbstractCairoTest {
                     }
                 }
 
-                try (TableWriter writer = engine.getWriter("x")) {
+                try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "x")) {
                     writer.removeColumn("a");
                 }
 
                 try {
-                    factory.getCursor();
+                    factory.getCursor(AllowAllCairoSecurityContext.INSTANCE);
                     Assert.fail();
                 } catch (ReaderOutOfDateException ignored) {
                 }

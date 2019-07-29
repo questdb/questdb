@@ -25,7 +25,7 @@ package com.questdb.cairo;
 
 import com.questdb.cairo.sql.RecordCursor;
 import com.questdb.cairo.sql.RecordMetadata;
-import com.questdb.griffin.engine.functions.bind.BindVariableService;
+import com.questdb.griffin.SqlExecutionContext;
 
 public class TableReaderRecordCursorFactory extends AbstractRecordCursorFactory {
     private final TableReaderRecordCursor cursor = new TableReaderRecordCursor();
@@ -41,8 +41,8 @@ public class TableReaderRecordCursorFactory extends AbstractRecordCursorFactory 
     }
 
     @Override
-    public RecordCursor getCursor(BindVariableService bindVariableService) {
-        cursor.of(engine.getReader(tableName, tableVersion));
+    public RecordCursor getCursor(SqlExecutionContext executionContext) {
+        cursor.of(engine.getReader(executionContext.getCairoSecurityContext(), tableName, tableVersion));
         return cursor;
     }
 

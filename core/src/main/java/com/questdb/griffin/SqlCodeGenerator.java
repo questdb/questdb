@@ -385,7 +385,10 @@ public class SqlCodeGenerator {
         return generateQuery(model, executionContext, true);
     }
 
-    private RecordCursorFactory generateFunctionQuery(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
+    private RecordCursorFactory generateFunctionQuery(
+            QueryModel model,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
         final Function function = model.getTableNameFunction();
         assert function != null;
         if (function.getType() != TypeEx.CURSOR) {
@@ -735,7 +738,10 @@ public class SqlCodeGenerator {
         return new LimitRecordCursorFactory(factory, loFunc, hiFunc);
     }
 
-    private RecordCursorFactory generateNoSelect(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
+    private RecordCursorFactory generateNoSelect(
+            QueryModel model,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
         ExpressionNode tableName = model.getTableName();
         if (tableName != null) {
             if (tableName.type == ExpressionNode.FUNCTION) {
@@ -952,7 +958,11 @@ public class SqlCodeGenerator {
         }
     }
 
-    private RecordCursorFactory generateSelect(QueryModel model, SqlExecutionContext executionContext, boolean processJoins) throws SqlException {
+    private RecordCursorFactory generateSelect(
+            QueryModel model,
+            SqlExecutionContext executionContext,
+            boolean processJoins
+    ) throws SqlException {
         switch (model.getSelectModelType()) {
             case QueryModel.SELECT_MODEL_CHOOSE:
                 return generateSelectChoose(model, executionContext);
@@ -1128,11 +1138,18 @@ public class SqlCodeGenerator {
     }
 
     @SuppressWarnings("ConstantConditions")
-    private RecordCursorFactory generateTableQuery(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
+    private RecordCursorFactory generateTableQuery(
+            QueryModel model,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
         final ExpressionNode latestBy = model.getLatestBy();
         final ExpressionNode whereClause = model.getWhereClause();
 
-        try (TableReader reader = engine.getReader(model.getTableName().token, model.getTableVersion())) {
+        try (TableReader reader = engine.getReader(
+                executionContext.getCairoSecurityContext(),
+                model.getTableName().token,
+                model.getTableVersion())
+        ) {
             final RecordMetadata metadata = reader.getMetadata();
 
             final int latestByIndex;

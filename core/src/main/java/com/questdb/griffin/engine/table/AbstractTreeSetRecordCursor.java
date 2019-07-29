@@ -24,7 +24,7 @@
 package com.questdb.griffin.engine.table;
 
 import com.questdb.cairo.sql.DataFrameCursor;
-import com.questdb.griffin.engine.functions.bind.BindVariableService;
+import com.questdb.griffin.SqlExecutionContext;
 import com.questdb.std.Rows;
 
 abstract class AbstractTreeSetRecordCursor extends AbstractDataFrameRecordCursor {
@@ -42,7 +42,7 @@ abstract class AbstractTreeSetRecordCursor extends AbstractDataFrameRecordCursor
         treeCursor = null;
     }
 
-    abstract protected void buildTreeMap(BindVariableService bindVariableService);
+    abstract protected void buildTreeMap(SqlExecutionContext executionContext);
 
     @Override
     public final boolean hasNext() {
@@ -60,11 +60,11 @@ abstract class AbstractTreeSetRecordCursor extends AbstractDataFrameRecordCursor
     }
 
     @Override
-    final void of(DataFrameCursor dataFrameCursor, BindVariableService bindVariableService) {
+    final void of(DataFrameCursor dataFrameCursor, SqlExecutionContext executionContext) {
         this.dataFrameCursor = dataFrameCursor;
         this.record.of(dataFrameCursor.getTableReader());
         treeSet.clear();
-        buildTreeMap(bindVariableService);
+        buildTreeMap(executionContext);
         treeCursor = treeSet.getCursor();
     }
 }

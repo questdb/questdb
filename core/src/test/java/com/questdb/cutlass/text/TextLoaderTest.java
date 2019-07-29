@@ -27,6 +27,7 @@ import com.questdb.cairo.AbstractCairoTest;
 import com.questdb.cairo.CairoEngine;
 import com.questdb.cairo.CairoException;
 import com.questdb.cairo.TableWriter;
+import com.questdb.cairo.security.AllowAllCairoSecurityContext;
 import com.questdb.cairo.sql.RecordCursor;
 import com.questdb.cairo.sql.RecordCursorFactory;
 import com.questdb.cutlass.json.JsonException;
@@ -465,10 +466,12 @@ public class TextLoaderTest extends AbstractCairoTest {
                     ", h long" +
                     ", i boolean" +
                     ", k long" +
-                    ", t timestamp)");
+                            ", t timestamp)",
+                    AllowAllCairoSecurityContext.INSTANCE,
+                    null);
 
             configureLoaderDefaults(textLoader, (byte) -1, Atomicity.SKIP_ROW, true);
-            try (TableWriter ignore = engine.getWriter("test")) {
+            try (TableWriter ignore = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "test")) {
                 try {
                     playText0(textLoader, csv, 1024, ENTITY_MANIPULATOR);
                     Assert.fail();
@@ -1538,7 +1541,9 @@ public class TextLoaderTest extends AbstractCairoTest {
                     ", h long" +
                     ", i boolean" +
                     ", k long" +
-                    ", t timestamp)");
+                            ", t timestamp)",
+                    AllowAllCairoSecurityContext.INSTANCE,
+                    null);
 
             configureLoaderDefaults(textLoader, (byte) -1, Atomicity.SKIP_ROW, true);
             playText(
@@ -2003,7 +2008,7 @@ public class TextLoaderTest extends AbstractCairoTest {
                     "efg\t45\t\n" +
                     "werop\t90\t\n";
 
-            compiler.compile("create table test(a string, d binary)");
+            compiler.compile("create table test(a string, d binary)", AllowAllCairoSecurityContext.INSTANCE, null);
             configureLoaderDefaults(textLoader);
             try {
                 playText(textLoader, csv, 1024,
@@ -2031,7 +2036,7 @@ public class TextLoaderTest extends AbstractCairoTest {
                     "efg\t\n" +
                     "werop\t\n";
 
-            compiler.compile("create table test(a string, b date)");
+            compiler.compile("create table test(a string, b date)", AllowAllCairoSecurityContext.INSTANCE, null);
             configureLoaderDefaults(textLoader);
             playText(textLoader, csv, 1024,
                     expected,
@@ -2054,7 +2059,7 @@ public class TextLoaderTest extends AbstractCairoTest {
                     "efg\t\n" +
                     "werop\t\n";
 
-            compiler.compile("create table test(a string, b timestamp)");
+            compiler.compile("create table test(a string, b timestamp)", AllowAllCairoSecurityContext.INSTANCE, null);
             configureLoaderDefaults(textLoader);
             playText(textLoader, csv, 1024,
                     expected,
@@ -2080,7 +2085,7 @@ public class TextLoaderTest extends AbstractCairoTest {
                     "CMP2,2,4770,2.85092033445835,2015-02-08T19:15:09.000Z,2015-02-08 19:15:09,02/08/2015,253,TRUE,33766814\n" +
                     "CMP1,5,4938,4.42754498450086,2015-02-09T19:15:09.000Z,2015-02-09 19:15:09,02/09/2015,7817,FALSE,61983099\n";
 
-            compiler.compile("create table test(a int, b int)");
+            compiler.compile("create table test(a int, b int)", AllowAllCairoSecurityContext.INSTANCE, null);
             configureLoaderDefaults(textLoader);
             try {
                 playText0(textLoader, csv, 1024, ENTITY_MANIPULATOR);
@@ -2103,7 +2108,7 @@ public class TextLoaderTest extends AbstractCairoTest {
                     "efg\t45\t\n" +
                     "werop\t90\t\n";
 
-            compiler.compile("create table test(a string, b int, d binary)");
+            compiler.compile("create table test(a string, b int, d binary)", AllowAllCairoSecurityContext.INSTANCE, null);
             configureLoaderDefaults(textLoader);
             playText(textLoader, csv, 1024,
                     expected,
@@ -2193,8 +2198,8 @@ public class TextLoaderTest extends AbstractCairoTest {
 
     private void assertTable(String expected) throws IOException, SqlException {
         try (
-                RecordCursorFactory factory = compiler.compile("test");
-                RecordCursor cursor = factory.getCursor()
+                RecordCursorFactory factory = compiler.compile("test", AllowAllCairoSecurityContext.INSTANCE, null);
+                RecordCursor cursor = factory.getCursor(compiler.getExecutionContext())
         ) {
             sink.clear();
             printer.print(cursor, factory.getMetadata(), true);
@@ -2236,7 +2241,7 @@ public class TextLoaderTest extends AbstractCairoTest {
 
             for (int i = 0; i < len; i++) {
                 Unsafe.getUnsafe().putByte(smallBuf, Unsafe.getUnsafe().getByte(buf + i));
-                textLoader.parse(smallBuf, 1);
+                textLoader.parse(smallBuf, 1, AllowAllCairoSecurityContext.INSTANCE);
             }
             textLoader.wrapUp();
         } finally {
@@ -2287,7 +2292,7 @@ public class TextLoaderTest extends AbstractCairoTest {
         assertTable(expected);
         textLoader.clear();
 
-        try (TableWriter writer = engine.getWriter("test")) {
+        try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "test")) {
             writer.truncate();
         }
 
@@ -2312,15 +2317,15 @@ public class TextLoaderTest extends AbstractCairoTest {
             }
 
             if (firstBufSize < len) {
-                textLoader.parse(buf, firstBufSize);
+                textLoader.parse(buf, firstBufSize, AllowAllCairoSecurityContext.INSTANCE);
                 textLoader.setState(TextLoader.LOAD_DATA);
 
                 for (int i = firstBufSize; i < len; i++) {
                     Unsafe.getUnsafe().putByte(smallBuf, Unsafe.getUnsafe().getByte(buf + i));
-                    textLoader.parse(smallBuf, 1);
+                    textLoader.parse(smallBuf, 1, AllowAllCairoSecurityContext.INSTANCE);
                 }
             } else {
-                textLoader.parse(buf, len);
+                textLoader.parse(buf, len, AllowAllCairoSecurityContext.INSTANCE);
             }
             textLoader.wrapUp();
         } finally {

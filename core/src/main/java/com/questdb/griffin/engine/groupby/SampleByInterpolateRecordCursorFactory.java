@@ -34,7 +34,6 @@ import com.questdb.griffin.SqlException;
 import com.questdb.griffin.SqlExecutionContext;
 import com.questdb.griffin.engine.EmptyTableRandomRecordCursor;
 import com.questdb.griffin.engine.functions.GroupByFunction;
-import com.questdb.griffin.engine.functions.bind.BindVariableService;
 import com.questdb.griffin.engine.functions.columns.TimestampColumn;
 import com.questdb.griffin.model.QueryModel;
 import com.questdb.std.*;
@@ -181,10 +180,10 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
     }
 
     @Override
-    public RecordCursor getCursor(BindVariableService bindVariableService) {
+    public RecordCursor getCursor(SqlExecutionContext executionContext) {
         recordKeyMap.clear();
         dataMap.clear();
-        final RecordCursor baseCursor = base.getCursor(bindVariableService);
+        final RecordCursor baseCursor = base.getCursor(executionContext);
         final Record baseRecord = baseCursor.getRecord();
         try {
 
@@ -355,7 +354,7 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
                 }
             }
 
-            return initFunctionsAndCursor(bindVariableService, dataMap.getCursor(), baseCursor);
+            return initFunctionsAndCursor(executionContext, dataMap.getCursor(), baseCursor);
         } catch (CairoException e) {
             baseCursor.close();
             throw e;
@@ -418,11 +417,15 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
     }
 
     @NotNull
-    protected RecordCursor initFunctionsAndCursor(BindVariableService bindVariableService, RecordCursor mapCursor, RecordCursor baseCursor) {
+    protected RecordCursor initFunctionsAndCursor(
+            SqlExecutionContext executionContext,
+            RecordCursor mapCursor,
+            RecordCursor baseCursor
+    ) {
         cursor.of(mapCursor, baseCursor);
         // init all record function for this cursor, in case functions require metadata and/or symbol tables
         for (int i = 0, m = recordFunctions.size(); i < m; i++) {
-            recordFunctions.getQuick(i).init(cursor, bindVariableService);
+            recordFunctions.getQuick(i).init(cursor, executionContext);
         }
         return cursor;
     }

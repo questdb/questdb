@@ -25,7 +25,7 @@ package com.questdb.griffin.engine;
 
 import com.questdb.cairo.AbstractRecordCursorFactory;
 import com.questdb.cairo.sql.*;
-import com.questdb.griffin.engine.functions.bind.BindVariableService;
+import com.questdb.griffin.SqlExecutionContext;
 import org.jetbrains.annotations.Nullable;
 
 public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
@@ -39,8 +39,8 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
-    public RecordCursor getCursor(BindVariableService bindVariableService) {
-        cursor.of(base.getCursor(bindVariableService), bindVariableService);
+    public RecordCursor getCursor(SqlExecutionContext executionContext) {
+        cursor.of(base.getCursor(executionContext), executionContext);
         return cursor;
     }
 
@@ -95,11 +95,11 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
             base.recordAt(rowId);
         }
 
-        public void of(RecordCursor base, BindVariableService bindVariableService) {
+        public void of(RecordCursor base, SqlExecutionContext executionContext) {
             this.base = base;
-            loFunction.init(base, bindVariableService);
+            loFunction.init(base, executionContext);
             if (hiFunction != null) {
-                hiFunction.init(base, bindVariableService);
+                hiFunction.init(base, executionContext);
             }
             toTop();
         }

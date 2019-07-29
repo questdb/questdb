@@ -23,6 +23,8 @@
 
 package com.questdb.cutlass.http;
 
+import com.questdb.cairo.CairoSecurityContext;
+import com.questdb.cairo.security.AllowAllCairoSecurityContext;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.network.*;
@@ -43,22 +45,9 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
     private final LocalValueMap localValueMap = new LocalValueMap();
     private final NetworkFacade nf;
     private final long multipartIdleSpinCount;
+    private final CairoSecurityContext cairoSecurityContext = AllowAllCairoSecurityContext.INSTANCE;
     private long fd;
     private HttpRequestProcessor resumeProcessor = null;
-
-    @Override
-    public void close() {
-        this.fd = -1;
-        csPool.clear();
-        multipartContentParser.close();
-        multipartContentHeaderParser.close();
-        responseSink.close();
-        headerParser.close();
-        localValueMap.close();
-        Unsafe.free(recvBuffer, recvBufferSize);
-        Unsafe.free(sendBuffer, configuration.getSendBufferSize());
-        LOG.debug().$("closed").$();
-    }
 
     public HttpConnectionContext(HttpServerConfiguration configuration) {
         this.configuration = configuration;
@@ -87,13 +76,31 @@ public class HttpConnectionContext implements IOContext, Locality, Mutable {
     }
 
     @Override
-    public boolean invalid() {
-        return this.fd == -1;
+    public void close() {
+        this.fd = -1;
+        csPool.clear();
+        multipartContentParser.close();
+        multipartContentHeaderParser.close();
+        responseSink.close();
+        headerParser.close();
+        localValueMap.close();
+        Unsafe.free(recvBuffer, recvBufferSize);
+        Unsafe.free(sendBuffer, configuration.getSendBufferSize());
+        LOG.debug().$("closed").$();
     }
 
     @Override
     public long getFd() {
         return fd;
+    }
+
+    @Override
+    public boolean invalid() {
+        return this.fd == -1;
+    }
+
+    public CairoSecurityContext getCairoSecurityContext() {
+        return cairoSecurityContext;
     }
 
     public HttpChunkedResponseSocket getChunkedResponseSocket() {

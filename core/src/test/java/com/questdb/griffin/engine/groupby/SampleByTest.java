@@ -27,6 +27,7 @@ import com.questdb.cairo.CairoConfiguration;
 import com.questdb.cairo.CairoEngine;
 import com.questdb.cairo.CairoException;
 import com.questdb.cairo.DefaultCairoConfiguration;
+import com.questdb.cairo.security.AllowAllCairoSecurityContext;
 import com.questdb.cairo.sql.RecordCursor;
 import com.questdb.cairo.sql.RecordCursorFactory;
 import com.questdb.griffin.AbstractGriffinTest;
@@ -222,7 +223,10 @@ public class SampleByTest extends AbstractGriffinTest {
                     " rnd_symbol('XY','ZP', null, 'UU') c" +
                     " from" +
                     " long_sequence(1000000)" +
-                    ")"), bindVariableService);
+                            ")"),
+                    AllowAllCairoSecurityContext.INSTANCE,
+                    bindVariableService
+            );
 
             engine.releaseAllWriters();
             engine.releaseAllReaders();
@@ -249,8 +253,12 @@ public class SampleByTest extends AbstractGriffinTest {
             try (CairoEngine engine = new CairoEngine(configuration)) {
                 try (SqlCompiler compiler = new SqlCompiler(engine)) {
                     try {
-                        try (RecordCursorFactory factory = compiler.compile("select c, sum_t(d) from x", bindVariableService)) {
-                            factory.getCursor(bindVariableService);
+                        try (RecordCursorFactory factory = compiler.compile(
+                                "select c, sum_t(d) from x",
+                                AllowAllCairoSecurityContext.INSTANCE,
+                                bindVariableService
+                        )) {
+                            factory.getCursor(compiler.getExecutionContext());
                         }
                         Assert.fail();
                     } catch (CairoException e) {
@@ -1114,7 +1122,7 @@ public class SampleByTest extends AbstractGriffinTest {
                         " timestamp_sequence(to_timestamp(172800000000), 3600000000) k" +
                         " from" +
                         " long_sequence(20000000)" +
-                        ") timestamp(k) partition by NONE"), bindVariableService);
+                        ") timestamp(k) partition by NONE"), AllowAllCairoSecurityContext.INSTANCE, bindVariableService);
 
                 FilesFacade ff = new FilesFacadeImpl() {
                     int count = 2;
@@ -1138,7 +1146,11 @@ public class SampleByTest extends AbstractGriffinTest {
                 try (CairoEngine engine = new CairoEngine(configuration)) {
                     try (SqlCompiler compiler = new SqlCompiler(engine)) {
                         try {
-                            compiler.compile("select b, sum(a), k from x sample by 3h fill(linear)", bindVariableService);
+                            compiler.compile(
+                                    "select b, sum(a), k from x sample by 3h fill(linear)",
+                                    AllowAllCairoSecurityContext.INSTANCE,
+                                    bindVariableService
+                            );
                             Assert.fail();
                         } catch (SqlException e) {
                             Assert.assertTrue(Chars.contains(e.getMessage(), "Cannot mmap"));
@@ -1168,7 +1180,9 @@ public class SampleByTest extends AbstractGriffinTest {
                         " timestamp_sequence(to_timestamp(172800000000), 3600000000) k" +
                         " from" +
                         " long_sequence(20000000)" +
-                        ") timestamp(k) partition by NONE"), bindVariableService);
+                                ") timestamp(k) partition by NONE"),
+                        AllowAllCairoSecurityContext.INSTANCE,
+                        bindVariableService);
 
                 FilesFacade ff = new FilesFacadeImpl() {
                     int count = 5;
@@ -1192,9 +1206,13 @@ public class SampleByTest extends AbstractGriffinTest {
                 try (CairoEngine engine = new CairoEngine(configuration)) {
                     try (SqlCompiler compiler = new SqlCompiler(engine)) {
                         try {
-                            try (RecordCursorFactory factory = compiler.compile("select b, sum(a), k from x sample by 3h fill(linear)", bindVariableService)) {
+                            try (RecordCursorFactory factory = compiler.compile(
+                                    "select b, sum(a), k from x sample by 3h fill(linear)",
+                                    AllowAllCairoSecurityContext.INSTANCE,
+                                    bindVariableService
+                            )) {
                                 // with mmap count = 5 we should get failure in cursor
-                                factory.getCursor(bindVariableService);
+                                factory.getCursor(compiler.getExecutionContext());
                             }
                             Assert.fail();
                         } catch (CairoException e) {
@@ -3157,10 +3175,13 @@ public class SampleByTest extends AbstractGriffinTest {
                                 " timestamp_sequence(to_timestamp(172800000000), 3600000000) k" +
                                 " from" +
                                 " long_sequence(20)" +
-                                ") timestamp(k) partition by NONE"), bindVariableService);
+                                ") timestamp(k) partition by NONE"),
+                        AllowAllCairoSecurityContext.INSTANCE,
+                        bindVariableService);
 
                 try (final RecordCursorFactory factory = compiler.compile(
                         "select b, sum(a), sum(c), sum(d), sum(e), sum(f), sum(g), k from x sample by 3h fill(20.56, 0, 0, 0, 0, 0)",
+                        AllowAllCairoSecurityContext.INSTANCE,
                         bindVariableService)
                 ) {
                     assertTimestamp("k", factory);
@@ -3206,8 +3227,8 @@ public class SampleByTest extends AbstractGriffinTest {
                     // make sure strings, binary fields and symbols are compliant with expected record behaviour
                     assertVariableColumns(factory);
 
-                    compiler.compile("truncate table x", bindVariableService);
-                    try (RecordCursor cursor = factory.getCursor(bindVariableService)) {
+                    compiler.compile("truncate table x", AllowAllCairoSecurityContext.INSTANCE, bindVariableService);
+                    try (RecordCursor cursor = factory.getCursor(compiler.getExecutionContext())) {
                         sink.clear();
                         printer.print(cursor, factory.getMetadata(), true);
                         TestUtils.assertEquals("b\tsum\tsum1\tsum2\tsum3\tsum4\tsum5\tk\n", sink);

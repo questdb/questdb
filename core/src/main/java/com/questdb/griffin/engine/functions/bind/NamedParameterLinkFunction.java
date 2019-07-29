@@ -25,6 +25,7 @@ package com.questdb.griffin.engine.functions.bind;
 
 import com.questdb.cairo.CairoException;
 import com.questdb.cairo.sql.*;
+import com.questdb.griffin.SqlExecutionContext;
 import com.questdb.std.BinarySequence;
 import com.questdb.std.Misc;
 import com.questdb.std.str.CharSink;
@@ -147,13 +148,13 @@ public class NamedParameterLinkFunction implements Function {
     }
 
     @Override
-    public void init(RecordCursor recordCursor, BindVariableService bindVariableService) {
-        base = bindVariableService.getFunction(variableName);
+    public void init(RecordCursor recordCursor, SqlExecutionContext executionContext) {
+        base = executionContext.getBindVariableService().getFunction(variableName);
         if (base == null) {
             throw CairoException.instance(0).put("undefined bind variable: ").put(variableName);
         }
         assert base.getType() == type;
-        base.init(recordCursor, bindVariableService);
+        base.init(recordCursor, executionContext);
     }
 
     private Function getBase() {

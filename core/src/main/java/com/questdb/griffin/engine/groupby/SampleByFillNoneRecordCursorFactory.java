@@ -36,7 +36,6 @@ import com.questdb.griffin.SqlException;
 import com.questdb.griffin.SqlExecutionContext;
 import com.questdb.griffin.engine.EmptyTableRecordCursor;
 import com.questdb.griffin.engine.functions.GroupByFunction;
-import com.questdb.griffin.engine.functions.bind.BindVariableService;
 import com.questdb.griffin.model.QueryModel;
 import com.questdb.std.BytecodeAssembler;
 import com.questdb.std.IntIntHashMap;
@@ -75,11 +74,11 @@ public class SampleByFillNoneRecordCursorFactory extends AbstractSampleByRecordC
     }
 
     @Override
-    public RecordCursor getCursor(BindVariableService bindVariableService) {
-        final RecordCursor baseCursor = base.getCursor(bindVariableService);
+    public RecordCursor getCursor(SqlExecutionContext executionContext) {
+        final RecordCursor baseCursor = base.getCursor(executionContext);
         if (baseCursor.hasNext()) {
             map.clear();
-            return initFunctionsAndCursor(bindVariableService, baseCursor);
+            return initFunctionsAndCursor(executionContext, baseCursor);
         }
 
         baseCursor.close();

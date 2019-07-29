@@ -21,22 +21,11 @@
  *
  ******************************************************************************/
 
-package com.questdb.cairo;
+package com.questdb.cairo.security;
 
-import com.questdb.cairo.sql.DataFrameCursor;
-import com.questdb.std.LongList;
+import com.questdb.cairo.CairoSecurityContext;
 
-public class IntervalBwdDataFrameCursorFactory extends AbstractDataFrameCursorFactory {
-    private final IntervalBwdDataFrameCursor cursor;
-
-    public IntervalBwdDataFrameCursorFactory(CairoEngine engine, String tableName, long tableVersion, LongList intervals) {
-        super(engine, tableName, tableVersion);
-        this.cursor = new IntervalBwdDataFrameCursor(intervals);
-    }
-
-    @Override
-    public DataFrameCursor getCursor(CairoSecurityContext securityContext) {
-        cursor.of(getReader(securityContext));
-        return cursor;
-    }
+@FunctionalInterface
+public interface CairoSecurityContextFactory {
+    CairoSecurityContext getInstance(CharSequence principal);
 }

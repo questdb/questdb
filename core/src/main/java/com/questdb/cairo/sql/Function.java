@@ -23,7 +23,7 @@
 
 package com.questdb.cairo.sql;
 
-import com.questdb.griffin.engine.functions.bind.BindVariableService;
+import com.questdb.griffin.SqlExecutionContext;
 import com.questdb.std.BinarySequence;
 import com.questdb.std.str.CharSink;
 
@@ -75,7 +75,7 @@ public interface Function extends Closeable {
 
     int getType();
 
-    default void init(RecordCursor recordCursor, BindVariableService bindVariableService) {
+    default void init(RecordCursor recordCursor, SqlExecutionContext executionContext) {
     }
 
     default boolean isConstant() {

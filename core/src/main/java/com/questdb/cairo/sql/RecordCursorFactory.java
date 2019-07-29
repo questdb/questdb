@@ -23,7 +23,7 @@
 
 package com.questdb.cairo.sql;
 
-import com.questdb.griffin.engine.functions.bind.BindVariableService;
+import com.questdb.griffin.SqlExecutionContext;
 
 import java.io.Closeable;
 
@@ -32,11 +32,7 @@ public interface RecordCursorFactory extends Closeable {
     default void close() {
     }
 
-    RecordCursor getCursor(BindVariableService bindVariableService);
-
-    default RecordCursor getCursor() {
-        return getCursor(null);
-    }
+    RecordCursor getCursor(SqlExecutionContext executionContext);
 
     RecordMetadata getMetadata();
 
