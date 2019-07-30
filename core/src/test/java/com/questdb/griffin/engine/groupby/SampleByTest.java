@@ -27,7 +27,6 @@ import com.questdb.cairo.CairoConfiguration;
 import com.questdb.cairo.CairoEngine;
 import com.questdb.cairo.CairoException;
 import com.questdb.cairo.DefaultCairoConfiguration;
-import com.questdb.cairo.security.AllowAllCairoSecurityContext;
 import com.questdb.cairo.sql.RecordCursor;
 import com.questdb.cairo.sql.RecordCursorFactory;
 import com.questdb.griffin.AbstractGriffinTest;
@@ -223,9 +222,7 @@ public class SampleByTest extends AbstractGriffinTest {
                     " rnd_symbol('XY','ZP', null, 'UU') c" +
                     " from" +
                     " long_sequence(1000000)" +
-                            ")"),
-                    AllowAllCairoSecurityContext.INSTANCE,
-                    bindVariableService
+                    ")")
             );
 
             engine.releaseAllWriters();
@@ -253,12 +250,8 @@ public class SampleByTest extends AbstractGriffinTest {
             try (CairoEngine engine = new CairoEngine(configuration)) {
                 try (SqlCompiler compiler = new SqlCompiler(engine)) {
                     try {
-                        try (RecordCursorFactory factory = compiler.compile(
-                                "select c, sum_t(d) from x",
-                                AllowAllCairoSecurityContext.INSTANCE,
-                                bindVariableService
-                        )) {
-                            factory.getCursor(compiler.getExecutionContext());
+                        try (RecordCursorFactory factory = compiler.compile("select c, sum_t(d) from x")) {
+                            factory.getCursor(sqlExecutionContext);
                         }
                         Assert.fail();
                     } catch (CairoException e) {
@@ -1122,7 +1115,7 @@ public class SampleByTest extends AbstractGriffinTest {
                         " timestamp_sequence(to_timestamp(172800000000), 3600000000) k" +
                         " from" +
                         " long_sequence(20000000)" +
-                        ") timestamp(k) partition by NONE"), AllowAllCairoSecurityContext.INSTANCE, bindVariableService);
+                        ") timestamp(k) partition by NONE"));
 
                 FilesFacade ff = new FilesFacadeImpl() {
                     int count = 2;
@@ -1146,11 +1139,7 @@ public class SampleByTest extends AbstractGriffinTest {
                 try (CairoEngine engine = new CairoEngine(configuration)) {
                     try (SqlCompiler compiler = new SqlCompiler(engine)) {
                         try {
-                            compiler.compile(
-                                    "select b, sum(a), k from x sample by 3h fill(linear)",
-                                    AllowAllCairoSecurityContext.INSTANCE,
-                                    bindVariableService
-                            );
+                            compiler.compile("select b, sum(a), k from x sample by 3h fill(linear)");
                             Assert.fail();
                         } catch (SqlException e) {
                             Assert.assertTrue(Chars.contains(e.getMessage(), "Cannot mmap"));
@@ -1180,9 +1169,8 @@ public class SampleByTest extends AbstractGriffinTest {
                         " timestamp_sequence(to_timestamp(172800000000), 3600000000) k" +
                         " from" +
                         " long_sequence(20000000)" +
-                                ") timestamp(k) partition by NONE"),
-                        AllowAllCairoSecurityContext.INSTANCE,
-                        bindVariableService);
+                        ") timestamp(k) partition by NONE")
+                );
 
                 FilesFacade ff = new FilesFacadeImpl() {
                     int count = 5;
@@ -1206,13 +1194,9 @@ public class SampleByTest extends AbstractGriffinTest {
                 try (CairoEngine engine = new CairoEngine(configuration)) {
                     try (SqlCompiler compiler = new SqlCompiler(engine)) {
                         try {
-                            try (RecordCursorFactory factory = compiler.compile(
-                                    "select b, sum(a), k from x sample by 3h fill(linear)",
-                                    AllowAllCairoSecurityContext.INSTANCE,
-                                    bindVariableService
-                            )) {
+                            try (RecordCursorFactory factory = compiler.compile("select b, sum(a), k from x sample by 3h fill(linear)")) {
                                 // with mmap count = 5 we should get failure in cursor
-                                factory.getCursor(compiler.getExecutionContext());
+                                factory.getCursor(sqlExecutionContext);
                             }
                             Assert.fail();
                         } catch (CairoException e) {
@@ -2768,151 +2752,6 @@ public class SampleByTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testSampleFillValueFromSubQuery() throws Exception {
-        assertQuery("b\tsum\tk\n" +
-                        "RXGZ\t23.905290108465\t1970-01-03T00:00:00.000000Z\n" +
-                        "HYRX\t20.560000000000\t1970-01-03T00:00:00.000000Z\n" +
-                        "VTJW\t20.560000000000\t1970-01-03T00:00:00.000000Z\n" +
-                        "PEHN\t20.560000000000\t1970-01-03T00:00:00.000000Z\n" +
-                        "\t20.560000000000\t1970-01-03T00:00:00.000000Z\n" +
-                        "RXGZ\t20.560000000000\t1970-01-03T03:00:00.000000Z\n" +
-                        "HYRX\t20.560000000000\t1970-01-03T03:00:00.000000Z\n" +
-                        "VTJW\t20.560000000000\t1970-01-03T03:00:00.000000Z\n" +
-                        "PEHN\t20.560000000000\t1970-01-03T03:00:00.000000Z\n" +
-                        "\t20.560000000000\t1970-01-03T03:00:00.000000Z\n" +
-                        "RXGZ\t20.560000000000\t1970-01-03T06:00:00.000000Z\n" +
-                        "HYRX\t20.560000000000\t1970-01-03T06:00:00.000000Z\n" +
-                        "VTJW\t20.560000000000\t1970-01-03T06:00:00.000000Z\n" +
-                        "PEHN\t20.560000000000\t1970-01-03T06:00:00.000000Z\n" +
-                        "\t20.560000000000\t1970-01-03T06:00:00.000000Z\n" +
-                        "RXGZ\t20.560000000000\t1970-01-03T09:00:00.000000Z\n" +
-                        "HYRX\t12.026122412833\t1970-01-03T09:00:00.000000Z\n" +
-                        "VTJW\t48.820511018587\t1970-01-03T09:00:00.000000Z\n" +
-                        "PEHN\t20.560000000000\t1970-01-03T09:00:00.000000Z\n" +
-                        "\t20.560000000000\t1970-01-03T09:00:00.000000Z\n" +
-                        "RXGZ\t20.560000000000\t1970-01-03T12:00:00.000000Z\n" +
-                        "HYRX\t20.560000000000\t1970-01-03T12:00:00.000000Z\n" +
-                        "VTJW\t20.560000000000\t1970-01-03T12:00:00.000000Z\n" +
-                        "PEHN\t20.560000000000\t1970-01-03T12:00:00.000000Z\n" +
-                        "\t20.560000000000\t1970-01-03T12:00:00.000000Z\n" +
-                        "RXGZ\t20.560000000000\t1970-01-03T15:00:00.000000Z\n" +
-                        "HYRX\t20.560000000000\t1970-01-03T15:00:00.000000Z\n" +
-                        "VTJW\t20.560000000000\t1970-01-03T15:00:00.000000Z\n" +
-                        "PEHN\t49.005104498852\t1970-01-03T15:00:00.000000Z\n" +
-                        "\t20.560000000000\t1970-01-03T15:00:00.000000Z\n" +
-                        "RXGZ\t20.560000000000\t1970-01-03T18:00:00.000000Z\n" +
-                        "HYRX\t20.560000000000\t1970-01-03T18:00:00.000000Z\n" +
-                        "VTJW\t20.560000000000\t1970-01-03T18:00:00.000000Z\n" +
-                        "PEHN\t20.560000000000\t1970-01-03T18:00:00.000000Z\n" +
-                        "\t40.455469747939\t1970-01-03T18:00:00.000000Z\n",
-                "select b, sum(a), k from (x latest by b) sample by 3h fill(20.56)",
-                "create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_double(0)*100 a," +
-                        " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(to_timestamp(172800000000), 3600000000) k" +
-                        " from" +
-                        " long_sequence(20)" +
-                        ") timestamp(k) partition by NONE",
-                "k",
-                "insert into x select * from (" +
-                        "select" +
-                        " rnd_double(0)*100 a," +
-                        " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(to_timestamp(277200000000), 3600000000) k" +
-                        " from" +
-                        " long_sequence(5)" +
-                        ") timestamp(k)",
-                "b\tsum\tk\n" +
-                        "RXGZ\t23.905290108465\t1970-01-03T00:00:00.000000Z\n" +
-                        "HYRX\t20.560000000000\t1970-01-03T00:00:00.000000Z\n" +
-                        "VTJW\t20.560000000000\t1970-01-03T00:00:00.000000Z\n" +
-                        "PEHN\t20.560000000000\t1970-01-03T00:00:00.000000Z\n" +
-                        "UVSD\t20.560000000000\t1970-01-03T00:00:00.000000Z\n" +
-                        "\t20.560000000000\t1970-01-03T00:00:00.000000Z\n" +
-                        "KGHV\t20.560000000000\t1970-01-03T00:00:00.000000Z\n" +
-                        "RXGZ\t20.560000000000\t1970-01-03T03:00:00.000000Z\n" +
-                        "HYRX\t20.560000000000\t1970-01-03T03:00:00.000000Z\n" +
-                        "VTJW\t20.560000000000\t1970-01-03T03:00:00.000000Z\n" +
-                        "PEHN\t20.560000000000\t1970-01-03T03:00:00.000000Z\n" +
-                        "UVSD\t20.560000000000\t1970-01-03T03:00:00.000000Z\n" +
-                        "\t20.560000000000\t1970-01-03T03:00:00.000000Z\n" +
-                        "KGHV\t20.560000000000\t1970-01-03T03:00:00.000000Z\n" +
-                        "RXGZ\t20.560000000000\t1970-01-03T06:00:00.000000Z\n" +
-                        "HYRX\t20.560000000000\t1970-01-03T06:00:00.000000Z\n" +
-                        "VTJW\t20.560000000000\t1970-01-03T06:00:00.000000Z\n" +
-                        "PEHN\t20.560000000000\t1970-01-03T06:00:00.000000Z\n" +
-                        "UVSD\t20.560000000000\t1970-01-03T06:00:00.000000Z\n" +
-                        "\t20.560000000000\t1970-01-03T06:00:00.000000Z\n" +
-                        "KGHV\t20.560000000000\t1970-01-03T06:00:00.000000Z\n" +
-                        "RXGZ\t20.560000000000\t1970-01-03T09:00:00.000000Z\n" +
-                        "HYRX\t12.026122412833\t1970-01-03T09:00:00.000000Z\n" +
-                        "VTJW\t48.820511018587\t1970-01-03T09:00:00.000000Z\n" +
-                        "PEHN\t20.560000000000\t1970-01-03T09:00:00.000000Z\n" +
-                        "UVSD\t20.560000000000\t1970-01-03T09:00:00.000000Z\n" +
-                        "\t20.560000000000\t1970-01-03T09:00:00.000000Z\n" +
-                        "KGHV\t20.560000000000\t1970-01-03T09:00:00.000000Z\n" +
-                        "RXGZ\t20.560000000000\t1970-01-03T12:00:00.000000Z\n" +
-                        "HYRX\t20.560000000000\t1970-01-03T12:00:00.000000Z\n" +
-                        "VTJW\t20.560000000000\t1970-01-03T12:00:00.000000Z\n" +
-                        "PEHN\t20.560000000000\t1970-01-03T12:00:00.000000Z\n" +
-                        "UVSD\t20.560000000000\t1970-01-03T12:00:00.000000Z\n" +
-                        "\t20.560000000000\t1970-01-03T12:00:00.000000Z\n" +
-                        "KGHV\t20.560000000000\t1970-01-03T12:00:00.000000Z\n" +
-                        "RXGZ\t20.560000000000\t1970-01-03T15:00:00.000000Z\n" +
-                        "HYRX\t20.560000000000\t1970-01-03T15:00:00.000000Z\n" +
-                        "VTJW\t20.560000000000\t1970-01-03T15:00:00.000000Z\n" +
-                        "PEHN\t49.005104498852\t1970-01-03T15:00:00.000000Z\n" +
-                        "UVSD\t20.560000000000\t1970-01-03T15:00:00.000000Z\n" +
-                        "\t20.560000000000\t1970-01-03T15:00:00.000000Z\n" +
-                        "KGHV\t20.560000000000\t1970-01-03T15:00:00.000000Z\n" +
-                        "RXGZ\t20.560000000000\t1970-01-03T18:00:00.000000Z\n" +
-                        "HYRX\t20.560000000000\t1970-01-03T18:00:00.000000Z\n" +
-                        "VTJW\t20.560000000000\t1970-01-03T18:00:00.000000Z\n" +
-                        "PEHN\t20.560000000000\t1970-01-03T18:00:00.000000Z\n" +
-                        "UVSD\t20.560000000000\t1970-01-03T18:00:00.000000Z\n" +
-                        "\t20.560000000000\t1970-01-03T18:00:00.000000Z\n" +
-                        "KGHV\t20.560000000000\t1970-01-03T18:00:00.000000Z\n" +
-                        "RXGZ\t20.560000000000\t1970-01-03T21:00:00.000000Z\n" +
-                        "HYRX\t20.560000000000\t1970-01-03T21:00:00.000000Z\n" +
-                        "VTJW\t20.560000000000\t1970-01-03T21:00:00.000000Z\n" +
-                        "PEHN\t20.560000000000\t1970-01-03T21:00:00.000000Z\n" +
-                        "UVSD\t20.560000000000\t1970-01-03T21:00:00.000000Z\n" +
-                        "\t20.560000000000\t1970-01-03T21:00:00.000000Z\n" +
-                        "KGHV\t20.560000000000\t1970-01-03T21:00:00.000000Z\n" +
-                        "RXGZ\t20.560000000000\t1970-01-04T00:00:00.000000Z\n" +
-                        "HYRX\t20.560000000000\t1970-01-04T00:00:00.000000Z\n" +
-                        "VTJW\t20.560000000000\t1970-01-04T00:00:00.000000Z\n" +
-                        "PEHN\t20.560000000000\t1970-01-04T00:00:00.000000Z\n" +
-                        "UVSD\t20.560000000000\t1970-01-04T00:00:00.000000Z\n" +
-                        "\t20.560000000000\t1970-01-04T00:00:00.000000Z\n" +
-                        "KGHV\t20.560000000000\t1970-01-04T00:00:00.000000Z\n" +
-                        "RXGZ\t20.560000000000\t1970-01-04T03:00:00.000000Z\n" +
-                        "HYRX\t20.560000000000\t1970-01-04T03:00:00.000000Z\n" +
-                        "VTJW\t20.560000000000\t1970-01-04T03:00:00.000000Z\n" +
-                        "PEHN\t20.560000000000\t1970-01-04T03:00:00.000000Z\n" +
-                        "UVSD\t20.560000000000\t1970-01-04T03:00:00.000000Z\n" +
-                        "\t20.560000000000\t1970-01-04T03:00:00.000000Z\n" +
-                        "KGHV\t20.560000000000\t1970-01-04T03:00:00.000000Z\n" +
-                        "RXGZ\t20.560000000000\t1970-01-04T06:00:00.000000Z\n" +
-                        "HYRX\t20.560000000000\t1970-01-04T06:00:00.000000Z\n" +
-                        "VTJW\t20.560000000000\t1970-01-04T06:00:00.000000Z\n" +
-                        "PEHN\t20.560000000000\t1970-01-04T06:00:00.000000Z\n" +
-                        "UVSD\t49.428905119585\t1970-01-04T06:00:00.000000Z\n" +
-                        "\t58.912164838798\t1970-01-04T06:00:00.000000Z\n" +
-                        "KGHV\t20.560000000000\t1970-01-04T06:00:00.000000Z\n" +
-                        "RXGZ\t20.560000000000\t1970-01-04T09:00:00.000000Z\n" +
-                        "HYRX\t20.560000000000\t1970-01-04T09:00:00.000000Z\n" +
-                        "VTJW\t20.560000000000\t1970-01-04T09:00:00.000000Z\n" +
-                        "PEHN\t20.560000000000\t1970-01-04T09:00:00.000000Z\n" +
-                        "UVSD\t20.560000000000\t1970-01-04T09:00:00.000000Z\n" +
-                        "\t20.560000000000\t1970-01-04T09:00:00.000000Z\n" +
-                        "KGHV\t67.525095471124\t1970-01-04T09:00:00.000000Z\n",
-                false);
-    }
-
-    @Test
     public void testSampleFillValueAllKeyTypes() throws Exception {
         assertQuery("b\th\ti\tj\tl\tsum\tsum1\tsum2\tsum3\tsum4\tsum5\tk\n" +
                         "\tFFYUDEYY\t00000000 49 b4 59 7e 3b 08 a1 1e 38 8d 1b 9e f4 c8 39 09\t2015-09-16T21:59:49.857Z\tfalse\t11.427984775756\t42.1777\t1432278050\t13216\t4\t5539350449504785212\t1970-01-03T00:00:00.000000Z\n" +
@@ -3175,15 +3014,9 @@ public class SampleByTest extends AbstractGriffinTest {
                                 " timestamp_sequence(to_timestamp(172800000000), 3600000000) k" +
                                 " from" +
                                 " long_sequence(20)" +
-                                ") timestamp(k) partition by NONE"),
-                        AllowAllCairoSecurityContext.INSTANCE,
-                        bindVariableService);
+                                ") timestamp(k) partition by NONE"));
 
-                try (final RecordCursorFactory factory = compiler.compile(
-                        "select b, sum(a), sum(c), sum(d), sum(e), sum(f), sum(g), k from x sample by 3h fill(20.56, 0, 0, 0, 0, 0)",
-                        AllowAllCairoSecurityContext.INSTANCE,
-                        bindVariableService)
-                ) {
+                try (final RecordCursorFactory factory = compiler.compile("select b, sum(a), sum(c), sum(d), sum(e), sum(f), sum(g), k from x sample by 3h fill(20.56, 0, 0, 0, 0, 0)")) {
                     assertTimestamp("k", factory);
                     String expected = "b\tsum\tsum1\tsum2\tsum3\tsum4\tsum5\tk\n" +
                             "\t74.197525059489\t113.1213\t-1737520119\t868\t12\t-6307312481136788016\t1970-01-03T00:00:00.000000Z\n" +
@@ -3227,8 +3060,8 @@ public class SampleByTest extends AbstractGriffinTest {
                     // make sure strings, binary fields and symbols are compliant with expected record behaviour
                     assertVariableColumns(factory);
 
-                    compiler.compile("truncate table x", AllowAllCairoSecurityContext.INSTANCE, bindVariableService);
-                    try (RecordCursor cursor = factory.getCursor(compiler.getExecutionContext())) {
+                    compiler.compile("truncate table x");
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                         sink.clear();
                         printer.print(cursor, factory.getMetadata(), true);
                         TestUtils.assertEquals("b\tsum\tsum1\tsum2\tsum3\tsum4\tsum5\tk\n", sink);
@@ -3275,6 +3108,151 @@ public class SampleByTest extends AbstractGriffinTest {
                         " long_sequence(0)" +
                         ") timestamp(k) partition by NONE",
                 "k",
+                false);
+    }
+
+    @Test
+    public void testSampleFillValueFromSubQuery() throws Exception {
+        assertQuery("b\tsum\tk\n" +
+                        "RXGZ\t23.905290108465\t1970-01-03T00:00:00.000000Z\n" +
+                        "HYRX\t20.560000000000\t1970-01-03T00:00:00.000000Z\n" +
+                        "VTJW\t20.560000000000\t1970-01-03T00:00:00.000000Z\n" +
+                        "PEHN\t20.560000000000\t1970-01-03T00:00:00.000000Z\n" +
+                        "\t20.560000000000\t1970-01-03T00:00:00.000000Z\n" +
+                        "RXGZ\t20.560000000000\t1970-01-03T03:00:00.000000Z\n" +
+                        "HYRX\t20.560000000000\t1970-01-03T03:00:00.000000Z\n" +
+                        "VTJW\t20.560000000000\t1970-01-03T03:00:00.000000Z\n" +
+                        "PEHN\t20.560000000000\t1970-01-03T03:00:00.000000Z\n" +
+                        "\t20.560000000000\t1970-01-03T03:00:00.000000Z\n" +
+                        "RXGZ\t20.560000000000\t1970-01-03T06:00:00.000000Z\n" +
+                        "HYRX\t20.560000000000\t1970-01-03T06:00:00.000000Z\n" +
+                        "VTJW\t20.560000000000\t1970-01-03T06:00:00.000000Z\n" +
+                        "PEHN\t20.560000000000\t1970-01-03T06:00:00.000000Z\n" +
+                        "\t20.560000000000\t1970-01-03T06:00:00.000000Z\n" +
+                        "RXGZ\t20.560000000000\t1970-01-03T09:00:00.000000Z\n" +
+                        "HYRX\t12.026122412833\t1970-01-03T09:00:00.000000Z\n" +
+                        "VTJW\t48.820511018587\t1970-01-03T09:00:00.000000Z\n" +
+                        "PEHN\t20.560000000000\t1970-01-03T09:00:00.000000Z\n" +
+                        "\t20.560000000000\t1970-01-03T09:00:00.000000Z\n" +
+                        "RXGZ\t20.560000000000\t1970-01-03T12:00:00.000000Z\n" +
+                        "HYRX\t20.560000000000\t1970-01-03T12:00:00.000000Z\n" +
+                        "VTJW\t20.560000000000\t1970-01-03T12:00:00.000000Z\n" +
+                        "PEHN\t20.560000000000\t1970-01-03T12:00:00.000000Z\n" +
+                        "\t20.560000000000\t1970-01-03T12:00:00.000000Z\n" +
+                        "RXGZ\t20.560000000000\t1970-01-03T15:00:00.000000Z\n" +
+                        "HYRX\t20.560000000000\t1970-01-03T15:00:00.000000Z\n" +
+                        "VTJW\t20.560000000000\t1970-01-03T15:00:00.000000Z\n" +
+                        "PEHN\t49.005104498852\t1970-01-03T15:00:00.000000Z\n" +
+                        "\t20.560000000000\t1970-01-03T15:00:00.000000Z\n" +
+                        "RXGZ\t20.560000000000\t1970-01-03T18:00:00.000000Z\n" +
+                        "HYRX\t20.560000000000\t1970-01-03T18:00:00.000000Z\n" +
+                        "VTJW\t20.560000000000\t1970-01-03T18:00:00.000000Z\n" +
+                        "PEHN\t20.560000000000\t1970-01-03T18:00:00.000000Z\n" +
+                        "\t40.455469747939\t1970-01-03T18:00:00.000000Z\n",
+                "select b, sum(a), k from (x latest by b) sample by 3h fill(20.56)",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(to_timestamp(172800000000), 3600000000) k" +
+                        " from" +
+                        " long_sequence(20)" +
+                        ") timestamp(k) partition by NONE",
+                "k",
+                "insert into x select * from (" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(to_timestamp(277200000000), 3600000000) k" +
+                        " from" +
+                        " long_sequence(5)" +
+                        ") timestamp(k)",
+                "b\tsum\tk\n" +
+                        "RXGZ\t23.905290108465\t1970-01-03T00:00:00.000000Z\n" +
+                        "HYRX\t20.560000000000\t1970-01-03T00:00:00.000000Z\n" +
+                        "VTJW\t20.560000000000\t1970-01-03T00:00:00.000000Z\n" +
+                        "PEHN\t20.560000000000\t1970-01-03T00:00:00.000000Z\n" +
+                        "UVSD\t20.560000000000\t1970-01-03T00:00:00.000000Z\n" +
+                        "\t20.560000000000\t1970-01-03T00:00:00.000000Z\n" +
+                        "KGHV\t20.560000000000\t1970-01-03T00:00:00.000000Z\n" +
+                        "RXGZ\t20.560000000000\t1970-01-03T03:00:00.000000Z\n" +
+                        "HYRX\t20.560000000000\t1970-01-03T03:00:00.000000Z\n" +
+                        "VTJW\t20.560000000000\t1970-01-03T03:00:00.000000Z\n" +
+                        "PEHN\t20.560000000000\t1970-01-03T03:00:00.000000Z\n" +
+                        "UVSD\t20.560000000000\t1970-01-03T03:00:00.000000Z\n" +
+                        "\t20.560000000000\t1970-01-03T03:00:00.000000Z\n" +
+                        "KGHV\t20.560000000000\t1970-01-03T03:00:00.000000Z\n" +
+                        "RXGZ\t20.560000000000\t1970-01-03T06:00:00.000000Z\n" +
+                        "HYRX\t20.560000000000\t1970-01-03T06:00:00.000000Z\n" +
+                        "VTJW\t20.560000000000\t1970-01-03T06:00:00.000000Z\n" +
+                        "PEHN\t20.560000000000\t1970-01-03T06:00:00.000000Z\n" +
+                        "UVSD\t20.560000000000\t1970-01-03T06:00:00.000000Z\n" +
+                        "\t20.560000000000\t1970-01-03T06:00:00.000000Z\n" +
+                        "KGHV\t20.560000000000\t1970-01-03T06:00:00.000000Z\n" +
+                        "RXGZ\t20.560000000000\t1970-01-03T09:00:00.000000Z\n" +
+                        "HYRX\t12.026122412833\t1970-01-03T09:00:00.000000Z\n" +
+                        "VTJW\t48.820511018587\t1970-01-03T09:00:00.000000Z\n" +
+                        "PEHN\t20.560000000000\t1970-01-03T09:00:00.000000Z\n" +
+                        "UVSD\t20.560000000000\t1970-01-03T09:00:00.000000Z\n" +
+                        "\t20.560000000000\t1970-01-03T09:00:00.000000Z\n" +
+                        "KGHV\t20.560000000000\t1970-01-03T09:00:00.000000Z\n" +
+                        "RXGZ\t20.560000000000\t1970-01-03T12:00:00.000000Z\n" +
+                        "HYRX\t20.560000000000\t1970-01-03T12:00:00.000000Z\n" +
+                        "VTJW\t20.560000000000\t1970-01-03T12:00:00.000000Z\n" +
+                        "PEHN\t20.560000000000\t1970-01-03T12:00:00.000000Z\n" +
+                        "UVSD\t20.560000000000\t1970-01-03T12:00:00.000000Z\n" +
+                        "\t20.560000000000\t1970-01-03T12:00:00.000000Z\n" +
+                        "KGHV\t20.560000000000\t1970-01-03T12:00:00.000000Z\n" +
+                        "RXGZ\t20.560000000000\t1970-01-03T15:00:00.000000Z\n" +
+                        "HYRX\t20.560000000000\t1970-01-03T15:00:00.000000Z\n" +
+                        "VTJW\t20.560000000000\t1970-01-03T15:00:00.000000Z\n" +
+                        "PEHN\t49.005104498852\t1970-01-03T15:00:00.000000Z\n" +
+                        "UVSD\t20.560000000000\t1970-01-03T15:00:00.000000Z\n" +
+                        "\t20.560000000000\t1970-01-03T15:00:00.000000Z\n" +
+                        "KGHV\t20.560000000000\t1970-01-03T15:00:00.000000Z\n" +
+                        "RXGZ\t20.560000000000\t1970-01-03T18:00:00.000000Z\n" +
+                        "HYRX\t20.560000000000\t1970-01-03T18:00:00.000000Z\n" +
+                        "VTJW\t20.560000000000\t1970-01-03T18:00:00.000000Z\n" +
+                        "PEHN\t20.560000000000\t1970-01-03T18:00:00.000000Z\n" +
+                        "UVSD\t20.560000000000\t1970-01-03T18:00:00.000000Z\n" +
+                        "\t20.560000000000\t1970-01-03T18:00:00.000000Z\n" +
+                        "KGHV\t20.560000000000\t1970-01-03T18:00:00.000000Z\n" +
+                        "RXGZ\t20.560000000000\t1970-01-03T21:00:00.000000Z\n" +
+                        "HYRX\t20.560000000000\t1970-01-03T21:00:00.000000Z\n" +
+                        "VTJW\t20.560000000000\t1970-01-03T21:00:00.000000Z\n" +
+                        "PEHN\t20.560000000000\t1970-01-03T21:00:00.000000Z\n" +
+                        "UVSD\t20.560000000000\t1970-01-03T21:00:00.000000Z\n" +
+                        "\t20.560000000000\t1970-01-03T21:00:00.000000Z\n" +
+                        "KGHV\t20.560000000000\t1970-01-03T21:00:00.000000Z\n" +
+                        "RXGZ\t20.560000000000\t1970-01-04T00:00:00.000000Z\n" +
+                        "HYRX\t20.560000000000\t1970-01-04T00:00:00.000000Z\n" +
+                        "VTJW\t20.560000000000\t1970-01-04T00:00:00.000000Z\n" +
+                        "PEHN\t20.560000000000\t1970-01-04T00:00:00.000000Z\n" +
+                        "UVSD\t20.560000000000\t1970-01-04T00:00:00.000000Z\n" +
+                        "\t20.560000000000\t1970-01-04T00:00:00.000000Z\n" +
+                        "KGHV\t20.560000000000\t1970-01-04T00:00:00.000000Z\n" +
+                        "RXGZ\t20.560000000000\t1970-01-04T03:00:00.000000Z\n" +
+                        "HYRX\t20.560000000000\t1970-01-04T03:00:00.000000Z\n" +
+                        "VTJW\t20.560000000000\t1970-01-04T03:00:00.000000Z\n" +
+                        "PEHN\t20.560000000000\t1970-01-04T03:00:00.000000Z\n" +
+                        "UVSD\t20.560000000000\t1970-01-04T03:00:00.000000Z\n" +
+                        "\t20.560000000000\t1970-01-04T03:00:00.000000Z\n" +
+                        "KGHV\t20.560000000000\t1970-01-04T03:00:00.000000Z\n" +
+                        "RXGZ\t20.560000000000\t1970-01-04T06:00:00.000000Z\n" +
+                        "HYRX\t20.560000000000\t1970-01-04T06:00:00.000000Z\n" +
+                        "VTJW\t20.560000000000\t1970-01-04T06:00:00.000000Z\n" +
+                        "PEHN\t20.560000000000\t1970-01-04T06:00:00.000000Z\n" +
+                        "UVSD\t49.428905119585\t1970-01-04T06:00:00.000000Z\n" +
+                        "\t58.912164838798\t1970-01-04T06:00:00.000000Z\n" +
+                        "KGHV\t20.560000000000\t1970-01-04T06:00:00.000000Z\n" +
+                        "RXGZ\t20.560000000000\t1970-01-04T09:00:00.000000Z\n" +
+                        "HYRX\t20.560000000000\t1970-01-04T09:00:00.000000Z\n" +
+                        "VTJW\t20.560000000000\t1970-01-04T09:00:00.000000Z\n" +
+                        "PEHN\t20.560000000000\t1970-01-04T09:00:00.000000Z\n" +
+                        "UVSD\t20.560000000000\t1970-01-04T09:00:00.000000Z\n" +
+                        "\t20.560000000000\t1970-01-04T09:00:00.000000Z\n" +
+                        "KGHV\t67.525095471124\t1970-01-04T09:00:00.000000Z\n",
                 false);
     }
 

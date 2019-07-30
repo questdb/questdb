@@ -25,9 +25,8 @@ package com.questdb.cutlass.pgwire;
 
 import com.questdb.cairo.CairoSecurityContext;
 import com.questdb.griffin.SqlException;
-import com.questdb.network.PeerDisconnectedException;
 
 @FunctionalInterface
 public interface PGAuthenticator {
-    CairoSecurityContext authenticate(CharSequence username, long msg, long msgLimit) throws BadProtocolException, PeerDisconnectedException, SqlException;
+    CairoSecurityContext authenticate(CharSequence username, long msg, long msgLimit) throws BadProtocolException, SqlException;
 }

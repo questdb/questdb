@@ -25,8 +25,8 @@ package com.questdb.cairo;
 
 import com.questdb.cairo.security.AllowAllCairoSecurityContext;
 import com.questdb.cairo.sql.Record;
+import com.questdb.griffin.AbstractGriffinTest;
 import com.questdb.griffin.SqlCompiler;
-import com.questdb.griffin.engine.functions.bind.BindVariableService;
 import com.questdb.std.BinarySequence;
 import com.questdb.std.Rnd;
 import com.questdb.std.Unsafe;
@@ -39,19 +39,13 @@ import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
-public class TableReaderTailRecordCursorTest extends AbstractCairoTest {
+public class TableReaderTailRecordCursorTest extends AbstractGriffinTest {
     private final static CairoEngine engine = new CairoEngine(configuration);
     private final static SqlCompiler compiler = new SqlCompiler(engine);
-    private final static BindVariableService bindVariableService = new BindVariableService();
 
     @Test
     public void testBusyPollByDay() throws Exception {
         testBusyPollFromMidTable(PartitionBy.DAY, 3000000000L);
-    }
-
-    @Test
-    public void testBusyPollFromBottomByDay() throws Exception {
-        testBusyPollFromBottomOfTable(PartitionBy.DAY, 3000000000L);
     }
 
     @Test
@@ -60,23 +54,28 @@ public class TableReaderTailRecordCursorTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testBusyPollFromBottomByMonth() throws Exception {
-        testBusyPollFromBottomOfTable(PartitionBy.MONTH, 50000000000L);
-    }
-
-    @Test
     public void testBusyPollByNone() throws Exception {
         testBusyPollFromMidTable(PartitionBy.NONE, 10000L);
     }
 
     @Test
-    public void testBusyPollFromBottomByNone() throws Exception {
-        testBusyPollFromBottomOfTable(PartitionBy.NONE, 10000L);
+    public void testBusyPollByYear() throws Exception {
+        testBusyPollFromMidTable(PartitionBy.YEAR, 365 * 500000000L);
     }
 
     @Test
-    public void testBusyPollByYear() throws Exception {
-        testBusyPollFromMidTable(PartitionBy.YEAR, 365 * 500000000L);
+    public void testBusyPollFromBottomByDay() throws Exception {
+        testBusyPollFromBottomOfTable(PartitionBy.DAY, 3000000000L);
+    }
+
+    @Test
+    public void testBusyPollFromBottomByMonth() throws Exception {
+        testBusyPollFromBottomOfTable(PartitionBy.MONTH, 50000000000L);
+    }
+
+    @Test
+    public void testBusyPollFromBottomByNone() throws Exception {
+        testBusyPollFromBottomOfTable(PartitionBy.NONE, 10000L);
     }
 
     @Test
@@ -137,7 +136,7 @@ public class TableReaderTailRecordCursorTest extends AbstractCairoTest {
 
     private void testBusyPoll(long timestampIncrement, int n, String createStatement) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            compiler.compile(createStatement, AllowAllCairoSecurityContext.INSTANCE, bindVariableService);
+            compiler.compile(createStatement);
             final AtomicInteger errorCount = new AtomicInteger();
             final CyclicBarrier barrier = new CyclicBarrier(2);
             final CountDownLatch latch = new CountDownLatch(2);
@@ -216,9 +215,7 @@ public class TableReaderTailRecordCursorTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             try {
                 compiler.compile(
-                        "create table xyz (sequence INT, event BINARY, ts LONG, stamp TIMESTAMP) timestamp(stamp) partition by " + PartitionBy.toString(partitionBy),
-                        AllowAllCairoSecurityContext.INSTANCE,
-                        bindVariableService
+                        "create table xyz (sequence INT, event BINARY, ts LONG, stamp TIMESTAMP) timestamp(stamp) partition by " + PartitionBy.toString(partitionBy)
                 );
 
                 try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "xyz")) {
@@ -282,8 +279,6 @@ public class TableReaderTailRecordCursorTest extends AbstractCairoTest {
             try {
                 compiler.compile(
                         "create table xyz (sequence INT, event BINARY, ts LONG, stamp TIMESTAMP) timestamp(stamp) partition by " + PartitionBy.toString(partitionBy)
-                        , AllowAllCairoSecurityContext.INSTANCE
-                        , bindVariableService
                 );
 
                 try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "xyz")) {

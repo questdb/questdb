@@ -135,7 +135,7 @@ public class RndBinFunctionFactoryTest extends AbstractFunctionFactoryTest {
     }
 
     private void assertQuery(CharSequence expected, CharSequence sql) throws SqlException, IOException {
-        RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext.getCairoSecurityContext(), sqlExecutionContext.getBindVariableService());
+        RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext);
         assertOnce(expected, factory.getCursor(sqlExecutionContext), factory.getMetadata(), true);
     }
 }

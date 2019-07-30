@@ -71,7 +71,7 @@ public class InFunctionFactory implements FunctionFactory {
         return new Func(position, var, set);
     }
 
-    private class Func extends BooleanFunction implements UnaryFunction {
+    private static class Func extends BooleanFunction implements UnaryFunction {
         private final Function arg;
         private final CharSequenceHashSet set;
 

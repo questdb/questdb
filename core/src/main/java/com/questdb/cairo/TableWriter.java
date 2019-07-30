@@ -753,9 +753,9 @@ public class TableWriter implements Closeable {
                     break;
             }
         } else {
-            mem1.setSize((long) 0);
+            mem1.setSize(0);
             if (mem2 != null) {
-                mem2.setSize((long) 0);
+                mem2.setSize(0);
             }
         }
     }

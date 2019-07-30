@@ -82,7 +82,7 @@ public class AlterTableDropColumnTest extends AbstractGriffinTest {
 
                 startBarrier.await();
                 try {
-                    compiler.compile("alter table x drop column ik", AllowAllCairoSecurityContext.INSTANCE, bindVariableService);
+                    compiler.compile("alter table x drop column ik");
                     Assert.fail();
                 } finally {
                     haltLatch.countDown();
@@ -116,7 +116,7 @@ public class AlterTableDropColumnTest extends AbstractGriffinTest {
                     try {
                         createX();
 
-                        Assert.assertNull(compiler.compile("alter table x drop column e, m", AllowAllCairoSecurityContext.INSTANCE, bindVariableService));
+                        Assert.assertNull(compiler.compile("alter table x drop column e, m"));
 
                         String expected = "{\"columnCount\":14,\"columns\":[{\"index\":0,\"name\":\"i\",\"type\":\"INT\"},{\"index\":1,\"name\":\"sym\",\"type\":\"SYMBOL\"},{\"index\":2,\"name\":\"amt\",\"type\":\"DOUBLE\"},{\"index\":3,\"name\":\"timestamp\",\"type\":\"TIMESTAMP\"},{\"index\":4,\"name\":\"b\",\"type\":\"BOOLEAN\"},{\"index\":5,\"name\":\"c\",\"type\":\"STRING\"},{\"index\":6,\"name\":\"d\",\"type\":\"DOUBLE\"},{\"index\":7,\"name\":\"f\",\"type\":\"SHORT\"},{\"index\":8,\"name\":\"g\",\"type\":\"DATE\"},{\"index\":9,\"name\":\"ik\",\"type\":\"SYMBOL\"},{\"index\":10,\"name\":\"j\",\"type\":\"LONG\"},{\"index\":11,\"name\":\"k\",\"type\":\"TIMESTAMP\"},{\"index\":12,\"name\":\"l\",\"type\":\"BYTE\"},{\"index\":13,\"name\":\"n\",\"type\":\"STRING\"}],\"timestampIndex\":3}";
 
@@ -170,7 +170,7 @@ public class AlterTableDropColumnTest extends AbstractGriffinTest {
         TestUtils.assertMemoryLeak(() -> {
             try {
                 createX();
-                compiler.compile(sql, AllowAllCairoSecurityContext.INSTANCE, bindVariableService);
+                compiler.compile(sql);
                 Assert.fail();
             } catch (SqlException e) {
                 Assert.assertEquals(position, e.getPosition());
@@ -203,9 +203,7 @@ public class AlterTableDropColumnTest extends AbstractGriffinTest {
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n" +
                         " from long_sequence(10)" +
-                        ") timestamp (timestamp)",
-                AllowAllCairoSecurityContext.INSTANCE,
-                bindVariableService
+                        ") timestamp (timestamp)"
         );
     }
 }

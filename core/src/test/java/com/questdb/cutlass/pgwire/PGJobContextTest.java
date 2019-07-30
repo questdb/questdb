@@ -186,6 +186,21 @@ public class PGJobContextTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testBadPasswordLength() throws Exception {
+        assertHexScript(
+                NetworkFacadeImpl.INSTANCE,
+                NetworkFacadeImpl.INSTANCE,
+                ">0000000804d2162f\n" +
+                        "<4e\n" +
+                        ">0000007500030000757365720061646d696e006461746162617365006e6162755f61707000636c69656e745f656e636f64696e67005554463800446174655374796c650049534f0054696d655a6f6e65004575726f70652f4c6f6e646f6e0065787472615f666c6f61745f64696769747300320000\n" +
+                        "<520000000800000003\n" +
+                        ">700000000464756e6e6f00\n" +
+                        "<!!",
+                new DefaultPGWireConfiguration()
+        );
+    }
+
+    @Test
     public void testBlobOverLimit() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             final CountDownLatch haltLatch = new CountDownLatch(1);
@@ -547,6 +562,62 @@ public class PGJobContextTest extends AbstractGriffinTest {
             @Override
             public String getDefaultUsername() {
                 return "xyz";
+            }
+        });
+    }
+
+    @Test
+    public void testLoginBadPassword() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final CountDownLatch haltLatch = new CountDownLatch(1);
+            final AtomicBoolean running = new AtomicBoolean(true);
+            try {
+                startBasicServer(NetworkFacadeImpl.INSTANCE,
+                        new DefaultPGWireConfiguration(),
+                        haltLatch,
+                        running
+                );
+
+                Properties properties = new Properties();
+                properties.setProperty("user", "admin");
+                properties.setProperty("password", "dunno");
+                try {
+                    DriverManager.getConnection("jdbc:postgresql://127.0.0.1:9120/nabu_app", properties);
+                    Assert.fail();
+                } catch (SQLException e) {
+                    TestUtils.assertContains(e.getMessage(), "invalid username/password");
+                }
+            } finally {
+                running.set(false);
+                haltLatch.await();
+            }
+        });
+    }
+
+    @Test
+    public void testLoginBadUsername() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final CountDownLatch haltLatch = new CountDownLatch(1);
+            final AtomicBoolean running = new AtomicBoolean(true);
+            try {
+                startBasicServer(NetworkFacadeImpl.INSTANCE,
+                        new DefaultPGWireConfiguration(),
+                        haltLatch,
+                        running
+                );
+
+                Properties properties = new Properties();
+                properties.setProperty("user", "joe");
+                properties.setProperty("password", "quest");
+                try {
+                    DriverManager.getConnection("jdbc:postgresql://127.0.0.1:9120/nabu_app", properties);
+                    Assert.fail();
+                } catch (SQLException e) {
+                    TestUtils.assertContains(e.getMessage(), "invalid username/password");
+                }
+            } finally {
+                running.set(false);
+                haltLatch.await();
             }
         });
     }

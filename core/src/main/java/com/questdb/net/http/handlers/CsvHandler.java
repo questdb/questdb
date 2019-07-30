@@ -224,8 +224,6 @@ public class CsvHandler implements ContextHandler {
                     sink.put(cs);
                 }
                 break;
-            case ColumnType.BINARY:
-                break;
             default:
                 break;
         }

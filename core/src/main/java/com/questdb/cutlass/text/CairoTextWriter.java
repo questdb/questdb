@@ -117,12 +117,11 @@ public class CairoTextWriter implements TextLexer.Listener, Closeable, Mutable {
         return writer.size() - _size;
     }
 
-    public CairoTextWriter of(CharSequence name, boolean overwrite, boolean durable, int atomicity) {
+    public void of(CharSequence name, boolean overwrite, boolean durable, int atomicity) {
         this.tableName = name;
         this.overwrite = overwrite;
         this.durable = durable;
         this.atomicity = atomicity;
-        return this;
     }
 
     @Override

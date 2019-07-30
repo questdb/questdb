@@ -141,7 +141,7 @@ public class RBTreeSortedRecordSource extends AbstractRecordSource implements Mu
 
         p = allocateBlock();
         setParent(p, parent);
-        long r = recordList.append(record, (long) -1);
+        long r = recordList.append(record, -1);
         setTop(p, r);
         setRef(p, r);
 
@@ -182,7 +182,7 @@ public class RBTreeSortedRecordSource extends AbstractRecordSource implements Mu
 
         p = allocateBlock();
         setParent(p, parent);
-        long r = recordList.append(fakeRecord.of(rowId), (long) -1);
+        long r = recordList.append(fakeRecord.of(rowId), -1);
         setTop(p, r);
         setRef(p, r);
 

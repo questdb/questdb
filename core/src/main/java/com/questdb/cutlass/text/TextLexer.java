@@ -109,10 +109,9 @@ public class TextLexer implements Closeable, Mutable {
         return lineCount;
     }
 
-    public TextLexer of(byte columnDelimiter) {
+    public void of(byte columnDelimiter) {
         clear();
         this.columnDelimiter = columnDelimiter;
-        return this;
     }
 
     public void parse(long lo, long len, int lineCountLimit, Listener textLexerListener) {

@@ -80,7 +80,7 @@ public class AlterTableAddColumnTest extends AbstractGriffinTest {
 
                 startBarrier.await();
                 try {
-                    compiler.compile("alter table x add column xx int", AllowAllCairoSecurityContext.INSTANCE, bindVariableService);
+                    compiler.compile("alter table x add column xx int");
                     Assert.fail();
                 } finally {
                     haltLatch.countDown();
@@ -98,49 +98,13 @@ public class AlterTableAddColumnTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testAddDuplicateColumn() throws Exception {
-        assertFailure("alter table x add column d int", 25, "column 'd' already exists");
-    }
-
-    @Test
-    public void testAddExpectColumnKeyword() throws Exception {
-        assertFailure("alter table x add", 17, "'column' expected");
-    }
-
-    @Test
-    public void testAddExpectColumnName() throws Exception {
-        assertFailure("alter table x add column", 24, "column name expected");
-    }
-
-    @Test
-    public void testAddSymbolExpectCapacity() throws Exception {
-        assertFailure("alter table x add column abc symbol capacity", 44, "symbol capacity expected");
-    }
-
-    @Test
-    public void testAddSymbolExpectCapacityTooHigh() throws Exception {
-        assertFailure("alter table x add column abc symbol capacity 1073741825 nocache", 45, "max symbol capacity is");
-    }
-
-    @Test
-    public void testAddSymbolExpectCapacityTooHigh2() throws Exception {
-        // cached symbol capacity is lower due to JVM limits
-        assertFailure("alter table x add column abc symbol capacity 1073741824", 45, "max cached symbol capacity is");
-    }
-
-    @Test
-    public void testAddSymbolExpectCapacityTooLow() throws Exception {
-        assertFailure("alter table x add column abc symbol capacity -100", 45, "min symbol capacity is");
-    }
-
-    @Test
     public void testAddColumn() throws Exception {
         TestUtils.assertMemoryLeak(
                 () -> {
                     try {
                         createX();
 
-                        Assert.assertNull(compiler.compile("alter table x add column mycol int", AllowAllCairoSecurityContext.INSTANCE, bindVariableService));
+                        Assert.assertNull(compiler.compile("alter table x add column mycol int"));
 
                         assertQuery(
                                 "c\tmycol\n" +
@@ -167,6 +131,21 @@ public class AlterTableAddColumnTest extends AbstractGriffinTest {
                     }
                 }
         );
+    }
+
+    @Test
+    public void testAddDuplicateColumn() throws Exception {
+        assertFailure("alter table x add column d int", 25, "column 'd' already exists");
+    }
+
+    @Test
+    public void testAddExpectColumnKeyword() throws Exception {
+        assertFailure("alter table x add", 17, "'column' expected");
+    }
+
+    @Test
+    public void testAddExpectColumnName() throws Exception {
+        assertFailure("alter table x add column", 24, "column name expected");
     }
 
     @Test
@@ -200,7 +179,7 @@ public class AlterTableAddColumnTest extends AbstractGriffinTest {
 
                         try (CairoEngine engine = new CairoEngine(configuration)) {
                             try (SqlCompiler compiler = new SqlCompiler(engine)) {
-                                Assert.assertNull(compiler.compile("alter table x add column meh symbol cache", AllowAllCairoSecurityContext.INSTANCE, bindVariableService));
+                                Assert.assertNull(compiler.compile("alter table x add column meh symbol cache"));
 
                                 try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_VERSION)) {
                                     SymbolMapReader smr = reader.getSymbolMapReader(16);
@@ -231,7 +210,7 @@ public class AlterTableAddColumnTest extends AbstractGriffinTest {
                     try {
                         createX();
 
-                        Assert.assertNull(compiler.compile("alter table x add column meh symbol capacity 2048", AllowAllCairoSecurityContext.INSTANCE, bindVariableService));
+                        Assert.assertNull(compiler.compile("alter table x add column meh symbol capacity 2048"));
 
                         try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_VERSION)) {
                             SymbolMapReader smr = reader.getSymbolMapReader(16);
@@ -250,6 +229,27 @@ public class AlterTableAddColumnTest extends AbstractGriffinTest {
                     }
                 }
         );
+    }
+
+    @Test
+    public void testAddSymbolExpectCapacity() throws Exception {
+        assertFailure("alter table x add column abc symbol capacity", 44, "symbol capacity expected");
+    }
+
+    @Test
+    public void testAddSymbolExpectCapacityTooHigh() throws Exception {
+        assertFailure("alter table x add column abc symbol capacity 1073741825 nocache", 45, "max symbol capacity is");
+    }
+
+    @Test
+    public void testAddSymbolExpectCapacityTooHigh2() throws Exception {
+        // cached symbol capacity is lower due to JVM limits
+        assertFailure("alter table x add column abc symbol capacity 1073741824", 45, "max cached symbol capacity is");
+    }
+
+    @Test
+    public void testAddSymbolExpectCapacityTooLow() throws Exception {
+        assertFailure("alter table x add column abc symbol capacity -100", 45, "min symbol capacity is");
     }
 
     @Test
@@ -274,7 +274,7 @@ public class AlterTableAddColumnTest extends AbstractGriffinTest {
                     try {
                         createX();
 
-                        Assert.assertNull(compiler.compile("alter table x add column meh symbol index", AllowAllCairoSecurityContext.INSTANCE, bindVariableService));
+                        Assert.assertNull(compiler.compile("alter table x add column meh symbol index"));
 
                         try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_VERSION)) {
                             SymbolMapReader smr = reader.getSymbolMapReader(16);
@@ -302,7 +302,7 @@ public class AlterTableAddColumnTest extends AbstractGriffinTest {
                     try {
                         createX();
 
-                        Assert.assertNull(compiler.compile("alter table x add column meh symbol index capacity 9000", AllowAllCairoSecurityContext.INSTANCE, bindVariableService));
+                        Assert.assertNull(compiler.compile("alter table x add column meh symbol index capacity 9000"));
 
                         try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_VERSION)) {
                             SymbolMapReader smr = reader.getSymbolMapReader(16);
@@ -336,7 +336,7 @@ public class AlterTableAddColumnTest extends AbstractGriffinTest {
                     try {
                         createX();
 
-                        Assert.assertNull(compiler.compile("alter table x add column meh symbol nocache", AllowAllCairoSecurityContext.INSTANCE, bindVariableService));
+                        Assert.assertNull(compiler.compile("alter table x add column meh symbol nocache"));
 
                         try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "x", TableUtils.ANY_TABLE_VERSION)) {
                             SymbolMapReader smr = reader.getSymbolMapReader(16);
@@ -346,6 +346,42 @@ public class AlterTableAddColumnTest extends AbstractGriffinTest {
                             Assert.assertEquals(configuration.getIndexValueBlockSize(), reader.getMetadata().getIndexValueBlockCapacity(16));
                             Assert.assertFalse(smr.isCached());
                         }
+
+                        Assert.assertEquals(0, engine.getBusyWriterCount());
+                        Assert.assertEquals(0, engine.getBusyReaderCount());
+                    } finally {
+                        engine.releaseAllReaders();
+                        engine.releaseAllWriters();
+                    }
+                }
+        );
+    }
+
+    @Test
+    public void testAddTwoColumns() throws Exception {
+        TestUtils.assertMemoryLeak(
+                () -> {
+                    try {
+                        createX();
+
+                        Assert.assertNull(compiler.compile("alter table x add column mycol int, second symbol"));
+
+                        assertQuery(
+                                "c\tmycol\tsecond\n" +
+                                        "XYZ\tNaN\t\n" +
+                                        "ABC\tNaN\t\n" +
+                                        "ABC\tNaN\t\n" +
+                                        "XYZ\tNaN\t\n" +
+                                        "\tNaN\t\n" +
+                                        "CDE\tNaN\t\n" +
+                                        "CDE\tNaN\t\n" +
+                                        "ABC\tNaN\t\n" +
+                                        "\tNaN\t\n" +
+                                        "XYZ\tNaN\t\n",
+                                "select c, mycol, second from x",
+                                null,
+                                true
+                        );
 
                         Assert.assertEquals(0, engine.getBusyWriterCount());
                         Assert.assertEquals(0, engine.getBusyReaderCount());
@@ -383,42 +419,6 @@ public class AlterTableAddColumnTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testAddTwoColumns() throws Exception {
-        TestUtils.assertMemoryLeak(
-                () -> {
-                    try {
-                        createX();
-
-                        Assert.assertNull(compiler.compile("alter table x add column mycol int, second symbol", AllowAllCairoSecurityContext.INSTANCE, bindVariableService));
-
-                        assertQuery(
-                                "c\tmycol\tsecond\n" +
-                                        "XYZ\tNaN\t\n" +
-                                        "ABC\tNaN\t\n" +
-                                        "ABC\tNaN\t\n" +
-                                        "XYZ\tNaN\t\n" +
-                                        "\tNaN\t\n" +
-                                        "CDE\tNaN\t\n" +
-                                        "CDE\tNaN\t\n" +
-                                        "ABC\tNaN\t\n" +
-                                        "\tNaN\t\n" +
-                                        "XYZ\tNaN\t\n",
-                                "select c, mycol, second from x",
-                                null,
-                                true
-                        );
-
-                        Assert.assertEquals(0, engine.getBusyWriterCount());
-                        Assert.assertEquals(0, engine.getBusyReaderCount());
-                    } finally {
-                        engine.releaseAllReaders();
-                        engine.releaseAllWriters();
-                    }
-                }
-        );
-    }
-
-    @Test
     public void testTableDoesNotExist() throws Exception {
         assertFailure("alter table y", 12, "table 'y' does not");
     }
@@ -427,7 +427,7 @@ public class AlterTableAddColumnTest extends AbstractGriffinTest {
         TestUtils.assertMemoryLeak(() -> {
             try {
                 createX();
-                compiler.compile(sql, AllowAllCairoSecurityContext.INSTANCE, bindVariableService);
+                compiler.compile(sql);
                 Assert.fail();
             } catch (SqlException e) {
                 Assert.assertEquals(position, e.getPosition());
@@ -460,9 +460,7 @@ public class AlterTableAddColumnTest extends AbstractGriffinTest {
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n" +
                         " from long_sequence(10)" +
-                        ") timestamp (timestamp);",
-                AllowAllCairoSecurityContext.INSTANCE,
-                bindVariableService
+                        ") timestamp (timestamp);"
         );
     }
 }

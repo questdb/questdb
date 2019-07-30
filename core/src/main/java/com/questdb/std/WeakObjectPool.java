@@ -42,7 +42,7 @@ public class WeakObjectPool<T extends Mutable> implements Closeable {
 
     private final ArrayDeque<T> cache;
     private final ObjectFactory<T> factory;
-    private int size;
+    private final int size;
 
     public WeakObjectPool(@NotNull ObjectFactory<T> factory, int size) {
         this.cache = new ArrayDeque<>();

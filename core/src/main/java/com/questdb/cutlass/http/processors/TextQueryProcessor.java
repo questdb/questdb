@@ -85,8 +85,9 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
             state.recordCursorFactory = FACTORY_CACHE.get().poll(state.query);
             int retryCount = 0;
             do {
+                sqlExecutionContext.with(context.getCairoSecurityContext(), null);
                 if (state.recordCursorFactory == null) {
-                    state.recordCursorFactory = compiler.compile(state.query, context.getCairoSecurityContext());
+                    state.recordCursorFactory = compiler.compile(state.query, sqlExecutionContext);
                     cacheHits.incrementAndGet();
                     info(state).$("execute-new [q=`").$(state.query).
                             $("`, skip: ").$(state.skip).
@@ -102,9 +103,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
 
                 if (state.recordCursorFactory != null) {
                     try {
-                        state.cursor = state.recordCursorFactory.getCursor(
-                                sqlExecutionContext.with(context.getCairoSecurityContext(), null)
-                        );
+                        state.cursor = state.recordCursorFactory.getCursor(sqlExecutionContext);
                         state.metadata = state.recordCursorFactory.getMetadata();
                         header(socket, 200);
                         resumeSend(context, dispatcher);

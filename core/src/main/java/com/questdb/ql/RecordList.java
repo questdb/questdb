@@ -188,6 +188,7 @@ public class RecordList implements Closeable, RecordCursor, Mutable {
                     writeAddress += 8;
                     break;
                 case ColumnType.INT:
+                case ColumnType.SYMBOL:
                     Unsafe.getUnsafe().putInt(writeAddress, record.getInt(i));
                     writeAddress += 4;
                     break;
@@ -198,10 +199,6 @@ public class RecordList implements Closeable, RecordCursor, Mutable {
                 case ColumnType.SHORT:
                     Unsafe.getUnsafe().putShort(writeAddress, record.getShort(i));
                     writeAddress += 2;
-                    break;
-                case ColumnType.SYMBOL:
-                    Unsafe.getUnsafe().putInt(writeAddress, record.getInt(i));
-                    writeAddress += 4;
                     break;
                 case ColumnType.DATE:
                     Unsafe.getUnsafe().putLong(writeAddress, record.getDate(i));

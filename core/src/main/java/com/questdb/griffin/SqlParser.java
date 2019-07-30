@@ -301,10 +301,10 @@ public final class SqlParser {
             tok = optTok(lexer);
         }
 
-        if (tok != null && !Chars.equals(tok, ';')) {
-            throw errUnexpected(lexer, tok);
+        if (tok == null || Chars.equals(tok, ';')) {
+            return model;
         }
-        return model;
+        throw errUnexpected(lexer, tok);
     }
 
     private void parseCreateTableAsSelect(GenericLexer lexer, CreateTableModel model, SqlExecutionContext executionContext) throws SqlException {
@@ -819,10 +819,10 @@ public final class SqlParser {
         lexer.unparse();
         final QueryModel model = parseDml(lexer);
         final CharSequence tok = optTok(lexer);
-        if (tok != null) {
-            throw errUnexpected(lexer, tok);
+        if (tok == null || Chars.equals(tok, ';')) {
+            return model;
         }
-        return model;
+        throw errUnexpected(lexer, tok);
     }
 
     private void parseSelectClause(GenericLexer lexer, QueryModel model) throws SqlException {
@@ -1150,6 +1150,7 @@ public final class SqlParser {
         tableAliasStop.add("timestamp");
         tableAliasStop.add("limit");
         tableAliasStop.add(")");
+        tableAliasStop.add(";");
         //
         columnAliasStop.add("from");
         columnAliasStop.add(",");

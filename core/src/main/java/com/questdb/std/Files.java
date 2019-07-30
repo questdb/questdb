@@ -28,6 +28,7 @@ import com.questdb.std.str.Path;
 
 import java.io.File;
 import java.nio.charset.Charset;
+import java.nio.charset.StandardCharsets;
 import java.util.concurrent.atomic.AtomicLong;
 
 public final class Files {
@@ -52,7 +53,7 @@ public final class Files {
 
     static {
         Os.init();
-        UTF_8 = Charset.forName("UTF-8");
+        UTF_8 = StandardCharsets.UTF_8;
         PAGE_SIZE = getPageSize();
         SEPARATOR = Os.type == Os.WINDOWS ? '\\' : '/';
     }

@@ -77,9 +77,9 @@ public class InterpolationUtil {
                 (float) interpolate(
                         x,
                         x1,
-                        (double) Unsafe.getUnsafe().getFloat(y1Address),
+                        Unsafe.getUnsafe().getFloat(y1Address),
                         x2,
-                        (double) Unsafe.getUnsafe().getFloat(y2Address)
+                        Unsafe.getUnsafe().getFloat(y2Address)
                 )
         );
     }
@@ -98,9 +98,9 @@ public class InterpolationUtil {
                 (int) interpolate(
                         x,
                         x1,
-                        (double) Unsafe.getUnsafe().getInt(y1Address),
+                        Unsafe.getUnsafe().getInt(y1Address),
                         x2,
-                        (double) Unsafe.getUnsafe().getInt(y2Address)
+                        Unsafe.getUnsafe().getInt(y2Address)
                 )
         );
     }

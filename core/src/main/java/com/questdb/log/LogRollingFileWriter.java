@@ -389,8 +389,8 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
     }
 
     private class SubStrSinkable implements Sinkable {
-        private int start;
-        private int end;
+        private final int start;
+        private final int end;
 
         public SubStrSinkable(int start, int end) {
             this.start = start;

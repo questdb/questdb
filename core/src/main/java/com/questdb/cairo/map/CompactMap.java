@@ -239,6 +239,8 @@ public class CompactMap implements Map {
                 case ColumnType.LONG:
                 case ColumnType.DATE:
                 case ColumnType.TIMESTAMP:
+                case ColumnType.STRING:
+                case ColumnType.BINARY:
                     sz = 8;
                     break;
                 case ColumnType.FLOAT:
@@ -247,10 +249,6 @@ public class CompactMap implements Map {
                     break;
                 case ColumnType.SHORT:
                     sz = 2;
-                    break;
-                case ColumnType.STRING:
-                case ColumnType.BINARY:
-                    sz = 8;
                     break;
                 default:
                     throw CairoException.instance(0).put("Unsupported column type: ").put(ColumnType.nameOf(valueTypes.getColumnType(i)));

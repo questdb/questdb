@@ -28,12 +28,12 @@ import com.questdb.cairo.sql.Record;
 import com.questdb.cairo.sql.RecordCursor;
 import com.questdb.cairo.sql.RecordCursorFactory;
 import com.questdb.cairo.sql.RecordMetadata;
-import com.questdb.griffin.engine.functions.bind.BindVariableService;
 import com.questdb.griffin.model.*;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.std.*;
 import com.questdb.std.str.Path;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
@@ -61,14 +61,12 @@ public class SqlCompiler implements Closeable {
     private final ListColumnFilter listColumnFilter = new ListColumnFilter();
     private final EntityColumnFilter entityColumnFilter = new EntityColumnFilter();
     private final IntIntHashMap typeCast = new IntIntHashMap();
-    private final SqlExecutionContextImpl executionContext = new SqlExecutionContextImpl();
-    private final ExecutableMethod insertAsSelectMethod = this::insertAsSelect;
     private final AssociativeCache<RecordCursorFactory> sqlCache;
     private final ObjList<TableWriter> tableWriters = new ObjList<>();
     private final TableStructureAdapter tableStructureAdapter = new TableStructureAdapter();
-    private final ExecutableMethod createTableMethod = this::createTable;
     private final FunctionParser functionParser;
-    private final BindVariableService bindVariableService = new BindVariableService();
+    private final ExecutableMethod insertAsSelectMethod = this::insertAsSelect;
+    private final ExecutableMethod createTableMethod = this::createTable;
 
     public SqlCompiler(CairoEngine engine) {
         this(engine, null);
@@ -145,20 +143,15 @@ public class SqlCompiler implements Closeable {
         Misc.free(sqlCache);
     }
 
-    public RecordCursorFactory compile(CharSequence query, CairoSecurityContext cairoSecurityContext) throws SqlException {
-        return compile(query, cairoSecurityContext, null);
+    public RecordCursorFactory compile(CharSequence query) throws SqlException {
+        return compile(query, DefaultSqlExecutionContext.INSTANCE);
     }
 
-    public RecordCursorFactory compile(
-            CharSequence query,
-            CairoSecurityContext cairoSecurityContext,
-            BindVariableService bindVariableService
-    ) throws SqlException {
+    public RecordCursorFactory compile(@NotNull CharSequence query, @NotNull SqlExecutionContext executionContext) throws SqlException {
         //
         // these are quick executions that do not require building of a model
         //
         lexer.of(query);
-        executionContext.with(cairoSecurityContext, bindVariableService);
 
         CharSequence tok = SqlUtil.fetchNext(lexer);
         if (Chars.equals(tok, "truncate")) {
@@ -167,7 +160,7 @@ public class SqlCompiler implements Closeable {
         }
 
         if (Chars.equals(tok, "alter")) {
-            alterTable(lexer);
+            alterTable(lexer, executionContext);
             return null;
         }
 
@@ -181,15 +174,7 @@ public class SqlCompiler implements Closeable {
             return result;
         }
 
-        return compileUsingModel(query);
-    }
-
-    public BindVariableService getBindVariableService() {
-        return bindVariableService;
-    }
-
-    public SqlExecutionContextImpl getExecutionContext() {
-        return executionContext;
+        return compileUsingModel(query, executionContext);
     }
 
     // Creates data type converter.
@@ -635,7 +620,7 @@ public class SqlCompiler implements Closeable {
         return tok;
     }
 
-    private void alterTable(GenericLexer lexer) throws SqlException {
+    private void alterTable(GenericLexer lexer, SqlExecutionContext executionContext) throws SqlException {
         CharSequence tok;
         expectKeyword(lexer, "table");
 
@@ -823,26 +808,26 @@ public class SqlCompiler implements Closeable {
         parser.clear();
     }
 
-    private ExecutionModel compileExecutionModel(GenericLexer lexer) throws SqlException {
+    private ExecutionModel compileExecutionModel(GenericLexer lexer, SqlExecutionContext executionContext) throws SqlException {
         ExecutionModel model = parser.parse(lexer, executionContext);
         switch (model.getModelType()) {
             case ExecutionModel.QUERY:
                 return optimiser.optimise((QueryModel) model, executionContext);
             case ExecutionModel.INSERT_AS_SELECT:
-                return validateAndOptimiseInsertAsSelect((InsertAsSelectModel) model);
+                return validateAndOptimiseInsertAsSelect((InsertAsSelectModel) model, executionContext);
             default:
                 return model;
         }
     }
 
-    ExecutionModel compileExecutionModel(CharSequence query) throws SqlException {
+    ExecutionModel compileExecutionModel(CharSequence query, SqlExecutionContext executionContext) throws SqlException {
         clear();
         lexer.of(query);
-        return compileExecutionModel(lexer);
+        return compileExecutionModel(lexer, executionContext);
     }
 
     @Nullable
-    private RecordCursorFactory compileUsingModel(CharSequence query) throws SqlException {
+    private RecordCursorFactory compileUsingModel(CharSequence query, SqlExecutionContext executionContext) throws SqlException {
         // This method will not populate sql cache directly;
         // factories are assumed to be non reentrant and once
         // factory is out of this method the caller assumes
@@ -851,19 +836,21 @@ public class SqlCompiler implements Closeable {
         // instance of compiler for safekeeping
 
 
-        ExecutionModel executionModel = compileExecutionModel(query);
+        ExecutionModel executionModel = compileExecutionModel(query, executionContext);
         switch (executionModel.getModelType()) {
             case ExecutionModel.QUERY:
-                return generate((QueryModel) executionModel);
+                return generate((QueryModel) executionModel, executionContext);
             case ExecutionModel.CREATE_TABLE:
-                createTableWithRetries(query, executionModel);
+                createTableWithRetries(query, executionModel, executionContext);
                 break;
             case ExecutionModel.INSERT_AS_SELECT:
                 executeWithRetries(
                         query,
                         insertAsSelectMethod,
                         executionModel,
-                        configuration.getCreateAsSelectRetryCount());
+                        configuration.getCreateAsSelectRetryCount(),
+                        executionContext
+                );
                 break;
             default:
                 break;
@@ -932,7 +919,7 @@ public class SqlCompiler implements Closeable {
                     if (createTableModel.getQueryModel() == null) {
                         engine.creatTable(executionContext.getCairoSecurityContext(), mem, path, createTableModel);
                     } else {
-                        writer = createTableFromCursor(createTableModel);
+                        writer = createTableFromCursor(createTableModel, executionContext);
                     }
                 } catch (CairoException e) {
                     LOG.error().$("could not create table [error=").$((Sinkable) e).$(']').$();
@@ -946,8 +933,8 @@ public class SqlCompiler implements Closeable {
         }
     }
 
-    private TableWriter createTableFromCursor(CreateTableModel model) throws SqlException {
-        try (final RecordCursorFactory factory = generate(model.getQueryModel());
+    private TableWriter createTableFromCursor(CreateTableModel model, SqlExecutionContext executionContext) throws SqlException {
+        try (final RecordCursorFactory factory = generate(model.getQueryModel(), executionContext);
              final RecordCursor cursor = factory.getCursor(executionContext)
         ) {
             typeCast.clear();
@@ -987,19 +974,26 @@ public class SqlCompiler implements Closeable {
      * For non-partitioned table partition by value would be NONE. For any other type of partition timestamp
      * has to be defined as reference to TIMESTAMP (type) column.
      *
-     * @param query          SQL text. When concurrent modification is detected SQL text is re-parsed and re-executed
-     * @param executionModel created from parsed sql.
+     * @param query            SQL text. When concurrent modification is detected SQL text is re-parsed and re-executed
+     * @param executionModel   created from parsed sql.
+     * @param executionContext provides access to bind variables and athorization module
      * @throws SqlException contains text of error and error position in SQL text.
      */
-    private void createTableWithRetries(CharSequence query, ExecutionModel executionModel) throws SqlException {
-        executeWithRetries(query, createTableMethod, executionModel, configuration.getCreateAsSelectRetryCount());
+    private void createTableWithRetries(
+            CharSequence query,
+            ExecutionModel executionModel,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        executeWithRetries(query, createTableMethod, executionModel, configuration.getCreateAsSelectRetryCount(), executionContext);
     }
 
     private void executeWithRetries(
             CharSequence query,
             ExecutableMethod method,
             ExecutionModel executionModel,
-            int retries) throws SqlException {
+            int retries,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
         int attemptsLeft = retries;
         do {
             try {
@@ -1007,7 +1001,7 @@ public class SqlCompiler implements Closeable {
                 break;
             } catch (ReaderOutOfDateException e) {
                 attemptsLeft--;
-                executionModel = compileExecutionModel(query);
+                executionModel = compileExecutionModel(query, executionContext);
             }
         } while (attemptsLeft > 0);
 
@@ -1016,12 +1010,8 @@ public class SqlCompiler implements Closeable {
         }
     }
 
-    RecordCursorFactory generate(QueryModel queryModel) throws SqlException {
+    RecordCursorFactory generate(QueryModel queryModel, SqlExecutionContext executionContext) throws SqlException {
         return codeGenerator.generate(queryModel, executionContext);
-    }
-
-    SqlCodeGenerator getCodeGenerator() {
-        return codeGenerator;
     }
 
     private void insertAsSelect(ExecutionModel executionModel, SqlExecutionContext executionContext) throws SqlException {
@@ -1030,7 +1020,7 @@ public class SqlCompiler implements Closeable {
         tableExistsOrFail(name.position, name.token, executionContext);
 
         try (TableWriter writer = engine.getWriter(executionContext.getCairoSecurityContext(), name.token);
-             RecordCursorFactory factory = generate(model.getQueryModel())) {
+             RecordCursorFactory factory = generate(model.getQueryModel(), executionContext)) {
 
             final RecordMetadata cursorMetadata = factory.getMetadata();
             final RecordMetadata writerMetadata = writer.getMetadata();
@@ -1203,7 +1193,10 @@ public class SqlCompiler implements Closeable {
         }
     }
 
-    private InsertAsSelectModel validateAndOptimiseInsertAsSelect(InsertAsSelectModel model) throws SqlException {
+    private InsertAsSelectModel validateAndOptimiseInsertAsSelect(
+            InsertAsSelectModel model,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
         final QueryModel queryModel = optimiser.optimise(model.getQueryModel(), executionContext);
         int targetColumnCount = model.getColumnSet().size();
         if (targetColumnCount > 0 && queryModel.getColumns().size() != targetColumnCount) {
@@ -1349,6 +1342,7 @@ public class SqlCompiler implements Closeable {
         castGroups.extendAndSet(ColumnType.BINARY, 4);
 
         sqlControlSymbols.add("(");
+        sqlControlSymbols.add(";");
         sqlControlSymbols.add(")");
         sqlControlSymbols.add(",");
         sqlControlSymbols.add("/*");

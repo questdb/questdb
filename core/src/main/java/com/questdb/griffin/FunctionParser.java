@@ -218,7 +218,8 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
     public Function parseFunction(
             ExpressionNode node,
             RecordMetadata metadata,
-            SqlExecutionContext executionContext) throws SqlException {
+            SqlExecutionContext executionContext
+    ) throws SqlException {
 
         this.sqlExecutionContext = executionContext;
 

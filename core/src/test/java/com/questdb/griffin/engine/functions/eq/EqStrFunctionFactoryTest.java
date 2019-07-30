@@ -23,27 +23,19 @@
 
 package com.questdb.griffin.engine.functions.eq;
 
-import com.questdb.cairo.AbstractCairoTest;
-import com.questdb.cairo.CairoEngine;
-import com.questdb.cairo.security.AllowAllCairoSecurityContext;
 import com.questdb.cairo.sql.RecordCursor;
 import com.questdb.cairo.sql.RecordCursorFactory;
-import com.questdb.griffin.SqlCompiler;
-import com.questdb.griffin.engine.functions.bind.BindVariableService;
+import com.questdb.griffin.AbstractGriffinTest;
 import com.questdb.griffin.engine.functions.rnd.SharedRandom;
 import com.questdb.std.Rnd;
 import com.questdb.test.tools.TestUtils;
 import org.junit.Before;
 import org.junit.Test;
 
-public class EqStrFunctionFactoryTest extends AbstractCairoTest {
-
-    private static final BindVariableService bindVariableService = new BindVariableService();
-    private static final CairoEngine engine = new CairoEngine(configuration);
-    private static final SqlCompiler compiler = new SqlCompiler(engine);
+public class EqStrFunctionFactoryTest extends AbstractGriffinTest {
 
     @Before
-    public void setUp2() {
+    public void setUp3() {
         SharedRandom.RANDOM.set(new Rnd());
     }
 
@@ -73,12 +65,12 @@ public class EqStrFunctionFactoryTest extends AbstractCairoTest {
                     " rnd_str(2,2,0) b," +
                     " rnd_double(0) c" +
                     " from long_sequence(10000)" +
-                    ")", AllowAllCairoSecurityContext.INSTANCE, bindVariableService);
+                    ")", sqlExecutionContext);
 
-            try (RecordCursorFactory factory = compiler.compile("x where a = b", AllowAllCairoSecurityContext.INSTANCE, bindVariableService)) {
+            try (RecordCursorFactory factory = compiler.compile("x where a = b", sqlExecutionContext)) {
                 sink.clear();
 
-                try (RecordCursor cursor = factory.getCursor(compiler.getExecutionContext())) {
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     printer.print(cursor, factory.getMetadata(), true);
                 }
 
@@ -130,11 +122,11 @@ public class EqStrFunctionFactoryTest extends AbstractCairoTest {
                     " rnd_str(4,4,8) b," +
                     " rnd_double(0) c" +
                     " from long_sequence(10000)" +
-                    ")", AllowAllCairoSecurityContext.INSTANCE, bindVariableService);
+                    ")", sqlExecutionContext);
 
-            try (RecordCursorFactory factory = compiler.compile("x where a = b", AllowAllCairoSecurityContext.INSTANCE, bindVariableService)) {
+            try (RecordCursorFactory factory = compiler.compile("x where a = b", sqlExecutionContext)) {
                 sink.clear();
-                try (RecordCursor cursor = factory.getCursor(compiler.getExecutionContext())) {
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     printer.print(cursor, factory.getMetadata(), true);
                 }
 
@@ -170,12 +162,12 @@ public class EqStrFunctionFactoryTest extends AbstractCairoTest {
                     " rnd_str(2,2,0) b," +
                     " rnd_double(0) c" +
                     " from long_sequence(10000)" +
-                    ")", AllowAllCairoSecurityContext.INSTANCE, bindVariableService);
+                    ")", sqlExecutionContext);
 
-            try (RecordCursorFactory factory = compiler.compile("x where a = 'UW'", AllowAllCairoSecurityContext.INSTANCE, bindVariableService)) {
+            try (RecordCursorFactory factory = compiler.compile("x where a = 'UW'", sqlExecutionContext)) {
                 sink.clear();
 
-                try (RecordCursor cursor = factory.getCursor(compiler.getExecutionContext())) {
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     printer.print(cursor, factory.getMetadata(), true);
                 }
 
@@ -211,12 +203,12 @@ public class EqStrFunctionFactoryTest extends AbstractCairoTest {
                     " rnd_str(2,2,0) b," +
                     " rnd_double(0) c" +
                     " from long_sequence(10000)" +
-                    ")", AllowAllCairoSecurityContext.INSTANCE, bindVariableService);
+                    ")", sqlExecutionContext);
 
-            try (RecordCursorFactory factory = compiler.compile("x where 'UW' = a", AllowAllCairoSecurityContext.INSTANCE, bindVariableService)) {
+            try (RecordCursorFactory factory = compiler.compile("x where 'UW' = a", sqlExecutionContext)) {
                 sink.clear();
 
-                try (RecordCursor cursor = factory.getCursor(compiler.getExecutionContext())) {
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     printer.print(cursor, factory.getMetadata(), true);
                 }
 
@@ -251,12 +243,12 @@ public class EqStrFunctionFactoryTest extends AbstractCairoTest {
                     " rnd_str(2,2,0) b," +
                     " rnd_double(0) c" +
                     " from long_sequence(10000)" +
-                    ")", AllowAllCairoSecurityContext.INSTANCE, bindVariableService);
+                    ")", sqlExecutionContext);
 
-            try (RecordCursorFactory factory = compiler.compile("x where a = null", AllowAllCairoSecurityContext.INSTANCE, bindVariableService)) {
+            try (RecordCursorFactory factory = compiler.compile("x where a = null", sqlExecutionContext)) {
                 sink.clear();
 
-                try (RecordCursor cursor = factory.getCursor(compiler.getExecutionContext())) {
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     printer.print(cursor, factory.getMetadata(), true);
                 }
 

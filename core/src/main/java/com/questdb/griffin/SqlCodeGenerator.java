@@ -65,10 +65,6 @@ public class SqlCodeGenerator {
         this.recordComparatorCompiler = new RecordComparatorCompiler(asm);
     }
 
-    private void clearState() {
-        // todo: clear
-    }
-
     private RecordMetadata copyMetadata(RecordMetadata that) {
         // todo: this metadata is immutable. Ideally we shouldn't be creating metadata for the same table over and over
         return GenericRecordMetadata.copyOf(that);
@@ -381,7 +377,6 @@ public class SqlCodeGenerator {
     }
 
     RecordCursorFactory generate(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
-        clearState();
         return generateQuery(model, executionContext, true);
     }
 

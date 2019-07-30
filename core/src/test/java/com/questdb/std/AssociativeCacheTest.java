@@ -5,7 +5,7 @@
  *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
  *   \__\_\\__,_|\___||___/\__|____/|____/
  *
- * Copyright (C) 2014-2018 Appsicle
+ * Copyright (C) 2014-2019 Appsicle
  *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU Affero General Public License, version 3,
@@ -23,6 +23,7 @@
 
 package com.questdb.std;
 
+import com.questdb.std.str.DirectByteCharSequence;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -61,5 +62,36 @@ public class AssociativeCacheTest {
             }
         }
         Assert.assertEquals(512, reject.size());
+    }
+
+    @Test
+    public void testImmutableKeys() {
+        final AssociativeCache<String> cache = new AssociativeCache<>(8, 8);
+        long mem = Unsafe.malloc(1024);
+        final DirectByteCharSequence dbcs = new DirectByteCharSequence();
+
+        try {
+            Unsafe.getUnsafe().putByte(mem, (byte) 'A');
+            Unsafe.getUnsafe().putByte(mem + 1, (byte) 'B');
+
+            cache.put(dbcs.of(mem, mem + 2), "hello1");
+
+            Unsafe.getUnsafe().putByte(mem, (byte) 'C');
+            Unsafe.getUnsafe().putByte(mem + 1, (byte) 'D');
+
+            cache.put(dbcs, "hello2");
+
+            Unsafe.getUnsafe().putByte(mem, (byte) 'A');
+            Unsafe.getUnsafe().putByte(mem + 1, (byte) 'B');
+
+            Assert.assertEquals("hello1", cache.peek(dbcs));
+
+            Unsafe.getUnsafe().putByte(mem, (byte) 'C');
+            Unsafe.getUnsafe().putByte(mem + 1, (byte) 'D');
+
+            Assert.assertEquals("hello2", cache.peek(dbcs));
+        } finally {
+            Unsafe.free(mem, 1024);
+        }
     }
 }

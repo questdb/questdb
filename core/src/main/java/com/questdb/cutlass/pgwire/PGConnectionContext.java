@@ -83,7 +83,6 @@ public class PGConnectionContext implements IOContext, Mutable {
     private final String serverVersion;
     private final PGAuthenticator authenticator;
     private final SqlExecutionContextImpl sqlExecutionContext = new SqlExecutionContextImpl();
-    private CairoSecurityContext cairoSecurityContext = null;
     private int sendCurrentCursorTail = TAIL_NONE;
     private long sendBufferPtr;
     private boolean requireInitalMessage = false;
@@ -741,6 +740,7 @@ public class PGConnectionContext implements IOContext, Mutable {
         long lo = address + PREFIXED_MESSAGE_HEADER_LEN; // 8 is offset where name value pairs begin
 
         if (authenticationRequired) {
+            CairoSecurityContext cairoSecurityContext;
             try {
                 cairoSecurityContext = authenticator.authenticate(username, lo, msgLimit);
             } catch (SqlException e) {
@@ -906,7 +906,7 @@ public class PGConnectionContext implements IOContext, Mutable {
 
                 currentFactory = factoryCache.peek(queryText);
                 if (currentFactory == null) {
-                    currentFactory = compiler.compile(queryText, cairoSecurityContext, bindVariableService);
+                    currentFactory = compiler.compile(queryText, sqlExecutionContext);
                     if (currentFactory != null) {
                         factoryCache.put(queryText, currentFactory);
                     } else {
@@ -945,7 +945,7 @@ public class PGConnectionContext implements IOContext, Mutable {
         responseAsciiSink.reset();
         currentFactory = factoryCache.peek(query);
         if (currentFactory == null) {
-            currentFactory = compiler.compile(query, cairoSecurityContext, bindVariableService);
+            currentFactory = compiler.compile(query, sqlExecutionContext);
             if (currentFactory != null) {
                 factoryCache.put(query, currentFactory);
             } else {
@@ -969,7 +969,9 @@ public class PGConnectionContext implements IOContext, Mutable {
         responseAsciiSink.encodeUtf8Z(e.getFlyweightMessage());
         responseAsciiSink.put('S');
         responseAsciiSink.encodeUtf8Z("ERROR");
-        responseAsciiSink.put('P').put(e.getPosition() + 1).put((char) 0);
+        if (e.getPosition() > -1) {
+            responseAsciiSink.put('P').put(e.getPosition() + 1).put((char) 0);
+        }
         responseAsciiSink.put((char) 0);
         responseAsciiSink.putLen(addr);
     }

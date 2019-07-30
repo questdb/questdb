@@ -59,6 +59,7 @@ public class MapUtils {
                 w.putDouble(vc.getDouble(r));
                 break;
             case ColumnType.INT:
+            case ColumnType.SYMBOL:
                 w.putInt(vc.getInt(r));
                 break;
             case ColumnType.LONG:
@@ -72,9 +73,6 @@ public class MapUtils {
                 break;
             case ColumnType.STRING:
                 w.putStr(vc.getFlyweightStr(r));
-                break;
-            case ColumnType.SYMBOL:
-                w.putInt(vc.getInt(r));
                 break;
             case ColumnType.BINARY:
                 w.putBin(vc.getBin(r));

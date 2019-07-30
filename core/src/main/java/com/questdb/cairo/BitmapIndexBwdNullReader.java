@@ -50,7 +50,7 @@ public class BitmapIndexBwdNullReader implements BitmapIndexReader {
         return cachedInstance ? cursor : new NullCursor();
     }
 
-    private class NullCursor implements RowCursor {
+    private static class NullCursor implements RowCursor {
         private long value;
 
         @Override

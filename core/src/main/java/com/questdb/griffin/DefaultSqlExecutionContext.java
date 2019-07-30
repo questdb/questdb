@@ -5,7 +5,7 @@
  *  | |_| | |_| |  __/\__ \ |_| |_| | |_) |
  *   \__\_\\__,_|\___||___/\__|____/|____/
  *
- * Copyright (C) 2014-2018 Appsicle
+ * Copyright (C) 2014-2019 Appsicle
  *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU Affero General Public License, version 3,
@@ -21,30 +21,22 @@
  *
  ******************************************************************************/
 
-package com.questdb.store;
+package com.questdb.griffin;
 
-import com.questdb.model.SubQuote;
-import com.questdb.test.tools.AbstractTest;
-import org.junit.Assert;
-import org.junit.Test;
+import com.questdb.cairo.CairoSecurityContext;
+import com.questdb.cairo.security.AllowAllCairoSecurityContext;
+import com.questdb.griffin.engine.functions.bind.BindVariableService;
 
-public class SubclassTest extends AbstractTest {
+public class DefaultSqlExecutionContext implements SqlExecutionContext {
+    public static final DefaultSqlExecutionContext INSTANCE = new DefaultSqlExecutionContext();
 
-    @Test
-    public void testSubclass() throws Exception {
+    @Override
+    public BindVariableService getBindVariableService() {
+        return null;
+    }
 
-        try (JournalWriter<SubQuote> w = getFactory().writer(SubQuote.class)) {
-
-            SubQuote q = new SubQuote().setType((byte) 10);
-            q.setTimestamp(System.currentTimeMillis());
-            q.setSym("ABC");
-
-            w.append(q);
-
-            SubQuote q2 = w.read(0);
-            Assert.assertEquals(q.getSym(), q2.getSym());
-            Assert.assertEquals(q.getTimestamp(), q2.getTimestamp());
-            Assert.assertEquals(q.getType(), q2.getType());
-        }
+    @Override
+    public CairoSecurityContext getCairoSecurityContext() {
+        return AllowAllCairoSecurityContext.INSTANCE;
     }
 }

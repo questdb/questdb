@@ -45,16 +45,10 @@ public class JoinTest extends AbstractGriffinTest {
         TestUtils.assertMemoryLeak(() -> {
 
             compiler.compile(
-                    "create table orders (sym SYMBOL, amount DOUBLE, side BYTE, timestamp TIMESTAMP) timestamp(timestamp)",
-                    AllowAllCairoSecurityContext.INSTANCE,
-                    bindVariableService
-            );
+                    "create table orders (sym SYMBOL, amount DOUBLE, side BYTE, timestamp TIMESTAMP) timestamp(timestamp)");
 
             compiler.compile(
-                    "create table quotes (sym SYMBOL, bid DOUBLE, ask DOUBLE, timestamp TIMESTAMP) timestamp(timestamp)",
-                    AllowAllCairoSecurityContext.INSTANCE,
-                    bindVariableService
-            );
+                    "create table quotes (sym SYMBOL, bid DOUBLE, ask DOUBLE, timestamp TIMESTAMP) timestamp(timestamp)");
 
             try (
                     TableWriter orders = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "orders");
@@ -162,9 +156,7 @@ public class JoinTest extends AbstractGriffinTest {
                                 " rnd_bin(10, 20, 2) m," +
                                 " rnd_str(5,16,2) n" +
                                 " from long_sequence(10)" +
-                                ") timestamp (timestamp)",
-                        AllowAllCairoSecurityContext.INSTANCE,
-                        bindVariableService
+                                ") timestamp (timestamp)"
                 );
                 compiler.compile(
                         "create table y as (" +
@@ -187,12 +179,10 @@ public class JoinTest extends AbstractGriffinTest {
                                 " rnd_str(5,16,2) n" +
                                 " from long_sequence(30)" +
                                 ") timestamp(timestamp)"
-                        , AllowAllCairoSecurityContext.INSTANCE
-                        , bindVariableService
                 );
 
                 try {
-                    compiler.compile(query, AllowAllCairoSecurityContext.INSTANCE, bindVariableService);
+                    compiler.compile(query);
                     Assert.fail();
                 } catch (SqlException e) {
                     Assert.assertEquals(68, e.getPosition());
@@ -251,9 +241,7 @@ public class JoinTest extends AbstractGriffinTest {
                                 " rnd_bin(10, 20, 2) m," +
                                 " rnd_str(5,16,2) n" +
                                 " from long_sequence(10)" +
-                                ") timestamp (timestamp)",
-                        AllowAllCairoSecurityContext.INSTANCE,
-                        bindVariableService
+                                ") timestamp (timestamp)"
                 );
                 compiler.compile(
                         "create table y as (" +
@@ -276,8 +264,6 @@ public class JoinTest extends AbstractGriffinTest {
                                 " rnd_str(5,16,2) n" +
                                 " from long_sequence(30)" +
                                 ") timestamp(timestamp)"
-                        , AllowAllCairoSecurityContext.INSTANCE
-                        , bindVariableService
                 );
 
                 assertQueryAndCache(expected, query, "timestamp");
@@ -303,8 +289,6 @@ public class JoinTest extends AbstractGriffinTest {
                                 " rnd_str(5,16,2) n" +
                                 " from long_sequence(10)" +
                                 ") timestamp(timestamp)"
-                        , AllowAllCairoSecurityContext.INSTANCE
-                        , bindVariableService
                 );
                 compiler.compile(
                         "insert into y select * from " +
@@ -327,8 +311,6 @@ public class JoinTest extends AbstractGriffinTest {
                                 " rnd_str(5,16,2) n" +
                                 " from long_sequence(30)" +
                                 ") timestamp(timestamp)"
-                        , AllowAllCairoSecurityContext.INSTANCE
-                        , bindVariableService
                 );
 
                 assertQuery("i\tc\tc1\tamt\tprice\ttimestamp\ttimestamp1\n" +
@@ -390,9 +372,7 @@ public class JoinTest extends AbstractGriffinTest {
                                 " round(rnd_double(0)*100, 3) amt," +
                                 " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp" +
                                 " from long_sequence(10)" +
-                                ") timestamp (timestamp)",
-                        AllowAllCairoSecurityContext.INSTANCE,
-                        bindVariableService
+                                ") timestamp (timestamp)"
                 );
 
                 compiler.compile(
@@ -402,9 +382,7 @@ public class JoinTest extends AbstractGriffinTest {
                                 " round(rnd_double(0), 3) price," +
                                 " to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp" +
                                 " from long_sequence(30)" +
-                                ") timestamp(timestamp)",
-                        AllowAllCairoSecurityContext.INSTANCE,
-                        bindVariableService
+                                ") timestamp(timestamp)"
                 );
 
                 assertQueryAndCache(expected, query, "timestamp");
@@ -417,9 +395,7 @@ public class JoinTest extends AbstractGriffinTest {
                                 " round(rnd_double(0)*100, 3) amt," +
                                 " to_timestamp('2018-01', 'yyyy-MM') + (x + 10) * 720000000 timestamp" +
                                 " from long_sequence(10)" +
-                                ") timestamp(timestamp)",
-                        AllowAllCairoSecurityContext.INSTANCE,
-                        bindVariableService
+                                ") timestamp(timestamp)"
                 );
 
                 compiler.compile(
@@ -430,9 +406,7 @@ public class JoinTest extends AbstractGriffinTest {
                                 " round(rnd_double(0), 3) price," +
                                 " to_timestamp('2018-01', 'yyyy-MM') + (x + 30) * 120000000 timestamp" +
                                 " from long_sequence(30)" +
-                                ") timestamp(timestamp)",
-                        AllowAllCairoSecurityContext.INSTANCE,
-                        bindVariableService
+                                ") timestamp(timestamp)"
                 );
 
                 assertQuery("i\tsym\tamt\tprice\ttimestamp\ttimestamp1\n" +
@@ -506,9 +480,7 @@ public class JoinTest extends AbstractGriffinTest {
                                 " rnd_bin(10, 20, 2) m," +
                                 " rnd_str(5,16,2) n" +
                                 " from long_sequence(10)" +
-                                ") timestamp (timestamp)",
-                        AllowAllCairoSecurityContext.INSTANCE,
-                        bindVariableService
+                                ") timestamp (timestamp)"
                 );
                 compiler.compile(
                         "create table y as (" +
@@ -531,8 +503,6 @@ public class JoinTest extends AbstractGriffinTest {
                                 " rnd_str(5,16,2) n" +
                                 " from long_sequence(30)" +
                                 ") timestamp(timestamp)"
-                        , AllowAllCairoSecurityContext.INSTANCE
-                        , bindVariableService
                 );
 
                 assertQueryAndCache(expected, query, "timestamp");
@@ -558,8 +528,6 @@ public class JoinTest extends AbstractGriffinTest {
                                 " rnd_str(5,16,2) n" +
                                 " from long_sequence(10)" +
                                 ") timestamp(timestamp)"
-                        , AllowAllCairoSecurityContext.INSTANCE
-                        , bindVariableService
                 );
                 compiler.compile(
                         "insert into y select * from " +
@@ -582,8 +550,6 @@ public class JoinTest extends AbstractGriffinTest {
                                 " rnd_str(5,16,2) n" +
                                 " from long_sequence(30)" +
                                 ") timestamp(timestamp)"
-                        , AllowAllCairoSecurityContext.INSTANCE
-                        , bindVariableService
                 );
 
                 assertQuery("i\tsym\tamt\tprice\ttimestamp\ttimestamp1\n" +
@@ -629,15 +595,11 @@ public class JoinTest extends AbstractGriffinTest {
         TestUtils.assertMemoryLeak(() -> {
             try {
                 final String query = "select x.i, x.sym, x.amt, price, x.timestamp, y.timestamp from x asof join y on y.sym2 = x.sym";
-                compiler.compile("create table x as (select to_int(x) i, rnd_symbol('msft','ibm', 'googl') sym, round(rnd_double(0)*100, 3) amt, to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp from long_sequence(10))"
-                        , AllowAllCairoSecurityContext.INSTANCE
-                        , bindVariableService);
-                compiler.compile("create table y as (select to_int(x) i, rnd_symbol('msft','ibm', 'googl') sym2, round(rnd_double(0), 3) price, to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp from long_sequence(30)) timestamp(timestamp)"
-                        , AllowAllCairoSecurityContext.INSTANCE
-                        , bindVariableService);
+                compiler.compile("create table x as (select to_int(x) i, rnd_symbol('msft','ibm', 'googl') sym, round(rnd_double(0)*100, 3) amt, to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp from long_sequence(10))");
+                compiler.compile("create table y as (select to_int(x) i, rnd_symbol('msft','ibm', 'googl') sym2, round(rnd_double(0), 3) price, to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp from long_sequence(30)) timestamp(timestamp)");
 
                 try {
-                    compiler.compile(query, AllowAllCairoSecurityContext.INSTANCE, bindVariableService);
+                    compiler.compile(query);
                     Assert.fail();
                 } catch (SqlException e) {
                     Assert.assertEquals(65, e.getPosition());
@@ -658,15 +620,11 @@ public class JoinTest extends AbstractGriffinTest {
         TestUtils.assertMemoryLeak(() -> {
             try {
                 final String query = "select x.i, x.sym, x.amt, price, x.timestamp, y.timestamp from x asof join y on y.sym2 = x.sym";
-                compiler.compile("create table x as (select to_int(x) i, rnd_symbol('msft','ibm', 'googl') sym, round(rnd_double(0)*100, 3) amt, to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp from long_sequence(10)) timestamp(timestamp)",
-                        AllowAllCairoSecurityContext.INSTANCE,
-                        bindVariableService);
-                compiler.compile("create table y as (select to_int(x) i, rnd_symbol('msft','ibm', 'googl') sym2, round(rnd_double(0), 3) price, to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp from long_sequence(30))",
-                        AllowAllCairoSecurityContext.INSTANCE,
-                        bindVariableService);
+                compiler.compile("create table x as (select to_int(x) i, rnd_symbol('msft','ibm', 'googl') sym, round(rnd_double(0)*100, 3) amt, to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp from long_sequence(10)) timestamp(timestamp)");
+                compiler.compile("create table y as (select to_int(x) i, rnd_symbol('msft','ibm', 'googl') sym2, round(rnd_double(0), 3) price, to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp from long_sequence(30))");
 
                 try {
-                    compiler.compile(query, AllowAllCairoSecurityContext.INSTANCE, bindVariableService);
+                    compiler.compile(query);
                     Assert.fail();
                 } catch (SqlException e) {
                     Assert.assertEquals(65, e.getPosition());
@@ -720,9 +678,7 @@ public class JoinTest extends AbstractGriffinTest {
                                 " rnd_bin(10, 20, 2) m," +
                                 " rnd_str(5,16,2) n" +
                                 " from long_sequence(10)" +
-                                ") timestamp (timestamp)",
-                        AllowAllCairoSecurityContext.INSTANCE,
-                        bindVariableService
+                                ") timestamp (timestamp)"
                 );
                 compiler.compile(
                         "create table y as (" +
@@ -742,8 +698,6 @@ public class JoinTest extends AbstractGriffinTest {
                                 " rnd_byte(2,50) l" +
                                 " from long_sequence(30)" +
                                 ") timestamp(timestamp)"
-                        , AllowAllCairoSecurityContext.INSTANCE
-                        , bindVariableService
                 );
 
                 assertQueryAndCache(expected, query, "timestamp");
@@ -768,10 +722,7 @@ public class JoinTest extends AbstractGriffinTest {
                                 " rnd_bin(10, 20, 2) m," +
                                 " rnd_str(5,16,2) n" +
                                 " from long_sequence(10)" +
-                                ") timestamp(timestamp)"
-                        , AllowAllCairoSecurityContext.INSTANCE
-                        , bindVariableService
-                );
+                                ") timestamp(timestamp)");
                 compiler.compile(
                         "insert into y select * from " +
                                 "(select" +
@@ -790,8 +741,6 @@ public class JoinTest extends AbstractGriffinTest {
                                 " rnd_byte(2,50) l" +
                                 " from long_sequence(30)" +
                                 ") timestamp(timestamp)"
-                        , AllowAllCairoSecurityContext.INSTANCE
-                        , bindVariableService
                 );
 
                 assertQuery("i\tsym\tamt\tprice\ttimestamp\ttimestamp1\n" +
@@ -865,10 +814,7 @@ public class JoinTest extends AbstractGriffinTest {
                                 " rnd_bin(10, 20, 2) m," +
                                 " rnd_str(5,16,2) n" +
                                 " from long_sequence(10)" +
-                                ") timestamp (timestamp)",
-                        AllowAllCairoSecurityContext.INSTANCE,
-                        bindVariableService
-                );
+                                ") timestamp (timestamp)");
                 compiler.compile(
                         "create table y as (" +
                                 "select" +
@@ -889,10 +835,7 @@ public class JoinTest extends AbstractGriffinTest {
                                 " rnd_bin(10, 20, 2) m," +
                                 " rnd_str(5,16,2) n" +
                                 " from long_sequence(30)" +
-                                ") timestamp(timestamp)"
-                        , AllowAllCairoSecurityContext.INSTANCE
-                        , bindVariableService
-                );
+                                ") timestamp(timestamp)");
 
                 assertQueryAndCache(expected, query, "timestamp");
 
@@ -916,10 +859,7 @@ public class JoinTest extends AbstractGriffinTest {
                                 " rnd_bin(10, 20, 2) m," +
                                 " rnd_str(5,16,2) n" +
                                 " from long_sequence(10)" +
-                                ") timestamp(timestamp)"
-                        , AllowAllCairoSecurityContext.INSTANCE
-                        , bindVariableService
-                );
+                                ") timestamp(timestamp)");
                 compiler.compile(
                         "insert into y select * from " +
                                 "(select" +
@@ -940,10 +880,7 @@ public class JoinTest extends AbstractGriffinTest {
                                 " rnd_bin(10, 20, 2) m," +
                                 " rnd_str(5,16,2) n" +
                                 " from long_sequence(30)" +
-                                ") timestamp(timestamp)"
-                        , AllowAllCairoSecurityContext.INSTANCE
-                        , bindVariableService
-                );
+                                ") timestamp(timestamp)");
 
                 assertQuery("i\tc\tc1\tamt\tprice\ttimestamp\ttimestamp1\n" +
                                 "1\tXYZ\t\t50.938000000000\tNaN\t2018-01-01T00:12:00.000000Z\t\n" +
@@ -1017,10 +954,7 @@ public class JoinTest extends AbstractGriffinTest {
                                 " rnd_bin(10, 20, 2) m," +
                                 " rnd_str(5,16,2) n" +
                                 " from long_sequence(10)" +
-                                ") timestamp (timestamp)",
-                        AllowAllCairoSecurityContext.INSTANCE,
-                        bindVariableService
-                );
+                                ") timestamp (timestamp)");
                 compiler.compile(
                         "create table y as (" +
                                 "select" +
@@ -1039,10 +973,7 @@ public class JoinTest extends AbstractGriffinTest {
                                 " timestamp_sequence(to_timestamp(0), 1000000000) k," +
                                 " rnd_byte(2,50) l" +
                                 " from long_sequence(30)" +
-                                ") timestamp(timestamp)"
-                        , AllowAllCairoSecurityContext.INSTANCE
-                        , bindVariableService
-                );
+                                ") timestamp(timestamp)");
 
                 assertQueryAndCache(expected, query, "timestamp");
 
@@ -1066,10 +997,7 @@ public class JoinTest extends AbstractGriffinTest {
                                 " rnd_bin(10, 20, 2) m," +
                                 " rnd_str(5,16,2) n" +
                                 " from long_sequence(10)" +
-                                ") timestamp(timestamp)"
-                        , AllowAllCairoSecurityContext.INSTANCE
-                        , bindVariableService
-                );
+                                ") timestamp(timestamp)");
                 compiler.compile(
                         "insert into y select * from " +
                                 "(select" +
@@ -1088,10 +1016,7 @@ public class JoinTest extends AbstractGriffinTest {
                                 " timestamp_sequence(to_timestamp(0), 1000000000) k," +
                                 " rnd_byte(2,50) l" +
                                 " from long_sequence(30)" +
-                                ") timestamp(timestamp)"
-                        , AllowAllCairoSecurityContext.INSTANCE
-                        , bindVariableService
-                );
+                                ") timestamp(timestamp)");
 
                 assertQuery("i\tc\tc1\tamt\tprice\ttimestamp\ttimestamp1\n" +
                                 "1\tXYZ\tXYZ\t50.938000000000\t0.294000000000\t2018-01-01T00:12:00.000000Z\t2018-01-01T00:10:00.000000Z\n" +
@@ -1152,10 +1077,7 @@ public class JoinTest extends AbstractGriffinTest {
                                 " round(rnd_double(0)*100, 3) amt," +
                                 " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp" +
                                 " from long_sequence(10)" +
-                                ") timestamp (timestamp)",
-                        AllowAllCairoSecurityContext.INSTANCE,
-                        bindVariableService
-                );
+                                ") timestamp (timestamp)");
                 compiler.compile(
                         "create table y as (" +
                                 "select" +
@@ -1164,18 +1086,13 @@ public class JoinTest extends AbstractGriffinTest {
                                 " round(rnd_double(0), 3) price," +
                                 " to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp" +
                                 " from long_sequence(30)" +
-                                ") timestamp(timestamp)",
-                        AllowAllCairoSecurityContext.INSTANCE,
-                        bindVariableService);
+                                ") timestamp(timestamp)"
+                );
 
                 assertQueryAndCache(expected, query, "timestamp");
 
-                compiler.compile("insert into x select * from (select to_int(x + 10) i, rnd_symbol('msft','ibm', 'googl') sym, round(rnd_double(0)*100, 3) amt, to_timestamp('2018-01', 'yyyy-MM') + (x + 10) * 720000000 timestamp from long_sequence(10)) timestamp(timestamp)"
-                        , AllowAllCairoSecurityContext.INSTANCE
-                        , bindVariableService);
-                compiler.compile("insert into y select * from (select to_int(x + 30) i, rnd_symbol('msft','ibm', 'googl') sym2, round(rnd_double(0), 3) price, to_timestamp('2018-01', 'yyyy-MM') + (x + 30) * 120000000 timestamp from long_sequence(30)) timestamp(timestamp)"
-                        , AllowAllCairoSecurityContext.INSTANCE
-                        , bindVariableService);
+                compiler.compile("insert into x select * from (select to_int(x + 10) i, rnd_symbol('msft','ibm', 'googl') sym, round(rnd_double(0)*100, 3) amt, to_timestamp('2018-01', 'yyyy-MM') + (x + 10) * 720000000 timestamp from long_sequence(10)) timestamp(timestamp)");
+                compiler.compile("insert into y select * from (select to_int(x + 30) i, rnd_symbol('msft','ibm', 'googl') sym2, round(rnd_double(0), 3) price, to_timestamp('2018-01', 'yyyy-MM') + (x + 30) * 120000000 timestamp from long_sequence(30)) timestamp(timestamp)");
 
                 assertQuery("i\tsym\tsym2\tamt\tprice\ttimestamp\ttimestamp1\n" +
                                 "1\tmsft\t\t22.463000000000\tNaN\t2018-01-01T00:12:00.000000Z\t\n" +
@@ -1230,42 +1147,40 @@ public class JoinTest extends AbstractGriffinTest {
                         "2\t-1271909747\ttrue\tB\tNaN\t0.1250\t524\t2015-02-23T11:11:04.998Z\t\t-8955092533521658248\t1970-01-01T00:16:40.000000Z\t3\t00000000 de e4 7c d2 35 07 42 fc 31 79\tRSZSRYRFBVTMHG\t1\t-101516094\tfalse\tG\t0.982066273567\t0.5357\t792\t2015-12-04T15:38:03.249Z\tVDZJ\t5703149806881083206\t1970-01-01T00:33:20.000000Z\t36\t00000000 68 79 8b 43 1d 57 34 04 23 8d d8 57\tWVDKFLOPJOXPK\n";
 
                 compiler.compile("create table x as (select" +
-                                " to_int(x) kk, " +
-                                " rnd_int() a," +
-                                " rnd_boolean() b," +
-                                " rnd_str(1,1,2) c," +
-                                " rnd_double(2) d," +
-                                " rnd_float(2) e," +
-                                " rnd_short(10,1024) f," +
-                                " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
-                                " rnd_symbol(4,4,4,2) i," +
-                                " rnd_long() j," +
-                                " timestamp_sequence(to_timestamp(0), 1000000000) k," +
-                                " rnd_byte(2,50) l," +
-                                " rnd_bin(10, 20, 2) m," +
-                                " rnd_str(5,16,2) n" +
-                                " from long_sequence(2))"
-                        , AllowAllCairoSecurityContext.INSTANCE
-                        , bindVariableService);
+                        " to_int(x) kk, " +
+                        " rnd_int() a," +
+                        " rnd_boolean() b," +
+                        " rnd_str(1,1,2) c," +
+                        " rnd_double(2) d," +
+                        " rnd_float(2) e," +
+                        " rnd_short(10,1024) f," +
+                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                        " rnd_symbol(4,4,4,2) i," +
+                        " rnd_long() j," +
+                        " timestamp_sequence(to_timestamp(0), 1000000000) k," +
+                        " rnd_byte(2,50) l," +
+                        " rnd_bin(10, 20, 2) m," +
+                        " rnd_str(5,16,2) n" +
+                        " from long_sequence(2))"
+                );
 
                 compiler.compile("create table y as (select" +
-                                " to_int((x-1)/4 + 1) kk," +
-                                " rnd_int() a," +
-                                " rnd_boolean() b," +
-                                " rnd_str(1,1,2) c," +
-                                " rnd_double(2) d," +
-                                " rnd_float(2) e," +
-                                " rnd_short(10,1024) f," +
-                                " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
-                                " rnd_symbol(4,4,4,2) i," +
-                                " rnd_long() j," +
-                                " timestamp_sequence(to_timestamp(0), 1000000000) k," +
-                                " rnd_byte(2,50) l," +
-                                " rnd_bin(10, 20, 2) m," +
-                                " rnd_str(5,16,2) n" +
-                                " from long_sequence(3))"
-                        , AllowAllCairoSecurityContext.INSTANCE
-                        , bindVariableService);
+                        " to_int((x-1)/4 + 1) kk," +
+                        " rnd_int() a," +
+                        " rnd_boolean() b," +
+                        " rnd_str(1,1,2) c," +
+                        " rnd_double(2) d," +
+                        " rnd_float(2) e," +
+                        " rnd_short(10,1024) f," +
+                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                        " rnd_symbol(4,4,4,2) i," +
+                        " rnd_long() j," +
+                        " timestamp_sequence(to_timestamp(0), 1000000000) k," +
+                        " rnd_byte(2,50) l," +
+                        " rnd_bin(10, 20, 2) m," +
+                        " rnd_str(5,16,2) n" +
+                        " from long_sequence(3))"
+                );
 
                 // filter is applied to final join result
                 assertQuery(expected, "select * from x cross join y", null);
@@ -1293,23 +1208,22 @@ public class JoinTest extends AbstractGriffinTest {
                         "2\t-1271909747\ttrue\tB\tNaN\t0.1250\t524\t2015-02-23T11:11:04.998Z\t\t-8955092533521658248\t1970-01-01T00:16:40.000000Z\t3\t00000000 de e4 7c d2 35 07 42 fc 31 79\tRSZSRYRFBVTMHG\t1\t-101516094\tfalse\tG\t0.982066273567\t0.5357\t792\t2015-12-04T15:38:03.249Z\tVDZJ\t5703149806881083206\t1970-01-01T00:33:20.000000Z\t36\t00000000 68 79 8b 43 1d 57 34 04 23 8d d8 57\tWVDKFLOPJOXPK\n";
 
                 compiler.compile("create table x as (select" +
-                                " to_int(x) kk, " +
-                                " rnd_int() a," +
-                                " rnd_boolean() b," +
-                                " rnd_str(1,1,2) c," +
-                                " rnd_double(2) d," +
-                                " rnd_float(2) e," +
-                                " rnd_short(10,1024) f," +
-                                " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
-                                " rnd_symbol(4,4,4,2) i," +
-                                " rnd_long() j," +
-                                " timestamp_sequence(to_timestamp(0), 1000000000) k," +
-                                " rnd_byte(2,50) l," +
-                                " rnd_bin(10, 20, 2) m," +
-                                " rnd_str(5,16,2) n" +
-                                " from long_sequence(2)) timestamp(k)"
-                        , AllowAllCairoSecurityContext.INSTANCE
-                        , bindVariableService);
+                        " to_int(x) kk, " +
+                        " rnd_int() a," +
+                        " rnd_boolean() b," +
+                        " rnd_str(1,1,2) c," +
+                        " rnd_double(2) d," +
+                        " rnd_float(2) e," +
+                        " rnd_short(10,1024) f," +
+                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                        " rnd_symbol(4,4,4,2) i," +
+                        " rnd_long() j," +
+                        " timestamp_sequence(to_timestamp(0), 1000000000) k," +
+                        " rnd_byte(2,50) l," +
+                        " rnd_bin(10, 20, 2) m," +
+                        " rnd_str(5,16,2) n" +
+                        " from long_sequence(2)) timestamp(k)"
+                );
 
                 compiler.compile("create table y as (select" +
                                 " to_int((x-1)/4 + 1) kk," +
@@ -1327,8 +1241,7 @@ public class JoinTest extends AbstractGriffinTest {
                                 " rnd_bin(10, 20, 2) m," +
                                 " rnd_str(5,16,2) n" +
                                 " from long_sequence(3))"
-                        , AllowAllCairoSecurityContext.INSTANCE
-                        , bindVariableService);
+                );
 
                 // filter is applied to final join result
                 assertQuery(expected, "select * from x cross join y", "k");
@@ -1346,12 +1259,8 @@ public class JoinTest extends AbstractGriffinTest {
         TestUtils.assertMemoryLeak(() -> {
             try {
                 final String expected = "c\ta\tb\tcolumn\n";
-                compiler.compile("create table x as (select to_int(x) c, abs(rnd_int() % 650) a from long_sequence(10))"
-                        , AllowAllCairoSecurityContext.INSTANCE
-                        , bindVariableService);
-                compiler.compile("create table y as (select x, to_int(2*((x-1)/2))+2 m, abs(rnd_int() % 100) b from long_sequence(10))"
-                        , AllowAllCairoSecurityContext.INSTANCE
-                        , bindVariableService);
+                compiler.compile("create table x as (select to_int(x) c, abs(rnd_int() % 650) a from long_sequence(10))");
+                compiler.compile("create table y as (select x, to_int(2*((x-1)/2))+2 m, abs(rnd_int() % 100) b from long_sequence(10))");
 
                 // master records should be filtered out because slave records missing
                 assertQuery(expected, "select x.c, x.a, b, a+b from x join y on y.m = x.c and 1 > 10", null);
@@ -1385,12 +1294,8 @@ public class JoinTest extends AbstractGriffinTest {
                         "10\t598\t5\n" +
                         "10\t598\t74\n";
 
-                compiler.compile("create table x as (select to_int(x) c, abs(rnd_int() % 650) a from long_sequence(10))"
-                        , AllowAllCairoSecurityContext.INSTANCE
-                        , bindVariableService);
-                compiler.compile("create table y as (select x, to_int(2*((x-1)/2))+2 m, abs(rnd_int() % 100) b from long_sequence(10))"
-                        , AllowAllCairoSecurityContext.INSTANCE
-                        , bindVariableService);
+                compiler.compile("create table x as (select to_int(x) c, abs(rnd_int() % 650) a from long_sequence(10))");
+                compiler.compile("create table y as (select x, to_int(2*((x-1)/2))+2 m, abs(rnd_int() % 100) b from long_sequence(10))");
 
                 // master records should be filtered out because slave records missing
                 assertQuery(expected, "select x.c, x.a, b from x join y on y.m = x.c and 1 < 10", null);
@@ -1455,15 +1360,9 @@ public class JoinTest extends AbstractGriffinTest {
                         "5\t251\t7\t279\t272\n" +
                         "5\t251\t7\t198\t191\n";
 
-                compiler.compile("create table x as (select to_int(x) c, abs(rnd_int() % 650) a, to_timestamp('2018-03-01', 'yyyy-MM-dd') + x ts from long_sequence(5)) timestamp(ts)"
-                        , AllowAllCairoSecurityContext.INSTANCE
-                        , bindVariableService);
-                compiler.compile("create table y as (select to_int((x-1)/4 + 1) c, abs(rnd_int() % 100) b from long_sequence(20))"
-                        , AllowAllCairoSecurityContext.INSTANCE
-                        , bindVariableService);
-                compiler.compile("create table z as (select to_int((x-1)/2 + 1) c, abs(rnd_int() % 1000) d from long_sequence(40))"
-                        , AllowAllCairoSecurityContext.INSTANCE
-                        , bindVariableService);
+                compiler.compile("create table x as (select to_int(x) c, abs(rnd_int() % 650) a, to_timestamp('2018-03-01', 'yyyy-MM-dd') + x ts from long_sequence(5)) timestamp(ts)");
+                compiler.compile("create table y as (select to_int((x-1)/4 + 1) c, abs(rnd_int() % 100) b from long_sequence(20))");
+                compiler.compile("create table z as (select to_int((x-1)/2 + 1) c, abs(rnd_int() % 1000) d from long_sequence(40))");
 
                 assertQuery(expected, "select z.c, x.a, b, d, d-b from x join y on(c) join z on (c)", null);
                 Assert.assertEquals(0, engine.getBusyReaderCount());
@@ -1528,8 +1427,7 @@ public class JoinTest extends AbstractGriffinTest {
                                 " rnd_bin(10, 20, 2) m," +
                                 " rnd_str(5,16,2) n" +
                                 " from long_sequence(5))"
-                        , AllowAllCairoSecurityContext.INSTANCE
-                        , bindVariableService);
+                );
 
                 compiler.compile("create table y as (select" +
                                 " to_int((x-1)/4 + 1) kk," +
@@ -1547,8 +1445,7 @@ public class JoinTest extends AbstractGriffinTest {
                                 " rnd_bin(10, 20, 2) m," +
                                 " rnd_str(5,16,2) n" +
                                 " from long_sequence(20))"
-                        , AllowAllCairoSecurityContext.INSTANCE
-                        , bindVariableService);
+                );
 
                 // filter is applied to final join result
                 assertQuery(expected, "select * from x join y on (kk)", null);
@@ -1613,15 +1510,9 @@ public class JoinTest extends AbstractGriffinTest {
                         "5\t251\t7\t279\t272\n" +
                         "5\t251\t7\t198\t191\n";
 
-                compiler.compile("create table x as (select to_int(x) c, abs(rnd_int() % 650) a from long_sequence(5))"
-                        , AllowAllCairoSecurityContext.INSTANCE
-                        , bindVariableService);
-                compiler.compile("create table y as (select to_int((x-1)/4 + 1) m, abs(rnd_int() % 100) b from long_sequence(20))"
-                        , AllowAllCairoSecurityContext.INSTANCE
-                        , bindVariableService);
-                compiler.compile("create table z as (select to_int((x-1)/2 + 1) c, abs(rnd_int() % 1000) d from long_sequence(40))"
-                        , AllowAllCairoSecurityContext.INSTANCE
-                        , bindVariableService);
+                compiler.compile("create table x as (select to_int(x) c, abs(rnd_int() % 650) a from long_sequence(5))");
+                compiler.compile("create table y as (select to_int((x-1)/4 + 1) m, abs(rnd_int() % 100) b from long_sequence(20))");
+                compiler.compile("create table z as (select to_int((x-1)/2 + 1) c, abs(rnd_int() % 1000) d from long_sequence(40))");
 
                 assertQuery(expected, "select z.c, x.a, b, d, d-b from x join y on y.m = x.c join z on (c)", null);
                 Assert.assertEquals(0, engine.getBusyReaderCount());
@@ -1665,28 +1556,16 @@ public class JoinTest extends AbstractGriffinTest {
                         "5\t251\t7\t279\t272\n" +
                         "5\t251\t7\t198\t191\n";
 
-                compiler.compile("create table x as (select to_int(x) c, abs(rnd_int() % 650) a from long_sequence(5))"
-                        , AllowAllCairoSecurityContext.INSTANCE
-                        , bindVariableService);
-                compiler.compile("create table y as (select to_int((x-1)/4 + 1) m, abs(rnd_int() % 100) b from long_sequence(20))"
-                        , AllowAllCairoSecurityContext.INSTANCE
-                        , bindVariableService);
-                compiler.compile("create table z as (select to_int((x-1)/2 + 1) c, abs(rnd_int() % 1000) d from long_sequence(16))"
-                        , AllowAllCairoSecurityContext.INSTANCE
-                        , bindVariableService);
+                compiler.compile("create table x as (select to_int(x) c, abs(rnd_int() % 650) a from long_sequence(5))");
+                compiler.compile("create table y as (select to_int((x-1)/4 + 1) m, abs(rnd_int() % 100) b from long_sequence(20))");
+                compiler.compile("create table z as (select to_int((x-1)/2 + 1) c, abs(rnd_int() % 1000) d from long_sequence(16))");
 
                 // filter is applied to intermediate join result
                 assertQueryAndCache(expected, "select z.c, x.a, b, d, d-b from x join y on y.m = x.c join z on (c) where y.b < 20", null);
 
-                compiler.compile("insert into x select to_int(x+6) c, abs(rnd_int() % 650) a from long_sequence(3)"
-                        , AllowAllCairoSecurityContext.INSTANCE
-                        , bindVariableService);
-                compiler.compile("insert into y select to_int((x+19)/4 + 1) m, abs(rnd_int() % 100) b from long_sequence(16)"
-                        , AllowAllCairoSecurityContext.INSTANCE
-                        , bindVariableService);
-                compiler.compile("insert into z select to_int((x+15)/2 + 1) c, abs(rnd_int() % 1000) d from long_sequence(2)"
-                        , AllowAllCairoSecurityContext.INSTANCE
-                        , bindVariableService);
+                compiler.compile("insert into x select to_int(x+6) c, abs(rnd_int() % 650) a from long_sequence(3)");
+                compiler.compile("insert into y select to_int((x+19)/4 + 1) m, abs(rnd_int() % 100) b from long_sequence(16)");
+                compiler.compile("insert into z select to_int((x+15)/2 + 1) c, abs(rnd_int() % 1000) d from long_sequence(2)");
 
                 assertQuery(expected +
                                 "7\t253\t14\t228\t214\n" +
@@ -1742,15 +1621,9 @@ public class JoinTest extends AbstractGriffinTest {
                         "5\t251\t7\t279\t272\n" +
                         "5\t251\t7\t198\t191\n";
 
-                compiler.compile("create table x as (select to_int(x) c, abs(rnd_int() % 650) a from long_sequence(5))"
-                        , AllowAllCairoSecurityContext.INSTANCE
-                        , bindVariableService);
-                compiler.compile("create table y as (select to_int((x-1)/4 + 1) m, abs(rnd_int() % 100) b from long_sequence(20))"
-                        , AllowAllCairoSecurityContext.INSTANCE
-                        , bindVariableService);
-                compiler.compile("create table z as (select to_int((x-1)/2 + 1) c, abs(rnd_int() % 1000) d from long_sequence(40))"
-                        , AllowAllCairoSecurityContext.INSTANCE
-                        , bindVariableService);
+                compiler.compile("create table x as (select to_int(x) c, abs(rnd_int() % 650) a from long_sequence(5))");
+                compiler.compile("create table y as (select to_int((x-1)/4 + 1) m, abs(rnd_int() % 100) b from long_sequence(20))");
+                compiler.compile("create table z as (select to_int((x-1)/2 + 1) c, abs(rnd_int() % 1000) d from long_sequence(40))");
 
                 // filter is applied to final join result
                 assertQuery(
@@ -1788,21 +1661,13 @@ public class JoinTest extends AbstractGriffinTest {
                         "10\t598\t5\n" +
                         "10\t598\t74\n";
 
-                compiler.compile("create table x as (select to_int(x) c, abs(rnd_int() % 650) a from long_sequence(10))"
-                        , AllowAllCairoSecurityContext.INSTANCE
-                        , bindVariableService);
-                compiler.compile("create table y as (select x, to_int(2*((x-1)/2))+2 m, abs(rnd_int() % 100) b from long_sequence(10))"
-                        , AllowAllCairoSecurityContext.INSTANCE
-                        , bindVariableService);
+                compiler.compile("create table x as (select to_int(x) c, abs(rnd_int() % 650) a from long_sequence(10))");
+                compiler.compile("create table y as (select x, to_int(2*((x-1)/2))+2 m, abs(rnd_int() % 100) b from long_sequence(10))");
 
                 assertQueryAndCache(expected, "select x.c, x.a, b from x join y on y.m = x.c", null);
 
-                compiler.compile("insert into x select to_int(x+10) c, abs(rnd_int() % 650) a from long_sequence(4)"
-                        , AllowAllCairoSecurityContext.INSTANCE
-                        , bindVariableService);
-                compiler.compile("insert into y select x, to_int(2*((x-1+10)/2))+2 m, abs(rnd_int() % 100) b from long_sequence(6)"
-                        , AllowAllCairoSecurityContext.INSTANCE
-                        , bindVariableService);
+                compiler.compile("insert into x select to_int(x+10) c, abs(rnd_int() % 650) a from long_sequence(4)");
+                compiler.compile("insert into y select x, to_int(2*((x-1+10)/2))+2 m, abs(rnd_int() % 100) b from long_sequence(6)");
 
                 assertQuery(expected +
                                 "12\t347\t7\n" +
@@ -1916,28 +1781,16 @@ public class JoinTest extends AbstractGriffinTest {
                         "\t\t\t598\t53\t540\t487\n" +
                         "\t\t\t598\t53\t908\t855\n";
 
-                compiler.compile("create table x as (select rnd_symbol('A','B',null,'D') c, abs(rnd_int() % 650) a from long_sequence(5))"
-                        , AllowAllCairoSecurityContext.INSTANCE
-                        , bindVariableService);
-                compiler.compile("create table y as (select rnd_symbol('B','A',null,'D') m, abs(rnd_int() % 100) b from long_sequence(20))"
-                        , AllowAllCairoSecurityContext.INSTANCE
-                        , bindVariableService);
-                compiler.compile("create table z as (select rnd_symbol('D','B',null,'A') c, abs(rnd_int() % 1000) d from long_sequence(16))"
-                        , AllowAllCairoSecurityContext.INSTANCE
-                        , bindVariableService);
+                compiler.compile("create table x as (select rnd_symbol('A','B',null,'D') c, abs(rnd_int() % 650) a from long_sequence(5))");
+                compiler.compile("create table y as (select rnd_symbol('B','A',null,'D') m, abs(rnd_int() % 100) b from long_sequence(20))");
+                compiler.compile("create table z as (select rnd_symbol('D','B',null,'A') c, abs(rnd_int() % 1000) d from long_sequence(16))");
 
                 // filter is applied to intermediate join result
                 assertQueryAndCache(expected, "select x.c xc, z.c zc, y.m yc, x.a, b, d, d-b from x join y on y.m = x.c join z on (c)", null);
 
-                compiler.compile("insert into x select rnd_symbol('L','K','P') c, abs(rnd_int() % 650) a from long_sequence(3)"
-                        , AllowAllCairoSecurityContext.INSTANCE
-                        , bindVariableService);
-                compiler.compile("insert into y select rnd_symbol('P','L','K') m, abs(rnd_int() % 100) b from long_sequence(6)"
-                        , AllowAllCairoSecurityContext.INSTANCE
-                        , bindVariableService);
-                compiler.compile("insert into z select rnd_symbol('K','P','L') c, abs(rnd_int() % 1000) d from long_sequence(6)"
-                        , AllowAllCairoSecurityContext.INSTANCE
-                        , bindVariableService);
+                compiler.compile("insert into x select rnd_symbol('L','K','P') c, abs(rnd_int() % 650) a from long_sequence(3)");
+                compiler.compile("insert into y select rnd_symbol('P','L','K') m, abs(rnd_int() % 100) b from long_sequence(6)");
+                compiler.compile("insert into z select rnd_symbol('K','P','L') c, abs(rnd_int() % 1000) d from long_sequence(6)");
 
                 assertQuery(expected +
                                 "L\tL\tL\t148\t38\t121\t83\n" +
@@ -1979,28 +1832,16 @@ public class JoinTest extends AbstractGriffinTest {
                         "5\t251\t7\t279\t258\n" +
                         "5\t251\t7\t198\t258\n";
 
-                compiler.compile("create table x as (select to_int(x) c, abs(rnd_int() % 650) a from long_sequence(5))"
-                        , AllowAllCairoSecurityContext.INSTANCE
-                        , bindVariableService);
-                compiler.compile("create table y as (select to_int((x-1)/4 + 1) m, abs(rnd_int() % 100) b from long_sequence(20))"
-                        , AllowAllCairoSecurityContext.INSTANCE
-                        , bindVariableService);
-                compiler.compile("create table z as (select to_int((x-1)/2 + 1) c, abs(rnd_int() % 1000) d from long_sequence(16))"
-                        , AllowAllCairoSecurityContext.INSTANCE
-                        , bindVariableService);
+                compiler.compile("create table x as (select to_int(x) c, abs(rnd_int() % 650) a from long_sequence(5))");
+                compiler.compile("create table y as (select to_int((x-1)/4 + 1) m, abs(rnd_int() % 100) b from long_sequence(20))");
+                compiler.compile("create table z as (select to_int((x-1)/2 + 1) c, abs(rnd_int() % 1000) d from long_sequence(16))");
 
                 // filter is applied to intermediate join result
                 assertQueryAndCache(expected, "select z.c, x.a, b, d, a+b from x join y on y.m = x.c join z on (c) where a+b < 300", null);
 
-                compiler.compile("insert into x select to_int(x+6) c, abs(rnd_int() % 650) a from long_sequence(3)"
-                        , AllowAllCairoSecurityContext.INSTANCE
-                        , bindVariableService);
-                compiler.compile("insert into y select to_int((x+19)/4 + 1) m, abs(rnd_int() % 100) b from long_sequence(16)"
-                        , AllowAllCairoSecurityContext.INSTANCE
-                        , bindVariableService);
-                compiler.compile("insert into z select to_int((x+15)/2 + 1) c, abs(rnd_int() % 1000) d from long_sequence(2)"
-                        , AllowAllCairoSecurityContext.INSTANCE
-                        , bindVariableService);
+                compiler.compile("insert into x select to_int(x+6) c, abs(rnd_int() % 650) a from long_sequence(3)");
+                compiler.compile("insert into y select to_int((x+19)/4 + 1) m, abs(rnd_int() % 100) b from long_sequence(16)");
+                compiler.compile("insert into z select to_int((x+15)/2 + 1) c, abs(rnd_int() % 1000) d from long_sequence(2)");
 
                 assertQuery(expected +
                                 "7\t253\t35\t228\t288\n" +
@@ -2078,15 +1919,9 @@ public class JoinTest extends AbstractGriffinTest {
                         "5\t251\t7\t279\t272\t2018-03-01T00:00:00.000005Z\n" +
                         "5\t251\t7\t198\t191\t2018-03-01T00:00:00.000005Z\n";
 
-                compiler.compile("create table x as (select to_int(x) c, abs(rnd_int() % 650) a, to_timestamp('2018-03-01', 'yyyy-MM-dd') + x ts from long_sequence(5)) timestamp(ts)"
-                        , AllowAllCairoSecurityContext.INSTANCE
-                        , bindVariableService);
-                compiler.compile("create table y as (select to_int((x-1)/4 + 1) c, abs(rnd_int() % 100) b from long_sequence(20))"
-                        , AllowAllCairoSecurityContext.INSTANCE
-                        , bindVariableService);
-                compiler.compile("create table z as (select to_int((x-1)/2 + 1) c, abs(rnd_int() % 1000) d from long_sequence(40))"
-                        , AllowAllCairoSecurityContext.INSTANCE
-                        , bindVariableService);
+                compiler.compile("create table x as (select to_int(x) c, abs(rnd_int() % 650) a, to_timestamp('2018-03-01', 'yyyy-MM-dd') + x ts from long_sequence(5)) timestamp(ts)");
+                compiler.compile("create table y as (select to_int((x-1)/4 + 1) c, abs(rnd_int() % 100) b from long_sequence(20))");
+                compiler.compile("create table z as (select to_int((x-1)/2 + 1) c, abs(rnd_int() % 1000) d from long_sequence(40))");
 
                 assertQuery(expected, "select z.c, x.a, b, d, d-b, ts from x join y on(c) join z on (c)", "ts");
                 Assert.assertEquals(0, engine.getBusyReaderCount());
@@ -2136,8 +1971,7 @@ public class JoinTest extends AbstractGriffinTest {
                                 " rnd_bin(10, 20, 2) m," +
                                 " rnd_str(5,16,2) n" +
                                 " from long_sequence(10))"
-                        , AllowAllCairoSecurityContext.INSTANCE
-                        , bindVariableService);
+                );
 
                 compiler.compile("create table y as (select" +
                                 " to_int(2*((x-1)/2))+2 kk," +
@@ -2155,8 +1989,7 @@ public class JoinTest extends AbstractGriffinTest {
                                 " rnd_bin(10, 20, 2) m," +
                                 " rnd_str(5,16,2) n" +
                                 " from long_sequence(10))"
-                        , AllowAllCairoSecurityContext.INSTANCE
-                        , bindVariableService);
+                );
 
                 // filter is applied to final join result
                 assertQuery(
@@ -2199,22 +2032,14 @@ public class JoinTest extends AbstractGriffinTest {
                         "10\t598\t5\n" +
                         "10\t598\t74\n";
 
-                compiler.compile("create table x as (select to_int(x) c, abs(rnd_int() % 650) a, to_timestamp('2018-03-01', 'yyyy-MM-dd') + x ts from long_sequence(10)) timestamp(ts)"
-                        , AllowAllCairoSecurityContext.INSTANCE
-                        , bindVariableService);
-                compiler.compile("create table y as (select x, to_int(2*((x-1)/2))+2 m, abs(rnd_int() % 100) b from long_sequence(10))"
-                        , AllowAllCairoSecurityContext.INSTANCE
-                        , bindVariableService);
+                compiler.compile("create table x as (select to_int(x) c, abs(rnd_int() % 650) a, to_timestamp('2018-03-01', 'yyyy-MM-dd') + x ts from long_sequence(10)) timestamp(ts)");
+                compiler.compile("create table y as (select x, to_int(2*((x-1)/2))+2 m, abs(rnd_int() % 100) b from long_sequence(10))");
 
                 // master records should be filtered out because slave records missing
                 assertQueryAndCache(expected, "select x.c, x.a, b from x outer join y on y.m = x.c", null);
 
-                compiler.compile("insert into x select * from (select to_int(x+10) c, abs(rnd_int() % 650) a, to_timestamp('2018-03-01', 'yyyy-MM-dd') + x + 10 ts from long_sequence(4)) timestamp(ts)"
-                        , AllowAllCairoSecurityContext.INSTANCE
-                        , bindVariableService);
-                compiler.compile("insert into y select x, to_int(2*((x-1+10)/2))+2 m, abs(rnd_int() % 100) b from long_sequence(6)"
-                        , AllowAllCairoSecurityContext.INSTANCE
-                        , bindVariableService);
+                compiler.compile("insert into x select * from (select to_int(x+10) c, abs(rnd_int() % 650) a, to_timestamp('2018-03-01', 'yyyy-MM-dd') + x + 10 ts from long_sequence(4)) timestamp(ts)");
+                compiler.compile("insert into y select x, to_int(2*((x-1+10)/2))+2 m, abs(rnd_int() % 100) b from long_sequence(6)");
 
                 assertQuery(expected +
                                 "11\t467\tNaN\n" +
@@ -2263,22 +2088,14 @@ public class JoinTest extends AbstractGriffinTest {
                         "10\t598\t5\t2018-03-01T00:00:00.000010Z\n" +
                         "10\t598\t74\t2018-03-01T00:00:00.000010Z\n";
 
-                compiler.compile("create table x as (select to_int(x) c, abs(rnd_int() % 650) a, to_timestamp('2018-03-01', 'yyyy-MM-dd') + x ts from long_sequence(10)) timestamp(ts)"
-                        , AllowAllCairoSecurityContext.INSTANCE
-                        , bindVariableService);
-                compiler.compile("create table y as (select x, to_int(2*((x-1)/2))+2 m, abs(rnd_int() % 100) b from long_sequence(10))"
-                        , AllowAllCairoSecurityContext.INSTANCE
-                        , bindVariableService);
+                compiler.compile("create table x as (select to_int(x) c, abs(rnd_int() % 650) a, to_timestamp('2018-03-01', 'yyyy-MM-dd') + x ts from long_sequence(10)) timestamp(ts)");
+                compiler.compile("create table y as (select x, to_int(2*((x-1)/2))+2 m, abs(rnd_int() % 100) b from long_sequence(10))");
 
                 // master records should be filtered out because slave records missing
                 assertQueryAndCache(expected, query, "ts");
 
-                compiler.compile("insert into x select * from (select to_int(x+10) c, abs(rnd_int() % 650) a, to_timestamp('2018-03-01', 'yyyy-MM-dd') + x + 10 ts from long_sequence(4)) timestamp(ts)"
-                        , AllowAllCairoSecurityContext.INSTANCE
-                        , bindVariableService);
-                compiler.compile("insert into y select x, to_int(2*((x-1+10)/2))+2 m, abs(rnd_int() % 100) b from long_sequence(6)"
-                        , AllowAllCairoSecurityContext.INSTANCE
-                        , bindVariableService);
+                compiler.compile("insert into x select * from (select to_int(x+10) c, abs(rnd_int() % 650) a, to_timestamp('2018-03-01', 'yyyy-MM-dd') + x + 10 ts from long_sequence(4)) timestamp(ts)");
+                compiler.compile("insert into y select x, to_int(2*((x-1+10)/2))+2 m, abs(rnd_int() % 100) b from long_sequence(6)");
 
                 assertQuery(expected +
                                 "11\t467\tNaN\t2018-03-01T00:00:00.000011Z\n" +
@@ -2304,17 +2121,10 @@ public class JoinTest extends AbstractGriffinTest {
     public void testSpliceCorrectness() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
 
-            compiler.compile(
-                    "create table orders (sym SYMBOL, amount DOUBLE, side BYTE, timestamp TIMESTAMP) timestamp(timestamp)",
-                    AllowAllCairoSecurityContext.INSTANCE,
-                    bindVariableService
-            );
+            compiler.compile("create table orders (sym SYMBOL, amount DOUBLE, side BYTE, timestamp TIMESTAMP) timestamp(timestamp)");
 
             compiler.compile(
-                    "create table quotes (sym SYMBOL, bid DOUBLE, ask DOUBLE, timestamp TIMESTAMP) timestamp(timestamp)",
-                    AllowAllCairoSecurityContext.INSTANCE,
-                    bindVariableService
-            );
+                    "create table quotes (sym SYMBOL, bid DOUBLE, ask DOUBLE, timestamp TIMESTAMP) timestamp(timestamp)");
 
             try (
                     TableWriter orders = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "orders");
@@ -2459,9 +2269,7 @@ public class JoinTest extends AbstractGriffinTest {
                                 " rnd_bin(10, 20, 2) m," +
                                 " rnd_str(5,16,2) n" +
                                 " from long_sequence(10)" +
-                                ") timestamp (timestamp)",
-                        AllowAllCairoSecurityContext.INSTANCE,
-                        bindVariableService
+                                ") timestamp (timestamp)"
                 );
                 compiler.compile(
                         "create table y as (" +
@@ -2484,8 +2292,6 @@ public class JoinTest extends AbstractGriffinTest {
                                 " rnd_str(5,16,2) n" +
                                 " from long_sequence(30)" +
                                 ") timestamp(timestamp)"
-                        , AllowAllCairoSecurityContext.INSTANCE
-                        , bindVariableService
                 );
 
                 assertQueryAndCache(expected, query, null);
@@ -2511,8 +2317,6 @@ public class JoinTest extends AbstractGriffinTest {
                                 " rnd_str(5,16,2) n" +
                                 " from long_sequence(10)" +
                                 ") timestamp(timestamp)"
-                        , AllowAllCairoSecurityContext.INSTANCE
-                        , bindVariableService
                 );
                 compiler.compile(
                         "insert into y select * from " +
@@ -2535,8 +2339,6 @@ public class JoinTest extends AbstractGriffinTest {
                                 " rnd_str(5,16,2) n" +
                                 " from long_sequence(30)" +
                                 ") timestamp(timestamp)"
-                        , AllowAllCairoSecurityContext.INSTANCE
-                        , bindVariableService
                 );
 
                 assertQuery("i\tsym\tamt\tprice\ttimestamp\ttimestamp1\n" +
@@ -2627,15 +2429,11 @@ public class JoinTest extends AbstractGriffinTest {
         TestUtils.assertMemoryLeak(() -> {
             try {
                 final String query = "select x.i, x.sym, x.amt, price, x.timestamp, y.timestamp from x splice join y on y.sym2 = x.sym";
-                compiler.compile("create table x as (select to_int(x) i, rnd_symbol('msft','ibm', 'googl') sym, round(rnd_double(0)*100, 3) amt, to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp from long_sequence(10))"
-                        , AllowAllCairoSecurityContext.INSTANCE
-                        , bindVariableService);
-                compiler.compile("create table y as (select to_int(x) i, rnd_symbol('msft','ibm', 'googl') sym2, round(rnd_double(0), 3) price, to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp from long_sequence(30)) timestamp(timestamp)"
-                        , AllowAllCairoSecurityContext.INSTANCE
-                        , bindVariableService);
+                compiler.compile("create table x as (select to_int(x) i, rnd_symbol('msft','ibm', 'googl') sym, round(rnd_double(0)*100, 3) amt, to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp from long_sequence(10))");
+                compiler.compile("create table y as (select to_int(x) i, rnd_symbol('msft','ibm', 'googl') sym2, round(rnd_double(0), 3) price, to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp from long_sequence(30)) timestamp(timestamp)");
 
                 try {
-                    compiler.compile(query, AllowAllCairoSecurityContext.INSTANCE, bindVariableService);
+                    compiler.compile(query);
                     Assert.fail();
                 } catch (SqlException e) {
                     Assert.assertEquals(65, e.getPosition());
@@ -2656,15 +2454,11 @@ public class JoinTest extends AbstractGriffinTest {
         TestUtils.assertMemoryLeak(() -> {
             try {
                 final String query = "select x.i, x.sym, x.amt, price, x.timestamp, y.timestamp from x splice join y on y.sym2 = x.sym";
-                compiler.compile("create table x as (select to_int(x) i, rnd_symbol('msft','ibm', 'googl') sym, round(rnd_double(0)*100, 3) amt, to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp from long_sequence(10)) timestamp(timestamp)"
-                        , AllowAllCairoSecurityContext.INSTANCE
-                        , bindVariableService);
-                compiler.compile("create table y as (select to_int(x) i, rnd_symbol('msft','ibm', 'googl') sym2, round(rnd_double(0), 3) price, to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp from long_sequence(30))"
-                        , AllowAllCairoSecurityContext.INSTANCE
-                        , bindVariableService);
+                compiler.compile("create table x as (select to_int(x) i, rnd_symbol('msft','ibm', 'googl') sym, round(rnd_double(0)*100, 3) amt, to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp from long_sequence(10)) timestamp(timestamp)");
+                compiler.compile("create table y as (select to_int(x) i, rnd_symbol('msft','ibm', 'googl') sym2, round(rnd_double(0), 3) price, to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp from long_sequence(30))");
 
                 try {
-                    compiler.compile(query, AllowAllCairoSecurityContext.INSTANCE, bindVariableService);
+                    compiler.compile(query);
                     Assert.fail();
                 } catch (SqlException e) {
                     Assert.assertEquals(65, e.getPosition());
@@ -2743,9 +2537,7 @@ public class JoinTest extends AbstractGriffinTest {
                                 " rnd_bin(10, 20, 2) m," +
                                 " rnd_str(5,16,2) n" +
                                 " from long_sequence(10)" +
-                                ") timestamp (timestamp)",
-                        AllowAllCairoSecurityContext.INSTANCE,
-                        bindVariableService
+                                ") timestamp (timestamp)"
                 );
                 compiler.compile(
                         "create table y as (" +
@@ -2765,8 +2557,6 @@ public class JoinTest extends AbstractGriffinTest {
                                 " rnd_byte(2,50) l" +
                                 " from long_sequence(30)" +
                                 ") timestamp(timestamp)"
-                        , AllowAllCairoSecurityContext.INSTANCE
-                        , bindVariableService
                 );
 
                 assertQueryAndCache(expected, query, null);
@@ -2792,8 +2582,6 @@ public class JoinTest extends AbstractGriffinTest {
                                 " rnd_str(5,16,2) n" +
                                 " from long_sequence(10)" +
                                 ") timestamp(timestamp)"
-                        , AllowAllCairoSecurityContext.INSTANCE
-                        , bindVariableService
                 );
                 compiler.compile(
                         "insert into y select * from " +
@@ -2813,8 +2601,6 @@ public class JoinTest extends AbstractGriffinTest {
                                 " rnd_byte(2,50) l" +
                                 " from long_sequence(30)" +
                                 ") timestamp(timestamp)"
-                        , AllowAllCairoSecurityContext.INSTANCE
-                        , bindVariableService
                 );
 
                 assertQuery("i\tsym\tamt\tprice\ttimestamp\ttimestamp1\n" +
@@ -2904,20 +2690,12 @@ public class JoinTest extends AbstractGriffinTest {
     public void testTypeMismatch() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try {
-                compiler.compile("create table x as (select x c, abs(rnd_int() % 650) a from long_sequence(5))"
-                        , AllowAllCairoSecurityContext.INSTANCE
-                        , bindVariableService);
-                compiler.compile("create table y as (select to_int((x-1)/4 + 1) c, abs(rnd_int() % 100) b from long_sequence(20))"
-                        , AllowAllCairoSecurityContext.INSTANCE
-                        , bindVariableService);
-                compiler.compile("create table z as (select to_int((x-1)/2 + 1) c, abs(rnd_int() % 1000) d from long_sequence(40))"
-                        , AllowAllCairoSecurityContext.INSTANCE
-                        , bindVariableService);
+                compiler.compile("create table x as (select x c, abs(rnd_int() % 650) a from long_sequence(5))");
+                compiler.compile("create table y as (select to_int((x-1)/4 + 1) c, abs(rnd_int() % 100) b from long_sequence(20))");
+                compiler.compile("create table z as (select to_int((x-1)/2 + 1) c, abs(rnd_int() % 1000) d from long_sequence(40))");
 
                 try {
-                    compiler.compile("select z.c, x.a, b, d, d-b from x join y on(c) join z on (c)"
-                            , AllowAllCairoSecurityContext.INSTANCE
-                            , bindVariableService);
+                    compiler.compile("select z.c, x.a, b, d, d-b from x join y on(c) join z on (c)");
                     Assert.fail();
                 } catch (SqlException e) {
                     Assert.assertEquals(44, e.getPosition());

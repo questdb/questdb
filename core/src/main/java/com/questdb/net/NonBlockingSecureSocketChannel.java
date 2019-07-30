@@ -284,8 +284,6 @@ public class NonBlockingSecureSocketChannel implements NetworkChannel {
                                 break;
                             case BUFFER_OVERFLOW:
                                 throw new IOException("Did not expect OVERFLOW here");
-                            case OK:
-                                break;
                             case CLOSED:
                                 throw new IOException("Did not expect CLOSED");
                             default:

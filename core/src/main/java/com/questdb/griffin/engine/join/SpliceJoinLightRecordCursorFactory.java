@@ -305,7 +305,7 @@ public class SpliceJoinLightRecordCursorFactory extends AbstractRecordCursorFact
         }
     }
 
-    public class FullJoinRecord implements Record {
+    public static class FullJoinRecord implements Record {
         private final int split;
         private Record master;
         private Record slave;

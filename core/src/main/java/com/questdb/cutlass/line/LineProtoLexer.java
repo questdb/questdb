@@ -208,9 +208,6 @@ public class LineProtoLexer implements Mutable, Closeable {
     private void fireEventTransition(int evtTagName, int evtFieldName) {
         switch (state) {
             case LineProtoParser.EVT_MEASUREMENT:
-                fireEvent();
-                state = evtTagName;
-                break;
             case LineProtoParser.EVT_TAG_VALUE:
                 fireEvent();
                 state = evtTagName;
@@ -346,7 +343,7 @@ public class LineProtoLexer implements Mutable, Closeable {
         }
     }
 
-    private class FloatingCharSequence extends AbstractCharSequence {
+    private static class FloatingCharSequence extends AbstractCharSequence {
         long lo, hi;
 
         @Override

@@ -44,6 +44,23 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testLexerReset() {
+        for (int i = 0; i < 10; i++) {
+            try {
+                compiler.compileExecutionModel("select \n" +
+                        "-- ltod(Date)\n" +
+                        "count() \n" +
+                        "-- from acc\n" +
+                        "from acc(Date) sample by 1d\n" +
+                        "-- where x = 10\n", sqlExecutionContext);
+                Assert.fail();
+            } catch (SqlException e) {
+                TestUtils.assertEquals("Invalid column: Date", e.getFlyweightMessage());
+            }
+        }
+    }
+
+    @Test
     public void testDuplicateColumnsVirtualAndGroupBySelect() throws SqlException {
         assertQuery(
                 "select-group-by sum(b + a) sum, column, k1, k1 k from (select-virtual a, b, a + b column, k1, k1 k from (select-choose a, b, k k1 from (x timestamp (timestamp)))) sample by 1m",
@@ -2906,19 +2923,12 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testLexerReset() {
-        for (int i = 0; i < 10; i++) {
-            try {
-                compiler.compileExecutionModel("select \n" +
-                                "-- ltod(Date)\n" +
-                                "count() \n" +
-                                "-- from acc\n" +
-                                "from acc(Date) sample by 1d\n" +
-                        "-- where x = 10\n");
-                Assert.fail();
-            } catch (SqlException e) {
-                TestUtils.assertEquals("Invalid column: Date", e.getFlyweightMessage());
-            }
+    public void testMissingWhere() {
+        try {
+            compiler.compileExecutionModel("select id, x + 10, x from tab id ~ 'HBRO'", sqlExecutionContext);
+            Assert.fail("Exception expected");
+        } catch (SqlException e) {
+            Assert.assertEquals(33, e.getPosition());
         }
     }
 
@@ -2994,13 +3004,10 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testMissingWhere() {
-        try {
-            compiler.compileExecutionModel("select id, x + 10, x from tab id ~ 'HBRO'");
-            Assert.fail("Exception expected");
-        } catch (SqlException e) {
-            Assert.assertEquals(33, e.getPosition());
-        }
+    public void testSelectEndsWithSemicolon() throws Exception {
+        assertQuery("select-choose x from (x)",
+                "select * from x;",
+                modelOf("x").col("x", ColumnType.INT));
     }
 
     @Test
@@ -4384,7 +4391,7 @@ public class SqlParserTest extends AbstractGriffinTest {
             }
             b.append('f').append(i);
         }
-        QueryModel st = (QueryModel) compiler.compileExecutionModel(b);
+        QueryModel st = (QueryModel) compiler.compileExecutionModel(b, sqlExecutionContext);
         Assert.assertEquals(SqlParser.MAX_ORDER_BY_COLUMNS - 1, st.getOrderBy().size());
     }
 
@@ -4399,7 +4406,7 @@ public class SqlParserTest extends AbstractGriffinTest {
             b.append('f').append(i);
         }
         try {
-            compiler.compileExecutionModel(b);
+            compiler.compileExecutionModel(b, sqlExecutionContext);
         } catch (SqlException e) {
             TestUtils.assertEquals("Too many columns", e.getFlyweightMessage());
         }
@@ -4510,7 +4517,7 @@ public class SqlParserTest extends AbstractGriffinTest {
             for (int i = 0, n = tableModels.length; i < n; i++) {
                 CairoTestUtils.create(tableModels[i]);
             }
-            compiler.compileExecutionModel(query);
+            compiler.compileExecutionModel(query, sqlExecutionContext);
             Assert.fail("Exception expected");
         } catch (SqlException e) {
             Assert.assertEquals(position, e.getPosition());
@@ -4533,7 +4540,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     private void assertModel(String expected, String query, int modelType, TableModel... tableModels) throws SqlException {
         createModelsAndRun(() -> {
             sink.clear();
-            ExecutionModel model = compiler.compileExecutionModel(query);
+            ExecutionModel model = compiler.compileExecutionModel(query, sqlExecutionContext);
             Assert.assertEquals(model.getModelType(), modelType);
             ((Sinkable) model).toSink(sink);
             TestUtils.assertEquals(expected, sink);

@@ -55,7 +55,7 @@ public class PGBasicAuthenticator implements PGAuthenticator {
             long hi = PGConnectionContext.getStringLength(msg, msgLimit);
             if (hi == -1) {
                 // we did not find 0 within message limit
-                LOG.error().$("bad prepared password length").$();
+                LOG.error().$("bad password length").$();
                 throw BadProtocolException.INSTANCE;
             }
 
@@ -69,6 +69,7 @@ public class PGBasicAuthenticator implements PGAuthenticator {
         } else {
             LOG.error().$("invalid user [").$(username).$(']').$();
         }
-        throw SqlException.$(0, "invalid username/password");
+        // -1 position here means we will not send it to postgresql
+        throw SqlException.$(-1, "invalid username/password");
     }
 }

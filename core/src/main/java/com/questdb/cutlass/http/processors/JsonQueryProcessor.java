@@ -64,106 +64,9 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         this.doubleScale = configuration.getDoubleScale();
     }
 
-    private void putValue(HttpChunkedResponseSocket socket, int type, Record rec, int col) {
-        switch (type) {
-            case ColumnType.BOOLEAN:
-                socket.put(rec.getBool(col));
-                break;
-            case ColumnType.BYTE:
-                socket.put(rec.getByte(col));
-                break;
-            case ColumnType.DOUBLE:
-                socket.put(rec.getDouble(col), doubleScale);
-                break;
-            case ColumnType.FLOAT:
-                socket.put(rec.getFloat(col), floatScale);
-                break;
-            case ColumnType.INT:
-                final int i = rec.getInt(col);
-                if (i == Integer.MIN_VALUE) {
-                    socket.put("null");
-                } else {
-                    Numbers.append(socket, i);
-                }
-                break;
-            case ColumnType.LONG:
-                final long l = rec.getLong(col);
-                if (l == Long.MIN_VALUE) {
-                    socket.put("null");
-                } else {
-                    socket.put(l);
-                }
-                break;
-            case ColumnType.DATE:
-                final long d = rec.getDate(col);
-                if (d == Long.MIN_VALUE) {
-                    socket.put("null");
-                    break;
-                }
-                socket.put('"').putISODateMillis(d).put('"');
-                break;
-            case ColumnType.TIMESTAMP:
-                final long t = rec.getTimestamp(col);
-                if (t == Long.MIN_VALUE) {
-                    socket.put("null");
-                    break;
-                }
-                socket.put('"').putISODate(t).put('"');
-                break;
-            case ColumnType.SHORT:
-                socket.put(rec.getShort(col));
-                break;
-            case ColumnType.STRING:
-                putStringOrNull(socket, rec.getStr(col));
-                break;
-            case ColumnType.SYMBOL:
-                putStringOrNull(socket, rec.getSym(col));
-                break;
-            case ColumnType.BINARY:
-                socket.put('[');
-                socket.put(']');
-                break;
-            default:
-                assert false;
-        }
-    }
-
-    private static void putStringOrNull(CharSink r, CharSequence str) {
-        if (str == null) {
-            r.put("null");
-        } else {
-            r.encodeUtf8AndQuote(str);
-        }
-    }
-
     @Override
     public void close() {
         Misc.free(compiler);
-    }
-
-    @Override
-    public void onHeadersReady(HttpConnectionContext context) {
-    }
-
-    @Override
-    public void resumeRecv(HttpConnectionContext context, IODispatcher<HttpConnectionContext> dispatcher) {
-    }
-
-    @Override
-    public void onRequestComplete(
-            HttpConnectionContext context,
-            IODispatcher<HttpConnectionContext> dispatcher
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        JsonQueryProcessorState state = LV.get(context);
-        if (state == null) {
-            LV.set(context, state = new JsonQueryProcessorState(context.getFd(), configuration.getConnectionCheckFrequency()));
-        }
-        HttpChunkedResponseSocket socket = context.getChunkedResponseSocket();
-        if (parseUrl(socket, context.getRequestHeader(), state)) {
-            execute(context, dispatcher, state, socket);
-        } else {
-            readyForNextRequest(context, dispatcher);
-        }
     }
 
     public void execute(
@@ -176,8 +79,9 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             state.recordCursorFactory = AbstractQueryContext.FACTORY_CACHE.get().poll(state.query);
             int retryCount = 0;
             do {
+                sqlExecutionContext.with(context.getCairoSecurityContext(), null);
                 if (state.recordCursorFactory == null) {
-                    state.recordCursorFactory = compiler.compile(state.query, context.getCairoSecurityContext());
+                    state.recordCursorFactory = compiler.compile(state.query, sqlExecutionContext);
                     cacheHits.incrementAndGet();
                     info(state).$("execute-new [q=`").$(state.query).
                             $("`, skip: ").$(state.skip).
@@ -193,9 +97,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
 
                 if (state.recordCursorFactory != null) {
                     try {
-                        state.cursor = state.recordCursorFactory.getCursor(
-                                sqlExecutionContext.with(context.getCairoSecurityContext(), null)
-                        );
+                        state.cursor = state.recordCursorFactory.getCursor(sqlExecutionContext);
                         state.metadata = state.recordCursorFactory.getMetadata();
                         header(socket, 200);
                         resumeSend(context, dispatcher);
@@ -229,6 +131,31 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             internalError(socket, e, state);
             readyForNextRequest(context, dispatcher);
         }
+    }
+
+    @Override
+    public void onHeadersReady(HttpConnectionContext context) {
+    }
+
+    @Override
+    public void onRequestComplete(
+            HttpConnectionContext context,
+            IODispatcher<HttpConnectionContext> dispatcher
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        JsonQueryProcessorState state = LV.get(context);
+        if (state == null) {
+            LV.set(context, state = new JsonQueryProcessorState(context.getFd(), configuration.getConnectionCheckFrequency()));
+        }
+        HttpChunkedResponseSocket socket = context.getChunkedResponseSocket();
+        if (parseUrl(socket, context.getRequestHeader(), state)) {
+            execute(context, dispatcher, state, socket);
+        } else {
+            readyForNextRequest(context, dispatcher);
+        }
+    }
+
+    @Override
+    public void resumeRecv(HttpConnectionContext context, IODispatcher<HttpConnectionContext> dispatcher) {
     }
 
     @Override
@@ -364,34 +291,25 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         readyForNextRequest(context, dispatcher);
     }
 
-    private void syntaxError(
-            HttpChunkedResponseSocket socket,
-            SqlException sqlException,
-            JsonQueryProcessorState state
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        info(state)
-                .$("syntax-error [q=`").$(state.query)
-                .$("`, at=").$(sqlException.getPosition())
-                .$(", message=`").$(sqlException.getFlyweightMessage()).$('`')
-                .$(']').$();
-        sendException(socket, sqlException.getPosition(), sqlException.getFlyweightMessage(), 400, state.query);
+    private static void putStringOrNull(CharSink r, CharSequence str) {
+        if (str == null) {
+            r.put("null");
+        } else {
+            r.encodeUtf8AndQuote(str);
+        }
     }
 
-    private void sendConfirmation(HttpChunkedResponseSocket socket) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        socket.put('{').putQuoted("ddl").put(':').putQuoted("OK").put('}');
-        socket.sendChunk();
-        socket.done();
+    private LogRecord error(JsonQueryProcessorState state) {
+        return LOG.error().$('[').$(state.fd).$("] ");
     }
 
-    private void internalError(
-            HttpChunkedResponseSocket socket,
-            Throwable e,
-            JsonQueryProcessorState state
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        error(state).$("Server error executing query ").$(state.query).$(e).$();
-        sendException(socket, 0, e.getMessage(), 500, state.query);
+    long getCacheHits() {
+        return cacheHits.longValue();
     }
 
+    long getCacheMisses() {
+        return cacheMisses.longValue();
+    }
 
     protected void header(
             HttpChunkedResponseSocket socket,
@@ -402,29 +320,17 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         socket.sendHeader();
     }
 
-    private void sendException(
-            HttpChunkedResponseSocket socket,
-            int position,
-            CharSequence message,
-            int status,
-            CharSequence query
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        header(socket, status);
-        socket.put('{').
-                putQuoted("query").put(':').encodeUtf8AndQuote(query == null ? "" : query).put(',').
-                putQuoted("error").put(':').encodeUtf8AndQuote(message).put(',').
-                putQuoted("position").put(':').put(position);
-        socket.put('}');
-        socket.sendChunk();
-        socket.done();
-    }
-
-    private LogRecord error(JsonQueryProcessorState state) {
-        return LOG.error().$('[').$(state.fd).$("] ");
-    }
-
     private LogRecord info(JsonQueryProcessorState state) {
         return LOG.info().$('[').$(state.fd).$("] ");
+    }
+
+    private void internalError(
+            HttpChunkedResponseSocket socket,
+            Throwable e,
+            JsonQueryProcessorState state
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        error(state).$("Server error executing query ").$(state.query).$(e).$();
+        sendException(socket, 0, e.getMessage(), 500, state.query);
     }
 
     private boolean parseUrl(
@@ -477,18 +383,80 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         return true;
     }
 
+    private void putValue(HttpChunkedResponseSocket socket, int type, Record rec, int col) {
+        switch (type) {
+            case ColumnType.BOOLEAN:
+                socket.put(rec.getBool(col));
+                break;
+            case ColumnType.BYTE:
+                socket.put(rec.getByte(col));
+                break;
+            case ColumnType.DOUBLE:
+                socket.put(rec.getDouble(col), doubleScale);
+                break;
+            case ColumnType.FLOAT:
+                socket.put(rec.getFloat(col), floatScale);
+                break;
+            case ColumnType.INT:
+                final int i = rec.getInt(col);
+                if (i == Integer.MIN_VALUE) {
+                    socket.put("null");
+                } else {
+                    Numbers.append(socket, i);
+                }
+                break;
+            case ColumnType.LONG:
+                final long l = rec.getLong(col);
+                if (l == Long.MIN_VALUE) {
+                    socket.put("null");
+                } else {
+                    socket.put(l);
+                }
+                break;
+            case ColumnType.DATE:
+                final long d = rec.getDate(col);
+                if (d == Long.MIN_VALUE) {
+                    socket.put("null");
+                    break;
+                }
+                socket.put('"').putISODateMillis(d).put('"');
+                break;
+            case ColumnType.TIMESTAMP:
+                final long t = rec.getTimestamp(col);
+                if (t == Long.MIN_VALUE) {
+                    socket.put("null");
+                    break;
+                }
+                socket.put('"').putISODate(t).put('"');
+                break;
+            case ColumnType.SHORT:
+                socket.put(rec.getShort(col));
+                break;
+            case ColumnType.STRING:
+                putStringOrNull(socket, rec.getStr(col));
+                break;
+            case ColumnType.SYMBOL:
+                putStringOrNull(socket, rec.getSym(col));
+                break;
+            case ColumnType.BINARY:
+                socket.put('[');
+                socket.put(']');
+                break;
+            default:
+                assert false;
+        }
+    }
+
     private void readyForNextRequest(HttpConnectionContext context, IODispatcher<HttpConnectionContext> dispatcher) {
         LOG.debug().$("all sent [fd=").$(context.getFd()).$(']').$();
         context.clear();
         dispatcher.registerChannel(context, IOOperation.READ);
     }
 
-    long getCacheHits() {
-        return cacheHits.longValue();
-    }
-
-    long getCacheMisses() {
-        return cacheMisses.longValue();
+    private void sendConfirmation(HttpChunkedResponseSocket socket) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        socket.put('{').putQuoted("ddl").put(':').putQuoted("OK").put('}');
+        socket.sendChunk();
+        socket.done();
     }
 
     private void sendDone(
@@ -504,5 +472,35 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             socket.sendChunk();
         }
         socket.done();
+    }
+
+    private void sendException(
+            HttpChunkedResponseSocket socket,
+            int position,
+            CharSequence message,
+            int status,
+            CharSequence query
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        header(socket, status);
+        socket.put('{').
+                putQuoted("query").put(':').encodeUtf8AndQuote(query == null ? "" : query).put(',').
+                putQuoted("error").put(':').encodeUtf8AndQuote(message).put(',').
+                putQuoted("position").put(':').put(position);
+        socket.put('}');
+        socket.sendChunk();
+        socket.done();
+    }
+
+    private void syntaxError(
+            HttpChunkedResponseSocket socket,
+            SqlException sqlException,
+            JsonQueryProcessorState state
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        info(state)
+                .$("syntax-error [q=`").$(state.query)
+                .$("`, at=").$(sqlException.getPosition())
+                .$(", message=`").$(sqlException.getFlyweightMessage()).$('`')
+                .$(']').$();
+        sendException(socket, sqlException.getPosition(), sqlException.getFlyweightMessage(), 400, state.query);
     }
 }
