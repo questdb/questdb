@@ -460,7 +460,7 @@ public class AlterTableAddColumnTest extends AbstractGriffinTest {
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n" +
                         " from long_sequence(10)" +
-                        ") timestamp (timestamp)",
+                        ") timestamp (timestamp);",
                 AllowAllCairoSecurityContext.INSTANCE,
                 bindVariableService
         );

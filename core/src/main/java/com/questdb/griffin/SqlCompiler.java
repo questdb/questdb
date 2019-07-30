@@ -160,7 +160,6 @@ public class SqlCompiler implements Closeable {
         lexer.of(query);
         executionContext.with(cairoSecurityContext, bindVariableService);
 
-
         CharSequence tok = SqlUtil.fetchNext(lexer);
         if (Chars.equals(tok, "truncate")) {
             truncateTables(lexer, executionContext);
@@ -169,6 +168,10 @@ public class SqlCompiler implements Closeable {
 
         if (Chars.equals(tok, "alter")) {
             alterTable(lexer);
+            return null;
+        }
+
+        if (tok == null || Chars.equalsIgnoreCase(tok, "set")) {
             return null;
         }
 

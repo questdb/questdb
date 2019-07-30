@@ -301,7 +301,7 @@ public final class SqlParser {
             tok = optTok(lexer);
         }
 
-        if (tok != null) {
+        if (tok != null && !Chars.equals(tok, ';')) {
             throw errUnexpected(lexer, tok);
         }
         return model;

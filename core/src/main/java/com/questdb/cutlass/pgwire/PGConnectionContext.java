@@ -943,26 +943,16 @@ public class PGConnectionContext implements IOContext, Mutable {
         // of all of them, which is looked up by query text
 
         responseAsciiSink.reset();
-        if (!Chars.startsWith(query, "SET")) {
-            currentFactory = factoryCache.peek(query);
-            if (currentFactory == null) {
-                currentFactory = compiler.compile(query, cairoSecurityContext, bindVariableService);
-                if (currentFactory != null) {
-                    factoryCache.put(query, currentFactory);
-                } else {
-                    // DDL SQL
-                    prepareParseComplete();
-                }
+        currentFactory = factoryCache.peek(query);
+        if (currentFactory == null) {
+            currentFactory = compiler.compile(query, cairoSecurityContext, bindVariableService);
+            if (currentFactory != null) {
+                factoryCache.put(query, currentFactory);
+            } else {
+                // DDL SQL
+                prepareParseComplete();
             }
-        } else {
-            // same as DDL, but special handling because SQL compiler does not yet understand these SETs
-            prepareParseComplete();
         }
-    }
-
-    private void prepareForNewQuery() {
-        queryCharacterStore.clear();
-        bindVariableService.clear();
     }
 
     void prepareCommandComplete() {
@@ -982,6 +972,11 @@ public class PGConnectionContext implements IOContext, Mutable {
         responseAsciiSink.put('P').put(e.getPosition() + 1).put((char) 0);
         responseAsciiSink.put((char) 0);
         responseAsciiSink.putLen(addr);
+    }
+
+    private void prepareForNewQuery() {
+        queryCharacterStore.clear();
+        bindVariableService.clear();
     }
 
     private void prepareLoginOk(ResponseAsciiSink sink) {
