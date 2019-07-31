@@ -23,6 +23,7 @@
 
 package com.questdb.log;
 
+import com.questdb.mp.QueueConsumer;
 import com.questdb.mp.RingQueue;
 import com.questdb.mp.SCSequence;
 import com.questdb.mp.SynchronizedJob;
@@ -41,6 +42,7 @@ public class LogFileWriter extends SynchronizedJob implements Closeable, LogWrit
     private long lim;
     private long buf;
     private long _wptr;
+    private final QueueConsumer<LogRecordSink> myConsumer = this::copyToBuffer;
     private String location;
     // can be set via reflection
     @SuppressWarnings("unused")
@@ -101,7 +103,7 @@ public class LogFileWriter extends SynchronizedJob implements Closeable, LogWrit
 
     @Override
     public boolean runSerially() {
-        if (subSeq.consumeAll(ring, this::copyToBuffer)) {
+        if (subSeq.consumeAll(ring, myConsumer)) {
             return true;
         }
         if (_wptr > buf) {

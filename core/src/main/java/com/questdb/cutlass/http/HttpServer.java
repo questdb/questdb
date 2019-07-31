@@ -30,30 +30,18 @@ import com.questdb.mp.WorkerPool;
 import com.questdb.network.IOContextFactory;
 import com.questdb.network.IODispatcher;
 import com.questdb.network.IODispatchers;
+import com.questdb.network.IORequestProcessor;
 import com.questdb.std.ThreadLocal;
 import com.questdb.std.*;
 
 import java.io.Closeable;
 
 public class HttpServer implements Closeable {
-    private final ObjList<HttpRequestProcessorSelectorImpl> selectors;
     private static final Log LOG = LogFactory.getLog(HttpServer.class);
+    private final ObjList<HttpRequestProcessorSelectorImpl> selectors;
     private final IODispatcher<HttpConnectionContext> dispatcher;
     private final int workerCount;
     private final HttpContextFactory httpContextFactory;
-
-    public void bind(HttpRequestProcessorFactory factory) {
-        final String url = factory.getUrl();
-        assert url != null;
-        for (int i = 0; i < workerCount; i++) {
-            HttpRequestProcessorSelectorImpl selector = selectors.getQuick(i);
-            if (HttpServerConfiguration.DEFAULT_PROCESSOR_URL.equals(url)) {
-                selector.defaultRequestProcessor = factory.newInstance();
-            } else {
-                selector.processorMap.put(url, factory.newInstance());
-            }
-        }
-    }
 
     public HttpServer(HttpServerConfiguration configuration, WorkerPool pool) {
         this.workerCount = pool.getWorkerCount();
@@ -74,13 +62,12 @@ public class HttpServer implements Closeable {
             final int index = i;
             pool.assign(i, new Job() {
                 private final HttpRequestProcessorSelector selector = selectors.getQuick(index);
+                private final IORequestProcessor<HttpConnectionContext> processor =
+                        (operation, context, dispatcher) -> context.handleClientOperation(operation, dispatcher, selector);
 
                 @Override
                 public boolean run() {
-                    return dispatcher.processIOQueue(
-                            (operation, context, dispatcher1)
-                                    -> context.handleClientOperation(operation, dispatcher1, selector)
-                    );
+                    return dispatcher.processIOQueue(processor);
                 }
             });
 
@@ -90,6 +77,33 @@ public class HttpServer implements Closeable {
                 Misc.free(selectors.getQuick(index));
                 httpContextFactory.closeContextPool();
             });
+        }
+    }
+
+    public void bind(HttpRequestProcessorFactory factory) {
+        final String url = factory.getUrl();
+        assert url != null;
+        for (int i = 0; i < workerCount; i++) {
+            HttpRequestProcessorSelectorImpl selector = selectors.getQuick(i);
+            if (HttpServerConfiguration.DEFAULT_PROCESSOR_URL.equals(url)) {
+                selector.defaultRequestProcessor = factory.newInstance();
+            } else {
+                selector.processorMap.put(url, factory.newInstance());
+            }
+        }
+    }
+
+    @Override
+    public void close() {
+        Misc.free(httpContextFactory);
+        Misc.free(dispatcher);
+        for (int i = 0; i < workerCount; i++) {
+            HttpRequestProcessorSelectorImpl selector = selectors.getQuick(i);
+            Misc.free(selector.defaultRequestProcessor);
+            final ObjList<CharSequence> urls = selector.processorMap.keys();
+            for (int j = 0, m = urls.size(); j < m; j++) {
+                Misc.free(selector.processorMap.get(urls.getQuick(j)));
+            }
         }
     }
 
@@ -114,20 +128,6 @@ public class HttpServer implements Closeable {
             ObjList<CharSequence> processorKeys = processorMap.keys();
             for (int i = 0, n = processorKeys.size(); i < n; i++) {
                 Misc.free(processorMap.get(processorKeys.getQuick(i)));
-            }
-        }
-    }
-
-    @Override
-    public void close() {
-        Misc.free(httpContextFactory);
-        Misc.free(dispatcher);
-        for (int i = 0; i < workerCount; i++) {
-            HttpRequestProcessorSelectorImpl selector = selectors.getQuick(i);
-            Misc.free(selector.defaultRequestProcessor);
-            final ObjList<CharSequence> urls = selector.processorMap.keys();
-            for (int j = 0, m = urls.size(); j < m; j++) {
-                Misc.free(selector.processorMap.get(urls.getQuick(j)));
             }
         }
     }

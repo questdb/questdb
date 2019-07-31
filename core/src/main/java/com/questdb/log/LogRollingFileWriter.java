@@ -23,6 +23,7 @@
 
 package com.questdb.log;
 
+import com.questdb.mp.QueueConsumer;
 import com.questdb.mp.RingQueue;
 import com.questdb.mp.SCSequence;
 import com.questdb.mp.SynchronizedJob;
@@ -64,6 +65,7 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
     private long idleSpinCount = 0;
     private long rollDeadline;
     private NextDeadline rollDeadlineFunction;
+    private final QueueConsumer<LogRecordSink> myConsumer = this::copyToBuffer;
 
     public LogRollingFileWriter(RingQueue<LogRecordSink> ring, SCSequence subSeq, int level) {
         this(FilesFacadeImpl.INSTANCE, MicrosecondClockImpl.INSTANCE, ring, subSeq, level);
@@ -167,7 +169,7 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
 
     @Override
     public boolean runSerially() {
-        if (subSeq.consumeAll(ring, this::copyToBuffer)) {
+        if (subSeq.consumeAll(ring, myConsumer)) {
             return true;
         }
 

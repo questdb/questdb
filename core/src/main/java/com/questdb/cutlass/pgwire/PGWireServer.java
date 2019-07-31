@@ -26,6 +26,7 @@ package com.questdb.cutlass.pgwire;
 import com.questdb.cairo.CairoEngine;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
+import com.questdb.mp.Job;
 import com.questdb.mp.WorkerPool;
 import com.questdb.network.*;
 import com.questdb.std.Misc;
@@ -54,20 +55,25 @@ public class PGWireServer implements Closeable {
 
         for (int i = 0, n = pool.getWorkerCount(); i < n; i++) {
             final PGJobContext jobContext = new PGJobContext(configuration, engine);
-            pool.assign(i, () -> dispatcher.processIOQueue((operation, context, dispatcher) -> {
-                        try {
-                            jobContext.handleClientOperation(context);
-                            dispatcher.registerChannel(context, IOOperation.READ);
-                        } catch (PeerIsSlowToWriteException e) {
-                            dispatcher.registerChannel(context, IOOperation.READ);
-                        } catch (PeerIsSlowToReadException e) {
-                            dispatcher.registerChannel(context, IOOperation.WRITE);
-                        } catch (PeerDisconnectedException | BadProtocolException e) {
-                            dispatcher.disconnect(context);
-                        }
+            pool.assign(i, new Job() {
+                private final IORequestProcessor<PGConnectionContext> processor = (operation, context, dispatcher) -> {
+                    try {
+                        jobContext.handleClientOperation(context);
+                        dispatcher.registerChannel(context, IOOperation.READ);
+                    } catch (PeerIsSlowToWriteException e) {
+                        dispatcher.registerChannel(context, IOOperation.READ);
+                    } catch (PeerIsSlowToReadException e) {
+                        dispatcher.registerChannel(context, IOOperation.WRITE);
+                    } catch (PeerDisconnectedException | BadProtocolException e) {
+                        dispatcher.disconnect(context);
                     }
+                };
 
-            ));
+                @Override
+                public boolean run() {
+                    return dispatcher.processIOQueue(processor);
+                }
+            });
 
             // http context factory has thread local pools
             // therefore we need each thread to clean their thread locals individually

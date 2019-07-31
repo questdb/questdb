@@ -23,6 +23,7 @@
 
 package com.questdb.log;
 
+import com.questdb.mp.QueueConsumer;
 import com.questdb.mp.RingQueue;
 import com.questdb.mp.SCSequence;
 import com.questdb.mp.SynchronizedJob;
@@ -35,6 +36,7 @@ public class LogConsoleWriter extends SynchronizedJob implements Closeable, LogW
     private final RingQueue<LogRecordSink> ring;
     private final SCSequence subSeq;
     private final int level;
+    private final QueueConsumer<LogRecordSink> myConsumer = this::toStdOut;
 
     public LogConsoleWriter(RingQueue<LogRecordSink> ring, SCSequence subSeq, int level) {
         this.ring = ring;
@@ -52,7 +54,7 @@ public class LogConsoleWriter extends SynchronizedJob implements Closeable, LogW
 
     @Override
     public boolean runSerially() {
-        return subSeq.consumeAll(ring, this::toStdOut);
+        return subSeq.consumeAll(ring, myConsumer);
     }
 
     private void toStdOut(LogRecordSink sink) {
