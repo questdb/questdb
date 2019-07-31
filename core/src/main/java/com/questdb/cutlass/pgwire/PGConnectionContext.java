@@ -316,6 +316,7 @@ public class PGConnectionContext implements IOContext, Mutable {
         try {
             bindVariableService.setByte(index, (byte) Numbers.parseInt(dbcs.of(address, address + valueLen)));
         } catch (NumericException e) {
+            LOG.error().$("bad byte variable value [index=").$(index).$(", value=`").$(dbcs).$("`").$();
             throw BadProtocolException.INSTANCE;
         }
     }
@@ -342,6 +343,7 @@ public class PGConnectionContext implements IOContext, Mutable {
         try {
             bindVariableService.setDouble(index, Numbers.parseDouble(dbcs.of(address, address + valueLen)));
         } catch (NumericException e) {
+            LOG.error().$("bad double variable value [index=").$(index).$(", value=`").$(dbcs).$("`]").$();
             throw BadProtocolException.INSTANCE;
         }
     }
@@ -368,6 +370,7 @@ public class PGConnectionContext implements IOContext, Mutable {
         try {
             bindVariableService.setInt(index, Numbers.parseInt(dbcs.of(address, address + valueLen)));
         } catch (NumericException e) {
+            LOG.error().$("bad int variable value [index=").$(index).$(", value=`").$(dbcs).$("`]").$();
             throw BadProtocolException.INSTANCE;
         }
     }
@@ -381,6 +384,7 @@ public class PGConnectionContext implements IOContext, Mutable {
         try {
             bindVariableService.setLong(index, Numbers.parseLong(dbcs.of(address, address + valueLen)));
         } catch (NumericException e) {
+            LOG.error().$("bad long variable value [index=").$(index).$(", value=`").$(dbcs).$("`]").$();
             throw BadProtocolException.INSTANCE;
         }
     }
@@ -401,6 +405,7 @@ public class PGConnectionContext implements IOContext, Mutable {
 
     private static void ensureValueLength(int required, int valueLen) throws BadProtocolException {
         if (required != valueLen) {
+            LOG.error().$("bad parameter value length [required=").$(required).$(", actual=").$(valueLen).$(']').$();
             throw BadProtocolException.INSTANCE;
         }
     }
@@ -761,7 +766,6 @@ public class PGConnectionContext implements IOContext, Mutable {
         switch (type) {
             case 'P':
 
-                prepareForNewQuery();
                 // 'Parse'
                 // this appears to be the execution side - we must at least return 'RowDescription'
                 // possibly more, check QueryExecutionImpl.processResults() in PG driver for more info
@@ -781,14 +785,8 @@ public class PGConnectionContext implements IOContext, Mutable {
                     throw BadProtocolException.INSTANCE;
                 }
 
-                CharacterStoreEntry e = queryCharacterStore.newEntry();
-                if (Chars.utf8Decode(lo, hi, e)) {
-                    queryText = queryCharacterStore.toImmutable();
-                    LOG.info().$("parse [q=").utf8(queryText).$(']').$();
-                } else {
-                    LOG.error().$("invalid UTF8 bytes in parse query").$();
-                    throw BadProtocolException.INSTANCE;
-                }
+                prepareForNewQuery();
+                parseQueryText(lo, hi);
 
                 lo = hi + 1;
                 if (lo + Short.BYTES > msgLimit) {
@@ -894,15 +892,7 @@ public class PGConnectionContext implements IOContext, Mutable {
             case 'Q':
                 // vanilla query
                 prepareForNewQuery();
-
-                e = queryCharacterStore.newEntry();
-                if (Chars.utf8Decode(lo, limit - 1, e)) {
-                    queryText = queryCharacterStore.toImmutable();
-                    LOG.info().$("simple query [q=").utf8(queryText).$(']').$();
-                } else {
-                    LOG.error().$("invalid UTF8 bytes in simple query").$();
-                    throw BadProtocolException.INSTANCE;
-                }
+                parseQueryText(lo, limit - 1);
 
                 currentFactory = factoryCache.peek(queryText);
                 if (currentFactory == null) {
@@ -952,6 +942,17 @@ public class PGConnectionContext implements IOContext, Mutable {
                 // DDL SQL
                 prepareParseComplete();
             }
+        }
+    }
+
+    private void parseQueryText(long lo, long hi) throws BadProtocolException {
+        CharacterStoreEntry e = queryCharacterStore.newEntry();
+        if (Chars.utf8Decode(lo, hi, e)) {
+            queryText = queryCharacterStore.toImmutable();
+            LOG.info().$("parse [q=").utf8(queryText).$(']').$();
+        } else {
+            LOG.error().$("invalid UTF8 bytes in parse query").$();
+            throw BadProtocolException.INSTANCE;
         }
     }
 
@@ -1069,7 +1070,12 @@ public class PGConnectionContext implements IOContext, Mutable {
                     log.$("property [");
                     try {
                         long hi = getStringLength(lo, msgLimit);
-                        assert hi > -1;
+                        if (hi == -1) {
+                            // we did not find 0 within message limit
+                            log.$("malformed property name");
+                            throw BadProtocolException.INSTANCE;
+                        }
+
                         log.$("name=").$(dbcs.of(lo, hi));
 
                         final boolean username = Chars.equals("user", dbcs);
@@ -1077,7 +1083,12 @@ public class PGConnectionContext implements IOContext, Mutable {
                         // name is ready
                         lo = hi + 1;
                         hi = getStringLength(lo, msgLimit);
-                        assert hi > -1;
+                        if (hi == -1) {
+                            // we did not find 0 within message limit
+                            log.$(", malformed property value");
+                            throw BadProtocolException.INSTANCE;
+                        }
+
                         log.$(", value=").$(dbcs.of(lo, hi));
                         lo = hi + 1;
                         if (username) {
@@ -1128,6 +1139,7 @@ public class PGConnectionContext implements IOContext, Mutable {
                 }
 
                 if (n < 0) {
+                    LOG.info().$("disconnect [code=").$(n).$(']').$();
                     throw PeerDisconnectedException.INSTANCE;
                 }
 
