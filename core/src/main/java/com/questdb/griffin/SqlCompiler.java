@@ -44,6 +44,30 @@ public class SqlCompiler implements Closeable {
     public static final ObjList<String> sqlControlSymbols = new ObjList<>(8);
     private final static Log LOG = LogFactory.getLog(SqlCompiler.class);
     private static final IntList castGroups = new IntList();
+
+    static {
+        castGroups.extendAndSet(ColumnType.BOOLEAN, 2);
+        castGroups.extendAndSet(ColumnType.BYTE, 1);
+        castGroups.extendAndSet(ColumnType.SHORT, 1);
+        castGroups.extendAndSet(ColumnType.INT, 1);
+        castGroups.extendAndSet(ColumnType.LONG, 1);
+        castGroups.extendAndSet(ColumnType.FLOAT, 1);
+        castGroups.extendAndSet(ColumnType.DOUBLE, 1);
+        castGroups.extendAndSet(ColumnType.DATE, 1);
+        castGroups.extendAndSet(ColumnType.TIMESTAMP, 1);
+        castGroups.extendAndSet(ColumnType.STRING, 3);
+        castGroups.extendAndSet(ColumnType.SYMBOL, 3);
+        castGroups.extendAndSet(ColumnType.BINARY, 4);
+
+        sqlControlSymbols.add("(");
+        sqlControlSymbols.add(";");
+        sqlControlSymbols.add(")");
+        sqlControlSymbols.add(",");
+        sqlControlSymbols.add("/*");
+        sqlControlSymbols.add("*/");
+        sqlControlSymbols.add("--");
+    }
+
     private final SqlOptimiser optimiser;
     private final SqlParser parser;
     private final ObjectPool<ExpressionNode> sqlNodePool;
@@ -131,50 +155,6 @@ public class SqlCompiler implements Closeable {
                 lexer.defineSymbol(op.token);
             }
         }
-    }
-
-    public void cache(CharSequence query, RecordCursorFactory factory) {
-        sqlCache.put(query, factory);
-    }
-
-    @Override
-    public void close() {
-        Misc.free(path);
-        Misc.free(sqlCache);
-    }
-
-    public RecordCursorFactory compile(CharSequence query) throws SqlException {
-        return compile(query, DefaultSqlExecutionContext.INSTANCE);
-    }
-
-    public RecordCursorFactory compile(@NotNull CharSequence query, @NotNull SqlExecutionContext executionContext) throws SqlException {
-        //
-        // these are quick executions that do not require building of a model
-        //
-        lexer.of(query);
-
-        CharSequence tok = SqlUtil.fetchNext(lexer);
-        if (Chars.equals(tok, "truncate")) {
-            truncateTables(lexer, executionContext);
-            return null;
-        }
-
-        if (Chars.equals(tok, "alter")) {
-            alterTable(lexer, executionContext);
-            return null;
-        }
-
-        if (tok == null || Chars.equalsIgnoreCase(tok, "set")) {
-            return null;
-        }
-
-        // short circuit to cache if there is anything there
-        RecordCursorFactory result = sqlCache.poll(query);
-        if (result != null) {
-            return result;
-        }
-
-        return compileUsingModel(query, executionContext);
     }
 
     // Creates data type converter.
@@ -618,6 +598,55 @@ public class SqlCompiler implements Closeable {
         }
 
         return tok;
+    }
+
+    public void cache(CharSequence query, RecordCursorFactory factory) {
+        sqlCache.put(query, factory);
+    }
+
+    @Override
+    public void close() {
+        Misc.free(path);
+        Misc.free(sqlCache);
+    }
+
+    public RecordCursorFactory compile(CharSequence query) throws SqlException {
+        return compile(query, DefaultSqlExecutionContext.INSTANCE);
+    }
+
+    public RecordCursorFactory compile(@NotNull CharSequence query, @NotNull SqlExecutionContext executionContext) throws SqlException {
+        //
+        // these are quick executions that do not require building of a model
+        //
+        lexer.of(query);
+
+        CharSequence tok = SqlUtil.fetchNext(lexer);
+        if (Chars.equals(tok, "truncate")) {
+            truncateTables(lexer, executionContext);
+            return null;
+        }
+
+        if (Chars.equals(tok, "alter")) {
+            alterTable(lexer, executionContext);
+            return null;
+        }
+
+        if (Chars.equals(tok, "repair")) {
+            repairTables(lexer, executionContext);
+            return null;
+        }
+
+        if (tok == null || Chars.equalsIgnoreCase(tok, "set")) {
+            return null;
+        }
+
+        // short circuit to cache if there is anything there
+        RecordCursorFactory result = sqlCache.poll(query);
+        if (result != null) {
+            return result;
+        }
+
+        return compileUsingModel(query, executionContext);
     }
 
     private void alterTable(GenericLexer lexer, SqlExecutionContext executionContext) throws SqlException {
@@ -1165,12 +1194,15 @@ public class SqlCompiler implements Closeable {
                         throw SqlException.$(lexer.getPosition(), "table name expected");
                     }
 
+                    if (Chars.isQuoted(tok)) {
+                        tok = GenericLexer.unquote(tok);
+                    }
                     tableExistsOrFail(lexer.lastTokenPosition(), tok, executionContext);
 
                     try {
                         tableWriters.add(engine.getWriter(executionContext.getCairoSecurityContext(), tok));
                     } catch (CairoException e) {
-                        LOG.info().$("failed to lock table for truncate: ").$((Sinkable) e).$();
+                        LOG.info().$("table busy [table=").$(tok).$(", e=").$((Sinkable) e).$(']').$();
                         throw SqlException.$(lexer.lastTokenPosition(), "table '").put(tok).put("' is busy");
                     }
                     tok = SqlUtil.fetchNext(lexer);
@@ -1185,12 +1217,56 @@ public class SqlCompiler implements Closeable {
 
             for (int i = 0, n = tableWriters.size(); i < n; i++) {
                 try (TableWriter writer = tableWriters.getQuick(i)) {
-                    writer.truncate();
+                    try {
+                        if (engine.lockReaders(writer.getName())) {
+                            try {
+                                writer.truncate();
+                            } finally {
+                                engine.unlockReaders(writer.getName());
+                            }
+                        } else {
+                            throw SqlException.$(0, "there is an active query against '").put(writer.getName()).put("'. Try again.");
+                        }
+                    } catch (CairoException | CairoError e) {
+                        LOG.error().$("could truncate [table=").$(writer.getName()).$(", e=").$((Sinkable) e).$(']').$();
+                        throw e;
+                    }
                 }
             }
         } finally {
             tableWriters.clear();
         }
+    }
+
+    private void repairTables(GenericLexer lexer, SqlExecutionContext executionContext) throws SqlException {
+        CharSequence tok;
+        tok = SqlUtil.fetchNext(lexer);
+        if (!Chars.equals("table", tok)) {
+            throw SqlException.$(lexer.lastTokenPosition(), "'table' expected");
+        }
+
+        do {
+            tok = SqlUtil.fetchNext(lexer);
+
+            if (tok == null || Chars.equals(tok, ',')) {
+                throw SqlException.$(lexer.getPosition(), "table name expected");
+            }
+
+            if (Chars.isQuoted(tok)) {
+                tok = GenericLexer.unquote(tok);
+            }
+            tableExistsOrFail(lexer.lastTokenPosition(), tok, executionContext);
+
+            try {
+                engine.getWriter(executionContext.getCairoSecurityContext(), tok).close();
+            } catch (CairoException e) {
+                LOG.info().$("table busy [table=").$(tok).$(", e=").$((Sinkable) e).$(']').$();
+                throw SqlException.$(lexer.lastTokenPosition(), "table '").put(tok).put("' is busy");
+            }
+            tok = SqlUtil.fetchNext(lexer);
+
+        } while (tok != null && Chars.equals(tok, ','));
+
     }
 
     private InsertAsSelectModel validateAndOptimiseInsertAsSelect(
@@ -1325,28 +1401,5 @@ public class SqlCompiler implements Closeable {
             this.typeCast = typeCast;
             return this;
         }
-    }
-
-    static {
-        castGroups.extendAndSet(ColumnType.BOOLEAN, 2);
-        castGroups.extendAndSet(ColumnType.BYTE, 1);
-        castGroups.extendAndSet(ColumnType.SHORT, 1);
-        castGroups.extendAndSet(ColumnType.INT, 1);
-        castGroups.extendAndSet(ColumnType.LONG, 1);
-        castGroups.extendAndSet(ColumnType.FLOAT, 1);
-        castGroups.extendAndSet(ColumnType.DOUBLE, 1);
-        castGroups.extendAndSet(ColumnType.DATE, 1);
-        castGroups.extendAndSet(ColumnType.TIMESTAMP, 1);
-        castGroups.extendAndSet(ColumnType.STRING, 3);
-        castGroups.extendAndSet(ColumnType.SYMBOL, 3);
-        castGroups.extendAndSet(ColumnType.BINARY, 4);
-
-        sqlControlSymbols.add("(");
-        sqlControlSymbols.add(";");
-        sqlControlSymbols.add(")");
-        sqlControlSymbols.add(",");
-        sqlControlSymbols.add("/*");
-        sqlControlSymbols.add("*/");
-        sqlControlSymbols.add("--");
     }
 }

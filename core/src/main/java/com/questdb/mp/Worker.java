@@ -43,7 +43,7 @@ public class Worker extends Thread {
     @SuppressWarnings("FieldCanBeLocal")
     private volatile int running = 0;
     private volatile int fence;
-    private final Runnable cleaner;
+    private final WorkerCleaner cleaner;
 
     public Worker(
             ObjHashSet<? extends Job> jobs,
@@ -57,7 +57,7 @@ public class Worker extends Thread {
             final SOCountDownLatch haltLatch,
             final int affinity,
             final Log log,
-            final Runnable cleaner
+            final WorkerCleaner cleaner
     ) {
         this.log = log;
         this.jobs = jobs;
@@ -73,64 +73,70 @@ public class Worker extends Thread {
 
     @Override
     public void run() {
-        if (Unsafe.getUnsafe().compareAndSwapInt(this, RUNNING_OFFSET, 0, 1)) {
-            setupJobs();
-            if (affinity > -1) {
-                if (Os.setCurrentThreadAffinity(this.affinity) == 0) {
-                    if (log != null) {
-                        log.info().$("affinity set [cpu=").$(affinity).$(", name=").$(getName()).$(']').$();
+        Throwable ex = null;
+        try {
+            if (Unsafe.getUnsafe().compareAndSwapInt(this, RUNNING_OFFSET, 0, 1)) {
+                setupJobs();
+                if (affinity > -1) {
+                    if (Os.setCurrentThreadAffinity(this.affinity) == 0) {
+                        if (log != null) {
+                            log.info().$("affinity set [cpu=").$(affinity).$(", name=").$(getName()).$(']').$();
+                        }
+                    } else {
+                        if (log != null) {
+                            log.error().$("could not set affinity [cpu=").$(affinity).$(", name=").$(getName()).$(']').$();
+                        }
                     }
                 } else {
                     if (log != null) {
-                        log.error().$("could not set affinity [cpu=").$(affinity).$(", name=").$(getName()).$(']').$();
+                        log.info().$("os scheduled [name=").$(getName()).$(']').$();
                     }
                 }
-            } else {
-                if (log != null) {
-                    log.info().$("os scheduled [name=").$(getName()).$(']').$();
-                }
-            }
-            int n = jobs.size();
-            long uselessCounter = 0;
-            while (running == 1) {
+                int n = jobs.size();
+                long uselessCounter = 0;
+                while (running == 1) {
 
-                boolean useful = false;
-                for (int i = 0; i < n; i++) {
-                    loadFence();
-                    try {
-                        useful |= jobs.get(i).run();
-                    } finally {
-                        storeFence();
+                    boolean useful = false;
+                    for (int i = 0; i < n; i++) {
+                        loadFence();
+                        try {
+                            useful |= jobs.get(i).run();
+                        } finally {
+                            storeFence();
+                        }
+                    }
+
+                    if (useful) {
+                        uselessCounter = 0;
+                        continue;
+                    }
+
+                    uselessCounter++;
+
+                    if (uselessCounter < 0) {
+                        // deal with overflow
+                        uselessCounter = SLEEP_THRESHOLD + 1;
+                    }
+
+                    if (uselessCounter > YIELD_THRESHOLD) {
+                        Thread.yield();
+                    }
+
+                    if (uselessCounter > SLEEP_THRESHOLD) {
+                        LockSupport.parkNanos(1000000);
                     }
                 }
-
-                if (useful) {
-                    uselessCounter = 0;
-                    continue;
-                }
-
-                uselessCounter++;
-
-                if (uselessCounter < 0) {
-                    // deal with overflow
-                    uselessCounter = SLEEP_THRESHOLD + 1;
-                }
-
-                if (uselessCounter > YIELD_THRESHOLD) {
-                    Thread.yield();
-                }
-
-                if (uselessCounter > SLEEP_THRESHOLD) {
-                    LockSupport.parkNanos(1000000);
-                }
             }
+        } catch (Throwable e) {
+            ex = e;
+        } finally {
+            // cleaner will typically attempt to release
+            // thread-local instances
+            if (cleaner != null) {
+                cleaner.run(ex);
+            }
+            haltLatch.countDown();
         }
-        // cleaner will typically attempt to release
-        // thread-local instances
-        if (cleaner != null) {
-            cleaner.run();
-        }
-        haltLatch.countDown();
     }
 
     @SuppressWarnings("UnusedReturnValue")

@@ -159,6 +159,14 @@ public class CairoEngine implements Closeable {
         return readerPool.releaseAll();
     }
 
+    public boolean lockReaders(CharSequence tableName) {
+        return readerPool.lock(tableName);
+    }
+
+    public void unlockReaders(CharSequence tableName) {
+        readerPool.unlock(tableName);
+    }
+
     public boolean releaseAllWriters() {
         return writerPool.releaseAll();
     }

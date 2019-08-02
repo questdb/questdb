@@ -112,7 +112,7 @@ public class WorkerPool {
                         haltLatch,
                         workerAffinity[i],
                         LOG,
-                        () -> {
+                        (ex) -> {
                             final ObjList<Closeable> cl = cleaners.getQuick(index);
                             for (int j = 0, n = cl.size(); j < n; j++) {
                                 Misc.free(cl.getQuick(j));
