@@ -43,19 +43,29 @@ public class SqlParserTest extends AbstractGriffinTest {
                 modelOf("x").col("x", ColumnType.INT));
     }
 
-    @Test
-    public void testLexerReset() {
-        for (int i = 0; i < 10; i++) {
-            try {
-                compiler.compileExecutionModel("select \n" +
-                        "-- ltod(Date)\n" +
-                        "count() \n" +
-                        "-- from acc\n" +
-                        "from acc(Date) sample by 1d\n" +
-                        "-- where x = 10\n", sqlExecutionContext);
-                Assert.fail();
-            } catch (SqlException e) {
-                TestUtils.assertEquals("Invalid column: Date", e.getFlyweightMessage());
+    private static void assertSyntaxError(
+            SqlCompiler compiler,
+            CairoEngine engine,
+            String query,
+            int position,
+            String contains,
+            TableModel... tableModels) {
+        try {
+            for (int i = 0, n = tableModels.length; i < n; i++) {
+                CairoTestUtils.create(tableModels[i]);
+            }
+            compiler.compile(query, sqlExecutionContext);
+            Assert.fail("Exception expected");
+        } catch (SqlException e) {
+            Assert.assertEquals(position, e.getPosition());
+            TestUtils.assertContains(e.getMessage(), contains);
+        } finally {
+            Assert.assertTrue(engine.releaseAllReaders());
+            for (int i = 0, n = tableModels.length; i < n; i++) {
+                TableModel tableModel = tableModels[i];
+                Path path = tableModel.getPath().of(tableModel.getCairoCfg().getRoot()).concat(tableModel.getName()).put(Files.SEPARATOR).$();
+                Assert.assertTrue(configuration.getFilesFacade().rmdir(path));
+                tableModel.close();
             }
         }
     }
@@ -2923,12 +2933,19 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testMissingWhere() {
-        try {
-            compiler.compileExecutionModel("select id, x + 10, x from tab id ~ 'HBRO'", sqlExecutionContext);
-            Assert.fail("Exception expected");
-        } catch (SqlException e) {
-            Assert.assertEquals(33, e.getPosition());
+    public void testLexerReset() {
+        for (int i = 0; i < 10; i++) {
+            try {
+                compiler.compile("select \n" +
+                        "-- ltod(Date)\n" +
+                        "count() \n" +
+                        "-- from acc\n" +
+                        "from acc(Date) sample by 1d\n" +
+                        "-- where x = 10\n", sqlExecutionContext);
+                Assert.fail();
+            } catch (SqlException e) {
+                TestUtils.assertEquals("Invalid column: Date", e.getFlyweightMessage());
+            }
         }
     }
 
@@ -4375,6 +4392,16 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testMissingWhere() {
+        try {
+            compiler.compile("select id, x + 10, x from tab id ~ 'HBRO'", sqlExecutionContext);
+            Assert.fail("Exception expected");
+        } catch (SqlException e) {
+            Assert.assertEquals(33, e.getPosition());
+        }
+    }
+
+    @Test
     public void testTooManyColumnsEdgeInOrderBy() throws Exception {
         try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)) {
             for (int i = 0; i < SqlParser.MAX_ORDER_BY_COLUMNS - 1; i++) {
@@ -4391,25 +4418,8 @@ public class SqlParserTest extends AbstractGriffinTest {
             }
             b.append('f').append(i);
         }
-        QueryModel st = (QueryModel) compiler.compileExecutionModel(b, sqlExecutionContext);
+        QueryModel st = (QueryModel) compiler.testCompileModel(b, sqlExecutionContext);
         Assert.assertEquals(SqlParser.MAX_ORDER_BY_COLUMNS - 1, st.getOrderBy().size());
-    }
-
-    @Test
-    public void testTooManyColumnsInOrderBy() {
-        StringBuilder b = new StringBuilder();
-        b.append("x order by ");
-        for (int i = 0; i < SqlParser.MAX_ORDER_BY_COLUMNS; i++) {
-            if (i > 0) {
-                b.append(',');
-            }
-            b.append('f').append(i);
-        }
-        try {
-            compiler.compileExecutionModel(b, sqlExecutionContext);
-        } catch (SqlException e) {
-            TestUtils.assertEquals("Too many columns", e.getFlyweightMessage());
-        }
     }
 
     @Test
@@ -4506,30 +4516,20 @@ public class SqlParserTest extends AbstractGriffinTest {
         assertSyntaxError(compiler, engine, query, position, contains, tableModels);
     }
 
-    private static void assertSyntaxError(
-            SqlCompiler compiler,
-            CairoEngine engine,
-            String query,
-            int position,
-            String contains,
-            TableModel... tableModels) {
+    @Test
+    public void testTooManyColumnsInOrderBy() {
+        StringBuilder b = new StringBuilder();
+        b.append("x order by ");
+        for (int i = 0; i < SqlParser.MAX_ORDER_BY_COLUMNS; i++) {
+            if (i > 0) {
+                b.append(',');
+            }
+            b.append('f').append(i);
+        }
         try {
-            for (int i = 0, n = tableModels.length; i < n; i++) {
-                CairoTestUtils.create(tableModels[i]);
-            }
-            compiler.compileExecutionModel(query, sqlExecutionContext);
-            Assert.fail("Exception expected");
+            compiler.compile(b, sqlExecutionContext);
         } catch (SqlException e) {
-            Assert.assertEquals(position, e.getPosition());
-            TestUtils.assertContains(e.getMessage(), contains);
-        } finally {
-            Assert.assertTrue(engine.releaseAllReaders());
-            for (int i = 0, n = tableModels.length; i < n; i++) {
-                TableModel tableModel = tableModels[i];
-                Path path = tableModel.getPath().of(tableModel.getCairoCfg().getRoot()).concat(tableModel.getName()).put(Files.SEPARATOR).$();
-                Assert.assertTrue(configuration.getFilesFacade().rmdir(path));
-                tableModel.close();
-            }
+            TestUtils.assertEquals("Too many columns", e.getFlyweightMessage());
         }
     }
 
@@ -4540,7 +4540,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     private void assertModel(String expected, String query, int modelType, TableModel... tableModels) throws SqlException {
         createModelsAndRun(() -> {
             sink.clear();
-            ExecutionModel model = compiler.compileExecutionModel(query, sqlExecutionContext);
+            ExecutionModel model = compiler.testCompileModel(query, sqlExecutionContext);
             Assert.assertEquals(model.getModelType(), modelType);
             ((Sinkable) model).toSink(sink);
             TestUtils.assertEquals(expected, sink);

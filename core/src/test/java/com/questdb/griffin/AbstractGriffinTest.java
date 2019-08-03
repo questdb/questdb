@@ -93,12 +93,6 @@ public class AbstractGriffinTest extends AbstractCairoTest {
         bindVariableService.clear();
     }
 
-    @After
-    public void tearDownAfterTest() {
-        engine.releaseAllReaders();
-        engine.releaseAllWriters();
-    }
-
     @AfterClass
     public static void tearDown() {
         engine.close();
@@ -347,6 +341,12 @@ public class AbstractGriffinTest extends AbstractCairoTest {
         }
     }
 
+    @After
+    public void tearDownAfterTest() {
+        engine.releaseAllReaders();
+        engine.releaseAllWriters();
+    }
+
     void assertFactoryCursor(String expected, String expectedTimestamp, RecordCursorFactory factory, boolean supportsRandomAccess) throws IOException {
         assertTimestamp(expectedTimestamp, factory);
         assertCursor(expected, factory, supportsRandomAccess);
@@ -398,8 +398,8 @@ public class AbstractGriffinTest extends AbstractCairoTest {
     }
 
     protected void assertQueryAndCache(String expected, String query, String expectedTimestamp, boolean supportsRandomAccess) throws IOException, SqlException {
-        final RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext);
-        assertFactoryCursor(expected, expectedTimestamp, factory, supportsRandomAccess);
-        compiler.cache(query, factory);
+        try (final RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext)) {
+            assertFactoryCursor(expected, expectedTimestamp, factory, supportsRandomAccess);
+        }
     }
 }

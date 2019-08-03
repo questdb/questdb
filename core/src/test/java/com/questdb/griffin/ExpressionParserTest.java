@@ -314,7 +314,7 @@ public class ExpressionParserTest extends AbstractCairoTest {
 
     private void assertFail(String content, int pos, String contains) {
         try {
-            compiler.parseExpression(content, rpnBuilder);
+            compiler.testParseExpression(content, rpnBuilder);
             Assert.fail("expected exception");
         } catch (SqlException e) {
             Assert.assertEquals(pos, e.getPosition());
@@ -326,7 +326,7 @@ public class ExpressionParserTest extends AbstractCairoTest {
 
     private void x(CharSequence expectedRpn, String content) throws SqlException {
         rpnBuilder.reset();
-        compiler.parseExpression(content, rpnBuilder);
+        compiler.testParseExpression(content, rpnBuilder);
         TestUtils.assertEquals(expectedRpn, rpnBuilder.rpn());
     }
 

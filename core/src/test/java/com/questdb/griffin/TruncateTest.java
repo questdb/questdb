@@ -25,6 +25,9 @@ package com.questdb.griffin;
 
 import com.questdb.cairo.TableWriter;
 import com.questdb.cairo.security.AllowAllCairoSecurityContext;
+import com.questdb.cairo.sql.Record;
+import com.questdb.cairo.sql.RecordCursor;
+import com.questdb.cairo.sql.RecordCursorFactory;
 import com.questdb.griffin.engine.functions.rnd.SharedRandom;
 import com.questdb.std.Rnd;
 import com.questdb.test.tools.TestUtils;
@@ -196,6 +199,38 @@ public class TruncateTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testTruncateOpenReader() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            createX(1_000_000);
+
+            assertQuery(
+                    "count\n" +
+                            "1000000\n",
+                    "select count() from x",
+                    null,
+                    true
+            );
+
+            try (RecordCursorFactory factory = compiler.compile("select * from x")) {
+                try (RecordCursor cursor = factory.getCursor(DefaultSqlExecutionContext.INSTANCE)) {
+                    final Record record = cursor.getRecord();
+                    while (cursor.hasNext()) {
+                        record.getInt(0);
+                        record.getSym(1);
+                        record.getDouble(2);
+                    }
+                }
+            }
+
+
+            compiler.compile("truncate table 'x'");
+
+            engine.releaseAllWriters();
+            engine.releaseAllReaders();
+        });
+    }
+
+    @Test
     public void testTableDoesNotExist() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             createX();
@@ -291,6 +326,10 @@ public class TruncateTest extends AbstractGriffinTest {
     }
 
     private void createX() throws SqlException {
+        createX(10);
+    }
+
+    private void createX(long count) throws SqlException {
         compiler.compile(
                 "create table x as (" +
                         "select" +
@@ -310,7 +349,7 @@ public class TruncateTest extends AbstractGriffinTest {
                         " rnd_byte(2,50) l," +
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n" +
-                        " from long_sequence(10)" +
+                        " from long_sequence(" + count + ")" +
                         ") timestamp (timestamp)"
         );
     }

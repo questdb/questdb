@@ -28,6 +28,8 @@ import com.questdb.cairo.security.AllowAllCairoSecurityContext;
 import com.questdb.cairo.sql.RecordCursor;
 import com.questdb.cairo.sql.RecordCursorFactory;
 import com.questdb.griffin.engine.functions.rnd.SharedRandom;
+import com.questdb.log.Log;
+import com.questdb.log.LogFactory;
 import com.questdb.std.Chars;
 import com.questdb.std.FilesFacade;
 import com.questdb.std.FilesFacadeImpl;
@@ -3019,6 +3021,8 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                         " from long_sequence(30)", 12, "select clause must provide timestamp column");
     }
 
+    private static final Log LOG = LogFactory.getLog(SqlCompilerTest.class);
+
     @Test
     public void testRaceToCreateEmptyTable() throws InterruptedException {
         try (SqlCompiler compiler2 = new SqlCompiler(engine)) {
@@ -3031,6 +3035,8 @@ public class SqlCompilerTest extends AbstractGriffinTest {
 
                 index.set(-1);
                 success.set(0);
+
+                LOG.info().$("create race [i=").$(i).$(']').$();
 
                 new Thread(() -> {
                     try {
@@ -3075,78 +3081,6 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                 engine.remove(AllowAllCairoSecurityContext.INSTANCE, path, "x");
             }
         }
-    }
-
-    @Test
-    public void testSqlCache() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            String ddl = "create table x (a STRING, b INT, n TIMESTAMP)";
-            String insert = "insert into x (b,a)" +
-                    "select" +
-                    " rnd_int()," +
-                    " rnd_symbol(8,6,10,2)" +
-                    " from long_sequence(30)";
-            String query = "x where a = :sym";
-
-            compiler.compile(ddl);
-            compiler.compile(insert);
-
-
-            bindVariableService.setStr("sym", null);
-            RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext);
-            sink.clear();
-            bindVariableService.setStr("sym", "RXGZSXUX");
-            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                printer.print(cursor, factory.getMetadata(), true);
-            }
-
-            TestUtils.assertEquals(
-                    "a\tb\tn\n" +
-                            "RXGZSXUX\t-235358133\t\n" +
-                            "RXGZSXUX\t-1424048819\t\n", sink);
-
-            compiler.cache(query, factory);
-
-            sink.clear();
-
-            try (RecordCursorFactory f = compiler.compile(query, sqlExecutionContext)) {
-
-                bindVariableService.setStr("sym", null);
-                try (RecordCursor cursor = f.getCursor(sqlExecutionContext)) {
-                    printer.print(cursor, f.getMetadata(), true);
-                }
-
-                TestUtils.assertEquals("a\tb\tn\n" +
-                                "\t326010667\t\n" +
-                                "\t1196016669\t\n" +
-                                "\t-1566901076\t\n" +
-                                "\t-1201923128\t\n" +
-                                "\t1234796102\t\n" +
-                                "\t-89906802\t\n" +
-                                "\t659736535\t\n" +
-                                "\t1060917944\t\n" +
-                                "\t2060263242\t\n",
-                        sink);
-            }
-
-            // attempt to compile factory again after it is closed
-
-            bindVariableService.setStr("sym", null);
-            try (RecordCursorFactory f2 = compiler.compile(query, sqlExecutionContext)) {
-                sink.clear();
-                bindVariableService.setStr("sym", "RXGZSXUX");
-                try (RecordCursor cursor = f2.getCursor(sqlExecutionContext)) {
-                    printer.print(cursor, f2.getMetadata(), true);
-                }
-
-                TestUtils.assertEquals(
-                        "a\tb\tn\n" +
-                                "RXGZSXUX\t-235358133\t\n" +
-                                "RXGZSXUX\t-1424048819\t\n", sink);
-            }
-            engine.releaseAllWriters();
-            engine.releaseAllReaders();
-        });
     }
 
     private void assertCast(String expectedData, String expectedMeta, String sql) throws SqlException, IOException {

@@ -42,6 +42,7 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
     private CharSequence content;
     private CharSequence unparsed;
     private CharSequence last;
+    private int _start;
 
     public GenericLexer(int poolCapacity) {
         this.csPool = new ObjectPool<>(FloatingSequence::new, poolCapacity);
@@ -209,8 +210,18 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
     public void of(CharSequence cs, int lo, int hi) {
         this.csPool.clear();
         this.content = cs;
+        this._start = lo;
         this._pos = lo;
         this._len = hi;
+        this.next = null;
+        this.unparsed = null;
+        this.last = null;
+    }
+
+    public void restart() {
+        this.csPool.clear();
+        this._pos = this._start;
+        this.csPool.clear();
         this.next = null;
         this.unparsed = null;
         this.last = null;

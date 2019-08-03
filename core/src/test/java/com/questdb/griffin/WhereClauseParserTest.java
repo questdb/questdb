@@ -1133,12 +1133,12 @@ public class WhereClauseParserTest extends AbstractCairoTest {
 
     private IntrinsicModel modelOf(CharSequence seq, String preferredColumn) throws SqlException {
         queryModel.clear();
-        return e.extract(column -> column, compiler.parseExpression(seq, queryModel), metadata, preferredColumn, metadata.getTimestampIndex());
+        return e.extract(column -> column, compiler.testParseExpression(seq, queryModel), metadata, preferredColumn, metadata.getTimestampIndex());
     }
 
     private IntrinsicModel noTimestampModelOf(CharSequence seq) throws SqlException {
         queryModel.clear();
-        return e.extract(column -> column, compiler.parseExpression(seq, queryModel), noTimestampMetadata, null, noTimestampMetadata.getTimestampIndex());
+        return e.extract(column -> column, compiler.testParseExpression(seq, queryModel), noTimestampMetadata, null, noTimestampMetadata.getTimestampIndex());
     }
 
     private void testBadOperator(String op) {
@@ -1166,6 +1166,6 @@ public class WhereClauseParserTest extends AbstractCairoTest {
 
     private IntrinsicModel unindexedModelOf(CharSequence seq, String preferredColumn) throws SqlException {
         queryModel.clear();
-        return e.extract(column -> column, compiler.parseExpression(seq, queryModel), unindexedMetadata, preferredColumn, unindexedMetadata.getTimestampIndex());
+        return e.extract(column -> column, compiler.testParseExpression(seq, queryModel), unindexedMetadata, preferredColumn, unindexedMetadata.getTimestampIndex());
     }
 }

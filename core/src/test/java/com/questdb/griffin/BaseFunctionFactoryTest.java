@@ -47,7 +47,7 @@ public class BaseFunctionFactoryTest extends AbstractGriffinTest {
 
     protected static ExpressionNode expr(CharSequence expression) throws SqlException {
         queryModel.clear();
-        return compiler.parseExpression(expression, queryModel);
+        return compiler.testParseExpression(expression, queryModel);
     }
 
     @NotNull
