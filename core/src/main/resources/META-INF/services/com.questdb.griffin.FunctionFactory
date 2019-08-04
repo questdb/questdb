@@ -109,6 +109,9 @@ com.questdb.griffin.engine.functions.groupby.SumShortGroupByFunctionFactory
 com.questdb.griffin.engine.functions.groupby.SumIntGroupByFunctionFactory
 com.questdb.griffin.engine.functions.groupby.SumLongGroupByFunctionFactory
 
+# 'max' group
+com.questdb.griffin.engine.functions.groupby.MaxDoubleGroupByFunctionFactory
+
 # 'count' group by function
 com.questdb.griffin.engine.functions.groupby.CountGroupByFunctionFactory
 
