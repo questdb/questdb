@@ -43,6 +43,13 @@ public class SqlParserTest extends AbstractGriffinTest {
                 modelOf("x").col("x", ColumnType.INT));
     }
 
+    @Test
+    public void testAliasWithSpaceDoubleQuote() throws Exception {
+        assertQuery("select-choose x from (x 'b a' where x > 1)",
+                "x \"b a\" where x > 1",
+                modelOf("x").col("x", ColumnType.INT));
+    }
+
     private static void assertSyntaxError(
             SqlCompiler compiler,
             CairoEngine engine,
@@ -4484,6 +4491,16 @@ public class SqlParserTest extends AbstractGriffinTest {
                 "with x as (" +
                         " select a from tab" +
                         ") select a from x",
+                modelOf("tab").col("a", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testSelectAsAliasQuoted() throws SqlException {
+        assertQuery(
+                "select-choose a 'y y' from (tab)",
+
+                "select a as \"y y\" from tab",
                 modelOf("tab").col("a", ColumnType.INT)
         );
     }

@@ -880,7 +880,11 @@ public final class SqlParser {
                 if (Chars.indexOf(tok, '.') != -1) {
                     throw SqlException.$(lexer.lastTokenPosition(), "'.' is not allowed here");
                 }
-                alias = GenericLexer.immutableOf(tok);
+                if (Chars.equals(tok, "as")) {
+                    alias = GenericLexer.unquote(GenericLexer.immutableOf(tok(lexer, "alias")));
+                } else {
+                    alias = GenericLexer.immutableOf(tok);
+                }
                 tok = tok(lexer, "',', 'from' or 'over'");
             } else {
                 alias = createColumnAlias(expr, model);
