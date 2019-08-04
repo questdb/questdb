@@ -1315,7 +1315,7 @@ class SqlOptimiser {
         enumerateTableColumns(model, executionContext);
         resolveJoinColumns(model);
         optimiseBooleanNot(model);
-        final QueryModel rewrittenModel = rewriteOrderBy(rewriteSelectClause(model, true));
+        final QueryModel rewrittenModel = rewriteOrderBy(rewriteOrderByPosition(rewriteSelectClause(model, true)));
         optimiseOrderBy(rewrittenModel, ORDER_BY_UNKNOWN);
         createOrderHash(rewrittenModel);
         optimiseJoins(rewrittenModel);
@@ -1757,6 +1757,52 @@ class SqlOptimiser {
         if (model.getNestedModel() != null) {
             resolveJoinColumns(model.getNestedModel());
         }
+    }
+
+    private QueryModel rewriteOrderByPosition(QueryModel model) throws SqlException {
+        QueryModel base = model;
+        QueryModel baseParent = model;
+
+        while (base.getColumns().size() > 0) {
+            baseParent = base;
+            base = base.getNestedModel();
+        }
+
+        ObjList<ExpressionNode> orderByNodes = base.getOrderBy();
+        int sz = orderByNodes.size();
+        if (sz > 0) {
+            final ObjList<QueryColumn> columns = baseParent.getColumns();
+            final int columnCount = columns.size();
+            // for each order by column check how deep we need to go between "model" and "base"
+            for (int i = 0; i < sz; i++) {
+                final ExpressionNode orderBy = orderByNodes.getQuick(i);
+                final CharSequence column = orderBy.token;
+
+                char first = column.charAt(0);
+                if (first < '0' || first > '9') {
+                    continue;
+                }
+
+                try {
+                    final int position = Numbers.parseInt(column);
+                    if (position < 1 || position > columnCount) {
+                        throw SqlException.$(orderBy.position, "order column position is out of range [max=").put(columnCount).put(']');
+                    }
+                    orderByNodes.setQuick(
+                            i,
+                            sqlNodePool.next().of(
+                                    ExpressionNode.LITERAL,
+                                    columns.get(position - 1).getName(),
+                                    -1,
+                                    orderBy.position
+                            )
+                    );
+                } catch (NumericException e) {
+                    throw SqlException.invalidColumn(orderBy.position, column);
+                }
+            }
+        }
+        return model;
     }
 
     /**

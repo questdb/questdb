@@ -3272,7 +3272,72 @@ public class SqlParserTest extends AbstractGriffinTest {
                         .col("y", ColumnType.INT)
                         .col("z", ColumnType.INT)
         );
+    }
 
+    @Test
+    public void testOrderByPosition() throws Exception {
+        assertQuery(
+                "select-choose x, y from (tab) order by y, x",
+                "select x,y from tab order by 2,1",
+                modelOf("tab")
+                        .col("x", ColumnType.INT)
+                        .col("y", ColumnType.INT)
+                        .col("z", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testOrderByPositionCorrupt() {
+        assertSyntaxError(
+                "tab order by 3a, 1",
+                13,
+                "Invalid column: 3a",
+                modelOf("tab")
+                        .col("x", ColumnType.INT)
+                        .col("y", ColumnType.INT)
+                        .col("z", ColumnType.INT)
+
+        );
+    }
+
+    @Test
+    public void testOrderByPositionNoSelect() throws Exception {
+        assertQuery(
+                "select-choose x, y, z from (tab) order by z desc, x",
+                "tab order by 3 desc,1",
+                modelOf("tab")
+                        .col("x", ColumnType.INT)
+                        .col("y", ColumnType.INT)
+                        .col("z", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testOrderByPositionOutOfRange1() {
+        assertSyntaxError(
+                "tab order by 0, 1",
+                13,
+                "order column position is out of range",
+                modelOf("tab")
+                        .col("x", ColumnType.INT)
+                        .col("y", ColumnType.INT)
+                        .col("z", ColumnType.INT)
+
+        );
+    }
+
+    @Test
+    public void testOrderByPositionOutOfRange2() {
+        assertSyntaxError(
+                "tab order by 2, 4",
+                16,
+                "order column position is out of range",
+                modelOf("tab")
+                        .col("x", ColumnType.INT)
+                        .col("y", ColumnType.INT)
+                        .col("z", ColumnType.INT)
+
+        );
     }
 
     @Test
