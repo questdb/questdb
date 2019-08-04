@@ -90,7 +90,7 @@ public class HttpResponseSink implements Closeable, Mutable {
         this.out = Unsafe.calloc(responseBufferSize);
         this.headerImpl = new HttpResponseHeaderImpl(configuration.getResponseHeaderBufferSize(), configuration.getClock());
         // size is 32bit int, as hex string max 8 bytes
-        this.chunkHeaderBuf = Unsafe.calloc(8 + 2 * Misc.EOL.length());
+        this.chunkHeaderBuf = Unsafe.calloc(8 + 2L * Misc.EOL.length());
         this.chunkSink = new DirectUnboundedByteSink(chunkHeaderBuf);
         this.chunkSink.put(Misc.EOL);
         this.outPtr = this._wPtr = out;
@@ -111,7 +111,7 @@ public class HttpResponseSink implements Closeable, Mutable {
     @Override
     public void close() {
         Unsafe.free(out, responseBufferSize);
-        Unsafe.free(chunkHeaderBuf, 8 + 2 * Misc.EOL.length());
+        Unsafe.free(chunkHeaderBuf, 8 + 2L * Misc.EOL.length());
         headerImpl.close();
         ByteBuffers.release(zout);
         if (z_streamp != 0) {
@@ -470,20 +470,20 @@ public class HttpResponseSink implements Closeable, Mutable {
 
         @Override
         public CharSink put(float value, int scale) {
-            if (value == value) {
-                return super.put(value, scale);
+            if (Float.isNaN(value)) {
+                put("null");
+                return this;
             }
-            put("null");
-            return this;
+            return super.put(value, scale);
         }
 
         @Override
         public CharSink put(double value, int scale) {
-            if (value == value) {
-                return super.put(value, scale);
+            if (Double.isNaN(value)) {
+                put("null");
+                return this;
             }
-            put("null");
-            return this;
+            return super.put(value, scale);
         }
 
         @Override
