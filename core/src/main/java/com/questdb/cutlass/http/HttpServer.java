@@ -23,16 +23,20 @@
 
 package com.questdb.cutlass.http;
 
+import com.questdb.cairo.CairoEngine;
+import com.questdb.cutlass.http.processors.*;
 import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.mp.Job;
 import com.questdb.mp.WorkerPool;
+import com.questdb.mp.WorkerPoolConfiguration;
 import com.questdb.network.IOContextFactory;
 import com.questdb.network.IODispatcher;
 import com.questdb.network.IODispatchers;
 import com.questdb.network.IORequestProcessor;
 import com.questdb.std.ThreadLocal;
 import com.questdb.std.*;
+import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 
@@ -78,6 +82,101 @@ public class HttpServer implements Closeable {
                 httpContextFactory.closeContextPool();
             });
         }
+    }
+
+    @Nullable
+    public static HttpServer create(
+            HttpServerConfiguration configuration,
+            WorkerPool workerPool,
+            Log workerPoolLog,
+            CairoEngine cairoEngine
+    ) {
+        if (configuration.isEnabled()) {
+            final WorkerPool localPool;
+            if (configuration.getWorkerCount() > 0) {
+                localPool = new WorkerPool(new WorkerPoolConfiguration() {
+                    @Override
+                    public int[] getWorkerAffinity() {
+                        return configuration.getWorkerAffinity();
+                    }
+
+                    @Override
+                    public int getWorkerCount() {
+                        return configuration.getWorkerCount();
+                    }
+                });
+            } else {
+                localPool = workerPool;
+            }
+            final HttpServer httpServer = new HttpServer(configuration, localPool);
+
+            httpServer.bind(new HttpRequestProcessorFactory() {
+                @Override
+                public String getUrl() {
+                    return "/exec";
+                }
+
+                @Override
+                public HttpRequestProcessor newInstance() {
+                    return new JsonQueryProcessor(configuration.getJsonQueryProcessorConfiguration(), cairoEngine);
+                }
+            });
+
+            httpServer.bind(new HttpRequestProcessorFactory() {
+                @Override
+                public String getUrl() {
+                    return "/imp";
+                }
+
+                @Override
+                public HttpRequestProcessor newInstance() {
+                    return new TextImportProcessor(configuration.getTextImportProcessorConfiguration(), cairoEngine);
+                }
+            });
+
+            httpServer.bind(new HttpRequestProcessorFactory() {
+                @Override
+                public String getUrl() {
+                    return "/exp";
+                }
+
+                @Override
+                public HttpRequestProcessor newInstance() {
+                    return new TextQueryProcessor(configuration.getJsonQueryProcessorConfiguration(), cairoEngine);
+                }
+            });
+
+            httpServer.bind(new HttpRequestProcessorFactory() {
+                @Override
+                public String getUrl() {
+                    return "/chk";
+                }
+
+                @Override
+                public HttpRequestProcessor newInstance() {
+                    return new TableStatusCheckProcessor(cairoEngine);
+                }
+            });
+
+            httpServer.bind(new HttpRequestProcessorFactory() {
+                @Override
+                public String getUrl() {
+                    return HttpServerConfiguration.DEFAULT_PROCESSOR_URL;
+                }
+
+                @Override
+                public HttpRequestProcessor newInstance() {
+                    return new StaticContentProcessor(configuration.getStaticContentProcessorConfiguration());
+                }
+            });
+
+            if (localPool != workerPool) {
+                localPool.start(workerPoolLog);
+            }
+
+            return httpServer;
+        }
+        return null;
     }
 
     public void bind(HttpRequestProcessorFactory factory) {

@@ -24,16 +24,15 @@
 package com.questdb.mp;
 
 import com.questdb.log.Log;
-import com.questdb.log.LogFactory;
 import com.questdb.std.Misc;
 import com.questdb.std.ObjHashSet;
 import com.questdb.std.ObjList;
+import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class WorkerPool {
-    private final static Log LOG = LogFactory.getLog(WorkerPool.class);
     private final AtomicBoolean running = new AtomicBoolean(false);
     private final int workerCount;
     private final int[] workerAffinity;
@@ -89,7 +88,6 @@ public class WorkerPool {
 
     public void halt() {
         if (running.compareAndSet(true, false)) {
-            LOG.info().$("stopping").$();
             started.await();
             for (int i = 0; i < workerCount; i++) {
                 workers.getQuick(i).halt();
@@ -99,11 +97,10 @@ public class WorkerPool {
             for (int i = 0; i < workerCount; i++) {
                 Misc.free(workers.getQuick(i));
             }
-            LOG.info().$("stopped").$();
         }
     }
 
-    public void start() {
+    public void start(@Nullable Log log) {
         if (running.compareAndSet(false, true)) {
             for (int i = 0; i < workerCount; i++) {
                 final int index = i;
@@ -111,19 +108,23 @@ public class WorkerPool {
                         workerJobs.getQuick(i),
                         haltLatch,
                         workerAffinity[i],
-                        LOG,
+                        log,
                         (ex) -> {
                             final ObjList<Closeable> cl = cleaners.getQuick(index);
                             for (int j = 0, n = cl.size(); j < n; j++) {
                                 Misc.free(cl.getQuick(j));
                             }
-                            LOG.info().$("cleaned [worker=").$(index).$(']').$();
+                            if (log != null) {
+                                log.info().$("cleaned [worker=").$(index).$(']').$();
+                            }
                         }
                 );
                 workers.add(worker);
                 worker.start();
             }
-            LOG.info().$("started").$();
+            if (log != null) {
+                log.info().$("started").$();
+            }
             started.countDown();
         }
     }

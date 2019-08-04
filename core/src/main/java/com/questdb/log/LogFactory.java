@@ -46,12 +46,18 @@ public class LogFactory implements Closeable {
     private static final String EMPTY_STR = "";
     private static final CharSequenceHashSet reserved = new CharSequenceHashSet();
     private static final LengthDescendingComparator LDC = new LengthDescendingComparator();
+
+    static {
+        reserved.add("scope");
+        reserved.add("class");
+        reserved.add("level");
+    }
+
     private final CharSequenceObjHashMap<ScopeConfiguration> scopeConfigMap = new CharSequenceObjHashMap<>();
     private final ObjList<ScopeConfiguration> scopeConfigs = new ObjList<>();
     private final ObjHashSet<LogWriter> jobs = new ObjHashSet<>();
-    private final SOCountDownLatch workerHaltLatch = new SOCountDownLatch(1);
     private final MicrosecondClock clock;
-    private Worker worker = null;
+    private WorkerPool workerPool;
     private boolean configured = false;
     private int queueDepth = DEFAULT_QUEUE_DEPTH;
     private int recordLength = DEFAULT_MSG_SIZE;
@@ -70,116 +76,20 @@ public class LogFactory implements Closeable {
 
     public static Log getLog(CharSequence key) {
         if (!INSTANCE.configured) {
-            configureFromSystemProperties(INSTANCE);
+            configureFromSystemProperties(INSTANCE, null);
         }
         return INSTANCE.create(key);
     }
 
-    public void add(final LogWriterConfig config) {
-        final int index = scopeConfigMap.keyIndex(config.getScope());
-        ScopeConfiguration scopeConf;
-        if (index > -1) {
-            scopeConfigMap.putAt(index, config.getScope(), scopeConf = new ScopeConfiguration(3));
-            scopeConfigs.add(scopeConf);
-        } else {
-            scopeConf = scopeConfigMap.valueAt(index);
-        }
-        scopeConf.add(config);
+    public static void configureFromSystemProperties(WorkerPool workerPool) {
+        configureFromSystemProperties(INSTANCE, workerPool);
     }
 
-    public void bind() {
-        if (configured) {
-            return;
-        }
-
-        configured = true;
-
-        for (int i = 0, n = scopeConfigs.size(); i < n; i++) {
-            ScopeConfiguration conf = scopeConfigs.get(i);
-            conf.bind(jobs, queueDepth, recordLength);
-        }
-
-        scopeConfigMap.sortKeys(LDC);
-
-        for (int i = 0, n = jobs.size(); i < n; i++) {
-            jobs.get(i).bindProperties();
-        }
+    public static void configureFromSystemProperties(LogFactory factory) {
+        configureFromSystemProperties(factory, null);
     }
 
-    @Override
-    public void close() {
-        haltThread();
-        for (int i = 0, n = jobs.size(); i < n; i++) {
-            Misc.free(jobs.get(i));
-        }
-        for (int i = 0, n = scopeConfigs.size(); i < n; i++) {
-            Misc.free(scopeConfigs.getQuick(i));
-        }
-    }
-
-    public Log create(CharSequence key) {
-        if (!configured) {
-            throw new LogError("Not configured");
-        }
-
-        ScopeConfiguration scopeConfiguration = find(key);
-        if (scopeConfiguration == null) {
-            return new Logger(clock, compressScope(key), null, null, null, null, null, null);
-        }
-        Holder inf = scopeConfiguration.getHolder(Numbers.msb(LogLevel.LOG_LEVEL_INFO));
-        Holder dbg = scopeConfiguration.getHolder(Numbers.msb(LogLevel.LOG_LEVEL_DEBUG));
-        Holder err = scopeConfiguration.getHolder(Numbers.msb(LogLevel.LOG_LEVEL_ERROR));
-        return new Logger(
-                clock,
-                compressScope(key),
-                dbg == null ? null : dbg.ring,
-                dbg == null ? null : dbg.lSeq,
-                inf == null ? null : inf.ring,
-                inf == null ? null : inf.lSeq,
-                err == null ? null : err.ring,
-                err == null ? null : err.lSeq
-        );
-    }
-
-    public ObjHashSet<LogWriter> getJobs() {
-        return jobs;
-    }
-
-    public int getQueueDepth() {
-        return queueDepth;
-    }
-
-    private void setQueueDepth(int queueDepth) {
-        this.queueDepth = queueDepth;
-    }
-
-    public int getRecordLength() {
-        return recordLength;
-    }
-
-    private void setRecordLength(int recordLength) {
-        this.recordLength = recordLength;
-    }
-
-    public void haltThread() {
-        if (worker != null) {
-            worker.halt();
-                workerHaltLatch.await();
-            worker = null;
-        }
-    }
-
-    public void startThread() {
-        if (this.worker != null) {
-            return;
-        }
-        this.worker = new Worker(jobs, workerHaltLatch);
-        worker.setDaemon(true);
-        worker.setName("questdb-log-writer");
-        worker.start();
-    }
-
-    static void configureFromSystemProperties(LogFactory factory) {
+    public static void configureFromSystemProperties(LogFactory factory, WorkerPool workerPool) {
         String conf = System.getProperty(CONFIG_SYSTEM_PROPERTY);
         if (conf == null) {
             conf = DEFAULT_CONFIG;
@@ -188,14 +98,14 @@ public class LogFactory implements Closeable {
             if (is != null) {
                 Properties properties = new Properties();
                 properties.load(is);
-                setup(factory, properties);
+                configureFromPoperties(factory, properties, workerPool);
             } else {
                 File f = new File(conf);
                 if (f.canRead()) {
                     try (FileInputStream fis = new FileInputStream(f)) {
                         Properties properties = new Properties();
                         properties.load(fis);
-                        setup(factory, properties);
+                        configureFromPoperties(factory, properties, workerPool);
                     }
                 } else {
                     factory.configureDefaultWriter();
@@ -211,8 +121,9 @@ public class LogFactory implements Closeable {
         factory.startThread();
     }
 
-    private static void setup(LogFactory factory, Properties properties) {
+    public static void configureFromPoperties(LogFactory factory, Properties properties, WorkerPool workerPool) {
 
+        factory.workerPool = workerPool;
         String writers = properties.getProperty("writers");
 
         if (writers == null) {
@@ -356,6 +267,133 @@ public class LogFactory implements Closeable {
         builder.append(' ');
 
         return builder;
+    }
+
+    public void add(final LogWriterConfig config) {
+        final int index = scopeConfigMap.keyIndex(config.getScope());
+        ScopeConfiguration scopeConf;
+        if (index > -1) {
+            scopeConfigMap.putAt(index, config.getScope(), scopeConf = new ScopeConfiguration(3));
+            scopeConfigs.add(scopeConf);
+        } else {
+            scopeConf = scopeConfigMap.valueAt(index);
+        }
+        scopeConf.add(config);
+    }
+
+    public void bind() {
+        if (configured) {
+            return;
+        }
+
+        configured = true;
+
+        for (int i = 0, n = scopeConfigs.size(); i < n; i++) {
+            ScopeConfiguration conf = scopeConfigs.get(i);
+            conf.bind(jobs, queueDepth, recordLength);
+        }
+
+        scopeConfigMap.sortKeys(LDC);
+
+        for (int i = 0, n = jobs.size(); i < n; i++) {
+            jobs.get(i).bindProperties();
+        }
+
+        if (workerPool != null) {
+            assign(workerPool);
+        }
+    }
+
+    @Override
+    public void close() {
+        haltThread();
+        for (int i = 0, n = jobs.size(); i < n; i++) {
+            Misc.free(jobs.get(i));
+        }
+        for (int i = 0, n = scopeConfigs.size(); i < n; i++) {
+            Misc.free(scopeConfigs.getQuick(i));
+        }
+    }
+
+    public Log create(CharSequence key) {
+        if (!configured) {
+            throw new LogError("Not configured");
+        }
+
+        ScopeConfiguration scopeConfiguration = find(key);
+        if (scopeConfiguration == null) {
+            return new Logger(clock, compressScope(key), null, null, null, null, null, null);
+        }
+        Holder inf = scopeConfiguration.getHolder(Numbers.msb(LogLevel.LOG_LEVEL_INFO));
+        Holder dbg = scopeConfiguration.getHolder(Numbers.msb(LogLevel.LOG_LEVEL_DEBUG));
+        Holder err = scopeConfiguration.getHolder(Numbers.msb(LogLevel.LOG_LEVEL_ERROR));
+        return new Logger(
+                clock,
+                compressScope(key),
+                dbg == null ? null : dbg.ring,
+                dbg == null ? null : dbg.lSeq,
+                inf == null ? null : inf.ring,
+                inf == null ? null : inf.lSeq,
+                err == null ? null : err.ring,
+                err == null ? null : err.lSeq
+        );
+    }
+
+    public ObjHashSet<LogWriter> getJobs() {
+        return jobs;
+    }
+
+    public int getQueueDepth() {
+        return queueDepth;
+    }
+
+    private void setQueueDepth(int queueDepth) {
+        this.queueDepth = queueDepth;
+    }
+
+    public int getRecordLength() {
+        return recordLength;
+    }
+
+    private void setRecordLength(int recordLength) {
+        this.recordLength = recordLength;
+    }
+
+    public void haltThread() {
+        if (workerPool != null) {
+            workerPool.halt();
+            workerPool = null;
+        }
+    }
+
+    public void startThread() {
+
+        if (this.workerPool != null) {
+            return;
+        }
+
+        this.workerPool = new WorkerPool(new WorkerPoolConfiguration() {
+            @Override
+            public int[] getWorkerAffinity() {
+                return new int[]{-1};
+            }
+
+            @Override
+            public int getWorkerCount() {
+                return 1;
+            }
+        });
+        assign(workerPool);
+        workerPool.start(null);
+    }
+
+    public void assign(WorkerPool workerPool) {
+        for (int i = 0, n = jobs.size(); i < n; i++) {
+            workerPool.assign(jobs.get(i));
+        }
+        if (this.workerPool == null) {
+            this.workerPool = workerPool;
+        }
     }
 
     private void configureDefaultWriter() {
@@ -555,11 +593,5 @@ public class LogFactory implements Closeable {
                 Misc.free(ring.get(i));
             }
         }
-    }
-
-    static {
-        reserved.add("scope");
-        reserved.add("class");
-        reserved.add("level");
     }
 }

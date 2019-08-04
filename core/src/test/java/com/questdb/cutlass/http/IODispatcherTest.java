@@ -283,7 +283,7 @@ public class IODispatcherTest {
                     }
                 });
 
-                workerPool.start();
+                workerPool.start(LOG);
 
                 // send multipart request to server
                 final String request = "POST /upload HTTP/1.1\r\n" +
@@ -459,7 +459,7 @@ public class IODispatcherTest {
                     }
                 });
 
-                workerPool.start();
+                workerPool.start(LOG);
 
                 // send multipart request to server
                 final String request = "POST /upload HTTP/1.1\r\n" +
@@ -608,7 +608,7 @@ public class IODispatcherTest {
                     }
                 });
 
-                workerPool.start();
+                workerPool.start(LOG);
 
                 // send multipart request to server
                 final String request = "POST /upload HTTP/1.1\r\n" +
@@ -766,7 +766,7 @@ public class IODispatcherTest {
                     }
                 });
 
-                workerPool.start();
+                workerPool.start(LOG);
 
                 // create table with all column types
                 CairoTestUtils.createTestTable(
@@ -858,7 +858,7 @@ public class IODispatcherTest {
                     }
                 });
 
-                workerPool.start();
+                workerPool.start(LOG);
 
                 // create table with all column types
                 CairoTestUtils.createTestTable(
@@ -1014,7 +1014,7 @@ public class IODispatcherTest {
                     }
                 });
 
-                workerPool.start();
+                workerPool.start(LOG);
 
                 // create table with all column types
                 CairoTestUtils.createTestTable(
@@ -1184,7 +1184,7 @@ public class IODispatcherTest {
                     }
                 });
 
-                workerPool.start();
+                workerPool.start(LOG);
 
                 // create 20Mb file in /tmp directory
                 try (Path path = new Path().of(baseDir).concat("questdb-temp.txt").$()) {
@@ -1373,7 +1373,7 @@ public class IODispatcherTest {
                     }
                 });
 
-                workerPool.start();
+                workerPool.start(LOG);
 
                 // create 20Mb file in /tmp directory
                 try (Path path = new Path().of(baseDir).concat("questdb-temp.txt").$()) {
@@ -2242,7 +2242,7 @@ public class IODispatcherTest {
                 });
 
 
-                workerPool.start();
+                workerPool.start(LOG);
 
                 Thread.sleep(2000000);
             }

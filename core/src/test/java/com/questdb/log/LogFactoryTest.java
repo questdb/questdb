@@ -53,7 +53,7 @@ public class LogFactoryTest {
         System.setProperty(LogFactory.CONFIG_SYSTEM_PROPERTY, "/nfslog-bad-writer.conf");
 
         try (LogFactory factory = new LogFactory()) {
-            LogFactory.configureFromSystemProperties(factory);
+            LogFactory.configureFromSystemProperties(factory, null);
         }
     }
 

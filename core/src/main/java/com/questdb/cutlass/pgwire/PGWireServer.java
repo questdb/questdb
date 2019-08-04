@@ -28,10 +28,12 @@ import com.questdb.log.Log;
 import com.questdb.log.LogFactory;
 import com.questdb.mp.Job;
 import com.questdb.mp.WorkerPool;
+import com.questdb.mp.WorkerPoolConfiguration;
 import com.questdb.network.*;
 import com.questdb.std.Misc;
 import com.questdb.std.ThreadLocal;
 import com.questdb.std.WeakObjectPool;
+import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 
@@ -82,6 +84,38 @@ public class PGWireServer implements Closeable {
                 contextFactory.closeContextPool();
             });
         }
+    }
+
+    @Nullable
+    public static PGWireServer create(PGWireConfiguration configuration, WorkerPool workerPool, Log log, CairoEngine cairoEngine) {
+        PGWireServer pgWireServer;
+        if (configuration.isEnabled()) {
+            final WorkerPool localPool;
+            if (configuration.getWorkerCount() > 0) {
+                localPool = new WorkerPool(new WorkerPoolConfiguration() {
+                    @Override
+                    public int[] getWorkerAffinity() {
+                        return configuration.getWorkerAffinity();
+                    }
+
+                    @Override
+                    public int getWorkerCount() {
+                        return configuration.getWorkerCount();
+                    }
+                });
+            } else {
+                localPool = workerPool;
+            }
+
+            pgWireServer = new PGWireServer(configuration, cairoEngine, localPool);
+
+            if (localPool != workerPool) {
+                localPool.start(log);
+            }
+        } else {
+            pgWireServer = null;
+        }
+        return pgWireServer;
     }
 
     @Override
