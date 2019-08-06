@@ -189,6 +189,39 @@ public final class Chars {
         return true;
     }
 
+    public static boolean equalsLowerCaseAscii(CharSequence l, int lLo, int lHi, CharSequence r, int rLo, int rHi) {
+        if (l == r) {
+            return true;
+        }
+
+        int ll = lHi - lLo;
+        if (ll != rHi - rLo) {
+            return false;
+        }
+
+        for (int i = 0; i < ll; i++) {
+            if (toLowerCaseAscii(l.charAt(i + lLo)) != r.charAt(i + rLo)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    public static boolean equalsLowerCaseAscii(CharSequence l, CharSequence r) {
+        int ll;
+        if ((ll = l.length()) != r.length()) {
+            return false;
+        }
+
+        for (int i = 0; i < ll; i++) {
+            if (toLowerCaseAscii(l.charAt(i)) != r.charAt(i)) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
     public static boolean equalsNc(CharSequence l, CharSequence r) {
         return r != null && equals(l, r);
     }
@@ -285,6 +318,32 @@ public final class Chars {
             }
         }
         return -1;
+    }
+
+    public static int lowerCaseAsciiHashCode(CharSequence value, int lo, int hi) {
+
+        if (hi == lo) {
+            return 0;
+        }
+
+        int h = 0;
+        for (int p = lo; p < hi; p++) {
+            h = 31 * h + toLowerCaseAscii(value.charAt(p));
+        }
+        return h;
+    }
+
+    public static int lowerCaseAsciiHashCode(CharSequence value) {
+        int len = value.length();
+        if (len == 0) {
+            return 0;
+        }
+
+        int h = 0;
+        for (int p = 0; p < len; p++) {
+            h = 31 * h + toLowerCaseAscii(value.charAt(p));
+        }
+        return h;
     }
 
     public static boolean noMatch(CharSequence l, int llo, int lhi, CharSequence r, int rlo, int rhi) {
@@ -431,6 +490,10 @@ public final class Chars {
             default:
                 return s;
         }
+    }
+
+    public static char toLowerCaseAscii(char character) {
+        return character > 64 && character < 91 ? (char) (character + 32) : character;
     }
 
     public static void toSink(BinarySequence sequence, CharSink sink) {

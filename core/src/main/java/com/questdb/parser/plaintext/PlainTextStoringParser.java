@@ -182,7 +182,7 @@ public class PlainTextStoringParser implements MetadataAwareTextParser, Closeabl
                             w.putLong(i, Numbers.parseLong(values.getQuick(i)));
                             break;
                         case ColumnType.BOOLEAN:
-                            w.putBool(i, Chars.equalsIgnoreCase(values.getQuick(i), "true"));
+                            w.putBool(i, Chars.equalsLowerCaseAscii(values.getQuick(i), "true"));
                             break;
                         default:
                             break;

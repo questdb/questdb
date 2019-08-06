@@ -37,7 +37,7 @@ public class MapFactory {
             @Transient @NotNull ColumnTypes valueTypes
     ) {
         CharSequence mapType = configuration.getDefaultMapType();
-        if (Chars.equalsIgnoreCase(mapType, "fast")) {
+        if (Chars.equalsLowerCaseAscii(mapType, "fast")) {
             return new FastMap(
                     configuration.getSqlMapPageSize(),
                     keyTypes,
@@ -46,7 +46,7 @@ public class MapFactory {
                     configuration.getSqlFastMapLoadFactor());
         }
 
-        if (Chars.equalsIgnoreCase(mapType, "compact")) {
+        if (Chars.equalsLowerCaseAscii(mapType, "compact")) {
             return new CompactMap(
                     configuration.getSqlMapPageSize(),
                     keyTypes,
@@ -62,7 +62,7 @@ public class MapFactory {
             CairoConfiguration configuration,
             @Transient @NotNull ColumnTypes keyTypes) {
         CharSequence mapType = configuration.getDefaultMapType();
-        if (Chars.equalsIgnoreCase(mapType, "fast")) {
+        if (Chars.equalsLowerCaseAscii(mapType, "fast")) {
             return new FastMap(
                     configuration.getSqlMapPageSize(),
                     keyTypes,
@@ -70,7 +70,7 @@ public class MapFactory {
                     configuration.getSqlFastMapLoadFactor());
         }
 
-        if (Chars.equalsIgnoreCase(mapType, "compact")) {
+        if (Chars.equalsLowerCaseAscii(mapType, "compact")) {
             return new CompactMap(
                     configuration.getSqlMapPageSize(),
                     keyTypes,

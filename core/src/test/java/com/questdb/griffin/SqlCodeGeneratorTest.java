@@ -363,6 +363,16 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testInsertMissingQuery() throws Exception {
+        assertFailure(
+                "insert into x (a,b)",
+                "create table x as (select * from random_cursor(20, 'a', rnd_double(0)*100, 'b', rnd_symbol(5,4,4,1))), index(b)",
+                19,
+                "'select' expected"
+        );
+    }
+
+    @Test
     public void testFilterOnNull() throws Exception {
         final String expected = "a\tb\n" +
                 "11.427984775756\t\n" +

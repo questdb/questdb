@@ -371,7 +371,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
 
     private Function createConstant(ExpressionNode node) throws SqlException {
 
-        if (Chars.equalsIgnoreCase(node.token, "null")) {
+        if (Chars.equalsLowerCaseAscii(node.token, "null")) {
             return new NullConstant(node.position);
         }
 
@@ -379,11 +379,11 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             return new StrConstant(node.position, node.token);
         }
 
-        if (Chars.equalsIgnoreCase(node.token, "true")) {
+        if (Chars.equalsLowerCaseAscii(node.token, "true")) {
             return new BooleanConstant(node.position, true);
         }
 
-        if (Chars.equalsIgnoreCase(node.token, "false")) {
+        if (Chars.equalsLowerCaseAscii(node.token, "false")) {
             return new BooleanConstant(node.position, false);
         }
 

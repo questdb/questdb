@@ -369,7 +369,7 @@ final class WhereClauseParser {
                         return false;
                     }
 
-                    if (Chars.equalsIgnoreCase(c.token, "null")) {
+                    if (Chars.equalsLowerCaseAscii(c.token, "null")) {
                         if (tempKeys.add(null)) {
                             tempPos.add(c.position);
                         }

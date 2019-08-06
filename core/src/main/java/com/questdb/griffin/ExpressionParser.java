@@ -207,8 +207,8 @@ class ExpressionParser {
                     case 'T':
                     case 'f':
                     case 'F':
-                        if (Chars.equalsIgnoreCase(tok, "nan") || Chars.equalsIgnoreCase(tok, "null")
-                                || Chars.equalsIgnoreCase(tok, "true") || Chars.equalsIgnoreCase(tok, "false")) {
+                        if (Chars.equalsLowerCaseAscii(tok, "nan") || Chars.equalsLowerCaseAscii(tok, "null")
+                                || Chars.equalsLowerCaseAscii(tok, "true") || Chars.equalsLowerCaseAscii(tok, "false")) {
                             thisBranch = BRANCH_CONSTANT;
                             // If the token is a number, then add it to the output queue.
                             listener.onNode(sqlNodePool.next().of(ExpressionNode.CONSTANT, GenericLexer.immutableOf(tok), 0, lexer.lastTokenPosition()));

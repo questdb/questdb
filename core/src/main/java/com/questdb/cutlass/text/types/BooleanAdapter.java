@@ -42,11 +42,11 @@ public final class BooleanAdapter extends AbstractTypeAdapter {
 
     @Override
     public boolean probe(CharSequence text) {
-        return Chars.equalsIgnoreCase(text, "true") || Chars.equalsIgnoreCase(text, "false");
+        return Chars.equalsLowerCaseAscii(text, "true") || Chars.equalsLowerCaseAscii(text, "false");
     }
 
     @Override
     public void write(TableWriter.Row row, int column, DirectByteCharSequence value) {
-        row.putBool(column, Chars.equalsIgnoreCase(value, "true"));
+        row.putBool(column, Chars.equalsLowerCaseAscii(value, "true"));
     }
 }

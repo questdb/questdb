@@ -132,7 +132,7 @@ public class SqlParserTest extends AbstractGriffinTest {
                         " q.timestamp timestamp1" +
                         " from (" +
                         "trades t timestamp (timestamp) asof join quotes q timestamp (timestamp) post-join-where tag = null)",
-                "trades t asof join quotes q where tag = null",
+                "trades t ASOF JOIN quotes q WHERE tag = null",
                 modelOf("trades").timestamp().col("tag", ColumnType.SYMBOL),
                 modelOf("quotes").timestamp()
         );
@@ -4297,8 +4297,8 @@ public class SqlParserTest extends AbstractGriffinTest {
                         "AND a.seq < b.seq\n" +
                         "WHERE b.orderID IS NULL\n" +
                         "ORDER BY a.seq desc) AS x group by sym",
-                10,
-                "unexpected token",
+                66,
+                "')' expected",
                 modelOf("tab")
                         .col("sym", ColumnType.INT)
                         .col("amount", ColumnType.LONG)

@@ -70,7 +70,7 @@ public class LogFileWriter extends SynchronizedJob implements Closeable, LogWrit
         this.buf = _wptr = Unsafe.malloc(bufSize);
         this.lim = buf + bufSize;
         try (Path path = new Path().of(location).$()) {
-            if (truncate != null && Chars.equalsIgnoreCase(truncate, "true")) {
+            if (truncate != null && Chars.equalsLowerCaseAscii(truncate, "true")) {
                 this.fd = Files.openRW(path);
                 Files.truncate(fd, 0);
             } else {
