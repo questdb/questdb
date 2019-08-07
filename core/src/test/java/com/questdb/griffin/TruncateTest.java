@@ -60,6 +60,19 @@ public class TruncateTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testExpectTableKeyword2() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try {
+                compiler.compile("truncate");
+                Assert.fail();
+            } catch (SqlException e) {
+                Assert.assertEquals(8, e.getPosition());
+                TestUtils.assertContains(e.getFlyweightMessage(), "'table' expected");
+            }
+        });
+    }
+
+    @Test
     public void testExpectTableName() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try {
@@ -71,7 +84,6 @@ public class TruncateTest extends AbstractGriffinTest {
             }
         });
     }
-
 
     @Test
     public void testExpectTableName2() throws Exception {

@@ -870,7 +870,7 @@ public class SqlCodeGenerator {
             valueTypes.reset();
             listColumnFilterA.clear();
 
-            if (fillCount == 0 || fillCount == 1 && Chars.equals(sampleByFill.getQuick(0).token, "none")) {
+            if (fillCount == 0 || fillCount == 1 && Chars.equalsLowerCaseAscii(sampleByFill.getQuick(0).token, "none")) {
                 return new SampleByFillNoneRecordCursorFactory(
                         configuration,
                         factory,
@@ -886,7 +886,7 @@ public class SqlCodeGenerator {
             }
 
 
-            if (fillCount == 1 && Chars.equals(sampleByFill.getQuick(0).token, "prev")) {
+            if (fillCount == 1 && Chars.equalsLowerCaseAscii(sampleByFill.getQuick(0).token, "prev")) {
                 return new SampleByFillPrevRecordCursorFactory(
                         configuration,
                         factory,
@@ -901,7 +901,7 @@ public class SqlCodeGenerator {
                 );
             }
 
-            if (fillCount == 1 && Chars.equals(sampleByFill.getQuick(0).token, "null")) {
+            if (fillCount == 1 && Chars.equalsLowerCaseAscii(sampleByFill.getQuick(0).token, "null")) {
                 return new SampleByFillNullRecordCursorFactory(
                         configuration,
                         factory,
@@ -916,7 +916,7 @@ public class SqlCodeGenerator {
                 );
             }
 
-            if (fillCount == 1 && Chars.equals(sampleByFill.getQuick(0).token, "linear")) {
+            if (fillCount == 1 && Chars.equalsLowerCaseAscii(sampleByFill.getQuick(0).token, "linear")) {
                 return new SampleByInterpolateRecordCursorFactory(
                         configuration,
                         factory,

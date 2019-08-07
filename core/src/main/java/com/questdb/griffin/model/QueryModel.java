@@ -491,7 +491,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         sqlNodeStack.clear();
         while (!sqlNodeStack.isEmpty() || n != null) {
             if (n != null) {
-                if (Chars.equals("and", n.token)) {
+                if (Chars.equalsLowerCaseAscii(n.token, "and")) {
                     if (n.rhs != null) {
                         sqlNodeStack.push(n.rhs);
                     }

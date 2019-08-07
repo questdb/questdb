@@ -589,7 +589,7 @@ public class SqlCompiler implements Closeable {
             throw SqlException.position(lexer.getPosition()).put('\'').put(keyword).put("' expected");
         }
 
-        if (!Chars.equals(tok, keyword)) {
+        if (!Chars.equalsLowerCaseAscii(tok, keyword)) {
             throw SqlException.position(lexer.lastTokenPosition()).put('\'').put(keyword).put("' expected");
         }
     }
@@ -647,9 +647,9 @@ public class SqlCompiler implements Closeable {
 
             tok = expectToken(lexer, "'add' or 'drop'");
 
-            if (Chars.equals("add", tok)) {
+            if (Chars.equalsLowerCaseAscii("add", tok)) {
                 alterTableAddColumn(tableNamePosition, writer);
-            } else if (Chars.equals("drop", tok)) {
+            } else if (Chars.equalsLowerCaseAscii("drop", tok)) {
                 alterTableDropColumn(tableNamePosition, writer);
             }
         } catch (CairoException e) {
@@ -690,7 +690,7 @@ public class SqlCompiler implements Closeable {
 
             if (type == ColumnType.SYMBOL && tok != null && !Chars.equals(tok, ',')) {
 
-                if (Chars.equals(tok, "capacity")) {
+                if (Chars.equalsLowerCaseAscii(tok, "capacity")) {
                     tok = expectToken(lexer, "symbol capacity");
 
                     final boolean negative;
@@ -1162,10 +1162,46 @@ public class SqlCompiler implements Closeable {
         }
     }
 
+    private RecordCursorFactory repairTables(SqlExecutionContext executionContext) throws SqlException {
+        CharSequence tok;
+        tok = SqlUtil.fetchNext(lexer);
+        if (tok == null || !Chars.equalsLowerCaseAscii(tok, "table")) {
+            throw SqlException.$(lexer.lastTokenPosition(), "'table' expected");
+        }
+
+        do {
+            tok = SqlUtil.fetchNext(lexer);
+
+            if (tok == null || Chars.equals(tok, ',')) {
+                throw SqlException.$(lexer.getPosition(), "table name expected");
+            }
+
+            if (Chars.isQuoted(tok)) {
+                tok = GenericLexer.unquote(tok);
+            }
+            tableExistsOrFail(lexer.lastTokenPosition(), tok, executionContext);
+
+            try {
+                engine.getWriter(executionContext.getCairoSecurityContext(), tok).close();
+            } catch (CairoException e) {
+                LOG.info().$("table busy [table=").$(tok).$(", e=").$((Sinkable) e).$(']').$();
+                throw SqlException.$(lexer.lastTokenPosition(), "table '").put(tok).put("' is busy");
+            }
+            tok = SqlUtil.fetchNext(lexer);
+
+        } while (tok != null && Chars.equals(tok, ','));
+        return null;
+    }
+
     private RecordCursorFactory truncateTables(SqlExecutionContext executionContext) throws SqlException {
         CharSequence tok;
         tok = SqlUtil.fetchNext(lexer);
-        if (!Chars.equals("table", tok)) {
+
+        if (tok == null) {
+            throw SqlException.$(lexer.getPosition(), "'table' expected");
+        }
+
+        if (!Chars.equalsLowerCaseAscii(tok, "table")) {
             throw SqlException.$(lexer.lastTokenPosition(), "'table' expected");
         }
 
@@ -1221,37 +1257,6 @@ public class SqlCompiler implements Closeable {
         } finally {
             tableWriters.clear();
         }
-        return null;
-    }
-
-    private RecordCursorFactory repairTables(SqlExecutionContext executionContext) throws SqlException {
-        CharSequence tok;
-        tok = SqlUtil.fetchNext(lexer);
-        if (!Chars.equals("table", tok)) {
-            throw SqlException.$(lexer.lastTokenPosition(), "'table' expected");
-        }
-
-        do {
-            tok = SqlUtil.fetchNext(lexer);
-
-            if (tok == null || Chars.equals(tok, ',')) {
-                throw SqlException.$(lexer.getPosition(), "table name expected");
-            }
-
-            if (Chars.isQuoted(tok)) {
-                tok = GenericLexer.unquote(tok);
-            }
-            tableExistsOrFail(lexer.lastTokenPosition(), tok, executionContext);
-
-            try {
-                engine.getWriter(executionContext.getCairoSecurityContext(), tok).close();
-            } catch (CairoException e) {
-                LOG.info().$("table busy [table=").$(tok).$(", e=").$((Sinkable) e).$(']').$();
-                throw SqlException.$(lexer.lastTokenPosition(), "table '").put(tok).put("' is busy");
-            }
-            tok = SqlUtil.fetchNext(lexer);
-
-        } while (tok != null && Chars.equals(tok, ','));
         return null;
     }
 

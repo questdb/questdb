@@ -72,7 +72,7 @@ public class IntrinsicModel implements Mutable {
     public void excludeValue(ExpressionNode val) {
 
         final int index;
-        if (Chars.equals("null", val.token)) {
+        if (Chars.equalsLowerCaseAscii(val.token, "null")) {
             index = keyValues.removeNull();
             if (index > -1) {
                 keyValuePositions.removeIndex(index);

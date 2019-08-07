@@ -41,7 +41,7 @@ class ExpressionParser {
     private static final int BRANCH_LITERAL = 6;
     private static final int BRANCH_LAMBDA = 7;
     private static final int BRANCH_CASE_CONTROL = 9;
-    private static final CharSequenceIntHashMap caseKeywords = new CharSequenceIntHashMap();
+    private static final LowerCaseAsciiCharSequenceIntHashMap caseKeywords = new LowerCaseAsciiCharSequenceIntHashMap();
     private final Deque<ExpressionNode> opStack = new ArrayDeque<>();
     private final IntStack paramCountStack = new IntStack();
     private final ObjectPool<ExpressionNode> sqlNodePool;
@@ -149,7 +149,7 @@ class ExpressionParser {
                         break;
                     case 's':
                     case 'S':
-                        if (Chars.equals(tok, "select")) {
+                        if (Chars.equalsLowerCaseAscii(tok, "select")) {
                             thisBranch = BRANCH_LAMBDA;
                             // It is highly likely this expression parser will be re-entered when
                             // parsing sub-query. To prevent sub-query consuming operation stack we must add a
@@ -280,7 +280,7 @@ class ExpressionParser {
 
                         // here we handle literals, in case of "case" statement some of these literals
                         // are going to flush operation stack
-                        if (thisChar == 'c' && Chars.equals("case", tok)) {
+                        if (Chars.toLowerCaseAscii(thisChar) == 'c' && Chars.equalsLowerCaseAscii(tok, "case")) {
                             caseCount++;
                             paramCountStack.push(paramCount);
                             paramCount = 0;
@@ -289,9 +289,9 @@ class ExpressionParser {
                         }
 
                         if (caseCount > 0) {
-                            switch (thisChar) {
+                            switch (Chars.toLowerCaseAscii(thisChar)) {
                                 case 'e':
-                                    if (Chars.equals("end", tok)) {
+                                    if (Chars.equalsLowerCaseAscii(tok, "end")) {
                                         if (prevBranch == BRANCH_CASE_CONTROL) {
                                             throw missingArgs(lexer.lastTokenPosition());
                                         }
@@ -301,7 +301,7 @@ class ExpressionParser {
                                         // Pop the left parenthesis from the stack, but not onto the output queue.
                                         //        If the token at the top of the stack is a function token, pop it onto the output queue.
                                         //        If the stack runs out without finding a left parenthesis, then there are mismatched parentheses.
-                                        while ((node = opStack.poll()) != null && !Chars.equals("case", node.token)) {
+                                        while ((node = opStack.poll()) != null && !Chars.equalsLowerCaseAscii(node.token, "case")) {
                                             listener.onNode(node);
                                         }
 
@@ -340,7 +340,7 @@ class ExpressionParser {
                                                 break;
                                         }
 
-                                        while ((node = opStack.poll()) != null && !Chars.equals("case", node.token)) {
+                                        while ((node = opStack.poll()) != null && !Chars.equalsLowerCaseAscii(node.token, "case")) {
                                             listener.onNode(node);
                                         }
 
@@ -375,7 +375,7 @@ class ExpressionParser {
                     throw SqlException.$(node.position, "unbalanced (");
                 }
 
-                if (Chars.equals("case", node.token)) {
+                if (Chars.equalsLowerCaseAscii(node.token, "case")) {
                     throw SqlException.$(node.position, "unbalanced 'case'");
                 }
 

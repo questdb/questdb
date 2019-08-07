@@ -1149,6 +1149,7 @@ public final class SqlParser {
         tableAliasStop.add("latest");
         tableAliasStop.add("join");
         tableAliasStop.add("inner");
+        tableAliasStop.add("left");
         tableAliasStop.add("outer");
         tableAliasStop.add("asof");
         tableAliasStop.add("splice");
@@ -1169,6 +1170,7 @@ public final class SqlParser {
         groupByStopSet.add(")");
         groupByStopSet.add(",");
 
+        joinStartSet.put("left", QueryModel.JOIN_INNER);
         joinStartSet.put("join", QueryModel.JOIN_INNER);
         joinStartSet.put("inner", QueryModel.JOIN_INNER);
         joinStartSet.put("outer", QueryModel.JOIN_OUTER);

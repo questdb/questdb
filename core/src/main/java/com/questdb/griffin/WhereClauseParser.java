@@ -94,7 +94,7 @@ final class WhereClauseParser {
                         final boolean preferred = Chars.equalsNc(column, preferredKeyColumn);
                         final boolean indexed = m.isColumnIndexed(index);
                         if (preferred || (indexed && preferredKeyColumn == null)) {
-                            CharSequence value = Chars.equals("null", b.token) ? null : unquote(b.token);
+                            CharSequence value = Chars.equalsLowerCaseAscii(b.token, "null") ? null : unquote(b.token);
                             if (Chars.equalsNc(column, model.keyColumn)) {
                                 // compute overlap of values
                                 // if values do overlap, keep only our value
@@ -552,7 +552,7 @@ final class WhereClauseParser {
                 ExpressionNode parent = keyExclNodes.getQuick(i);
 
 
-                ExpressionNode node = Chars.equals("not", parent.token) ? parent.rhs : parent;
+                ExpressionNode node = Chars.equalsLowerCaseAscii(parent.token, "not") ? parent.rhs : parent;
                 // this could either be '=' or 'in'
 
                 if (node.paramCount == 2) {
@@ -610,7 +610,7 @@ final class WhereClauseParser {
         if (node == null || node.intrinsicValue == IntrinsicModel.TRUE) {
             return null;
         }
-        if (node.queryModel == null && Chars.equals("and", node.token)) {
+        if (node.queryModel == null && Chars.equalsLowerCaseAscii(node.token, "and")) {
             if (node.lhs == null || node.lhs.intrinsicValue == IntrinsicModel.TRUE) {
                 return node.rhs;
             }
@@ -638,7 +638,7 @@ final class WhereClauseParser {
 
         while (!stack.isEmpty() || node != null) {
             if (node != null) {
-                if (Chars.equals("and", node.token)) {
+                if (Chars.equalsLowerCaseAscii(node.token, "and")) {
                     if (!removeAndIntrinsics(translator, model, node.rhs, m)) {
                         stack.push(node.rhs);
                     }
@@ -676,7 +676,7 @@ final class WhereClauseParser {
             case INTRINCIC_OP_NOT_EQ:
                 return analyzeNotEquals(translator, model, node, m);
             case INTRINCIC_OP_NOT:
-                return Chars.equals("in", node.rhs.token) && analyzeNotIn(translator, model, node, m);
+                return Chars.equalsLowerCaseAscii(node.rhs.token, "in") && analyzeNotIn(translator, model, node, m);
             default:
                 return false;
         }
