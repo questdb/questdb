@@ -26,6 +26,8 @@ package com.questdb.std;
 import com.questdb.std.str.CharSink;
 import com.questdb.std.str.DirectBytes;
 import com.questdb.std.str.Path;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import static com.questdb.std.Numbers.hexDigits;
 
@@ -49,7 +51,7 @@ public final class Chars {
         int ll = l.length();
         int rl = r.length();
 
-        for (int i = 0, n = ll < rl ? ll : rl; i < n; i++) {
+        for (int i = 0, n = Math.min(ll, rl); i < n; i++) {
             int k = l.charAt(i) - r.charAt(i);
             if (k != 0) {
                 return k;
@@ -181,12 +183,16 @@ public final class Chars {
         }
 
         for (int i = 0; i < ll; i++) {
-            if (Character.toLowerCase(l.charAt(i)) != r.charAt(i)) {
+            if (Character.toLowerCase(l.charAt(i)) != Character.toLowerCase(r.charAt(i))) {
                 return false;
             }
         }
 
         return true;
+    }
+
+    public static boolean equalsIgnoreCaseNc(CharSequence l, CharSequence r) {
+        return l != null && equalsIgnoreCase(l, r);
     }
 
     public static boolean equalsLowerCaseAscii(CharSequence l, int lLo, int lHi, CharSequence r, int rLo, int rHi) {
@@ -207,7 +213,7 @@ public final class Chars {
         return true;
     }
 
-    public static boolean equalsLowerCaseAscii(CharSequence l, CharSequence r) {
+    public static boolean equalsLowerCaseAscii(@NotNull CharSequence l, CharSequence r) {
         int ll;
         if ((ll = l.length()) != r.length()) {
             return false;
@@ -220,6 +226,10 @@ public final class Chars {
         }
 
         return true;
+    }
+
+    public static boolean equalsLowerCaseAsciiNc(@Nullable CharSequence l, @NotNull CharSequence r) {
+        return l != null && equalsLowerCaseAscii(l, r);
     }
 
     public static boolean equalsNc(CharSequence l, CharSequence r) {

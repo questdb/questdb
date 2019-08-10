@@ -394,6 +394,31 @@ public class AlterTableAddColumnTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testAddColumnUpperCase() throws Exception {
+        TestUtils.assertMemoryLeak(
+                () -> {
+                    try {
+                        createX();
+
+                        try {
+                            compiler.compile("alter table x add column D int");
+                            Assert.fail();
+                        } catch (SqlException e) {
+                            TestUtils.assertContains(e.getFlyweightMessage(), "Cannot add column [error=Duplicate column name: D]");
+                        }
+
+
+                        Assert.assertEquals(0, engine.getBusyWriterCount());
+                        Assert.assertEquals(0, engine.getBusyReaderCount());
+                    } finally {
+                        engine.releaseAllReaders();
+                        engine.releaseAllWriters();
+                    }
+                }
+        );
+    }
+
+    @Test
     public void testAddUnknown() throws Exception {
         assertFailure("alter table x add blah", 18, "'column' expected");
     }
