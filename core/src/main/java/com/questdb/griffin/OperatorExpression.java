@@ -23,7 +23,7 @@
 
 package com.questdb.griffin;
 
-import com.questdb.std.CharSequenceObjHashMap;
+import com.questdb.std.LowerCaseAsciiCharSequenceObjHashMap;
 import com.questdb.std.ObjList;
 
 public final class OperatorExpression {
@@ -45,13 +45,15 @@ public final class OperatorExpression {
         add(new OperatorExpression("=", 7, true, BINARY));
         add(new OperatorExpression("~", 7, true, BINARY));
         add(new OperatorExpression("!=", 7, true, BINARY));
+        add(new OperatorExpression("<>", 7, true, BINARY));
+        add(new OperatorExpression("!~", 7, true, BINARY));
         add(new OperatorExpression("in", 7, true, SET, false));
         add(new OperatorExpression("and", 11, true, BINARY, false));
         add(new OperatorExpression("or", 11, true, BINARY, false));
         add(new OperatorExpression("not", 11, true, UNARY, false));
     }};
 
-    static final CharSequenceObjHashMap<OperatorExpression> opMap = new CharSequenceObjHashMap<OperatorExpression>() {{
+    static final LowerCaseAsciiCharSequenceObjHashMap<OperatorExpression> opMap = new LowerCaseAsciiCharSequenceObjHashMap<OperatorExpression>() {{
         for (int i = 0, k = operators.size(); i < k; i++) {
             OperatorExpression op = operators.getQuick(i);
             put(op.token, op);

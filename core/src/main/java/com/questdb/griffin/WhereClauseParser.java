@@ -91,11 +91,11 @@ final class WhereClauseParser {
                     case ColumnType.STRING:
                     case ColumnType.LONG:
                     case ColumnType.INT:
-                        final boolean preferred = Chars.equalsNc(column, preferredKeyColumn);
+                        final boolean preferred = Chars.equalsIgnoreCaseNc(preferredKeyColumn, column);
                         final boolean indexed = m.isColumnIndexed(index);
                         if (preferred || (indexed && preferredKeyColumn == null)) {
                             CharSequence value = Chars.equalsLowerCaseAscii(b.token, "null") ? null : unquote(b.token);
-                            if (Chars.equalsNc(column, model.keyColumn)) {
+                            if (Chars.equalsIgnoreCaseNc(model.keyColumn, column)) {
                                 // compute overlap of values
                                 // if values do overlap, keep only our value
                                 // otherwise invalidate entire model
@@ -246,10 +246,10 @@ final class WhereClauseParser {
     private boolean analyzeInLambda(IntrinsicModel model, CharSequence columnName, RecordMetadata meta, ExpressionNode node) throws SqlException {
 //        RecordColumnMetadata colMeta = meta.getColumn(columnName);
         int columnIndex = meta.getColumnIndex(columnName);
-        boolean preferred = Chars.equalsNc(columnName, preferredKeyColumn);
+        boolean preferred = Chars.equalsIgnoreCaseNc(preferredKeyColumn, columnName);
 
         if (preferred || (preferredKeyColumn == null && meta.isColumnIndexed(columnIndex))) {
-            if (preferredKeyColumn != null && !Chars.equals(columnName, preferredKeyColumn)) {
+            if (preferredKeyColumn != null && !Chars.equalsIgnoreCase(columnName, preferredKeyColumn)) {
                 return false;
             }
 
@@ -259,12 +259,12 @@ final class WhereClauseParser {
 
             // check if we already have indexed column and it is of worse selectivity
             if (model.keyColumn != null
-                    && (!Chars.equals(model.keyColumn, columnName))
+                    && (!Chars.equalsIgnoreCase(model.keyColumn, columnName))
                     && meta.getIndexValueBlockCapacity(columnIndex) <= meta.getIndexValueBlockCapacity(model.keyColumn)) {
                 return false;
             }
 
-            if ((Chars.equalsNc(columnName, model.keyColumn) && model.keySubQuery != null) || node.paramCount > 2) {
+            if ((Chars.equalsIgnoreCaseNc(model.keyColumn, columnName) && model.keySubQuery != null) || node.paramCount > 2) {
                 throw SqlException.$(node.position, "Multiple lambda expressions not supported");
             }
 
@@ -335,7 +335,7 @@ final class WhereClauseParser {
     private boolean analyzeListOfValues(IntrinsicModel model, CharSequence columnName, RecordMetadata meta, ExpressionNode node) {
         final int columnIndex = meta.getColumnIndex(columnName);
         boolean newColumn = true;
-        boolean preferred = Chars.equalsNc(columnName, preferredKeyColumn);
+        boolean preferred = Chars.equalsIgnoreCaseNc(preferredKeyColumn, columnName);
 
         if (preferred || (preferredKeyColumn == null && meta.isColumnIndexed(columnIndex))) {
 

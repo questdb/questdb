@@ -60,6 +60,10 @@ public class CairoException extends RuntimeException implements Sinkable {
         return this;
     }
 
+    public CharSequence getFlyweightMessage() {
+        return message;
+    }
+
     @Override
     public void toSink(CharSink sink) {
         sink.put('[').put(errno).put("]: ").put(message);

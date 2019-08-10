@@ -782,7 +782,7 @@ public class TableWriter implements Closeable {
         long nameOffset = getColumnNameOffset(columnCount);
         for (int i = 0; i < columnCount; i++) {
             CharSequence col = metaMem.getStr(nameOffset);
-            if (Chars.equals(col, name)) {
+            if (Chars.equalsIgnoreCase(col, name)) {
                 return i;
             }
             nameOffset += VirtualMemory.getStorageLength(col);

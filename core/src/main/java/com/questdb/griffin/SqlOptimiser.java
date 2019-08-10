@@ -206,8 +206,8 @@ class SqlOptimiser {
             jc.bIndexes.add(bi);
             jc.bNames.add(bn);
             jc.bNodes.add(bo);
-            jc.slaveIndex = ai > bi ? ai : bi;
-            jc.parents.add(ai < bi ? ai : bi);
+            jc.slaveIndex = Math.max(ai, bi);
+            jc.parents.add(Math.min(ai, bi));
             emittedJoinClauses.add(jc);
         }
 
@@ -357,8 +357,8 @@ class SqlOptimiser {
                         jc.bNames.add(literalCollectorBNames.getQuick(0));
                         jc.aIndexes.add(lhi);
                         jc.bIndexes.add(rhi);
-                        int max = lhi > rhi ? lhi : rhi;
-                        int min = lhi < rhi ? lhi : rhi;
+                        int max = Math.max(lhi, rhi);
+                        int min = Math.min(lhi, rhi);
                         jc.slaveIndex = max;
                         jc.parents.add(min);
                         linkDependencies(parent, min, max);
@@ -478,6 +478,10 @@ class SqlOptimiser {
         literalCollectorANames.clear();
         literalCollectorBNames.clear();
         defaultAliasCount = 0;
+        sqlNodePool.clear();
+        characterStore.clear();
+        tablesSoFar.clear();
+        clausesToSteal.clear();
     }
 
     private void collectAlias(QueryModel parent, int modelIndex, QueryModel model) throws SqlException {
@@ -1069,8 +1073,8 @@ class SqlOptimiser {
             r.bIndexes.add(bbi);
             r.bNames.add(bbn);
             r.bNodes.add(bbo);
-            int max = bai > bbi ? bai : bbi;
-            int min = bai < bbi ? bai : bbi;
+            int max = Math.max(bai, bbi);
+            int min = Math.min(bai, bbi);
             r.slaveIndex = max;
             r.parents.add(min);
             linkDependencies(parent, min, max);

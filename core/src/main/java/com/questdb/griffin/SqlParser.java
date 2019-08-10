@@ -38,6 +38,42 @@ public final class SqlParser {
     private static final LowerCaseAsciiCharSequenceHashSet columnAliasStop = new LowerCaseAsciiCharSequenceHashSet();
     private static final LowerCaseAsciiCharSequenceHashSet groupByStopSet = new LowerCaseAsciiCharSequenceHashSet();
     private static final LowerCaseAsciiCharSequenceIntHashMap joinStartSet = new LowerCaseAsciiCharSequenceIntHashMap();
+
+    static {
+        tableAliasStop.add("where");
+        tableAliasStop.add("latest");
+        tableAliasStop.add("join");
+        tableAliasStop.add("inner");
+        tableAliasStop.add("left");
+        tableAliasStop.add("outer");
+        tableAliasStop.add("asof");
+        tableAliasStop.add("splice");
+        tableAliasStop.add("cross");
+        tableAliasStop.add("sample");
+        tableAliasStop.add("order");
+        tableAliasStop.add("on");
+        tableAliasStop.add("timestamp");
+        tableAliasStop.add("limit");
+        tableAliasStop.add(")");
+        tableAliasStop.add(";");
+        //
+        columnAliasStop.add("from");
+        columnAliasStop.add(",");
+        columnAliasStop.add("over");
+        //
+        groupByStopSet.add("order");
+        groupByStopSet.add(")");
+        groupByStopSet.add(",");
+
+        joinStartSet.put("left", QueryModel.JOIN_INNER);
+        joinStartSet.put("join", QueryModel.JOIN_INNER);
+        joinStartSet.put("inner", QueryModel.JOIN_INNER);
+        joinStartSet.put("outer", QueryModel.JOIN_OUTER);
+        joinStartSet.put("cross", QueryModel.JOIN_CROSS);
+        joinStartSet.put("asof", QueryModel.JOIN_ASOF);
+        joinStartSet.put("splice", QueryModel.JOIN_SPLICE);
+    }
+
     private final ObjectPool<ExpressionNode> sqlNodePool;
     private final ExpressionTreeBuilder expressionTreeBuilder = new ExpressionTreeBuilder();
     private final ObjectPool<QueryModel> queryModelPool;
@@ -94,6 +130,7 @@ public final class SqlParser {
         subQueryMode = false;
         characterStore.clear();
         insertAsSelectModelPool.clear();
+        expressionTreeBuilder.reset();
     }
 
     private CharSequence createColumnAlias(ExpressionNode node, QueryModel model) {
@@ -498,7 +535,7 @@ public final class SqlParser {
     }
 
     private ExpressionNode parseCreateTablePartition(GenericLexer lexer, CharSequence tok) throws SqlException {
-        if (Chars.equalsNc("partition", tok)) {
+        if (Chars.equalsLowerCaseAsciiNc(tok, "partition")) {
             expectTok(lexer, "by");
             return expectLiteral(lexer);
         }
@@ -583,7 +620,7 @@ public final class SqlParser {
 
             // expect [latest by]
 
-            if (Chars.equalsNc("latest", tok)) {
+            if (Chars.equalsLowerCaseAsciiNc(tok, "latest")) {
                 parseLatestBy(lexer, model);
                 tok = optTok(lexer);
             }
@@ -992,7 +1029,7 @@ public final class SqlParser {
     }
 
     private ExpressionNode parseTimestamp(GenericLexer lexer, CharSequence tok) throws SqlException {
-        if (Chars.equalsNc("timestamp", tok)) {
+        if (Chars.equalsLowerCaseAsciiNc(tok, "timestamp")) {
             expectTok(lexer, '(');
             final ExpressionNode result = expectLiteral(lexer);
             expectTok(lexer, ')');
@@ -1040,30 +1077,41 @@ public final class SqlParser {
         } while (true);
     }
 
-    private ExpressionNode rewriteCase(ExpressionNode node) throws SqlException {
-        traversalAlgo.traverse(node, node1 -> {
-            if (node1.type == ExpressionNode.FUNCTION && Chars.equalsLowerCaseAscii(node1.token, "case")) {
+    private ExpressionNode rewriteCase(ExpressionNode parent) throws SqlException {
+        traversalAlgo.traverse(parent, node -> {
+            if (node.type == ExpressionNode.FUNCTION && Chars.equalsLowerCaseAscii(node.token, "case")) {
                 tempExprNodes.clear();
                 ExpressionNode literal = null;
                 ExpressionNode elseExpr;
                 boolean convertToSwitch = true;
-                final int paramCount = node1.paramCount;
+                final int paramCount = node.paramCount;
                 final int lim;
-                if ((paramCount & 1) == 1) {
-                    elseExpr = node1.args.getQuick(0);
+                if ((paramCount & 1) == 0) {
+                    elseExpr = node.args.getQuick(0);
                     lim = 0;
                 } else {
                     elseExpr = null;
                     lim = -1;
                 }
 
-                for (int i = paramCount - 1; i > lim; i--) {
+                // agrs are in inverted order, hence last list item is the first arg
+                ExpressionNode first = node.args.getQuick(paramCount - 1);
+                if (first.token != null) {
+                    // simple case of 'case' :) e.g.
+                    // case x
+                    //   when 1 then 'A'
+                    //   ...
+                    node.token = "switch";
+                    return;
+                }
+
+                for (int i = paramCount - 2; i > lim; i--) {
                     if ((i & 1) == 1) {
                         // this is "then" clause, copy it as as
-                        tempExprNodes.add(node1.args.getQuick(i));
+                        tempExprNodes.add(node.args.getQuick(i));
                         continue;
                     }
-                    ExpressionNode where = node1.args.getQuick(i);
+                    ExpressionNode where = node.args.getQuick(i);
                     if (where.type == ExpressionNode.OPERATION && where.token.charAt(0) == '=') {
                         ExpressionNode thisConstant;
                         ExpressionNode thisLiteral;
@@ -1098,18 +1146,21 @@ public final class SqlParser {
 
                 if (convertToSwitch) {
                     int n = tempExprNodes.size();
-                    node1.token = "switch";
-                    node1.args.clear();
-                    node1.args.add(elseExpr);
+                    node.token = "switch";
+                    node.args.clear();
+                    node.args.add(elseExpr);
                     for (int i = n - 1; i > -1; i--) {
-                        node1.args.add(tempExprNodes.getQuick(i));
+                        node.args.add(tempExprNodes.getQuick(i));
                     }
-                    node1.args.add(literal);
-                    node1.paramCount = n + 2;
+                    node.args.add(literal);
+                    node.paramCount = n + 2;
+                } else {
+                    node.args.remove(paramCount - 1);
+                    node.paramCount = paramCount - 1;
                 }
             }
         });
-        return node;
+        return parent;
     }
 
     private int toColumnType(GenericLexer lexer, CharSequence tok) throws SqlException {
@@ -1142,40 +1193,5 @@ public final class SqlParser {
                 break;
 
         }
-    }
-
-    static {
-        tableAliasStop.add("where");
-        tableAliasStop.add("latest");
-        tableAliasStop.add("join");
-        tableAliasStop.add("inner");
-        tableAliasStop.add("left");
-        tableAliasStop.add("outer");
-        tableAliasStop.add("asof");
-        tableAliasStop.add("splice");
-        tableAliasStop.add("cross");
-        tableAliasStop.add("sample");
-        tableAliasStop.add("order");
-        tableAliasStop.add("on");
-        tableAliasStop.add("timestamp");
-        tableAliasStop.add("limit");
-        tableAliasStop.add(")");
-        tableAliasStop.add(";");
-        //
-        columnAliasStop.add("from");
-        columnAliasStop.add(",");
-        columnAliasStop.add("over");
-        //
-        groupByStopSet.add("order");
-        groupByStopSet.add(")");
-        groupByStopSet.add(",");
-
-        joinStartSet.put("left", QueryModel.JOIN_INNER);
-        joinStartSet.put("join", QueryModel.JOIN_INNER);
-        joinStartSet.put("inner", QueryModel.JOIN_INNER);
-        joinStartSet.put("outer", QueryModel.JOIN_OUTER);
-        joinStartSet.put("cross", QueryModel.JOIN_CROSS);
-        joinStartSet.put("asof", QueryModel.JOIN_ASOF);
-        joinStartSet.put("splice", QueryModel.JOIN_SPLICE);
     }
 }

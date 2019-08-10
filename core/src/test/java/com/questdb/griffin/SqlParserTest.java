@@ -149,6 +149,16 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testJoinOnCaseDanglingThen() {
+        assertSyntaxError(
+                "select a.x from a a join b on (CASE WHEN a.x THEN 10 10+4 ELSE 15 END)",
+                53,
+                "dangling expression",
+                modelOf("a").col("x", ColumnType.INT),
+                modelOf("b").col("x", ColumnType.INT));
+    }
+
+    @Test
     public void testAsOfJoinColumnAliasNull() throws SqlException {
         assertQuery(
                 "select-choose customerId, kk, count" +
@@ -384,7 +394,6 @@ public class SqlParserTest extends AbstractGriffinTest {
 
     @Test
     @Ignore
-    // todo: fix
     public void testPGTableListQuery() throws SqlException {
         assertQuery(
                 "",
@@ -667,11 +676,11 @@ public class SqlParserTest extends AbstractGriffinTest {
                         "g DATE, " +
                         "h BINARY, " +
                         "t TIMESTAMP, " +
-                        "x SYMBOL capacity 64 cache, " +
+                        "x SYMBOL CAPACITY 64 CACHE, " +
                         "z STRING, " +
                         "y BOOLEAN) " +
-                        "timestamp(t) " +
-                        "partition by YEAR");
+                        "TIMESTAMP(t) " +
+                        "PARTITION BY YEAR");
     }
 
     @Test
@@ -1207,11 +1216,11 @@ public class SqlParserTest extends AbstractGriffinTest {
                         "g DATE, " +
                         "h BINARY, " +
                         "t TIMESTAMP, " +
-                        "x SYMBOL nocache, " +
+                        "x SYMBOL NOCACHE, " +
                         "z STRING, " +
                         "y BOOLEAN) " +
-                        "timestamp(t) " +
-                        "partition by YEAR");
+                        "TIMESTAMP(t) " +
+                        "PARTITION by YEAR");
     }
 
     @Test
@@ -2173,7 +2182,7 @@ public class SqlParserTest extends AbstractGriffinTest {
                         "join (select-choose x, y from (tab4 latest by z where a > b and y > 0)) x4 on x4.x = t1.x " +
                         "cross join tab3 post-join-where xx2.x > tab3.b" +
                         ")",
-                "select t1.x, y from (select x from tab t2 latest by x where x > 100) t1 " +
+                "select t1.x, y from (select x from tab t2 LATEST BY x where x > 100) t1 " +
                         "join tab2 xx2 on xx2.x = t1.x " +
                         "join tab3 on xx2.x > tab3.b " +
                         "join (select x,y from tab4 latest by z where a > b) x4 on x4.x = t1.x " +
@@ -2474,12 +2483,29 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    @Ignore
-    // todo: fix
     public void testSimpleCaseExpression() throws SqlException {
         assertQuery(
                 "select-virtual switch(a,1,'A',2,'B','C') + 1 column, b from (tab)",
                 "select case a when 1 then 'A' when 2 then 'B' else 'C' end + 1, b from tab",
+                modelOf("tab").col("a", ColumnType.INT).col("b", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testSimpleCaseExpressionAsConstant() throws SqlException {
+        assertQuery(
+                "select-virtual switch(1,1,'A',2,'B','C') + 1 column, b from (tab)",
+                "select case 1 when 1 then 'A' when 2 then 'B' else 'C' end + 1, b from tab",
+                modelOf("tab").col("a", ColumnType.INT).col("b", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testDodgyCaseExpression() {
+        assertSyntaxError(
+                "select case end + 1, b from tab",
+                12,
+                "'when' expected",
                 modelOf("tab").col("a", ColumnType.INT).col("b", ColumnType.INT)
         );
     }
@@ -4330,28 +4356,6 @@ public class SqlParserTest extends AbstractGriffinTest {
     }
 
     @Test
-    @Ignore
-    // todo: fix
-    public void testStackOverflow() {
-        assertSyntaxError(
-                "SELECT sym, sum(amount) from (SELECT a.amount, a.sym\n" +
-                        "FROM 'tab' a\n" +
-                        "LEFT OUTER JOIN 'tab' b\n" +
-                        "ON a.orderID = b.orderID \n" +
-                        "AND a.seq < b.seq\n" +
-                        "WHERE b.orderID IS NULL\n" +
-                        "ORDER BY a.seq desc) AS x group by sym",
-                71,
-                "')' expected",
-                modelOf("tab")
-                        .col("sym", ColumnType.INT)
-                        .col("amount", ColumnType.LONG)
-                        .col("orderID", ColumnType.LONG)
-                        .col("seq", ColumnType.LONG)
-        );
-    }
-
-    @Test
     public void testSubQuery() throws Exception {
         assertQuery(
                 "select-choose x, y from ((select-choose x, y from (tab t2 latest by x where x > 100 and y > 0)) t1)",
@@ -4571,7 +4575,7 @@ public class SqlParserTest extends AbstractGriffinTest {
     public void testWhereClause() throws Exception {
         assertQuery(
                 "select-virtual x, sum + 25 ohoh from (select-group-by x, sum(z) sum from (select-virtual a + b * c x, z from (zyzy where a in (0,10) and b = 10)))",
-                "select a+b*c x, sum(z)+25 ohoh from zyzy where a in (0,10) and b = 10",
+                "select a+b*c x, sum(z)+25 ohoh from zyzy where a in (0,10) AND b = 10",
                 modelOf("zyzy")
                         .col("a", ColumnType.INT)
                         .col("b", ColumnType.INT)

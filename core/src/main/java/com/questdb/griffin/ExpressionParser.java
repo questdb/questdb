@@ -40,7 +40,8 @@ class ExpressionParser {
     private static final int BRANCH_OPERATOR = 5;
     private static final int BRANCH_LITERAL = 6;
     private static final int BRANCH_LAMBDA = 7;
-    private static final int BRANCH_CASE_CONTROL = 9;
+    private static final int BRANCH_CASE_START = 9;
+    private static final int BRANCH_CASE_CONTROL = 10;
     private static final LowerCaseAsciiCharSequenceIntHashMap caseKeywords = new LowerCaseAsciiCharSequenceIntHashMap();
     private final Deque<ExpressionNode> opStack = new ArrayDeque<>();
     private final IntStack paramCountStack = new IntStack();
@@ -195,9 +196,12 @@ class ExpressionParser {
                         if (nonLiteralBranches.excludes(thisBranch)) {
                             thisBranch = BRANCH_CONSTANT;
                             // If the token is a number, then add it to the output queue.
-                            listener.onNode(sqlNodePool.next().of(ExpressionNode.CONSTANT, GenericLexer.immutableOf(tok), 0, lexer.lastTokenPosition()));
+                            opStack.push(sqlNodePool.next().of(ExpressionNode.CONSTANT, GenericLexer.immutableOf(tok), 0, lexer.lastTokenPosition()));
                             break;
                         } else {
+                            if (opStack.size() > 1) {
+                                throw SqlException.$(lexer.lastTokenPosition(), "dangling expression");
+                            }
                             lexer.unparse();
                             break OUT;
                         }
@@ -211,7 +215,7 @@ class ExpressionParser {
                                 || Chars.equalsLowerCaseAscii(tok, "true") || Chars.equalsLowerCaseAscii(tok, "false")) {
                             thisBranch = BRANCH_CONSTANT;
                             // If the token is a number, then add it to the output queue.
-                            listener.onNode(sqlNodePool.next().of(ExpressionNode.CONSTANT, GenericLexer.immutableOf(tok), 0, lexer.lastTokenPosition()));
+                            opStack.push(sqlNodePool.next().of(ExpressionNode.CONSTANT, GenericLexer.immutableOf(tok), 0, lexer.lastTokenPosition()));
                             break;
                         }
                     default:
@@ -276,8 +280,6 @@ class ExpressionParser {
                         opStack.push(node);
                     } else if (caseCount > 0 || nonLiteralBranches.excludes(thisBranch)) {
 
-                        thisBranch = BRANCH_LITERAL;
-
                         // here we handle literals, in case of "case" statement some of these literals
                         // are going to flush operation stack
                         if (Chars.toLowerCaseAscii(thisChar) == 'c' && Chars.equalsLowerCaseAscii(tok, "case")) {
@@ -285,8 +287,11 @@ class ExpressionParser {
                             paramCountStack.push(paramCount);
                             paramCount = 0;
                             opStack.push(sqlNodePool.next().of(ExpressionNode.FUNCTION, GenericLexer.immutableOf(tok), Integer.MAX_VALUE, lexer.lastTokenPosition()));
+                            thisBranch = BRANCH_CASE_START;
                             continue;
                         }
+
+                        thisBranch = BRANCH_LITERAL;
 
                         if (caseCount > 0) {
                             switch (Chars.toLowerCaseAscii(thisChar)) {
@@ -294,6 +299,10 @@ class ExpressionParser {
                                     if (Chars.equalsLowerCaseAscii(tok, "end")) {
                                         if (prevBranch == BRANCH_CASE_CONTROL) {
                                             throw missingArgs(lexer.lastTokenPosition());
+                                        }
+
+                                        if (paramCount == 0) {
+                                            throw SqlException.$(lexer.lastTokenPosition(), "'when' expected");
                                         }
 
                                         // If the token is a right parenthesis:
@@ -326,22 +335,34 @@ class ExpressionParser {
                                             throw missingArgs(lexer.lastTokenPosition());
                                         }
 
+                                        int argCount = 0;
+                                        while ((node = opStack.poll()) != null && !Chars.equalsLowerCaseAscii(node.token, "case")) {
+                                            listener.onNode(node);
+                                            argCount++;
+                                        }
+
+
+                                        if (paramCount == 0) {
+                                            if (argCount == 0) {
+                                                // this is 'case when', we will
+                                                // indicate that this is regular 'case' to the rewrite logic
+                                                listener.onNode(sqlNodePool.next().of(ExpressionNode.LITERAL, null, Integer.MIN_VALUE, -1));
+                                            }
+                                            paramCount++;
+                                        }
+
                                         switch (keywordIndex) {
                                             case 0: // when
                                             case 2: // else
-                                                if ((paramCount % 2) != 0) {
+                                                if ((paramCount % 2) == 0) {
                                                     throw SqlException.$(lexer.lastTokenPosition(), "'then' expected");
                                                 }
                                                 break;
                                             default: // then
-                                                if ((paramCount % 2) == 0) {
+                                                if ((paramCount % 2) != 0) {
                                                     throw SqlException.$(lexer.lastTokenPosition(), "'when' expected");
                                                 }
                                                 break;
-                                        }
-
-                                        while ((node = opStack.poll()) != null && !Chars.equalsLowerCaseAscii(node.token, "case")) {
-                                            listener.onNode(node);
                                         }
 
                                         if (node != null) {

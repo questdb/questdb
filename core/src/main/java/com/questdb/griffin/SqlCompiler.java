@@ -720,10 +720,10 @@ public class SqlCompiler implements Closeable {
                 }
 
 
-                if (Chars.equalsNc("cache", tok)) {
+                if (Chars.equalsLowerCaseAsciiNc(tok, "cache")) {
                     cache = true;
                     tok = SqlUtil.fetchNext(lexer);
-                } else if (Chars.equalsNc("nocache", tok)) {
+                } else if (Chars.equalsLowerCaseAsciiNc(tok, "nocache")) {
                     cache = false;
                     tok = SqlUtil.fetchNext(lexer);
                 } else {
@@ -732,12 +732,12 @@ public class SqlCompiler implements Closeable {
 
                 TableUtils.validateSymbolCapacityCached(cache, symbolCapacity, lexer.lastTokenPosition());
 
-                indexed = Chars.equalsNc("index", tok);
+                indexed = Chars.equalsLowerCaseAsciiNc(tok, "index");
                 if (indexed) {
                     tok = SqlUtil.fetchNext(lexer);
                 }
 
-                if (Chars.equalsNc("capacity", tok)) {
+                if (Chars.equalsLowerCaseAsciiNc(tok, "capacity")) {
                     tok = expectToken(lexer, "symbol index capacity");
 
                     try {
@@ -766,7 +766,7 @@ public class SqlCompiler implements Closeable {
                 );
             } catch (CairoException e) {
                 LOG.error().$("Cannot add column '").$(writer.getName()).$('.').$(columnName).$("'. Exception: ").$((Sinkable) e).$();
-                throw SqlException.$(tableNamePosition, "Cannot add column. Try again later.");
+                throw SqlException.$(tableNamePosition, "Cannot add column [error=").put(e.getFlyweightMessage()).put(']');
             }
 
             if (tok == null) {
